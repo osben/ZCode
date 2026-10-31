@@ -4,6 +4,7 @@ import {
   recoverPendingPermissionGrant,
 } from "../permission-grant-recovery.js";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
+import { refreshWorkspaceTrustAdmission } from "./mcp.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
 import {
   CoreErrorType,
@@ -46,6 +47,7 @@ import type {
   DrainedPendingInputDiagnostics,
 } from "../types.js";
 import {
+  attachGenUiContext,
   createRuntimeUserEntry,
   realUserRuntimeMetadata,
   type RuntimeMessageEntry,
@@ -123,6 +125,7 @@ export async function steerTurn(
   const commandKind = request.commandKind;
   const source: TurnSteerSource | undefined = request.source;
   const delivery = request.delivery;
+  const automationId = request.automationId;
   const toolDisallowlist = request.toolDisallowlist;
   const queuePosition = activeTurn.pendingInputs.length;
   const intent = request.intent
@@ -147,6 +150,7 @@ export async function steerTurn(
     ...(delivery ? { delivery } : {}),
     ...(intent ? { intent } : {}),
     ...(request.attachments ? { attachments: request.attachments } : {}),
+    ...(automationId ? { automationId } : {}),
     ...(toolDisallowlist ? { toolDisallowlist } : {}),
     turnId: activeTurn.turnId,
   };
@@ -162,8 +166,8 @@ export async function steerTurn(
       : undefined,
   );
   activeTurn.pendingInputs.push(pendingInput);
-  // 用户亲手 steer 进来的话（协调者 / 信箱 / 工具跟进也走这里，它们不算）：与 prompt 一样，给每个
-  // 欠着决定的 run 一对新的提醒。
+  // When the user steers by hand (the coordinator / inbox / tool follow-ups also route here and
+  // do not count): like a prompt, give every run awaiting a decision a fresh pair of reminders.
   if (request.inputPresentation === "user_steer") this.workflowBlockedReminder?.userSpoke();
   const queueLength = activeTurn.pendingInputs.length;
   const event = createSessionEvent(
@@ -181,6 +185,7 @@ export async function steerTurn(
       ...(request.inputPresentation ? { inputPresentation: request.inputPresentation } : {}),
       ...(delivery ? { delivery } : {}),
       ...(intent ? { intent } : {}),
+      ...(automationId ? { automationId } : {}),
       ...(toolDisallowlist ? { toolDisallowlist } : {}),
       targetTurnId: activeTurn.turnId,
       queueLength,
@@ -253,6 +258,7 @@ export async function enqueueDeferredInput(
   const commandKind = request.commandKind;
   const source: TurnSteerSource | undefined = request.source;
   const delivery = request.delivery ?? "queue";
+  const automationId = request.automationId;
   const toolDisallowlist = request.toolDisallowlist;
   const pendingInputId =
     request.pendingInputId ??
@@ -282,6 +288,7 @@ export async function enqueueDeferredInput(
       ...(request.inputPresentation ? { inputPresentation: request.inputPresentation } : {}),
       delivery,
       ...(intent ? { intent } : {}),
+      ...(automationId ? { automationId } : {}),
       ...(toolDisallowlist ? { toolDisallowlist } : {}),
       targetTurnId,
       queueLength,
@@ -474,16 +481,23 @@ function pendingInputDelivery(pendingInput: PendingTurnInput | undefined): "guid
   return delivery === "guide" ? "guide" : "queue";
 }
 
+function isInlineGuide(pendingInput: PendingTurnInput): boolean {
+  return (
+    pendingInput.commandKind !== "sendGoalCommand" &&
+    pendingInput.commandKind !== "compact" &&
+    pendingInputDelivery(pendingInput) === "guide"
+  );
+}
+
 function firstInlineGuideIndex(activeTurn: ActiveTurnSteeringState): number {
   // pendingInputs holds both the future queue and current-turn guides. Checking only
   // the array head allowed an earlier ordinary message to permanently block a later explicit guide. Delivery is the consumption lane;
   // preserve admission FIFO only within the guide subsequence here, leaving ordinary queue items in place for outer promotion.
-  return activeTurn.pendingInputs.findIndex(
-    (pendingInput) =>
-      pendingInput.commandKind !== "sendGoalCommand" &&
-      pendingInput.commandKind !== "compact" &&
-      pendingInputDelivery(pendingInput) === "guide",
-  );
+  return activeTurn.pendingInputs.findIndex(isInlineGuide);
+}
+
+function withQueryId(traceContext: TraceContext, queryId: QueryId | undefined): TraceContext {
+  return queryId ? { ...traceContext, queryId } : traceContext;
 }
 
 export function hasInlineGuidePendingInput(
@@ -901,6 +915,7 @@ export async function editPendingInputById(
         inputSize: measureUtf8Bytes(options.newText),
         ...(held.commandKind ? { commandKind: held.commandKind } : {}),
         ...(held.intent ? { intent: { ...held.intent, text: options.newText } } : {}),
+        ...(held.automationId ? { automationId: held.automationId } : {}),
         ...(held.toolDisallowlist ? { toolDisallowlist: held.toolDisallowlist } : {}),
         queueLength: projection.pendingSteerInputs.length,
         targetTurnId: held.targetTurnId,
@@ -932,6 +947,7 @@ export async function editPendingInputById(
         ? { inputPresentation: pendingInput.inputPresentation }
         : {}),
       ...(pendingInput.intent ? { intent: pendingInput.intent } : {}),
+      ...(pendingInput.automationId ? { automationId: pendingInput.automationId } : {}),
       ...(pendingInput.toolDisallowlist ? { toolDisallowlist: pendingInput.toolDisallowlist } : {}),
       queueLength: activeTurn.pendingInputs.length,
       targetTurnId: activeTurn.turnId,
@@ -1196,50 +1212,52 @@ async function drainPendingInputUnlocked(
   this: AgentRuntimeInternal,
   options: Parameters<typeof drainPendingInput>[0],
 ): Promise<DrainedPendingInputDiagnostics | undefined> {
-  const guideIndex = firstInlineGuideIndex(options.activeTurn);
-  const pendingInput = guideIndex >= 0 ? options.activeTurn.pendingInputs[guideIndex] : undefined;
-  if (!pendingInput) return undefined;
-  // The head reserved by sendQueuedNow can only be promoted by its reservation owner; pause ordinary roundtrip drain
-  // to prevent the current turn from consuming the same input again while a stop barrier is active.
-  if (this.pendingInputReservations.has(pendingInput.id)) return undefined;
-  // Bootstrap may promote ordinary queue items only after session-ready and the goal gate. Runtime inline drain
-  // takes the earliest item from the guide subsequence; it must not run future queue items early or let them block current-turn guidance.
-  options.activeTurn.pendingInputs.splice(guideIndex, 1);
-  const pendingInputs = [pendingInput];
-  const queryIds = pendingInput.queryId ? [pendingInput.queryId] : undefined;
-  // A steer is a new real user query. The next model request after drain must use that queryId
-  // instead of the original turn query, or later tool requests will be attributed to the previous user message.
-  const drainTraceContext = pendingInput.queryId
-    ? { ...options.traceContext, queryId: pendingInput.queryId }
-    : options.traceContext;
+  // Take all waiting guides at this boundary in admission FIFO order. The ordinary queue can
+  // only be promoted by bootstrap after session-ready + goal gate; it stays in place — no
+  // jumping ahead and no blocking this turn's guides. A guide already reserved by
+  // sendQueuedNow can only be promoted by its reservation owner; stop at it so the same input
+  // is not consumed a second time by the current turn during the stop barrier, and later
+  // guides do not pass it.
+  const pendingInputs: PendingTurnInput[] = [];
+  for (const pendingInput of options.activeTurn.pendingInputs) {
+    if (!isInlineGuide(pendingInput)) continue;
+    if (this.pendingInputReservations.has(pendingInput.id)) break;
+    pendingInputs.push(pendingInput);
+  }
+  if (pendingInputs.length === 0) return undefined;
+  for (const pendingInput of pendingInputs) {
+    options.activeTurn.pendingInputs.splice(
+      options.activeTurn.pendingInputs.indexOf(pendingInput),
+      1,
+    );
+  }
+  const drainedQueryIds = pendingInputs.flatMap((pendingInput) =>
+    pendingInput.queryId ? [pendingInput.queryId] : [],
+  );
+  const queryIds = drainedQueryIds.length > 0 ? drainedQueryIds : undefined;
 
   const drainedAt = Date.now();
-  const inputPreviews = pendingInputs.map((pendingInput) => previewInput(pendingInput.input));
-  const inputSizes = pendingInputs.map((pendingInput) => measureUtf8Bytes(pendingInput.input));
-  const queuedDurationsMs = pendingInputs.map(
-    (pendingInput) => drainedAt - pendingInput.queuedAt.getTime(),
-  );
   const messageIds: MessageId[] = [];
   const runtimeEntries: RuntimeMessageEntry[] = [];
-  const drainedInputs: Array<{
-    pendingInputId: string;
-    messageId: MessageId;
-    text: string;
-    delivery?: "guide" | "queue";
-    intent?: NonNullable<PendingTurnInput["intent"]>;
-    toolDisallowlist?: readonly string[];
-  }> = [];
+  // Recording, queue removal (promote), and display (drained event) happen per guide; merging
+  // happens only when the request is assembled.
+  // Fix rationale: when drained events fired only after the whole batch committed, a later
+  // write failure left earlier guides saved and dequeued without a formal user row, invisible
+  // in the live UI.
   for (const pendingInput of pendingInputs) {
     const messageId = createMessageId();
     // Delivery defaults to queue (queued consumption starts a separate turn); the v4 command surface
     // explicitly marks guides through inputRouting. Persist this in metadata so cold recovery restores the same distinction.
     const delivery = pendingInput.delivery ?? "queue";
+    // Each input records its own query; when drained together they must not all be attributed
+    // to the last one.
+    const inputTraceContext = withQueryId(options.traceContext, pendingInput.queryId);
     const resolvedAttachments = await resolveTurnAttachments(pendingInput.attachments, {
       artifactStore: this.artifactStore,
       fileSystemPort: this.fileSystemPort,
       imageProcessorPort: this.imageProcessorPort,
       sessionId: this.sessionId,
-      traceContext: drainTraceContext,
+      traceContext: inputTraceContext,
       turnId: options.activeTurn.turnId,
       workingDirectory: this.workingDirectory,
     });
@@ -1259,13 +1277,11 @@ async function drainPendingInputUnlocked(
       ),
       runtimeInputMetadata(inputPresentation) ?? realUserRuntimeMetadata(),
     );
-    this.messageHistory.addEntries([runtimeEntry]);
-    runtimeEntries.push(runtimeEntry);
     await this.persistUserPrompt(
       messageId,
       pendingInput.input,
       resolvedAttachments,
-      drainTraceContext,
+      inputTraceContext,
       {
         steerDelivery: delivery,
         inputPresentation,
@@ -1276,14 +1292,59 @@ async function drainPendingInputUnlocked(
         intent: pendingInput.intent,
       },
     );
+    // Enter in-memory history only after the database write succeeds.
+    // Fix rationale: when the in-memory history came first, a guide whose write failed stayed
+    // in the queue while the next request already carried it; after the user resumed the queue,
+    // the model saw it twice, and after cold recovery only once.
+    const entry = attachGenUiContext(runtimeEntry, pendingInput.intent?.genUiContext);
+    this.messageHistory.addEntries([entry]);
+    runtimeEntries.push(entry);
+    // Judge by the original source; attachments omit the presentation marker, so a synthetic
+    // message must not be mistaken for user input.
+    if (
+      this.mcpToolsRegistered &&
+      runtimeInputMetadata(pendingInput.inputPresentation)?.source !== "legacy_synthetic"
+    ) {
+      await refreshWorkspaceTrustAdmission(this, inputTraceContext);
+    }
     messageIds.push(messageId);
-    drainedInputs.push({
-      pendingInputId: pendingInput.id,
-      messageId,
-      text: pendingInput.input,
-      delivery,
-      ...(pendingInput.intent ? { intent: pendingInput.intent } : {}),
-      ...(pendingInput.toolDisallowlist ? { toolDisallowlist: pendingInput.toolDisallowlist } : {}),
+    const event = this.createEvent(
+      SessionEventType.TurnSteerDrained,
+      {
+        injectedMessageIds: [messageId],
+        pendingInputIds: [pendingInput.id],
+        drainedInputs: [
+          {
+            pendingInputId: pendingInput.id,
+            messageId,
+            text: pendingInput.input,
+            delivery,
+            ...(pendingInput.intent ? { intent: pendingInput.intent } : {}),
+            ...(pendingInput.toolDisallowlist
+              ? { toolDisallowlist: pendingInput.toolDisallowlist }
+              : {}),
+          },
+        ],
+        ...(pendingInput.queryId ? { queryIds: [pendingInput.queryId] } : {}),
+        targetTurnId: options.activeTurn.turnId,
+      },
+      inputTraceContext,
+    );
+    await this.appendEvent(event, inputTraceContext);
+    options.events.push(event);
+    this.logger?.debug("Turn steer drained", {
+      ...traceContextToLogContext(inputTraceContext),
+      drainedCount: 1,
+      event: "turn.steer.drained",
+      injectedMessageIds: [messageId],
+      inputPreviews: [previewInput(pendingInput.input)],
+      inputSizes: [measureUtf8Bytes(pendingInput.input)],
+      module: "core.runtime",
+      pendingInputIds: [pendingInput.id],
+      queryIds: pendingInput.queryId ? [pendingInput.queryId] : undefined,
+      queuedDurationsMs: [drainedAt - pendingInput.queuedAt.getTime()],
+      status: "completed",
+      targetTurnId: options.activeTurn.turnId,
     });
   }
 
@@ -1291,36 +1352,12 @@ async function drainPendingInputUnlocked(
   const toolDisallowlist = [
     ...new Set(pendingInputs.flatMap((pendingInput) => pendingInput.toolDisallowlist ?? [])),
   ];
-  const event = this.createEvent(
-    SessionEventType.TurnSteerDrained,
-    {
-      injectedMessageIds: messageIds,
-      pendingInputIds,
-      drainedInputs,
-      ...(queryIds ? { queryIds } : {}),
-      targetTurnId: options.activeTurn.turnId,
-    },
-    drainTraceContext,
-  );
-  await this.appendEvent(event, drainTraceContext);
-  options.events.push(event);
-  this.logger?.debug("Turn steer drained", {
-    ...traceContextToLogContext(drainTraceContext),
-    drainedCount: pendingInputs.length,
-    event: "turn.steer.drained",
-    injectedMessageIds: messageIds,
-    inputPreviews,
-    inputSizes,
-    module: "core.runtime",
-    pendingInputIds,
-    queryIds,
-    queuedDurationsMs,
-    status: "completed",
-    targetTurnId: options.activeTurn.turnId,
-  });
+  // When several are taken at the same boundary, the last input carrying an intent decides the
+  // next step's model, permissions, and Plan.
+  const intent = pendingInputs.findLast((pendingInput) => pendingInput.intent)?.intent;
   return {
     injectedMessageIds: messageIds,
-    ...(pendingInput.intent ? { intent: pendingInput.intent } : {}),
+    ...(intent ? { intent } : {}),
     latestMessageId: messageIds.at(-1),
     pendingInputIds,
     queryIds,

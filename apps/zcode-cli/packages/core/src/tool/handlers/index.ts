@@ -1,4 +1,4 @@
-import { replyToChannelToolEntry } from "./reply-to-channel.js";
+// import { replyToChannelToolEntry } from "./reply-to-channel.js";
 // ============================================================
 // Built-in Tool Handlers
 // ============================================================
@@ -45,6 +45,7 @@ import {
   cronCreateToolEntry,
   cronDeleteToolEntry,
   cronListToolEntry,
+  cronPauseSelfToolEntry,
   cronUpdateToolEntry,
 } from "./cron.js";
 import { offPeakCreateToolEntry, offPeakListToolEntry } from "./off-peak.js";
@@ -98,6 +99,7 @@ export const builtInTools: ToolEntry[] = [
   cronListToolEntry,
   cronUpdateToolEntry,
   cronDeleteToolEntry,
+  cronPauseSelfToolEntry,
   offPeakCreateToolEntry,
   offPeakListToolEntry,
   enterPlanModeToolEntry,
@@ -113,7 +115,8 @@ export const builtInTools: ToolEntry[] = [
   taskOutputToolEntry,
   taskStopToolEntry,
   readSessionContextToolEntry,
-  replyToChannelToolEntry,
+  // Channel reply awaits plugin entry wiring; default registration stays commented out, full implementation kept.
+  // replyToChannelToolEntry,
   agentToolEntry,
   taskToolEntry,
   skillToolEntry,
@@ -124,8 +127,10 @@ export const builtInTools: ToolEntry[] = [
   saveWorkflowToolEntry,
   // Experimental workflow authoring channel: synchronous, read-only (v1), fully transient.
   evalWorkflowSnippetToolEntry,
-  // Two read-only run introspection tools: always on, no gate. They are not in WORKFLOW_CHILD_DISALLOWED_TOOLS because that denylist
-  // prevents CreateWorkflow's alwaysAsk from opening a dialog in child runtimes, which does not apply to read-only queries.
+  // Two read-only run-introspection tools: always-on in the main session, no gate. They are not in WORKFLOW_CHILD_DISALLOWED_TOOLS —
+  // that ban exists because CreateWorkflow's alwaysAsk has no window to prompt in a child runtime, which does not apply to read-only queries; but the child
+  // runtime holds no run port, so they would always fail there and are removed from child runtimes by a separate rule
+  // (RUN_INTROSPECTION_TOOLS in runtime/helpers/tool-allowlist.ts).
   listWorkflowRunsToolEntry,
   getWorkflowRunToolEntry,
   // Run recovery entry point: related to the two read-only introspection tools above (run_id key and same port-probe failures), but
@@ -264,7 +269,8 @@ export function registerBuiltInTools(
       (entry.metadata.name === "CronCreate" ||
         entry.metadata.name === "CronList" ||
         entry.metadata.name === "CronUpdate" ||
-        entry.metadata.name === "CronDelete") &&
+        entry.metadata.name === "CronDelete" ||
+        entry.metadata.name === "CronPauseSelf") &&
       options.includeAutomation !== true
     ) {
       continue;

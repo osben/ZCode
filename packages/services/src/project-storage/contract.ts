@@ -1,10 +1,14 @@
+import type {
+  ProjectRepositoryContract,
+  ProjectTaskRef,
+} from "#src/project-storage/repository-contract.js";
+export * from "#src/project-storage/repository-contract.js";
 import type { DatabaseSync } from "node:sqlite";
-import type { ProjectReservationCleanupContract } from "#src/project-storage/reservation-contract.js";
 import type { AppSettings } from "@zcode/shared";
 import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
 
 export interface ProjectMigrationContext {
-  /** 可信持库 Server 身份；不受客户端请求或旧 canonical route 影响。 */
+  /** Trusted Server identity of the owning Host; not affected by client requests or legacy canonical routes. */
   hostId?: string;
   backupDirectories: readonly string[];
   settings?: Pick<
@@ -15,127 +19,10 @@ export interface ProjectMigrationContext {
   warn?: (message: string, details?: Record<string, unknown>) => void;
 }
 
-/** Host 数据库的版本化迁移端口；不读取或修改 CLI db.sqlite。 */
+/** Versioned migration port for the Host database; never reads or modifies the CLI db.sqlite. */
 export interface ProjectStorageContract {
-  /** 加法升级后同事务交接旧版本新增行/删除/标题意图；每次启动调用，不重算已处理的 NULL。 */
+  /** After the additive upgrade, hands off rows added, deleted, and title intents from the old version in the same transaction; called on every startup, and already-processed NULLs are not recomputed. */
   migrate(db: DatabaseSync, context: ProjectMigrationContext): Promise<MigrationResult>;
   repository(db: DatabaseSync, hostId?: string): ProjectRepositoryContract;
   admitTaskIdentity(db: DatabaseSync, task: ProjectTaskRef, hostId?: string): void;
-}
-
-/** A plain create always resolves its directories; a fork resolves null while its parent has no owner yet. */
-export type ReserveCreatedTaskResult<T extends ReserveCreatedTaskInput> = T extends {
-  forkOf: ProjectTaskRef;
-}
-  ? ProjectDirectories | null
-  : ProjectDirectories;
-
-/**
- * A plain create names its project and directories. A fork names only its parent: the child takes over the parent's
- * project, cwd and resolved directories, and a row that already has an owner is left unchanged. An unowned parent gives no claim (null).
- */
-export type ReserveCreatedTaskInput =
-  | {
-      task: ProjectTaskRef;
-      projectId: string | null;
-      /** Host 已固化的执行目录；首次预留持久化，重试不改。undefined 为普通新建。 */
-      additionalDirectories?: string[];
-      forkOf?: undefined;
-    }
-  | {
-      task: ProjectTaskRef;
-      forkOf: ProjectTaskRef;
-      projectId?: undefined;
-      additionalDirectories?: undefined;
-    };
-export interface ProjectRoot {
-  rootPath: string;
-  position: number;
-  isPrimary: boolean;
-}
-export interface VirtualProject {
-  /** 所属 Host 异步探测的只读投影，不写入项目数据库或远端入口缓存；旧 Server 可省略。 */
-  primaryRootStatus?: "available" | "missing" | "unavailable";
-  /** 旧 Server 的只读单 root 投影，不是本机持久化项目。 */
-  legacySingleRoot?: true;
-  /** 旧单 root 按所属 Host 规则派生的目录匹配值；不落库，不改变原 root、项目 ID 或任务 cwd。 */
-  directoryMatchPath?: string;
-  id: string;
-  hostId: string;
-  name: string;
-  nameOverridden: boolean;
-  roots: ProjectRoot[];
-  position: number;
-  pinned: boolean;
-  deleted: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-export interface ProjectTaskRef {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  taskId: string;
-}
-export type ProjectTask = import("@zcode/shared").ZCodeTaskMeta & {
-  projectId: string | null;
-  hostId: string;
-  pinned: boolean;
-  archived: boolean;
-};
-export interface ProjectTree {
-  legacySingleRoot?: true;
-  projects: VirtualProject[];
-  tasks: ProjectTask[];
-  /** 仅显式请求时返回删除事实；离线缺席不能替代这些引用。 */
-  deletedTasks?: Array<ProjectTaskRef & { hostId: string }>;
-}
-
-export const LEGACY_SINGLE_ROOT_PROJECT_PREFIX = "legacy-single-root:";
-export interface SaveProjectInput {
-  id?: string;
-  hostId?: string;
-  name?: string;
-  defaultName?: string;
-  roots?: string[];
-  primaryRoot?: string;
-  pinned?: boolean;
-  restoreProjectId?: string;
-  /**
-   * Open-directory intent: return the local project already bound to this single root instead of creating a
-   * duplicate. Only valid for one local root with no other fields (see the project service schema).
-   */
-  reuseExistingRoot?: boolean;
-}
-export interface ProjectDirectories {
-  workspacePath: string;
-  /** 远端装配层登记后的 attachment 身份；执行仍使用 workspacePath。 */
-  workspaceIdentity?: string;
-  additionalDirectories: string[];
-  projectId: string | null;
-}
-export interface AutoArchiveInput {
-  cutoff: number;
-  activeTasks: readonly ProjectTaskRef[];
-}
-export interface ProjectRepositoryContract extends ProjectReservationCleanupContract {
-  /** 单事务纯按 CLI 最后活动时间筛选，置顶与 activeTasks 除外，仅写组织态；覆盖未归类 cwd。 */
-  archiveInactive(input: AutoArchiveInput): ProjectTaskRef[];
-  /** 可只取目录，并参与调用方已有的 SQLite 读快照。 */
-  readTree(options?: {
-    includeDeleted?: boolean;
-    includeDeletedTasks?: boolean;
-    includeTasks?: boolean;
-  }): ProjectTree;
-  saveProject(input: SaveProjectInput): VirtualProject;
-  deleteProject(id: string): void;
-  /** 在写事务内只为空项目初始化 root；并发编辑已添加的目录优先。 */
-  initializeProjectRoot(id: string, path: string): VirtualProject;
-  moveTask(input: { task: ProjectTaskRef; projectId: string; addMissingRoot?: boolean }): void;
-  reorderProjects(ids: string[]): void;
-  resolveSessionDirectories(task: ProjectTaskRef): ProjectDirectories;
-  /**
-   * CLI 创建之前原子预留归属；无事实的预留行不进入列表，重试不覆盖组织操作。
-   * 分叉的父行尚未归属（host_id NULL）时返回 null：子行不写入，由 admitForkSummary 在父行归属后认领。
-   */
-  reserveCreatedTask<T extends ReserveCreatedTaskInput>(input: T): ReserveCreatedTaskResult<T>;
 }

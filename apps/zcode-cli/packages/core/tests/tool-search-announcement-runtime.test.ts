@@ -149,14 +149,15 @@ it("rebuilds the full continuation catalog before manual compact returns", async
     removedNames: [],
     readdedNames: [],
   });
-  expect(requests.find(isCompact)?.toolSearchEnabled).toBe(false);
+  // The summary request shares the same tool exposure as the main loop.
+  expect(requests.find(isCompact)?.toolSearchEnabled).toBe(true);
   await runtime.executeTurn("next");
   expect(announcements(internal)).toHaveLength(1);
   expect(announcementCount(requests.at(-1)!)).toBe(1);
 });
 
-it("uses compact continuation scope without changing the summary tool policy", async () => {
-  const { runtime, internal } = fixture((request) =>
+it("uses the continuation scope for the summary request and the announcement", async () => {
+  const { runtime, internal, requests } = fixture((request) =>
     isCompact(request)
       ? { ...done(), text: "<summary>Continue with the scoped tools.</summary>" }
       : done(),
@@ -169,7 +170,9 @@ it("uses compact continuation scope without changing the summary tool policy", a
   await internal.compactActiveConversation(undefined, createRootTraceContext(), [], {
     getContinuationTools,
   });
-  expect(getContinuationTools).toHaveBeenCalledOnce();
+  // Taken once before the summary request and once again after it returns; the announcement uses the latest scope.
+  expect(getContinuationTools).toHaveBeenCalledTimes(2);
+  expect(requests.find(isCompact)?.tools?.map((tool) => tool.name)).not.toContain("ToolSearch");
   expect(announcements(internal)).toHaveLength(0);
 });
 
@@ -181,7 +184,7 @@ it("retains an announcement in the kept tail without appending another", async (
   );
   await runtime.executeTurn("setup one");
   await runtime.executeTurn("setup two");
-  // 模拟保留段已经含正常 attachment 收集提交的公告；旧公告会随更早的段被压缩。
+  // Simulate a kept tail that already contains an announcement committed by normal attachment collection; older ones are compacted away with earlier segments.
   const retained = announcements(internal)[0]!;
   internal.messageHistory.addEntries([retained]);
   const result = await internal.compactActiveConversation(undefined, createRootTraceContext(), [], {
@@ -189,6 +192,43 @@ it("retains an announcement in the kept tail without appending another", async (
   });
   expect(result.outcome).toBe("compacted");
   expect(result.entries.filter((e) => e.metadata?.toolSearchAnnouncement)).toEqual([retained]);
+});
+
+it("derives summary request tools from the summarized history, not the kept tail", async () => {
+  const { runtime, internal, requests } = fixture((request) =>
+    isCompact(request)
+      ? { ...done(), text: "<summary>Keep the latest context.</summary>" }
+      : done(),
+  );
+  await runtime.executeTurn("setup one");
+  await runtime.executeTurn("setup two");
+  // WebFetch is discovered only in the last group (the kept tail); the summary request's messages do not include this search.
+  internal.messageHistory.addEntries([
+    {
+      message: {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "search-kept", name: "ToolSearch", input: { query: "select:WebFetch" } }],
+      },
+    },
+    {
+      message: {
+        role: "tool",
+        toolName: "ToolSearch",
+        toolCallId: "search-kept",
+        content: [{ type: "tool_reference", toolName: "WebFetch" }],
+      },
+    },
+  ]);
+  const result = await internal.compactActiveConversation(undefined, createRootTraceContext(), [], {
+    trigger: CompactTrigger.Reactive,
+  });
+  expect(result.outcome).toBe("compacted");
+  const summaryRequest = requests.find(isCompact)!;
+  expect(requestText(summaryRequest.messages)).not.toContain("select:WebFetch");
+  // Discovered tools are computed only from this request's messages: tools discovered in the kept tail do not enter the summary request.
+  expect(summaryRequest.tools?.map((tool) => tool.name)).not.toContain("WebFetch");
+  expect(summaryRequest.tools?.map((tool) => tool.name)).toContain("ToolSearch");
 });
 
 it.each(["auto", "reactive"] as const)(
@@ -351,7 +391,7 @@ it.each(["persist failure", "cancel"])(
   },
 );
 
-// Local 与 Native 共用公告时序；续写只保留已有公告，目录变化延迟到正常收集。
+// Local and Native share the announcement timing; a continuation only keeps existing announcements, and directory changes wait for normal collection.
 it.each(["off", "on"] as const)(
   "Local keeps its snapshot through three continuations (streaming=%s)",
   async (modelStreaming) => {

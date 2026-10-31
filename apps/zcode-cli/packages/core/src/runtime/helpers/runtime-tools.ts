@@ -214,6 +214,9 @@ function createRuntimeToolExecutor(
     dynamicWorkflowSnippetPort: deps.dynamicWorkflowSnippetPort,
     modelCatalogPort: deps.modelCatalogPort,
     runtimeTaskRegistry: runtime.runtimeTaskRegistry,
+    registerResidencyBlockingWork: (work) => {
+      void runtime.trackResidencyBlockingWork(work).catch(() => undefined);
+    },
     readFileState: runtime.readFileState,
     nestedInstructions: createRuntimeNestedInstructionContext(runtime),
     // Skill gate for workflow-authoring tools (tool/handlers/workflow-skill-gate.ts): answer “has the skill been read?” from history

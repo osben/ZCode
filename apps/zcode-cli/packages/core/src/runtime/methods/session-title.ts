@@ -188,6 +188,7 @@ function resolveSessionTitleGenerationMode(
   seedText: string,
   options: { firstTurnOnly?: boolean; bypassShortInputGuard?: boolean } = {},
 ): SessionTitleGenerationMode | null {
+  if (runtime.shuttingDown) return null;
   if (!isTitleGenerationConfigured(runtime)) return null;
   if (runtime.sessionTitleGenerationInFlight || runtime.sessionTitleGenerationSettled) return null;
   if (runtime.sessionTitleGenerationAttempts >= MAX_SESSION_TITLE_GENERATION_ATTEMPTS) return null;

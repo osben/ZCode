@@ -84,6 +84,8 @@ export interface ToolExecutorOptions {
   permissionService: PermissionService;
   permissionBroker?: PermissionBrokerPort;
   emitEvent: (event: SessionEvent) => Promise<void>;
+  /** The real completion chain of background tracking (including the terminal write) belongs to the runtime and must not be lost when the tool returns. */
+  registerResidencyBlockingWork?: (work: Promise<void>) => void;
   enqueueBackgroundTaskNotification?: EnqueueBackgroundTaskNotification;
   shouldEnqueueBackgroundTaskNotification?: ShouldEnqueueBackgroundTaskNotification;
   sessionId: SessionId;
@@ -157,6 +159,17 @@ export interface ToolExecutor {
     options?: ToolExecuteOptions,
   ): Promise<unknown>;
 
+  /**
+   * Runs no hooks, shows no confirmation, and emits no events: decides per file whether a Read is denied
+   * under the current mode and permission rules (all count as denied when Read is not registered).
+   * Shares the same static check as Read tool calls, so the rules load once; compaction uses it to skip
+   * files whose Read permission is denied when restoring files.
+   */
+  areReadsDeniedWithoutPrompt(
+    filePaths: readonly string[],
+    traceContext: TraceContext,
+  ): Promise<boolean[]>;
+
   execute(toolCall: ExecutableToolCall, options?: ToolExecuteOptions): Promise<ToolExecutionResult>;
   executeBatch(
     toolCalls: ExecutableToolCall[],
@@ -188,6 +201,7 @@ export interface ToolExecutor {
 export interface ToolExecuteOptions {
   toolSearch?: ToolSearchExecutionContext;
   automationTurn?: boolean;
+  automationId?: string;
   offPeakTurn?: boolean;
   signal?: AbortSignal;
   traceContext?: TraceContext;
@@ -208,6 +222,8 @@ export interface ToolExecutorDeps {
   permissionService: PermissionService;
   permissionBroker: PermissionBrokerPort;
   emitEvent: (event: SessionEvent) => Promise<void>;
+  /** The real completion chain of background tracking (including the terminal write) belongs to the runtime and must not be lost when the tool returns. */
+  registerResidencyBlockingWork?: (work: Promise<void>) => void;
   enqueueBackgroundTaskNotification?: EnqueueBackgroundTaskNotification;
   shouldEnqueueBackgroundTaskNotification?: ShouldEnqueueBackgroundTaskNotification;
   sessionId: SessionId;
@@ -249,6 +265,8 @@ export interface ToolExecutorDeps {
   readFileState: ReadFileStateMap;
   /** Nested AGENTS.md discovery; absent (e.g. incognito) means tool results are unchanged. */
   nestedInstructions?: NestedInstructionContext;
+  /** Next sequence number for file-read snapshots; the executor owns the counter, which only increases. */
+  nextReadFileStateSnapshotIndex: () => number;
   hasLoadedSkill?: (skillName: string) => boolean;
   subagentBackgroundBashMaxMs?: number;
   bashShellSelection?: ExecutionShellSelection;

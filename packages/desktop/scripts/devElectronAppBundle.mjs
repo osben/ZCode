@@ -1,11 +1,29 @@
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, posix } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 export const DEV_ELECTRON_PROTOCOL_SCHEME = "zcode";
 export const DEV_ELECTRON_APP_NAME = "ZCode Dev";
 export const DEV_ELECTRON_APP_BUNDLE_ID = "dev.zcode.app.development";
 // Copy layout version; see the fingerprint notes in prepareDevElectronAppBundle.
-export const DEV_ELECTRON_BUNDLE_FORMAT = 2;
+export const DEV_ELECTRON_BUNDLE_FORMAT = 3;
+const execFileAsync = promisify(execFile);
+
+async function signDevElectronApp(appPath) {
+  // Since Electron 42, notifications require a valid signature; the original npm runtime
+  // signature may be incomplete, so it must be re-signed after any identity change too.
+  // Ad-hoc signing applies only to the ignored dev copy; official releases still go through
+  // the existing certificate and notarization flow.
+  await execFileAsync("/usr/bin/codesign", [
+    "--deep",
+    "--force",
+    "--sign",
+    "-",
+    "--preserve-metadata=entitlements,flags,runtime",
+    appPath,
+  ]);
+}
 
 function escapeXml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
@@ -57,6 +75,7 @@ export async function prepareDevElectronAppBundle({
   runtimeRoot,
   electronVersion,
   arch,
+  signApp = signDevElectronApp,
 }) {
   const appPath = resolveDevElectronAppBundlePath({ runtimeRoot, electronVersion, arch });
   const infoPlistPath = posix.join(appPath, "Contents", "Info.plist");
@@ -111,6 +130,7 @@ export async function prepareDevElectronAppBundle({
     await cp(electronAppPath, appPath, { recursive: true, verbatimSymlinks: true });
     const patchedInfoPlist = patchDevElectronInfoPlist(await readFile(infoPlistPath, "utf8"));
     await writeFile(infoPlistPath, patchedInfoPlist, "utf8");
+    await signApp(appPath);
     // Write the fingerprint last so a failure midway still triggers a recopy next time instead of leaving
     // a partial cache marked as complete.
     if (sourceStamp !== undefined) await writeFile(sourceStampPath, sourceStamp, "utf8");

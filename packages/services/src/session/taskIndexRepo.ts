@@ -38,7 +38,11 @@ import type {
 } from "#src/session/zcodeTaskListTypes.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { getTasksIndexDatabasePath, getZCodeDataRootDir } from "#src/paths.js";
-import { projectStorage, type ProjectMigrationContext } from "#src/project-storage/index.js";
+import {
+  createProjectDataRepository,
+  projectStorage,
+  type ProjectMigrationContext,
+} from "#src/project-storage/index.js";
 import { RESERVATION_PLACEHOLDER_SQL } from "#src/project-storage/project-repository.js";
 import { runTasksDatabaseMigrations } from "#src/session/tasksDatabase/migrations.js";
 
@@ -645,6 +649,11 @@ export class TaskIndexRepo {
   async getProjectRepository() {
     await this.ensureReady();
     return projectStorage.repository(this.getDatabase(), this.storageHostId);
+  }
+
+  async getProjectDataRepository() {
+    await this.ensureReady();
+    return createProjectDataRepository(this.getDatabase(), this.storageHostId);
   }
 
   async ensureReady(): Promise<void> {
@@ -2403,7 +2412,7 @@ export class TaskIndexRepo {
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
           AND (@include_deleted = 1 OR deleted = 0)
           AND NOT ${RESERVATION_PLACEHOLDER_SQL}
-          -- Bugfix: ZCode Agent 列表只接受当前 glm provider；Claude Code 导入也属于非 glm 历史数据。
+          -- Bugfix: the ZCode Agent list only accepts the current glm provider; Claude Code imports are also non-glm historical data.
           AND (@provider IS NULL OR provider = @provider)
           AND (@pinned IS NULL OR pinned = @pinned)
           AND (@archived IS NULL OR archived = @archived)
@@ -2748,20 +2757,26 @@ export class TaskIndexRepo {
     params: ZCodeTaskListQuery & { provider?: ZCodeProvider },
   ): Promise<ZCodeTaskListResult> {
     await this.ensureReady();
-    const workspaceKeys = normalizeWorkspaceKeys(params.workspaceScopes);
-    if (workspaceKeys.length === 0) {
+    const scopes = params.workspaceScopes === "host" ? [] : params.workspaceScopes;
+    const workspaceKeys = normalizeWorkspaceKeys(scopes);
+    if (params.workspaceScopes !== "host" && workspaceKeys.length === 0) {
       return { items: [], total: 0, hasMore: false };
     }
 
     const search = params.search?.trim();
     const normalizedSearchLike =
       search && search.length > 0 ? `%${search.toLocaleLowerCase()}%` : null;
-    const where = [
-      "deleted = 0",
-      `NOT ${RESERVATION_PLACEHOLDER_SQL}`,
-      `workspace_key IN (${workspaceKeys.map(() => "?").join(", ")})`,
-    ];
-    const args: Array<string | number> = [...workspaceKeys];
+    const where = ["deleted = 0", `NOT ${RESERVATION_PLACEHOLDER_SQL}`];
+    const args: Array<string | number> = [];
+    if (params.workspaceScopes === "host") {
+      // Legacy search relied on tabStore to trim the workspace, so history that was never reopened stayed invisible.
+      // Query all tasks from the index owner, excluding other Host caches in the local database.
+      where.push("host_id = ?");
+      args.push(this.storageHostId ?? "local");
+    } else {
+      where.push(`workspace_key IN (${workspaceKeys.map(() => "?").join(", ")})`);
+      args.push(...workspaceKeys);
+    }
     if (params.provider) {
       appendZCodeAgentIndexedProviderFilter(where, args, params.provider);
     }
@@ -2769,7 +2784,7 @@ export class TaskIndexRepo {
       where.push("pinned = 1", "archived = 0");
     } else if (params.kind === "archived") {
       where.push("archived = 1");
-    } else {
+    } else if (params.kind !== "all") {
       where.push("pinned = 0", "archived = 0");
     }
     if (normalizedSearchLike) {
@@ -2831,7 +2846,7 @@ export class TaskIndexRepo {
       )
       .all(...listArgs) as unknown as Array<TaskIndexMetaRow & { searchable_text?: string }>;
     const workspacePurposeByKey = new Map(
-      params.workspaceScopes.flatMap((scope) =>
+      scopes.flatMap((scope) =>
         scope.workspacePurpose ? [[workspaceKey(scope), scope.workspacePurpose] as const] : [],
       ),
     );

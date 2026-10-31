@@ -193,8 +193,9 @@ export async function finishModelStepWithoutToolCalls(
     return "break";
   }
   if (await drainInlineGuideForNextRequest(this, state)) {
-      // Normal text-only is a continuation boundary: the assistant is persisted and the guide enters history as a user role.
-      // Continue with the next provider request in the same active turn; do not move it to the future queue.
+    // Normal text-only is a continuation boundary: the assistant is persisted and the guide enters history as a user role.
+    // Continue with the next provider request in the same active turn; do not move it to the future queue.
+    state.inputAttachmentCollectionPending = true;
     state.turnMachine = new TurnMachineImpl(state.turnMachine.aggregateResults());
     return "continue";
   }

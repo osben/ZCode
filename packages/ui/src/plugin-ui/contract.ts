@@ -225,6 +225,10 @@ export interface PluginUiToolCallViewProps {
   surface?: string;
   preferredDisplayMode: McpAppsDisplayMode;
   sidePaneActive: boolean;
+  inlineAllowed: boolean;
+  pluginId: string;
+  pluginName: string;
+  pluginIcon?: string;
   host: PluginUiSidePaneViewProps["host"];
   prefersBorder: boolean;
   /** Superseded by a newer successful result of the same logical UI; stays a plain tool result, no sandbox or auto side pane open. */
@@ -239,6 +243,7 @@ export interface PluginUiToolCallViewProps {
   retryLabel: string;
   openedLabel: string;
   openLabel: string;
+  openButtonLabel: string;
   onWidthChange(width: number): void;
   onOpenSidePane?: () => void;
 }

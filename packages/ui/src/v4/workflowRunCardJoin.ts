@@ -1,5 +1,5 @@
 import { workflowRunStepCounts, type WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
-import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+import type { ConversationRow, ConversationRowsPartition } from "@zcode/shared/zcode-protocol-v4";
 import {
   ZCODE_WORKFLOWS_FOR_RUN_MAX_CANDIDATES,
   type ZCodeWorkflowsForRunCandidate,
@@ -7,7 +7,12 @@ import {
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
 import { readWorkflowHoleTarget } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
-import { isFillWorkflowHoleToolCall } from "@/lib/workflowToolNames.js";
+import { memoizeByRows } from "@/v4/conversationProjectionStore.js";
+import {
+  isFillWorkflowHoleToolCall,
+  isCreateWorkflowToolCall,
+  isAmendWorkflowToolCall,
+} from "@/lib/workflowToolNames.js";
 
 /**
  * Join tool cards to DWF runs.
@@ -311,4 +316,52 @@ export function buildWorkflowSaveCandidatesByRunId(
     byRunId.set(found.runId, list);
   }
   return byRunId;
+}
+
+/**
+ * Bug root cause: SessionPane calls selectWorkflowJoinRows on every snapshot change (every frame while streaming).
+ * Name-based detection ran several regex normalizations per tool row, costing ~1ms per frame on an ~8000-row session
+ * and growing with history length. Protocol rows are immutable — a content change always yields a new object — so
+ * caching verdicts per row object needs no invalidation; a WeakMap also does not extend row lifetime.
+ * After partitioning, the tail is re-filtered every frame; this cache keeps unchanged tail tool rows from repeating the regex normalization.
+ */
+const workflowJoinToolRowVerdicts = new WeakMap<ConversationRow, boolean>();
+
+function isWorkflowJoinToolRow(row: Extract<ConversationRow, { kind: "toolCall" }>): boolean {
+  const cached = workflowJoinToolRowVerdicts.get(row);
+  if (cached !== undefined) return cached;
+  const verdict =
+    row.display?.kind === "create_workflow" ||
+    isCreateWorkflowToolCall(row) ||
+    isAmendWorkflowToolCall(row) ||
+    isFillWorkflowHoleToolCall(row) ||
+    row.toolName === "SaveWorkflow";
+  workflowJoinToolRowVerdicts.set(row, verdict);
+  return verdict;
+}
+
+/** Ordinary message frames do not affect the Workflow join; keep relevant raw rows and let callers reuse deps after a shallow compare. */
+export function selectWorkflowJoinRows(
+  rows: readonly ConversationRow[] | undefined,
+): ConversationRow[] {
+  return (rows ?? []).filter((row) => {
+    if (row.kind === "turnHeader" || row.kind === "userInput")
+      return row.workflowLaunch !== undefined;
+    return row.kind === "toolCall" && isWorkflowJoinToolRow(row);
+  });
+}
+
+const workflowJoinRowsByRows = memoizeByRows(selectWorkflowJoinRows);
+
+/**
+ * Same result as selectWorkflowJoinRows(history ++ tail); the history segment is cached by reference and only the tail turn is filtered each frame.
+ * When the tail turn has no relevant rows, return the history array directly so the caller's shallow compare skips item-by-item comparison.
+ */
+export function selectWorkflowJoinRowsInPartition(
+  partition: ConversationRowsPartition | null,
+): ConversationRow[] {
+  if (!partition) return [];
+  const history = workflowJoinRowsByRows(partition.history);
+  const tail = workflowJoinRowsByRows(partition.tail);
+  return tail.length === 0 ? history : [...history, ...tail];
 }

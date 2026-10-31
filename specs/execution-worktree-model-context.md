@@ -15,21 +15,22 @@ Worktree sessions execute in a linked worktree while the session's listing ident
 - `EnvInfo` (defined in `@zcode/contracts` `context-source.port.ts`, held by `apps/zcode-cli/packages/core/src/context/types.ts:105`) stays untouched: the fact is passed into the env-section builders at render time, not persisted into env-info snapshots and not restored from them (persisted `envInfo` shape/compat is frozen).
 - No git probing: the line renders purely from config facts. Zero added I/O per turn.
 
-### Rendering — both env builders
+### Rendering — own section in both builders
 
-- Main agent: `buildEnvInfoSection` (`apps/zcode-cli/packages/core/src/context/sections/env-info.ts`) gains an optional third parameter with the worktree fact; `ContextBuilder` (`apps/zcode-cli/packages/core/src/context/builder.ts:168`) passes `this.config.executionWorktree`.
-- Subagents: `buildSubagentEnvironmentContext` (`apps/zcode-cli/packages/core/src/subagent/system-prompt.ts`, rendered via `subagent/context-builder.ts:137-142`) gains the same optional parameter, and the bullet is inserted inside the subagent `<env>` block right after `Working directory:` (the analogous slot to the main agent's `Primary working directory`). Task-tool subagent children do NOT spread the parent `AgentRuntimeConfig` — `methods/subagent.ts` builds an explicit field list — so the child config carries `executionWorktree: this.config.executionWorktree` explicitly, and `SubagentContextBuilderConfig` (assembled in `runtime/methods/context.ts`) threads it to the builder. The `context.ts:116` spread applies to legacy workflow children only. Subagents must know about isolation as much as the main agent.
-- Healthy worktree session — one extra bullet in the `Environment` section, after `Primary working directory`:
+- Environment facts (cwd, platform, shell, git flag) now reach the model as runtime announcements, not as system text (upstream 3.17.1 environment model). The worktree notice is therefore a separate section, not a bullet inside the `Environment` block.
+- Main agent: `buildExecutionWorktreeSection` (`apps/zcode-cli/packages/core/src/context/sections/env-info.ts`) renders the fact as a dynamic system section (`source: execution_worktree`) with the `# Environment` heading and one bullet. `ContextBuilder` (`builder.ts`) appends it after the environment sections. It is not gated by the incognito `environment` toggle.
+- Subagents: `buildSubagentExecutionWorktreeContext` (`apps/zcode-cli/packages/core/src/subagent/system-prompt.ts`) returns a bare `<env>` block that holds only the worktree bullet; `SubagentContextBuilder` (`subagent/context-builder.ts`) adds it as a system section after the environment sections. Task-tool subagent children do NOT spread the parent's worktree fact (unchanged).
+- Healthy worktree session — one bullet:
 
   `- Execution worktree: this session runs in a linked git worktree of <workspacePath> (branch <branchName>); file changes stay in the worktree until they are merged.`
 
-  Omit the `(branch ...)` clause when `branchName` is absent (cold-seeded rows).
+  Omit the `(branch ...)` clause when `branchName` is absent (cold-seeded rows). The subagent block carries the same sentence without the list prefix.
 
 - Missing worktree (`missing: true`; the session retains its missing execution target and blocks workspace actions per execution-worktree-missing-handling.md §2) — the bullet becomes:
 
   `- Execution worktree: the requested worktree <path> is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is <workspacePath>.`
 
-- Plain sessions (no `executionWorktree`) → the section is byte-identical to today. This is a hard requirement: system-prompt formatting is pinned by contract tests (sentinel strings), and the shared prompt prefix must not shift for the majority non-worktree case.
+- Plain sessions (no `executionWorktree`) → no notice section or block; the rest of the prompt is unchanged. This is a hard requirement: system-prompt formatting is pinned by contract tests (sentinel strings), and the shared prompt prefix must not shift for the majority non-worktree case.
 
 ## Why
 
@@ -37,9 +38,9 @@ One line removes a whole class of agent mistakes (branch confusion, "where are m
 
 ## Acceptance scenarios
 
-1. Worktree session (healthy, with branch) → Environment section contains the execution-worktree bullet with parent path and branch.
+1. Worktree session (healthy, with branch) → the execution-worktree section contains the bullet with parent path and branch.
 2. Worktree session without persisted branch (cold-seeded row) → bullet without the branch clause.
-3. Plain session → Environment section byte-identical to the current output (regression guard).
+3. Plain session → no execution-worktree section or subagent block (regression guard).
 4. Resume of a worktree session whose directory was deleted → bullet renders the missing-variant; the session retains the missing execution target, and workspace actions remain blocked until restoration.
 5. Subagent spawned inside a worktree session → subagent environment block carries the same bullet.
 6. Subagent spawned inside a plain session → no bullet.

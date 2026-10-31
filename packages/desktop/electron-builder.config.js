@@ -22,6 +22,7 @@ import {
   resolveDesktopProductIdentity,
 } from "./scripts/desktop-product-identity.mjs";
 import { createWindowsPowerShellSecurityArgs } from "./scripts/powershell-command.mjs";
+import { writeWindowsUpdatePublisher } from "./scripts/windows-update-publisher.mjs";
 import {
   isSharpRequiredByComputerUse,
   verifyStagedSharp,
@@ -144,6 +145,10 @@ const REQUIRED_ASAR_RUNTIME_MODULES = [
   "asn1",
   "bcrypt-pbkdf",
   "tweetnacl",
+  // The pnpm collector in 26.17.0 can still miss deduped transitive dependencies. Expanding the full
+  // closure from the updater entry, together with the existing afterPack backfill and final artifact
+  // checks, prevents MODULE_NOT_FOUND from surfacing only after installation.
+  "electron-updater",
   // electron-updater → builder-util-runtime → debug dynamically requires "ms" at runtime.
   // With pnpm hoisting, electron-builder sometimes omits this leaf dependency. Version 3.4.0 (built by ci/cua-v0.3.17)
   // triggered a production startup error: Cannot find module 'ms' (Require stack: debug/src/common.js),
@@ -257,6 +262,26 @@ const PACKAGING_PRUNE_PATTERNS = [
   "!**/CONTRIBUTING*",
   "!**/CODE_OF_CONDUCT*",
   "!**/SECURITY*",
+  // The 26.17 pnpm collector packs from the full-platform lockfile graph, which pulls build-time-only
+  // dependencies into app.asar (per-package asar reconciliation against the 26.8.1 output on 2026-10-26
+  // showed +24MB uncompressed). All of the following were verified to have zero runtime references:
+  // - shadcn is a component scaffolding CLI that @zcode/ui mistakenly declared in production; it drags in
+  //   @ts-morph/ts-morph, the @babel ecosystem and the caniuse-lite/browserslist/baseline-browser-mapping data packages;
+  // - node-gyp/node-addon-api is the build toolchain for CUA native modules;
+  // - cpu-features/nan are optional native accelerators for ssh2; ssh2 falls back automatically when they are missing.
+  // @babel/runtime may be required at runtime by packaged libraries, so it is re-included right after the directory exclusion.
+  "!node_modules/shadcn/**",
+  "!node_modules/@ts-morph/**",
+  "!node_modules/ts-morph/**",
+  "!node_modules/@babel/**",
+  "node_modules/@babel/runtime/**",
+  "!node_modules/caniuse-lite/**",
+  "!node_modules/browserslist/**",
+  "!node_modules/baseline-browser-mapping/**",
+  "!node_modules/node-gyp/**",
+  "!node_modules/node-addon-api/**",
+  "!node_modules/cpu-features/**",
+  "!node_modules/nan/**",
 ];
 
 function buildDesktopArtifactName(platformName, extension = "${ext}") {
@@ -599,11 +624,10 @@ export default {
   // During macOS signing, each language package under Electron Framework is signed individually.
   // Keeping every default locale creates many locale.pak signing calls and significantly increases packaging time.
   // Retain only the locales required by this product to reduce the number of signed files and total CI time.
+  // builder matches language pack filenames exactly: Windows/Linux use locales/en-US.pak, macOS uses mac.electronLanguages.
   electronLanguages: ["en-US", "zh-CN", "uk"],
-  // In a pnpm workspace with a semver range (such as ^41.0.3), electron-builder
-  // sometimes cannot reliably infer the Electron version from the dependency tree and stops bundling.
-  // Specify the current Desktop Electron version explicitly to avoid unreliable guesses during packaging.
-  electronVersion: "41.0.3",
+  // electron-builder's dependency-tree inference is unstable; read package.json explicitly to avoid version drift between dev and installer.
+  electronVersion: desktopElectronVersion,
   // A legacy Windows protocol registration may inject --inspect-brk before the app's JavaScript rewrites the registry.
   // Disable the native Inspector argument before signing to cover the first launch after an upgrade; keep RunAsNode for the Agent.
   ...(targetPlatform.os === "win32"
@@ -683,7 +707,12 @@ export default {
       context.electronPlatformName === "darwin"
         ? resolve(context.appOutDir, framework.distMacOsAppName, "Contents", "Resources")
         : resolve(context.appOutDir, "resources");
-    await stageElectronNotices(context.appOutDir, resources, framework.version);
+    // Before afterExtract, 26.17.0 already moved the macOS LICENSE/Chromium notices into the app Resources;
+    // Windows/Linux still keep the license files in the appOutDir root. The source directory must follow the
+    // Builder's per-platform layout, or macOS keeps reading the moved LICENSE.electron.txt and fails before signing.
+    const extractedLicenseRoot =
+      context.electronPlatformName === "darwin" ? resources : context.appOutDir;
+    await stageElectronNotices(extractedLicenseRoot, resources, framework.version);
   },
   afterPack: async (context) => {
     const actualWindowsTarget =
@@ -727,15 +756,21 @@ export default {
       );
     }
   },
-  ...(shouldPackageWindowsBrowserImportHelper
-    ? {
-        afterSign: async (context) => {
-          runTimedSync("afterSign:assertSignedWindowsBrowserImportHelper", () =>
-            assertSignedWindowsBrowserImportHelper(context),
-          );
-        },
-      }
-    : {}),
+  afterSign: async (context) => {
+    if (shouldPackageWindowsBrowserImportHelper) {
+      runTimedSync("afterSign:assertSignedWindowsBrowserImportHelper", () =>
+        assertSignedWindowsBrowserImportHelper(context),
+      );
+    }
+    if (context.electronPlatformName === "win32" && shouldEnableWindowsVsign) {
+      await runTimedAsync("afterSign:writeWindowsUpdatePublisher", () =>
+        writeWindowsUpdatePublisher({
+          appOutDir: context.appOutDir,
+          executableName: context.packager.appInfo.productFilename,
+        }),
+      );
+    }
+  },
   extraResources: [
     { from: resolve(workspaceRoot, noticesFileName), to: noticesFileName },
     ...(targetPlatform.os === "darwin"
@@ -843,6 +878,10 @@ export default {
       filter: ["**/*"],
     })),
   ],
+  // Do not merely warn and keep producing the installer when the pnpm dependency graph is incomplete;
+  // afterPack can only backfill resolvable dependencies, and production dependencies the collector has
+  // confirmed missing must stop the packaging step.
+  allowMissingDependencies: false,
   // postinstall first reuses node-pty's Windows prebuild; other platforms run electron-rebuild as needed.
   // Packaging reuses the native files prepared during installation to avoid another uncontrolled local compile in electron-builder.
   npmRebuild: false,
@@ -856,9 +895,14 @@ export default {
     },
   ],
   mac: {
+    minimumSystemVersion: "13.0.0",
     target: ["dmg", "zip"],
     category: "public.app-category.developer-tools",
     artifactName: buildDesktopArtifactName("mac"),
+    // macOS language packs are named en.lproj / zh_CN.lproj. Reusing the top-level "en-US" matches none of them,
+    // so every pack is deleted and Chromium's built-in strings are lost (the video control menu keeps only icons
+    // and the playback speed submenu is blank).
+    electronLanguages: ["en", "zh_CN", "uk"],
     extendInfo: {
       NSAppleEventsUsageDescription: `${desktopProductIdentity.productName} needs Apple Events access to coordinate local automation workflows with user-approved desktop apps.`,
       // Without this key, macOS silently denies CoreBluetooth enumeration and the embedded browser's Web Bluetooth
@@ -896,6 +940,7 @@ export default {
   win: {
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
+    verifyUpdateCodeSignature: true,
     signExts: [".node", ".dll"],
     // Bugfix: Windows CI previously relied entirely on electron-builder's bundled signtool.exe.
     // When the runner's certificate chain requires vsigntool, packaging would stall in the built-in signing step.
@@ -954,9 +999,11 @@ export default {
     // Use a dedicated installer-disk icon instead of reusing the application icon, which is less recognizable in the installer.
     icon: "build/icon_installer.icns",
     contents: [
-      // Experimental adjustment: set explicit icon coordinates for hidden resource files to move them toward the corners.
-      { x: 640, y: 56, type: "file", path: ".background.tiff" },
-      { x: 640, y: 56, type: "file", path: ".VolumeIcon.icns" },
+      // dmg-builder@1.2.5's dmgbuild runs ditto <path> for every type:"file" entry, and path is resolved
+      // as a real source file. .background.tiff / .VolumeIcon.icns are hidden files that dmgbuild generates
+      // inside the image itself, not source files. Listing them in contents was tolerated by the old dmgbuild,
+      // but the new dmgbuild fails straight away with "Cannot get the real path" on ditto (CI x64 DMG
+      // observed 2026-10-23). Leave the hidden-file coordinates to dmgbuild's default placement instead of listing them.
       { x: 130, y: 220 },
       { x: 410, y: 220, type: "link", path: "/Applications" },
     ],

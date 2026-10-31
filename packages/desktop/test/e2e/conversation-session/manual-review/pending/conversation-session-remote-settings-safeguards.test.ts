@@ -1,7 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { parseRemoteWorkspaceIdentity } from "@zcode/shared";
 import {
   TID_SETTINGS_PAGE,
+  TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_SECTION_NAV,
   TID_TASK_SETTINGS_BUTTON,
   testId,
@@ -115,8 +117,29 @@ describe(`${CASE_MARKER}: settings guardrails, connection editing and device lab
     this.timeout(15 * 60_000);
     const config = readSSHRuntimeConfig(CASE_MARKER);
     const path = config.workspacePaths[0];
+    // The preceding screenshots end on a narrow settings page, where the project sidebar is in its responsive hidden state; this standalone action scenario restores the desktop viewport.
+    await browser.electron.execute((electron) =>
+      electron.BrowserWindow.getAllWindows()
+        .find((window) => !window.isDestroyed())
+        ?.setSize(1400, 900),
+    );
+    await browser.waitUntil(() => browser.execute(() => innerWidth === 1400));
     await prepareSSHConnectionPage(CASE_MARKER);
     await prepareV4ConversationE2E({ skipProvider: true });
+    if (await $(`[data-testid="${TID_SETTINGS_PAGE}"]`).isDisplayed())
+      await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
+    // After the failure-recording confirmation widens the window, the narrow-screen sidebar collapse choice is still kept; restoring the size alone does not expand the sidebar.
+    if (!(await $('[data-testid="project-section"]').isDisplayed())) {
+      const toggles = await $$(
+        'button[aria-label="切换侧边栏"], button[aria-label="Toggle sidebar"]',
+      );
+      for (const toggle of toggles) {
+        if (!(await toggle.isDisplayed())) continue;
+        await toggle.click();
+        break;
+      }
+      await $('[data-testid="project-section"]').waitForDisplayed();
+    }
     await openSSHRemoteDialog(CASE_MARKER);
     await fillSSHPasswordSettings(config);
     await clickLastEnabledSSHDialogButton(CASE_MARKER);
@@ -135,7 +158,9 @@ describe(`${CASE_MARKER}: settings guardrails, connection editing and device lab
     });
     await section("remoteDevices");
     await $('[data-remote-connection-status="online"]').waitForDisplayed();
-    await clickButton("Edit");
+    // RDUX-13: Edit lives in the device row's More menu.
+    await more();
+    await clickButton("Edit", '[role="menu"]');
     await $("#edit-connection-name").setValue(connectionName);
     await $("#edit-device-name").setValue(deviceName);
     expect(await $('[role="dialog"]').getText()).toContain("Takes effect next time you connect");
@@ -145,7 +170,8 @@ describe(`${CASE_MARKER}: settings guardrails, connection editing and device lab
       async () => (await $("[data-settings-content-frame]").getText()).includes(deviceName),
       { timeout: 10_000 },
     );
-    await clickButton("Edit");
+    await more();
+    await clickButton("Edit", '[role="menu"]');
     expect(await $("#edit-connection-name").getValue()).toBe(connectionName);
     expect(await $("#edit-device-name").getValue()).toBe(deviceName);
     expect(await $('[data-testid="ssh-auth-password"]').getAttribute("aria-pressed")).toBe("true");
@@ -186,10 +212,11 @@ describe(`${CASE_MARKER}: settings guardrails, connection editing and device lab
         }
       }
     }
+    // The English button labels below require the en-US baseline this case uses.
     await browser.execute(() =>
       (
-        window as Window & { __testActions?: { setLocale(value: "zh-CN"): void } }
-      ).__testActions?.setLocale("zh-CN"),
+        window as Window & { __testActions?: { setLocale(value: "en-US"): void } }
+      ).__testActions?.setLocale("en-US"),
     );
     await clickButton("Cancel", '[role="dialog"]');
     await browser.electron.execute((electron) =>
@@ -202,7 +229,11 @@ describe(`${CASE_MARKER}: settings guardrails, connection editing and device lab
       expect(await $("[data-settings-machine]").isExisting()).toBe(false);
       expect(await $("[data-settings-content-frame]").getText()).not.toMatch(/Editing:/u);
       const trigger = $('[data-plugin-scope-trigger="true"]');
-      expect(await trigger.getText()).toContain(name === "subagents" ? "This device" : deviceName);
+      // Data sync has unified each resource's scope; subagents no longer carry the old exception that the user is always "this device".
+      expect(await trigger.getText()).toContain(deviceName);
+      const sourceId = parseRemoteWorkspaceIdentity(tab.workspaceIdentity!)?.sourceServerId;
+      expect(sourceId).toBeTruthy();
+      expect(await trigger.getAttribute("data-plugin-scope-key")).toBe(`source-user:${sourceId}`);
     }
     await section("general");
     expect(await $("[data-settings-machine]").isExisting()).toBe(false);
@@ -229,16 +260,20 @@ describe(`${CASE_MARKER}: settings guardrails, connection editing and device lab
     await browser.keys("Enter");
     await $('[role="dialog"]').waitForDisplayed({ reverse: true });
     expect(await $("[data-settings-content-frame]").getText()).toContain(deviceName);
-    // 任务继续提示只放在断开按钮说明上，不再常驻成一行。
-    expect(
-      await browser.execute(
-        () =>
-          [...document.querySelectorAll<HTMLButtonElement>("[data-source-server-card] button")]
-            .find((button) => button.textContent?.trim() === "Disconnect")
-            ?.getAttribute("title") ?? null,
-      ),
-    ).toContain("Remote tasks will continue running");
-    await clickButton("Disconnect");
+    // RDUX-13: Disconnect lives in the More menu; the task-continues notice stays inside the menu item and does not take up the device row.
+    expect(await $("[data-settings-content-frame]").getText()).not.toContain(
+      "Remote tasks will continue running",
+    );
+    await more();
+    const disconnectItem = await browser.execute(() => {
+      const item = [
+        ...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]'),
+      ].find((candidate) => candidate.textContent?.trim().startsWith("Disconnect"));
+      const text = item?.textContent ?? null;
+      item?.click();
+      return text;
+    });
+    expect(disconnectItem).toContain("Remote tasks will continue running");
     await $('[data-remote-connection-status="offline"]').waitForDisplayed({ timeout: 20_000 });
     expect(await $('[role="dialog"]').isDisplayed()).toBe(false);
     await browser.waitUntil(

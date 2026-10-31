@@ -4,8 +4,9 @@
 //
 // The child runtime's tool registry must enforce the subagent tool surface; otherwise the judge actor in a real transcript also receives the full set of interactive tools. Two risks:
 //   1. Hanging: AskUserQuestion / EnterPlanMode have nobody to ask in a headless child, so the turn never ends;
-//      since 2026-09-23 AskUserQuestion is delivered to the user through the parent session and has
-//      been returned to subagents (see the exclusion-list comment);
+//   1. Hanging and escalation: EnterPlanMode has nobody to approve it in a headless child;
+//      AskUserQuestion would let the subagent bypass the main agent and ask the user directly
+//      (see the subtraction-table comment).
 //   2. Privilege escalation and recursion: CreateWorkflow lets an actor submit another workflow, and ReadSessionContext can read the parent session.
 // This module provides the missing mapping, expanded by the driver-side runtime factory when creating AgentRuntime.
 //
@@ -13,6 +14,7 @@
 // "The judge must not edit files" is stated in the ask text, as for ordinary subagents (Explore retains Bash and relies on the prompt for read-only behavior).
 
 import {
+  ASK_USER_QUESTION_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   READ_SESSION_CONTEXT_TOOL_NAME,
@@ -25,16 +27,22 @@ interface WorkflowActorToolPolicy {
 }
 
 /**
- * Tools excluded from the full set: the plan pair—subagents do not produce plans awaiting
- * approval; CreateWorkflow lets an actor recursively submit workflows; ReadSessionContext reads
- * outside the parent session. All others (Bash / Edit / Write / search / web) remain enabled—the
- * actor is meant to do work.
- *
- * AskUserQuestion is not in the list: it goes through PermissionRequested, delivered to the
- * confirmation window via the broker derived from the parent runtime and the parent-session mirror
- * (docs/dynamic-workflow/launch.md, "Permissions inside a run"), so it no longer hangs.
+  * Tools excluded from the full set: the plan pair—subagents do not produce plans awaiting
+  * approval; CreateWorkflow lets an actor recursively submit workflows; ReadSessionContext reads
+  * outside the parent session. All others (Bash / Edit / Write / search / web) remain enabled—the
+  * actor is meant to do work.
  */
 const ACTOR_DISALLOWED_TOOLS: readonly string[] = [
+  // Subagents do not ask people (removed again as of 2026-10-19; on 2026-09-23 the parent
+  // session's delivery-confirmation window had briefly given it back to subagents).
+  // Problem: the system prompt (core/src/context/sections/workflow-actor.ts) has always said
+  // "no tool for asking people", yet the tool surface had AskUserQuestion, so model behavior
+  // depended on which side it trusted; N parallel subagents each opened their own dialog, the
+  // user got a string of unrelated questions, and the main agent never knew they happened.
+  // Fix: the prompt is authoritative with a single channel — the subagent hands the question to
+  // the main agent via `escalate`, and the main agent decides whether to ask the user
+  // (docs/dynamic-workflow/launch.md, "Permissions inside a run").
+  ASK_USER_QUESTION_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   "CreateWorkflow",

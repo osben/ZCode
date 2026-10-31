@@ -3,6 +3,7 @@ import { generateText as aiGenerateText, streamText as aiStreamText } from "ai";
 import type {
   ModelProperties,
   ModelRequestAuth,
+  ModelRequestSessionFeature,
   ModelTextRequest,
   TraceContext,
 } from "@zcode/contracts";
@@ -57,6 +58,9 @@ export interface AiSdkModelTextRequest extends ModelTextRequest {
   // so an independent adapter typecheck does not lose this runtime-only field before contracts build
   // output has been refreshed.
   preserveProviderStreamBoundaries?: boolean;
+  // Runtime-level session feature flags reach the adapter only via the call context (docs/design/v2/model/session-features-header.md);
+  // they are not part of the business ModelTextRequest; the runner expands the call context and they land here.
+  modelRequestSessionFeatures?: readonly ModelRequestSessionFeature[];
 }
 
 export const defaultRuntime: AiSdkModelRuntime = {

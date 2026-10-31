@@ -70,6 +70,7 @@ export interface WindowHostExposeAttachmentParams<TServices, TPort, TCapabilitie
   requestId: string;
   attachmentId: string;
   clientMode: ZCodeAgentV4ClientMode;
+  terminalOwnerId?: string;
   scope: WindowHostAttachmentScope;
   services: TServices;
   generation: number;
@@ -112,6 +113,7 @@ export function createWindowHostAttachmentRegistry<
     requestId: string;
     attachmentId: string;
     clientMode: ZCodeAgentV4ClientMode;
+    terminalOwnerId?: string;
     scope: WindowHostAttachmentScope;
     port: TPort;
   }): void {

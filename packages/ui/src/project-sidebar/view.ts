@@ -24,7 +24,7 @@ import {
 } from "@/v4/taskListItemStabilization.js";
 
 /**
- * 活动态只覆盖已有行的 UI sidecar；Controller 快照不能替代项目树的行集合和事实。
+ * Activity only overlays a UI sidecar on existing rows; a Controller snapshot cannot replace the project tree's row set and facts.
  * Child-conversation facts ride the same overlay: the task index never stores them, so dropping
  * them here hid the sidebar child marker in every view (spec sidebar-child-conversation-counts §7).
  */
@@ -48,7 +48,7 @@ export function applyProjectTaskOverlays(
   };
 }
 
-/** 复用等价对象以保留行 memo；组织变化和 activity 都参加比较，不把旧项目归属粘在行上。 */
+/** Reuses equivalent objects to preserve row memoization; both reorganization and activity take part in comparison, so old project membership never sticks to a row. */
 export function stabilizeProjectTree(previous: ProjectTree, next: ProjectTree): ProjectTree {
   const previousProjects = new Map(
     previous.projects.map((project) => [projectKey(project), project]),
@@ -71,16 +71,17 @@ export function stabilizeProjectTree(previous: ProjectTree, next: ProjectTree): 
 export type ProjectRowSelection =
   | { kind: "project"; projectId: string | null; hostId?: string }
   | { kind: "timeline" }
+  | { kind: "unread" }
   | { kind: "pinned" };
 
-/** 选择器和行列表共用同一比较器，避免时间线在渲染时又被运行优先覆盖。 */
+/** Selector and row list share one comparator so the timeline is not re-overridden by run priority at render time. */
 export function compareProjectTaskRows(
   left: ProjectTask,
   right: ProjectTask,
-  kind: "project" | "pinned" | "timeline",
+  kind: ProjectRowSelection["kind"],
 ): number {
   return (
-    (kind === "timeline"
+    (kind === "timeline" || kind === "unread"
       ? compareTaskListItemsByTime(left, right, "updated")
       : compareZCodeTaskListItems(left, right, "updated")) ||
     JSON.stringify([right.hostId, buildTaskEntityKey(right)]).localeCompare(
@@ -88,11 +89,15 @@ export function compareProjectTaskRows(
     )
   );
 }
-/** 只从 Host 已提交的行派生显示；相同 cwd 不代表相同项目。 */
+/** Display derives only from Host-committed rows; an identical cwd does not mean the same project. */
 export function selectProjectRows(
   tree: ProjectTree,
   selection: ProjectRowSelection,
 ): ProjectTask[] {
+  if (selection.kind === "unread")
+    return selectUnreadProjectRows(tree).sort((left, right) =>
+      compareProjectTaskRows(left, right, selection.kind),
+    );
   return tree.tasks
     .filter((task) => {
       if (selection.kind === "pinned") return task.pinned && !task.archived;
@@ -111,7 +116,7 @@ export function projectHasUnread(
   tree: ProjectTree,
   project: Pick<VirtualProject, "id" | "hostId">,
 ): boolean {
-  // 置顶只改变显示位置，不改变项目归属；不能只从截断/排除置顶的可见行汇总。
+  // Pinning only changes display position, not project membership; do not aggregate from visible rows that truncate/exclude pinned ones.
   return tree.tasks.some(
     (task) =>
       task.projectId === project.id &&
@@ -122,27 +127,36 @@ export function projectHasUnread(
 }
 
 /**
- * 任务栏/托盘角标的未读总数：与侧栏蓝点同源（host readTree 的权威树），
- * 过滤条件与 projectHasUnread 一致（非归档 + 有 unreadAt），按 host+workspace+task 去重。
- * 不能改读 renderer 的 taskListCache/taskQueryCache：它们只装载活跃 workspace 的列表，
- * 背景工作区有蓝点时这两份缓存是空的，角标会丢数。
+ * Total unread count for the taskbar/tray badge: same source as the sidebar blue dot (the
+ * authoritative host readTree), same filter as projectHasUnread (not archived + has unreadAt),
+ * deduplicated by host+workspace+task.
+ * Do not switch to the renderer's taskListCache/taskQueryCache: they only hold the active
+ * workspace's lists, both caches are empty when a background workspace has a blue dot, and the badge would lose counts.
  */
 export function countProjectTreeUnreadTasks(tree: ProjectTree): number {
-  // 只统计侧边栏实际渲染的项目（非软删）：孤儿任务（项目不存在）与已删项目的
-  // 未读在界面上没有蓝点落点，计入只会产生「有角标没蓝点」的幽灵提醒。
+  return selectUnreadProjectRows(tree).length;
+}
+
+/** Filtering and the badge share one set, so the unread list never shows historical orphan tasks with no matching badge count. */
+function selectUnreadProjectRows(tree: ProjectTree): ProjectTask[] {
+  // Count only projects the sidebar actually renders (not soft-deleted): unread on orphan tasks
+  // (project missing) and on deleted projects has no blue-dot anchor in the UI; counting them
+  // only produces ghost "badge without dot" reminders.
   const renderedProjectKeys = new Set(
     tree.projects
       .filter((project) => !project.deleted)
       .map((project) => `${project.hostId}::${project.id}`),
   );
   const seen = new Set<string>();
+  const rows: ProjectTask[] = [];
   for (const task of tree.tasks) {
     if (task.archived || !task.unreadAt) {
       continue;
     }
 
-    // 可见性对齐渲染分区：置顶区跨项目渲染；本地无项目任务区只渲染
-    // host=local 的 null-project 任务；其余任务必须归属渲染项目。
+    // Visibility aligns with render sections: the pinned section renders across projects; the
+    // local no-project section renders only host=local null-project tasks; all other tasks must
+    // belong to a rendered project.
     const visible =
       task.pinned ||
       (task.projectId == null && task.hostId === "local") ||
@@ -151,16 +165,17 @@ export function countProjectTreeUnreadTasks(tree: ProjectTree): number {
       continue;
     }
 
-    seen.add(
-      JSON.stringify([
-        task.hostId,
-        task.workspaceIdentity?.trim() || task.workspacePath,
-        task.taskId,
-      ]),
-    );
+    const key = JSON.stringify([
+      task.hostId,
+      task.workspaceIdentity?.trim() || task.workspacePath,
+      task.taskId,
+    ]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(task);
   }
 
-  return seen.size;
+  return rows;
 }
 
 export function projectKey(project: Pick<VirtualProject, "id" | "hostId">): string {
@@ -191,7 +206,7 @@ export function resolveEntryProject(
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-/** 聚合是展示投影，不复制远端事实；离线后只保留本机入口基础缓存。 */
+/** The aggregate is a display projection, not a copy of remote facts; offline only the local entry base cache remains. */
 export function mergeProjectTrees(
   local: ProjectTree,
   directory: RemoteProjectDirectory,
@@ -218,7 +233,8 @@ export function mergeProjectTrees(
       name: entry.name,
       roots: entry.roots,
       pinned: false,
-      deleted: false,
+      // Bug cause: cached rows once hard-coded not-deleted, so projects deleted online reappeared offline or on remote read failure; now reads the deletion-state cache written by refresh.
+      deleted: entry.deleted === true,
       nameOverridden: false,
       position: projects.length,
       createdAt: 0,
@@ -253,7 +269,7 @@ export function mergeProjectTrees(
   };
 }
 
-/** Host position 仅作为控制端首次初始化的种子；实际显示顺序由侧栏偏好覆盖。 */
+/** Host position is only the seed for first-time controller initialization; the actual display order is overridden by sidebar preference. */
 export function selectSortedProjects(tree: ProjectTree): VirtualProject[] {
   return tree.projects
     .filter((project) => !project.deleted)
@@ -268,7 +284,7 @@ export function projectSourceServerId(project: VirtualProject): string | undefin
       )?.sourceServerId;
 }
 
-/** 内部错误码只用于判断；展示边界翻译已知状态，保留未知服务错误的诊断信息。 */
+/** Internal error codes are for decisions only; the display boundary translates known states and keeps diagnostic info for unknown service errors. */
 export function formatProjectError(
   cause: unknown,
   formatMessage: (descriptor: { id: string }) => string,
@@ -277,6 +293,14 @@ export function formatProjectError(
   if (code === "remote-project.host-removed") return formatMessage({ id: "project.hostRemoved" });
   if (code === "project.connection-unavailable")
     return formatMessage({ id: "project.connectionUnavailable" });
+  if (code === "project.undo-unavailable") return formatMessage({ id: "project.undoUnavailable" });
+  if (code === "project.data-session-running")
+    return formatMessage({ id: "project.dataSessionRunning" });
+  if (code === "project.data-session-referenced")
+    return formatMessage({ id: "project.dataSessionReferenced" });
+  if (code === "project.data-delete-failed")
+    return formatMessage({ id: "project.dataDeleteFailed" });
+  if (code === "project.data-unavailable") return formatMessage({ id: "project.dataUnavailable" });
   return String(cause);
 }
 

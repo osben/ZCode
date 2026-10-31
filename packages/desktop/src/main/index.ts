@@ -1,3 +1,4 @@
+import { createRemoteConversationTelemetryDispatcher } from "@zcode/shared/conversation-telemetry";
 import { installRequestSecurityDiagnostics } from "./request-security-edition/index.js";
 import { createLocalTtftExporter } from "./localTtftExporter.js";
 /* eslint-disable max-lines */
@@ -42,6 +43,7 @@ import {
   net,
   protocol,
   session,
+  shell,
   webContents,
 } from "electron";
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
@@ -57,8 +59,10 @@ import {
   createTelemetryAuthorizationLoader,
   buildRuntimeProcessEnvPatch,
   captureLoginShellEnvSnapshot,
+  getAppConfigDir,
   getConversationWorkspaceDir,
   getDataBaseDir,
+  getExportLogDir,
   getZCodeDataRootDir,
   normalizeRuntimeProcessEnv,
   setDataBaseDir,
@@ -91,7 +95,7 @@ import {
   type TelemetryEventPayload,
   HostMessageTypes,
 } from "@zcode/shared";
-import { logger, webRemoteControlRelayLogger } from "./logger.js";
+import { logger, webRemoteControlRelayLogger, flushLocalTtftLogs } from "./logger.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import { createDesktopTelemetryFetch } from "./desktopTelemetryFetch.js";
@@ -135,11 +139,15 @@ import {
 } from "./startupWorkspaceDeepLinkGate.js";
 import { createWebRemoteControlManager } from "./webRemoteControlManager.js";
 import {
+  createMobileLogSink,
   createWebRemoteControlDeviceStorage,
   createWebRemoteControlDeviceKeyBearer,
   createWebRemoteControlDeviceKeyIdentity,
   createWebRemoteControlRelayBearer,
+  pullAndExportMobileLogs,
   resolveWebRemoteControlRelayIdentityMode,
+  runWebRemoteControlActionInRenderer,
+  type MobileLogSink,
   WEB_REMOTE_CONTROL_DEVICE_KEY_PLACEHOLDER_JWT,
   WEB_REMOTE_CONTROL_ENROLLMENT_SECRET_CREDENTIAL,
 } from "./web-remote-relay/index.js";
@@ -516,6 +524,7 @@ async function runBrowserCommandOnView(params: {
   requestId: string;
   browserId?: string;
   browserGeneration?: number;
+  controlScopeId?: string;
   sessionId: string;
   turnId?: string;
   workspaceKey?: string;
@@ -558,6 +567,7 @@ async function runBrowserCommandOnView(params: {
     const result = await browserGuestManager.execute(
       {
         requestId: params.requestId,
+        controlScopeId: params.controlScopeId,
         browserId: params.browserId ?? "legacy-iab",
         browserGeneration: params.browserGeneration ?? 0,
         windowId: params.win.id,
@@ -825,6 +835,19 @@ const appTelemetryRuntime = createAppTelemetryRuntime({
   appLaunchCoordinator,
 });
 
+const reportRemoteConversationTelemetry = createRemoteConversationTelemetryDispatcher(
+  async (event) => {
+    const locale = Intl.DateTimeFormat().resolvedOptions();
+    const context = appTelemetryRuntime.getLatestRendererContext() ?? {
+      clientTimezone: locale.timeZone,
+      clientLanguage: locale.locale,
+      screenResolution: "",
+    };
+    await appTelemetryCore.reportEvent({ ...event, context });
+  },
+  appTelemetryCore.trackPendingReport,
+);
+
 function reportRemoteUsageEventForRenderer(rendererId: number, event: TelemetryEventPayload): void {
   const context =
     appTelemetryRuntime.getRendererContext(rendererId) ??
@@ -1021,7 +1044,19 @@ let startupOpenWorkspaceRequest: ExplicitStartupWorkspaceRequest | null =
       ? { path: startupDeepLinkWorkspacePath, source: "deep-link" }
       : null;
 
+// Mobile real-time log directory: placed under logs/ so it is automatically included when "Export Logs" packages them.
+function getMobileRealtimeLogDir(): string {
+  return join(getAppConfigDir(), "logs", "mobile");
+}
+let mobileLogSink: MobileLogSink | undefined;
+// Create on first mobile-log arrival: the data directory is finalized only after startup, so the path must not be fixed at module load.
+function getMobileLogSink(): MobileLogSink {
+  mobileLogSink ??= createMobileLogSink({ rootDir: getMobileRealtimeLogDir(), logger });
+  return mobileLogSink;
+}
+
 const webRemoteControlManager = createWebRemoteControlManager({
+  mobileLogSink: { append: (target, events) => getMobileLogSink().append(target, events) },
   getEndpointUrls: async () => {
     const derived = buildZCodeEndpointUrls(await resolveCurrentZCodeEndpointOrigin(), {
       appVersion: webRemoteControlAppVersion,
@@ -1126,6 +1161,21 @@ const webRemoteControlManager = createWebRemoteControlManager({
   reconnectWorkspace: reconnectWebRemoteControlWorkspaceInRenderer,
   openWorkspace: (windowId, target) =>
     openWebRemoteControlWorkspaceInWindow(windowId, target, logger),
+  runRendererAction: runWebRemoteControlActionInRenderer,
+  prepareProjectWorkspace: async (windowId, project, requestId) => {
+    const win = BrowserWindow.fromId(windowId);
+    if (!win || win.isDestroyed()) throw new Error("项目导航窗口已关闭");
+    return remoteSessionManager.prepareProjectWorkspace(win, project, requestId);
+  },
+  cancelProjectPreparation: (windowId, requestId) => {
+    const win = BrowserWindow.fromId(windowId);
+    if (win && !win.isDestroyed())
+      remoteSessionManager.cancelPendingRemoteWorkspaceSessionsForWindow(
+        win.webContents.id,
+        "mobile-navigation-superseded",
+        requestId,
+      );
+  },
   reportRendererTelemetryEvent: (event) => {
     void appTelemetryCore.reportEvent(event).catch(() => {});
   },
@@ -1140,6 +1190,7 @@ const webRemoteControlManager = createWebRemoteControlManager({
     sendWebRemoteControlStatusChangedToWindow(BrowserWindow.fromId(windowId), status);
   },
   attachWorkspaceHost: webRemoteControlSharedHostAttachments.attachWorkspaceHost,
+  setTerminalOwner: webRemoteControlSharedHostAttachments.setTerminalOwner,
   releaseWorkspaceHostAttachment: webRemoteControlSharedHostAttachments.releaseAttachment,
   disposeWorkspaceHostAttachmentsForWindow: (windowId) =>
     webRemoteControlSharedHostAttachments.disposeWindow(windowId),
@@ -1147,6 +1198,23 @@ const webRemoteControlManager = createWebRemoteControlManager({
     webRemoteControlSharedHostAttachments.disposeRemoteSession(remoteSessionId),
 });
 webRemoteControlManagerRef.current = webRemoteControlManager;
+webRemoteControlManager.startNotifications();
+broadcastHub.onMobilePushRun = (run) => webRemoteControlManager.observeNotificationRun(run);
+// The owner must be confirmed synchronously when the event arrives; MobilePushConnection reads the locale asynchronously after confirmation.
+broadcastHub.onMobilePushEvent = (event) =>
+  webRemoteControlManager.sendNotification(event, () =>
+    mainSettingService.get().then(
+      (settings) => (settings.locale?.startsWith("zh") ? "zh-CN" : "en-US"),
+      () => {
+        logger.warn("[mobile-push] notification locale unavailable");
+        throw new Error("locale_unavailable");
+      },
+    ),
+  );
+app
+  .whenReady()
+  .then(() => powerMonitor.on("resume", () => void webRemoteControlManager.refreshNotifications()));
+app.on("will-quit", () => webRemoteControlManager.disposeNotifications());
 
 let forceUpdateMainWindowCreationBlocked = false;
 
@@ -1350,6 +1418,7 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
     // Enter the existing barrier in parallel with other owners and wait at most 2 seconds, avoiding serial telemetry delay.
     appTelemetryCore.flushPendingReports({ timeoutMs: 2_000 }),
     localTtftExporter.shutdown(),
+    flushLocalTtftLogs(),
     rendererActionTraceBroker.shutdown().catch((error) => {
       logger.warn(`[app-quit] renderer action trace shutdown failed (${reason}):`, error);
     }),
@@ -1707,6 +1776,23 @@ async function executeDesktopCommandForApp(
     },
     credentialsDir: getCredentialsDir(),
     currentApplicationLocale,
+    pullMobileLogs: (windowId) =>
+      pullAndExportMobileLogs(windowId, {
+        findTarget: (id) => webRemoteControlManager.findMobileLogPullTarget(id),
+        pull: (id, query, onShard) => webRemoteControlManager.pullMobileLogs(id, query, onShard),
+        exportDir: getExportLogDir(),
+        realtimeLogDir: getMobileRealtimeLogDir(),
+        locale: currentApplicationLocale,
+        showMessage: async (options) => {
+          const parent = senderWindow && !senderWindow.isDestroyed() ? senderWindow : undefined;
+          const result = parent
+            ? await dialog.showMessageBox(parent, options)
+            : await dialog.showMessageBox(options);
+          return result.response;
+        },
+        showItemInFolder: (path) => shell.showItemInFolder(path),
+        logger,
+      }),
   });
 }
 
@@ -2049,6 +2135,7 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
         label,
         {
           ...initMessage,
+          browserBackendIdentity: browserGuestManager.getBackendIdentity(win.id),
           zcodeBuiltinProviderConfigFilePath: resolveZCodeBuiltinProviderConfigFilePath(),
         },
         {
@@ -2084,6 +2171,9 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
             reportMcpTelemetryToArms(message.event, message.runtimeSurface),
           onPluginTelemetry: (message) => {
             void appTelemetryCore.reportEvent(message.event).catch(() => {});
+          },
+          onRemoteConversationTelemetry: (message) => {
+            void reportRemoteConversationTelemetry(message.event);
           },
           onSessionCreateTelemetry: (message) => {
             void appTelemetryCore.reportEvent(message.event).catch(() => {});
@@ -2237,6 +2327,13 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           // browser-use: main executes commands with WebContentsView + CDP.
           handleBrowserExecuteRequest: ({ win: browserWin, ...request }) =>
             runBrowserCommandOnView({ win: browserWin, ...request }),
+          // Data Sync page "Model Providers" category: both the latest result and retries use the Main coordinator's lane as the only data source.
+          providerProvisioningLanes: {
+            getStatus: (sourceServerId, laneOptions) =>
+              remoteSessionManager.getProviderProvisioningLaneStatus(sourceServerId, laneOptions),
+            retry: (sourceServerId) =>
+              remoteSessionManager.retryProviderProvisioning(sourceServerId),
+          },
         },
         {
           taskRealtime: {

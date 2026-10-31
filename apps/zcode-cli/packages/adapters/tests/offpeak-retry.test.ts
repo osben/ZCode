@@ -17,9 +17,10 @@ import { executeAdapterGenerateText, executeAdapterStreamText } from "./test-ada
 
 const TEST_QUEUE_PROVIDER_ID = "configured-queue-provider";
 
-// Off-peak queueing protocol (D24/D26): 429/3105 is exempt from the retry budget and probes without limit;
-// a 400/3102 stable marker triggers resumption. The semantics only apply to idle plan providers; ordinary
-// providers keep the existing budget — both sides need regression proof.
+// Off-peak queueing protocol: 429/3105 are exempt from the retry budget; 3102/3106 keep their
+// original code and notify the Host to end the task. The semantics apply only to idle plan
+// providers while ordinary providers keep the existing budget — both sides need regression
+// proof.
 
 function offPeakRegistryConfig() {
   return {
@@ -55,7 +56,7 @@ function queue429(retryAfterSeconds: number): ProviderBusinessError {
   });
 }
 
-function ticketUnavailable(code = "3102"): ProviderBusinessError {
+function ticketUnavailable(code: string | number = "3102"): ProviderBusinessError {
   return new ProviderBusinessError({
     providerCode: code,
     providerId: TEST_QUEUE_PROVIDER_ID,
@@ -137,10 +138,10 @@ describe("off-peak 排队重试（generate 路径）", () => {
     expect(calls).toBe(5);
   });
 
-  it("400/3102 立即以稳定标记落败（触发 desktop 续跑，非普通失败）", async () => {
+  it.each(["3102", "3106"])("400/%s 以稳定标记落败，保留原错误码", async (code) => {
     const runtime: AiSdkModelRuntime = {
       async generateText() {
-        throw ticketUnavailable();
+        throw ticketUnavailable(code);
       },
       streamText() {
         throw new Error("not used");
@@ -155,6 +156,7 @@ describe("off-peak 排队重试（generate 路径）", () => {
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(OFF_PEAK_TICKET_EXPIRED_MARKER);
+    expect(error).toMatchObject({ context: { providerCode: code } });
   });
 
   it("回归：普通 provider 的 429 仍受 maxAttempts 预算约束", async () => {
@@ -223,7 +225,7 @@ describe("off-peak 排队重试（stream 路径）", () => {
     expect(events.some((e) => (e as { type: string }).type === "text_delta")).toBe(true);
   });
 
-  it("stream 3102 落败信息携带续跑标记", async () => {
+  it.each(["3102", "3106"])("stream %s 落败信息携带过期标记", async (code) => {
     const runtime: AiSdkModelRuntime = {
       generateText() {
         throw new Error("not used");
@@ -232,7 +234,7 @@ describe("off-peak 排队重试（stream 路径）", () => {
         return {
             // eslint-disable-next-line require-yield -- simulate the stream throwing as soon as it starts
           fullStream: (async function* () {
-            throw ticketUnavailable();
+            throw ticketUnavailable(code);
           })(),
         } as never;
       },
@@ -250,6 +252,7 @@ describe("off-peak 排队重试（stream 路径）", () => {
     };
     const error = await iterate().catch((e: unknown) => e);
     expect((error as Error).message).toContain(OFF_PEAK_TICKET_EXPIRED_MARKER);
+    expect(error).toMatchObject({ context: { providerCode: code } });
   });
 });
 
@@ -296,6 +299,33 @@ describe("resolveOffPeakFailureDecision 纯函数", () => {
         offPeak: false,
         failure: baseFailure,
         error: queue429(10),
+      }),
+    ).toBeNull();
+  });
+
+  it.each(["3102", 3102, "3106", 3106])("过期码 %s 兼容数字和字符串响应", (code) => {
+    expect(
+      resolveOffPeakFailureDecision({
+        offPeak: true,
+        failure: { ...baseFailure, statusCode: 400 },
+        error: ticketUnavailable(code),
+      }),
+    ).toEqual({ kind: "ticketExpired" });
+  });
+
+  it("3104 无效票据不是过期，普通 provider 的 3106 不走闲时协议", () => {
+    expect(
+      resolveOffPeakFailureDecision({
+        offPeak: true,
+        failure: { ...baseFailure, statusCode: 400 },
+        error: ticketUnavailable("3104"),
+      }),
+    ).toBeNull();
+    expect(
+      resolveOffPeakFailureDecision({
+        offPeak: false,
+        failure: { ...baseFailure, statusCode: 400 },
+        error: ticketUnavailable("3106"),
       }),
     ).toBeNull();
   });

@@ -7,6 +7,7 @@ import type {
   WindowHostTaskAddress,
 } from "@zcode/shared/zcode-protocol-v4";
 import {
+  CONTROLLER_TASKS_INDEX_TOPIC,
   matchesTaskListMembershipKind,
   windowHostTaskAddressSchema,
 } from "@zcode/shared/zcode-protocol-v4";
@@ -153,7 +154,10 @@ function liveStatusFromMeta(meta: ZCodeTaskMeta): WindowHostControllerTaskRow["l
  * the corresponding source's tasks-index, and disconnects freeze only the last successful in-memory snapshot.
  */
 export function createWindowHostControllerRuntime(options: {
+  onRunStarted?: (run: import("@zcode/shared/web-remote-relay").MobilePushRun) => void;
+  onNotification?: (event: import("@zcode/shared/web-remote-relay").MobilePushEvent) => void;
   createId: () => string;
+  readHostTaskList: IZCodeTaskService["listTaskList"];
   resolveSource: (scope: ZCodeTaskListWorkspaceScope) => ResolvedWindowHostControllerSource | null;
   maxSources?: number;
   maxConcurrentSourceRefreshes?: number;
@@ -378,6 +382,20 @@ export function createWindowHostControllerRuntime(options: {
         ...(resolved.scope.workspaceIdentity
           ? { workspaceIdentity: resolved.scope.workspaceIdentity }
           : {}),
+      },
+      onRunStarted: (run) => {
+        if (
+          sourceSessionObservers.get(key)?.observer === observer &&
+          sourceAvailability.get(key) === "online"
+        )
+          options.onRunStarted?.(run);
+      },
+      onNotification: (event) => {
+        if (
+          sourceSessionObservers.get(key)?.observer === observer &&
+          sourceAvailability.get(key) === "online"
+        )
+          options.onNotification?.(event);
       },
       onSessionsChange: (sessions) => {
         if (sourceSessionObservers.get(key)?.observer !== observer) return;
@@ -751,6 +769,29 @@ export function createWindowHostControllerRuntime(options: {
     query: ZCodeTaskListQuery,
   ): Promise<WindowHostControllerTaskListResult> {
     assertOpen();
+    if (query.workspaceScopes === "host") {
+      // A registered source only covers workspaces that were opened; global history must go straight to the persistence owner.
+      // No refreshSource, so search never creates a CLI/runtime or remote connection for an unopened directory.
+      const result = await options.readHostTaskList(query);
+      const localRows = new Map(
+        projection
+          .getTasks()
+          .filter((row) => !row.address.sourceServerId && !row.address.remoteSessionId)
+          .map((row) => [taskKey(row.meta), row]),
+      );
+      return {
+        ...result,
+        items: result.items.map((item) => {
+          const projected = localRows.get(taskKey(item));
+          return {
+            ...item,
+            sourceAvailability: "online" as const,
+            liveStatus: projected?.liveStatus ?? liveStatusFromMeta(item),
+            ...(projected?.activity ? { activity: projected.activity } : {}),
+          };
+        }),
+      };
+    }
     const resolvedSources = resolveQuerySources(query.workspaceScopes);
     const refreshErrors: unknown[] = [];
     await Promise.all(
@@ -889,7 +930,7 @@ export function createWindowHostControllerRuntime(options: {
                 };
           return (
             selectedSources.has(sourceKey(scope)) &&
-            matchesTaskListMembershipKind(row.membership, query.kind)
+            (query.kind === "all" || matchesTaskListMembershipKind(row.membership, query.kind))
           );
         })
         .map((row) => {
@@ -1149,6 +1190,11 @@ export function createWindowHostControllerRuntime(options: {
   return {
     service,
     createAttachmentService,
+    /** Live interaction overlay for the mobile project tree: reads current projection rows only and does not trigger a source refresh. */
+    readTaskRows: (): WindowHostControllerTaskRow[] => projection.getTasks(),
+    /** Called on any projection row change; a subscriber immediately receives one snapshot callback. */
+    subscribeTaskRows: (onChange: () => void): { dispose(): void } =>
+      projection.subscribe({ topic: CONTROLLER_TASKS_INDEX_TOPIC, onFrame: () => onChange() }),
     replaceDisconnectedSource,
     async resolveTaskAddress(params: {
       taskId: string;

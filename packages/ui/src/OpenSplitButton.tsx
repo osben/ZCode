@@ -25,10 +25,13 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubTrigger,
-  ContextMenuSubContent,
 } from "@/components/ui/context-menu.js";
+import {
+  DefaultFileApplicationLabel,
+  FileApplicationChoices,
+  FileSaveAsMenuItem,
+  useFileApplications,
+} from "@/file-menu/index.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useFileContextActions } from "@/hooks/useFileContextActions.js";
 import { useWorkspaceOpenInEditorTarget } from "@/hooks/useWorkspaceOpenInEditorTarget.js";
@@ -61,9 +64,16 @@ interface OpenSplitButtonProps {
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   hideOpenWithMenu?: boolean;
+  openDefaultOnPrimary?: boolean;
+  /** Preview-specific display options appended after the unified file actions; do not duplicate file operations. */
+  viewMenuItems?: ReactNode;
   stopPropagation?: boolean;
-  /** 整张卡片复用按钮的操作与状态，右键和下拉不会维护两套动作。 */
-  renderCard?: (button: ReactNode) => ReactElement;
+  /** The whole card reuses the button's actions and state; context menu and dropdown do not keep a second set. */
+  renderCard?: (
+    button: ReactNode,
+    /** Whole-card click reuses the primary button's preview action and availability. */
+    actions: { handlePreview: () => void; canPreview: boolean },
+  ) => ReactElement;
 }
 
 export function OpenSplitButton({
@@ -72,6 +82,8 @@ export function OpenSplitButton({
   onOpenFileLink,
   onOpenCodeViewer,
   hideOpenWithMenu = false,
+  openDefaultOnPrimary = false,
+  viewMenuItems,
   stopPropagation = false,
   renderCard,
 }: OpenSplitButtonProps) {
@@ -100,35 +112,61 @@ export function OpenSplitButton({
   const workspacePath =
     target.type === "file" ? previewSource?.workspacePath : target.workspacePath;
   const canOpenNative = Boolean(platform.canOpenLocalFiles && !isRemoteSource);
+  const fileApplications = useFileApplications(
+    target.type === "file"
+      ? { path: target.path, pathKind: "file", workspaceIdentity: previewSource?.workspaceIdentity }
+      : null,
+    isRemoteSource,
+  );
+  const defaultApplication = fileApplications.defaultApplication;
+  const defaultApplicationTitle = intl.formatMessage(
+    {
+      id: defaultApplication ? "fileActions.openInApplication" : "chat.previewCards.openDefaultApp",
+    },
+    defaultApplication ? { application: defaultApplication.name } : undefined,
+  );
+  useEffect(() => {
+    if (openDefaultOnPrimary && canOpenNative) void fileApplications.load();
+  }, [openDefaultOnPrimary, canOpenNative, fileApplications.load]);
   const editorRequest = useRef(0);
+  const primaryEditorLoadStarted = useRef(false);
   const [editors, setEditors] = useState<EditorInfo[]>([]);
   const [editorsLoaded, setEditorsLoaded] = useState(false);
   const [loadingEditors, setLoadingEditors] = useState(false);
-  const sortedEditors = useMemo(
+  const sortedEditors: Array<EditorInfo & { isDefault?: boolean }> = useMemo(
     () =>
-      isRemoteSource && !openInEditorRemoteTarget
-        ? []
-        : resolveWorkspaceEditorSelection({
-            installedEditors: editors,
-            selectedEditorId: null,
-            remoteTarget: openInEditorRemoteTarget,
-          }).availableEditors,
-    [editors, isRemoteSource, openInEditorRemoteTarget],
+      !isRemoteSource
+        ? fileApplications.apps.map((app) => ({ ...app, iconDataUrl: app.iconDataUrl ?? "" }))
+        : isRemoteSource && !openInEditorRemoteTarget
+          ? []
+          : resolveWorkspaceEditorSelection({
+              installedEditors: editors,
+              selectedEditorId: null,
+              remoteTarget: openInEditorRemoteTarget,
+            }).availableEditors,
+    [editors, isRemoteSource, openInEditorRemoteTarget, fileApplications.apps],
   );
-  const canPreview =
-    target.type === "website"
+  const canPreview = openDefaultOnPrimary
+    ? Boolean(canOpenNative || sortedEditors.length)
+    : target.type === "website"
       ? Boolean(onOpenBrowserUrl)
       : Boolean(onOpenFileLink || onOpenCodeViewer);
   useEffect(() => {
+    primaryEditorLoadStarted.current = false;
     setEditors([]);
     setEditorsLoaded(false);
     setLoadingEditors(false);
-    // 卡片虚拟行重用时旧目标的异步应用结果不能覆盖新目标。
+    // When a virtualized card row is reused, async app results for the old target must not overwrite the new one.
     editorRequest.current += 1;
     return () => {
       editorRequest.current += 1;
     };
-  }, [filePath, previewSource?.workspaceIdentity, previewSource?.workspaceRemoteSessionId]);
+  }, [
+    filePath,
+    workspacePath,
+    previewSource?.workspaceIdentity,
+    previewSource?.workspaceRemoteSessionId,
+  ]);
 
   const stopEventPropagation = (event: { stopPropagation: () => void }) => {
     if (stopPropagation) {
@@ -137,7 +175,12 @@ export function OpenSplitButton({
   };
 
   const loadEditors = useCallback(async () => {
-    if (editorsLoaded || loadingEditors || target.type !== "file") {
+    if (target.type !== "file") return;
+    if (!isRemoteSource) {
+      await fileApplications.load();
+      return;
+    }
+    if (editorsLoaded || loadingEditors) {
       return;
     }
 
@@ -157,9 +200,37 @@ export function OpenSplitButton({
     } finally {
       if (request === editorRequest.current) setLoadingEditors(false);
     }
-  }, [editorsLoaded, loadingEditors, platform, target, isRemoteSource, openInEditorRemoteTarget]);
+  }, [editorsLoaded, loadingEditors, platform, target, isRemoteSource, fileApplications.load]);
+
+  useEffect(() => {
+    // The remote primary button also needs available editors fetched early; do not wait for the user to open the dropdown to enable it.
+    // Auto-request once per source; after a failure the user can still reopen the menu to retry, avoiding render-loop retries.
+    if (
+      openDefaultOnPrimary &&
+      isRemoteSource &&
+      openInEditorRemoteTarget &&
+      !primaryEditorLoadStarted.current &&
+      !editorsLoaded &&
+      !loadingEditors
+    ) {
+      primaryEditorLoadStarted.current = true;
+      void loadEditors();
+    }
+  }, [
+    openDefaultOnPrimary,
+    isRemoteSource,
+    openInEditorRemoteTarget,
+    loadEditors,
+    editorsLoaded,
+    loadingEditors,
+  ]);
 
   const handlePreview = () => {
+    if (openDefaultOnPrimary) {
+      if (canOpenNative) handleOpenDefault();
+      else if (sortedEditors[0]) handleOpenInEditor(sortedEditors[0]);
+      return;
+    }
     if (target.type === "website") {
       onOpenBrowserUrl?.(target.url);
       return;
@@ -191,8 +262,12 @@ export function OpenSplitButton({
       return;
     }
 
+    if (!isRemoteSource) {
+      void fileApplications.open({ ...editor, isDefault: false });
+      return;
+    }
     persistLastSelectedEditorId(editor.id);
-    // 返回失败和 IPC 拒绝都必须有可见反馈，不能只写日志后静默结束。
+    // Both a failed result and an IPC rejection must produce visible feedback, not just a log line that ends silently.
     void platform
       .openInEditor(editor.id, target.path, {
         pathKind: "file",
@@ -235,28 +310,13 @@ export function OpenSplitButton({
   };
 
   const handleOpenDefault = () => {
-    if (!filePath || !canOpenNative || !platform.openExternalFile) return;
-    void platform
-      .openExternalFile(filePath)
-      .then((result) => {
-        if (!result.success) throw new Error(result.error);
-      })
-      .catch((error: unknown) => {
-        logger.warn("[OpenSplitButton] 默认应用打开文件失败", {
-          path: filePath,
-          error: String(error),
-        });
-        toast(intl.formatMessage({ id: "chat.previewCards.openFileFailed" }));
-      });
+    void fileApplications.openDefault();
   };
 
-  // 新增动作只出现在右键菜单，下拉仍使用原有的应用列表布局。
+  // Card context menu and the Open dropdown share app queries and save actions.
   const renderContextActions = () => {
     const Item = ContextMenuItem;
     const Separator = ContextMenuSeparator;
-    const Sub = ContextMenuSub;
-    const SubTrigger = ContextMenuSubTrigger;
-    const SubContent = ContextMenuSubContent;
     return (
       <>
         <Item disabled={!canPreview} onSelect={handlePreview}>
@@ -272,34 +332,27 @@ export function OpenSplitButton({
           </Item>
         ) : (
           <>
-            {canOpenNative && platform.openExternalFile && (
-              <Item onSelect={handleOpenDefault}>
-                <ExternalLinkIcon className="size-4" />
-                {intl.formatMessage({ id: "chat.previewCards.openDefaultApp" })}
-              </Item>
-            )}
             {platform.canOpenLocalFiles && (!isRemoteSource || openInEditorRemoteTarget) && (
-              <Sub>
-                <SubTrigger>{intl.formatMessage({ id: "chat.previewCards.openWith" })}</SubTrigger>
-                <SubContent>
-                  {sortedEditors.length ? (
-                    sortedEditors.map((editor) => (
-                      <Item key={editor.id} onSelect={() => handleOpenInEditor(editor)}>
-                        <img src={editor.iconDataUrl} alt="" className="size-4 shrink-0" />
-                        <span>{editor.name}</span>
-                      </Item>
-                    ))
-                  ) : (
-                    <Item disabled>
-                      {intl.formatMessage({
-                        id: loadingEditors ? "common.loading" : "chat.previewCards.noOpenApps",
-                      })}
-                    </Item>
-                  )}
-                </SubContent>
-              </Sub>
+              <FileApplicationChoices
+                variant="context"
+                applications={sortedEditors}
+                loading={loadingEditors || fileApplications.loading}
+                onOpenDefault={
+                  canOpenNative && platform.openExternalFile ? handleOpenDefault : undefined
+                }
+                onSelect={handleOpenInEditor}
+              />
             )}
           </>
+        )}
+        {target.type === "file" && (
+          <FileSaveAsMenuItem
+            variant="context"
+            path={target.path}
+            workspacePath={workspacePath}
+            workspaceIdentity={previewSource?.workspaceIdentity}
+            workspaceRemoteSessionId={previewSource?.workspaceRemoteSessionId}
+          />
         )}
         <Separator />
         {target.type === "website" && (
@@ -346,12 +399,20 @@ export function OpenSplitButton({
           size="default"
           className={`h-7 rounded-none border-0 gap-1 ${hideOpenWithMenu ? "px-2" : "pr-1.5"}`}
           disabled={!canPreview}
+          title={openDefaultOnPrimary ? defaultApplicationTitle : undefined}
+          aria-label={openDefaultOnPrimary ? defaultApplicationTitle : undefined}
           onClick={(event) => {
             stopEventPropagation(event);
             handlePreview();
           }}
         >
-          {intl.formatMessage({ id: "common.open" })}
+          {openDefaultOnPrimary ? (
+            <DefaultFileApplicationLabel application={defaultApplication}>
+              {intl.formatMessage({ id: "common.open" })}
+            </DefaultFileApplicationLabel>
+          ) : (
+            intl.formatMessage({ id: "common.open" })
+          )}
         </Button>
         {!hideOpenWithMenu && (
           <DropdownMenuTrigger asChild>
@@ -370,14 +431,31 @@ export function OpenSplitButton({
         )}
       </div>
       {!hideOpenWithMenu && (
-        <DropdownMenuContent align="end" side="top" className="w-44" onClick={stopEventPropagation}>
+        <DropdownMenuContent
+          align="end"
+          side="top"
+          className="w-64 max-w-[calc(100vw-1rem)]"
+          onClick={stopEventPropagation}
+        >
           <OpenSplitButtonDropdownActions
             target={target}
             sortedEditors={sortedEditors}
-            loadingEditors={loadingEditors}
+            loadingEditors={loadingEditors || fileApplications.loading}
+            canOpenWith={Boolean(
+              platform.canOpenLocalFiles && (!isRemoteSource || openInEditorRemoteTarget),
+            )}
             handleOpenExternal={handleOpenExternal}
             handleOpenInEditor={handleOpenInEditor}
+            handleOpenDefault={
+              canOpenNative && platform.openExternalFile ? handleOpenDefault : undefined
+            }
           />
+          {viewMenuItems ? (
+            <>
+              <DropdownMenuSeparator />
+              {viewMenuItems}
+            </>
+          ) : null}
         </DropdownMenuContent>
       )}
     </DropdownMenu>
@@ -392,31 +470,47 @@ export function OpenSplitButton({
         void loadEditors()
       }
     >
-      <ContextMenuTrigger asChild>{renderCard(button)}</ContextMenuTrigger>
-      <ContextMenuContent>{renderContextActions()}</ContextMenuContent>
+      <ContextMenuTrigger asChild>
+        {renderCard(button, { handlePreview, canPreview })}
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-64 max-w-[calc(100vw-1rem)]">
+        {renderContextActions()}
+      </ContextMenuContent>
     </ContextMenu>
   );
 }
 
-// 右键菜单新增后，下拉菜单仍保留原有的平铺应用列表与路径操作顺序。
+// The dropdown keeps a compact flat app list; save-copy and path actions stay directly discoverable.
 function OpenSplitButtonDropdownActions({
   target,
   sortedEditors,
   loadingEditors,
   handleOpenExternal,
   handleOpenInEditor,
+  handleOpenDefault,
+  canOpenWith,
 }: {
   target:
     | { type: "website" }
-    | { type: "file"; path: string; label: string; previewSource?: { workspacePath?: string } };
-  sortedEditors: readonly EditorInfo[];
+    | {
+        type: "file";
+        path: string;
+        label: string;
+        previewSource?: {
+          workspacePath?: string;
+          workspaceIdentity?: string;
+          workspaceRemoteSessionId?: string;
+        };
+      };
+  sortedEditors: readonly (EditorInfo & { isDefault?: boolean })[];
   loadingEditors: boolean;
   handleOpenExternal: () => void;
   handleOpenInEditor: (editor: EditorInfo) => void;
+  handleOpenDefault?: () => void;
+  canOpenWith: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const fileActions = useFileContextActions();
-  const selectedEditor = sortedEditors[0];
   return (
     <>
       {target.type === "website" ? (
@@ -430,21 +524,16 @@ function OpenSplitButtonDropdownActions({
         </DropdownMenuItem>
       ) : (
         <>
-          {selectedEditor ? (
-            sortedEditors.map((editor) => (
-              <DropdownMenuItem key={editor.id} onSelect={() => handleOpenInEditor(editor)}>
-                <img src={editor.iconDataUrl} alt={editor.name} className="size-4 shrink-0" />
-                <span>{editor.name}</span>
-              </DropdownMenuItem>
-            ))
-          ) : (
-            <DropdownMenuItem disabled>
-              {intl.formatMessage({
-                id: loadingEditors ? "common.loading" : "chat.previewCards.noOpenApps",
-              })}
-            </DropdownMenuItem>
+          {(handleOpenDefault || canOpenWith) && (
+            <FileApplicationChoices
+              applications={sortedEditors}
+              loading={loadingEditors}
+              onOpenDefault={handleOpenDefault}
+              onSelect={handleOpenInEditor}
+            />
           )}
-          <DropdownMenuSeparator />
+          {(handleOpenDefault || canOpenWith) && <DropdownMenuSeparator />}
+          <FileSaveAsMenuItem path={target.path} {...target.previewSource} />
           <DropdownMenuItem
             onSelect={() => void fileActions.copyAbsolutePath({ path: target.path })}
           >

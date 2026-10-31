@@ -3,6 +3,7 @@
 ## Product Rules
 
 - In the main conversation, the "Working for N min N sec" row for each work segment shows live throughput `xx.x tok/s`, right-aligned.
+- Since upstream 3.17.1 render units, a running turn whose tail has no "Working" row shows the `ChatLoading` indicator instead (`TurnChatLoadingSlot`). The same `WorkingThroughput` component then renders right after that indicator, fed by the latest work segment's assistant rows (`unit.workSegments.at(-1).assistantWorkRows`, else `unit.assistantWorkRows`), so the live value stays visible whichever of the two rows is on screen. Test id: `chat-working-throughput`.
 - **Two value sources, with display priority**:
   1. **Streaming estimate `~xx.x tok/s` (with a `~` prefix)**: Update in real time while output is streaming, including reasoning. Estimate tokens from the text of rows currently streaming (body/reasoning when `state === "streaming"`; tool arguments when `status === "inputStreaming"`) using the same formula as the CLI's `estimateTokens` (Chinese characters count double, then divide by `ESTIMATED_TOKEN_CHAR_DIVISOR`).
      - **Use a cumulative average**: `(current tokens - baseline tokens) / (now - baseline time)`, recalculated on a 300 ms tick. The denominator covers the full interval, while bursts only increase the numerator once; this avoids estimates in the tens of thousands of tok/s that a short-window slope can produce. (Reference: pi-web's `tps = tokens / elapsed`, timed from the start of streaming.)
@@ -50,6 +51,7 @@ reasoning/assistantText row.delta → cumulative text from active segment rows
 ## Acceptance Scenarios
 
 1. Start a conversation. While reasoning or the response body is streaming, the "Working" row shows `~xx.x tok/s` at the right within one second and updates as output arrives.
+   1a. While the turn shows only the loading indicator (no "Working" row yet), `~xx.x tok/s` appears beside the indicator and disappears with it.
 2. After streaming is silent for about two seconds (during tool execution or between requests), fall back to the exact value without `~`. Refresh the exact value after each model request completes.
 3. If only a tool is running and there is no streaming or completed request, keep the value unchanged. Hide it when the segment completes.
 4. If neither source has a value (the first request has not completed and the sample span is too short, or throughput is unknown), show no value or placeholder.

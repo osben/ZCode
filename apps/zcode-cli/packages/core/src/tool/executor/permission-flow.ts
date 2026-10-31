@@ -41,6 +41,96 @@ import { buildDefaultPermissionUpdates } from "./permission-suggestions.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { summarizeInput } from "./utils.js";
 
+const READ_TOOL_NAME = "Read";
+
+type PermissionFlowContext = ToolRuntimePermissionCapabilityContext & {
+  workingDirectory: string;
+  workspaceRoot: string;
+};
+
+/**
+ * Only checks whether Read is directly denied by mode or permission rules; runs no hooks, shows no confirmation, emits no events; rules are loaded once.
+ * Read does not touch memory-file write permission, so it skips applyMemoryFilePermission.
+ */
+export async function areReadsDeniedWithoutPrompt(
+  deps: ToolExecutorDeps,
+  filePaths: readonly string[],
+  traceContext: TraceContext,
+): Promise<boolean[]> {
+  const entry = deps.registry.get(READ_TOOL_NAME);
+  if (!entry) return filePaths.map(() => true);
+  const mode = deps.getMode();
+  const context = resolvePermissionFlowContext(deps, mode);
+  const projectRules = await loadProjectPermissionRuleset(deps);
+  return filePaths.map((filePath) => {
+    const { decision } = checkStaticToolPermission(deps, {
+      context,
+      entry,
+      executionInput: { file_path: filePath },
+      mode,
+      projectRules,
+      toolName: READ_TOOL_NAME,
+    });
+    deps.logger?.debug("Tool permission evaluated without prompt", {
+      ...traceContextToLogContext(traceContext),
+      decision: decision.decision,
+      event: "tool.permission.evaluated",
+      mode,
+      module: "core.tool.executor",
+      reason: decision.reason,
+      ruleId: decision.ruleId,
+      toolName: READ_TOOL_NAME,
+    });
+    return decision.decision === "deny";
+  });
+}
+
+function resolvePermissionFlowContext(
+  deps: ToolExecutorDeps,
+  mode: CollaborationMode,
+  preparedContext?: ToolRuntimePermissionCapabilityContext,
+): PermissionFlowContext {
+  return {
+    ...resolveRuntimePermissionContext(deps),
+    ...preparedContext,
+    mode,
+    workingDirectory: preparedContext?.workingDirectory ?? deps.getWorkingDirectory(),
+    workspaceRoot: preparedContext?.workspaceRoot ?? deps.getWorkspaceRoot(),
+  };
+}
+
+// Static decision from mode and permission rules; shared by tool-call and no-prompt Read checks so both sides reach the same verdict.
+function checkStaticToolPermission(
+  deps: ToolExecutorDeps,
+  input: {
+    context: PermissionFlowContext;
+    entry: ToolEntry;
+    executionInput: unknown;
+    mode: CollaborationMode;
+    projectRules: PermissionRuleset | null;
+    toolName: string;
+  },
+) {
+  const { context, entry, executionInput } = input;
+  const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, context);
+  const decision = deps.permissionService.checkPermission(
+    {
+      toolName: input.toolName,
+      input: executionInput,
+      riskLevel: entry.metadata.riskLevel,
+      mode: input.mode,
+      planEnabled: deps.sessionModePort?.isPlanEnabled?.(),
+      prePlanMode: deps.sessionModePort?.getPrePlanMode(),
+      // Draft pre-approval and the actual tool input share the prepared cwd; it must not be dropped when merging Guarded.
+      workingDirectory: context.workingDirectory,
+    },
+    resolveRuntimePermissionCapability(entry, executionInput, context),
+    input.projectRules,
+    rulePolicy,
+  );
+  return { decision, rulePolicy };
+}
+
 export async function resolveToolPermission(
   deps: ToolExecutorDeps,
   toolCall: ExecutableToolCall,
@@ -53,13 +143,7 @@ export async function resolveToolPermission(
   telemetry?: ToolExecutionSpanWriter,
   preparedContext?: ToolRuntimePermissionCapabilityContext,
 ): Promise<PermissionFlowResult> {
-  const context = {
-    ...resolveRuntimePermissionContext(deps),
-    ...preparedContext,
-    mode,
-    workingDirectory: preparedContext?.workingDirectory ?? deps.getWorkingDirectory(),
-    workspaceRoot: preparedContext?.workspaceRoot ?? deps.getWorkspaceRoot(),
-  };
+  const context = resolvePermissionFlowContext(deps, mode, preparedContext);
   let projectRules: PermissionRuleset | null;
   try {
     projectRules = await loadProjectPermissionRuleset(deps);
@@ -90,22 +174,15 @@ export async function resolveToolPermission(
           }),
         ),
       };
-    const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, context);
-    let decision = deps.permissionService.checkPermission(
-      {
-        toolName: toolCall.name,
-        input: executionInput,
-        riskLevel: entry.metadata.riskLevel,
-        mode,
-        planEnabled: deps.sessionModePort?.isPlanEnabled?.(),
-        prePlanMode: deps.sessionModePort?.getPrePlanMode(),
-        // Draft pre-approval and actual tool input share the prepared cwd; do not omit it when combining Guarded checks.
-        workingDirectory: context.workingDirectory,
-      },
-      resolveRuntimePermissionCapability(entry, executionInput, context),
+    const { decision: staticDecision, rulePolicy } = checkStaticToolPermission(deps, {
+      context,
+      entry,
+      executionInput,
+      mode,
       projectRules,
-      rulePolicy,
-    );
+      toolName: toolCall.name,
+    });
+    let decision = staticDecision;
     if (firstInput && decision.approvalMode !== "user-once") {
       decision = applyPreToolPermissionDecision(decision, preToolHookResult, mode);
     }

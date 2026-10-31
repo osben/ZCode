@@ -609,7 +609,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "点「运行」后没有弹出实参窗",
     });
     const dialogText = (await readTestIdPrefixText(TID_WORKFLOW_LAUNCH_DIALOG)) ?? "";
-    expect(dialogText).toContain(LAUNCH_OK_NAME); // 名字（mono）
+    expect(dialogText).toContain(LAUNCH_OK_NAME); // name (mono)
     expect(dialogText).toContain("Project"); // Scope badge (scope.project).
     expect(dialogText).toContain("Starts right away in a new session");
 
@@ -859,6 +859,28 @@ describe("直接启动 E2E", () => {
         }, TID_CHAT_SUMMARY_PANEL),
       { timeout: 30000, timeoutMsg: "状态胶囊没有按名字显示在跑的工作流" },
     );
+
+    // 2d) The pill must not cover the launch card (docs/dynamic-workflow/presentation.md "The
+    //     run card", transcript-top inset): the launch turn is the session's first turn with no
+    //     bubbles, and the card header's configure / stop / ⤢ buttons used to sit under the
+    //     pill. clickTestIdByDom uses a DOM click with no hit testing, so check
+    //     elementFromPoint at each button's center — the hit must be the button itself.
+    const coveredHeaderButtons = await browser.execute(() => {
+      const header = document.querySelector<HTMLElement>('[data-testid="workflow-card-header"]');
+      const buttons = Array.from(header?.querySelectorAll<HTMLElement>("button") ?? []);
+      if (buttons.length === 0) return ["<no header buttons>"];
+      return buttons
+        .filter((button) => {
+          const rect = button.getBoundingClientRect();
+          const hit = document.elementFromPoint(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2,
+          );
+          return !button.contains(hit);
+        })
+        .map((button) => button.getAttribute("aria-label") ?? button.outerHTML.slice(0, 80));
+    });
+    expect(coveredHeaderButtons).toEqual([]);
 
     // 3) Composer badge: exactly one workflow, no terminals and no subagents, and its declared open target is workflow-run.
     await browser.waitUntil(

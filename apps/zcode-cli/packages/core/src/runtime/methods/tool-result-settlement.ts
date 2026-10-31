@@ -11,22 +11,23 @@ import {
   createStreamRecoveryAnchorId,
   emitStreamRecoveryAnchor,
   emitStreamingToolLedgerUpdate,
-  isErrorForToolResult,
   isTurnCancellationError,
   modelContentForToolResult,
   stringifyToolResultOutput,
+  toolBatchModelEntries,
 } from "../helpers/index.js";
 import { persistToolResultMediaAttachments } from "../helpers/tool-result-media-persistence.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { StreamedToolExecutionResult } from "../types.js";
-import { createRuntimeToolResultEntry } from "../../agent/message-history.js";
 import { recordBrowserTurnToolResult } from "../../repl/browser-turn-state.js";
 import { completedToolPartMetadata, mcpToolPartMetadata } from "./tool-part-metadata.js";
 import { projectToolNameForNonEmptyBoundary } from "./tool-part-persistence.js";
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
 import { emitNestedModelUsageEvents } from "./turn-nested-model-usage.js";
 import { commitTurnRequestEntries } from "./turn-output-token-continuation.js";
+import { persistAnnouncements } from "./context-refresh.js";
 import { recordToolUsageFromResult } from "./turn-tool-usage.js";
+import { recordSessionFeaturesFromToolResults } from "../session-features/contract.js";
 
 export interface ToolResultPart {
   partID: PartId;
@@ -48,22 +49,14 @@ export async function settleToolResults(
   },
 ): Promise<void> {
   const { results, toolParts, toolCallById, streamedResultsById } = options;
+  const batchEntries = toolBatchModelEntries(results, {
+    registry: this.registry,
+    modelCallWrapperOf: (toolCallId) => toolCallById.get(toolCallId)?.modelCallWrapper,
+  });
   // 根因：工具调用已进入历史，但旧逻辑在异步保存之后逐项加入结果；中途失败会
   // 留下缺失结果的调用。整批真实结果必须在任何异步收尾之前同步进入两份模型历史。
   // 这只保证当前进程历史完整，恢复锚点仍以各项持久化成功为前提。
-  commitTurnRequestEntries(
-    this,
-    state.turnRequestState,
-    results.map((result) =>
-      createRuntimeToolResultEntry(
-        result.toolCallId,
-        result.toolName,
-        modelContentForToolResult(result),
-        isErrorForToolResult(result),
-        toolCallById.get(result.toolCallId)?.modelCallWrapper,
-      ),
-    ),
-  );
+  commitTurnRequestEntries(this, state.turnRequestState, batchEntries.toolResults);
   for (const result of results) {
     recordBrowserTurnToolResult({
       output: result.output,
@@ -75,6 +68,9 @@ export async function settleToolResults(
   // The results are now in provider-visible history, so history alone answers which nested AGENTS.md files the model
   // has seen. Reservations only bridged the gap until this point (context/nested-instructions/tracker.ts).
   this.nestedInstructionTracker.clearReservations();
+  // Tag capabilities synchronously once the results are in history so the next model request carries them
+  // (session-features only reads the results).
+  recordSessionFeaturesFromToolResults.call(this, results, options.modelTraceContext);
   await emitNestedModelUsageEvents(this, {
     events: state.events,
     results,
@@ -237,6 +233,17 @@ export async function settleToolResults(
     );
   }
 
+  // Additional context from tool Hooks and batch hints declared by tools (for example the Read partial-view hint) follow
+  // right after this batch of tool results (order: see toolBatchModelEntries). Once persisted they enter history and
+  // keep their position after resume. They belong to this batch, so a Stop checkpoint also writes them before throwing:
+  // results -> attachments -> interrupt marker. Throwing first would lose the attachments: the tool results are already
+  // in history and the model would afterwards see only the truncated body.
+  await persistAnnouncements(
+    this,
+    state.turnRequestState,
+    batchEntries.attachments,
+    options.modelTraceContext,
+  );
   if (deferredCheckpointCancellation) {
     throw deferredCheckpointCancellation;
   }

@@ -1,18 +1,20 @@
 import { DatabaseSync } from "node:sqlite";
-// M5 冷恢复（打开历史会话）验收网：CLI 重启后内存注册表为空，v4 订阅历史会话
-// 必须经 host.resumePersistedSession 把 record 拉起来，而不是抛
-// "Session is not active"（真 bug：桌面重启后点侧栏历史会话永远"连接中"）。
+// M5 cold resume (opening a historical session) acceptance net: after a CLI restart the in-memory
+// registry is empty, and a v4 subscription to a historical session must bring the record up via
+// host.resumePersistedSession instead of throwing "Session is not active" (real bug: after a
+// desktop restart, clicking a sidebar history session stayed "connecting" forever).
 //
-// 两层覆盖：
-// - gateway 单元（stub host）：单飞幂等 / 完整事件日志 hydration 路径 /
-//   notFound vs resumeFailed 错误分型 / 宿主未实现钩子的退化行为。
-// - 集成（真 sqlite sessionStore + ZCodeProtocolAgentServer + binder）：
-//   写 transcript → 关库重开（模拟 CLI 重启，context.sessions 为空）→
-//   v4 subscribe → snapshot 含历史行（transcript 合成路径）→ sendText 再发一轮成功；
-//   restoreWarning 语义保真（workspace 无可用模型时 sendText 被拒）；
-//   store 无此会话 → fault.subscribe.sessionNotFound。
+// Two layers of coverage:
+// - Gateway unit (stub host): single-flight idempotency / full event-log hydration path /
+//   notFound vs resumeFailed error discrimination / degraded behavior when the host hook is unimplemented.
+// - Integration (real sqlite sessionStore + ZCodeProtocolAgentServer + binder):
+//   write transcript → close and reopen the db (simulating a CLI restart, context.sessions empty) →
+//   v4 subscribe → snapshot contains historical rows (transcript synthesis path) → sendText runs another turn successfully;
+//   restoreWarning semantics preserved (sendText rejected when the workspace has no usable model);
+//   session missing from store → fault.subscribe.sessionNotFound.
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSqliteSessionStore } from "@zcode/adapters/storage";
@@ -71,12 +73,18 @@ import {
 import { resolveSessionContextUsage } from "../src/zcode-protocol/session-mapper.js";
 import { getRegistryBackedModel } from "../src/app/provider-registry-selection.js";
 import { ZCodeProtocolAgentServer } from "../src/zcode-protocol/server.js";
+import { ZCodeProtocolNdjsonConnection } from "../src/zcode-protocol/transport.js";
 import type { SessionUsageSeed } from "../src/zcode-protocol-v4/product-projection.js";
 import type { ZCodeApp, ZCodeAppOptions } from "../src/app/types.js";
 import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
 import { createRegistryBackedTestApp } from "./helpers/registry-backed-test-app.js";
+import {
+  HISTORY_MARKER,
+  SURVIVOR_ID,
+  seedFailedForkRace,
+} from "../../adapters/tests/fixtures/session-transaction-race.js";
 
-// ── gateway 单元层（stub host，模式对齐 v4-gateway.test.ts）──────────────────
+// ── Gateway unit layer (stub host, patterns aligned with v4-gateway.test.ts) ──────────
 
 interface ColdHostStub {
   sessions: Set<string>;
@@ -97,7 +105,7 @@ function makeColdHost(): ColdHostStub {
     errors: [],
     resumeCalls: [],
     resumeThoughtLevels: [],
-    // 默认打桩：恢复成功 = 会话进入内存注册表（对应 binder 的 resumeSession 建 record）。
+    // Default stub: resume success = the session enters the in-memory registry (matching the binder's resumeSession creating the record).
     resumeImpl: async (sessionId) => {
       host.sessions.add(sessionId);
       return { status: "resumed" };
@@ -190,6 +198,42 @@ function nextMacrotask(): Promise<void> {
 }
 
 describe("v4 冷恢复（gateway 单元）", () => {
+  it("rowsRange resident-only：冷会话报 proto.sessionNotResident，不冷恢复", async () => {
+    const host = makeColdHost();
+    host.persistedEvents.set("sess-cold", [
+      makeEvent("sess-cold", 1, SessionEventType.SessionCreated, {
+        mode: "default",
+        contextWindow: 200_000,
+      }),
+    ]);
+    const gateway = makeColdGateway(host);
+
+    await expect(
+      gateway.rowsRange({ sessionId: "sess-cold", limit: 30, residency: "resident-only" }),
+    ).rejects.toMatchObject({ reasonCode: "proto.sessionNotResident" });
+    expect(host.resumeCalls).toEqual([]);
+  });
+
+  it("rowsRange resident-only：内存里的会话照常返回最新一页", async () => {
+    const host = makeColdHost();
+    host.sessions.add("sess-live");
+    host.persistedEvents.set("sess-live", [
+      makeEvent("sess-live", 1, SessionEventType.SessionCreated, {
+        mode: "default",
+        contextWindow: 200_000,
+      }),
+    ]);
+    const gateway = makeColdGateway(host);
+
+    const result = await gateway.rowsRange({
+      sessionId: "sess-live",
+      limit: 30,
+      residency: "resident-only",
+    });
+    expect(Array.isArray(result.rows)).toBe(true);
+    expect(host.resumeCalls).toEqual([]);
+  });
+
   it("冷订阅未加载会话：单一 READY 完成 activation 与 hydration", async () => {
     const host = makeColdHost();
     host.persistedEvents.set("sess-cold", [
@@ -292,8 +336,9 @@ describe("v4 冷恢复（gateway 单元）", () => {
     let simulateWireProjectionBuild = false;
     const gateway = makeColdGateway(host, {
       now: () => {
-        // publisher 构建 initial frame 时会写 sentAt；借该公开时钟缝隙推进 monotonic clock，
-        // 可确定性验证构建耗时是否包含在 initialFrameEncodeMs，而不依赖真实 CPU 速度。
+        // The publisher writes sentAt while building the initial frame; use that public clock seam
+        // to advance the monotonic clock, deterministically verifying whether build time is
+        // included in initialFrameEncodeMs without depending on real CPU speed.
         if (simulateWireProjectionBuild) monotonicTime += 25;
         return 1_700_000_999_000;
       },
@@ -338,8 +383,9 @@ describe("v4 冷恢复（gateway 单元）", () => {
     const resumeEntered = deferred();
     const resumeGate = deferred();
     host.resumeImpl = async (sessionId) => {
-      // production 在 app.resume() 前先注册 record；第二个订阅此时会观察到 live，
-      // 但仍必须加入 activation flight，不能用空 materialization 抢跑 hydration。
+      // Production registers the record before app.resume(); a second subscription at that point
+      // observes live but must still join the activation flight — it cannot race ahead of
+      // hydration with an empty materialization.
       host.sessions.add(sessionId);
       resumeEntered.resolve();
       await resumeGate.promise;
@@ -369,7 +415,7 @@ describe("v4 冷恢复（gateway 单元）", () => {
       clientMode: "web-remote-replayable",
       connectionId: "conn-cold-2",
     });
-    // 等真实恢复进入 barrier 后再放行，避免依赖内部 Promise 链的 microtask 层数。
+    // Wait until the real resume reaches the barrier before releasing, avoiding dependence on the internal Promise chain's microtask depth.
     await resumeEntered.promise;
     resumeGate.resolve();
 
@@ -396,7 +442,7 @@ describe("v4 冷恢复（gateway 单元）", () => {
     const queryCommandId = "cmd-query-cold-ready";
     let discardedReady = false;
     host.resumeImpl = async (sessionId) => {
-      // 复现 production：record 先入册，遗留 admitted input 在 resume 收尾时才变成 discarded。
+      // Reproduces production: the record registers first, and leftover admitted input becomes discarded only at resume finalization.
       host.sessions.add(sessionId);
       resumeStarted.resolve();
       await resumeGate.promise;
@@ -641,14 +687,14 @@ describe("v4 冷恢复（gateway 单元）", () => {
     expect(failure).toBeInstanceOf(V4SubscribeSessionUnavailableError);
     const typed = failure as V4SubscribeSessionUnavailableError;
     expect(typed.reasonCode).toBe("fault.subscribe.sessionNotFound");
-    // renderer 订阅错误块直显 message → reasonCode 必须随文透出。
+    // The renderer's subscription error block shows the message directly → the reasonCode must surface in the text.
     expect(typed.message).toContain("fault.subscribe.sessionNotFound");
   });
 
   it("record 入册前恢复失败：保留原始 cause，并释放 rejected READY entry", async () => {
     const host = makeColdHost();
     host.resumeImpl = async () => {
-      // 只代表 production 中 record 入册前的失败；入册后的 lifecycle 恢复不属于 READY 的职责。
+      // Represents only a pre-registration failure in production; post-registration lifecycle recovery is not READY's responsibility.
       throw new Error("sqlite is on fire");
     };
     const gateway = makeColdGateway(host);
@@ -665,7 +711,7 @@ describe("v4 冷恢复（gateway 单元）", () => {
     expect(host.errors.some((entry) => entry.scope === "v4.subscribe.resume")).toBe(true);
     expect(host.resumeCalls).toEqual(["sess-cold"]);
 
-    // 这里只证明 rejected READY promise 没被缓存；不宣称 record 入册后的 activation 可自动重试。
+    // This only proves the rejected READY promise is not cached; it does not claim that post-registration activation auto-retries.
     host.resumeImpl = async (sessionId) => {
       host.sessions.add(sessionId);
       return { status: "resumed" };
@@ -751,7 +797,7 @@ describe("v4 冷恢复（gateway 单元）", () => {
   });
 });
 
-// ── 集成层（真 sqlite store + ZCodeProtocolAgentServer + binder）─────────────
+// ── Integration layer (real sqlite store + ZCodeProtocolAgentServer + binder) ─────────────
 
 const WORKSPACE_PATH = "/workspace/cold-resume";
 const workspace = { workspacePath: WORKSPACE_PATH, workspaceKey: WORKSPACE_PATH };
@@ -847,7 +893,7 @@ async function saveAssistantTextMessage(
   });
 }
 
-/** 冷恢复集成用最小 fake app（子集自 zcode-protocol.test.ts createFakeApp）。 */
+/** Minimal fake app for cold-resume integration (subset of zcode-protocol.test.ts createFakeApp). */
 interface ColdFakeAppProbe {
   resumeGate?: Promise<void>;
   failResume?: boolean;
@@ -956,10 +1002,12 @@ function createColdFakeApp(
       probe?.resumePersistedMessagesProvided?.push(resumeOptions?.persistedMessages !== undefined);
       for (const [index, type] of (probe?.resumeEventTypes ?? []).entries()) {
         const payload =
-          type === SessionEventType.WorkspaceHookAdmissionUpdated
+          type === SessionEventType.WorkspaceHookAdmissionUpdated ||
+          type === SessionEventType.WorkspaceMcpAdmissionUpdated
             ? {
                 pendingCount: 0,
-                bundleDigest: "cold-resume-hooks",
+                bundleDigest: "cold-resume-admission",
+                workspaceIdentity: WORKSPACE_PATH,
               }
             : {
                 hookEventName: "SessionStart",
@@ -979,13 +1027,16 @@ function createColdFakeApp(
       };
     },
     runtime: {
-      // TTL pool 在 resident 未超水位时也要读取权威 idle facts；冷恢复 fake 必须和
-      // 生产 runtime 一样显式声明没有前台或后台工作，不能再依赖旧容量分支短路。
+      beginShutdown: () => undefined,
+      // The TTL pool reads authoritative idle facts even when residents are under the watermark;
+      // the cold-resume fake must declare no foreground/background work explicitly, like the
+      // production runtime — no more relying on the old capacity-branch short-circuit.
       hasActiveOrQueuedTurnWork: () => false,
       hasRunningBackgroundTasks: () => false,
       hasResidencyBlockingWork: () => false,
-      // 合并后 sendText 的 afterLegacyStateMutation 会经 auto-drain 读前台执行位；
-      // 与上面同一条论证：fake 必须显式声明没有前台工作，而不是让属性缺席变成 TypeError。
+      // After the merge, sendText's afterLegacyStateMutation reads the foreground execution slot
+      // via auto-drain; same argument as above: the fake must explicitly declare no foreground
+      // work rather than letting the missing property become a TypeError.
       getActiveForegroundExecutionId: () => undefined,
       getExecutionWorktree: () => options?.runtimeConfig?.executionWorktree ?? null,
       // The session index reads the incognito marker from the runtime; the fake reports the configured profile.
@@ -1145,7 +1196,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
     await rm(tempRoot, { force: true, recursive: true });
   });
 
-  /** 第一段人生：往 store 写入一段 user/assistant transcript 后关库（模拟 CLI 退出）。 */
+  /** First incarnation: write a user/assistant transcript to the store, then close the db (simulating a CLI exit). */
   async function seedPersistedSession(
     dbPath: string,
     workspaceIdentity?: WorkspaceId,
@@ -1267,7 +1318,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
     }
   }
 
-  /** 第二段人生：同一 db 文件重开 → 新 server（内存注册表为空 = CLI 重启）。 */
+  /** Second incarnation: reopen the same db file → a new server (empty in-memory registry = CLI restart). */
   async function bootRestartedServer(
     dbPath: string,
     sentInputs: Array<{ text: string }>,
@@ -1288,9 +1339,115 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
     return { server, store };
   }
 
-  // 模型恢复须走真实 App，不能让生命周期测试替身复制生产迁移逻辑。
+  it.each(["restart", "ensureReady"] as const)(
+    "冷打开的启动读取未返回时 %s 共享生命周期并最终完成",
+    async (operation) => {
+      const dbPath = join(tempRoot, `opening-${operation}.db`);
+      await seedPersistedSession(dbPath);
+      const created: ZCodeAppOptions[] = [];
+      const probe = { closeCalls: 0 };
+      const { server, store } = await bootRestartedServer(dbPath, [], probe, created);
+      const entered = deferred();
+      const release = deferred();
+      let completed = false;
+      let response: unknown;
+      try {
+        await requestResult(server, {
+          id: "opening",
+          method: V4_METHODS.conversationSubscribe,
+          params: { ...subscribeParams(SESSION_ID), historyFirst: true },
+        });
+        // History is seeded; the next getSession is the startup info read; the barrier must not block later queries.
+        const getSession = store.getSession.bind(store);
+        vi.spyOn(store, "getSession").mockImplementationOnce(async (id) => {
+          entered.resolve();
+          await release.promise;
+          return getSession(id);
+        });
+        const frame = conversationTopicFrameSchema.parse(takeInitialFrameParams(server, "opening"));
+        if (frame.payload.kind !== "snapshot") throw new Error("Expected history snapshot");
+        expect(frame.payload.snapshot.runtimeInitialization?.status).toBe("initializing");
+        expect(JSON.stringify(frame.payload.snapshot)).toContain("历史问题一");
+        await entered.promise;
+        expect(created).toHaveLength(0);
+        const pending = server
+          .handleMessage({
+            id: "lifecycle",
+            method:
+              operation === "restart"
+                ? zcodeProtocolMethods.sessionLifecycleRestart
+                : zcodeProtocolMethods.sessionLifecycleEnsureReady,
+            params: { sessionId: SESSION_ID },
+          })
+          .then((value) => {
+            response = value;
+            completed = true;
+          });
+        // Ensure the lifecycle request is registered; do not rely on scheduling speed to luckily miss the read window.
+        await requestResult(server, {
+          id: "observing",
+          method: zcodeProtocolMethods.sessionLifecycleGetState,
+          params: { sessionId: SESSION_ID },
+        });
+        release.resolve();
+        await vi.waitFor(() => expect(completed).toBe(true), { timeout: 2000 });
+        await pending;
+        expect(response).toMatchObject({ result: { completed: true } });
+        expect(created).toHaveLength(operation === "restart" ? 2 : 1);
+        expect(probe.closeCalls).toBe(operation === "restart" ? 1 : 0);
+        expect(
+          await requestResult(server, {
+            id: "ready",
+            method: zcodeProtocolMethods.sessionLifecycleGetState,
+            params: { sessionId: SESSION_ID },
+          }),
+        ).toMatchObject({ state: "ready" });
+      } finally {
+        release.resolve();
+        // The failure probe must also be able to exit; do not await shutdown again inside the wait loop under test.
+        if (completed) await server.shutdown();
+        server.disposeProjections();
+        store.close();
+      }
+    },
+  );
+
+  it("已有历史首帧尚未提交时 ensureReady 复用历史并完成实例启动", async () => {
+    const dbPath = join(tempRoot, "history-before-activation.db");
+    await seedPersistedSession(dbPath);
+    const created: ZCodeAppOptions[] = [];
+    const { server, store } = await bootRestartedServer(dbPath, [], undefined, created);
+    let completed = false;
+    try {
+      await requestResult(server, {
+        id: "history-only",
+        method: V4_METHODS.conversationSubscribe,
+        params: { ...subscribeParams(SESSION_ID), historyFirst: true },
+      });
+      expect(created).toHaveLength(0);
+      const pending = requestResult(server, {
+        id: "ensure-existing-history",
+        method: zcodeProtocolMethods.sessionLifecycleEnsureReady,
+        params: { sessionId: SESSION_ID },
+      }).then((result) => {
+        completed = true;
+        return result;
+      });
+      void pending.catch(() => undefined);
+      takeInitialFrameParams(server, "history-only");
+      await vi.waitFor(() => expect(completed).toBe(true), { timeout: 2000 });
+      expect(await pending).toEqual({ completed: true });
+      expect(created).toHaveLength(1);
+    } finally {
+      if (completed) await server.shutdown();
+      server.disposeProjections();
+      store.close();
+    }
+  });
+
+  // Model recovery must go through the real App; the lifecycle test double must not duplicate production migration logic.
   function prepareLegacySelectionUpgrade(dbPath: string) {
-    // 旧格式 fixture 必须走首次升级；新版 Reader 不再通过读取消息隐式补迁会话选择。
+    // Old-format fixtures must go through the first upgrade; the new Reader no longer implicitly backfills session selection while reading messages.
     const db = new DatabaseSync(dbPath);
     try {
       db.exec(
@@ -1339,6 +1496,42 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       },
     };
   }
+
+  it.each(["desktop-continuous", "web-remote-replayable"] as const)(
+    "%s fork 回滚后的独立会话可通过真实协议冷订阅",
+    async (clientMode) => {
+      const dbPath = join(tempRoot, `fork-isolation-${clientMode}.db`);
+      const store = await createSqliteSessionStore({ dbPath, forkCommitFaultAt: "beforeCommit" });
+      try {
+        const results = await seedFailedForkRace(store, WORKSPACE_PATH);
+        expect(results[0]?.status).toBe("rejected");
+        expect(results.slice(1).map((result) => result.status)).toEqual(Array(4).fill("fulfilled"));
+      } finally {
+        store.close();
+      }
+      const { server, close } = await bootRealRestartedServer(dbPath);
+      try {
+        await requestResult(server, {
+          id: "fork-isolation",
+          method: V4_METHODS.conversationSubscribe,
+          params: { topic: conversationTopic(SURVIVOR_ID), connectionId: clientMode, clientMode },
+        });
+        const frame = conversationTopicFrameSchema.parse(
+          takeInitialFrameParams(server, "fork-isolation"),
+        );
+        if (frame.payload.kind !== "snapshot") throw new Error("Expected snapshot");
+        expect(
+          frame.payload.snapshot.rows.window.some(
+            (row) => row.kind === "userInput" && row.text === HISTORY_MARKER,
+          ),
+        ).toBe(true);
+      } finally {
+        await server.shutdown();
+        server.disposeProjections();
+        await close();
+      }
+    },
+  );
 
   it("cold rename/delete persist before acknowledgement and duplicate delete does not resume again", async () => {
     const dbPath = join(tempRoot, "metadata.db");
@@ -1883,8 +2076,9 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
         workspaceID: foreignWorkspaceIdentity,
       });
 
-      // 未被当前 identity 的 task index 证明归属的空 identity 会话不得迁移；
-      // 同一���据库里的本地路径订阅仍只能看到这条未归属记录。
+      // An empty-identity session not proven to belong by the current identity's task index must
+      // not be migrated; a local-path subscription in the same database still sees only this
+      // unattributed record.
       await requestResult(server, {
         id: "local-index-after-remote",
         method: V4_METHODS.conversationSubscribe,
@@ -1947,7 +2141,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
           topic: sessionsIndexTopic(WORKSPACE_PATH),
           connectionId: "conn-local-index",
           clientMode: "desktop-continuous",
-          // 防御旧/混合版本客户端误传：本地 topic 必须完全忽略远端迁移 allowlist。
+          // Defense against old/mixed-version clients passing it wrongly: local topics must fully ignore the remote migration allowlist.
           legacyTaskIds: [SESSION_ID],
         },
       });
@@ -2028,7 +2222,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
 
     const { server, store } = await bootRestartedServer(dbPath, []);
     try {
-      // 不先 resume 任一 child，直接模拟 App 重启后的首次列表订阅。
+      // Resume no child first; directly simulate the first list subscription after an App restart.
       await requestResult(server, {
         id: "cold-index-membership",
         method: V4_METHODS.conversationSubscribe,
@@ -2337,7 +2531,143 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
     "selection_side_chat",
     "nested_workflow_child",
   ] as const)("SAT30 %s", (childKind) => {
-    it.each(["valid", "foreign-parent", "missing-parent", "foreign-cwd", "foreign-child", "cycle"])(
+    it.each(["desktop-continuous", "web-remote-replayable"] as const)(
+      "SAT30: restarted %s child carries its directory source through cold materialization",
+      async (clientMode) => {
+        const dbPath = join(tempRoot, "directory-source.db");
+        await seedPersistedSession(dbPath, undefined, childKind);
+        const seed = await createSqliteSessionStore({ dbPath });
+        await seed.createSession({
+          id: PARENT_SESSION_ID,
+          workspaceID: REMOTE_WORKSPACE_IDENTITY,
+          taskType: "interactive",
+          projectID: "project" as ProjectId,
+          slug: "parent",
+          title: "parent",
+          directory: WORKSPACE_PATH,
+          path: WORKSPACE_PATH,
+          version: "test",
+        });
+        seed.close();
+        for (let lifetime = 0; lifetime < 2; lifetime += 1) {
+          const apps: ZCodeAppOptions[] = [];
+          const { server, store } = await bootRestartedServer(dbPath, [], undefined, apps);
+          const preferences: unknown[] = [];
+          const input = new PassThrough();
+          const output = new PassThrough();
+          const subscribed = Promise.withResolvers<void>();
+          const connection = new ZCodeProtocolNdjsonConnection({
+            input,
+            output,
+            handleMessage: (message) => server.handleMessage(message),
+          });
+          // Through the real NDJSON serial queue: a reverse request must be answered directly, not query the CLI for the parent chain again.
+          output.on("data", (chunk: Buffer) => {
+            const message = JSON.parse(chunk.toString()) as ZCodeProtocolMessage;
+            if (!("id" in message)) return;
+            if (
+              "method" in message &&
+              message.method === zcodeProtocolMethods.sessionRequestRuntimePreferences
+            ) {
+              const params = message.params as { sessionId: string; directorySessionId?: string };
+              preferences.push(params);
+              input.write(
+                JSON.stringify(
+                  params.directorySessionId === PARENT_SESSION_ID
+                    ? {
+                        id: message.id,
+                        result: {
+                          nativeSearchEnhancementsEnabled: false,
+                          memoryEnabled: false,
+                          additionalDirectories: [],
+                        },
+                      }
+                    : {
+                        id: message.id,
+                        error: { code: -32603, message: "project.remote-project-required" },
+                      },
+                ) + "\n",
+              );
+            } else if (message.id === "directory-subscribe") {
+              if ("error" in message) subscribed.reject(new Error(message.error.message));
+              else subscribed.resolve();
+            }
+          });
+          server.setNotificationSink((message) => connection.send(message));
+          connection.start();
+          try {
+            await requestResult(server, {
+              id: "directory-capability",
+              method: zcodeProtocolMethods.runtimeCapabilities,
+              params: {
+                hostCapabilities: {
+                  sessionDirectorySource: true,
+                  ...(lifetime === 1 ? { sessionWorkspaceRouting: true } : {}),
+                },
+              },
+            });
+            const metadata = await requestResult(server, {
+              id: "directory-metadata",
+              method: zcodeProtocolMethods.sessionList,
+              params: { workspace: remoteWorkspace, sessionIds: [SESSION_ID] },
+            });
+            expect(apps).toEqual([]);
+            if (lifetime === 1) {
+              await requestResult(server, {
+                id: "explicit-resume",
+                method: zcodeProtocolMethods.sessionResume,
+                params: { workspace: remoteWorkspace, sessionId: SESSION_ID },
+              });
+            }
+            input.write(
+              JSON.stringify({
+                id: "directory-subscribe",
+                method: V4_METHODS.conversationSubscribe,
+                params: { ...subscribeParams(SESSION_ID), clientMode, workspace: remoteWorkspace },
+              }) + "\n",
+            );
+            await subscribed.promise;
+            expect(metadata).toMatchObject({
+              sessions: [{ sessionId: SESSION_ID, directorySessionId: PARENT_SESSION_ID }],
+            });
+            expect(preferences).toEqual([
+              expect.objectContaining({
+                sessionId: SESSION_ID,
+                directorySessionId: PARENT_SESSION_ID,
+              }),
+            ]);
+            if (lifetime === 1) expect(preferences[0]).toHaveProperty("workspace", remoteWorkspace);
+            else expect(preferences[0]).not.toHaveProperty("workspace");
+
+            const frame = conversationTopicFrameSchema.parse(
+              takeInitialFrameParams(server, "directory-subscribe"),
+            );
+            if (frame.payload.kind !== "snapshot") throw new Error("Expected snapshot");
+            expect(
+              frame.payload.snapshot.rows.window.some(
+                (row) => row.kind === "assistantText" && row.text === "历史回答二",
+              ),
+            ).toBe(true);
+            expect(apps).toHaveLength(1);
+            expect(apps[0]?.sessionId).toBe(SESSION_ID);
+          } finally {
+            input.end();
+            await connection.waitForClose();
+            await server.shutdown();
+            store.close();
+          }
+        }
+      },
+    );
+    it.each([
+      "valid",
+      "foreign-parent",
+      "missing-parent",
+      "deleted-parent",
+      "foreign-cwd",
+      "foreign-child",
+      "cycle",
+    ])(
       "SAT30: explicit remote child metadata resolves persisted lineage (%s) without activation",
       async (scenario) => {
         const dbPath = join(tempRoot, "sessions.db");
@@ -2371,6 +2701,12 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
               version: "test",
             });
           }
+          await requestResult(server, {
+            id: "directory-capability",
+            method: zcodeProtocolMethods.runtimeCapabilities,
+            params: { hostCapabilities: { sessionDirectorySource: true } },
+          });
+          if (scenario === "deleted-parent") await store.softDeleteSession?.(PARENT_SESSION_ID, 2);
           const explicit = (await requestResult(server, {
             id: "legacy-child",
             method: zcodeProtocolMethods.sessionList,
@@ -2379,8 +2715,20 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
           expect(explicit.sessions.map((session) => session.sessionId)).toEqual(
             scenario === "valid" ? [SESSION_ID] : [],
           );
-          if (scenario === "valid")
-            expect(explicit.sessions[0]?.workspace).toEqual(remoteWorkspace);
+          if (scenario === "valid") {
+            expect(explicit.sessions[0]).toMatchObject({
+              workspace: remoteWorkspace,
+              directorySessionId: PARENT_SESSION_ID,
+            });
+          } else {
+            await expect(
+              requestResult(server, {
+                id: "invalid-resume",
+                method: zcodeProtocolMethods.sessionResume,
+                params: { workspace: remoteWorkspace, sessionId: SESSION_ID },
+              }),
+            ).rejects.toThrow();
+          }
           const normal = (await requestResult(server, {
             id: "normal-list",
             method: zcodeProtocolMethods.sessionList,
@@ -2396,6 +2744,56 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       },
     );
   });
+
+  it.each(["interactive", "fork", "workflow_parent"] as const)(
+    "SAT30: nested children stop directory inheritance at %s",
+    async (ownerKind) => {
+      const dbPath = join(tempRoot, "directory-owner.db");
+      await seedPersistedSession(dbPath, REMOTE_WORKSPACE_IDENTITY, "nested_workflow_child");
+      const { server, store } = await bootRestartedServer(dbPath, []);
+      try {
+        for (const [id, parentID, taskType] of [
+          [PARENT_SESSION_ID, "directory-owner", "workflow_child"],
+          ["directory-owner", "missing-upstream", ownerKind],
+        ] as const) {
+          await store.createSession({
+            id: id as SessionId,
+            parentID: parentID as SessionId,
+            taskType,
+            workspaceID: REMOTE_WORKSPACE_IDENTITY,
+            projectID: "project" as ProjectId,
+            slug: id,
+            title: id,
+            path: WORKSPACE_PATH,
+            directory: WORKSPACE_PATH,
+            version: "test",
+          });
+        }
+        const read = () =>
+          requestResult(server, {
+            id: "owner",
+            method: zcodeProtocolMethods.sessionList,
+            params: { workspace: remoteWorkspace, sessionIds: [SESSION_ID] },
+          }) as Promise<{ sessions: Array<{ directorySessionId?: string }> }>;
+        // When the old Host has not declared the capability, the strict legacy metadata schema must not receive new fields.
+        expect((await read()).sessions[0]).not.toHaveProperty("directorySessionId");
+        await requestResult(server, {
+          id: "enable",
+          method: zcodeProtocolMethods.runtimeCapabilities,
+          params: { hostCapabilities: { sessionDirectorySource: true } },
+        });
+        // A plain capability probe must not revoke a contract already confirmed in the same process.
+        await requestResult(server, {
+          id: "probe",
+          method: zcodeProtocolMethods.runtimeCapabilities,
+          params: {},
+        });
+        expect((await read()).sessions[0]?.directorySessionId).toBe("directory-owner");
+      } finally {
+        store.close();
+      }
+    },
+  );
 
   it("重启后冷订阅：transcript 合成重建历史 + 可交互 + sendText 再发一轮成功", async () => {
     const dbPath = join(tempRoot, "sessions.db");
@@ -2420,13 +2818,14 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
         throw new Error("Expected snapshot initial frame");
       }
       const snapshot = frame.payload.snapshot;
-      // Bug 根因：旧 cold hydration 固定合成 20 万，导致首帧在后续 live 事件纠正前
-      // 已触发满载/压缩。首个原始 snapshot 必须直接使用当前 registry 的 1M。
+      // Bug root cause: old cold hydration synthesized a fixed 200K, so the first frame already
+      // triggered full-load/compaction before later live events corrected it. The first raw
+      // snapshot must use the current registry's 1M directly.
       expect(snapshot.usage.contextWindow).toMatchObject({
         maxTokens: 1_000_000,
         usedTokens: 2,
       });
-      // 历史行齐全（transcript→event 合成路径：重启后 record 的内存事件日志为空）。
+      // All historical rows present (transcript→event synthesis path: the record's in-memory event log is empty after restart).
       const texts = snapshot.rows.window
         .filter((row) => row.kind === "userInput" || row.kind === "assistantText")
         .map((row) => ("text" in row ? row.text : ""));
@@ -2441,12 +2840,12 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
         toolCallId: "call_cold_read",
         toolName: "Read",
       });
-      // control 可交互：完成态 + 输入直发（composer 不该禁用）。
+      // Control is interactive: completed phase + direct input send (the composer must not be disabled).
       expect(snapshot.control.phase).toBe("completedSuccess");
       expect(snapshot.control.canStop).toBe(false);
       expect(snapshot.inputRouting.mode).toBe("startNow");
 
-      // 再发一轮：sendText 必须 accepted 并落到 runtime sendInput。
+      // One more turn: sendText must be accepted and land on runtime sendInput.
       const ack = commandAckSchema.parse(
         await requestResult(server, {
           id: 3,
@@ -2465,7 +2864,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(sentInputs).toEqual([{ text: "重启后的新问题" }]);
 
-      // sessions-index 联动：恢复后的会话进入 live 注册表，列表订阅可见。
+      // sessions-index linkage: the resumed session enters the live registry and is visible to list subscriptions.
       const indexResult = v4SessionsIndexSubscribeResultSchema.parse(
         await requestResult(server, {
           id: 4,
@@ -2486,7 +2885,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       );
       expect(resumedSummary?.parentSessionId).toBe(PARENT_SESSION_ID);
 
-      // 幂等：再次订阅同一会话不再重建 record（无重复恢复副作用），直接出帧。
+      // Idempotent: resubscribing the same session does not rebuild the record (no duplicate resume side effects) and emits frames directly.
       const resubscribed = v4ConversationSubscribeResultSchema.parse(
         await requestResult(server, {
           id: 5,
@@ -2573,7 +2972,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       failResume: true,
     };
     const apps: ZCodeAppOptions[] = [];
-    // 存储迁移已异步化；新增历史用例必须等待夹具就绪，不能解构尚未完成的 Promise。
+    // Storage migration is async now; new history cases must await fixture readiness and cannot destructure a pending Promise.
     const { server, store } = await bootRestartedServer(dbPath, [], probe, apps);
     const originalTime = (await store.getSession(SESSION_ID))?.time;
     const messages = vi.spyOn(store, "messages");
@@ -2673,18 +3072,20 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       );
       if (frame.payload.kind !== "snapshot") throw new Error("Expected snapshot frame");
 
-      // Bug 根因：旧 V4 resume 钩子会先构建一份无人消费的 legacy snapshot，
-      // usage seed 随后又构建第二份。readTodos 只属于 full snapshot，可作为稳定 seam
-      // 证明 V4 现在只做 activation + 自己的 durable hydration。
+      // Bug root cause: the old V4 resume hook first built a legacy snapshot nobody consumed,
+      // then the usage seed built a second one. readTodos belongs only to the full snapshot and
+      // serves as a stable seam proving V4 now does activation + its own durable hydration only.
       expect(probe).toEqual({ readTodosCalls: 0, resumeCalls: 1 });
-      // 性能根因：同一份父会话 messages 过去又被 hydration、subagent seed、usage seed
-      // 各读一次。正常冷订阅必须只在 activation 起点物化一次。
+      // Perf root cause: the same parent-session messages used to be read once each by
+      // hydration, subagent seed, and usage seed. A normal cold subscription must materialize
+      // exactly once at the activation start.
       expect(
         messagesSpy.mock.calls.filter(([input]) => input.sessionID === SESSION_ID),
       ).toHaveLength(1);
       expect(frame.payload.snapshot.usage.contextWindow).toMatchObject({
-        // 当前分支的模型 registry 是 context-window 权威；窄读只替换 usage 取数，
-        // 不能把冷 runtime projection 的旧 128k 分母重新覆盖到 V4 首帧。
+        // The current branch's model registry is the context-window authority; the narrow read
+        // only replaces usage figures and must not overwrite the V4 first frame with the cold
+        // runtime projection's old 128k denominator.
         maxTokens: 1_000_000,
         usedTokens: 2,
       });
@@ -2859,7 +3260,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
           topic: conversationTopic(SESSION_ID),
           connectionId: "conn-thought",
           clientMode: "desktop-continuous",
-          // 即便 host 的 legacy hint 迟到/过期，Agent 自己的 durable selection 仍优先。
+          // Even if the host's legacy hint arrives late or is stale, the Agent's own durable selection wins.
           resumeThoughtLevel: "medium",
         },
       });
@@ -2996,64 +3397,69 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
     }
   });
 
-  it("冷恢复期间内部 hook 事件不刷新 sessions-index 活动时间", async () => {
-    const dbPath = join(tempRoot, "sessions.db");
-    await seedPersistedSession(dbPath);
-    const seedStore = await createSqliteSessionStore({ dbPath });
-    const persistedActivityAt = (await seedStore.getSession(SESSION_ID))?.time.updated;
-    seedStore.close();
-    expect(persistedActivityAt).toBeTypeOf("number");
-    const resumeNow = persistedActivityAt! + 60_000;
-    const probe: ColdFakeAppProbe = {
-      readTodosCalls: 0,
-      resumeCalls: 0,
-      resumeEventTypes: [
-        SessionEventType.HookRunStarted,
-        SessionEventType.HookRunProgress,
-        SessionEventType.HookRunCompleted,
-        SessionEventType.HookRunFailed,
-        SessionEventType.HookRunBlocked,
-        SessionEventType.WorkspaceHookAdmissionUpdated,
-      ],
-    };
-    const { server, store } = await bootRestartedServer(dbPath, [], probe);
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(resumeNow);
-    try {
-      await requestResult(server, {
-        id: "subscribe-resume-activity",
-        method: V4_METHODS.conversationSubscribe,
-        params: {
-          topic: conversationTopic(SESSION_ID),
-          connectionId: "conn-resume-activity",
-          clientMode: "desktop-continuous",
-        },
-      });
-      takeInitialFrameParams(server, "subscribe-resume-activity");
+  it.each(["desktop-continuous", "web-remote-replayable"] as const)(
+    "%s 冷恢复期间内部 hook 和 MCP 准入事件不刷新活动时间",
+    async (clientMode) => {
+      const dbPath = join(tempRoot, "sessions.db");
+      await seedPersistedSession(dbPath);
+      const seedStore = await createSqliteSessionStore({ dbPath });
+      const persistedActivityAt = (await seedStore.getSession(SESSION_ID))?.time.updated;
+      seedStore.close();
+      expect(persistedActivityAt).toBeTypeOf("number");
+      const resumeNow = persistedActivityAt! + 60_000;
+      const probe: ColdFakeAppProbe = {
+        readTodosCalls: 0,
+        resumeCalls: 0,
+        resumeEventTypes: [
+          SessionEventType.HookRunStarted,
+          SessionEventType.HookRunProgress,
+          SessionEventType.HookRunCompleted,
+          SessionEventType.HookRunFailed,
+          SessionEventType.HookRunBlocked,
+          SessionEventType.WorkspaceHookAdmissionUpdated,
+          SessionEventType.WorkspaceMcpAdmissionUpdated,
+        ],
+      };
+      const { server, store } = await bootRestartedServer(dbPath, [], probe);
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(resumeNow);
+      try {
+        await requestResult(server, {
+          id: "subscribe-resume-activity",
+          method: V4_METHODS.conversationSubscribe,
+          params: {
+            topic: conversationTopic(SESSION_ID),
+            connectionId: "conn-resume-activity",
+            clientMode,
+          },
+        });
+        takeInitialFrameParams(server, "subscribe-resume-activity");
 
-      await requestResult(server, {
-        id: "index-resume-activity",
-        method: V4_METHODS.conversationSubscribe,
-        params: {
-          topic: sessionsIndexTopic(WORKSPACE_PATH),
-          connectionId: "conn-index-resume-activity",
-          clientMode: "desktop-continuous",
-        },
-      });
-      const frame = sessionsIndexTopicFrameSchema.parse(
-        takeInitialFrameParams(server, "index-resume-activity"),
-      );
-      if (frame.payload.kind !== "snapshot") {
-        throw new Error("Expected sessions-index snapshot frame");
+        await requestResult(server, {
+          id: "index-resume-activity",
+          method: V4_METHODS.conversationSubscribe,
+          params: {
+            topic: sessionsIndexTopic(WORKSPACE_PATH),
+            connectionId: "conn-index-resume-activity",
+            clientMode,
+          },
+        });
+        const frame = sessionsIndexTopicFrameSchema.parse(
+          takeInitialFrameParams(server, "index-resume-activity"),
+        );
+        if (frame.payload.kind !== "snapshot") {
+          throw new Error("Expected sessions-index snapshot frame");
+        }
+        expect(
+          frame.payload.snapshot.sessions.find((session) => session.sessionId === SESSION_ID)
+            ?.lastActivityAt,
+        ).toBe(persistedActivityAt);
+        expect((await store.getSession(SESSION_ID))?.time.updated).toBe(persistedActivityAt);
+      } finally {
+        nowSpy.mockRestore();
+        store.close();
       }
-      expect(
-        frame.payload.snapshot.sessions.find((session) => session.sessionId === SESSION_ID)
-          ?.lastActivityAt,
-      ).toBe(persistedActivityAt);
-    } finally {
-      nowSpy.mockRestore();
-      store.close();
-    }
-  });
+    },
+  );
 
   it.each(["desktop-continuous", "web-remote-replayable"] as const)(
     "%s 冷恢复后同步追加消息模式不刷新活动时间",
@@ -3080,7 +3486,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
         if (resumed.payload.kind !== "snapshot") throw new Error("Expected snapshot");
         let revision = resumed.payload.snapshot.revision;
 
-        // 打开历史会话会自动同步全局偏好；重复同步和反向切换都只改变配置。
+        // Opening a history session auto-syncs global preferences; repeated syncs and reverse switches only change config.
         for (const [index, mode] of (["guide", "guide", "queue"] as const).entries()) {
           const commandId = `followup-config-${index}`;
           expect(
@@ -3155,7 +3561,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
           topic: conversationTopic(SESSION_ID),
           connectionId: "conn-legacy-thought",
           clientMode: "desktop-continuous",
-          // 旧消息没有档位，桌面提示不能替用户补选。
+          // Old messages carry no thought level; the desktop hint must not pick one on the user's behalf.
           resumeThoughtLevel: "deep",
         },
       });

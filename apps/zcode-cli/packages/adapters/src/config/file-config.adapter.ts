@@ -24,6 +24,7 @@ import {
 interface FileConfigOptions {
   baseDir?: string;
   configFileName?: string;
+  scope?: "user" | "project";
 }
 
 export interface LoadedConfig {
@@ -99,7 +100,7 @@ export function loadFileConfig(filePath?: string, options: FileConfigOptions = {
       // Normalizing only in memory would leave old keys on disk forever, preventing later versions from safely removing the migration logic.
       persistPluginConfigMigration(resolvedPath, migrated);
     }
-    const result = parseConfigFileToRuntimePatchWithDiagnostics(parsed);
+    const result = parseConfigFileToRuntimePatchWithDiagnostics(parsed, options.scope);
 
     return {
       config: result.config,

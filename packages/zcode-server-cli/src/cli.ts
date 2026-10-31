@@ -39,7 +39,12 @@ import {
   removeRunContentsExceptLock,
 } from "./runtime/uninstallGuard.js";
 import { readPersistedStatus, readPersistedStatusDetailed } from "./runtime/statusSnapshot.js";
-import { waitForServerStopped } from "./runtime/shutdownWait.js";
+import {
+  isStoppedServerStatus,
+  readStatusForStopWithoutControl,
+  stopSupervisorAndWait,
+  waitForServerStopped,
+} from "./runtime/shutdownWait.js";
 export { readPersistedStatus } from "./runtime/statusSnapshot.js";
 import {
   hasLegacyServiceRegistration,
@@ -59,7 +64,7 @@ export interface ServerCliRuntimeOptions {
   bundledAgentWiring?: BundledAgentWiring | null;
   proxyStdioStreams?: { input: Readable; output: Writable };
   workspaceAliasRepo?: Pick<SourceServerWorkspaceAliasRepo, "retryFailedWorkspace">;
-  /** process/service manager 是更新协调器的外部边界；测试可注入受控实现。 */
+  /** The process/service manager is the external boundary of the update coordinator; tests can inject controlled implementations. */
   updateDaemonHandoff?: UpdateDaemonHandoff;
 }
 
@@ -115,8 +120,8 @@ export async function runServerCli(
     const parsed = parseServerCliArguments(argv);
     const command = parsed.argv[0];
     if (command === "version" || command === "--version") {
-      // Bug 原因：Server --version 过去落入 legacy delegate，实际输出取决于旁边的 Agent
-      // zcode.cjs，Desktop probe 无法稳定判断 Server compatibility。
+      // Bug cause: Server --version used to fall through to the legacy delegate, so its output depended on the adjacent Agent
+      // zcode.cjs, and the Desktop probe could not reliably judge Server compatibility.
       stdout(io, json ? { product: "zcode-server", version: ZCODE_VERSION } : ZCODE_VERSION);
       return 0;
     }
@@ -126,8 +131,8 @@ export async function runServerCli(
     if (!command) {
       return await (io.legacyDelegate?.(parsed.argv) ?? delegateLegacyCli(parsed.argv, io));
     }
-    // 同一物理 data-root 的符号链接别名会派生不同 control endpoint 和 OS service
-    // identity。生命周期命令统一在 IO 前收敛 root，避免第二个 Supervisor 绕过探测重复注册。
+    // Symlink aliases of the same physical data-root derive different control endpoints and OS service
+    // identities. Lifecycle commands canonicalize the root before any IO so a second Supervisor cannot bypass probing and register again.
     const layout =
       ["serve", "status", "stop", "restart", "update", "uninstall"].includes(command) ||
       proxyStdioRequested ||
@@ -164,10 +169,26 @@ export async function runServerCli(
     switch (command) {
       case "serve":
         return await runServe(parsed.argv.slice(1), io, json, layout, runtimeOptions);
+      case "stop":
+        // Bug cause: runControl does not receive argv, so `stop --wait` used to be treated as an ack-style stop and returned at once;
+        // the Desktop reported "stopped" while the remote still held the lock. --wait must go through the unified stop wait.
+        if (parsed.argv.includes("--wait")) return await runStopAndWait(io, layout);
+        return await runControl(command, io, json, {}, layout);
+      case "restart": {
+        // Same lifecycle command lock as update / uninstall: with several computers or terminals running concurrently, a restart must not stop a service
+        // that is being updated or taken over by uninstall. When the lock is held, fail immediately (no waiting, no stopping the running service), reusing uninstall's conflict output.
+        const restartLock = await acquireLifecycleCommandLock(
+          layout,
+          "A ZCode Server update is already running",
+        );
+        try {
+          return await runRestart(io, json, layout, runtimeOptions);
+        } finally {
+          await restartLock.release();
+        }
+      }
       case "status":
       case "running-tasks":
-      case "stop":
-      case "restart":
         return await runControl(command, io, json, {}, layout);
       case "update": {
         const updateLock = await acquireLifecycleCommandLock(
@@ -270,8 +291,8 @@ async function runServe(
     if (startupMode === "service") {
       const { isServiceManagerAvailable } = await import("./platform/serviceManager.js");
       if (!(await isServiceManagerAvailable(platform))) {
-        // Bug 原因：SSH 过去把 transport 类型等同于“必有 systemd --user/launchd”。
-        // 容器、最小系统和无 user bus 的非交互会话因此在安装完成后必然连接失败。
+        // Bug cause: SSH used to treat the transport type as "systemd --user/launchd is always present".
+        // Containers, minimal systems and non-interactive sessions without a user bus therefore always failed to connect after installation.
         startupMode = "fallback";
       }
     }
@@ -279,11 +300,12 @@ async function runServe(
       startupMode === "service" && (await hasLegacyServiceRegistration(layout));
     const existing = await readControlStatus(layout, 500);
     if (existing && (existing.state === "ready" || existing.state === "starting")) {
-      if ((existing.serviceRegistered && !legacyIdentityMigration) || startupMode === "fallback") {
-        // Bug cause: reusing a Supervisor that is still "starting" used to return exit 0 with
-        // port:null immediately; the Desktop only accepts a success result that carries a port,
-        // so it reported "did not report a valid ingress port" while the daemon went ready
-        // normally right afterwards. Wait for control to report ready before returning.
+      // Bug cause: fallback can now be the normal result of a systemd load failure. The old logic stopped an idle fallback
+      // before registering again when the service manager was available; reconnects then failed to register again and relaunched, and with running tasks it errored outright and blocked the connection.
+      // A live daemon is always reused; only an old identity service under the same root still needs migration.
+      if (!legacyIdentityMigration) {
+        // Bug cause: reusing a starting Supervisor used to return exit 0 with port:null immediately; the Desktop only accepts a success result that carries a port,
+        // so it reported "did not report a valid ingress port" while the daemon went ready normally right afterwards.
         const reused = existing.state === "ready" ? existing : await waitForControlReady(layout);
         if (json) stdout(io, reused);
         else
@@ -292,25 +314,23 @@ async function runServe(
       }
       if (existing.runningTaskCount > 0) {
         throw new Error(
-          `Cannot replace fallback daemon while ${existing.runningTaskCount} task(s) are running; stop the server first`,
+          `Cannot replace legacy service daemon while ${existing.runningTaskCount} task(s) are running; stop the server first`,
         );
       }
-      // 旧 fallback 会持有 data-root lock，直接注册并启动 OS service 只能
-      // 拉起一个立即锁冲突的 Supervisor。空闲时先收口 fallback，再重试真实注册。
-      await stopExistingSupervisor(layout, "Cannot verify fallback Server status before migration");
+      // An old-identity daemon holds the data-root lock, so registering and starting a new identity directly only
+      // launches a Supervisor that immediately conflicts on the lock. When idle, shut the old daemon down first, then register the new identity.
+      await stopSupervisorAndWait(layout, "legacy service migration");
     } else if (existing?.state === "stop-failed" && existing.pid === null) {
-      // Bug 原因：stop-failed 的 Supervisor 观察到迟到的 Core 终态后仍持有锁和 control socket，
-      // 直接启动只会让新 Supervisor 锁冲突，设备在手工 stop 前无法恢复。已无存活 Core 时由
-      // 原 owner 按 stop 契约收口；pid 仍存在则不发 stop，继续由锁 fail-closed。
-      await stopExistingSupervisor(
-        layout,
-        "Cannot verify stop-failed Server status before restart",
-      );
+      // Bug cause: a stop-failed Supervisor still holds the lock and control socket after observing a late Core terminal state;
+      // starting directly only makes the new Supervisor conflict on the lock, and the device cannot recover before a manual stop. When no live Core remains,
+      // the original owner closes out per the stop contract; if the pid still exists, no stop is sent and the lock keeps failing closed.
+      await stopSupervisorAndWait(layout, "stop-failed restart");
     }
     const baselineUpdatedAt = (await readPersistedStatus(layout))?.updatedAt ?? 0;
     let serviceStarted = false;
     let serviceFallbackReason: string | undefined;
     let childEarlyExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let reapForkedSupervisor: (() => Promise<void>) | undefined;
     if (startupMode === "service") {
       const {
         createDaemonServiceDescriptor,
@@ -327,18 +347,15 @@ async function runServe(
       const descriptorPath = serviceDescriptorPath(layout, descriptor);
       await writeFile(descriptorPath, descriptor.content, "utf8");
       await unregisterLegacyServiceForRoot(layout);
-      // Bug cause: the capability probe only proves the user manager's bus is reachable. enable is
-      // run by the manager reading the unit with its own group list and mount view; groups joined
-      // after the manager started, or the manager's private /tmp, can hide the server root from
-      // it. The old rule returned this failure directly, so every SSH reconnect failed even though
-      // a detached fallback on the same root would run fine. On a load-stage failure no unit has
-      // been started in this run, so fall back detached and carry the reason; on a start-stage
-      // failure the unit is already enabled, and unmarked errors (launchd / Task Scheduler) cannot
-      // confirm the failure stage either, so they are still returned unchanged.
       try {
         await registerService(descriptor, descriptorPath);
         serviceStarted = true;
       } catch (error) {
+        // Bug cause: the capability probe only proves that the user manager's bus is reachable. enable is run by the manager, which reads the unit with its own group list and
+        // mount view; groups joined after the manager started, or the manager's private /tmp, can hide the server root from it. The old rule returned this failure directly,
+        // so every SSH reconnect failed even though a detached fallback on the same root would run fine. On a load-stage failure no unit has been started in this run, so
+        // fall back to detached mode and carry the reason; on a start-stage failure the unit is already enabled. Unmarked errors (launchd / Task Scheduler) also cannot
+        // confirm the stage, so they are still returned unchanged.
         if (!isServiceLoadFailure(error)) throw error;
         serviceFallbackReason = (error as Error).message.trim();
         if (!json)
@@ -346,8 +363,8 @@ async function runServe(
       }
     }
     if (!serviceStarted) {
-      // Bug 原因：archive bootstrap 协调更新时 import.meta.url 指向临时解压目录；handoff
-      // 后该目录会被清理。fallback 必须复用本次目标 release 的真实 argv 入口。
+      // Bug cause: when archive bootstrap coordinates an update, import.meta.url points at the temporary extraction directory, which is cleaned up after the
+      // handoff. The fallback must reuse the real argv entry of this update's target release.
       const supervisorEntry = process.argv[1] ?? fileURLToPath(import.meta.url);
       const child = fork(
         supervisorEntry,
@@ -363,29 +380,45 @@ async function runServe(
         },
       );
       child.unref();
-      // Supervisor is an independent daemon and does not need the CLI↔Supervisor IPC channel to remain open; closing it
+      // The Supervisor is an independent daemon and does not need to keep the CLI<->Supervisor IPC channel; closing it
       // lets the one-shot `serve --daemon` CLI actually exit after returning ready.
       child.disconnect();
-      // The child Supervisor starts detached with stdio ignored and exits silently on startup failures such as lock conflicts;
-      // record early-exit information so the wait loop reports the actual cause immediately.
-      child.once("exit", (code, signal) => {
-        childEarlyExit = { code, signal };
+      // The child Supervisor starts detached with stdio ignored, so on a lock conflict or other startup failure it exits silently;
+      // recording the early-exit info lets the wait loop report the real cause immediately.
+      const childExited = new Promise<void>((resolve) => {
+        child.once("exit", (code, signal) => {
+          childEarlyExit = { code, signal };
+          resolve();
+        });
       });
+      reapForkedSupervisor = async () => {
+        // An unref'd child no longer keeps the event loop alive; without ref() again the CLI would exit silently before the exit event arrives.
+        child.ref();
+        child.kill("SIGKILL");
+        await childExited;
+      };
     }
-    const started = await waitForPersistedStatus(
-      layout,
-      "ready",
-      baselineUpdatedAt,
-      () => {
-        if (childEarlyExit) {
-          throw new Error(
-            `ZCode Server daemon exited before ready (code=${childEarlyExit.code ?? "null"} signal=${childEarlyExit.signal ?? "none"}); check ${layout.statusFile} for details`,
-          );
-        }
-      },
-      serviceStarted,
-    );
-    // The fallback reason belongs to this startup result only; it is not written into status.json.
+    let started: ServerStatus;
+    try {
+      started = await waitForPersistedStatus(
+        layout,
+        "ready",
+        baselineUpdatedAt,
+        () =>
+          childEarlyExit
+            ? `ZCode Server daemon exited before ready (code=${childEarlyExit.code ?? "null"} signal=${childEarlyExit.signal ?? "none"})`
+            : undefined,
+        serviceStarted,
+      );
+    } catch (error) {
+      // Bug cause: after the CLI gave up waiting, a slow cold-started fallback Supervisor still took the lock and became ready; the caller got a failure
+      // that contradicted the remote facts, and an update rollback's stop could fail to reach it (it had not yet listened on control) and then raced for the lock.
+      // The fallback Supervisor is forked by this CLI, which is its only owner: force-kill it and wait for exit before reporting failure
+      // (Core disconnects over IPC and closes itself out; a leftover lock is taken over by the next owner as stale). The OS service is held by the service manager and is not stopped here.
+      await reapForkedSupervisor?.();
+      throw error;
+    }
+    // The fallback reason belongs only to this startup result and is not written into status.json.
     if (json) stdout(io, serviceFallbackReason ? { ...started, serviceFallbackReason } : started);
     else stdout(io, `ZCode Server ${started.state} at ${started.host ?? ""}:${started.port ?? ""}`);
     process.stdin.pause();
@@ -443,21 +476,21 @@ async function runServe(
       foregroundStopped?.();
       if (supervisorProcess) process.disconnect?.();
     },
-    // The server root was deleted or taken over while running: exit non-zero on "missing" so the
-    // service manager restarts a fresh owner; exit 0 on "taken" because the new owner already runs.
-    onServerRootLost: (loss) => {
-      process.exit(loss === "missing" ? 1 : 0);
-    },
+    // After losing the server root, the control server still listens, so the process cannot end by returning; closing it would delete the new owner's socket by path.
+    // A missing lock file is an abnormal exit: the OS service restarts the real owner per Restart=on-failure / KeepAlive.
+    // Bug cause: exiting with 1 also happened when the lock had been taken over by another owner. Two hosts sharing one home each judged the other's live lock as stale,
+    // and their service managers restarted in turn, taking over from each other and stopping the Core every round. The new owner is already running, so exit 0 and the service manager does not restart.
+    onServerRootLost: (loss) => process.exit(loss === "missing" ? 1 : 0),
   });
   await supervisor.start();
   let status: ServerStatus;
   try {
     status = await waitForSupervisorReady(supervisor);
   } catch (error) {
-    // When Core enters a crash loop, do not throw directly to the top-level CLI handler: the control
-    // socket still holds the event loop and leaves the foreground process hung. If the user presses Ctrl+C (before a signal handler is registered,
-    // so default force-kill behavior runs), the lock file and socket remain, and later serve commands report "already running" forever.
-    // On startup failure, stop Supervisor and close the lock/socket before rethrowing the error.
+    // When Core enters crash-loop, the error must not be thrown straight to the CLI top-level handler: the control
+    // socket still holds the event loop, leaving the foreground process hung. If the user presses Ctrl+C (the signal handler is not yet registered at this point,
+    // so the default force-kill runs), the lock file and socket remain and later serve commands report "already running" forever.
+    // On startup failure, stop the Supervisor first to close out the lock and socket, then rethrow the error.
     await supervisor.stop("startup-failed").catch(() => undefined);
     throw error;
   }
@@ -476,25 +509,12 @@ async function runServe(
   return 0;
 }
 
-// apply-update 服务端最坏路径包含旧 Core 停止、新 Core ready 等待、新 Core 回滚停止、
-// 旧 Core ready 等待以及旧 Core ready 超时后的再次停止，即三次停止预算加两次 ready 预算，
-// 另需为 current/pending 文件操作和 IPC 调度留出余量。客户端超时必须覆盖完整回滚路径，
-// 否则 CLI 会在 update 仍在后台执行时误报超时（R2-CLI-08）。
+// The worst-case path of apply-update on the server includes: stopping the old Core, waiting for the new Core to become ready, stopping the new Core on rollback,
+// waiting for the old Core to become ready, and stopping again after the old Core's ready timeout: three stop budgets plus two ready budgets,
+// plus headroom for current/pending file operations and IPC scheduling. The client timeout must cover the complete rollback path,
+// otherwise the CLI reports a timeout while the update is still running in the background (R2-CLI-08).
 export const APPLY_UPDATE_TIMEOUT_MS =
   3 * (CORE_STOP_GRACE_TIMEOUT_MS + CORE_KILL_TIMEOUT_MS) + 2 * CORE_READY_TIMEOUT_MS + 30_000;
-
-async function stopExistingSupervisor(
-  layout: ReturnType<typeof resolveServerLayout>,
-  unverifiedStatusMessage: string,
-): Promise<void> {
-  const persistedBeforeStop = await readPersistedStatusDetailed(layout);
-  if (persistedBeforeStop.state === "invalid" || persistedBeforeStop.state === "unreadable") {
-    throw new Error(unverifiedStatusMessage);
-  }
-  const stopBaselineUpdatedAt = persistedBeforeStop.status?.updatedAt ?? 0;
-  await requestControl(layout.controlEndpoint, { command: "stop" });
-  await waitForServerStopped(layout, stopBaselineUpdatedAt, true);
-}
 
 async function requestApplyUpdate(
   layout: ReturnType<typeof resolveServerLayout>,
@@ -526,21 +546,11 @@ async function runControl(
     if (command === "status") {
       const persisted = await readPersistedStatusDetailed(layout);
       result = persisted.status ?? createStoppedServerStatus(ZCODE_VERSION);
-    } else if (command === "stop" && isControlEndpointUnavailable(error)) {
-      const persisted = await readPersistedStatusDetailed(layout);
-      if (persisted.state === "invalid" || persisted.state === "unreadable") {
-        throw error;
-      }
-      if (
-        persisted.status &&
-        persisted.status.state !== "stopped" &&
-        persisted.status.state !== "uninstalled"
-      ) {
-        throw error;
-      }
-      // During Supervisor shutdown, the control socket closes before the CLI persists the stopped state.
-      // A repeated stop during this window must not fail just because the socket is gone.
-      result = persisted.status ?? createStoppedServerStatus(ZCODE_VERSION);
+    } else if (command === "stop") {
+      // A missing snapshot means the daemon never wrote its status; report it as stopped.
+      result =
+        (await readStatusForStopWithoutControl(layout, error)) ??
+        createStoppedServerStatus(ZCODE_VERSION);
     } else {
       throw error;
     }
@@ -550,9 +560,46 @@ async function runControl(
   return 0;
 }
 
-function isControlEndpointUnavailable(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false;
-  return error.code === "ENOENT" || error.code === "ECONNREFUSED" || error.code === "EINVAL";
+/**
+ * `stop --wait`: outputs the final ServerStatus only after the data-root lock is released and the status is a stopped newer than the baseline (R2 §8.1).
+ * When the daemon is not running (lock missing or stale), succeeds immediately; stop-failed and control timeouts fail with public error codes.
+ */
+async function runStopAndWait(
+  io: CliIO,
+  layout: ReturnType<typeof resolveServerLayout>,
+): Promise<number> {
+  await stopSupervisorAndWait(layout, "stop");
+  const persisted = await readPersistedStatusDetailed(layout);
+  const status = persisted.status;
+  // After the Supervisor has died, the snapshot may still show the ready state from before its death; the output only states the final fact "stopped".
+  stdout(
+    io,
+    isStoppedServerStatus(status)
+      ? status
+      : createStoppedServerStatus(ZCODE_VERSION, {
+          serviceRegistered: status?.serviceRegistered ?? false,
+        }),
+  );
+  return 0;
+}
+
+/**
+ * Full process-tree restart (R2 §8.1), coordinated by the CLI that issued the command rather than self-bootstrapped inside the lock-holding Supervisor.
+ * Bug cause: the old `restart` only swapped the Core inside the Supervisor through control, so the Supervisor and its crash budget stayed unchanged;
+ * when the daemon was not running, or the Supervisor was dead but its socket remained, it errored outright, and `crash-loop-stopped` could not recover itself.
+ * Now it first drains the existing Supervisor with the unified stop wait (a missing or stale lock counts as not running and skips the stop; a new
+ * `stop-failed` fails with a public code and starts no new instance), then starts it with `serve --daemon` and waits for ready. This process is run from the
+ * current release by the stable launcher, and the startup mode follows the same environment decision (OS service / detached fallback).
+ *
+ */
+async function runRestart(
+  io: CliIO,
+  json: boolean,
+  layout: ReturnType<typeof resolveServerLayout>,
+  runtimeOptions: ServerCliRuntimeOptions,
+): Promise<number> {
+  await stopSupervisorAndWait(layout, "restart");
+  return await runServe(["--daemon"], io, json, layout, runtimeOptions);
 }
 
 async function runUninstall(
@@ -565,14 +612,14 @@ async function runUninstall(
   if (first !== "DELETE") throw new Error("Uninstall cancelled");
   const second = await (io.confirm?.("Type DELETE again to confirm: ") ?? Promise.resolve(""));
   if (second !== "DELETE") throw new Error("Uninstall cancelled");
-  // Do not use the same --server-root as both the allowlist root and deletion target: containment always succeeds,
-  // allowing uninstall to recursively delete any absolute directory. Verify installation ownership before stopping the service.
+  // The same --server-root must not be used both as the allowlist root and as the deletion target: containment
+  // always holds, so any absolute directory could be recursively deleted by the uninstall flow. Install ownership must be verified before the service is stopped.
   const ownership = await validateServerInstallOwnership(layout);
   try {
     await runControl("confirm-uninstall", io, json, { confirmation: "DELETE" }, layout);
   } catch (error: unknown) {
     const persisted = await readPersistedStatusDetailed(layout);
-    if (persisted.status?.state === "stopped" || persisted.status?.state === "uninstalled")
+    if (isStoppedServerStatus(persisted.status))
       return await finishUninstall(io, json, layout, ownership);
     const lockInspection = await new DataRootLock(layout.lockFile).inspect();
     if (lockInspection.state === "active") {
@@ -599,8 +646,8 @@ async function finishUninstall(
 ): Promise<number> {
   await unregisterInstalledService(layout);
   const uninstallLock = await acquireUninstallLock(layout);
-  // 根因：删除 install.json 会在数据仍保留时生成新设备身份，App 因此归档原连接并拆出新设备。
-  // 正式卸载只移除运行资产；身份随用户数据保留，卸载状态仍由 uninstalled.json 保护。
+  // Root cause: deleting install.json creates a new device identity while the data is still retained, so the App archives the original connection and splits off a new device.
+  // Formal uninstall removes only runtime assets; the identity is kept with user data, and the uninstall state stays protected by uninstalled.json.
   const uninstallEntries = [
     "releases",
     "run",
@@ -609,6 +656,7 @@ async function finishUninstall(
     "service",
     "current.json",
     "pending.json",
+    "downgrade.json",
     "uninstalled.json",
     "update-transaction.json",
     "node",
@@ -635,9 +683,9 @@ async function finishUninstall(
     const preservedPaths = (await readdir(ownership.canonicalServerRoot))
       .filter((entry) => entry !== "run")
       .sort();
-    // The server root may be explicitly chosen by the user, so do not recursively delete unknown content. Uninstall cleans only the ZCode
-    // allowlist above and records retained items in the result for audit. Persist the marker before releasing the lock,
-    // so a concurrent Supervisor also fails closed during the final window when the run directory is being deleted.
+    // A server root the user explicitly specified must not be recursively deleted with unknown contents. Uninstall cleans up only the ZCode allowlist above,
+    // and writes the retained items into the result for the user to audit. The marker is written to disk first, then the lock is released,
+    // so a concurrent Supervisor also fails closed in the final window while the run directory is being deleted.
     await writeFile(
       layout.uninstalledFile,
       `${JSON.stringify({ uninstalled: true, uninstalledAt: Date.now(), version: ZCODE_VERSION, preservedPaths }, null, 2)}\n`,
@@ -654,20 +702,16 @@ async function finishUninstall(
   }
 }
 
-// Bug cause: when the Core fails to start, the Supervisor has already written the reason into
-// status, but the CLI wait failure only reported "Timed out waiting for Server ready", so the
-// 3.16.2 remote timeout ticket could not tell why the Core never came up. On failure append the
-// state and lastExitReason written during this startup; a stale pre-start snapshot must not be
-// presented as this startup's cause.
+// Bug cause: when Core startup failed, the Supervisor had already written the reason into status, but the CLI wait failure only reported
+// "Timed out waiting for Server ready", so the 3.16.2 remote-timeout ticket could not tell why Core never came up.
+// On failure, append the state and lastExitReason written during this startup; a stale pre-startup snapshot must not pass as this startup's cause.
 function describeStartupStatus(status: ServerStatus | null, minUpdatedAt: number): string {
   if (!status || status.updatedAt <= minUpdatedAt) return "";
   return ` (state=${status.state}${status.lastExitReason ? `, last exit: ${status.lastExitReason}` : ""})`;
 }
 
-// The appended Core reason may contain text such as permission denied, ECONNREFUSED or timeout;
-// when the Desktop guesses the category from that text it would switch UI titles because of it.
-// Carry the category of the original first sentence as an explicit code (matching what the Desktop
-// inferred before the appended detail existed); the detail is display-only.
+// The appended Core reason may contain text such as permission denied, ECONNREFUSED or timeout; when the Desktop guesses the category from that text,
+// the UI title would change because of it. The category of the original first sentence is carried explicitly as a code (consistent with the Desktop's judgment before the detail was appended); the detail is for display only.
 function startupWaitError(
   message: string,
   code: "remote-connection-timeout" | "remote-connection-unknown",
@@ -679,7 +723,8 @@ async function waitForPersistedStatus(
   layout: ReturnType<typeof resolveServerLayout>,
   expectedState: "ready" | "stopped",
   minUpdatedAt = 0,
-  assertStillWaiting?: () => void,
+  /** A non-empty return value means the awaited operation has failed; the value is the first sentence of the error, and the status detail is appended by this function. */
+  readEarlyFailure?: () => string | undefined,
   expectedServiceRegistered?: boolean,
 ): Promise<ServerStatus> {
   const deadline = Date.now() + SERVER_READY_WAIT_TIMEOUT_MS;
@@ -694,7 +739,18 @@ async function waitForPersistedStatus(
     )
       return status;
     lastStatus = status ?? lastStatus;
-    assertStillWaiting?.();
+    const earlyFailure = readEarlyFailure?.();
+    if (earlyFailure) {
+      // The final status the Supervisor wrote before exiting may land after this round's read, so read it again before reporting.
+      const detail = describeStartupStatus(
+        (await readPersistedStatus(layout)) ?? lastStatus,
+        minUpdatedAt,
+      );
+      throw startupWaitError(
+        `${earlyFailure}${detail || `; check ${layout.statusFile} for details`}`,
+        "remote-connection-unknown",
+      );
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
   throw startupWaitError(
@@ -703,9 +759,8 @@ async function waitForPersistedStatus(
   );
 }
 
-// The reused Supervisor is already running and control is its live state; status.json may hold a
-// ready snapshot left by a previous Supervisor with a now-stale port, so it cannot serve as the
-// readiness basis when reusing.
+// The reused Supervisor is already running and control is its live state; status.json may be a ready snapshot left by an old Supervisor
+// (its port is no longer valid), and cannot serve as the readiness basis when reusing.
 async function waitForControlReady(
   layout: ReturnType<typeof resolveServerLayout>,
 ): Promise<ServerStatus> {
@@ -717,8 +772,7 @@ async function waitForControlReady(
     lastStatus = status ?? lastStatus;
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
-  // The reuse target is a running Supervisor and control returns its current state, so no
-  // startup-baseline filtering is needed for the appended detail.
+  // The reused object is the running Supervisor and control returns its current state, so no startup-baseline filtering is needed.
   throw startupWaitError(
     `Timed out waiting for Server ready${describeStartupStatus(lastStatus, 0)}`,
     "remote-connection-timeout",

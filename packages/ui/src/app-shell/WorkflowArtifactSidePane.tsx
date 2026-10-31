@@ -16,7 +16,8 @@ import {
 import {
   ArtifactOpenAsFileButton,
   useCanOpenArtifactAsFile,
-} from "@/app-shell/workflow-artifacts/ArtifactOpenAsFileButton.js";
+  useCanSaveArtifactAsFile,
+} from "@/file-menu/index.js";
 import { WorkflowArtifactBody } from "@/app-shell/workflow-artifacts/WorkflowArtifactBody.js";
 import { artifactPresetFieldPaths } from "@/app-shell/workflow-artifacts/presets/spec.js";
 import { useWorkflowRunArtifactBytes } from "@/hooks/useWorkflowRunArtifactBytes.js";
@@ -203,7 +204,10 @@ function WorkflowArtifactView({
 
   // Keep one file control in the header: when “Open as file” is available, put “Show in workspace” in its menu; otherwise show it as a separate button.
   const canOpenAsFile = useCanOpenArtifactAsFile();
-  const openAsFile = !preset && canOpenAsFile;
+  const canSaveAsFile = useCanSaveArtifactAsFile();
+  const openAsFile = !preset && canSaveAsFile;
+  // Web has only a save button and no native open menu; the original reveal entry must not be hidden together with the save capability.
+  const revealInMenu = !preset && canOpenAsFile;
   const reveal =
     localSourcePath !== undefined && onRevealFileInTree !== undefined
       ? () => onRevealFileInTree(localSourcePath)
@@ -264,7 +268,7 @@ function WorkflowArtifactView({
                 {...(reveal === undefined ? {} : { onReveal: reveal })}
               />
             ) : null}
-            {!openAsFile && reveal !== undefined ? (
+            {!revealInMenu && reveal !== undefined ? (
               <Button
                 data-testid="workflow-artifact-reveal"
                 onClick={reveal}

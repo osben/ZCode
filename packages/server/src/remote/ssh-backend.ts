@@ -19,7 +19,10 @@ import {
   normalizeRemotePlatform,
   resolveRemotePlatform,
 } from "@zcode/server/remote/detectEnv.js";
-import { createCloseEventController } from "@zcode/server/remote/closeEvent.js";
+import {
+  createCloseEventController,
+  resolveRemoteExitCode,
+} from "@zcode/server/remote/closeEvent.js";
 import {
   buildPosixShellExecCommand,
   quotePosixShellArg,
@@ -127,6 +130,7 @@ export class SSHBackend implements IRemoteBackend {
       // layers again or trigger an uncaught exception.
       return;
     }
+    // Read connected first: reportDisconnect clears it, and a client-timeout after ready only comes from keepalive.
     const normalizedError = normalizeSSHConnectError(error, {
       established: this.connected,
       additionalVerificationPrompted: this.additionalVerificationPrompted,
@@ -297,8 +301,8 @@ export class SSHBackend implements IRemoteBackend {
 
   async detect(): Promise<RemoteEnvironment> {
     await this.ensureConnected();
-    // Bug 原因：冷启动曾为 platform、arch、kernel ostype 串行创建三个 SSH exec channel，
-    // 仅环境探测就占掉大部分 10 秒恢复预算。保持一个 POSIX channel 可同时避免首次多 channel 竞态。
+    // Cause: a cold start used to open three SSH exec channels in series for platform, arch and kernel ostype,
+    // and environment probing alone consumed most of the 10-second recovery budget. Keeping one POSIX channel also avoids the first-use multi-channel race.
     const output = await this.execSimple(
       "printf 'platform='; uname -s; printf 'arch='; uname -m; printf 'kernel='; " +
         "if [ -r /proc/sys/kernel/ostype ]; then cat /proc/sys/kernel/ostype; else printf '\\n'; fi",
@@ -391,16 +395,18 @@ export class SSHBackend implements IRemoteBackend {
           if (code !== 0) {
             console.warn(`[ssh] exec channel failed: code=${code}`);
           }
-          onClose.fire(code ?? 0);
+          onClose.fire(code);
         };
 
         // ssh2 channels may fire 'exit' before 'close', or sometimes
         // only one of them. Listen to both to be safe.
-        channel.on("exit", (code: number | null) => {
-          fireOnce(code ?? 0);
+        // ssh2 passes a null code when the exit came from a signal, and close carries no arguments when no exit status arrived.
+        // Neither case is a success; see resolveRemoteExitCode.
+        channel.on("exit", (code: number | null, signal?: string) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
-        channel.on("close", () => {
-          fireOnce(0);
+        channel.on("close", (code?: number | null, signal?: string) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
 
         resolve({
@@ -477,12 +483,11 @@ export class SSHBackend implements IRemoteBackend {
         // finish in the exit handler or later data may be lost, occasionally leaving platform/arch
         // detection empty. Finish only on close, preferring the actual exit code recorded by exit to
         // avoid misclassifying the command as successful.
-        channel.on("exit", (code: number | null) => {
-          exitCode = code ?? 0;
+        channel.on("exit", (code: number | null, signal?: string) => {
+          exitCode = resolveRemoteExitCode(code, signal);
         });
-        channel.on("close", (code: number | null) => {
-          const resolvedCode = exitCode ?? code ?? 0;
-          finish(resolvedCode);
+        channel.on("close", (code?: number | null, signal?: string) => {
+          finish(exitCode ?? resolveRemoteExitCode(code, signal));
         });
       });
     });

@@ -85,7 +85,7 @@ The container entry is `pnpm test:e2e:container`, driven by `scripts/test-deskto
 
 ```bash
 E2E_NETWORK_MODE=replay-isolated \
-E2E_SPEC=./test/e2e/conversation-session/manual-review/pending/conversation-session-compact.test.ts \
+E2E_SPEC=./test/e2e/conversation-session/conversation-session-compact.test.ts \
 pnpm test:e2e:container
 ```
 
@@ -104,7 +104,7 @@ Recording example:
 ```bash
 E2E_NETWORK_MODE=capture \
 E2E_PROVIDER_API_KEY=sk-... \
-E2E_SPEC=./test/e2e/conversation-session/manual-review/pending/conversation-session-compact.test.ts \
+E2E_SPEC=./test/e2e/conversation-session/conversation-session-compact.test.ts \
 pnpm test:e2e:container
 ```
 

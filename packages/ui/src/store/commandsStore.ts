@@ -12,8 +12,11 @@ import type { ICommandsService } from "@zcode/services";
 interface CommandsStoreState {
   workspacePath: string | null;
   workspaceIdentity: string | null;
+  /** cacheAuthorityKey of a remote "User" (`source-settings:<id>`); null for project and local machine. */
+  authorityKey: string | null;
   loadedWorkspacePath: string | null;
   loadedWorkspaceIdentity: string | null;
+  loadedAuthorityKey: string | null;
   commands: ZCodeCommand[];
   userCommands: UserCommand[];
   pluginCommands: ZCodeCommand[];
@@ -25,6 +28,7 @@ interface CommandsStoreState {
     workspacePath: string | undefined,
     commandsService: ICommandsService,
     workspaceIdentity?: string,
+    authorityKey?: string,
   ) => Promise<void>;
   refresh: (commandsService: ICommandsService) => Promise<void>;
   createCommand: (
@@ -49,23 +53,33 @@ const inflightLists = new Map<string, Promise<void>>();
 
 type StoreGet = () => CommandsStoreState;
 
-function listKey(workspacePath: string | undefined, workspaceIdentity?: string): string {
-  return workspaceIdentity?.trim() || workspacePath || "__no_workspace__";
+// Bug cause: the request key only looked at identity / path. Two remote "Users" with the same home have no identity
+// and identical paths, so B reused A's inflight request, A's late result passed B's checks, B displayed A's commands,
+// and toggles were submitted to A's commands through B's service.
+// Fix: authority joined the request key, the late-result check, and the loaded projection; the whole Scope target group is compared.
+function listKey(
+  workspacePath: string | undefined,
+  workspaceIdentity?: string,
+  authorityKey?: string | null,
+): string {
+  return `${authorityKey?.trim() || "workspace"}\0${workspaceIdentity?.trim() || workspacePath || "__no_workspace__"}`;
 }
 
 // The store is a singleton, and the Scope menu can switch targets on the same page. Before writing any async result, compare it with
 // the target key from when the request started; otherwise, a slow target's list can overwrite the current projection, and delete/toggle will use an old host
 // to execute filePath on the current target's host.
 function currentListKey(get: StoreGet): string {
-  const { workspacePath, workspaceIdentity } = get();
-  return listKey(workspacePath ?? undefined, workspaceIdentity ?? undefined);
+  const { workspacePath, workspaceIdentity, authorityKey } = get();
+  return listKey(workspacePath ?? undefined, workspaceIdentity ?? undefined, authorityKey);
 }
 
 export const useCommandsStore = create<CommandsStoreState>((set, get) => ({
   workspacePath: null,
   workspaceIdentity: null,
+  authorityKey: null,
   loadedWorkspacePath: null,
   loadedWorkspaceIdentity: null,
+  loadedAuthorityKey: null,
   commands: [],
   userCommands: [],
   pluginCommands: [],
@@ -74,10 +88,19 @@ export const useCommandsStore = create<CommandsStoreState>((set, get) => ({
   error: null,
   operatingCommandId: null,
 
-  initialize: async (workspacePath, commandsService, workspaceIdentity) => {
+  initialize: async (workspacePath, commandsService, workspaceIdentity, authorityKey) => {
     const normalizedWorkspaceIdentity = workspaceIdentity?.trim() || null;
-    set({ workspacePath: workspacePath ?? null, workspaceIdentity: normalizedWorkspaceIdentity });
-    const key = listKey(workspacePath, normalizedWorkspaceIdentity ?? undefined);
+    const normalizedAuthorityKey = authorityKey?.trim() || null;
+    set({
+      workspacePath: workspacePath ?? null,
+      workspaceIdentity: normalizedWorkspaceIdentity,
+      authorityKey: normalizedAuthorityKey,
+    });
+    const key = listKey(
+      workspacePath,
+      normalizedWorkspaceIdentity ?? undefined,
+      normalizedAuthorityKey,
+    );
     const existing = inflightLists.get(key);
     if (existing) {
       await existing;
@@ -100,6 +123,7 @@ export const useCommandsStore = create<CommandsStoreState>((set, get) => ({
           capability: result.capability,
           loadedWorkspacePath: workspacePath ?? null,
           loadedWorkspaceIdentity: normalizedWorkspaceIdentity,
+          loadedAuthorityKey: normalizedAuthorityKey,
           loading: false,
         });
       } catch (err) {
@@ -115,7 +139,7 @@ export const useCommandsStore = create<CommandsStoreState>((set, get) => ({
   },
 
   refresh: async (commandsService) => {
-    const { workspacePath, workspaceIdentity } = get();
+    const { workspacePath, workspaceIdentity, authorityKey } = get();
     const key = currentListKey(get);
     set({ loading: true, error: null });
     try {
@@ -131,6 +155,7 @@ export const useCommandsStore = create<CommandsStoreState>((set, get) => ({
         capability: result.capability,
         loadedWorkspacePath: workspacePath,
         loadedWorkspaceIdentity: workspaceIdentity,
+        loadedAuthorityKey: authorityKey,
         loading: false,
       });
     } catch (err) {

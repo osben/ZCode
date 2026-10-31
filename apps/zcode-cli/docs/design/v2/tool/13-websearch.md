@@ -41,6 +41,10 @@ public input:
 
 `allowed_domains` and `blocked_domains` cannot be passed together. A domain accepts only a hostname, not a protocol, path or wildcard.
 
+模型可见描述是固定文本。月份一行写作
+`The current month is (provided in the conversation below)`，不写入真实月份：模型从会话中的
+当前日期得知月份。描述里写真实月份会让 tools 段每个月变化一次，整个请求的缓存前缀随之失效。
+
 ## Internal Provider-Native Request
 
 The `WebSearch` handler converts the public input into internal provider-native args:

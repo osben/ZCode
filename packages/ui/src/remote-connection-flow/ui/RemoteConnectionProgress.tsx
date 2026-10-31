@@ -31,31 +31,39 @@ export function usePublishRemoteConnectionProgress(progress: RemoteConnectionPro
   useEffect(() => () => publish?.(null), [publish]);
 }
 
-export function RemoteConnectionMinimizedProgress({
-  view,
-  cancelled,
-  target,
-  name,
-  workspacePath,
-  logs,
-  error,
-  reason,
-  waiting,
-  onResume,
-  onCancel,
-  ready,
-}: RemoteConnectionProgress) {
-  const { intl } = useZCodeIntl();
-  const phases = resolveRemoteConnectionPhases(logs, {
-    includeWorkspace: workspacePath !== undefined,
+/**
+ * The single summary of background connection progress, shared by the progress block and the settings device row so phases and percent are computed once.
+ * waiting holds only while the connection is still in progress without a failure, meaning the flow stopped to wait for user input or confirmation.
+ */
+export function summarizeRemoteConnectionProgress(
+  progress: Pick<
+    RemoteConnectionProgress,
+    "view" | "cancelled" | "ready" | "logs" | "workspacePath" | "error" | "waiting"
+  >,
+) {
+  const phases = resolveRemoteConnectionPhases(progress.logs, {
+    includeWorkspace: progress.workspacePath !== undefined,
   });
   const active =
     phases.find((phase) => phase.status === "active" || phase.status === "failed") ?? phases[0]!;
   const percent = Math.round(
     (phases.filter((phase) => phase.status === "complete").length / phases.length) * 100,
   );
+  const progressing = progress.view === "connecting" && !progress.cancelled && !progress.ready;
+  return {
+    active,
+    percent,
+    progressing,
+    waiting: progressing && progress.waiting && !progress.error,
+  };
+}
+
+export function RemoteConnectionMinimizedProgress(props: RemoteConnectionProgress) {
+  const { view, cancelled, target, name, error, reason, waiting, onResume, onCancel, ready } =
+    props;
+  const { intl } = useZCodeIntl();
+  const { active, percent, progressing } = summarizeRemoteConnectionProgress(props);
   const device = name ?? (target ? formatRemoteLinkRailTarget(target) : "");
-  const progressing = view === "connecting" && !cancelled && !ready;
   const title = intl.formatMessage(
     {
       id: ready
@@ -94,7 +102,7 @@ export function RemoteConnectionMinimizedProgress({
           <span className="min-w-0 flex-1 truncate">{title}</span>
           {!error && progressing ? <span>{percent}%</span> : null}
         </span>
-        <span className="mt-1 block break-words text-ui-xs">
+        <span className="mt-1 block break-words text-ui-sm">
           {(error ? `${error} · ${reason}` : "") ||
             intl.formatMessage({
               id: !progressing

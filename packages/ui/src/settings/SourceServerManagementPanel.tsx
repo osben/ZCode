@@ -1,6 +1,7 @@
 import {
   useRemoteConnectionProgress,
   RemoteConnectionMinimizedProgress,
+  summarizeRemoteConnectionProgress,
 } from "@/remote-connection-flow/ui/RemoteConnectionProgress.js";
 import {
   Dialog,
@@ -10,9 +11,9 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
-import { DesktopCommandIds } from "@zcode/shared";
+import { DesktopCommandIds, ZCODE_VERSION } from "@zcode/shared";
 /* eslint-disable max-lines -- Source/Profile/迁移三类管理操作共享同一 Host 快照和错误状态。 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   ChevronDown,
@@ -24,14 +25,17 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Power,
+  RotateCw,
   Server,
   Box,
   TerminalSquare,
   Copy,
   Trash2,
+  Unplug,
   Wrench,
 } from "lucide-react";
-import { resolveWorkspaceKey, ZCODE_VERSION } from "@zcode/shared";
+import { resolveWorkspaceKey } from "@zcode/shared";
 import type {
   ConnectionProfile,
   AppSettings,
@@ -53,9 +57,19 @@ import { useSourceServerOperationLogs } from "@/hooks/useSourceServerOperationLo
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SourceServerMigrationReportPanel } from "@/settings/SourceServerMigrationReportPanel.js";
 import {
+  resolveSourceServerUpdatePercent,
   SourceServerLogList,
   SourceServerUpdateActivity,
 } from "@/settings/SourceServerUpdateActivity.js";
+import {
+  SourceServerDeviceRow,
+  type SourceServerDeviceRowProgress,
+} from "@/settings/SourceServerDeviceRow.js";
+import {
+  matchesSourceServerDeviceSearch,
+  reconcileSourceServerDeviceOrder,
+} from "@/settings/sourceServerDeviceList.js";
+import { SettingsSearchInput } from "@/settings/SettingsSearchInput.js";
 import { formatRemoteConnectionError } from "@/lib/remoteConnectionPresentation.js";
 import {
   resolveRemoteConnectionPresentation,
@@ -69,9 +83,13 @@ import {
   useDeferredSourceServerUpdates,
 } from "@/lib/sourceServerUpdatePreferences.js";
 import {
+  getRemoteServiceLifecycleDescription,
   getSourceServerForceUpdateDescription,
+  getSourceServerDowngradeConfirmation,
   getSourceServerReinstallConfirmation,
   isSourceServerCredentialsRequiredError,
+  readSourceServerRunningTasksForConfirmation,
+  resolveSourceServerLifecycleActionAvailability,
   resolveSourceServerReinstallAvailability,
   runSourceServerUpdate,
 } from "@/lib/sourceServerUpdateAction.js";
@@ -138,12 +156,72 @@ export function getProjectCount(
 
 const COLLAPSED_PROJECT_COUNT = 3;
 
-function toggleSetItem(current: Set<string>, item: string): Set<string> {
+/** Status shown on a device row while the background connection waits for the user or is in progress (RDUX-13 progress display). */
+const BACKGROUND_WAITING_PRESENTATION = resolveRemoteConnectionPresentation({ state: "pending" });
+const BACKGROUND_CONNECTING_PRESENTATION = resolveRemoteConnectionPresentation({
+  state: "connecting",
+});
+
+function getProjectDisplayName(server: SourceServerRecord, workspacePath: string): string {
+  return (
+    server.declaredWorkspaces?.find((item) => item.workspacePath === workspacePath)?.label ??
+    getPathLeaf(workspacePath)
+  );
+}
+
+function toggleSetItem(current: ReadonlySet<string>, item: string): Set<string> {
   const next = new Set(current);
   if (next.has(item)) next.delete(item);
   else next.add(item);
   return next;
 }
+
+/**
+ * The connection whose failure details to open: the Host failed terminal state first; otherwise a connection kept disconnected but carrying a reason
+ * (for example a failed remote-service stop, where the Host writes the reason on the route it chose and the Renderer does not know which connection that is).
+ */
+function findSourceErrorProfile(
+  snapshot: SourceServerManagementSnapshot | null | undefined,
+  sourceServerId: string,
+): ConnectionProfile | undefined {
+  const states = snapshot?.states.filter((state) => state.sourceServerId === sourceServerId) ?? [];
+  const state =
+    states.find((candidate) => candidate.state === "failed") ??
+    states
+      .filter((candidate) => candidate.error || candidate.errorCode)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  return snapshot?.profiles.find((profile) => profile.profileId === state?.profileId);
+}
+
+/**
+ * Remote service lifecycle actions in the device card "More" menu (RDLC-01). Availability, the danger confirmation, same-device exclusion and hint rules are shared;
+ * only stop uses the destructive menu item. The order is the menu order: restart comes before stop.
+ */
+const REMOTE_SERVICE_LIFECYCLE_ACTIONS = {
+  restart: {
+    label: "settings.source.restartRemoteService",
+    title: "settings.source.restartRemoteServiceTitle",
+    completedToast: "sourceServer.restartCompletedToast",
+    failedToast: "sourceServer.restartFailedToast",
+    intent: "source-server-restart",
+    icon: RotateCw,
+    variant: "default",
+  },
+  stop: {
+    label: "settings.source.stopRemoteService",
+    title: "settings.source.stopRemoteServiceTitle",
+    completedToast: "sourceServer.stopCompletedToast",
+    failedToast: "sourceServer.stopFailedToast",
+    intent: "source-server-stop",
+    icon: Power,
+    variant: "destructive",
+  },
+} as const;
+type RemoteServiceLifecycleAction = keyof typeof REMOTE_SERVICE_LIFECYCLE_ACTIONS;
+const REMOTE_SERVICE_LIFECYCLE_ACTION_ORDER: readonly RemoteServiceLifecycleAction[] = [
+  "restart",
+  "stop",
+];
 
 function profileOperationScope(profile: ConnectionProfile): string {
   return profile.sourceServerId
@@ -165,6 +243,8 @@ export function SourceServerManagementPanel({
   workspaceTabs = [],
   settings,
   onUpdateSettings,
+  hideProjectDeviceNames = false,
+  onHideProjectDeviceNamesChange,
 }: {
   management: ISourceServerManagementService;
   targetSourceServerId?: string;
@@ -187,6 +267,8 @@ export function SourceServerManagementPanel({
     "remoteStartupAutoReconnectEnabled" | "remoteConversationWorkspaceBySourceServerId"
   > | null;
   onUpdateSettings?: (patch: Partial<AppSettings>) => Promise<unknown> | void;
+  hideProjectDeviceNames?: boolean;
+  onHideProjectDeviceNamesChange?: (hidden: boolean) => void;
 }) {
   const background = useRemoteConnectionProgress();
   const { intl, locale } = useZCodeIntl();
@@ -209,6 +291,18 @@ export function SourceServerManagementPanel({
     new Set(),
   );
   const [expandedProjectSources, setExpandedProjectSources] = useState<Set<string>>(new Set());
+  // Display state of the device list (RDUX-13): kept only in panel memory, reset when the panel remounts, never written back to the Host.
+  const [expandedDevices, setExpandedDevices] = useState<ReadonlySet<string>>(new Set());
+  const [highlightedSourceServerId, setHighlightedSourceServerId] = useState<string | null>(null);
+  const [deviceSearch, setDeviceSearch] = useState("");
+  const [deviceOrder, setDeviceOrder] = useState<readonly string[] | null>(null);
+  const [pendingFocusSourceServerId, setPendingFocusSourceServerId] = useState<string | null>(null);
+  const deviceTogglesRef = useRef(new Map<string, HTMLButtonElement>());
+  // Any user action on a row (expand or collapse) ends the locate highlight; no timer clears it.
+  const toggleDevice = useCallback((sourceServerId: string) => {
+    setExpandedDevices((current) => toggleSetItem(current, sourceServerId));
+    setHighlightedSourceServerId(null);
+  }, []);
   // 只记录用户手动切换过的日志展开状态；未切换时由设备是否失败决定默认值。
   const [logExpansionBySource, setLogExpansionBySource] = useState<ReadonlyMap<string, boolean>>(
     new Map(),
@@ -252,7 +346,8 @@ export function SourceServerManagementPanel({
     onError: (cause) => setError(getSourceServerManagementErrorMessage(cause, intl.formatMessage)),
   });
   const focusedTargetRef = useRef<string | undefined>(undefined);
-  const deviceCardsRef = useRef(new Map<string, HTMLElement>());
+  // Locate intent (RDUX-13): once the snapshot is ready and the target device exists, clear the search, expand only the target row and keep it highlighted;
+  // focus and scrolling run only after the target row has rendered.
   useEffect(() => {
     if (!targetSourceServerId) {
       focusedTargetRef.current = undefined;
@@ -260,16 +355,12 @@ export function SourceServerManagementPanel({
     }
     const targetKey = `${targetSourceServerId}:${targetSourceServerDetails}`;
     if (!ready || focusedTargetRef.current === targetKey) return;
-    const card = deviceCardsRef.current.get(targetSourceServerId);
-    if (!card) return;
-    card.scrollIntoView({ block: "center" });
-    card.focus({ preventScroll: true });
-    const failedProfileId = snapshot?.states.find(
-      (state) => state.sourceServerId === targetSourceServerId && state.state === "failed",
-    )?.profileId;
-    const failedProfile = snapshot?.profiles.find(
-      (profile) => profile.profileId === failedProfileId,
-    );
+    if (!snapshot?.servers.some((server) => server.sourceServerId === targetSourceServerId)) return;
+    setDeviceSearch("");
+    setExpandedDevices(new Set([targetSourceServerId]));
+    setHighlightedSourceServerId(targetSourceServerId);
+    setPendingFocusSourceServerId(targetSourceServerId);
+    const failedProfile = findSourceErrorProfile(snapshot, targetSourceServerId);
     if (targetSourceServerDetails && failedProfile) setErrorDetailsProfile(failedProfile);
     focusedTargetRef.current = targetKey;
     onTargetSourceServerFocused?.();
@@ -302,6 +393,11 @@ export function SourceServerManagementPanel({
     () => new Map(snapshot?.states.map((state) => [state.profileId, state]) ?? []),
     [snapshot?.states],
   );
+  // "View details" in a failure toast is clicked after the operation ends, so it must read the latest Host snapshot at that time.
+  const snapshotRef = useRef(snapshot);
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
 
   const run = useCallback(
     async (
@@ -326,6 +422,34 @@ export function SourceServerManagementPanel({
       }
     },
     [applySnapshot, refreshSnapshot, intl, hasBusyScope],
+  );
+
+  /** Device operation failure toast; when credentials cannot be obtained silently, it shares the supplemental-credentials copy with the inline error and offers no details entry without content. */
+  const showOperationFailureToast = useCallback(
+    (
+      cause: unknown,
+      messageId: string,
+      source: string,
+      sourceServerId: string | undefined,
+      openDetails: () => void,
+    ) => {
+      if (isSourceServerCredentialsRequiredError(cause)) {
+        toast(getSourceServerManagementErrorMessage(cause, intl.formatMessage), {
+          variant: "warning",
+        });
+        return;
+      }
+      toast(intl.formatMessage({ id: messageId }, { source }), {
+        variant: "warning",
+        actionLabel: intl.formatMessage({ id: "remote.action.details" }),
+        onAction: () => {
+          // The operation can complete across panel lifecycles; the global toast must not capture the setter of an unmounted component.
+          if (mountedRef.current) openDetails();
+          else if (sourceServerId) onShowUpdateDetails?.(sourceServerId);
+        },
+      });
+    },
+    [intl, onShowUpdateDetails],
   );
 
   const removeProfile = useCallback(
@@ -438,7 +562,8 @@ export function SourceServerManagementPanel({
   const updateProfile = useCallback(
     async (
       profile: ConnectionProfile,
-      // RDRI-01: reinstall reuses the same update chain, only swapping feedback copy and device name.
+      allowDowngrade = false,
+      // RDRI-01: reinstall reuses the same update chain and only swaps the feedback copy and device name.
       feedback: { source?: string; completedToast?: string; failedToast?: string } = {},
     ) => {
       const source = feedback.source ?? profile.displayName ?? profile.transport;
@@ -450,6 +575,7 @@ export function SourceServerManagementPanel({
             next = await runSourceServerUpdate({
               management,
               profileId: profile.profileId,
+              allowDowngrade,
               confirmForce: async () =>
                 await confirmDialog({
                   title: intl.formatMessage({
@@ -467,28 +593,12 @@ export function SourceServerManagementPanel({
                 }),
             });
           } catch (cause) {
-            // Device operation failure toast; when credentials cannot be obtained silently, share the
-            // supplemental-credentials message and offer no details entry without content.
-            if (isSourceServerCredentialsRequiredError(cause)) {
-              toast(getSourceServerManagementErrorMessage(cause, intl.formatMessage), {
-                variant: "warning",
-              });
-              throw cause;
-            }
-            toast(
-              intl.formatMessage(
-                { id: feedback.failedToast ?? "sourceServer.updateFailedToast" },
-                { source },
-              ),
-              {
-                variant: "warning",
-                actionLabel: intl.formatMessage({ id: "remote.action.details" }),
-                onAction: () => {
-                  // 更新可跨面板生命周期完成，不能让全局 toast 捕获已卸载组件的 setter。
-                  if (mountedRef.current) setErrorDetailsProfile(profile);
-                  else if (profile.sourceServerId) onShowUpdateDetails?.(profile.sourceServerId);
-                },
-              },
+            showOperationFailureToast(
+              cause,
+              feedback.failedToast ?? "sourceServer.updateFailedToast",
+              source,
+              profile.sourceServerId,
+              () => setErrorDetailsProfile(profile),
             );
             throw cause;
           }
@@ -505,14 +615,12 @@ export function SourceServerManagementPanel({
         [profileOperationScope(profile)],
       );
     },
-    [confirmDialog, intl, management, onShowUpdateDetails, run],
+    [confirmDialog, intl, management, run, showOperationFailureToast],
   );
 
   /**
-   * Reinstall remote service (RDRI-01): a plain confirmation, then the update chain reinstalls the
-   * local-version archive on the remote; a damaged same-version release is replaced wholesale by the
-   * remote installer. The running-task guard and force confirmation follow the update chain; no
-   * separate Host operation is added.
+   * Reinstall remote service (RDRI-01): a plain confirmation, then the update chain reinstalls the local-version archive on the remote; a damaged same-version
+   * release is replaced wholesale by the remote installer. The running-task guard and force confirmation follow the update chain; no separate Host operation is added.
    */
   const reinstallRemoteService = useCallback(
     async (server: SourceServerRecord, profile: ConnectionProfile) => {
@@ -524,7 +632,7 @@ export function SourceServerManagementPanel({
         }),
       );
       if (!confirmed) return;
-      await updateProfile(profile, {
+      await updateProfile(profile, false, {
         source: server.displayName,
         completedToast: "sourceServer.reinstallCompletedToast",
         failedToast: "sourceServer.reinstallFailedToast",
@@ -533,11 +641,118 @@ export function SourceServerManagementPanel({
     [confirmDialog, intl, updateProfile],
   );
 
+  /**
+   * Restart / stop remote service (RDLC-01): read the running tasks for the device first, then show the danger confirmation, and hand off to the Host after confirmation. During a restart
+   * the device shows connecting and connects automatically when done; for a stop the Host disconnects first and then stops the remote service, and the device stays disconnected.
+   * Reading, confirming and executing sit inside the same `source:<id>` exclusion: the menu item is disabled during the read so it cannot be triggered twice,
+   * and no other operation on the same device can be inserted between the end of the read and the confirmation.
+   */
+  const runRemoteServiceLifecycle = useCallback(
+    async (server: SourceServerRecord, action: RemoteServiceLifecycleAction) => {
+      const copy = REMOTE_SERVICE_LIFECYCLE_ACTIONS[action];
+      await run(
+        `${action}:${server.sourceServerId}`,
+        async () => {
+          try {
+            // The read throws only when credentials cannot be obtained silently: the confirmation is not opened, and the catch below shows the same supplemental-credentials prompt as the update.
+            const runningTasks = await readSourceServerRunningTasksForConfirmation(
+              management,
+              server.sourceServerId,
+            );
+            const confirmed = await confirmDialog({
+              title: intl.formatMessage({ id: copy.title }),
+              description: getRemoteServiceLifecycleDescription({
+                action,
+                runningTasks,
+                startupAutoReconnect,
+                formatMessage: (id) => intl.formatMessage({ id }),
+              }),
+              confirmLabel: intl.formatMessage({ id: copy.label }),
+              confirmVariant: "destructive",
+              intent: copy.intent,
+              scrollableDescription: true,
+            });
+            if (!confirmed) return;
+            const next =
+              action === "restart"
+                ? await management.restartSource(server.sourceServerId)
+                : await management.stopSource(server.sourceServerId);
+            toast(intl.formatMessage({ id: copy.completedToast }, { source: server.displayName }));
+            return next;
+          } catch (cause) {
+            showOperationFailureToast(
+              cause,
+              copy.failedToast,
+              server.displayName,
+              server.sourceServerId,
+              () => {
+                const profile =
+                  findSourceErrorProfile(snapshotRef.current, server.sourceServerId) ??
+                  snapshotRef.current?.profiles.find(
+                    (candidate) => candidate.profileId === server.preferredProfileId,
+                  );
+                if (profile) setErrorDetailsProfile(profile);
+              },
+            );
+            throw cause;
+          }
+        },
+        [`source:${server.sourceServerId}`],
+      );
+    },
+    [confirmDialog, intl, management, run, showOperationFailureToast, startupAutoReconnect],
+  );
+
   const servers = snapshot?.servers ?? [];
   const profiles = snapshot?.profiles ?? [];
   const activeProfiles = profiles.filter((profile) => profile.lifecycleState !== "retired");
   const retiredProfiles = profiles.filter((profile) => profile.lifecycleState === "retired");
   const unboundProfiles = activeProfiles.filter((profile) => !profile.sourceServerId);
+
+  // Recently-used ordering is computed once when the snapshot first becomes ready; afterwards only new devices are inserted and removed devices deleted (RDUX-13).
+  const deviceRecency = servers.map((server) => ({
+    sourceServerId: server.sourceServerId,
+    online:
+      resolveRemoteConnectionPresentation(
+        getRemoteDevicePresentationInput(snapshot, server.sourceServerId),
+      ).status === "online",
+    lastUsedAt: Math.max(
+      server.lastOnlineAt ?? 0,
+      ...(projection.devices
+        .find((candidate) => candidate.sourceServerId === server.sourceServerId)
+        ?.knownProjects.map((project) => project.lastOpenedAt) ?? []),
+    ),
+  }));
+  const nextDeviceOrder = ready
+    ? reconcileSourceServerDeviceOrder(deviceOrder, deviceRecency)
+    : deviceOrder;
+  // Derived during render: updates immediately when the order changes; when nothing changed, reconcile returns the same reference, so there is no render loop.
+  if (nextDeviceOrder !== deviceOrder) setDeviceOrder(nextDeviceOrder);
+  const serverById = new Map(servers.map((server) => [server.sourceServerId, server]));
+  const visibleServers = (nextDeviceOrder ?? [])
+    .map((sourceServerId) => serverById.get(sourceServerId))
+    .filter((server) => server !== undefined)
+    .filter((server) => {
+      const device = projection.devices.find(
+        (candidate) => candidate.sourceServerId === server.sourceServerId,
+      );
+      return matchesSourceServerDeviceSearch(deviceSearch, [
+        server.displayName,
+        server.hostname,
+        ...(device?.profiles ?? []).map((profile) => formatConnectionProfileTarget(profile)),
+        ...(device?.knownProjects ?? []).map((project) =>
+          getProjectDisplayName(server, project.workspacePath),
+        ),
+      ]);
+    });
+  useEffect(() => {
+    if (!pendingFocusSourceServerId) return;
+    const toggle = deviceTogglesRef.current.get(pendingFocusSourceServerId);
+    if (!toggle) return;
+    toggle.scrollIntoView({ block: "center" });
+    toggle.focus({ preventScroll: true });
+    setPendingFocusSourceServerId(null);
+  }, [pendingFocusSourceServerId, nextDeviceOrder, deviceSearch]);
 
   const renderIdentityConfirmation = (profile: ConnectionProfile, size: "sm" | "xs") => (
     <Button
@@ -648,8 +863,8 @@ export function SourceServerManagementPanel({
       >
         <RemoteConnectionKindTag kind={profile.transport} />
         {!server ? <RemoteConnectionStatusTag presentation={presentation} /> : null}
-        <span className="shrink-0 text-ui-sm font-medium text-foreground">{profileName}</span>
-        <span className="min-w-0 truncate font-mono text-ui-xs text-remote-foreground-muted">
+        <span className="shrink-0 text-ui-base font-medium text-foreground">{profileName}</span>
+        <span className="min-w-0 truncate font-mono text-ui-sm text-remote-foreground-muted">
           {formatConnectionProfileTarget(profile)}
         </span>
         {server?.preferredProfileId === profile.profileId ? (
@@ -660,14 +875,14 @@ export function SourceServerManagementPanel({
         <span className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
           {connectionErrorText ? (
             <span
-              className="max-w-64 truncate text-ui-xs text-destructive-surface-foreground"
+              className="max-w-64 truncate text-ui-sm text-destructive-surface-foreground"
               title={connectionErrorText}
             >
               {connectionErrorText}
             </span>
           ) : profile.lastConnectedAt ? (
             <span
-              className="text-ui-xs text-remote-foreground-muted"
+              className="text-ui-sm text-remote-foreground-muted"
               title={formatTimestamp(profile.lastConnectedAt, locale)}
             >
               {intl.formatMessage(
@@ -754,11 +969,11 @@ export function SourceServerManagementPanel({
     <div className="flex flex-col gap-4" aria-busy={busyOperations.size > 0}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-xl">
-          <p className="text-ui-sm text-remote-foreground-muted">
+          <p className="text-ui-base text-remote-foreground-muted">
             {intl.formatMessage({ id: "settings.remoteDevicesDescription" })}
           </p>
           {error ? (
-            <p role="alert" className="mt-2 text-ui-sm text-destructive">
+            <p role="alert" className="mt-2 text-ui-base text-destructive">
               {error}
             </p>
           ) : null}
@@ -777,7 +992,7 @@ export function SourceServerManagementPanel({
           data-unfinished-background-connection
           className="rounded-xl border border-card-border bg-card pt-3"
         >
-          <p className="px-4 text-ui-sm font-medium">
+          <p className="px-4 text-ui-base font-medium">
             {intl.formatMessage({ id: "settings.source.unfinishedConnections" })}
           </p>
           <RemoteConnectionMinimizedProgress {...background} />
@@ -786,7 +1001,7 @@ export function SourceServerManagementPanel({
       {!ready && !error ? (
         <p
           role="status"
-          className="flex items-center gap-2 text-ui-sm text-remote-foreground-muted"
+          className="flex items-center gap-2 text-ui-base text-remote-foreground-muted"
         >
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           {intl.formatMessage({ id: "common.loading" })}
@@ -794,247 +1009,276 @@ export function SourceServerManagementPanel({
       ) : null}
       <div className="min-w-0 space-y-3">
         {servers.length > 0 ? (
-          <h3 className="flex items-center gap-2 text-ui-base font-medium text-foreground">
-            {intl.formatMessage({ id: "settings.source.devicesHeading" })}
-            <span className="text-ui-xs font-normal text-remote-foreground-muted">
-              {servers.length}
-            </span>
-          </h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-ui-base font-medium text-foreground">
+              {intl.formatMessage({ id: "settings.source.devicesHeading" })}
+              <span className="text-ui-xs font-normal text-remote-foreground-muted">
+                {servers.length}
+              </span>
+            </h3>
+            <SettingsSearchInput
+              containerClassName="w-full max-w-64"
+              value={deviceSearch}
+              onChange={(event) => setDeviceSearch(event.target.value)}
+              onClear={() => setDeviceSearch("")}
+              clearLabel={intl.formatMessage({ id: "settings.search.clear" })}
+              placeholder={intl.formatMessage({ id: "settings.source.searchPlaceholder" })}
+              aria-label={intl.formatMessage({ id: "settings.source.searchPlaceholder" })}
+            />
+          </div>
         ) : null}
-        {servers.map((server) => {
-          const device = projection.devices.find(
-            (candidate) => candidate.sourceServerId === server.sourceServerId,
-          );
-          const serverProfiles = device?.profiles ?? [];
-          const preferredProfile =
-            serverProfiles.find((profile) => profile.profileId === server.preferredProfileId) ??
-            serverProfiles[0];
-          // 旧 Source 在确认前仍可能是 uninstalled；恢复入口不能藏在安装状态或首选线路折叠后面。
-          const pendingIdentityProfiles = serverProfiles.filter(
-            (profile) => stateByProfile.get(profile.profileId)?.state === "identity-change-pending",
-          );
-          const identityChangeProfile =
-            pendingIdentityProfiles.find((profile) => profile === preferredProfile) ??
-            pendingIdentityProfiles[0];
-          const currentProfile = serverProfiles.find(
-            (profile) => stateByProfile.get(profile.profileId)?.state === "online",
-          );
-          const displayedProfile = currentProfile ?? preferredProfile;
-          const ConnectionIcon =
-            displayedProfile?.transport === "docker"
-              ? Box
-              : displayedProfile?.transport === "wsl"
-                ? TerminalSquare
-                : Server;
-          // 同一项目可能有多条历史（不同连接），保留最近一次，并按最近打开倒序展示。
-          const latestProjectByKey = new Map<string, SourceServerWorkspaceHistoryEntry>();
-          for (const project of device?.knownProjects ?? []) {
-            const key = resolveWorkspaceKey(project);
-            const existing = latestProjectByKey.get(key);
-            if (!existing || project.lastOpenedAt >= existing.lastOpenedAt)
-              latestProjectByKey.set(key, project);
-          }
-          const projects = [...latestProjectByKey.values()].sort(
-            (left, right) => right.lastOpenedAt - left.lastOpenedAt,
-          );
-          const projectsExpanded = expandedProjectSources.has(server.sourceServerId);
-          const visibleProjects = projectsExpanded
-            ? projects
-            : projects.slice(0, COLLAPSED_PROJECT_COUNT);
-          const openedProjectPaths = new Set(
-            workspaceTabs
-              .filter(
-                (tab) =>
-                  getWorkspaceSourceServerId(tab, {
-                    workspaceHistory: snapshot?.workspaceHistory,
-                  }) === server.sourceServerId,
-              )
-              .map((tab) => tab.workspacePath),
-          );
-          const otherProfiles = displayedProfile
-            ? serverProfiles.filter(
+        {servers.length > 0 ? (
+          <div
+            data-source-server-device-list
+            className="@container/source-server-devices overflow-hidden rounded-xl border border-card-border bg-card"
+          >
+            {visibleServers.length === 0 ? (
+              <p className="px-4 py-6 text-center text-ui-base text-remote-foreground-muted">
+                {intl.formatMessage(
+                  { id: "settings.source.searchEmpty" },
+                  { query: deviceSearch.trim() },
+                )}
+              </p>
+            ) : null}
+            {visibleServers.map((server) => {
+              const device = projection.devices.find(
+                (candidate) => candidate.sourceServerId === server.sourceServerId,
+              );
+              const serverProfiles = device?.profiles ?? [];
+              const preferredProfile =
+                serverProfiles.find((profile) => profile.profileId === server.preferredProfileId) ??
+                serverProfiles[0];
+              // 旧 Source 在确认前仍可能是 uninstalled；恢复入口不能藏在安装状态或首选线路折叠后面。
+              const pendingIdentityProfiles = serverProfiles.filter(
                 (profile) =>
-                  profile !== displayedProfile && !pendingIdentityProfiles.includes(profile),
-              )
-            : [];
-          const online = device?.aggregatedStatus === "online";
-          const migrationReport = migrationReports[server.sourceServerId];
-          const migrationCount = snapshot?.migrationCounts.find(
-            (count) => count.sourceServerId === server.sourceServerId,
-          );
-          const showServerLines = server.installState !== "uninstalled";
-          // 覆盖可更新/必须升级/更新中/更新失败四态：更新中不再携带 updateAvailability，也要选中。
-          const profileStates = serverProfiles
-            .map((profile) => stateByProfile.get(profile.profileId))
-            .filter((state) => state !== undefined);
-          const presentation = resolveRemoteConnectionPresentation(
-            getRemoteDevicePresentationInput(snapshot, server.sourceServerId),
-          );
-          const actionProfile =
-            serverProfiles.find((profile) => profile.profileId === presentation.profileId) ??
-            preferredProfile;
-          const deviceBusy = busyScopes.has(`source:${server.sourceServerId}`);
-          const reinstallAvailability = actionProfile
-            ? resolveSourceServerReinstallAvailability({
+                  stateByProfile.get(profile.profileId)?.state === "identity-change-pending",
+              );
+              const identityChangeProfile =
+                pendingIdentityProfiles.find((profile) => profile === preferredProfile) ??
+                pendingIdentityProfiles[0];
+              const currentProfile = serverProfiles.find(
+                (profile) => stateByProfile.get(profile.profileId)?.state === "online",
+              );
+              const displayedProfile = currentProfile ?? preferredProfile;
+              const ConnectionIcon =
+                displayedProfile?.transport === "docker"
+                  ? Box
+                  : displayedProfile?.transport === "wsl"
+                    ? TerminalSquare
+                    : Server;
+              // 同一项目可能有多条历史（不同连接），保留最近一次，并按最近打开倒序展示。
+              const latestProjectByKey = new Map<string, SourceServerWorkspaceHistoryEntry>();
+              for (const project of device?.knownProjects ?? []) {
+                const key = resolveWorkspaceKey(project);
+                const existing = latestProjectByKey.get(key);
+                if (!existing || project.lastOpenedAt >= existing.lastOpenedAt)
+                  latestProjectByKey.set(key, project);
+              }
+              const projects = [...latestProjectByKey.values()].sort(
+                (left, right) => right.lastOpenedAt - left.lastOpenedAt,
+              );
+              const projectsExpanded = expandedProjectSources.has(server.sourceServerId);
+              const visibleProjects = projectsExpanded
+                ? projects
+                : projects.slice(0, COLLAPSED_PROJECT_COUNT);
+              const openedProjectPaths = new Set(
+                workspaceTabs
+                  .filter(
+                    (tab) =>
+                      getWorkspaceSourceServerId(tab, {
+                        workspaceHistory: snapshot?.workspaceHistory,
+                      }) === server.sourceServerId,
+                  )
+                  .map((tab) => tab.workspacePath),
+              );
+              const otherProfiles = displayedProfile
+                ? serverProfiles.filter(
+                    (profile) =>
+                      profile !== displayedProfile && !pendingIdentityProfiles.includes(profile),
+                  )
+                : [];
+              const online = device?.aggregatedStatus === "online";
+              const migrationReport = migrationReports[server.sourceServerId];
+              const migrationCount = snapshot?.migrationCounts.find(
+                (count) => count.sourceServerId === server.sourceServerId,
+              );
+              const showServerLines = server.installState !== "uninstalled";
+              const pendingMigrationCount =
+                showServerLines && migrationCount?.status === "available"
+                  ? migrationCount.failedPathCount + migrationCount.abandonedPathCount
+                  : 0;
+              // 覆盖可更新/必须升级/更新中/更新失败四态：更新中不再携带 updateAvailability，也要选中。
+              const profileStates = serverProfiles
+                .map((profile) => stateByProfile.get(profile.profileId))
+                .filter((state) => state !== undefined);
+              const presentation = resolveRemoteConnectionPresentation(
+                getRemoteDevicePresentationInput(snapshot, server.sourceServerId),
+              );
+              const actionProfile =
+                serverProfiles.find((profile) => profile.profileId === presentation.profileId) ??
+                preferredProfile;
+              const deviceBusy = busyScopes.has(`source:${server.sourceServerId}`);
+              const lifecycleAvailability = resolveSourceServerLifecycleActionAvailability({
                 status: presentation.status,
                 deviceBusy,
-                installState: server.installState,
                 lastSeenVersion: server.lastSeenVersion,
-                localVersion: ZCODE_VERSION,
-              })
-            : ({ visible: false } as const);
-          const actionBusy =
-            busyOperations.has(`disconnect:${server.sourceServerId}`) ||
-            busyOperations.has(`connect:${actionProfile?.profileId}`) ||
-            busyOperations.has(`update:${actionProfile?.profileId}`) ||
-            (busyOperations.has("desktop-update") &&
-              presentation.primaryAction === "update-desktop");
-          const preferredConnectionErrorText = presentation.reason
-            ? intl.formatMessage({ id: presentation.reason.titleId }, presentation.reason.values)
-            : null;
-          const serverState =
-            profileStates.find((state) => state.state === "updating") ??
-            profileStates.find(
-              (state) =>
-                (state.updateAvailability && state.updateAvailability !== "none") ||
-                state.state === "updating",
-            );
-          const updateFailed = serverState?.state === "failed";
-          const updateKey = sourceServerUpdateKey(
-            server.sourceServerId,
-            serverState?.availableVersion ?? "",
-          );
-          const showUpdate =
-            serverState &&
-            !(
-              serverState.updateAvailability === "available" &&
-              serverState.state !== "updating" &&
-              deferredUpdates.has(updateKey)
-            );
+              });
+              const reinstallAvailability = actionProfile
+                ? resolveSourceServerReinstallAvailability({
+                    status: presentation.status,
+                    deviceBusy,
+                    installState: server.installState,
+                    lastSeenVersion: server.lastSeenVersion,
+                    localVersion: ZCODE_VERSION,
+                  })
+                : ({ visible: false } as const);
+              const actionBusy =
+                busyOperations.has(`disconnect:${server.sourceServerId}`) ||
+                busyOperations.has(`connect:${actionProfile?.profileId}`) ||
+                busyOperations.has(`update:${actionProfile?.profileId}`) ||
+                (busyOperations.has("desktop-update") &&
+                  presentation.primaryAction === "update-desktop");
+              const preferredConnectionErrorText = presentation.reason
+                ? intl.formatMessage(
+                    { id: presentation.reason.titleId },
+                    presentation.reason.values,
+                  )
+                : null;
+              const serverState =
+                profileStates.find((state) => state.state === "updating") ??
+                profileStates.find(
+                  (state) =>
+                    (state.updateAvailability && state.updateAvailability !== "none") ||
+                    state.state === "updating",
+                );
+              const updateFailed = serverState?.state === "failed";
+              const updateKey = sourceServerUpdateKey(
+                server.sourceServerId,
+                serverState?.availableVersion ?? "",
+              );
+              const showUpdate =
+                serverState &&
+                !(
+                  serverState.updateAvailability === "available" &&
+                  serverState.state !== "updating" &&
+                  deferredUpdates.has(updateKey)
+                );
 
-          const updateFailureText =
-            updateFailed && serverState
-              ? formatRemoteConnectionError({
-                  fallback: intl.formatMessage({ id: "settings.source.operationFailed" }),
-                  reasonCode: serverState.errorCode,
-                  retryable: serverState.retryable,
-                  recoveryAttempt: serverState.recoveryAttempt,
-                  recoveryLimit: serverState.recoveryLimit,
-                  formatMessage: intl.formatMessage,
-                })
-              : null;
-          const updateExplainsConnectionError = Boolean(
-            showUpdate &&
-            serverState?.profileId === presentation.profileId &&
-            (serverState?.state === "updating" ||
-              (updateFailed && updateFailureText === preferredConnectionErrorText) ||
-              (serverState?.updateAvailability === "required" &&
-                presentation.reason?.category === "source-server-upgrade-required")),
-          );
+              const updateFailureText =
+                updateFailed && serverState
+                  ? formatRemoteConnectionError({
+                      fallback: intl.formatMessage({ id: "settings.source.operationFailed" }),
+                      reasonCode: serverState.errorCode,
+                      retryable: serverState.retryable,
+                      recoveryAttempt: serverState.recoveryAttempt,
+                      recoveryLimit: serverState.recoveryLimit,
+                      formatMessage: intl.formatMessage,
+                    })
+                  : null;
+              const updateExplainsConnectionError = Boolean(
+                showUpdate &&
+                serverState?.profileId === presentation.profileId &&
+                (serverState?.state === "updating" ||
+                  (updateFailed && updateFailureText === preferredConnectionErrorText) ||
+                  (serverState?.updateAvailability === "required" &&
+                    presentation.reason?.category === "source-server-upgrade-required")),
+              );
 
-          const operationLogs =
-            logsByProfileId[serverState?.profileId ?? actionProfile?.profileId ?? ""] ?? [];
-          const showOtherProfiles = showServerLines && otherProfiles.length > 0;
-          const otherProfilesExpanded =
-            showOtherProfiles && expandedSavedConnectionSources.has(server.sourceServerId);
-          // 更新中由更新横幅展示进度与日志，页脚不重复。
-          const showRecentLog = operationLogs.length > 0 && serverState?.state !== "updating";
-          const logExpanded =
-            showRecentLog &&
-            (logExpansionBySource.get(server.sourceServerId) ?? presentation.status === "failed");
-          return (
-            <section
-              key={server.sourceServerId}
-              data-source-server-card={server.sourceServerId}
-              tabIndex={-1}
-              ref={(element) => {
-                if (element) deviceCardsRef.current.set(server.sourceServerId, element);
-                else deviceCardsRef.current.delete(server.sourceServerId);
-              }}
-              className="overflow-hidden rounded-xl border border-card-border bg-card focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              {background?.sourceServerId === server.sourceServerId ? (
-                <RemoteConnectionMinimizedProgress {...background} />
-              ) : null}
-              <div className="flex min-w-0 flex-wrap items-center gap-3 px-4 py-4">
-                <span
-                  className={cn(
-                    "flex size-10 shrink-0 items-center justify-center rounded-lg bg-surface text-remote-foreground-muted",
-                    server.installState === "uninstalled" && "opacity-60",
-                  )}
-                >
-                  <ConnectionIcon className="size-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <p className="min-w-0 truncate text-ui-base font-semibold text-foreground">
-                      {server.displayName}
-                    </p>
-                    <RemoteConnectionStatusTag presentation={presentation} />
-                  </div>
-                </div>
-                <div
-                  className="order-2 basis-full min-w-0 flex flex-wrap items-center gap-2 text-ui-sm text-remote-foreground-muted"
-                  data-device-connection
-                >
-                  {displayedProfile ? (
-                    <>
-                      <RemoteConnectionKindTag kind={displayedProfile.transport} />
-                      <span
-                        className="min-w-0 truncate font-mono"
-                        title={formatConnectionProfileTarget(displayedProfile)}
-                      >
-                        {formatConnectionProfileTarget(displayedProfile)}
-                      </span>
-                      {/* 只有一条连接时“当前 / 默认”没有区分意义，不显示。 */}
-                      {serverProfiles.length > 1 && currentProfile ? (
-                        <span className="shrink-0 rounded-md bg-tag px-1.5 py-0.5 text-ui-xs">
-                          {intl.formatMessage({
-                            id: "settings.source.currentProfile",
-                          })}
-                        </span>
-                      ) : null}
-                      {serverProfiles.length > 1 &&
-                      displayedProfile.profileId === server.preferredProfileId ? (
-                        <span className="shrink-0 rounded-md bg-tag px-1.5 py-0.5 text-ui-xs">
-                          {intl.formatMessage({ id: "settings.source.defaultProfile" })}
-                        </span>
-                      ) : null}
-                      {displayedProfile.profileId !== server.preferredProfileId ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          disabled={deviceBusy}
-                          onClick={() =>
-                            void run(
-                              `preferred:${displayedProfile.profileId}`,
-                              () =>
-                                management.setPreferredProfile(
-                                  server.sourceServerId,
-                                  displayedProfile.profileId,
-                                ),
-                              [`source:${server.sourceServerId}`],
-                            )
-                          }
-                        >
-                          {intl.formatMessage({ id: "settings.source.setDefault" })}
-                        </Button>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {server.lastSeenVersion ? (
-                    <span
-                      className="shrink-0"
-                      title={intl.formatMessage({ id: "settings.source.info.version" })}
-                    >
-                      {displayedProfile ? "· " : ""}v{server.lastSeenVersion.replace(/^v/i, "")}
-                    </span>
-                  ) : null}
-                  {server.lastOnlineAt && !online ? (
-                    <span className="shrink-0" title={formatTimestamp(server.lastOnlineAt, locale)}>
-                      {displayedProfile || server.lastSeenVersion ? "· " : ""}
-                      {intl.formatMessage(
+              const operationLogs =
+                logsByProfileId[serverState?.profileId ?? actionProfile?.profileId ?? ""] ?? [];
+              const showOtherProfiles = showServerLines && otherProfiles.length > 0;
+              const otherProfilesExpanded =
+                showOtherProfiles && expandedSavedConnectionSources.has(server.sourceServerId);
+              // 更新中由更新横幅展示进度与日志，页脚不重复。
+              const showRecentLog = operationLogs.length > 0 && serverState?.state !== "updating";
+              const logExpanded =
+                showRecentLog &&
+                (logExpansionBySource.get(server.sourceServerId) ??
+                  presentation.status === "failed");
+              // Progress display (RDUX-13): when collapsed, a top-edge progress line plus a short status; when expanded the line hides and the expanded area shows full progress.
+              const deviceBackground =
+                background?.sourceServerId === server.sourceServerId ? background : null;
+              const backgroundSummary = deviceBackground
+                ? summarizeRemoteConnectionProgress(deviceBackground)
+                : null;
+              let rowPresentation = presentation;
+              let rowProgress: SourceServerDeviceRowProgress | undefined;
+              const backgroundInFlight =
+                backgroundSummary?.progressing === true &&
+                !backgroundSummary.waiting &&
+                !deviceBackground?.error;
+              if (deviceBackground && !backgroundInFlight) {
+                // Bug cause: device operations are disabled during a background connection, while the progress block exists only in the expanded area. When waiting for input, completed,
+                // failed or cancelled, reusing the Host state would show "Connected" or a disabled "Retry" on the collapsed row, hiding that
+                // it still needs continuing or handling; these states uniformly prompt for attention and the user handles them after expanding.
+                rowPresentation = BACKGROUND_WAITING_PRESENTATION;
+              } else if (backgroundInFlight) {
+                rowPresentation = BACKGROUND_CONNECTING_PRESENTATION;
+                rowProgress = { percent: backgroundSummary.percent };
+              } else if (serverState?.state === "updating") {
+                rowProgress = { percent: resolveSourceServerUpdatePercent(operationLogs) };
+              } else if (presentation.status === "connecting") {
+                rowProgress = {};
+              }
+              // Same condition as the optional update banner in the expanded area: hidden when deferred, not shown while updating.
+              const optionalUpdateVersion =
+                showUpdate &&
+                serverState &&
+                serverState.updateAvailability === "available" &&
+                serverState.state !== "updating"
+                  ? (serverState.availableVersion?.replace(/^v/i, "") ?? "")
+                  : null;
+              const expanded = expandedDevices.has(server.sourceServerId);
+              const showsPrimaryAction =
+                presentation.primaryAction !== "none" &&
+                presentation.primaryAction !== "disconnect";
+              return (
+                <SourceServerDeviceRow
+                  key={server.sourceServerId}
+                  sourceServerId={server.sourceServerId}
+                  name={server.displayName}
+                  address={
+                    displayedProfile ? formatConnectionProfileTarget(displayedProfile) : undefined
+                  }
+                  icon={ConnectionIcon}
+                  dimIcon={server.installState === "uninstalled"}
+                  expanded={expanded}
+                  highlighted={highlightedSourceServerId === server.sourceServerId}
+                  progress={rowProgress}
+                  onToggle={() => toggleDevice(server.sourceServerId)}
+                  toggleRef={(element) => {
+                    if (element) deviceTogglesRef.current.set(server.sourceServerId, element);
+                    else deviceTogglesRef.current.delete(server.sourceServerId);
+                  }}
+                  metaTone={pendingMigrationCount > 0 ? "warning" : "muted"}
+                  metaTitle={
+                    pendingMigrationCount > 0
+                      ? intl.formatMessage({
+                          id: "settings.source.connectionHistoryNeedsAttention",
+                        })
+                      : undefined
+                  }
+                  meta={
+                    pendingMigrationCount > 0 ? (
+                      <>
+                        <FileWarning className="size-3.5 text-warning" aria-hidden="true" />
+                        {intl.formatMessage(
+                          { id: "settings.source.pendingMigrationCount" },
+                          { count: pendingMigrationCount },
+                        )}
+                      </>
+                    ) : optionalUpdateVersion !== null ? (
+                      intl.formatMessage(
+                        { id: "settings.source.updateAvailableVersion" },
+                        { version: optionalUpdateVersion },
+                      )
+                    ) : online ? (
+                      intl.formatMessage(
+                        { id: "settings.source.projectCount" },
+                        { count: projects.length },
+                      )
+                    ) : server.lastOnlineAt ? (
+                      intl.formatMessage(
                         { id: "settings.source.lastOnline" },
                         {
                           time: formatRelativeTimestamp(
@@ -1043,214 +1287,130 @@ export function SourceServerManagementPanel({
                             intl.formatMessage,
                           ),
                         },
-                      )}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="order-3 basis-full min-w-0" data-device-projects>
-                  {projects.length === 0 ? (
-                    <p className="text-ui-sm text-remote-foreground-muted">
-                      {intl.formatMessage({ id: "settings.source.projectCount" }, { count: 0 })}
-                    </p>
-                  ) : (
+                      )
+                    ) : undefined
+                  }
+                  status={
+                    <RemoteConnectionStatusTag
+                      presentation={rowPresentation}
+                      compact
+                      progressPercent={rowProgress?.percent}
+                    />
+                  }
+                  actions={
                     <>
-                      <div className="flex min-w-0 items-center justify-between gap-2">
-                        <p className="text-ui-xs font-medium text-remote-foreground-muted">
-                          {intl.formatMessage({ id: "settings.source.recentProjects" })}
-                        </p>
-                        {/* Bug 原因：旧实现超出三个只显示不可点击的 +N，其余项目在此处无法打开。 */}
-                        {projects.length > COLLAPSED_PROJECT_COUNT ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="xs"
-                            className="text-remote-foreground-muted"
-                            aria-expanded={projectsExpanded}
-                            onClick={() =>
-                              setExpandedProjectSources((current) =>
-                                toggleSetItem(current, server.sourceServerId),
-                              )
-                            }
-                          >
-                            {intl.formatMessage(
-                              {
-                                id: projectsExpanded
-                                  ? "settings.source.showLessProjects"
-                                  : "settings.source.showAllProjects",
-                              },
-                              { count: projects.length },
-                            )}
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 min-w-0">
-                        {visibleProjects.map((project) => {
-                          const projectName =
-                            server.declaredWorkspaces?.find(
-                              (item) => item.workspacePath === project.workspacePath,
-                            )?.label ?? getPathLeaf(project.workspacePath);
-                          return (
-                            <Button
-                              key={resolveWorkspaceKey(project)}
-                              data-device-project
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="group/project -mx-2 h-auto w-[calc(100%+1rem)] min-w-0 justify-start gap-2 px-2 py-1.5"
-                              aria-label={projectName}
-                              title={project.workspacePath}
-                              disabled={!onOpenProject || deviceBusy}
-                              onClick={() =>
-                                void run(
-                                  `open:${resolveWorkspaceKey(project)}`,
-                                  () =>
-                                    onOpenProject?.(
-                                      server.sourceServerId,
-                                      project.workspacePath,
-                                      displayedProfile?.profileId,
-                                    ) ?? Promise.resolve(),
-                                  [`source:${server.sourceServerId}`],
-                                )
-                              }
-                            >
-                              <Folder className="size-3.5 text-remote-foreground-muted" />
-                              <span className="max-w-48 shrink-0 truncate text-ui-sm font-medium">
-                                {projectName}
-                              </span>
-                              <span className="min-w-0 flex-1 truncate text-left font-mono text-ui-xs text-remote-foreground-muted">
-                                {project.workspacePath}
-                              </span>
-                              {openedProjectPaths.has(project.workspacePath) ? (
-                                <span className="shrink-0 rounded-md bg-tag px-1.5 py-0.5 text-ui-xs text-remote-foreground-muted">
-                                  {intl.formatMessage({ id: "settings.source.projectOpened" })}
-                                </span>
-                              ) : null}
-                              <span className="shrink-0 text-ui-xs text-remote-foreground-muted">
-                                {formatRelativeTimestamp(
-                                  project.lastOpenedAt,
-                                  locale,
-                                  intl.formatMessage,
-                                )}
-                              </span>
-                              <ArrowUpRight className="size-3.5 text-remote-foreground-muted opacity-0 group-hover/project:opacity-100 group-focus-visible/project:opacity-100" />
-                            </Button>
-                          );
-                        })}
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div className="order-1 ml-auto flex flex-wrap items-center gap-1">
-                  {presentation.primaryAction === "confirm-identity" && identityChangeProfile ? (
-                    renderIdentityConfirmation(identityChangeProfile, "sm")
-                  ) : presentation.primaryAction !== "none" ? (
-                    <Button
-                      type="button"
-                      // 已连接时断开是低频操作，降为 ghost；任务继续提示放进按钮说明，不常驻占行。
-                      variant={presentation.primaryAction === "disconnect" ? "ghost" : "outline"}
-                      size="sm"
-                      title={
-                        presentation.primaryAction === "disconnect"
-                          ? intl.formatMessage({ id: "settings.source.disconnectHint" })
-                          : undefined
-                      }
-                      disabled={
-                        (deviceBusy &&
-                          !["security", "details"].includes(presentation.primaryAction)) ||
-                        actionBusy ||
-                        presentation.status === "connecting"
-                      }
-                      aria-busy={actionBusy}
-                      onClick={() => {
-                        if (actionProfile) handleProfileAction(actionProfile, presentation, server);
-                        else onCreateConnection?.();
-                      }}
-                    >
-                      {actionBusy ? (
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                      {presentation.primaryAction === "confirm-identity" &&
+                      identityChangeProfile ? (
+                        renderIdentityConfirmation(identityChangeProfile, "sm")
+                      ) : showsPrimaryAction ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={
+                            (deviceBusy &&
+                              !["security", "details"].includes(presentation.primaryAction)) ||
+                            actionBusy ||
+                            presentation.status === "connecting"
+                          }
+                          aria-busy={actionBusy}
+                          onClick={() => {
+                            if (actionProfile)
+                              handleProfileAction(actionProfile, presentation, server);
+                            else onCreateConnection?.();
+                          }}
+                        >
+                          {actionBusy ? (
+                            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                          ) : null}
+                          {intl.formatMessage({
+                            id:
+                              server.installState === "uninstalled" &&
+                              presentation.primaryAction === "install"
+                                ? "settings.source.reinstallAndConnect"
+                                : presentation.actionMessageId,
+                          })}
+                        </Button>
                       ) : null}
-                      {intl.formatMessage({
-                        id:
-                          server.installState === "uninstalled" &&
-                          presentation.primaryAction === "install"
-                            ? "settings.source.reinstallAndConnect"
-                            : presentation.actionMessageId,
-                      })}
-                    </Button>
-                  ) : null}
-                  {presentation.primaryAction === "update-desktop" && preferredProfile ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={deviceBusy}
-                      aria-busy={busyOperations.has(`connect:${preferredProfile.profileId}`)}
-                      onClick={() =>
-                        void run(
-                          `connect:${preferredProfile.profileId}`,
-                          async () => {
-                            await onConnectProfile?.(preferredProfile.profileId);
-                          },
-                          [profileOperationScope(preferredProfile)],
-                        )
-                      }
-                    >
-                      {busyOperations.has(`connect:${preferredProfile.profileId}`) ? (
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                      ) : null}
-                      {intl.formatMessage({ id: "remote.action.connect" })}
-                    </Button>
-                  ) : null}
-                  {displayedProfile ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={intl.formatMessage({
-                        id: "settings.source.editConnection",
-                      })}
-                      disabled={deviceBusy}
-                      onClick={() =>
-                        setEditingConnection({
-                          profile: displayedProfile,
-                          server,
-                        })
-                      }
-                    >
-                      <Pencil className="size-3.5" />
-                      {intl.formatMessage({ id: "settings.source.editConnection" })}
-                    </Button>
-                  ) : null}
-                  {
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+                      {presentation.primaryAction === "update-desktop" && preferredProfile ? (
                         <Button
                           type="button"
                           variant="ghost"
-                          size="icon-sm"
-                          aria-label={intl.formatMessage({ id: "common.more" })}
+                          size="sm"
+                          disabled={deviceBusy}
+                          aria-busy={busyOperations.has(`connect:${preferredProfile.profileId}`)}
+                          onClick={() =>
+                            void run(
+                              `connect:${preferredProfile.profileId}`,
+                              async () => {
+                                await onConnectProfile?.(preferredProfile.profileId);
+                              },
+                              [profileOperationScope(preferredProfile)],
+                            )
+                          }
                         >
-                          <Ellipsis className="size-3.5" />
+                          {busyOperations.has(`connect:${preferredProfile.profileId}`) ? (
+                            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                          ) : null}
+                          {intl.formatMessage({ id: "remote.action.connect" })}
                         </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="w-max min-w-64 [&_[data-slot=dropdown-menu-item]]:whitespace-nowrap"
-                      >
-                        {/*
-                          Bug 原因：「移除全部连接」曾被包在 online 分支里，简化 UI 删掉离线态的
-                          「重命名 / 迁移报告」后离线菜单变成空壳，离线设备再无任何移除入口。
-                          移除只删本机记录与凭据，Host removeSourceServer 会先幂等断开再删记录，
-                          不依赖远端在线；因此对所有已安装状态都渲染，只有「在侧边栏中显示」保留在线条件。
-                        */}
-                        {onShowInSidebar &&
-                        workspaceTabs.some(
-                          (tab) =>
-                            getWorkspaceSourceServerId(tab, {
-                              workspaceHistory: snapshot?.workspaceHistory,
-                            }) === server.sourceServerId,
-                        ) ? (
-                          <>
+                      ) : null}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={intl.formatMessage({ id: "common.more" })}
+                          >
+                            <Ellipsis className="size-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          className="w-max min-w-64 [&_[data-slot=dropdown-menu-item]]:whitespace-nowrap"
+                        >
+                          {/* RDUX-13: edit and disconnect of a connected device moved from the row into the menu; disconnect still does not ask for confirmation. */}
+                          {displayedProfile ? (
+                            <DropdownMenuItem
+                              disabled={deviceBusy}
+                              onSelect={() =>
+                                setEditingConnection({ profile: displayedProfile, server })
+                              }
+                            >
+                              <Pencil className="size-3.5" />
+                              {intl.formatMessage({ id: "settings.source.editConnection" })}
+                            </DropdownMenuItem>
+                          ) : null}
+                          {presentation.primaryAction === "disconnect" && actionProfile ? (
+                            <DropdownMenuItem
+                              disabled={deviceBusy || actionBusy}
+                              onSelect={() =>
+                                handleProfileAction(actionProfile, presentation, server)
+                              }
+                            >
+                              <Unplug className="size-3.5" />
+                              <span className="flex min-w-0 flex-col">
+                                {intl.formatMessage({ id: "remote.action.disconnect" })}
+                                <span className="text-ui-sm text-remote-foreground-muted">
+                                  {intl.formatMessage({ id: "settings.source.disconnectHint" })}
+                                </span>
+                              </span>
+                            </DropdownMenuItem>
+                          ) : null}
+                          {/*
+                            Bug 原因：「移除全部连接」曾被包在 online 分支里，简化 UI 删掉离线态的
+                            「重命名 / 迁移报告」后离线菜单变成空壳，离线设备再无任何移除入口。
+                            移除只删本机记录与凭据，Host removeSourceServer 会先幂等断开再删记录，
+                            不依赖远端在线；因此对所有已安装状态都渲染，只有「在侧边栏中显示」保留在线条件。
+                          */}
+                          {onShowInSidebar &&
+                          workspaceTabs.some(
+                            (tab) =>
+                              getWorkspaceSourceServerId(tab, {
+                                workspaceHistory: snapshot?.workspaceHistory,
+                              }) === server.sourceServerId,
+                          ) ? (
                             <DropdownMenuItem
                               onSelect={() => onShowInSidebar(server.sourceServerId)}
                             >
@@ -1259,341 +1419,583 @@ export function SourceServerManagementPanel({
                                 id: "settings.source.showInSidebar",
                               })}
                             </DropdownMenuItem>
+                          ) : null}
+                          {displayedProfile || presentation.primaryAction === "disconnect" ? (
                             <DropdownMenuSeparator />
-                          </>
-                        ) : null}
-                        <div
-                          className="max-w-80 space-y-1 px-2 py-2 text-ui-sm text-remote-foreground-muted"
-                          data-device-info
-                        >
-                          {[
-                            ["version", server.lastSeenVersion],
-                            ["hostname", server.hostname],
-                            ["osUser", server.osUser],
-                            ["deviceId", server.sourceServerId],
-                          ].map(([key, value]) => (
-                            <p key={key} className="break-all whitespace-normal">
-                              <span>
-                                {intl.formatMessage({ id: `settings.source.info.${key}` })}:{" "}
-                              </span>
-                              {value ?? intl.formatMessage({ id: "remote.infoUnavailable" })}
-                            </p>
-                          ))}
-                        </div>
-                        <DropdownMenuItem
-                          onSelect={() =>
-                            void run(`copy:${server.sourceServerId}`, async () => {
-                              await navigator.clipboard.writeText(server.sourceServerId);
-                            })
-                          }
-                        >
-                          <Copy className="size-3.5" />
-                          {intl.formatMessage({ id: "settings.source.copyDeviceId" })}
-                        </DropdownMenuItem>
-                        {/* RDRI-01: reinstall sits between restart and stop in the upstream menu; the
-                            fork has no lifecycle actions yet, so it directly follows the device info. */}
-                        {reinstallAvailability.visible && actionProfile ? (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              data-source-server-lifecycle-action="reinstall"
-                              disabled={!reinstallAvailability.enabled || actionBusy}
-                              onSelect={() => void reinstallRemoteService(server, actionProfile)}
-                            >
-                              <Wrench className="size-3.5" />
-                              <span className="flex min-w-0 flex-col">
-                                {intl.formatMessage({
-                                  id: "settings.source.reinstallRemoteService",
-                                })}
-                                <span className="text-ui-sm text-remote-foreground-muted">
-                                  {intl.formatMessage({
-                                    id: "settings.source.reinstallRemoteServiceHint",
-                                  })}
+                          ) : null}
+                          <div
+                            className="max-w-80 space-y-1 px-2 py-2 text-ui-sm text-remote-foreground-muted"
+                            data-device-info
+                          >
+                            {[
+                              ["version", server.lastSeenVersion],
+                              ["hostname", server.hostname],
+                              ["osUser", server.osUser],
+                              ["deviceId", server.sourceServerId],
+                            ].map(([key, value]) => (
+                              <p key={key} className="break-all whitespace-normal">
+                                <span>
+                                  {intl.formatMessage({ id: `settings.source.info.${key}` })}:{" "}
                                 </span>
-                              </span>
-                            </DropdownMenuItem>
-                          </>
-                        ) : null}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          disabled={deviceBusy}
-                          onSelect={() => void removeSourceServer(server)}
-                        >
-                          <Trash2 className="size-3.5" />
-                          {intl.formatMessage({
-                            id: "settings.source.removeSourceServer",
-                          })}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                                {value ?? intl.formatMessage({ id: "remote.infoUnavailable" })}
+                              </p>
+                            ))}
+                          </div>
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              void run(`copy:${server.sourceServerId}`, async () => {
+                                await navigator.clipboard.writeText(server.sourceServerId);
+                              })
+                            }
+                          >
+                            <Copy className="size-3.5" />
+                            {intl.formatMessage({ id: "settings.source.copyDeviceId" })}
+                          </DropdownMenuItem>
+                          {lifecycleAvailability.visible ? (
+                            <>
+                              <DropdownMenuSeparator />
+                              {REMOTE_SERVICE_LIFECYCLE_ACTION_ORDER.map((action) => {
+                                const copy = REMOTE_SERVICE_LIFECYCLE_ACTIONS[action];
+                                const Icon = copy.icon;
+                                return (
+                                  <Fragment key={action}>
+                                    {/* RDRI-01: reinstall sits between restart and stop; its availability rules are independent and not gated by the remote control-command version. */}
+                                    {action === "stop" &&
+                                    reinstallAvailability.visible &&
+                                    actionProfile ? (
+                                      <DropdownMenuItem
+                                        data-source-server-lifecycle-action="reinstall"
+                                        disabled={!reinstallAvailability.enabled || actionBusy}
+                                        onSelect={() =>
+                                          void reinstallRemoteService(server, actionProfile)
+                                        }
+                                      >
+                                        <Wrench className="size-3.5" />
+                                        <span className="flex min-w-0 flex-col">
+                                          {intl.formatMessage({
+                                            id: "settings.source.reinstallRemoteService",
+                                          })}
+                                          <span className="text-ui-sm text-remote-foreground-muted">
+                                            {intl.formatMessage({
+                                              id: "settings.source.reinstallRemoteServiceHint",
+                                            })}
+                                          </span>
+                                        </span>
+                                      </DropdownMenuItem>
+                                    ) : null}
+                                    <DropdownMenuItem
+                                      variant={copy.variant}
+                                      data-source-server-lifecycle-action={action}
+                                      disabled={!lifecycleAvailability.enabled}
+                                      onSelect={() =>
+                                        void runRemoteServiceLifecycle(server, action)
+                                      }
+                                    >
+                                      <Icon className="size-3.5" />
+                                      <span className="flex min-w-0 flex-col">
+                                        {intl.formatMessage({ id: copy.label })}
+                                        {/* Disabled menu items ignore the pointer; the version hint must stay inside the item rather than as a hover tooltip. */}
+                                        {lifecycleAvailability.requiresRemoteUpdate ? (
+                                          <span className="text-ui-sm text-remote-foreground-muted">
+                                            {intl.formatMessage({
+                                              id: "settings.source.remoteServiceUpdateRequired",
+                                            })}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  </Fragment>
+                                );
+                              })}
+                            </>
+                          ) : null}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={deviceBusy}
+                            onSelect={() => void removeSourceServer(server)}
+                          >
+                            <Trash2 className="size-3.5" />
+                            {intl.formatMessage({
+                              id: "settings.source.removeSourceServer",
+                            })}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
                   }
-                </div>
-              </div>
-              {/* 更新失败只替代同一连接的相同原因，其他连接和可选更新不能吞掉连接错误。 */}
-              {preferredConnectionErrorText && !updateExplainsConnectionError ? (
-                <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 rounded-md bg-destructive-surface px-3 py-2 text-ui-sm text-destructive-surface-foreground">
-                  <span className="min-w-0 flex-1">{preferredConnectionErrorText}</span>
-                  {/* RDRI-01: offer reinstall inline when the connection failed; same availability rules and confirmation as the "More" menu. */}
-                  {presentation.status === "failed" &&
-                  reinstallAvailability.visible &&
-                  actionProfile ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      data-source-server-reinstall
-                      disabled={!reinstallAvailability.enabled || actionBusy}
-                      onClick={() => void reinstallRemoteService(server, actionProfile)}
-                    >
-                      {intl.formatMessage({ id: "settings.source.reinstallRemoteService" })}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-              {showUpdate && serverState ? (
-                <div
-                  className={cn(
-                    "mx-4 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-ui-sm",
-                    presentation.updateNotice.surface,
-                    presentation.updateNotice.foreground,
-                  )}
                 >
-                  <span>
-                    {serverState.state === "updating"
-                      ? intl.formatMessage({
-                          id: "settings.source.updateInProgress",
-                        })
-                      : updateFailed
-                        ? updateFailureText
-                        : serverState.updateAvailability === "required"
-                          ? intl.formatMessage({
-                              id: "settings.source.updateRequired",
-                            })
-                          : intl.formatMessage(
-                              { id: "settings.source.updateAvailableVersion" },
-                              {
-                                version: serverState.availableVersion?.replace(/^v/i, "") ?? "",
-                              },
-                            )}
-                  </span>
-                  {serverState.updateAvailability === "available" &&
-                  serverState.state !== "updating" ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto"
-                      onClick={() => sourceServerUpdatePreferences.defer(updateKey)}
-                    >
-                      {intl.formatMessage({ id: "updateDialog.later" })}
-                    </Button>
-                  ) : null}
-                  {serverState.state !== "updating" &&
-                  presentation.primaryAction !== "update-server" &&
-                  presentation.primaryAction !== "update-desktop" ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={deviceBusy || busyOperations.has("desktop-update")}
-                      onClick={() => {
-                        const profile = serverProfiles.find(
-                          (candidate) => candidate.profileId === serverState.profileId,
-                        );
-                        if (serverState.upgradeTarget === "controller")
-                          void run("desktop-update", async () => {
-                            await platform?.executeDesktopCommand(
-                              DesktopCommandIds.CheckForUpdates,
-                            );
-                          });
-                        else if (profile) void updateProfile(profile);
-                      }}
-                    >
-                      {intl.formatMessage({
-                        id:
-                          serverState.upgradeTarget === "controller"
-                            ? "remote.action.update-desktop"
-                            : updateFailed
-                              ? "remote.action.retry"
-                              : "remote.action.update-server",
-                      })}
-                    </Button>
-                  ) : null}
-                  {serverState.state === "updating" ? (
-                    <SourceServerUpdateActivity
-                      active={serverState.state === "updating"}
-                      logs={operationLogs}
-                    />
-                  ) : serverState.currentVersion && serverState.minimumVersion ? (
-                    <p className="basis-full text-ui-xs opacity-80">
+                  {deviceBackground ? (
+                    <div className="-mx-4">
+                      <RemoteConnectionMinimizedProgress {...deviceBackground} />
+                    </div>
+                  ) : presentation.status === "connecting" && presentation.recovery ? (
+                    <div className="rounded-lg bg-progress-surface px-3 py-2 text-ui-base text-progress-surface-foreground">
                       {intl.formatMessage(
-                        { id: "settings.source.versionDetails" },
-                        {
-                          current: serverState.currentVersion.replace(/^v/i, ""),
-                          minimum: serverState.minimumVersion.replace(/^v/i, ""),
-                        },
+                        { id: presentation.recovery.messageId },
+                        presentation.recovery.values,
                       )}
-                    </p>
+                    </div>
                   ) : null}
-                </div>
-              ) : null}
-              {pendingIdentityProfiles.length > 1 ? (
-                <div className="border-t border-border px-4 py-2">
-                  {pendingIdentityProfiles
-                    .filter((profile) => profile !== identityChangeProfile)
-                    .map((profile) => renderProfile(profile, server))}
-                </div>
-              ) : null}
-              {showOtherProfiles || showRecentLog ? (
-                <div className="border-t border-border px-4 py-2" data-device-card-footer>
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    {showOtherProfiles ? (
+                  <div
+                    className="flex min-w-0 flex-wrap items-center gap-2 text-ui-sm text-remote-foreground-muted"
+                    data-device-connection
+                  >
+                    {displayedProfile ? (
+                      <>
+                        <RemoteConnectionKindTag kind={displayedProfile.transport} />
+                        <span
+                          className="min-w-0 truncate font-mono"
+                          title={formatConnectionProfileTarget(displayedProfile)}
+                        >
+                          {formatConnectionProfileTarget(displayedProfile)}
+                        </span>
+                        {/* 只有一条连接时“当前 / 默认”没有区分意义，不显示。 */}
+                        {serverProfiles.length > 1 && currentProfile ? (
+                          <span className="shrink-0 rounded-md bg-tag px-1.5 py-0.5 text-ui-xs">
+                            {intl.formatMessage({
+                              id: "settings.source.currentProfile",
+                            })}
+                          </span>
+                        ) : null}
+                        {serverProfiles.length > 1 &&
+                        displayedProfile.profileId === server.preferredProfileId ? (
+                          <span className="shrink-0 rounded-md bg-tag px-1.5 py-0.5 text-ui-xs">
+                            {intl.formatMessage({ id: "settings.source.defaultProfile" })}
+                          </span>
+                        ) : null}
+                        {displayedProfile.profileId !== server.preferredProfileId ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            disabled={deviceBusy}
+                            onClick={() =>
+                              void run(
+                                `preferred:${displayedProfile.profileId}`,
+                                () =>
+                                  management.setPreferredProfile(
+                                    server.sourceServerId,
+                                    displayedProfile.profileId,
+                                  ),
+                                [`source:${server.sourceServerId}`],
+                              )
+                            }
+                          >
+                            {intl.formatMessage({ id: "settings.source.setDefault" })}
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : null}
+                    {server.lastSeenVersion ? (
+                      <span
+                        className="shrink-0"
+                        title={intl.formatMessage({ id: "settings.source.info.version" })}
+                      >
+                        {displayedProfile ? "· " : ""}v{server.lastSeenVersion.replace(/^v/i, "")}
+                      </span>
+                    ) : null}
+                    {server.lastOnlineAt && !online ? (
+                      <span
+                        className="shrink-0"
+                        title={formatTimestamp(server.lastOnlineAt, locale)}
+                      >
+                        {displayedProfile || server.lastSeenVersion ? "· " : ""}
+                        {intl.formatMessage(
+                          { id: "settings.source.lastOnline" },
+                          {
+                            time: formatRelativeTimestamp(
+                              server.lastOnlineAt,
+                              locale,
+                              intl.formatMessage,
+                            ),
+                          },
+                        )}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* 更新失败只替代同一连接的相同原因，其他连接和可选更新不能吞掉连接错误。 */}
+                  {preferredConnectionErrorText && !updateExplainsConnectionError ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-destructive-surface px-3 py-2 text-ui-base text-destructive-surface-foreground">
+                      <span className="min-w-0 flex-1">{preferredConnectionErrorText}</span>
+                      {/* RDRI-01: offer reinstall inline when the connection failed; it shares the availability rules and confirmation with the "More" menu. */}
+                      {presentation.status === "failed" &&
+                      reinstallAvailability.visible &&
+                      actionProfile ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          data-source-server-reinstall
+                          disabled={!reinstallAvailability.enabled || actionBusy}
+                          onClick={() => void reinstallRemoteService(server, actionProfile)}
+                        >
+                          {intl.formatMessage({ id: "settings.source.reinstallRemoteService" })}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {showUpdate && serverState ? (
+                    <div
+                      className={cn(
+                        "flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-ui-base",
+                        presentation.updateNotice.surface,
+                        presentation.updateNotice.foreground,
+                      )}
+                    >
+                      <span>
+                        {serverState.state === "updating"
+                          ? intl.formatMessage({
+                              id: "settings.source.updateInProgress",
+                            })
+                          : updateFailed
+                            ? updateFailureText
+                            : serverState.updateAvailability === "required"
+                              ? intl.formatMessage({
+                                  id: "settings.source.updateRequired",
+                                })
+                              : intl.formatMessage(
+                                  { id: "settings.source.updateAvailableVersion" },
+                                  {
+                                    version: serverState.availableVersion?.replace(/^v/i, "") ?? "",
+                                  },
+                                )}
+                      </span>
+                      {serverState.updateAvailability === "available" &&
+                      serverState.state !== "updating" ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="ml-auto"
+                          onClick={() => sourceServerUpdatePreferences.defer(updateKey)}
+                        >
+                          {intl.formatMessage({ id: "updateDialog.later" })}
+                        </Button>
+                      ) : null}
+                      {serverState.state !== "updating" &&
+                      presentation.primaryAction !== "update-server" &&
+                      presentation.primaryAction !== "update-desktop" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={deviceBusy || busyOperations.has("desktop-update")}
+                          onClick={() => {
+                            const profile = serverProfiles.find(
+                              (candidate) => candidate.profileId === serverState.profileId,
+                            );
+                            if (serverState.upgradeTarget === "controller")
+                              void run("desktop-update", async () => {
+                                await platform?.executeDesktopCommand(
+                                  DesktopCommandIds.CheckForUpdates,
+                                );
+                              });
+                            else if (profile) void updateProfile(profile);
+                          }}
+                        >
+                          {intl.formatMessage({
+                            id:
+                              serverState.upgradeTarget === "controller"
+                                ? "remote.action.update-desktop"
+                                : updateFailed
+                                  ? "remote.action.retry"
+                                  : "remote.action.update-server",
+                          })}
+                        </Button>
+                      ) : null}
+                      {serverState.upgradeTarget === "controller" &&
+                      serverState.updateAvailability === "required" &&
+                      serverState.state !== "updating" &&
+                      serverState.currentVersion ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={deviceBusy}
+                          onClick={() => {
+                            const profile = serverProfiles.find(
+                              (candidate) => candidate.profileId === serverState.profileId,
+                            );
+                            if (!profile) return;
+                            void confirmDialog(
+                              getSourceServerDowngradeConfirmation(serverState, intl.formatMessage),
+                            ).then((confirmed) =>
+                              confirmed ? updateProfile(profile, true) : undefined,
+                            );
+                          }}
+                        >
+                          {intl.formatMessage(
+                            { id: "remote.action.downgrade-server" },
+                            { version: serverState.currentVersion.replace(/^v/i, "") },
+                          )}
+                        </Button>
+                      ) : null}
+                      {serverState.state === "updating" ? (
+                        <SourceServerUpdateActivity
+                          active={serverState.state === "updating"}
+                          logs={operationLogs}
+                        />
+                      ) : serverState.currentVersion && serverState.minimumVersion ? (
+                        <p className="basis-full text-ui-sm opacity-80">
+                          {intl.formatMessage(
+                            { id: "settings.source.versionDetails" },
+                            {
+                              current: serverState.currentVersion.replace(/^v/i, ""),
+                              minimum: serverState.minimumVersion.replace(/^v/i, ""),
+                            },
+                          )}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {pendingIdentityProfiles.length > 1 ? (
+                    <div>
+                      {pendingIdentityProfiles
+                        .filter((profile) => profile !== identityChangeProfile)
+                        .map((profile) => renderProfile(profile, server))}
+                    </div>
+                  ) : null}
+                  <div className="min-w-0" data-device-projects>
+                    {projects.length === 0 ? (
+                      <p className="text-ui-sm text-remote-foreground-muted">
+                        {intl.formatMessage({ id: "settings.source.projectCount" }, { count: 0 })}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex min-w-0 items-center justify-between gap-2">
+                          <p className="text-ui-sm font-medium text-remote-foreground-muted">
+                            {intl.formatMessage({ id: "settings.source.recentProjects" })}
+                          </p>
+                          {/* Bug 原因：旧实现超出三个只显示不可点击的 +N，其余项目在此处无法打开。 */}
+                          {projects.length > COLLAPSED_PROJECT_COUNT ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="xs"
+                              className="text-remote-foreground-muted"
+                              aria-expanded={projectsExpanded}
+                              onClick={() =>
+                                setExpandedProjectSources((current) =>
+                                  toggleSetItem(current, server.sourceServerId),
+                                )
+                              }
+                            >
+                              {intl.formatMessage(
+                                {
+                                  id: projectsExpanded
+                                    ? "settings.source.showLessProjects"
+                                    : "settings.source.showAllProjects",
+                                },
+                                { count: projects.length },
+                              )}
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 min-w-0">
+                          {visibleProjects.map((project) => {
+                            const projectName = getProjectDisplayName(
+                              server,
+                              project.workspacePath,
+                            );
+                            return (
+                              <Button
+                                key={resolveWorkspaceKey(project)}
+                                data-device-project
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="group/project -mx-2 h-auto w-[calc(100%+1rem)] min-w-0 justify-start gap-2 px-2 py-1.5"
+                                aria-label={projectName}
+                                title={project.workspacePath}
+                                disabled={!onOpenProject || deviceBusy}
+                                onClick={() =>
+                                  void run(
+                                    `open:${resolveWorkspaceKey(project)}`,
+                                    () =>
+                                      onOpenProject?.(
+                                        server.sourceServerId,
+                                        project.workspacePath,
+                                        displayedProfile?.profileId,
+                                      ) ?? Promise.resolve(),
+                                    [`source:${server.sourceServerId}`],
+                                  )
+                                }
+                              >
+                                <Folder className="size-3.5 text-remote-foreground-muted" />
+                                <span className="max-w-48 shrink-0 truncate text-ui-base font-medium">
+                                  {projectName}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-left font-mono text-ui-sm text-remote-foreground-muted">
+                                  {project.workspacePath}
+                                </span>
+                                {openedProjectPaths.has(project.workspacePath) ? (
+                                  <span className="shrink-0 rounded-md bg-tag px-1.5 py-0.5 text-ui-xs text-remote-foreground-muted">
+                                    {intl.formatMessage({ id: "settings.source.projectOpened" })}
+                                  </span>
+                                ) : null}
+                                <span className="shrink-0 text-ui-sm text-remote-foreground-muted">
+                                  {formatRelativeTimestamp(
+                                    project.lastOpenedAt,
+                                    locale,
+                                    intl.formatMessage,
+                                  )}
+                                </span>
+                                <ArrowUpRight className="size-3.5 text-remote-foreground-muted opacity-0 group-hover/project:opacity-100 group-focus-visible/project:opacity-100" />
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {showOtherProfiles || showRecentLog ? (
+                    <div className="border-t border-border pt-2" data-device-card-footer>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        {showOtherProfiles ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="-ml-2 text-remote-foreground-muted"
+                            aria-label={intl.formatMessage({
+                              id: "settings.source.otherSavedConnections",
+                            })}
+                            aria-expanded={otherProfilesExpanded}
+                            onClick={() =>
+                              setExpandedSavedConnectionSources((current) =>
+                                toggleSetItem(current, server.sourceServerId),
+                              )
+                            }
+                          >
+                            {otherProfilesExpanded ? (
+                              <ChevronDown className="size-3.5" />
+                            ) : (
+                              <ChevronRight className="size-3.5" />
+                            )}
+                            {intl.formatMessage(
+                              { id: "settings.source.otherSavedConnectionsCount" },
+                              { count: otherProfiles.length },
+                            )}
+                          </Button>
+                        ) : null}
+                        {showRecentLog ? (
+                          <Button
+                            data-source-server-log-toggle
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            // 只有日志入口时靠左，避免页脚左侧空出一整行。
+                            className={cn(
+                              "text-remote-foreground-muted",
+                              showOtherProfiles ? "-mr-2 ml-auto" : "-ml-2",
+                            )}
+                            aria-expanded={logExpanded}
+                            onClick={() =>
+                              setLogExpansionBySource((current) =>
+                                new Map(current).set(server.sourceServerId, !logExpanded),
+                              )
+                            }
+                          >
+                            <ChevronRight
+                              className={cn(
+                                "size-3.5 transition-transform",
+                                logExpanded && "rotate-90",
+                              )}
+                            />
+                            {intl.formatMessage({ id: "settings.source.recentLog" })}
+                          </Button>
+                        ) : null}
+                      </div>
+                      {otherProfilesExpanded ? (
+                        <div className="mt-1 px-2 py-1">
+                          {otherProfiles.map((profile) => renderProfile(profile, server))}
+                        </div>
+                      ) : null}
+                      {logExpanded ? (
+                        <div className="mt-1 pb-1">
+                          <SourceServerLogList logs={operationLogs} />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {/* 产品边界：迁移账本是内部兼容机制，仅在存在待处理问题时以用户可理解的连接历史提醒暴露。 */}
+                  {pendingMigrationCount > 0 ? (
+                    <div className="border-t border-border pt-2">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="-ml-2 text-remote-foreground-muted"
-                        aria-label={intl.formatMessage({
-                          id: "settings.source.otherSavedConnections",
-                        })}
-                        aria-expanded={otherProfilesExpanded}
-                        onClick={() =>
-                          setExpandedSavedConnectionSources((current) =>
-                            toggleSetItem(current, server.sourceServerId),
-                          )
-                        }
+                        className="-ml-2 justify-start text-ui-base text-remote-foreground-muted"
+                        onClick={() => toggleMigrationReport(server.sourceServerId)}
                       >
-                        {otherProfilesExpanded ? (
+                        {migrationReport ? (
                           <ChevronDown className="size-3.5" />
                         ) : (
                           <ChevronRight className="size-3.5" />
                         )}
-                        {intl.formatMessage(
-                          { id: "settings.source.otherSavedConnectionsCount" },
-                          { count: otherProfiles.length },
-                        )}
-                      </Button>
-                    ) : null}
-                    {showRecentLog ? (
-                      <Button
-                        data-source-server-log-toggle
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        // 只有日志入口时靠左，避免页脚左侧空出一整行。
-                        className={cn(
-                          "text-remote-foreground-muted",
-                          showOtherProfiles ? "-mr-2 ml-auto" : "-ml-2",
-                        )}
-                        aria-expanded={logExpanded}
-                        onClick={() =>
-                          setLogExpansionBySource((current) =>
-                            new Map(current).set(server.sourceServerId, !logExpanded),
-                          )
-                        }
-                      >
-                        <ChevronRight
-                          className={cn(
-                            "size-3.5 transition-transform",
-                            logExpanded && "rotate-90",
+                        <FileWarning className="size-3.5 text-warning" />
+                        {intl.formatMessage({
+                          id: "settings.source.connectionHistoryNeedsAttention",
+                        })}
+                        <span className="font-medium text-warning-surface-foreground">
+                          {intl.formatMessage(
+                            { id: "settings.source.pendingMigrationCount" },
+                            { count: pendingMigrationCount },
                           )}
-                        />
-                        {intl.formatMessage({ id: "settings.source.recentLog" })}
+                        </span>
                       </Button>
-                    ) : null}
-                  </div>
-                  {otherProfilesExpanded ? (
-                    <div className="mt-1 px-2 py-1">
-                      {otherProfiles.map((profile) => renderProfile(profile, server))}
-                    </div>
-                  ) : null}
-                  {logExpanded ? (
-                    <div className="mt-1 pb-1">
-                      <SourceServerLogList logs={operationLogs} />
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {/* 产品边界：迁移账本是内部兼容机制，仅在存在待处理问题时以用户可理解的连接历史提醒暴露。 */}
-              {showServerLines &&
-              migrationCount?.status === "available" &&
-              migrationCount.failedPathCount + migrationCount.abandonedPathCount > 0 ? (
-                <div className="border-t border-border">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start rounded-none px-4 py-2.5 text-ui-sm text-remote-foreground-muted"
-                    onClick={() => toggleMigrationReport(server.sourceServerId)}
-                  >
-                    {migrationReport ? (
-                      <ChevronDown className="size-3.5" />
-                    ) : (
-                      <ChevronRight className="size-3.5" />
-                    )}
-                    <FileWarning className="size-3.5 text-warning" />
-                    {intl.formatMessage({
-                      id: "settings.source.connectionHistoryNeedsAttention",
-                    })}
-                    <span className="font-medium text-warning">
-                      {intl.formatMessage(
-                        { id: "settings.source.pendingMigrationCount" },
-                        {
-                          count: migrationCount.failedPathCount + migrationCount.abandonedPathCount,
-                        },
-                      )}
-                    </span>
-                  </Button>
-                  {migrationReport ? (
-                    <SourceServerMigrationReportPanel
-                      report={migrationReport}
-                      disabled={deviceBusy}
-                      onAbandon={(workspacePath, migrationId) => {
-                        void confirmDialog({
-                          title: intl.formatMessage({
-                            id: "settings.source.abandonMigrationTitle",
-                          }),
-                          description: intl.formatMessage({
-                            id: "settings.source.abandonMigrationDescription",
-                          }),
-                          confirmLabel: intl.formatMessage({
-                            id: "settings.source.abandonMigration",
-                          }),
-                          confirmVariant: "destructive",
-                        }).then((confirmed) => {
-                          if (!confirmed) return;
-                          void runMigrationOperation(
-                            `abandon:${server.sourceServerId}:${migrationId}`,
-                            server.sourceServerId,
-                            () =>
-                              management.abandonWorkspaceMigration(
+                      {migrationReport ? (
+                        <SourceServerMigrationReportPanel
+                          report={migrationReport}
+                          disabled={deviceBusy}
+                          onAbandon={(workspacePath, migrationId) => {
+                            void confirmDialog({
+                              title: intl.formatMessage({
+                                id: "settings.source.abandonMigrationTitle",
+                              }),
+                              description: intl.formatMessage({
+                                id: "settings.source.abandonMigrationDescription",
+                              }),
+                              confirmLabel: intl.formatMessage({
+                                id: "settings.source.abandonMigration",
+                              }),
+                              confirmVariant: "destructive",
+                            }).then((confirmed) => {
+                              if (!confirmed) return;
+                              void runMigrationOperation(
+                                `abandon:${server.sourceServerId}:${migrationId}`,
                                 server.sourceServerId,
-                                workspacePath,
-                                migrationId,
-                              ),
-                          );
-                        });
-                      }}
-                      onRetry={(workspacePath, migrationId) =>
-                        void runMigrationOperation(
-                          `retry:${server.sourceServerId}:${migrationId}`,
-                          server.sourceServerId,
-                          () =>
-                            management.retryWorkspaceMigration(
+                                () =>
+                                  management.abandonWorkspaceMigration(
+                                    server.sourceServerId,
+                                    workspacePath,
+                                    migrationId,
+                                  ),
+                              );
+                            });
+                          }}
+                          onRetry={(workspacePath, migrationId) =>
+                            void runMigrationOperation(
+                              `retry:${server.sourceServerId}:${migrationId}`,
                               server.sourceServerId,
-                              workspacePath,
-                              migrationId,
-                            ),
-                        )
-                      }
-                    />
+                              () =>
+                                management.retryWorkspaceMigration(
+                                  server.sourceServerId,
+                                  workspacePath,
+                                  migrationId,
+                                ),
+                            )
+                          }
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
-                </div>
-              ) : null}
-            </section>
-          );
-        })}
+                </SourceServerDeviceRow>
+              );
+            })}
+          </div>
+        ) : null}
         {unboundProfiles.length > 0 ? (
           <details
             open={
@@ -1677,7 +2079,7 @@ export function SourceServerManagementPanel({
                 { id: "settings.source.retiredProfilesWithCount" },
                 { count: retiredProfiles.length },
               )}
-              <span className="text-ui-xs font-normal text-remote-foreground-muted">
+              <span className="text-ui-sm font-normal text-remote-foreground-muted">
                 {intl.formatMessage({
                   id: "settings.source.retiredProfilesDescription",
                 })}
@@ -1695,7 +2097,7 @@ export function SourceServerManagementPanel({
                       id: "settings.source.retiredNameSuffix",
                     })}
                   </span>
-                  <span className="text-ui-xs">
+                  <span className="text-ui-sm">
                     {profile.retiredAt
                       ? `${intl.formatMessage(
                           { id: "settings.source.archivedAt" },
@@ -1721,18 +2123,35 @@ export function SourceServerManagementPanel({
         <section className="border-t border-border pt-4">
           <h3 className="text-ui-base font-medium text-foreground">
             {intl.formatMessage({
-              id: "settings.source.connectionPreferences",
+              id: "settings.source.preferences",
             })}
           </h3>
           <div className="mt-3 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-ui-sm text-foreground">
+                <p className="text-ui-base text-foreground">
+                  {intl.formatMessage({ id: "settings.source.hideProjectDeviceNames" })}
+                </p>
+                <p className="text-ui-sm text-remote-foreground-muted">
+                  {intl.formatMessage({ id: "settings.source.hideProjectDeviceNamesDescription" })}
+                </p>
+              </div>
+              <Switch
+                data-testid="hide-project-device-names"
+                checked={hideProjectDeviceNames}
+                disabled={!onHideProjectDeviceNamesChange}
+                onCheckedChange={onHideProjectDeviceNamesChange}
+                aria-label={intl.formatMessage({ id: "settings.source.hideProjectDeviceNames" })}
+              />
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-ui-base text-foreground">
                   {intl.formatMessage({
                     id: "settings.source.startupAutoReconnect",
                   })}
                 </p>
-                <p className="text-ui-xs text-remote-foreground-muted">
+                <p className="text-ui-sm text-remote-foreground-muted">
                   {intl.formatMessage({
                     id: "settings.source.startupAutoReconnectDescription",
                   })}
@@ -1762,7 +2181,7 @@ export function SourceServerManagementPanel({
           </div>
         </section>
         {ready && profiles.length === 0 && servers.length === 0 ? (
-          <div className="space-y-3 py-4 text-center text-ui-sm text-remote-foreground-muted">
+          <div className="space-y-3 py-4 text-center text-ui-base text-remote-foreground-muted">
             <p>{intl.formatMessage({ id: "settings.source.empty" })}</p>
             {onCreateConnection ? (
               <Button type="button" size="sm" onClick={onCreateConnection}>

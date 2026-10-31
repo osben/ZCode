@@ -546,6 +546,8 @@ export async function executeDesktopCommand(options: {
   zcodeTestEndpointOrigin?: string;
   credentialsDir: string;
   currentApplicationLocale: Locale;
+  /** Remote-control diagnostics: pull logs from a paired phone and export them (window id is the originating window). */
+  pullMobileLogs?: (windowId: number | undefined) => Promise<unknown>;
 }) {
   const targetWindow = resolveTargetWindow(options.senderWindow);
   options.logger.info(
@@ -661,6 +663,9 @@ export async function executeDesktopCommand(options: {
       return;
     case DesktopCommandIds.ExportLogs:
       await exportLogs();
+      return;
+    case DesktopCommandIds.PullMobileLogs:
+      await options.pullMobileLogs?.(targetWindow?.id);
       return;
     case DesktopCommandIds.ToggleDevTools:
       targetWindow?.webContents.toggleDevTools();

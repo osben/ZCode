@@ -172,6 +172,17 @@ describe("memory extraction gate", () => {
       evaluateMemoryExtraction(snapshot([oldWrite, prose]), createMessageId("missing-cursor")),
     ).toEqual({ decision: "run", messageCount: 2 });
   });
+
+  it("counts only conversation messages, not hidden announcement records", () => {
+    const cursor = userMessage("cursor-hidden", ["already extracted"]);
+    const announcement = hiddenReminder("env-announcement", "environment");
+    const prose = userMessage("prose-hidden", ["remember the durable preference"]);
+    const marker = hiddenReminder("interrupt", "interrupt_marker");
+    // Hidden announcements are not conversation messages and are not counted in "~N messages"; the interrupt marker is plain user text and is counted.
+    expect(
+      evaluateMemoryExtraction(snapshot([cursor, announcement, prose, marker]), cursor.info.id),
+    ).toEqual({ decision: "run", messageCount: 2 });
+  });
 });
 
 describe("memory extraction scheduler", () => {
@@ -404,6 +415,24 @@ function userMessage(
       text,
     })),
   };
+}
+
+function hiddenReminder(id: string, source: string): MessageWithParts {
+  const message = userMessage(id, [`<system-reminder>${source}</system-reminder>`], {
+    synthetic: true,
+    visibility: "model-only",
+  });
+  message.info.semantics = {
+    origin: "agent_runtime",
+    kind: "system_reminder",
+    source,
+    uiVisibility: "hidden",
+    providerVisibility: "visible",
+    transcriptVisibility: "hidden",
+  };
+  // Same shape as written by buildRuntimeReminderMessage: the type lives in metadata.runtimeMessage, with no top-level source.
+  message.info.metadata = { runtimeMessage: { source }, source, visibility: "model-only" };
+  return message;
 }
 
 function assistantToolMessage(

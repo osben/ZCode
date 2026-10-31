@@ -21,6 +21,22 @@ export interface EnvInfo {
   recentCommits?: string[];
 }
 
+/**
+ * Git facts for session context; excludes host environment such as cwd and shell.
+ * isGitRepository is derived by walking up from the directory's real path (resolving links, matching git)
+ * looking for `.git`; it is always a definitive answer and never spawns a git process.
+ */
+export type GitContext = Pick<
+  EnvInfo,
+  | "isGitRepository"
+  | "gitBranch"
+  | "gitMainBranch"
+  | "gitUser"
+  | "gitStatus"
+  | "gitStatusLines"
+  | "recentCommits"
+>;
+
 export interface UserInstructionsOptions {
   workingDirectory: string;
   projectRoot?: string;
@@ -91,6 +107,17 @@ export interface ContextSourceResolveOptions {
 }
 
 export interface ContextSourcePort {
+  // Reads only the current host environment; does not reload instructions, Skills, or session-start Git details.
+  resolveEnvironment(
+    request: Pick<ContextSourceRequest, "workingDirectory" | "effectiveShellDisplayName" | "trace">,
+    options?: ContextSourceResolveOptions,
+  ): Promise<EnvInfo>;
+  // Reads only the current directory's Git session context. Decided once per context window: called when
+  // the pre-request history has neither session_context nor date, or when compaction's kept tail lacks session_context.
+  resolveGitContext(
+    request: Pick<ContextSourceRequest, "workingDirectory" | "trace">,
+    options?: ContextSourceResolveOptions,
+  ): Promise<GitContext>;
   resolveContextSources(
     request: ContextSourceRequest,
     options?: ContextSourceResolveOptions,

@@ -7,6 +7,8 @@ import {
   createToolCallId,
   createTurnId,
   type SessionEvent,
+  type ToolArtifactStorePort,
+  type ToolArtifactWriteRequest,
 } from "@zcode/contracts";
 import { createInMemoryHookRunner } from "../src/hooks/index.js";
 import { PermissionService, defaultPermissionConfig } from "../src/permission/service.js";
@@ -15,7 +17,7 @@ import { createToolRegistry } from "../src/tool/registry.js";
 import type { ToolEntry, ToolHandler } from "../src/tool/types.js";
 
 describe("ToolExecutor hook additional context", () => {
-  it("adds PreToolUse hook context to successful model content", async () => {
+  it("keeps PreToolUse hook context out of the successful tool result", async () => {
     const fixture = createExecutorFixture("tool-hook-pre-context");
     fixture.registry.register(createTestToolEntry("ContextTool", async () => "tool-output"));
     const hookRunner = createInMemoryHookRunner({
@@ -44,11 +46,14 @@ describe("ToolExecutor hook additional context", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(result.modelContent).toContain("tool-output");
-    expect(result.modelContent).toContain("pre-tool context");
+    expect(result.modelContent).toBe("tool-output");
+    expect(result.serialization?.content).toBe("tool-output");
+    expect(result.hookAdditionalContexts).toEqual([
+      "PreToolUse:ContextTool hook additional context: pre-tool context",
+    ]);
   });
 
-  it("adds PreToolUse and PostToolUseFailure hook context to failed model content", async () => {
+  it("keeps the raw error as the failed tool result and carries Pre and Failure contexts", async () => {
     const fixture = createExecutorFixture("tool-hook-failure-context");
     fixture.registry.register(
       createTestToolEntry("FailingContextTool", async () => {
@@ -90,10 +95,26 @@ describe("ToolExecutor hook additional context", () => {
       { traceContext: fixture.traceContext },
     );
 
+    const withoutHooks = await fixture
+      .createExecutor(createInMemoryHookRunner({ hooks: [] }))
+      .execute(
+        {
+          id: createToolCallId("pre-failure-context-no-hooks"),
+          input: {},
+          name: "FailingContextTool",
+        },
+        { traceContext: fixture.traceContext },
+      );
+
     expect(result.success).toBe(false);
-    expect(result.modelContent).toContain("tool exploded");
-    expect(result.modelContent).toContain("pre failure context");
-    expect(result.modelContent).toContain("post failure context");
+    // With and without a Hook, the model sees the same raw error text.
+    expect(result.modelContent).toEqual(withoutHooks.modelContent);
+    expect(result.error?.message).toBe(withoutHooks.error?.message);
+    expect(JSON.stringify(result.modelContent ?? "")).not.toContain("failure context");
+    expect(result.hookAdditionalContexts).toEqual([
+      "PreToolUse:FailingContextTool hook additional context: pre failure context",
+      "PostToolUseFailure:FailingContextTool hook additional context: post failure context",
+    ]);
   });
 
   it("keeps terminal provider facts when PostToolUseFailure adds context", async () => {
@@ -133,7 +154,10 @@ describe("ToolExecutor hook additional context", () => {
     expect(result.modelContent).toContain(
       "request has been blocked\n\nProvider failure: status=405 provider_error_code=3012 retryable=false",
     );
-    expect(result.modelContent).toContain("post failure context");
+    // Hook text is delivered as hookAdditionalContexts (runtime attachments), not spliced into modelContent.
+    expect(result.hookAdditionalContexts).toEqual([
+      "PostToolUseFailure:ProviderFailingTool hook additional context: post failure context",
+    ]);
   });
 
   it("keeps PreToolUse context when hook-updated input fails schema validation", async () => {
@@ -177,8 +201,10 @@ describe("ToolExecutor hook additional context", () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.message).toContain("Tool input failed inputSchema validation");
-    expect(result.modelContent).toContain("invalid update context");
-    expect(result.modelContent).not.toContain("InputValidationError:");
+    expect(JSON.stringify(result.modelContent ?? "")).not.toContain("invalid update context");
+    expect(result.hookAdditionalContexts).toEqual([
+      "PreToolUse:InvalidHookUpdateTool hook additional context: invalid update context",
+    ]);
     expect(handlerRan).toBe(false);
   });
 
@@ -247,9 +273,11 @@ describe("ToolExecutor hook additional context", () => {
       code: "7",
       message: "Tool-specific failure",
     });
-    expect(result.modelContent).toContain("<tool_use_error>Tool-specific failure</tool_use_error>");
-    expect(result.modelContent).toContain("pre failure context");
-    expect(result.modelContent).toContain("post failure context");
+    expect(result.modelContent).toBe("<tool_use_error>Tool-specific failure</tool_use_error>");
+    expect(result.hookAdditionalContexts).toEqual([
+      "PreToolUse:HandlerFailureTool hook additional context: pre failure context",
+      "PostToolUseFailure:HandlerFailureTool hook additional context: post failure context",
+    ]);
     expect(handlerCalls).toBe(1);
     expect(postSuccessRan).toBe(false);
     expect(postFailureRan).toBe(true);
@@ -301,8 +329,8 @@ describe("ToolExecutor hook additional context", () => {
     expect(result.success).toBe(true);
     expect(handlerRan).toBe(true);
     expect(events.map((event) => event.type)).toEqual([
-      // D20：block 决策只产生一个终态事件（runner.ts:143 为 blocked ? Blocked : Completed）。
-      // 此前同时断言 Completed + Blocked，会让「被拦截」在 UI 上呈现为已完成绿勾。
+      // D20: a block decision produces exactly one terminal event (runner.ts:143 is blocked ? Blocked : Completed).
+      // Previously asserting Completed + Blocked together made "blocked" render in the UI as a completed green check.
       SessionEventType.HookRunStarted,
       SessionEventType.HookRunBlocked,
     ]);
@@ -341,7 +369,9 @@ describe("ToolExecutor hook additional context", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(result.modelContent).toContain("task matcher matched agent");
+    expect(result.hookAdditionalContexts).toEqual([
+      "PreToolUse:Agent hook additional context: task matcher matched agent",
+    ]);
     expect(observedToolName).toBe("Agent");
   });
 
@@ -378,10 +408,179 @@ describe("ToolExecutor hook additional context", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(result.modelContent).toContain("agent matcher matched task");
+    expect(result.hookAdditionalContexts).toEqual([
+      "PreToolUse:Task hook additional context: agent matcher matched task",
+    ]);
     expect(observedToolName).toBe("Task");
   });
 });
+
+describe("ToolExecutor hook additional context size cap", () => {
+  it("keeps a context of exactly 10000 chars unchanged", async () => {
+    const context = "a".repeat(10_000);
+    const store = createHookArtifactStore();
+    const result = await executeWithPostContext("tool-hook-cap-exact", context, store);
+
+    expect(store.requests).toHaveLength(0);
+    expect(result.hookAdditionalContexts).toEqual([
+      `PostToolUse:CapTool hook additional context: ${context}`,
+    ]);
+  });
+
+  it("persists a longer context and shows a persisted-output preview", async () => {
+    const context = "a".repeat(12_000);
+    const store = createHookArtifactStore();
+    const result = await executeWithPostContext("tool-hook-cap-persist", context, store);
+
+    expect(store.requests).toHaveLength(1);
+    expect(store.requests[0]).toMatchObject({ content: context, contentType: "text/plain" });
+    expect(result.hookAdditionalContexts).toEqual([
+      "PostToolUse:CapTool hook additional context: <persisted-output>\n" +
+        "Output too large (11.7KB). Full output saved to: /artifacts/hook-1.txt\n\n" +
+        `Preview (first 2KB):\n${"a".repeat(2_000)}\n...\n</persisted-output>`,
+    ]);
+  });
+
+  it("keeps the first 10000 chars and the reason when the write fails", async () => {
+    const context = `${"a".repeat(9_999)}😀tail`;
+    const store = createHookArtifactStore(new Error("disk full"));
+    const result = await executeWithPostContext("tool-hook-cap-write-failed", context, store);
+
+    // The 10000th character is the high surrogate of a pair; truncation drops both, leaving no half character.
+    expect(result.hookAdditionalContexts).toEqual([
+      `PostToolUse:CapTool hook additional context: ${"a".repeat(9_999)}\n\n` +
+        "[Hook additionalContext truncated at 10000 chars — persist-to-disk failed: disk full]",
+    ]);
+  });
+
+  it("reuses the formatted PreToolUse context when the success path throws after formatting", async () => {
+    const fixture = createExecutorFixture("tool-hook-cap-late-failure");
+    fixture.registry.register(createTestToolEntry("CapTool", async () => "tool-output"));
+    const context = "c".repeat(12_000);
+    const store = createHookArtifactStore();
+    const executor = createToolExecutor({
+      artifactStore: store,
+      // The success path formats the Hook context, then writing the result event fails and drops into catch.
+      emitEvent: async (event) => {
+        if (event.type === SessionEventType.ToolCallResult) throw new Error("event store down");
+      },
+      hookRunner: createInMemoryHookRunner({
+        hooks: [
+          {
+            event: HookEventName.PreToolUse,
+            matcher: "CapTool",
+            callback: async (input) => ({
+              hookSpecificOutput: {
+                additionalContext: context,
+                hookEventName: input.hookEventName,
+              },
+            }),
+          },
+        ],
+      }),
+      permissionService: new PermissionService(defaultPermissionConfig),
+      registry: fixture.registry,
+      sessionId: fixture.traceContext.sessionId!,
+      traceContext: fixture.traceContext,
+      turnId: fixture.traceContext.turnId!,
+    });
+
+    const result = await executor.execute(
+      { id: createToolCallId("cap-late-failure"), input: {}, name: "CapTool" },
+      { traceContext: fixture.traceContext },
+    );
+
+    // catch reuses the success path's filtered, formatted result: persisted once, and the attachment points at the same file.
+    expect(result.success).toBe(false);
+    expect(store.requests).toHaveLength(1);
+    expect(result.hookAdditionalContexts).toEqual([
+      expect.stringContaining("Full output saved to: /artifacts/hook-1.txt"),
+    ]);
+  });
+
+  it("caps the PreToolUse context on the deny path", async () => {
+    const fixture = createExecutorFixture("tool-hook-cap-deny");
+    fixture.registry.register(createTestToolEntry("CapTool", async () => "tool-output"));
+    const context = "b".repeat(10_001);
+    const result = await fixture
+      .createExecutor(
+        createInMemoryHookRunner({
+          hooks: [
+            {
+              event: HookEventName.PreToolUse,
+              matcher: "CapTool",
+              callback: async (input) => ({
+                hookSpecificOutput: {
+                  additionalContext: context,
+                  hookEventName: input.hookEventName,
+                  permissionDecision: "deny",
+                },
+              }),
+            },
+          ],
+        }),
+      )
+      .execute(
+        { id: createToolCallId("cap-deny"), input: {}, name: "CapTool" },
+        { traceContext: fixture.traceContext },
+      );
+
+    expect(result.success).toBe(false);
+    expect(result.hookAdditionalContexts).toEqual([
+      `PreToolUse:CapTool hook additional context: ${"b".repeat(10_000)}\n\n` +
+        "[Hook additionalContext truncated at 10000 chars — persist-to-disk failed: no artifact store]",
+    ]);
+  });
+});
+
+async function executeWithPostContext(
+  sessionName: string,
+  context: string,
+  artifactStore: ToolArtifactStorePort,
+) {
+  const fixture = createExecutorFixture(sessionName);
+  fixture.registry.register(createTestToolEntry("CapTool", async () => "tool-output"));
+  const hookRunner = createInMemoryHookRunner({
+    hooks: [
+      {
+        event: HookEventName.PostToolUse,
+        matcher: "CapTool",
+        callback: async (input) => ({
+          hookSpecificOutput: { additionalContext: context, hookEventName: input.hookEventName },
+        }),
+      },
+    ],
+  });
+  return fixture
+    .createExecutor(hookRunner, artifactStore)
+    .execute(
+      { id: createToolCallId(`${sessionName}-call`), input: {}, name: "CapTool" },
+      { traceContext: fixture.traceContext },
+    );
+}
+
+function createHookArtifactStore(writeError?: Error) {
+  const requests: ToolArtifactWriteRequest[] = [];
+  const store: ToolArtifactStorePort & { requests: ToolArtifactWriteRequest[] } = {
+    requests,
+    async writeToolResultArtifact(request) {
+      if (writeError) throw writeError;
+      requests.push(request);
+      return {
+        bytes: Buffer.byteLength(request.content, "utf8"),
+        contentType: request.contentType ?? "text/plain",
+        createdAt: new Date(),
+        id: `hook-${requests.length}`,
+        path: `/artifacts/hook-${requests.length}.txt`,
+        uri: `zcode-artifact://test/hook-${requests.length}`,
+      };
+    },
+    async readToolResultArtifact() {
+      throw new Error("not used");
+    },
+  };
+  return store;
+}
 
 function createExecutorFixture(sessionName: string) {
   const sessionId = createSessionId(sessionName);
@@ -393,8 +592,12 @@ function createExecutorFixture(sessionName: string) {
     events,
     registry,
     traceContext,
-    createExecutor(hookRunner: ReturnType<typeof createInMemoryHookRunner>) {
+    createExecutor(
+      hookRunner: ReturnType<typeof createInMemoryHookRunner>,
+      artifactStore?: ToolArtifactStorePort,
+    ) {
       return createToolExecutor({
+        artifactStore,
         emitEvent: async (event) => {
           events.push(event);
         },

@@ -7,7 +7,11 @@ import type {
   ToolCall,
   ToolExecutionResult,
 } from "../deps.js";
-import { emitStreamingToolLedgerUpdate, toRecordInput } from "../helpers/index.js";
+import {
+  emitStreamingToolLedgerUpdate,
+  throwIfTurnAborted,
+  toRecordInput,
+} from "../helpers/index.js";
 import type { RuntimeModelTextResult, StreamedToolExecutionResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { emitSyntheticStreamedToolError } from "./streaming-tool-synthetic-result.js";
@@ -27,6 +31,7 @@ import {
 } from "./turn-loop-state.js";
 import type { ToolCallInput } from "../../agent/message-history.js";
 import { settleToolResults, type ToolResultPart } from "./tool-result-settlement.js";
+import { withUserStoppedToolResultContent } from "./interrupt-marker.js";
 
 export async function executeToolCallsForModelStep(
   this: AgentRuntimeInternal,
@@ -160,6 +165,7 @@ export async function executeToolCallsForModelStep(
     });
     const execution = await this.executeTools(pendingToolCalls, pendingSchedule, {
       automationTurn: isAutomationMutationRestrictedTurn(state),
+      automationId: state.automationId,
       offPeakTurn: isOffPeakCreateRestrictedTurn(state),
       signal: state.turnAbortSignal,
       traceContext: options.modelTraceContext,
@@ -226,17 +232,36 @@ export async function executeToolCallsForModelStep(
   for (const pending of pendingExecutionResults) {
     resultById.set(pending.toolCallId, pending);
   }
-  const results = coreToolCalls
-    .map((toolCall) => resultById.get(toolCall.id))
-    .filter((result): result is ToolExecutionResult => result !== undefined);
-  await settleToolResults.call(this, state, {
-    assistantMessageId: options.assistantMessageId,
-    modelTraceContext: options.modelTraceContext,
-    results,
-    toolParts,
-    toolCallById,
-    streamedResultsById,
-  });
+  const results = withUserStoppedToolResultContent(
+    this,
+    state,
+    coreToolCalls
+      .map((toolCall) => resultById.get(toolCall.id))
+      .filter((result): result is ToolExecutionResult => result !== undefined),
+  );
+  try {
+    await settleToolResults.call(this, state, {
+      assistantMessageId: options.assistantMessageId,
+      modelTraceContext: options.modelTraceContext,
+      results,
+      toolParts,
+      toolCallById,
+      streamedResultsById,
+    });
+  } finally {
+    // Stop during tool execution: the interrupt marker uses the tool-phase wording.
+    // Fix reason: when the checkpoint was cancelled, settlement threw the cancellation itself after
+    // writing the result, never reaching the branch below, and the marker would use the model-request
+    // phase wording.
+    if (state.turnAbortSignal.aborted) state.interruptedDuringToolBatch = true;
+  }
+  // Stop during tool execution: end the turn right after settlement.
+  // Fix reason: continuing would drain the pending guide into an already-stopped turn; after ending, the
+  // guide is returned to the queue by the cancellation path.
+  if (state.turnAbortSignal.aborted) {
+    await persistToolModelStepFinish(this, state, options);
+    throwIfTurnAborted(state.turnAbortSignal);
+  }
 
   const stopTurnResult = results.find((result) => result.turnControl?.stopTurnAfterResult === true);
   if (stopTurnResult) {

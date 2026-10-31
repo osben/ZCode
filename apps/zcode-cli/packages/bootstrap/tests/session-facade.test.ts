@@ -38,12 +38,11 @@ describe("session facade shutdown", () => {
   // 关闭次序（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Engine ownership」规则二）：dwf 的关闭夹在
   // beginShutdown 与资源关闭之间——前者让结算带出的终态通知被丢掉，后者让子代理还有
   // execution / MCP / store 可用、引擎还有 journal 可写自己那一笔。
-  it("drains both Memory Extraction and Dream before closing owned resources", async () => {
+  it("closes all work owners and Dreams before releasing shared resources", async () => {
     const drainGate = deferred<void>();
     const dreamGate = deferred<void>();
     const calls: string[] = [];
-    const drainMemoryExtractions = vi.fn(async (timeoutMs?: number) => {
-      expect(timeoutMs).toBe(60_000);
+    const closeOwnedWork = vi.fn(async () => {
       calls.push("drain:start");
       await drainGate.promise;
       calls.push("drain");
@@ -51,6 +50,9 @@ describe("session facade shutdown", () => {
     const facade = createSessionFacade({
       closeDynamicWorkflowRuns: async () => {
         calls.push("dwf");
+      },
+      closeScriptWorkflowRuns: async () => {
+        calls.push("script");
       },
       configResult: {
         config: DefaultRuntimeConfig,
@@ -86,7 +88,7 @@ describe("session facade shutdown", () => {
         closeBrowserSession: async () => {
           calls.push("browser");
         },
-        drainMemoryExtractions,
+        closeOwnedWork,
         drainBackgroundDreams: vi.fn(async (timeoutMs?: number) => {
           expect(timeoutMs).toBe(60_000);
           calls.push("dream:start");
@@ -111,7 +113,14 @@ describe("session facade shutdown", () => {
 
     const closing = facade.close?.();
     await nextTask();
-    expect(calls).toEqual(["session_end", "shutdown", "drain:start", "dream:start"]);
+    expect(calls).toEqual([
+      "session_end",
+      "shutdown",
+      "drain:start",
+      "dream:start",
+      "dwf",
+      "script",
+    ]);
 
     drainGate.resolve();
     await nextTask();
@@ -119,15 +128,16 @@ describe("session facade shutdown", () => {
     dreamGate.resolve();
     await closing;
 
-    expect(drainMemoryExtractions).toHaveBeenCalledTimes(1);
+    expect(closeOwnedWork).toHaveBeenCalledTimes(1);
     expect(calls).toEqual([
       "session_end",
       "shutdown",
       "drain:start",
       "dream:start",
+      "dwf",
+      "script",
       "drain",
       "dream",
-      "dwf",
       "shutdown",
       "browser",
       "execution",
@@ -180,10 +190,10 @@ describe("session facade shutdown", () => {
         closeBrowserSession: async () => {
           calls.push("browser");
         },
-        drainBackgroundDreams: async () => {},
-        drainMemoryExtractions: async () => {
+        closeOwnedWork: async () => {
           calls.push("drain");
         },
+        drainBackgroundDreams: async () => {},
         runSessionEndHooks: vi.fn(async () => {
           calls.push("session_end");
         }),
@@ -199,7 +209,7 @@ describe("session facade shutdown", () => {
       workingDirectory: "/workspace",
     });
 
-    await facade.close?.();
+    await expect(facade.close?.()).rejects.toBeInstanceOf(AggregateError);
 
     expect(calls).toEqual([
       "session_end",
@@ -215,8 +225,9 @@ describe("session facade shutdown", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  // SessionEnd хук запускается первым, пока все ресурсы сессии живы, но его отказ не должен
-  // мешать закрытию: иначе зависший хук удерживал бы подпроцессы, MCP-соединения и sqlite-хендлы.
+  // The SessionEnd hook runs first, while every session resource is alive, but its failure must
+  // not block closing: otherwise a stuck hook would hold child processes, MCP connections and
+  // sqlite handles.
   it("continues resource cleanup when the SessionEnd hook dispatch rejects", async () => {
     const calls: string[] = [];
     const warn = vi.fn();
@@ -255,10 +266,10 @@ describe("session facade shutdown", () => {
         closeBrowserSession: async () => {
           calls.push("browser");
         },
-        drainBackgroundDreams: async () => {},
-        drainMemoryExtractions: async () => {
+        closeOwnedWork: async () => {
           calls.push("drain");
         },
+        drainBackgroundDreams: async () => {},
         runSessionEndHooks: vi.fn(async () => {
           calls.push("session_end");
           throw new Error("session end hook crashed");
@@ -410,6 +421,88 @@ describe("session facade model selection", () => {
     expect(modelSelection.options?.reasoningLevel).toBe("high");
     expect(saveSessionEntry).not.toHaveBeenCalled();
   });
+
+  // ZCT-2109847556412547072: the App sets the thought level before the first message of a deferred
+  // session, so the entry write fails with FOREIGN KEY because the session row does not exist yet;
+  // the first persistence backfills the selection at that time, so this timing only logs debug,
+  // while an already persisted session must still warn.
+  it.each([
+    [false, "debug", "session.model_selection.persist_deferred"],
+    [true, "warn", "session.model_selection.persist_failed"],
+  ] as const)("sessionPersisted=%s 时选型写入失败记 %s", async (persisted, level, event) => {
+    let modelSelection: ModelSelection = {
+      providerId: "temporary-provider",
+      modelId: "temporary-model",
+      options: { reasoningLevel: "high" },
+    };
+    const provider = {
+      providerId: "temporary-provider",
+      config: { label: "Temporary", enabled: true },
+      models: [
+        {
+          modelId: "temporary-model",
+          config: { optionSpecs: { reasoningLevel: { values: ["low", "high"] } } },
+        },
+      ],
+    };
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const saveSessionEntry = vi.fn(async () => {
+      throw new Error("FOREIGN KEY constraint failed");
+    });
+    const facade = createSessionFacade({
+      configResult: { config: DefaultRuntimeConfig, configPort: {} as never, sources: {} as never },
+      configuredMcpServers: {},
+      executionPort: {} as never,
+      logger: logger as never,
+      loggerFactory: {} as never,
+      localSettingStore: {
+        getProjectPermissionMode: () => null,
+        saveProjectPermissionMode: vi.fn(),
+      },
+      ownsExecutionPort: false,
+      ownsMcpPort: false,
+      ownsSessionStore: false,
+      prepareResume: async () => {},
+      prepareUserExecutionBoundary: async () => {},
+      projectID: createProjectId("session-facade-deferred-selection"),
+      providerRegistry: {
+        getProvider: () => provider,
+        getModel: () => provider.models[0],
+        getView: () => ({ providers: [provider] }),
+        validateSelection: () => ({ ok: true }),
+      } as never,
+      resolveUiLocale: () => "en-US",
+      runtime: {
+        getSessionModelSelection: () => modelSelection,
+        setSessionModelSelection: (selection: ModelSelection) => {
+          modelSelection = selection;
+        },
+        isSessionPersisted: () => persisted,
+        updateConfig: vi.fn(),
+        recordPendingModelChange: vi.fn(),
+      } as unknown as AgentRuntime,
+      sessionId: createSessionId("session-facade-deferred-selection"),
+      sessionStore: { saveSessionEntry } as never,
+      traceContext: { traceId: "trace-deferred-selection" } as never,
+      untrustedProjectMcpServers: new Set(),
+      workingDirectory: "/workspace",
+    });
+
+    // The selection still takes effect in the current runtime; a persistence failure is not
+    // disguised as a switch failure.
+    await expect(facade.setThoughtLevel("low")).resolves.toMatchObject({ thoughtLevel: "low" });
+    expect(modelSelection.options?.reasoningLevel).toBe("low");
+    expect(saveSessionEntry).toHaveBeenCalledTimes(1);
+    const other = level === "debug" ? logger.warn : logger.debug;
+    expect(logger[level]).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ event, error: "FOREIGN KEY constraint failed" }),
+    );
+    expect(other).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ event: expect.stringMatching(/^session\.model_selection\./) }),
+    );
+  });
 });
 
 function deferred<T>() {
@@ -423,3 +516,41 @@ function deferred<T>() {
 async function nextTask(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
+
+it("timeout reports failure but retains store until the actual owner drain completes", async () => {
+  vi.useFakeTimers();
+  const drain = deferred<void>();
+  const closeStore = vi.fn();
+  const closeExecution = vi.fn(async () => {});
+  const facade = createSessionFacade({
+    configResult: { config: DefaultRuntimeConfig },
+    runtime: {
+      beginShutdown() {},
+      closeOwnedWork: () => drain.promise,
+      closeBrowserSession: async () => {},
+      drainBackgroundDreams: async () => {},
+      runSessionEndHooks: async () => {},
+    },
+    logger: { warn: vi.fn() },
+    ownsSessionStore: true,
+    sessionStore: { close: closeStore },
+    ownsExecutionPort: true,
+    executionPort: { close: closeExecution },
+  } as never);
+  try {
+    const closing = facade.close!();
+    const failed = expect(closing).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(6001);
+    await failed;
+    expect(closeStore).not.toHaveBeenCalled();
+    expect(closeExecution).not.toHaveBeenCalled();
+    drain.resolve();
+    await vi.runAllTimersAsync();
+    expect(closeStore).toHaveBeenCalledOnce();
+    expect(closeExecution).toHaveBeenCalledOnce();
+    await expect(facade.close!()).rejects.toThrow();
+  } finally {
+    drain.resolve();
+    vi.useRealTimers();
+  }
+});

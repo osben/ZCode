@@ -10,33 +10,53 @@ const localeAllowlist = new Set([
   "packages/ui/test/localeFormatting.test.ts",
   "packages/ui/test/localeSettingsSchema.test.ts",
   "packages/ui/test/localeSupport.test.ts",
-  "packages/ui/test/intlProviderLocalePreference.test.ts",
   "packages/ui/test/browser/manual-review/pending/share-failure.test.mjs", // share error message text for network and HTTP 405 failures per locale
   "packages/ui/test/browser/manual-review/pending/start-plan-followup.test.mjs", // Start Plan follow-up UI copy and actions per zh-CN/en-US locale behavior
   "packages/ui/test/browser/manual-review/pending/thought-level-display.test.mjs", // thought-level option labels and aria-labels per locale
   "packages/ui/test/browser/manual-review/pending/topic-preparation.test.mjs", // bot topic-preparation layout across an en-US and zh-CN viewport/theme matrix
-  "packages/ui/test/chatInputContextUsage.test.ts", // formatContextUsageSummary Chinese compact token units
   "packages/ui/test/intlPlural.test.ts", // createIntl zh-CN plural selection rules
   "packages/ui/test/offPeakNewTaskEntryLocale.test.ts", // off-peak banner, card and draft must stay in one language per zh-CN and en-US
-  "packages/ui/test/remoteConnectionFieldsAuthMethodLayout.test.ts", // SSH auth-method layout compared across zh-CN and en-US labels
-  "packages/ui/test/marketingPopupAdapter.test.ts", // Start popup settings button label per locale
-  "packages/ui/test/modelProviderCodingPlan.test.ts", // zh-CN date formatting and billing-discount copy resolution
-  "packages/ui/test/pluginStoreTryPrompt.test.ts", // localized plugin display label in the try prompt
-  "packages/ui/test/remoteSkillSyncDialog.test.ts", // zh-CN size-limit error after a locale switch
-  "packages/ui/test/savedWorkflowLaunchPrompt.test.ts", // zh-CN and en-US saved-workflow launch prompt output
-  "packages/ui/test/v4ConversationRowViewTimelineMarker.test.ts", // timeline model-marker copy per zh-CN and en-US
-  "packages/ui/test/workflowRunSave.test.ts", // zh-CN save-request prompt and saveRun catalog parity
-  "packages/web/test/conversationShareLandingPage.test.ts",
   "packages/desktop/test/e2e/settings/settings-language-system-default.test.ts",
   "packages/desktop/test/e2e/help-client-config.test.ts",
   "packages/desktop/test/e2e/help-menu-about.test.ts",
   "packages/desktop/test/e2e/settings/settings-ui-polish.test.ts",
-  "packages/desktop/test/e2e/plugins/manual-review/pending/plugin-localization-creator.test.ts",
+  "packages/desktop/test/e2e/plugins/plugin-localization-creator.test.ts",
   "packages/desktop/test/e2e/bots/feishu-bound-groups-ui.test.ts",
   "packages/desktop/test/e2e/bots/feishu-runtime-error-ui.test.ts",
   "packages/desktop/test/e2e/bots/feishu-streaming-card-lifecycle.test.ts",
   "packages/desktop/test/e2e/settings/provider-plan-navigation-labels.test.ts",
   "packages/desktop/test/e2e/coding-plan-team-usage.test.ts",
+
+  // Upstream 3.17.1 suites that run under both locales and pick copy per locale (`locale === "zh-CN" ? … : …`).
+  "packages/desktop/test/e2e/conversation-session/conversation-session-archive-management.test.ts",
+  "packages/desktop/test/e2e/conversation-session/conversation-session-automation-pause-self.test.ts",
+  "packages/desktop/test/e2e/conversation-session/conversation-session-hook-trust.test.ts",
+  "packages/desktop/test/e2e/conversation-session/conversation-session-project-missing-primary-root.test.ts",
+  "packages/desktop/test/e2e/conversation-session/conversation-session-tool-discovery-card.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-gen-ui-context.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-message-link-menu.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-project-management.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-remote-data-sync-demo-walkthrough.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-runtime-restart.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-shared-cli.test.ts",
+  "packages/ui/test/browser/manual-review/pending/workspace-hook-pending.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/yolo-confirmation.test.mjs",
+]);
+// Upstream 3.17.1 manual-review suites kept byte-identical to upstream (zh-CN default-locale copy and
+// CJK locators). Both checks skip them; convert a suite to English copy and drop it here when the
+// fork edits it.
+const upstreamVerbatimSuites = new Set([
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-id-compatibility.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-new-task-missing-root-mobile.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-web-remote-terminal.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-workspace-mcp-trust.test.ts",
+  "packages/desktop/test/e2e/ui-shell/manual-review/pending/command-center-history-search.test.ts",
+  "packages/ui/test/browser/manual-review/pending/image-preview-edit.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/plugin-marketplace-risk.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/plugin-ui-launcher.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/plugin-update-all.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/preview-card-actions.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/project-device-visibility.test.mjs",
 ]);
 const textLocatorMethods = new Set([
   "getByText",
@@ -108,6 +128,7 @@ for (const directory of roots) {
   for (const file of await listTestFiles(directory)) {
     const source = await readFile(join(root, file), "utf8");
     const relativePath = relative(root, file).replaceAll("\\", "/");
+    if (upstreamVerbatimSuites.has(relativePath)) continue;
     const localeAllowed = localeAllowlist.has(relativePath);
 
     if (!localeAllowed) {

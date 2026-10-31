@@ -32,6 +32,8 @@ export const workspaceHookProcessConfigSchema = z
     args: z.array(z.string()).optional(),
     timeoutMs: positiveNumberSchema.optional(),
     statusMessage: z.string().min(1).optional(),
+    // Allow or deny when the hook itself errors (HookOnError in contracts); only applies to PreToolUse.
+    onError: z.enum(["allow", "deny"]).optional(),
   })
   .passthrough();
 
@@ -45,6 +47,8 @@ export const workspaceHookCommandConfigSchema = z
     timeout: positiveNumberSchema.optional(),
     timeoutMs: positiveNumberSchema.optional(),
     statusMessage: z.string().min(1).optional(),
+    // Allow or deny when the hook itself errors (HookOnError in contracts); only applies to PreToolUse.
+    onError: z.enum(["allow", "deny"]).optional(),
   })
   .passthrough();
 

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- zcode-cli 配置 schema 需要集中维护文件解析和 provider 继承，拆散会让配置语义更难对齐。 */
+/* eslint-disable max-lines -- The zcode-cli config schema centrally maintains file parsing and provider inheritance; splitting it would make config semantics harder to keep aligned. */
 import { z } from "zod";
 import { UI_THEME_PALETTES, type RuntimeConfigPatch } from "@zcode/contracts";
 
@@ -45,7 +45,9 @@ const memorySchema = z.object({
 
 const mcpServerBaseSchema = {
   alwaysLoad: z.boolean().optional(),
-  // 设置页和 MCP adapter 已支持协议选择；配置入口漏掉该字段会因 strict 校验丢弃整个 server。
+  // The Host DTO and connection pool already support isolation; file parsing must not drop an entire supported declaration.
+  isolation: z.enum(["session", "workspace"]).optional(),
+  // The settings page and MCP adapter already support protocol selection; omitting the field at the config entry would let strict validation drop the whole server.
   protocolVersion: z.enum(["auto", "legacy", "2026-07-28"]).optional(),
   enabled: z.boolean().optional(),
   timeoutMs: positiveNumberSchema.optional(),
@@ -189,7 +191,7 @@ const skillToggleSchema = z.object({
   enable: z.boolean().optional(),
 });
 
-// skill / command 可用性覆盖：key 为对应 .md 的绝对路径，enable:false 表示禁用
+// skill / command availability overrides: key is the corresponding .md absolute path; enable:false means disabled
 const skillCommandOverrideSchema = z
   .object({
     enable: z.boolean().optional(),
@@ -228,13 +230,15 @@ const modelAnomalyGuardSchema = z.object({
   maxBudgetWarningsPerTurn: z.number().int().nonnegative().optional(),
 });
 
-// Hooks schema：
-// 理想态是 re-export shared/workspace-hook-config，但两个 pnpm workspace 解析出物理
-// 不同的 zod 实例（adapters 4.4.3 / shared 4.3.6）：shared schema 嵌入本包组合 schema
-// 会让 dts 引用 foreign zod 内部类型（TS2742），typeof/ZodType 注解都会落入类型循环。
-// 因此本副本按原样保留（本包 zod 构造），并保持与 shared 的校验语义等价；
-// 运行时校验语义仍以 shared 为准（discovery/trust 装配入口都走 shared schema——
-// 本 schema 只负责配置文件装载诊断）。若未来统一 zod 实例，应删除本副本改 re-export。
+// Hooks schema:
+// The ideal shape is re-exporting shared/workspace-hook-config, but the two pnpm workspaces
+// resolve physically distinct zod instances (adapters 4.4.3 / shared 4.3.6): embedding the
+// shared schema into this package's composite schema makes the dts reference foreign zod
+// internal types (TS2742), and typeof/ZodType annotations fall into a type cycle.
+// So this copy is kept as-is (constructed with this package's zod) and kept semantically
+// equivalent to shared's validation; runtime validation semantics remain owned by shared
+// (the discovery/trust assembly entries all use the shared schema — this schema only handles
+// config-file loading diagnostics). If zod is ever unified, delete this copy and re-export.
 export const hookProcessSchema = z
   .object({
     type: z.literal("process"),
@@ -243,6 +247,7 @@ export const hookProcessSchema = z
     args: z.array(z.string()).optional(),
     timeoutMs: positiveNumberSchema.optional(),
     statusMessage: z.string().min(1).optional(),
+    onError: z.enum(["allow", "deny"]).optional(),
   })
 
   .passthrough();
@@ -257,6 +262,7 @@ export const hookCommandSchema = z
     timeout: positiveNumberSchema.optional(),
     timeoutMs: positiveNumberSchema.optional(),
     statusMessage: z.string().min(1).optional(),
+    onError: z.enum(["allow", "deny"]).optional(),
   })
   .passthrough();
 
@@ -312,6 +318,32 @@ export const ZCodeConfigFileSchema = z
   })
   .passthrough();
 
+// Projects once reused the user config schema and could rewrite proxies, CAs, and the plugin
+// storage root. Only extension declarations are exposed; runtime parameters are stripped before
+// validation so newly added user fields do not automatically open to projects, and invalid
+// disabled fields cannot break MCP/Hook.
+const projectConfigFileSchema = ZCodeConfigFileSchema.pick({
+  mcp: true,
+  hooks: true,
+  skill: true,
+  command: true,
+})
+  .extend({
+    plugins: pluginsSchema.pick({ enabledPlugins: true, options: true }).optional(),
+    skills: z
+      .preprocess(
+        (value) =>
+          isPlainRecord(value)
+            ? Object.fromEntries(
+                Object.entries(value).filter(([path]) => isAbsoluteConfigPath(path)),
+              )
+            : value,
+        z.record(z.string(), skillToggleSchema),
+      )
+      .optional(),
+  })
+  .strip();
+
 export type ZCodeConfigFile = z.infer<typeof ZCodeConfigFileSchema>;
 
 type SkillCommandOverrideMap = Record<string, { enable?: boolean }>;
@@ -342,19 +374,21 @@ function normalizeMcpServerConfigInput(value: unknown): unknown {
 
   const server = { ...(value as Record<string, unknown>) };
   if (!("env" in server) && "environment" in server) {
-    // 旧配置和部分外部导入使用 environment；运行态只消费 env。
-    // 在解析入口归一化，避免一个 legacy MCP server 拖垮整份 config。
+    // Legacy configs and some external imports use environment; the runtime consumes only env.
+    // Normalize at the parsing entry so one legacy MCP server cannot break the whole config.
     server.env = server.environment;
   }
   delete server.environment;
 
   if (typeof server.enable === "boolean" || typeof server.enabled === "boolean") {
-    // 历史遗留兜底：桌面端早期把停用状态写成 enable，而契约字段一直是 enabled。
-    // 桌面端与 mcp-sync 现在只写 enabled，并在加载配置时把存量 enable 就地迁移落盘；
-    // CLI 是只读解析、不能写盘，这里只覆盖「用户先跑 CLI、还没开过桌面端」的窗口。
-    // 冲突时以「停用」为准：桌面端写 enable:false 时不会清理外部导入残留的 enabled:true，
-    // 按 enabled 取值会把用户关掉的 server 重新拉起（停用了还在被调用）。
-    // 存量配置迁移完毕后，这段连同下面的 delete 可以整块删除。
+    // Legacy fallback: early desktop builds wrote the disabled state as enable, while the
+    // contract field has always been enabled. The desktop and mcp-sync now write only enabled
+    // and migrate existing enable values in place when loading config; the CLI parses read-only
+    // and cannot write, so this covers only the "user ran the CLI before ever opening the
+    // desktop" window. On conflict, "disabled" wins: writing enable:false on desktop does not
+    // clean up an enabled:true left by external imports, and honoring enabled would bring a
+    // user-disabled server back up (disabled but still being called).
+    // Once legacy configs are fully migrated, this block plus the delete below can be removed.
     server.enabled = server.enable === false ? false : (server.enabled ?? true);
   }
   delete server.enable;
@@ -365,11 +399,11 @@ function normalizeMcpServerConfigInput(value: unknown): unknown {
   delete server.startup_timeout_sec;
 
   if (server.type === "remote") {
-    // 外部 Agent 配置常把 HTTP MCP 标记为 remote；ZCode 运行态协议类型是 http。
+    // External agent configs often mark HTTP MCP as remote; ZCode's runtime protocol type is http.
     server.type = "http";
   } else if (typeof server.type !== "string") {
-    // app 管理层把 command 形态视为默认 stdio；CLI 也需要同样推断，
-    // 否则历史 app 配置缺少 type 时会阻断模型配置加载。
+    // The app management layer treats the command form as default stdio; the CLI needs the same
+    // inference, or historical app configs missing type would block model config loading.
     if (typeof server.command === "string" && server.command.trim().length > 0) {
       server.type = "stdio";
     } else if (typeof server.url === "string" && server.url.trim().length > 0) {
@@ -382,7 +416,7 @@ function normalizeMcpServerConfigInput(value: unknown): unknown {
     server.headers === undefined &&
     server.http_headers !== undefined
   ) {
-    // 兼容历史 BigModel MCP 配置：旧字段名是 http_headers，agent runtime 只消费 headers。
+    // Legacy BigModel MCP config compat: the old field name is http_headers; the agent runtime consumes only headers.
     server.headers = server.http_headers;
   }
   delete server.http_headers;
@@ -392,10 +426,13 @@ function normalizeMcpServerConfigInput(value: unknown): unknown {
 
 export function parseConfigFileToRuntimePatchWithDiagnostics(
   value: unknown,
+  scope: "user" | "project" = "user",
 ): ParseConfigFileResult {
   const diagnostics: ConfigDiagnostic[] = [];
   const normalized = normalizeConfigFileInput(value, diagnostics);
-  const parsed = ZCodeConfigFileSchema.parse(normalized);
+  const parsed = (scope === "project" ? projectConfigFileSchema : ZCodeConfigFileSchema).parse(
+    normalized,
+  );
   return {
     config: parsedConfigFileToRuntimePatch(parsed),
     diagnostics,
@@ -498,7 +535,7 @@ function normalizeConfigFileInput(value: unknown, diagnostics: ConfigDiagnostic[
       continue;
     }
 
-    // MCP server 是可选工具配置，单个 server 错误不应导致 provider/plugin 等配置丢失。
+    // MCP servers are optional tool config; a single server error must not lose provider/plugin and other config.
     diagnostics.push({
       code: "config_mcp_server_invalid",
       message: formatMcpServerError(parsed.error),
@@ -554,8 +591,9 @@ function parseSkillOverridesFromPluralSkills(
     if (!isAbsoluteConfigPath(path) || !isSkillCommandOverrideValue(value)) {
       continue;
     }
-    // 设置页当前把单个 skill 开关写到 skills[SKILL.md 绝对路径]。
-    // agent 运行态只消费 skillOverrides，所以这里在配置解析阶段统一映射，避免 UI 状态和 agent 实际加载分叉。
+    // The settings page currently writes individual skill toggles to skills[absolute SKILL.md path].
+    // The agent runtime consumes only skillOverrides, so map here at config parsing to keep UI
+    // state from diverging from what the agent actually loads.
     overrides[path] = { enable: value.enable };
   }
   return Object.keys(overrides).length > 0 ? overrides : undefined;

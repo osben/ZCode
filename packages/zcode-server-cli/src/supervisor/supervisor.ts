@@ -1,14 +1,16 @@
 import type { SourceServerRunningTask } from "@zcode/shared";
-/* oxlint-disable eslint(max-lines) -- Supervisor 集中维护生命周期、Core 代际和更新回滚状态机，启动恢复锁边界修复不应拆散其原子流程。 */
+/* oxlint-disable eslint(max-lines) -- The Supervisor centrally maintains the lifecycle, Core generations and the update rollback state machine; the startup recovery and lock boundary fixes must not split its atomic flow. */
 
 import { type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { createServiceLogger } from "@zcode/services/node";
 import { SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE } from "@zcode/shared";
 import {
+  CORE_HEARTBEAT_INTERVAL_MS,
   CORE_KILL_TIMEOUT_MS,
   CORE_READY_TIMEOUT_MS,
   CORE_STOP_GRACE_TIMEOUT_MS,
+  CORE_UNRESPONSIVE_HEARTBEAT_PERIODS,
   coreMessageSchema,
   SERVER_CLI_PROTOCOL_VERSION,
   type ControlRequest,
@@ -28,8 +30,8 @@ import { waitForUpdateReady } from "../runtime/updateReadiness.js";
 import { createRollbackFailure, updateErrorMessage } from "../runtime/updateErrors.js";
 import { CrashBudget } from "./crashBudget.js";
 
-// 生命周期事件按运维排障判据用 info/warn/error（出问题时运维要能在日志里看到）；
-// 高频 heartbeat/task-activity 明细走 debug，避免生产日志膨胀。
+// Lifecycle events use info/warn/error by operational troubleshooting criteria (operators must be able to see them in the log when something goes wrong);
+// high-frequency heartbeat/task-activity details go to debug to avoid bloating the production log.
 const log = createServiceLogger("server-supervisor");
 
 export interface CoreLauncher {
@@ -40,12 +42,12 @@ export interface SupervisorOptions {
   layout?: ServerLayout;
   launcher: CoreLauncher;
   version: string;
-  /** 当前 Supervisor bundle 所属 immutable release；开发态入口允许缺失。 */
+  /** The immutable release this Supervisor bundle belongs to; the development entry point may leave it unset. */
   supervisorReleaseId?: string;
   serviceRegistered?: boolean;
-  /** 测试和诊断可缩短 ready 等待；生产默认使用 CORE_READY_TIMEOUT_MS。 */
+  /** Tests and diagnostics may shorten the ready wait; production defaults to CORE_READY_TIMEOUT_MS. */
   coreReadyTimeoutMs?: number;
-  /** 测试可缩短 Core 优雅退出和强杀后的终态等待；生产默认使用 contracts 中的停止预算。 */
+  /** Tests may shorten the Core graceful exit and the terminal-state wait after a force kill; production defaults to the stop budgets in contracts. */
   coreStopGraceTimeoutMs?: number;
   coreKillTimeoutMs?: number;
   now?: () => number;
@@ -58,7 +60,8 @@ export interface SupervisorOptions {
   onServerRootLost?: (loss: DataRootLockLoss) => void;
 }
 
-type LifecycleOperationKind = "stop" | "restart" | "update" | "uninstall";
+// The control `restart` that restarted only the Core has been removed (R2 §8.1): restarting the whole process tree is coordinated by the CLI that issues the command.
+type LifecycleOperationKind = "stop" | "update" | "uninstall";
 
 export class Supervisor {
   private readonly layout: ServerLayout;
@@ -83,10 +86,14 @@ export class Supervisor {
   private coreVersion: string | undefined;
   private coreReleaseId: string | undefined;
   /**
-   * Fatal reason summary for the current core as reported by the Core's fatal IPC message;
-   * cleared with the core scope and folded into lastExitReason when the Core exits.
+   * Fatal reason summary for the current core: either the fatal reported by the Core via IPC, or an
+   * unresponsive judgment made by the Supervisor; cleared with the core scope and folded into
+   * lastExitReason when the Core exits.
    */
   private coreFatalMessage: string | undefined;
+  /** Consecutive heartbeat periods in which the ready Core has sent no IPC message; cleared with the core scope. */
+  private coreSilentPeriods = 0;
+  private coreLivenessTimer: NodeJS.Timeout | undefined;
   private serverRootLost = false;
 
   public constructor(private readonly options: SupervisorOptions) {
@@ -137,9 +144,9 @@ export class Supervisor {
     await this.releaseManager.ensure();
     await this.lock.acquire();
     try {
-      // 启动恢复会回写 current.json 并删除 update-transaction.json，必须先取得
-      // data-root 单实例锁；否则存活 Supervisor 的 apply-update 会与第二个启动者竞态，
-      // 造成内存继续运行新 release、磁盘 current pointer 却被回滚到旧 release。
+      // Startup recovery rewrites current.json and deletes update-transaction.json, so it must first acquire
+      // the data-root single-instance lock; otherwise a live Supervisor's apply-update would race with a second starter,
+      // leaving the in-memory process running the new release while the disk current pointer is rolled back to the old release.
       await recoverSupervisorStartup(
         this.releaseManager,
         this.layout.uninstalledFile,
@@ -150,7 +157,7 @@ export class Supervisor {
           await this.persistStatusSnapshot();
         },
       );
-      // recovery 可能已经恢复 current pointer；必须在恢复后读取，避免启动已回滚的 candidate。
+      // Recovery may already have restored the current pointer; read it after recovery so a rolled-back candidate is not started.
       this.activeRelease = await this.releaseManager.readCurrentForExecution();
       await mkdir(this.layout.runDir, { recursive: true, mode: 0o700 });
       const handler: ControlHandler = (request) => this.handleControl(request);
@@ -164,9 +171,9 @@ export class Supervisor {
       await this.persistStatusSnapshot();
       return this.status();
     } catch (error) {
-      // 只在 recovery 失败时释放锁是不够的：mkdir、control server、Core 启动或
-      // 初始状态落盘失败会留下锁（以及可能已启动的 Core），同一 Supervisor 重试会把
-      // 自己识别成另一个实例。启动临界区必须在确认 Core/control 都收口后才释放锁。
+      // Releasing the lock only when recovery fails is not enough: a failure in mkdir, the control server, Core startup or
+      // the initial state write leaves the lock behind (and possibly an already-started Core), and a retry by the same Supervisor would identify
+      // itself as another instance. The startup critical section may release the lock only after Core/control are confirmed closed out.
       const recoveryFailed = this.state === "stop-failed";
       let coreStopped = this.core === undefined;
       if (this.core) {
@@ -190,8 +197,8 @@ export class Supervisor {
       }
 
       if (coreStopped && controlClosed) {
-        // 恢复失败本身已经写入 stop-failed；即使没有 Core/control 需要收口，也保留该
-        // 状态，让 status 继续暴露待人工处理的事务，同时释放锁允许同实例稍后重试。
+        // Recovery failure itself has already written stop-failed; even when no Core/control needs closing out, keep that
+        // state so status keeps exposing the transaction that needs manual handling, while releasing the lock lets the same instance retry later.
         this.state = recoveryFailed ? "stop-failed" : "stopped";
         await this.persistStatusSnapshot().catch((snapshotError) => {
           log.warn(
@@ -224,7 +231,7 @@ export class Supervisor {
       await this.control?.close();
       this.control = undefined;
       await this.lock.release();
-      if (reason !== "restart") this.options.onStopped?.();
+      this.options.onStopped?.();
       return this.status();
     }
     await this.stopCore(reason);
@@ -234,15 +241,8 @@ export class Supervisor {
     this.control = undefined;
     await this.lock.release();
     log.info("supervisor stopped", { reason });
-    if (reason !== "restart") this.options.onStopped?.();
+    this.options.onStopped?.();
     return this.status();
-  }
-
-  public async restart(): Promise<ServerStatus> {
-    return await this.runLifecycleOperation("restart", async () => {
-      await this.stopInternal("restart");
-      return await this.start();
-    });
   }
 
   private async stopCore(reason: string): Promise<void> {
@@ -253,9 +253,9 @@ export class Supervisor {
     const core = this.core;
     try {
       await new Promise<void>((resolve, reject) => {
-        // 发出 SIGKILL 后不能最多等两秒便无条件返回：未观察到子进程终态
-        // 也会释放 data-root lock，随后可启动第二个 Core。只有 exit/close 能证明进程
-        // 已收口；强杀后仍无终态必须失败并保留 Core 引用和锁。
+        // After sending SIGKILL we must not return unconditionally after at most two seconds: if no child terminal state was observed,
+        // the data-root lock would be released and a second Core could start. Only exit/close proves the process has closed out;
+        // if there is still no terminal state after the force kill, fail and keep the Core reference and the lock.
         let killTimer: NodeJS.Timeout | undefined;
         let settled = false;
         const cleanup = (): void => {
@@ -300,7 +300,7 @@ export class Supervisor {
         try {
           core.send({ command: "shutdown" });
         } catch {
-          // IPC 已关闭不代表 OS 进程已退出，直接强杀后仍等待 exit/close 终态。
+          // IPC being closed does not mean the OS process has exited; after a force kill, still wait for the exit/close terminal state.
           clearTimeout(graceTimer);
           forceKill();
         }
@@ -348,8 +348,8 @@ export class Supervisor {
       return { applied: true, version: pending.version };
     } catch (error) {
       this.enterUpdateRollback();
-      // 更新后的 Core 未 ready 时必须先停止仍存活的子进程，再恢复 current 指针。
-      // 否则 timeout 路径会覆盖 this.core 引用后遗留新 Core，与回滚后的旧 Core 并存。
+      // If the updated Core is not ready, the still-living child process must be stopped before the current pointer is restored;
+      // otherwise the timeout path overwrites the this.core reference and leaves the new Core alive alongside the rolled-back old Core.
       if (this.core) {
         try {
           await this.stopCore("update-rollback");
@@ -359,7 +359,7 @@ export class Supervisor {
           throw stopError;
         }
       }
-      // 恢复 current 指针，避免下一次启动继续使用坏 release。
+      // Restore the current pointer so the next start does not keep using the bad release.
       log.error("release apply failed, restoring previous current pointer", error);
       try {
         await this.releaseManager.restoreCurrent(previous);
@@ -371,8 +371,8 @@ export class Supervisor {
         throw createRollbackFailure(error, rollbackError);
       }
       this.activeRelease = previous;
-      // 回滚不仅恢复 pointer，还要立即拉起旧 release；否则 daemon 会以 stopped 留在
-      // 不可用状态，用户必须手工 restart 才能恢复服务。
+      // Rollback not only restores the pointer but also immediately relaunches the old release; otherwise the daemon would stay stopped
+      // in an unusable state, and the user would have to restart manually to recover the service.
       this.state = "stopped";
       if (previous) {
         this.state = "starting";
@@ -384,7 +384,7 @@ export class Supervisor {
           );
         } catch (rollbackError) {
           log.error("previous release rollback failed", rollbackError);
-          // 旧 release ready 超时只改状态会让仍存活的 Core、PID 和 lock 与 stopped 脱节；复用 stopCore 等待 exit/close，失败则保持 stop-failed。
+          // If the old release times out waiting for ready, changing only the state would leave the still-living Core, PID and lock out of sync with stopped; reuse stopCore to wait for exit/close, and keep stop-failed if that fails.
           if (this.core) await this.stopCore("update-rollback");
           this.state = "stopped";
         }
@@ -401,8 +401,8 @@ export class Supervisor {
       pid: this.core?.pid ?? null,
       port: this.port,
       host: this.host,
-      // status.version 保持 Core/current release 的兼容语义；Supervisor 自身版本与 release
-      // 由独立 runtime-identity control 返回，避免向严格持久化 schema 增加字段击穿旧版回滚。
+      // status.version keeps the compatibility meaning of Core/current release; the Supervisor's own version and release
+      // are returned by the independent runtime-identity control, so the strict persisted schema gains no field that would break older-version rollback.
       version: this.activeRelease?.version ?? this.options.version,
       generation: this.generation,
       startedAt: this.startedAt,
@@ -448,8 +448,8 @@ export class Supervisor {
         ? `${reason}: ${this.coreFatalMessage}`.slice(0, 500)
         : reason;
       if (this.state === "stop-failed") {
-        // stop 已失败时继续保留锁；迟到的终态只清除已死亡 child，不得计入 crash budget
-        // 或启动替代 Core。用户重试 stop 后再释放 control socket 与 data-root lock。
+        // While stop has failed, keep the lock; a late terminal state only clears the dead child and must not count toward the crash budget
+        // or start a replacement Core. Release the control socket and data-root lock only after the user retries stop.
         this.core = undefined;
         this.clearCoreScopedStatus();
         this.lastExitReason = exitReason;
@@ -480,9 +480,9 @@ export class Supervisor {
         this.launchCore();
       }, decision.delayMs).unref();
     };
-    // fork 的 execPath 不存在/不可执行时 Node 只发 error + close，不发 exit。
-    // error 与 exit 必须共用一次性终态，否则未处理的 error 会杀死 Supervisor，并让更新
-    // 已写入的新 current pointer 绕过 catch/rollback。
+    // When the forked child's execPath does not exist or is not executable, Node emits only error + close, not exit.
+    // error and exit must share a one-time terminal state; otherwise an unhandled error would kill the Supervisor, and the
+    // new current pointer already written by the update would bypass catch/rollback.
     child.once("error", (error: Error & { code?: string }) => {
       spawnErrorReason = `core spawn error code=${error.code ?? "unknown"}: ${error.message}`;
       this.lastExitReason = spawnErrorReason;
@@ -502,17 +502,19 @@ export class Supervisor {
   }
 
   private handleCoreMessage(child: ChildProcess, expectedGeneration: number, raw: unknown): void {
-    // 旧 child 的 message listener 会跨 generation 存活，延迟 heartbeat/ready
-    // 可覆盖当前 Core 的状态。消息必须同时绑定当前 child；ready 还需匹配启动 generation。
+    // The old child's message listener survives across generations, so a delayed heartbeat/ready
+    // could overwrite the current Core's state. Messages must be bound to the current child too; ready must also match the startup generation.
     if (this.core !== child) return;
+    // Any IPC message from the current Core proves that its event loop is running.
+    this.coreSilentPeriods = 0;
     const parsed = coreMessageSchema.safeParse(raw);
     if (!parsed.success) {
       return;
     }
     const message = parsed.data;
     if (message.type === "ready") {
-      // ready 只对当前 starting 的 Core 有效；stopping/stopped/stop-failed 阶段的迟到消息
-      // 不能复活已经收口或进入不确定终态的 Supervisor。
+      // ready is valid only for the Core currently starting; late messages in the stopping/stopped/stop-failed phases
+      // must not revive a Supervisor that has already closed out or entered an uncertain terminal state.
       if (message.generation !== expectedGeneration || this.state !== "starting") return;
       this.state = "ready";
       this.host = message.host;
@@ -521,6 +523,7 @@ export class Supervisor {
       this.startedAt = Date.now();
       this.coreVersion = message.version;
       this.coreReleaseId = message.releaseId;
+      this.watchCoreLiveness(child);
       log.info("server core ready", {
         host: this.host,
         port: this.port,
@@ -545,12 +548,41 @@ export class Supervisor {
   }
 
   private enterUpdateRollback(): void {
-    // 候选 Core 崩溃后 handleTerminal 会将状态置为 crashed 并安排自动重启；
-    // 回滚文件操作期间必须先离开 crashed，否则定时器会用坏的 activeRelease 再次拉起 Core。
+    // After a candidate Core crashes, handleTerminal sets the state to crashed and schedules an automatic restart;
+    // during rollback file operations it must leave crashed first, otherwise the timer would relaunch Core using the bad activeRelease.
     if (this.state === "crashed") this.state = "updating";
   }
 
+  private watchCoreLiveness(child: ChildProcess): void {
+    // Bug cause (ZCT-2113570821476302848): when the Core's event loop is saturated by synchronous work, the process still exists but sends no heartbeat,
+    // does not answer the handshake, and cannot run the JS-level SIGTERM handler. The Supervisor only enters the crash budget when the Core exits;
+    // status keeps reporting ready, the serve --daemon fallback on the Desktop only reuses the same port, and the device could only be recovered by a manual kill -9.
+    // Fix: after ready, count heartbeat periods and SIGKILL once N consecutive periods pass with no IPC message at all, so the existing exit
+    // handling restarts it as a crash. Only periods are counted, not clock time: when the Supervisor itself is suspended the check does not run, so suspended time is not counted as silence.
+    if (this.coreLivenessTimer) clearInterval(this.coreLivenessTimer);
+    const timer = setInterval(() => {
+      if (this.core !== child || this.state !== "ready") return;
+      this.coreSilentPeriods += 1;
+      if (this.coreSilentPeriods < CORE_UNRESPONSIVE_HEARTBEAT_PERIODS) return;
+      clearInterval(timer);
+      this.coreLivenessTimer = undefined;
+      const silentMs = this.coreSilentPeriods * CORE_HEARTBEAT_INTERVAL_MS;
+      this.coreFatalMessage = `core unresponsive: no IPC message for ${silentMs}ms`;
+      log.warn("server core unresponsive, sending SIGKILL", {
+        pid: child.pid,
+        generation: this.generation,
+        silentMs,
+      });
+      child.kill("SIGKILL");
+    }, CORE_HEARTBEAT_INTERVAL_MS);
+    timer.unref();
+    this.coreLivenessTimer = timer;
+  }
+
   private clearCoreScopedStatus(): void {
+    if (this.coreLivenessTimer) clearInterval(this.coreLivenessTimer);
+    this.coreLivenessTimer = undefined;
+    this.coreSilentPeriods = 0;
     this.host = null;
     this.port = null;
     this.startedAt = null;
@@ -576,12 +608,6 @@ export class Supervisor {
           this.stopInternal("control request"),
         );
         return { stopping: true };
-      case "restart":
-        this.startAcknowledgedLifecycleOperation("restart", async () => {
-          await this.stopInternal("restart");
-          await this.start();
-        });
-        return { restarting: true };
       case "prepare-update":
         return {
           status: this.runningTaskCount ? "blocked" : "ready",
@@ -599,10 +625,10 @@ export class Supervisor {
       case "confirm-uninstall":
         if (request.confirmation !== "DELETE")
           throw new Error("Uninstall confirmation must be DELETE");
-        // Bug 修复：spec 要求 uninstall 前检查运行任务（R2-CLI-10）。旧实现只有
-        // prepare-uninstall 会返回 blocked 却没有任何调用方消费它，confirm-uninstall
-        // 直接停 Core 删数据，运行中的任务会被无提示中断。这里在最后防线上强制 guard，
-        // 有运行任务时返回结构化错误并保持原状态。
+        // Bug fix: the spec requires checking running tasks before uninstall (R2-CLI-10). The old implementation only had
+        // prepare-uninstall return blocked, which no caller consumed, so confirm-uninstall
+        // stopped the Core and deleted data directly, interrupting running tasks without notice. The guard is enforced here at the last line of defense:
+        // when running tasks exist, return a structured error and keep the original state.
         if (this.runningTaskCount > 0) {
           throw new Error(
             `Cannot uninstall while ${this.runningTaskCount} task(s) are running; stop the server first`,
@@ -640,11 +666,11 @@ export class Supervisor {
     kind: LifecycleOperationKind,
     operation: () => Promise<unknown>,
   ): void {
-    // ack 型请求也必须在回包前检查 gate；后台 Promise 再 reject 会让客户端误以为
-    // restart/uninstall 已受理，实际却只在 Supervisor 日志里留下冲突。
+    // Ack-style requests must also check the gate before the reply; a background Promise that rejects afterwards would make the client believe
+    // stop/uninstall was accepted, while the conflict was actually left only in the Supervisor log.
     this.assertLifecycleOperationCanStart(kind);
     const started = this.runLifecycleOperation(kind, async () => {
-      // control response 必须先写回原 socket；直接关闭 control server 会与 dispatch 互等。
+      // The control response must be written back on the original socket first; closing the control server directly would deadlock with dispatch.
       await new Promise<void>((resolve) => setImmediate(resolve));
       return await operation();
     });

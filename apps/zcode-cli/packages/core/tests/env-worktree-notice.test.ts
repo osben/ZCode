@@ -1,12 +1,16 @@
-// Execution-worktree isolation notice in the Environment sections (spec: execution-worktree-model-context.md).
-// Covers the main-agent env section and the subagent env block; plain sessions must stay byte-identical.
+// Execution-worktree isolation notice (spec: execution-worktree-model-context.md).
+// The main agent gets the notice as its own dynamic system section; subagents get a bare <env> block.
+// Plain sessions must not carry the notice at all.
 import { describe, expect, it } from "vitest";
 import type { EnvInfo } from "@zcode/contracts";
+import { createContextBuilder } from "../src/context/index.js";
 import {
   buildEnvInfoSection,
+  buildExecutionWorktreeSection,
   type ExecutionWorktreeEnvFact,
 } from "../src/context/sections/env-info.js";
-import { buildSubagentEnvironmentContext } from "../src/subagent/system-prompt.js";
+import { createSubagentContextBuilder } from "../src/subagent/context-builder.js";
+import { buildSubagentExecutionWorktreeContext } from "../src/subagent/system-prompt.js";
 
 const envInfo: EnvInfo = {
   cwd: "/workspace/project-worktrees/zcode-sleepy-capybara",
@@ -22,23 +26,21 @@ const healthyFact: ExecutionWorktreeEnvFact = {
   workspacePath: "/workspace/project",
 };
 
+const HEALTHY_SENTENCE =
+  "Execution worktree: this session runs in a linked git worktree of /workspace/project (branch zcode/sleepy-capybara); file changes stay in the worktree until they are merged.";
+
 describe("execution worktree notice in the Environment section", () => {
-  it("healthy worktree session renders the isolation bullet right after the working directory", () => {
-    const content = buildEnvInfoSection(envInfo, undefined, healthyFact).content;
-    const lines = content.split("\n");
-    expect(lines[2]).toBe(
-      "- Primary working directory: /workspace/project-worktrees/zcode-sleepy-capybara",
-    );
-    expect(lines[3]).toBe(
-      "- Execution worktree: this session runs in a linked git worktree of /workspace/project (branch zcode/sleepy-capybara); file changes stay in the worktree until they are merged.",
-    );
+  it("healthy worktree session renders the isolation bullet as its own system section", () => {
+    const section = buildExecutionWorktreeSection(healthyFact);
+    expect(section?.injectionTarget).toBe("system");
+    expect(section?.content).toBe(`# Environment\n- ${HEALTHY_SENTENCE}`);
   });
 
   it("healthy fact without a branch omits the branch clause", () => {
-    const content = buildEnvInfoSection(envInfo, undefined, {
+    const content = buildExecutionWorktreeSection({
       ...healthyFact,
       branchName: undefined,
-    }).content;
+    })?.content;
     expect(content).toContain(
       "- Execution worktree: this session runs in a linked git worktree of /workspace/project; file changes stay in the worktree until they are merged.",
     );
@@ -46,50 +48,60 @@ describe("execution worktree notice in the Environment section", () => {
   });
 
   it("missing worktree explains filesystem actions are blocked until it is restored", () => {
-    const content = buildEnvInfoSection(envInfo, undefined, {
+    const content = buildExecutionWorktreeSection({
       path: healthyFact.path,
       missing: true,
       workspacePath: "/workspace/project",
-    }).content;
+    })?.content;
     expect(content).toContain(
       "- Execution worktree: the requested worktree /workspace/project-worktrees/zcode-sleepy-capybara is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is /workspace/project.",
     );
   });
 
-  it("plain sessions keep the section byte-identical (regression guard)", () => {
-    const withExplicitUndefined = buildEnvInfoSection(envInfo, undefined, undefined).content;
-    const withoutParam = buildEnvInfoSection(envInfo).content;
-    expect(withExplicitUndefined).toBe(withoutParam);
-    expect(withoutParam).not.toContain("Execution worktree");
-    expect(withoutParam.split("\n")[3]).toBe("- Is a git repository: no");
+  it("plain sessions keep the environment section free of the notice (regression guard)", () => {
+    const withExplicitUndefined = buildEnvInfoSection(envInfo).content;
+    expect(withExplicitUndefined).not.toContain("Execution worktree");
+    expect(withExplicitUndefined.split("\n")[3]).toBe(" - Is a git repository: false");
+    expect(buildExecutionWorktreeSection(undefined)).toBeNull();
+  });
+
+  it("the context builder delivers the notice in system messages only for worktree sessions", () => {
+    const worktree = createContextBuilder({
+      workingDirectory: envInfo.cwd,
+      envInfo,
+      executionWorktree: healthyFact,
+    }).build();
+    const worktreeSystem = worktree.systemMessages.map((message) => String(message.content));
+    expect(worktreeSystem.join("\n")).toContain(`- ${HEALTHY_SENTENCE}`);
+
+    const plain = createContextBuilder({ workingDirectory: envInfo.cwd, envInfo }).build();
+    const plainSystem = plain.systemMessages.map((message) => String(message.content));
+    expect(plainSystem.join("\n")).not.toContain("Execution worktree");
   });
 });
 
 describe("execution worktree notice in the subagent environment block", () => {
   it("subagent in a worktree session carries the same notice inside <env>", () => {
-    const content = buildSubagentEnvironmentContext({
+    const block = buildSubagentExecutionWorktreeContext(healthyFact);
+    const lines = block.split("\n");
+    expect(lines).toEqual(["<env>", HEALTHY_SENTENCE, "</env>"]);
+  });
+
+  it("subagent in a plain session has no notice block", () => {
+    expect(buildSubagentExecutionWorktreeContext(undefined)).toBe("");
+    const plain = createSubagentContextBuilder({ agentPrompt: "searcher", envInfo }).build();
+    expect(plain.systemMessages.map((message) => String(message.content)).join("\n")).not.toContain(
+      "Execution worktree",
+    );
+  });
+
+  it("the subagent context builder carries the notice in its system messages", () => {
+    const result = createSubagentContextBuilder({
       agentPrompt: "searcher",
       envInfo,
       executionWorktree: healthyFact,
-    });
-    const lines = content.split("\n");
-    expect(lines[2]).toBe("Working directory: /workspace/project-worktrees/zcode-sleepy-capybara");
-    expect(lines[3]).toBe(
-      "Execution worktree: this session runs in a linked git worktree of /workspace/project (branch zcode/sleepy-capybara); file changes stay in the worktree until they are merged.",
-    );
-    // The <env> block keeps its boundaries and remaining lines untouched.
-    expect(lines[1]).toBe("<env>");
-    expect(lines[8]).toBe("</env>");
-  });
-
-  it("subagent in a plain session keeps the block byte-identical (no notice)", () => {
-    const withExplicitUndefined = buildSubagentEnvironmentContext({
-      agentPrompt: "searcher",
-      envInfo,
-      executionWorktree: undefined,
-    });
-    const withoutOption = buildSubagentEnvironmentContext({ agentPrompt: "searcher", envInfo });
-    expect(withExplicitUndefined).toBe(withoutOption);
-    expect(withoutOption).not.toContain("Execution worktree");
+    }).build();
+    const system = result.systemMessages.map((message) => String(message.content)).join("\n");
+    expect(system).toContain(`<env>\n${HEALTHY_SENTENCE}\n</env>`);
   });
 });

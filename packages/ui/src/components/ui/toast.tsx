@@ -7,11 +7,19 @@
 import { TID_TOAST } from "@zcode/shared";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
-import { Info, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, Info, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
+import { Progress } from "@/components/ui/progress.js";
 
 export type ToastPosition = "top-center" | "top-right" | "bottom-left" | "bottom-center";
-type ToastVariant = "default" | "update" | "source-server-update" | "info" | "warning";
+type ToastVariant = "default" | "update" | "source-server-update" | "info" | "warning" | "success";
+
+/** Progress of a long-running operation: value is 0..1, label is the count note below the bar. Rendered only in the notice style. */
+export interface ToastProgress {
+  value: number;
+  label: string;
+  tone?: "destructive";
+}
 
 export interface ToastOptions {
   durationMs?: number;
@@ -24,6 +32,7 @@ export interface ToastOptions {
   anchorId?: string;
   /** 同一业务目标与动作的稳定键；新结果替换旧结果并移到栈底。 */
   dedupeKey?: string;
+  progress?: ToastProgress;
 }
 
 export interface ToastItem {
@@ -38,6 +47,7 @@ export interface ToastItem {
   dismissLabel?: string;
   anchorId?: string;
   dedupeKey?: string;
+  progress?: ToastProgress;
 }
 
 export function upsertToastItem(items: readonly ToastItem[], item: ToastItem): ToastItem[] {
@@ -309,7 +319,8 @@ export function ToastMessageView({
 }) {
   const isUpdate = item.variant === "update";
   const isSourceServerUpdate = item.variant === "source-server-update";
-  const isNotice = item.variant === "info" || item.variant === "warning";
+  const isNotice =
+    item.variant === "info" || item.variant === "warning" || item.variant === "success";
   const isTopRight = item.position === "top-right";
   const [fallbackTitle, ...fallbackBodyLines] = item.message.split("\n");
   const displayTitle = title ?? fallbackTitle;
@@ -404,32 +415,56 @@ export function ToastMessageView({
       ) : isNotice ? (
         // 固定最小高度会在 12px 内容 padding 之外继续补高，产生额外上下留白。
         <div className="flex min-w-0 items-center gap-4 px-4">
-          {item.variant === "warning" ? (
+          {item.progress ? (
+            <LoaderCircle
+              className="size-4 shrink-0 animate-spin text-foreground-subtle"
+              aria-hidden="true"
+            />
+          ) : item.variant === "warning" ? (
             <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
           ) : (
             <Info className="size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
           )}
-          <div className="flex min-w-0 flex-[1_0_0] items-start gap-4 py-3 text-ui-base">
-            <div className="min-w-0 flex-1 leading-5">
-              <div className="text-foreground">{displayTitle}</div>
-              {displayBody ? (
-                <div className="mt-0.5 whitespace-pre-line text-foreground-subtle">
-                  {displayBody}
-                </div>
+          {item.progress ? (
+            <div
+              data-testid="toast-progress"
+              className="flex min-w-0 flex-[1_0_0] flex-col gap-1.5 py-3 text-ui-base"
+            >
+              <span className="truncate text-foreground">{displayTitle}</span>
+              <Progress
+                value={Math.round(Math.min(Math.max(item.progress.value, 0), 1) * 100)}
+                className="bg-surface-hover"
+                indicatorClassName={
+                  item.progress.tone === "destructive" ? "bg-destructive" : "bg-foreground-subtle"
+                }
+              />
+              <span className="text-ui-sm tabular-nums text-foreground-subtle">
+                {item.progress.label}
+              </span>
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-[1_0_0] items-start gap-4 py-3 text-ui-base">
+              <div className="min-w-0 flex-1 leading-5">
+                <div className="text-foreground">{displayTitle}</div>
+                {displayBody ? (
+                  <div className="mt-0.5 whitespace-pre-line text-foreground-subtle">
+                    {displayBody}
+                  </div>
+                ) : null}
+              </div>
+              {/* Toast 继承可缩放 UI 字号，固定 18px 行高会在大字号下压缩操作文案。*/}
+              {item.actionLabel ? (
+                <button
+                  type="button"
+                  onClick={onAction ?? item.onAction}
+                  // 长团队名等具体目标不能把窄屏 Toast 撑出视口；保留完整名称并允许换行。
+                  className="max-w-1/2 self-center shrink-0 whitespace-normal break-words text-left font-medium leading-snug text-foreground underline underline-offset-2 hover:text-foreground-subtle"
+                >
+                  {item.actionLabel}
+                </button>
               ) : null}
             </div>
-            {/* Toast 继承可缩放 UI 字号，固定 18px 行高会在大字号下压缩操作文案。*/}
-            {item.actionLabel ? (
-              <button
-                type="button"
-                onClick={onAction ?? item.onAction}
-                // 长团队名等具体目标不能把窄屏 Toast 撑出视口；保留完整名称并允许换行。
-                className="max-w-1/2 self-center shrink-0 whitespace-normal break-words text-left font-medium leading-snug text-foreground underline underline-offset-2 hover:text-foreground-subtle"
-              >
-                {item.actionLabel}
-              </button>
-            ) : null}
-          </div>
+          )}
           {item.dismissible ? (
             <button
               type="button"
@@ -463,6 +498,7 @@ export function toast(message: string, options?: ToastOptions): number {
   const dismissLabel = options?.dismissLabel;
   const anchorId = options?.anchorId;
   const dedupeKey = options?.dedupeKey;
+  const progress = options?.progress;
   const tryAdd = () => {
     if (addToast) {
       const item: ToastItem = {
@@ -477,6 +513,7 @@ export function toast(message: string, options?: ToastOptions): number {
         dismissLabel,
         anchorId,
         dedupeKey,
+        ...(progress ? { progress } : {}),
       };
       const pendingUpdate = pendingToastUpdates.get(id);
       pendingToastUpdates.delete(id);

@@ -1,9 +1,4 @@
-import type {
-  ICommandsService,
-  IMcpSyncService,
-  ISkillsService,
-  IZCodeAgentService,
-} from "@zcode/services";
+import type { ICommandsService, ISkillsService, IZCodeAgentService } from "@zcode/services";
 import { logger } from "@/logger.js";
 import { invalidateDeferredDraftSessionForSkillChange } from "@/lib/zcodeDraftSkillInvalidation.js";
 import { refreshSharedSkillStoreForWorkspace } from "@/lib/skillStoreRefresh.js";
@@ -17,7 +12,8 @@ function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function refreshSlashCommandsAfterRemotePluginSync(params: {
+/** Re-fetch commands for the remote workspace and write them back to commandsStore and the input `/` panel (shared after plugin/command pushes). */
+export async function refreshSlashCommandsAfterRemoteSync(params: {
   commandsService: ICommandsService;
   reason: string;
   workspacePath: string;
@@ -33,9 +29,11 @@ async function refreshSlashCommandsAfterRemotePluginSync(params: {
     });
 
     const commandsStore = useCommandsStore.getState();
+    // This refreshes the project scope (no authority); if the store points at the remote "user" of the same path, that is a different target — do not write back.
     if (
       commandsStore.workspacePath === workspacePath &&
-      commandsStore.workspaceIdentity === workspaceIdentity
+      commandsStore.workspaceIdentity === workspaceIdentity &&
+      commandsStore.authorityKey === null
     ) {
       useCommandsStore.setState({
         commands: result.commands,
@@ -44,6 +42,7 @@ async function refreshSlashCommandsAfterRemotePluginSync(params: {
         capability: result.capability,
         loadedWorkspacePath: workspacePath,
         loadedWorkspaceIdentity: workspaceIdentity,
+        loadedAuthorityKey: null,
         loading: false,
         error: null,
       });
@@ -66,7 +65,8 @@ async function refreshSlashCommandsAfterRemotePluginSync(params: {
     const commandsStore = useCommandsStore.getState();
     if (
       commandsStore.workspacePath === workspacePath &&
-      commandsStore.workspaceIdentity === workspaceIdentity
+      commandsStore.workspaceIdentity === workspaceIdentity &&
+      commandsStore.authorityKey === null
     ) {
       useCommandsStore.setState({
         loading: false,
@@ -82,9 +82,34 @@ async function refreshSlashCommandsAfterRemotePluginSync(params: {
   }
 }
 
+/**
+ * The MCP store is a global singleton tracking a single current project: reload it only while it points at this workspace.
+ * Bug cause: after a data-sync plugin push, ensureLoadedForWorkspace was called for every project open on the
+ * device; it switched the store to the last refreshed project, clobbering the MCP list of the project the user
+ * was viewing. Fix: do not switch the current project; workspaces that are not current pick up the new config
+ * through the normal load on project switch.
+ *
+ * Bug cause: once the store's directory service is bound together with its target, passing the push-time
+ * source-settings service here rebinds the current project to it, and subsequent reads/writes for that project
+ * bypass the project's own service. Fix: only re-read the already-bound target, pass no service.
+ */
+export async function reloadMcpStoreIfCurrentWorkspace(params: {
+  workspacePath: string;
+  workspaceIdentity?: string | null;
+}): Promise<void> {
+  const { currentProjectPath, currentWorkspaceIdentity } = useMcpStore.getState();
+  const workspaceIdentity = params.workspaceIdentity?.trim() || undefined;
+  if (
+    params.workspacePath !== currentProjectPath ||
+    workspaceIdentity !== currentWorkspaceIdentity
+  ) {
+    return;
+  }
+  await useMcpStore.getState().loadMcpFromUserDirectory();
+}
+
 export async function refreshWorkspacePluginCapabilitiesAfterRemoteSync(params: {
   commandsService: ICommandsService;
-  mcpSyncService: IMcpSyncService;
   reason: string;
   skillsService: ISkillsService;
   workspaceIdentity?: string | null;
@@ -107,16 +132,17 @@ export async function refreshWorkspacePluginCapabilitiesAfterRemoteSync(params: 
     workspaceIdentity: workspaceIdentityParam,
     skillsService: params.skillsService,
   });
-  await refreshSlashCommandsAfterRemotePluginSync({
+  await refreshSlashCommandsAfterRemoteSync({
     commandsService: params.commandsService,
     reason: params.reason,
     workspacePath,
     workspaceIdentity,
   });
-  await useMcpStore
-    .getState()
-    .ensureLoadedForWorkspace(workspacePath, params.mcpSyncService, workspaceIdentityParam);
-  // 同步入口可能没有打开全局设置；按真实目标通知所有已挂载投影。
+  await reloadMcpStoreIfCurrentWorkspace({
+    workspacePath,
+    workspaceIdentity,
+  });
+  // The sync entry may run with global settings unopened; notify all mounted projections with the real target.
   notifyPluginManagementChange({
     workspacePath,
     workspaceIdentity,

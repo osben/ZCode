@@ -235,13 +235,13 @@ function findDescriptorByLocation(location: SettingsDirectoryLocation): Director
   return descriptor;
 }
 
-// Fix: the settings-page writers used loose reads (a read failure, corrupt JSON, or a non-object
-// root were all treated as an empty object) followed by an atomic write that set no permissions,
-// which could collapse the whole config.json (provider keys, MCP secrets) down to the MCP fields and
-// leave file permissions to the umask. All writers now go through updateJsonObjectFile: a strict
-// read (rejects on corruption, bytes untouched), a re-read before writing, and an atomic
-// replacement with 0600. When nothing would change, a strict read decides and returns directly
-// without creating or rewriting the file.
+// Fix: the settings page's three writers used lenient reads (read failure, corrupt JSON, or a
+// non-object root all treated as an empty object) and then an atomic write without explicit
+// permissions, which could flush the entire config.json (provider, MCP secrets) down to just
+// the MCP field, with permissions following the umask. All writes now go through
+// updateJsonObjectFile: strict read (throw on corruption, leave bytes untouched) + re-read
+// before writing + atomic replace (0600). When nothing changed, a strict read decides and
+// returns directly — no file is created or rewritten.
 async function cleanupLegacyMcpEnabledOverride(
   location: SettingsDirectoryLocation,
   name: string,

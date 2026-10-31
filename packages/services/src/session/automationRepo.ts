@@ -601,6 +601,29 @@ export class AutomationRepo {
       });
   }
 
+  /**
+   * Self-pause from an execution run (CronPauseSelf): only active and enabled tasks move to
+   * paused; returns whether the state actually changed. paused / completed / failed / deleted
+   * all return false so terminal tasks are never rewritten to paused.
+   * next_run_at / run_count are kept; resuming still goes through setEnabled(true).
+   */
+  async pause(automationId: string, workspaceKey?: string): Promise<boolean> {
+    await this.ensureReady();
+    const result = this.getDatabase()
+      .prepare(
+        `UPDATE automations
+        SET enabled = 0,
+            lifecycle_status = 'paused',
+            updated_at = @now
+        WHERE automation_id = @id
+          AND (@workspace_key IS NULL OR workspace_key = @workspace_key)
+          AND lifecycle_status = 'active'
+          AND enabled = 1`,
+      )
+      .run({ id: automationId, now: Date.now(), workspace_key: workspaceKey ?? null });
+    return result.changes > 0;
+  }
+
   /** Manually rerun a terminal task: return to active and clear counters/retry state; the caller supplies a recomputed nextRunAt. */
   async restart(
     automationId: string,
@@ -958,7 +981,9 @@ export class AutomationRepo {
   /**
    * Settle a successful dispatch: increment both the display total and scheduled-dispatch count, write last_run_at, clear retry state, and reset running;
    * recurring tasks return to active (the caller supplies nextRunAt recalculated from the actual dispatch time);
-   * finite tasks reaching max_runs become completed (enabled=0, next_run_at=NULL).
+   * finite tasks reaching max_runs become completed (enabled=0, next_run_at=NULL);
+   * tasks paused inside the dispatch window (CronPauseSelf / UI pause) stay paused and only
+   * record this dispatch.
    */
   async markDispatched(
     automationId: string,
@@ -974,6 +999,15 @@ export class AutomationRepo {
     // scheduled_run_count here; run_count also includes manual runs and is only for the Card's cumulative display.
     const reachedMax = row.recurring === 0 && scheduledRunCount >= (row.max_runs ?? 1);
     const reachedEnd = row.end_at !== null && (options.nextRunAt ?? Infinity) > row.end_at;
+    const completed = reachedMax || reachedEnd ? 1 : 0;
+    // Fix rationale: the scheduler write-back and Host-side pauses (CronPauseSelf / UI
+    // setEnabled(false)) run on two independent connections, and the old code unconditionally
+    // wrote lifecycle_status='active', enabled=1 here, reviving a paused state that landed
+    // inside the dispatch window back to active. Instead, a single UPDATE decides from the
+    // row's current values (SQLite SET expressions read the pre-update values): completed
+    // settles first; rows with enabled=0 keep their existing lifecycle / enabled and only
+    // record this dispatch; the rest still return to active. No second read or retry, to avoid
+    // opening another race window.
     this.getDatabase()
       .prepare(
         `UPDATE automations
@@ -986,9 +1020,13 @@ export class AutomationRepo {
             last_error = NULL,
             running = 0,
             claimed_at = NULL,
-            lifecycle_status = @lifecycle_status,
-            enabled = @enabled,
-            next_run_at = @next_run_at,
+            lifecycle_status = CASE
+              WHEN @completed = 1 THEN 'completed'
+              WHEN enabled = 0 THEN lifecycle_status
+              ELSE 'active'
+            END,
+            enabled = CASE WHEN @completed = 1 THEN 0 ELSE enabled END,
+            next_run_at = CASE WHEN @completed = 1 THEN NULL ELSE @next_run_at END,
             updated_at = @now
         WHERE automation_id = @id`,
       )
@@ -997,9 +1035,8 @@ export class AutomationRepo {
         run_count: runCount,
         scheduled_run_count: scheduledRunCount,
         dispatched_at: options.dispatchedAt,
-        lifecycle_status: reachedMax || reachedEnd ? "completed" : "active",
-        enabled: reachedMax || reachedEnd ? 0 : 1,
-        next_run_at: reachedMax || reachedEnd ? null : options.nextRunAt,
+        completed,
+        next_run_at: options.nextRunAt,
         now: options.dispatchedAt,
       });
   }

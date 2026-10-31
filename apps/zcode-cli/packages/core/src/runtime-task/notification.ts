@@ -126,28 +126,35 @@ export function formatTaskNotification(input: TaskNotificationInput): string {
 }
 
 function formatLocalBashTaskNotification(input: TaskNotificationInput): string {
-  const lines = ["<task-notification>", `<task-id>${escapeLocalBashXml(input.taskId)}</task-id>`];
+  const lines = ["<task-notification>", `<task-id>${escapeXmlText(input.taskId)}</task-id>`];
   if (input.toolUseId) {
-    lines.push(`<tool-use-id>${escapeLocalBashXml(input.toolUseId)}</tool-use-id>`);
+    lines.push(`<tool-use-id>${escapeXmlText(input.toolUseId)}</tool-use-id>`);
   }
   if (input.outputFile) {
-    lines.push(`<output-file>${escapeLocalBashXml(input.outputFile)}</output-file>`);
+    lines.push(`<output-file>${escapeXmlText(input.outputFile)}</output-file>`);
   }
-  lines.push(`<status>${escapeLocalBashXml(input.status)}</status>`);
-  lines.push(`<summary>${escapeLocalBashXml(input.summary)}</summary>`);
+  lines.push(`<status>${escapeXmlText(input.status)}</status>`);
+  lines.push(`<summary>${escapeXmlText(input.summary)}</summary>`);
   lines.push("</task-notification>");
 
   return lines.join("\n");
 }
 
+// Every background agent notification carries this <note>. A child seals its own background notifications when it ends and never resumes them,
+// so this same note is used for completed runs that still have live background children.
+const LOCAL_AGENT_NOTIFICATION_NOTE =
+  "A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.";
+
+// Escape only & < > (quotes kept as-is); the summary is always followed by the fixed <note> and no <error> is emitted —
+// the failure reason already sits after "failed: " in the summary.
 function formatLocalAgentTaskNotification(input: TaskNotificationInput): string {
-  const lines = ["<task-notification>", `<task-id>${escapeXml(input.taskId)}</task-id>`];
-  if (input.toolUseId) lines.push(`<tool-use-id>${escapeXml(input.toolUseId)}</tool-use-id>`);
-  if (input.outputFile) lines.push(`<output-file>${escapeXml(input.outputFile)}</output-file>`);
-  lines.push(`<status>${escapeXml(input.status)}</status>`);
-  lines.push(`<summary>${escapeXml(input.summary)}</summary>`);
-  if (input.result !== undefined) lines.push(`<result>${escapeXml(input.result)}</result>`);
-  if (input.error !== undefined) lines.push(`<error>${escapeXml(input.error)}</error>`);
+  const lines = ["<task-notification>", `<task-id>${escapeXmlText(input.taskId)}</task-id>`];
+  if (input.toolUseId) lines.push(`<tool-use-id>${escapeXmlText(input.toolUseId)}</tool-use-id>`);
+  if (input.outputFile) lines.push(`<output-file>${escapeXmlText(input.outputFile)}</output-file>`);
+  lines.push(`<status>${escapeXmlText(input.status)}</status>`);
+  lines.push(`<summary>${escapeXmlText(input.summary)}</summary>`);
+  lines.push(`<note>${LOCAL_AGENT_NOTIFICATION_NOTE}</note>`);
+  if (input.result !== undefined) lines.push(`<result>${escapeXmlText(input.result)}</result>`);
 
   const usage = formatLocalAgentUsage(input.usage);
   if (usage) lines.push(usage);
@@ -177,7 +184,7 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
       : formatWorkflowProviderStopError(input.failure, input.taskId);
   if (providerStopError !== undefined) {
     // The block contains a `run_id="…"` for the model to copy: escape only <>& and keep quotes unchanged (same policy as Bash notifications).
-    lines.push(`<error>\n${escapeLocalBashXml(providerStopError)}\n</error>`);
+    lines.push(`<error>\n${escapeXmlText(providerStopError)}\n</error>`);
   } else if (input.error !== undefined) {
     lines.push(`<error>${escapeXml(input.error)}</error>`);
   }
@@ -215,6 +222,9 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
         hasArtifacts: input.artifacts !== undefined,
         runId: input.taskId,
         scriptPath: input.scriptPath,
+        autoResumesAfterReset:
+          input.failure?.providerStop?.kind === "quota" &&
+          input.failure.providerStop.resetAt !== undefined,
       }),
     );
   }
@@ -237,6 +247,8 @@ function workflowDeliveryGuidance(input: {
   hasArtifacts: boolean;
   runId: string;
   scriptPath: string | undefined;
+  /** Quota stop with a reset time: the host resumes the run automatically (dynamic-workflow-quota-resume.ts in bootstrap). */
+  autoResumesAfterReset: boolean;
 }): string {
   const { status, stopReason, hasArtifacts, scriptPath } = input;
   // Append the artifact sentence only when the `<artifacts>` section is present: it refers to "the artifacts listed above",
@@ -282,7 +294,9 @@ function workflowDeliveryGuidance(input: {
   if (stopReason === "provider") {
     return [
       "A provider-side error stopped this run; the <error> block above names the cause and the fix. Present what the run finished: the reported items above are finished findings — show them individually with their evidence.",
-      `Then resolve the cause with the user before calling ResumeWorkflowRun with run_id="${input.runId}" — finished steps replay from the journal. Do not rebuild the workflow.`,
+      input.autoResumesAfterReset
+        ? "The run resumes by itself after the usage cap resets (the <error> block says when): tell the user, and do not call ResumeWorkflowRun or rebuild the workflow before then."
+        : `Then resolve the cause with the user before calling ResumeWorkflowRun with run_id="${input.runId}" — finished steps replay from the journal. Do not rebuild the workflow.`,
       ...artifactsShort,
     ].join("\n");
   }
@@ -375,6 +389,13 @@ function formatUsage(input: TaskNotificationInput["usage"]): string[] {
   return lines;
 }
 
+// Separator when a batch of notifications becomes one turn's input text. Each notification is its own text block in model context and does not rely on this to split.
+const TASK_NOTIFICATION_BATCH_SEPARATOR = "\n\n";
+
+export function joinTaskNotificationBatch(notifications: readonly string[]): string {
+  return notifications.join(TASK_NOTIFICATION_BATCH_SEPARATOR);
+}
+
 export function truncateTaskNotification(value: string): string {
   if (value.length <= TASK_NOTIFICATION_MAX_CHARS) return value;
   return `${value.slice(0, TASK_NOTIFICATION_MAX_CHARS)}\n[truncated]`;
@@ -399,7 +420,8 @@ export function escapeXml(value: string): string {
   });
 }
 
-function escapeLocalBashXml(value: string): string {
+// Escape only & < >; shared by bash, background agent notifications, and the workflow provider stop block.
+function escapeXmlText(value: string): string {
   return value.replace(/[<>&]/gu, (char) => {
     switch (char) {
       case "<":

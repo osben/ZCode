@@ -23,8 +23,6 @@ import {
   type ImportResourceCategory,
 } from "@/settings/ExternalAgentImportDialog.js";
 
-export { OnboardingWelcomeView } from "@/onboarding/OnboardingWelcomeView.js";
-
 export interface OnboardingWorkspaceCandidate {
   workspacePath: string;
   label: string;
@@ -323,6 +321,8 @@ export function OnboardingFinishStep(props: {
   settingsImportedCount: number;
   settingsSkippedCount: number;
   settingsFailedCount: number;
+  /** Number of settings items counted as failed because no project is open but one is required for import. */
+  settingsWorkspaceRequiredCount: number;
 }) {
   const { intl } = useZCodeIntl();
 
@@ -341,6 +341,17 @@ export function OnboardingFinishStep(props: {
         {props.finishExecution.error ? (
           <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-ui-base text-foreground">
             {props.finishExecution.error}
+          </div>
+        ) : null}
+        {props.settingsWorkspaceRequiredCount > 0 ? (
+          <div
+            data-testid="onboarding-finish-workspace-required"
+            className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-ui-base text-foreground"
+          >
+            {intl.formatMessage(
+              { id: "onboarding.finish.workspaceRequired" },
+              { count: String(props.settingsWorkspaceRequiredCount) },
+            )}
           </div>
         ) : null}
       </div>

@@ -1301,9 +1301,11 @@ describe("ZCode legacy task compat task index", () => {
       provider: "glm",
     });
 
+    // releasePreparation lets a shared task runtime close only this workspace's prepared sessions (upstream 3.17.1).
     expect(agent.disposeWorkspace).toHaveBeenCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: "remote:wsl:ubuntu:/repo",
+      releasePreparation: true,
     });
     expect(agent.disposeAll).not.toHaveBeenCalled();
   });

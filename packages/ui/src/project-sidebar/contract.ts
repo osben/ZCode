@@ -25,6 +25,8 @@ export interface ProjectRowAction {
   destructive?: boolean;
   /** Consecutive actions with a different group are separated (specs/session-context-menu-structure.md). */
   group?: string;
+  /** Draws a separator line between this action and the previous group; ignored for the first item. */
+  separatorBefore?: boolean;
 }
 export {
   buildRemoteHostWorkspaceIdentity,
@@ -68,7 +70,7 @@ export interface ProjectAvailability {
   unresolved?: boolean;
 }
 export type { Locale, Theme };
-export type ProjectSidebarView = "projects" | "grouped" | "timeline";
+export type ProjectSidebarView = "projects" | "grouped" | "timeline" | "unread";
 export interface SidebarFileTreeTarget {
   workspacePath: string;
   workspaceName: string;

@@ -47,7 +47,27 @@ class MockProcessManagerBase {
   // Bug root cause: the service marks the runtime ready after the provider/model gate passes; the shared mock
   // missing this lifecycle method would make every case entering the model execution path fail before its business assertions.
   markReady() {}
+
+  // Upstream 3.17.1 asks the process manager whether a workspace runs on the shared task runtime;
+  // these cases bind per-workspace runtimes only.
+  isSharedRuntime() {
+    return false;
+  }
+
+  // Upstream 3.17.1 lists the workspaces bound to the same runtime when releasing one; these cases bind
+  // one workspace per runtime, so the list is the released workspace itself.
+  getRuntimeWorkspaces(params: unknown) {
+    return [params];
+  }
 }
+
+// Upstream 3.17.1 probes runtime/capabilities once per CLI client when it starts, and the fork's
+// capability reads use the same method. The mocks answer as a current CLI that supports the
+// provider registry refresh barrier and durable first submission.
+const currentCliRuntimeCapabilities = {
+  durableFirstSubmission: true,
+  providerRegistryRefresh: true,
+};
 
 function createSessionSnapshot(params: {
   model: { providerId: string; modelId: string };
@@ -246,6 +266,7 @@ describe("createZCodeAgentService provider registry", () => {
       ],
     });
     const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === zcodeProtocolMethods.runtimeCapabilities) return currentCliRuntimeCapabilities;
       if (method === zcodeProtocolMethods.sessionCreate) {
         const model = (params as { model: { providerId: string; modelId: string } }).model;
         return createSessionSnapshot({ model, thoughtLevel: "high" });
@@ -297,7 +318,9 @@ describe("createZCodeAgentService provider registry", () => {
       providers: [],
     });
     const getClient = vi.fn(async () => ({
-      request: vi.fn(async () => {
+      request: vi.fn(async (method: string) => {
+        if (method === zcodeProtocolMethods.runtimeCapabilities)
+          return currentCliRuntimeCapabilities;
         throw new Error("Unexpected request");
       }),
       transportKind: "stdio" as const,
@@ -465,7 +488,7 @@ describe("createZCodeAgentService provider registry", () => {
 
   it("keeps concurrent callers on the same ready startup generation available", async () => {
     const getClient = vi.fn(async () => ({
-      request: vi.fn(),
+      request: vi.fn(async () => currentCliRuntimeCapabilities),
       transportKind: "stdio" as const,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
@@ -506,11 +529,15 @@ describe("createZCodeAgentService provider registry", () => {
         finishLateRead = resolve;
       });
       const getView = vi.fn().mockResolvedValueOnce(ready).mockReturnValue(lateRead);
-      const request = vi.fn(async () => ({
-        commandId: "first-input",
-        status: "accepted" as const,
-        revisionAtDecision: 1,
-      }));
+      const request = vi.fn(async (method: string) => {
+        if (method === zcodeProtocolMethods.runtimeCapabilities)
+          return currentCliRuntimeCapabilities;
+        return {
+          commandId: "first-input",
+          status: "accepted" as const,
+          revisionAtDecision: 1,
+        };
+      });
       const getClient = vi.fn(async () => ({
         request,
         transportKind: "stdio" as const,
@@ -553,11 +580,14 @@ describe("createZCodeAgentService provider registry", () => {
         await expect(command).resolves.toMatchObject({ status: "accepted" });
         expect(getView).toHaveBeenCalledTimes(1);
         expect(getClient).toHaveBeenCalledTimes(1);
-        expect(request).toHaveBeenCalledExactlyOnceWith(
-          V4_METHODS.command,
-          expect.objectContaining({ commandId: "first-input", type: "sendText" }),
-          expect.anything(),
-        );
+        // The client also carries the runtime/capabilities startup probe; only the first input may be a command.
+        expect(request.mock.calls.filter(([method]) => method === V4_METHODS.command)).toEqual([
+          [
+            V4_METHODS.command,
+            expect.objectContaining({ commandId: "first-input", type: "sendText" }),
+            expect.anything(),
+          ],
+        ]);
       } finally {
         finishLateRead(ready);
         service.disposeAll();
@@ -573,7 +603,7 @@ describe("createZCodeAgentService provider registry", () => {
     });
     const getView = vi.fn().mockReturnValueOnce(oldRead).mockResolvedValue(ready);
     const getClient = vi.fn(async () => ({
-      request: vi.fn(),
+      request: vi.fn(async () => currentCliRuntimeCapabilities),
       transportKind: "stdio" as const,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
@@ -613,6 +643,8 @@ describe("createZCodeAgentService provider registry", () => {
     }> = [];
     const getClient = vi.fn(async () => {
       const request = vi.fn(async (method: string) => {
+        if (method === zcodeProtocolMethods.runtimeCapabilities)
+          return currentCliRuntimeCapabilities;
         throw new Error(`Unexpected method ${method}`);
       });
       const client = {
@@ -662,7 +694,14 @@ describe("createZCodeAgentService provider registry", () => {
     expect(getClient).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceIdentity: secondIdentity }),
     );
-    expect(clients.every((client) => client.request.mock.calls.length === 0)).toBe(true);
+    // Starting a client sends only the runtime/capabilities startup probe; no session work reaches it.
+    expect(
+      clients.every((client) =>
+        client.request.mock.calls.every(
+          ([method]) => method === zcodeProtocolMethods.runtimeCapabilities,
+        ),
+      ),
+    ).toBe(true);
 
     selectionSource.emit(
       createModelSelectionViewFromRegistry({
@@ -752,6 +791,7 @@ describe("createZCodeAgentService provider registry", () => {
 
   it("reuses a read-only sessions-index client when provider/model becomes ready", async () => {
     const request = vi.fn(async (method: string) => {
+      if (method === zcodeProtocolMethods.runtimeCapabilities) return currentCliRuntimeCapabilities;
       if (method === "v4/conversation/subscribe") {
         return {
           ack: {
@@ -890,14 +930,16 @@ describe("createZCodeAgentService provider registry", () => {
     });
 
     // specs/provider-registry-refresh-barrier.md: session/create waits for the worker registry refresh.
+    // The first runtime/capabilities call is the client startup probe (upstream 3.17.1).
     expect(calls).toEqual([
+      zcodeProtocolMethods.runtimeCapabilities,
       zcodeProtocolMethods.providerUpdateAccountConfig,
       zcodeProtocolMethods.runtimeCapabilities,
       zcodeProtocolMethods.providerRefreshRegistry,
       zcodeProtocolMethods.sessionCreate,
     ]);
     expect(request).toHaveBeenNthCalledWith(
-      1,
+      2,
       zcodeProtocolMethods.providerUpdateAccountConfig,
       {
         revision: "account-1",
@@ -932,6 +974,7 @@ describe("createZCodeAgentService provider registry", () => {
       ]),
     });
     const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === zcodeProtocolMethods.runtimeCapabilities) return currentCliRuntimeCapabilities;
       if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
         const revision = (params as { revision: string }).revision;
         return { receivedRevision: revision, providerCount: 1, status: "received" as const };
@@ -1033,6 +1076,7 @@ describe("createZCodeAgentService provider registry", () => {
     const calls: string[] = [];
     const request = vi.fn(async (method: string, params?: unknown) => {
       calls.push(method);
+      if (method === zcodeProtocolMethods.runtimeCapabilities) return currentCliRuntimeCapabilities;
       if (method === V4_METHODS.command) {
         const envelope = params as { commandId: string };
         return {
@@ -1087,9 +1131,10 @@ describe("createZCodeAgentService provider registry", () => {
       status: "accepted",
       result: { type: "createSession", sessionId: "sess_v4_draft" },
     });
-    expect(calls).toEqual([V4_METHODS.command]);
+    // Only the client startup probe precedes the command; no Account Config or registry refresh is pushed.
+    expect(calls).toEqual([zcodeProtocolMethods.runtimeCapabilities, V4_METHODS.command]);
     expect(request).toHaveBeenNthCalledWith(
-      1,
+      2,
       V4_METHODS.command,
       expect.objectContaining({
         type: "createSession",
@@ -1172,7 +1217,9 @@ describe("createZCodeAgentService provider registry", () => {
         },
       });
       // The reservation touches no provider: no Account Config delivery and no registry refresh.
+      // The two runtime/capabilities calls are the startup probe and the cached durable-first read.
       expect(calls).toEqual([
+        zcodeProtocolMethods.runtimeCapabilities,
         zcodeProtocolMethods.runtimeCapabilities,
         `${V4_METHODS.command}:createSession`,
       ]);
@@ -1597,6 +1644,7 @@ describe("createZCodeAgentService provider registry", () => {
       slashCommands: [],
     };
     const firstRequest = vi.fn(async (method: string) => {
+      if (method === zcodeProtocolMethods.runtimeCapabilities) return currentCliRuntimeCapabilities;
       if (method === zcodeProtocolMethods.workspaceReadPresentation) {
         throw new Error("ZCode agent stdio transport is closed");
       }
@@ -1607,6 +1655,7 @@ describe("createZCodeAgentService provider registry", () => {
       };
     });
     const secondRequest = vi.fn(async (method: string) => {
+      if (method === zcodeProtocolMethods.runtimeCapabilities) return currentCliRuntimeCapabilities;
       if (method === zcodeProtocolMethods.workspaceReadPresentation) {
         return workspacePresentation;
       }
@@ -1634,19 +1683,10 @@ describe("createZCodeAgentService provider registry", () => {
       });
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
-      ZCodeAgentProcessManager: class {
+      // This case only drives stdio retries; the shared base supplies the runtime lifecycle, restart and
+      // shared-runtime methods the service calls at construction and on client startup.
+      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
         getClient = getClient;
-        // Same bug cause as the shared mock: the service added a runtime lifecycle subscription at construction; this case
-        // only drives stdio retries, so an empty disposable completes the local test stub's contract.
-        onRuntimeLifecycle() {
-          return { dispose() {} };
-        }
-        // Bugfix: after the rebase the service subscribes to runtime restarts at construction; the local process
-        // manager test stub must keep this interface, or it fails on the incomplete mock contract before reaching
-        // the stdio retry assertions.
-        onRuntimeRestarted() {
-          return { dispose() {} };
-        }
         disposeAll() {}
       },
     }));

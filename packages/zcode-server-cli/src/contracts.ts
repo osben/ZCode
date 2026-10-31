@@ -7,14 +7,14 @@ export const CRASH_WINDOW_MS = 5 * 60_000;
 export const CRASH_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 export const MAX_CONTROL_FRAME_BYTES = 64 * 1024;
 
-// Supervisor 停止/更新链路的时间预算唯一来源；等待 Supervisor 的调用方必须由这里推导，不能各自写死。
+// The single source of the time budgets for the Supervisor stop/update path; callers that wait for the Supervisor must derive their timeouts from here rather than hard-coding them.
 export const CORE_STOP_GRACE_TIMEOUT_MS = 5_000;
-// Bug 原因：SIGKILL 只会被不可中断等待推迟，Rosetta + swap 的远端按事故时序推算回收约 3.5～5.4 秒；旧的
-// 2 秒等待把必然结束的退出误判为 stop-failed，导致 update 失败并让 Supervisor 卡住锁。
+// Bug cause: SIGKILL is only deferred by uninterruptible waits, and on Rosetta + swap the remote reclaim, estimated from the incident timeline, takes about 3.5-5.4 seconds;
+// the old 2-second wait misjudged an exit that was bound to finish as stop-failed, which failed the update and left the Supervisor stuck holding the lock.
 export const CORE_KILL_TIMEOUT_MS = 10_000;
 export const CORE_READY_TIMEOUT_MS = 15_000;
 export const CONTROL_CLOSE_TIMEOUT_MS = 2_000;
-// stop 等待方需要覆盖宽限 + 强杀等待 + control socket 关闭，另留状态落盘和锁释放余量。
+// stop waiters must cover the grace period, the force-kill wait and the control socket close, with headroom left for status persistence and lock release.
 export const SERVER_STOP_WAIT_TIMEOUT_MS =
   CORE_STOP_GRACE_TIMEOUT_MS + CORE_KILL_TIMEOUT_MS + CONTROL_CLOSE_TIMEOUT_MS + 3_000;
 // serve --daemon waiters must cover Supervisor cold start (process spawn, module loading,
@@ -23,6 +23,10 @@ export const SERVER_STOP_WAIT_TIMEOUT_MS =
 // busy machine the Supervisor cold start measured 8-14s, so the CLI reported "Timed out waiting
 // for Server ready" first while the daemon went ready normally right afterwards.
 export const SERVER_READY_WAIT_TIMEOUT_MS = CORE_READY_TIMEOUT_MS + 10_000;
+// Core heartbeat period: shared by the Core sender and the Supervisor liveness check (R2 §4.2 Core liveness).
+export const CORE_HEARTBEAT_INTERVAL_MS = 10_000;
+// A ready Core that goes this many consecutive heartbeat periods without any IPC message is judged by the Supervisor to have a hung event loop.
+export const CORE_UNRESPONSIVE_HEARTBEAT_PERIODS = 6;
 
 export const lifecycleStateSchema = z.enum([
   "starting",
@@ -117,7 +121,6 @@ export const controlRequestSchema = z.discriminatedUnion("command", [
   requestBase.extend({ command: z.literal("status") }),
   requestBase.extend({ command: z.literal("running-tasks") }),
   requestBase.extend({ command: z.literal("stop") }),
-  requestBase.extend({ command: z.literal("restart") }),
   requestBase.extend({ command: z.literal("runtime-identity") }),
   requestBase.extend({ command: z.literal("prepare-update") }),
   requestBase.extend({ command: z.literal("apply-update"), force: z.boolean().optional() }),

@@ -35,7 +35,9 @@
 //   2. `abandon()` itself waits only 250ms (core/src/runtime/methods/streaming-tool-coordinator.ts:38, :121).
 // Both paths let an already-stored assistant message **grow one more part** after this gate has let it through
 // (the pending part at ibid :253, the running part at ibid :294). It cannot be awaited: those handles have already
-// detached from the promise we await, so there is nothing to wait on-this is not a question of gate strictness.
+// already detached. Session close now separately waits the tool-execution ledger via
+// runtime.closeOwnedWork; amend's message-count optimization still waits only the turn and
+// does not mix resource cleanup into its bounded query.
 //
 // Why this is acceptable: **the count is taken at amend time, and the messages are copied when the successor subagent is first dispatched**
 // (workflow-actor-transcript.ts's seedActorTranscript reads parts along with the `messageCount`).
@@ -76,6 +78,8 @@ export interface ActorSessionQuiescence {
    * Conservatively treat it as not quiet (the cost is one skipped continuation; the alternative is truncating a transcript at a message count nobody owns).
    */
   quietSessions(): Promise<ReadonlySet<string>>;
+  /** Close must wait for full cleanup; amend's bounded quiet-query is not a substitute. */
+  drain(): Promise<void>;
 }
 
 /** Driver-side write surface: {@link ActorSessionQuiescence} plus a registration hook used during dispose. */
@@ -88,6 +92,9 @@ export interface ActorSessionQuiescenceLedger extends ActorSessionQuiescence {
    * turns can be started (after dispose, `sessions` is cleared).
    */
   noteDisposed(sessionId: string, pendingTurn: Promise<unknown> | undefined): void;
+  /** Register the actual release chain so session close can wait on it and receive cleanup
+   *  failures. */
+  trackRelease(work: Promise<unknown>, retry?: () => Promise<unknown>): void;
 }
 
 /**
@@ -106,7 +113,37 @@ export function createActorSessionQuiescence(options?: {
   const schedule = options?.clock?.schedule ?? defaultSchedule;
   const quiesceMs = options?.quiesceMs ?? AMEND_TRANSCRIPT_QUIESCE_MS;
 
+  const releases = new Set<Promise<unknown>>();
+  const failed = new Map<Promise<unknown>, { error: unknown; retry?: () => Promise<unknown> }>();
   return {
+    trackRelease(work, retry) {
+      releases.add(work);
+      void work.then(
+        () => releases.delete(work),
+        (error: unknown) => {
+          releases.delete(work);
+          failed.set(work, { error, retry });
+        },
+      );
+    },
+    async drain() {
+      while (releases.size > 0) await Promise.allSettled(releases);
+      // Retry only explicitly held idempotent release handles; the failure history is not the
+      // current resource state.
+      const retries = [...failed.entries()];
+      await Promise.all(
+        retries.map(async ([work, failure]) => {
+          if (!failure.retry) return;
+          try {
+            await failure.retry();
+            failed.delete(work);
+          } catch (error) {
+            failure.error = error;
+          }
+        }),
+      );
+      if (failed.size) throw failed.values().next().value!.error;
+    },
     noteDisposed(sessionId, pendingTurn) {
       disposed.set(sessionId, pendingTurn);
     },
@@ -139,41 +176,51 @@ export function createActorSessionQuiescence(options?: {
  * Per-session release during dispose: unsubscribe activity observers, cancel backoff retries, **register quiescence**, then close after the active turn settles
  * actor runtime.
  *
- * Run the **same** chain used to close an app session for every runtime: `closeBrowserSession` performs beginShutdown,
- * node_repl session release, and browser-session close in order. Do not create a separate subagent shutdown chain that could drift. Close failures only warn;
- * they do not throw through settlement.
+ * runtime.close first cancels and waits out subagents, tools, and auxiliary tasks, then
+ * releases node_repl and browser resources. dispose still returns synchronously; close
+ * failures are logged and kept in the ledger, and App.close's drain must receive them.
  *
- * Register **before** `state.turn.then(...)`: at this point `state.turn` is the chain to await, while then would replace it with another promise.
- * This function returns synchronously (close is chained from then), so dispose remains non-blocking.
+ * Registration uses the state.turn at this moment; dispose returns synchronously and the real
+ * release promise is left to the owner's drain.
  */
 export function releaseActorSessions(
   deps: AgentRuntimeWorkflowDriverDeps,
   sessions: Iterable<SessionState>,
   ledger: ActorSessionQuiescenceLedger,
-): void {
+): Promise<void> {
+  const releases: Promise<void>[] = [];
   for (const state of sessions) {
     state.modelActivity.unsubscribe();
     state.cancelRedrive?.();
     state.cancelRedrive = undefined;
     ledger.noteDisposed(state.sessionId, state.turn);
-    const close = (): void => closeActorRuntime(deps, state);
-    if (state.turn === undefined) close();
-    else state.turn.then(close, close);
-  }
-}
-
-function closeActorRuntime(deps: AgentRuntimeWorkflowDriverDeps, state: SessionState): void {
-  // Promise.resolve().then(...): route synchronous throws through the same warning path (minimal stub runtimes may not have this method).
-  void Promise.resolve()
-    .then(() => state.runtime.closeBrowserSession())
-    .catch((error: unknown) => {
-      deps.logger?.warn?.("Dynamic workflow actor runtime close failed", {
-        errorMessage: error instanceof Error ? error.message : String(error),
+    // Close each actor's admission and fire cancellation before waiting; one slow turn must
+    // not keep the other actors from stopping.
+    state.runtime.beginShutdown?.();
+    const owned = state.runtime.close();
+    const release = (async () => {
+      const results = await Promise.allSettled([state.turn, owned]);
+      const ownedResult = results[1];
+      if (ownedResult?.status === "rejected") throw ownedResult.reason;
+    })();
+    void release.catch((error: unknown) =>
+      deps.logger?.warn?.("Workflow actor cleanup failed", {
         event: "dynamic_workflow.actor_runtime.close_failed",
-        module: "bootstrap.app",
         sessionId: state.sessionId,
-      });
-    });
+        errorMessage: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    ledger.trackRelease(release, () => state.runtime.close());
+    releases.push(release);
+  }
+  const completion = Promise.allSettled(releases).then((results) => {
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  });
+  // Callers of the synchronous dispose need not wait; failures stay in the ledger and
+  // App.close must consume them.
+  void completion.catch(() => undefined);
+  return completion;
 }
 
 /** Wait for `work` to settle for at most `delayMs`. Return at the deadline without throwing; clear the timer in either branch. */

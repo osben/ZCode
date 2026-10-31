@@ -64,6 +64,9 @@ const turnStartedFactSchema = z
   .object({
     ...factBaseFields,
     kind: z.literal("turn.started"),
+    inputOrigin: z.enum(["desktop", "mobile"]).optional(),
+    modelName: z.string().optional(),
+    modelProvider: z.string().optional(),
     executionKind: z.enum(["agent", "controlOnly"]).optional(),
     inputSource: zcodeSyntheticUserMessageSourceSchema.optional(),
     // `workflow`: a separate turn triggered by a completion/question notification from a dynamic-workflow run;

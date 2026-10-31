@@ -1,10 +1,12 @@
 import type { ChildSessionSelectOptions } from "@/components/TaskChildSessionRows.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { readComposerWorkspaceScope } from "@/v4/composer/composerDraftStore.js";
 import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -178,10 +180,10 @@ export function TaskGroupedView({
     onCollapsedGroupIdsChange: changeCollapsed,
     onMove: move,
   });
-  const groups = useMemo(
-    () => drag.view.nodes.flatMap((node) => (node.type === "group" ? [node.group] : [])),
-    [drag.view.nodes],
+  const selectGroups = useShallow((nodes: typeof drag.view.nodes) =>
+    nodes.flatMap((node) => (node.type === "group" ? [node.group] : [])),
   );
+  const groups = selectGroups(drag.view.nodes);
   const allExpanded = groups.every((group) => !collapsed.has(group.id));
   const toggleCollapsed = (id: string) =>
     changeCollapsed((current) => {
@@ -247,12 +249,7 @@ export function TaskGroupedView({
     task.workspacePurpose === "conversation"
       ? intl.formatMessage({ id: "workspaceSidebar.conversationsSection" })
       : task.workspacePath.split(/[\\/]/).filter(Boolean).at(-1) || task.workspacePath;
-  const rowCallbacks = {
-    groups,
-    activeWorkspacePath: workspacePath,
-    activeWorkspaceIdentity: workspaceIdentity,
-    activeTaskId,
-    mobileActiveTaskKey: presentation.mobileActiveTaskKey,
+  const rowActions = {
     onSelectTask: (
       path: string,
       id: string,
@@ -293,7 +290,44 @@ export function TaskGroupedView({
     },
     onMarkTaskAsUnread: (task: ProjectTask) =>
       action(() => mutate(task, { kind: "mark-unread" }), "taskList.markAsUnreadFailed"),
+  };
+  // Bug cause: one task activity rebuilt the whole group's row callbacks, defeating the memo of every unchanged task.
+  // Row events forward only to the latest committed implementation, keeping references stable and not capturing stale task/group or remote addresses.
+  const rowActionsRef = useRef(rowActions);
+  useLayoutEffect(() => {
+    rowActionsRef.current = rowActions;
+  });
+  const stableRowActions = useMemo(
+    () => ({
+      onSelectTask: (...args: Parameters<typeof rowActions.onSelectTask>) =>
+        rowActionsRef.current.onSelectTask(...args),
+      onCloseTask: (task: ProjectTask) => rowActionsRef.current.onCloseTask(task),
+      onArchiveTask: (task: ProjectTask) => rowActionsRef.current.onArchiveTask(task),
+      onOpenFileTree: (task: ProjectTask) => rowActionsRef.current.onOpenFileTree?.(task),
+      onMoveTaskToGroup: (task: ProjectTask, id: string | null) =>
+        rowActionsRef.current.onMoveTaskToGroup(task, id),
+      onMoveTaskToTop: (task: ProjectTask) => rowActionsRef.current.onMoveTaskToTop(task),
+      onStartRenameTask: (task: ProjectTask) => rowActionsRef.current.onStartRenameTask(task),
+      onMarkTaskAsUnread: (task: ProjectTask) => rowActionsRef.current.onMarkTaskAsUnread(task),
+    }),
+    [],
+  );
+  const rowCallbacks = {
+    ...stableRowActions,
+    onOpenFileTree: presentation.onOpenTaskFiles ? stableRowActions.onOpenFileTree : undefined,
+    groups,
     tooltipsDisabled: drag.dragging,
+  };
+  // Bug cause: first-send admission changes the global activeTaskId; passing it to every row also refreshes the outer scope of unselected rows.
+  // Derive each row's own selection state while assembling the list, keeping the memo inputs of unrelated rows unchanged.
+  const rowSelection = (task: ProjectTask) => {
+    const key = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
+    return {
+      isActive:
+        buildTaskWorkspaceKey(workspacePath, workspaceIdentity) === key &&
+        activeTaskId === task.taskId,
+      isMobileActive: presentation.mobileActiveTaskKey === `${key}:${task.taskId}`,
+    };
   };
   const [stickyId, setStickyId] = useState<string | null>(null);
   useEffect(() => {
@@ -449,6 +483,10 @@ export function TaskGroupedView({
                 <div key={node.group.id} data-grouped-layout-key={`group:${node.group.id}`}>
                   <GroupItem
                     {...rowCallbacks}
+                    activeWorkspacePath={workspacePath}
+                    activeWorkspaceIdentity={workspaceIdentity}
+                    activeTaskId={activeTaskId}
+                    mobileActiveTaskKey={presentation.mobileActiveTaskKey}
                     node={node}
                     getTaskRemoteSessionId={getTaskRemoteSessionId}
                     onCreateTask={() => createTask(node.group.id)}
@@ -476,6 +514,7 @@ export function TaskGroupedView({
                 <GroupedTaskItem
                   {...rowCallbacks}
                   key={taskKey(node.task)}
+                  {...rowSelection(node.task)}
                   task={node.task}
                   remoteSessionId={getTaskRemoteSessionId(node.task)}
                   dragId={taskKey(node.task)}
@@ -504,6 +543,7 @@ export function TaskGroupedView({
               >
                 <GroupedTaskItem
                   {...rowCallbacks}
+                  {...rowSelection(activeTask)}
                   task={activeTask}
                   remoteSessionId={getTaskRemoteSessionId(activeTask)}
                   dragId={drag.activeTaskKey ?? undefined}

@@ -51,7 +51,8 @@ export interface PluginUiHostBridge {
     params: Record<string, never>,
     options?: { timeout?: number; signal?: AbortSignal },
   ): Promise<unknown>;
-  /** Readable after `initialized`; the page-declared availableDisplayModes decides whether the host can switch it to fullscreen. */
+  /** Readable after `initialized`; the page's declared availableDisplayModes constrains every
+   *   host display mode. */
   getAppCapabilities(): McpUiAppCapabilities | undefined;
   notification(notification: { method: string; params?: Record<string, unknown> }): Promise<void>;
   /** App-Provided Tools: the host discovers page tools and hands model calls to the page for execution. */

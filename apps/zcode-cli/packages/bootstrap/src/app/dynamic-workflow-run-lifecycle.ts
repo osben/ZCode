@@ -48,6 +48,7 @@ interface RunServiceLifecycle {
   close(): Promise<void>;
   /** Launching after close is a wiring error: throw instead of adding a member to the contracts rejection enum. */
   assertOpen(): void;
+  trackOperation<T>(operation: () => Promise<T>): Promise<T>;
   /** A terminal row under an active entry indicates a foreign write; log one warning per entry. */
   noteForeignTerminalRow(runId: string): void;
 }
@@ -65,6 +66,9 @@ interface RunServiceLifecycle {
 export function createRunServiceLifecycle(deps: RunServiceLifecycleDeps): RunServiceLifecycle {
   const { runs } = deps;
   const terminalOrder: string[] = [];
+  const cleanup = new Set<Promise<void>>();
+  const unreleased = new Set<RunRegistryEntry>();
+  const operations = new Set<Promise<unknown>>();
   const settledListeners = new Set<(notice: DynamicWorkflowRunSettledNotice) => void>();
   const countLiveRuns = (): number => {
     let live = 0;
@@ -142,8 +146,26 @@ export function createRunServiceLifecycle(deps: RunServiceLifecycleDeps): RunSer
         return result;
       },
     );
-    // Service file header invariant 6: all three entry points (submit / amend / resume) share this registration point, which must run in the same synchronous turn as launch. Delaying by one microtask would let residency rebalance run between launch and registration. Register the **post-settlement** promise (`settlement` never rejects and bookkeeping is complete); release the count in its finally handler.
-    deps.registerResidencyBlockingWork?.(settlement);
+    // Service file-header invariant 6: the three entries (submit / amend / resume) share this
+    // single registration point, and it must happen in the same synchronous slice as the launch
+    // — one microtask later, a residency rebalance could land between launch and registration.
+    // What is registered is the **post-settlement** promise (`settlement` never rejects; the
+    // bookkeeping is done), and the count releases with its finally.
+    // Run terminal differs from actor drain; unfinished cleanup is kept separately and must not
+    // be evicted with the terminal registry.
+    const released = settlement.then(() => entry.quiescence?.drain());
+    unreleased.add(entry);
+    cleanup.add(released);
+    void released.then(
+      () => {
+        cleanup.delete(released);
+        unreleased.delete(entry);
+      },
+      () => {
+        cleanup.delete(released);
+      },
+    );
+    deps.registerResidencyBlockingWork?.(released.catch(() => undefined));
     return settlement;
   };
 
@@ -161,14 +183,31 @@ export function createRunServiceLifecycle(deps: RunServiceLifecycleDeps): RunSer
         parentSessionId: deps.parentSessionId,
       });
       for (const entry of live) entry.controller.abort("interrupted");
+      while (operations.size) await Promise.allSettled(operations);
       await Promise.all(live.map((entry) => entry.settlement));
+      while (cleanup.size > 0) await Promise.allSettled(cleanup);
+      const results = await Promise.allSettled(
+        [...unreleased].map(async (entry) => {
+          await entry.quiescence?.drain();
+          unreleased.delete(entry);
+        }),
+      );
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length) throw new AggregateError(errors, "Workflow actor cleanup failed");
       deps.logger?.info?.("Dynamic workflow run service closed", {
         event: "dynamic_workflow.service.closed",
         module: "bootstrap.app",
         parentSessionId: deps.parentSessionId,
         stoppedRunCount: live.length,
       });
-    })();
+    })().catch((error) => {
+      // unreleased keeps failed actors; a rejected flight must not become the permanent close
+      // result.
+      closePromise = undefined;
+      throw error;
+    });
     return closePromise;
   };
 
@@ -215,6 +254,16 @@ export function createRunServiceLifecycle(deps: RunServiceLifecycleDeps): RunSer
     trackSettlement,
     close,
     assertOpen,
+    trackOperation<T>(operation: () => Promise<T>): Promise<T> {
+      assertOpen();
+      const work = operation();
+      operations.add(work);
+      void work.then(
+        () => operations.delete(work),
+        () => operations.delete(work),
+      );
+      return work;
+    },
     noteForeignTerminalRow,
   };
 }

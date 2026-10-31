@@ -1,149 +1,103 @@
-# User onboarding telemetry spec
+# 用户引导埋点 Spec
 
-Date: 2026-09-18. Status: wired into the onboarding component and the common reporting chain; real client and
-receiver await manual acceptance.
+日期：2026-09-18。状态：已接入引导组件与公共上报链路，真实客户端及接收端待人工验收。
 
-## Goals and events
+## 目标与事件
 
-Record each onboarding exposure and the choices at its end, reusing the common business telemetry chain.
+记录整次引导曝光和结束时的选择，复用公共业务埋点链路。
 
-| Event               | element_name      | event_region   | event_type | event_text                                                                       |
-| ------------------- | ----------------- | -------------- | ---------- | -------------------------------------------------------------------------------- |
-| Onboarding exposure | onboarding_expose | app.onboarding | expose     | empty string                                                                     |
-| Onboarding end      | onboarding_end    | app.onboarding | ck         | Localized label of the button or close entry at the time of the action; required |
+| 事件     | element_name      | event_region   | event_type | event_text                                 |
+| -------- | ----------------- | -------------- | ---------- | ------------------------------------------ |
+| 引导曝光 | onboarding_expose | app.onboarding | expose     | 空字符串                                   |
+| 引导结束 | onboarding_end    | app.onboarding | ck         | 操作时按钮文案或关闭入口的本地化标签，必填 |
 
-`event_element` in the telemetry table maps to the existing request field `element_name` (call parameter
-`elementName`); no synonym field is added. The end event's event_text must be the button label the user saw when
-clicking, using the same i18n translation result as the button, not hardcoded Chinese, English or a translation
-key; it is captured together with the selection snapshot so switching language during the async save cannot make
-the text inconsistent. Action statistics rely on the fixed English `exit_action`.
+埋点表中的 `event_element` 对应现有请求字段 `element_name`，调用参数为 `elementName`，不新增同义字段。结束事件的 event_text 必须使用点击时用户看到的按钮文案，与按钮复用相同的 i18n 翻译结果，不写死中文、英文或翻译 key；随选择快照一起捕获，避免异步保存期间切换语言导致文案不一致。统计操作类型以固定英文 exit_action 为准。
 
-The close entry is an icon button; its event_text reuses the `occupationOnboarding.close` translation of its
-title / aria-label: currently “退出引导” in Chinese and "Exit onboarding" in English. Esc and the onboarding
-shortcut closing it actively use the same close label, never an empty string or key name.
+关闭入口为图标按钮，event_text 复用其 title / aria-label 的 `occupationOnboarding.close` 翻译：当前中文为“退出引导”，英文为“Exit onboarding”。Esc 和引导快捷键主动收起也使用同一关闭标签，不传空字符串或按键名。
 
-- First automatic display, later opening from Settings via “引导” (onboarding), manual opening by shortcut, and
-  automatic re-display under existing rules each report one exposure when the onboarding actually becomes visible;
-  not limited to first use of the app. Async decisions, prefill, re-render, step switches and going back do not
-  re-report. Explicitly reopening after closing counts as a new exposure; clicking an entry without actual display
-  reports none.
-- On page 3, clicking start or skip reports end once, when the preference save succeeds and onboarding ends. The
-  selection snapshot is captured at click time and must not be inferred from conservative defaults after saving or
-  from the local record.
-- A failed save stays in onboarding and reports no end; a successful retry reports exactly one. A failed local
-  record append does not affect an end event that already succeeded.
-- Skip on the first two pages only moves to the next page and triggers no end; a skipped single-choice page is
-  recorded empty, and after going back and reconfirming the new answer is used.
-- Top-right X / Esc / onboarding shortcut closing all report end with exit_action `close`, carrying the selection
-  snapshot at close time and the current step; the existing semantics of exiting directly without saving settings,
-  writing a record or marking completion are kept. The report is initiated before exit and does not wait for the
-  network. Closing the app, a crash or a non-user unmount does not fabricate a close.
-- One onboarding produces at most one end; start / skip / close share end de-duplication; the existing behavior of
-  disabling close while saving is unchanged. The gap between exposure and end counts samples that did not
-  successfully receive an end event, possibly including abnormal interruption or report failure.
-- Telemetry failure must not block onboarding or configuration saving; it follows the common upload retry policy,
-  with no extra retry in the business layer.
+- 首次自动展示、后续从设置点击“引导”、快捷键手动打开以及按现有规则再次自动展示，均在引导真正可见时曝光一次；不限定首次使用应用。异步判定、预填、重渲染、切换步骤和返回不重复曝光。关闭后显式重新打开算新一次；仅点击入口但未实际展示不报曝光。
+- 第三页点击开始使用或跳过，偏好保存成功、引导结束时上报 end 一次。点击时捕获选择快照，不能从保存后的保守默认值或本地 record 反推选择。
+- 保存失败仍停留在引导中，不报 end；成功重试只报一次。本地 record 追加失败不影响已成功结束的事件。
+- 当前前两页跳过只是进入下一页，不触发 end；被跳过的单选页记为空，用户返回重新确认后使用新答案。
+- 右上角 X / Esc / 引导快捷键主动收起均上报 end，exit_action 为 close，携带关闭时的选择快照和所在步骤；保持直接退出不保存 settings、不写 record、不标记完成的既有语义。退出前发起上报，不等待网络。关闭应用、崩溃或非用户操作的卸载不伪造 close。
+- 同一次引导最多产生一个 end，start / skip / close 共用结束去重；保存中禁用关闭的既有行为保持不变。曝光与结束的差额表示没有成功收到结束事件的样本，可能包含异常中断或上报失败。
+- 埋点失败不得阻塞引导或配置保存，沿用公共上传重试策略，不新增业务层重复重试。
 
 ```text
-Onboarding actually shown -> expose (once)
-    -> work direction -> UI mode -> work-assistant preferences
-         skip ----> next page     |
-                        start / skip: capture selection snapshot
+引导实际显示 -> expose（一次）
+    -> 工作方向 -> UI 模式 -> 工作助手偏好
+         跳过 ----> 下一页       |
+                        start / skip：捕获选择快照
                                |
-                         settings save
-                      failure /          \ success
-                 stay in onboarding       end (once)
-                                          -> existing end flow
-X / Esc / onboarding shortcut closing on any page
-    -> capture existing selections + current step
-    -> end(close, once, no network wait) -> exit directly, no settings or record saved
+                         settings 保存
+                      失败 /          \ 成功
+                    留在引导           end（一次）
+                                       -> 原有结束流程
+任意页 X / Esc / 引导快捷键收起
+    -> 捕获已有选择 + 当前步骤
+    -> end(close，一次，不等待网络) -> 直接退出，不保存配置或记录
 ```
 
 ## event_extra_detail
 
-The exposure event uses an empty object. The end event always contains these fields:
+曝光事件使用空对象。结束事件固定包含以下字段：
 
-| Field                                  | Logical value        | Meaning                                                                       |
-| -------------------------------------- | -------------------- | ----------------------------------------------------------------------------- |
-| work_direction                         | enum below / null    | Current work direction of a shown page; null if skipped and not re-chosen     |
-| ui_mode                                | work / code / null   | Office / coding; null if not shown, or skipped and not re-chosen              |
-| proactive_task_recommendations_enabled | boolean / null       | Checked state of proactive task recommendations, shown only in office mode    |
-| workspace_memory_enabled               | boolean / null       | Checked state of workspace memory                                             |
-| claude_code_history_migration_selected | boolean / null       | Checked state of migrating session data; does not mean the migration finished |
-| exit_action                            | start / skip / close | End entry                                                                     |
-| exit_step                              | 1 / 2 / 3            | Page at the end; 3 for start / skip, any page for close                       |
+| 字段                                   | 逻辑取值             | 含义                                              |
+| -------------------------------------- | -------------------- | ------------------------------------------------- |
+| work_direction                         | 下表枚举 / null      | 已展示页面的当前工作方向；跳过且未重选为 null     |
+| ui_mode                                | work / code / null   | 办公 / 编程；未展示或跳过且未重选为 null          |
+| proactive_task_recommendations_enabled | boolean / null       | 主动任务推荐勾选状态，仅办公模式展示              |
+| workspace_memory_enabled               | boolean / null       | 工作区记忆勾选状态                                |
+| claude_code_history_migration_selected | boolean / null       | 迁移会话数据勾选状态，不表示迁移完成              |
+| exit_action                            | start / skip / close | 结束入口                                          |
+| exit_step                              | 1 / 2 / 3            | 结束时所在页；start / skip 为 3，close 可为任意页 |
 
-Modes are mapped only at the telemetry boundary: internal `office -> work`, `coding -> code`; the modes in
-settings, store or record are not renamed.
+模式只在埋点边界映射：内部 `office -> work`、`coding -> code`；不更名 settings、store 或 record 中的模式。
 
-Preference fields: shown and checked is true, shown and unchecked is false, not shown is null. When coding mode or
-a skipped mode page hides the recommendation option, the recommendation field is null and not counted as actively
-turned off. Default or prefilled checks count in the final state and do not mean an active click. Clicking skip on
-page 3 still uploads the state of the three options at that time rather than uniformly empty, and does not mean
-those options were applied.
+偏好字段：展示且勾选为 true，展示但未勾选为 false，未展示为 null。编程模式或跳过模式页导致推荐选项隐藏时，推荐字段为 null，不能算作主动关闭。默认或预填勾选也计入最终状态，不表示主动点选。第三页点击 skip 仍上传当时三个选项的状态，不统一置空，也不表示这些选项已应用。
 
-close also records the current selection without requiring the current page to click next: closing on first
-arrival at page 1 uploads the defaults/prefill or manual choice shown on that page, with mode and the three
-preference fields null; closing on page 2 may upload the work direction and the current mode, with not-yet-shown
-preferences null. A page visited and returned to keeps this session's choice, and which pages were shown cannot be
-inferred from exit_step alone. When going back to change the mode, an old preference snapshot inconsistent with
-the new mode is invalidated, and preferences not confirmed under the new mode are null. All of this is a selection
-snapshot and does not mean saving or enabling succeeded.
+close 同样记录当前选择，不要求当前页先点下一步：例如首次进入第一页面后关闭，上传当页已显示的默认/预填或手动选择，模式和三个偏好字段为 null；第二页关闭可上传工作方向与当前模式，尚未展示的偏好为 null。已访问后返回的页面保留本次选择，不能仅根据 exit_step 推断哪些页展示过。返回修改模式时应使与新模式不一致的旧偏好快照失效，未在新模式下展示确认的偏好记 null。以上均为选择快照，不代表保存或启用成功。
 
-**Transport format:** the existing `TelemetryEventPayload.eventExtraDetail` is `Record<string, string>`. This
-interface is reused and every value is encoded as a string: booleans `"true"` / `"false"`, empty `"null"`, page
-numbers `"1"` / `"2"` / `"3"`. Empty fields are not omitted, JS undefined is not sent, and the whole object is not
-JSON-serialized a second time. The logical types above explain meaning; real queries compare strings. If native
-boolean/null is adopted later, the common interface must be evaluated and upgraded as a whole, not force-cast for
-this event alone.
+**传输格式**：现有 `TelemetryEventPayload.eventExtraDetail` 为 `Record<string, string>`。复用此接口，各值编码为字符串：布尔为 `"true"` / `"false"`，空值为 `"null"`，页码为 `"1"` / `"2"` / `"3"`。不省略空字段、不传 JS undefined，也不把整个对象二次 JSON 序列化。上述逻辑类型用于解释含义；实际查询按字符串比较。若未来采用原生布尔/null，需整体评估并升级公共接口，不能只在本事件强制类型转换。
 
-### Work-direction mapping
+### 工作方向映射
 
-The first column is the UI copy (zh-CN) and stays as is; the reported enum does not change with display language.
+| 中文文案           | 内部 occupation | work_direction                                 |
+| ------------------ | --------------- | ---------------------------------------------- |
+| 软件开发/数据/AI   | developer       | software_data_ai                               |
+| 创业/自由职业/OPC  | independent     | entrepreneurship_freelance_opc                 |
+| 测试/运维/安全     | infrastructure  | qa_operations_security                         |
+| 产品/项目/解决方案 | product         | product_project_solutions                      |
+| UI/UX/视觉设计     | design          | ui_ux_visual_design                            |
+| 学生/教师/科研     | student         | education_research                             |
+| 金融/财务/咨询     | finance         | finance_accounting_consulting                  |
+| 自媒体/内容创作    | creator         | media_content_creation                         |
+| 运营/电商/客户服务 | operations      | business_operations_ecommerce_customer_service |
+| 市场营销/品牌/公关 | marketing       | marketing_brand_pr                             |
+| 法律/行政/人力资源 | legal           | legal_administration_hr                        |
+| 其他职业           | other           | other                                          |
 
-| UI copy (zh-CN)    | Internal occupation | work_direction                                 |
-| ------------------ | ------------------- | ---------------------------------------------- |
-| 软件开发/数据/AI   | developer           | software_data_ai                               |
-| 创业/自由职业/OPC  | independent         | entrepreneurship_freelance_opc                 |
-| 测试/运维/安全     | infrastructure      | qa_operations_security                         |
-| 产品/项目/解决方案 | product             | product_project_solutions                      |
-| UI/UX/视觉设计     | design              | ui_ux_visual_design                            |
-| 学生/教师/科研     | student             | education_research                             |
-| 金融/财务/咨询     | finance             | finance_accounting_consulting                  |
-| 自媒体/内容创作    | creator             | media_content_creation                         |
-| 运营/电商/客户服务 | operations          | business_operations_ecommerce_customer_service |
-| 市场营销/品牌/公关 | marketing           | marketing_brand_pr                             |
-| 法律/行政/人力资源 | legal               | legal_administration_hr                        |
-| 其他职业           | other               | other                                          |
+不修改内部职业枚举。显示文案或语言变化不能改变上报枚举。other 只表示明确选择其他职业，不能替代未作答。
 
-The internal occupation enum is not modified. A display-copy or language change must not change the reported enum.
-`other` only means an explicit choice of another occupation and cannot stand for not answered.
+## 公共身份字段与链路
 
-## Common identity fields and chain
+两个事件都必须通过公共层携带顶层 `user_id`、`device_mid`，不放进 event_extra_detail。
 
-Both events must carry top-level `user_id` and `device_mid` through the common layer, not inside
-event_extra_detail.
-
-- user_id: keep the common layer's current account identity loading; with no account identity keep the empty
-  string, never forge a user ID or substitute the device ID. Implementation and acceptance must check that
-  requests of a logged-in user have the real account ID and that the field is still present when anonymous.
-- device_mid: reuse the persisted common device identifier in telemetry-state, provided by
-  `ensureTelemetryDeviceMid`; no onboarding-specific ID, no reuse of event_id, no switch to
-  `platform.getDeviceId()`. The deviceMid source in the local onboarding-record doc differs from the common
-  telemetry device identifier and must not be mixed.
-- Each event uses the common event ID and common context; no separate reporting interface is added.
+- user_id：沿用公共层当前账号身份加载；没有账号身份时沿用空字符串，不伪造用户 ID、不用设备 ID 替代。实现和验收必须检查登录用户的请求中有真实账号 ID，以及匿名情况下仍有该字段。
+- device_mid：复用 telemetry-state 中持久化的公共设备标识，由 `ensureTelemetryDeviceMid` 提供；不生成引导专用 ID，不复用 event_id，也不改用 `platform.getDeviceId()`。本地 onboarding-record 文档中的 deviceMid 来源与公共埋点设备标识不同，不应混用。
+- 每条事件使用公共事件 ID 和公共上下文，不新增独立上报接口。
 
 ```text
 OccupationOnboarding
   -> reportAppTelemetryEvent / usePlatform
   -> IPlatformService.reportTelemetryEvent
-  -> Desktop common TelemetryCore
-       + current user_id
-       + persisted device_mid
-  -> existing event/report request
+  -> Desktop 公共 TelemetryCore
+       + 当前 user_id
+       + 持久化 device_mid
+  -> 既有 event/report 请求
 ```
 
-Request example (relevant fields only, identity values are placeholders; `event_text` “开始使用” = "Start"):
+请求示例（仅列相关字段，身份值为占位符）：
 
 ```json
 {
@@ -165,61 +119,35 @@ Request example (relevant fields only, identity values are placeholders; `event_
 }
 ```
 
-## Boundary with the local record and multi-end
+## 与本地记录和多端的边界
 
-Skip semantics of the local record continue to follow the [onboarding record spec](../onboarding-record-spec.md):
-skipping a preference page writes null and settings fall back to conservative defaults. This event records the
-choices the user saw at the end; the purposes differ and the record cannot be uploaded in place of this event. The
-record's uploadState upload queue is not implemented in this phase.
+本地 record 的跳过语义继续遵循 [引导记录 Spec](../onboarding-record-spec.md)：偏好页跳过写 null，settings 落保守默认值。本事件记录用户结束时看到的选择，两者目的不同，不能直接上传 record 替代本事件。本期不实现 record 的 uploadState 上传队列。
 
-The UI calls through the existing platform abstraction; Web/mobile use their own adapters' capability and never
-access the desktop bridge directly or create a new Host/runtime; the desktop continuous and mobile replayable
-message flows are unchanged. Layout, interaction, theme, i18n and Windows/macOS/Linux configuration behavior stay
-as is.
+UI 通过现有平台抽象调用，Web/手机沿用自身适配器能力，不直接访问桌面 bridge 或新建 Host/runtime；不改变桌面 continuous 或手机 replayable 消息流。布局、交互、主题、国际化及 Windows/macOS/Linux 配置行为保持原状。
 
-## Implementation order and acceptance
+## 实现顺序与验收
 
-Write the following scenario tests first, then wire the events, then verify the runtime request:
+先编写以下场景测试，再接入事件，最后做运行时请求验证：
 
-1. All 12 occupation mappings complete; office/coding map to work/code; a skipped single-choice page sends the
-   string null, and other occupation is other.
-2. The three work-mode switches each support check/uncheck; in code mode the recommendation is null; hidden options
-   do not leak old values after a mode switch.
-3. start and page-3 skip both keep the click-time snapshot; skip triggers no migration, and checking migration does
-   not mean the migration succeeded.
-4. First automatic display and Settings/shortcut opening both produce an exposure; skip, back and repeated render
-   on the first two pages produce no end or duplicate exposure; a failed save reports no end and a successful
-   retry reports once; repeated clicks do not repeat the report; an explicit reopen produces a new exposure.
-5. Closing with X / Esc / onboarding shortcut on each of the three pages reports close exactly once with the right
-   exit_step; shown choices are kept and unshown fields are empty; going back and switching mode leaks no stale
-   preference; no settings/record is written, no migration triggered, no completion marked. Closing the app or
-   unmounting does not fabricate close; a report failure does not block exit.
-6. In the real common request body verify both events contain user_id and device_mid; the logged-in account is
-   right and anonymous keeps an empty user_id; both events on one device have the same device_mid and it is stable
-   across restarts. Mask real identities in logs/captures.
-7. Run pnpm typecheck, pnpm lint and related unit tests; verify desktop work/code, light/dark themes and the
-   mobile adapter are unaffected. Cross-platform or runtime verification that cannot be done is recorded
-   explicitly and not replaced by static reading.
-8. In Chinese and English, event_text of start / skip / close end events is non-empty and equals the actual button
-   copy or close label at the time (“退出引导” / Exit onboarding); exit_action does not change with language.
-   Switching language during an async save cannot change an already captured event_text.
+1. 12 个职业映射完整；office/coding 映射 work/code；跳过单选页传字符串 null，其他职业为 other。
+2. 工作模式三个开关分别支持勾选/取消；code 模式推荐为 null；模式切换后隐藏选项不泄露旧值。
+3. start 与第三页 skip 均保留点击时的快照；skip 不触发迁移，勾选迁移不代表迁移成功。
+4. 首次自动展示与设置/快捷键打开均产生曝光；前两页 skip、返回、重复渲染不产生结束事件或重复曝光；保存失败不报结束，重试成功一次；重复点击不重复上报；显式重开产生新曝光。
+5. 分别在三页用 X / Esc / 引导快捷键收起，均只报一次 close，exit_step 正确；已展示的选择保留，未展示字段为空，返回及改模式后不泄露失效偏好；不写 settings/record、不触发迁移、不标记完成。关闭应用或卸载不伪造 close；上报失败不阻断退出。
+6. 在真实公共请求体核验两事件均含 user_id、device_mid；已登录账号正确、匿名保留空 user_id；同设备两事件的 device_mid 一致且重启稳定。日志/抓包展示时遮蔽真实身份。
+7. 运行 pnpm typecheck、pnpm lint 及相关单测；验证桌面 work/code、深浅主题与手机适配器不受影响。无法完成的跨平台或运行时验证明确记录，不以静态阅读代替。
+8. 中英文下 start / skip / close 的结束事件 event_text 均非空，且等于操作时按钮实际文案或关闭标签（退出引导 / Exit onboarding）；exit_action 不随语言变化。异步保存期间切换语言不能改变已捕获的 event_text。
 
-## Landing points and regression cases
+## 落地点与回归用例
 
-`OccupationOnboarding` stays the sole owner of selection state; `useOnboardingTelemetry` only records, in a layout
-effect, the steps actually shown, the current mode and same-session end de-duplication, and persists no second copy
-of the answers. The save entry freezes the snapshot first and sends end after settings succeed; close sends
-directly. After the end the steps are reset so a reopen does not inherit the previously shown range.
+`OccupationOnboarding` 保持选择状态的唯一 owner；`useOnboardingTelemetry` 仅在 layout effect 中记录实际展示的步骤、当前模式和同次结束去重，不持久化第二份答案。保存入口先冻结快照，settings 成功后发送 end；close 直接发送。结束后将步骤复位，避免重开时沿用上次已展示范围。
 
-| Case    | Setup and action                                          | Assertions                                                                                   | Automation location                      |
-| ------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| ONBT-01 | First auto/manual open, StrictMode, page switches, reopen | One exposure per actual open, none when not shown                                            | UI occupationOnboardingTelemetry.test.ts |
-| ONBT-02 | Three-step selection then start/skip, failed save retry   | One end after success; click-time answers and language kept; migration intent is not success | same                                     |
-| ONBT-03 | Close on any page, go back and change mode then close     | close and page number correct, unshown/invalid preferences empty, nothing saved              | same                                     |
-| ONBT-04 | Common Core reports anonymous/logged-in events            | Top-level user_id/device_mid; device identifier unchanged after rebuilding Core              | services telemetryService.test.ts        |
-| ONBT-05 | Real desktop onboarding reopened, close/start/skip        | Actual request body and receiver events, identity and fields complete                        | manual verification by the user          |
+| 用例    | 设置与操作                                | 断言                                                       | 自动化位置                               |
+| ------- | ----------------------------------------- | ---------------------------------------------------------- | ---------------------------------------- |
+| ONBT-01 | 首次自动/手动打开、StrictMode、切页、重开 | 每次实际打开一次曝光，未展示无曝光                         | UI occupationOnboardingTelemetry.test.ts |
+| ONBT-02 | 三步选择后 start/skip，保存失败重试       | 成功后一次 end，点击时的答案和语言保持，迁移意愿不等于成功 | 同上                                     |
+| ONBT-03 | 任意页关闭、返回改模式再关闭              | close 与页码正确，未展示/失效偏好为空，不保存              | 同上                                     |
+| ONBT-04 | 公共 Core 上报匿名/登录事件               | 顶层 user_id/device_mid，重建 Core 后设备标识一致          | services telemetryService.test.ts        |
+| ONBT-05 | 桌面真实引导重开，close/start/skip        | 实际请求体与接收端事件，身份及字段完整                     | 用户手动验证                             |
 
-At the user's request E2E is not an acceptance item for this change: code is verified with component interaction
-tests and common-Core request-body tests; the real client and production receiver are manually verified by the user
-and not yet accepted. Web/mobile keep reusing the original platform adapter capability and no separate upload exit
-was added.
+本次按用户要求不以 E2E 为验收项，使用组件交互测试与公共 Core 请求体测试验证代码；真实客户端及生产接收端由用户手动验证，尚未验收。Web/手机继续复用原平台适配器能力，未新增独立上传出口。

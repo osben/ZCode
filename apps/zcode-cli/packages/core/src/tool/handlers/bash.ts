@@ -45,7 +45,11 @@ export {
   getBashUserFacingName,
 } from "./bash-metadata.js";
 import { readStringProperty } from "./bash-metadata.js";
-import { formatBashModelContent, formatPersistedBashModelContent } from "./bash-model-content.js";
+import {
+  formatBashModelContent,
+  formatPersistedBashModelContent,
+  isBashModelContentBounded,
+} from "./bash-model-content.js";
 
 /** Grammar used by the Guarded matcher before session shell selection is initialized; matches the assumptions of read-only detection. */
 const GUARDED_DEFAULT_DIALECT: ExecutionShellSelection["dialect"] = "posix";
@@ -249,7 +253,10 @@ async function executeBashHandler(
     : await runCommand();
 
   if (runResult.kind === "backgrounded") {
-    return toBackgroundedBashOutput(runResult.task, parsed);
+    // auto_on_timeout backgrounds only when the timeout timer fires, so what is recorded here is exactly the timeout that triggered the backgrounding.
+    const timedOutAfterMs =
+      !parsed.run_in_background && eligibleForAutoBackground ? request.timeoutMs : undefined;
+    return toBackgroundedBashOutput(runResult.task, parsed, timedOutAfterMs);
   }
 
   const result = runResult.result;
@@ -302,6 +309,7 @@ function emptyBashOutput(input: BashInput): BashOutput {
 function toBackgroundedBashOutput(
   task: BackgroundExecutionStartResult,
   input: BashInput,
+  timedOutAfterMs: number | undefined,
 ): BashOutput {
   return attachToolExecutionTelemetry(
     {
@@ -310,6 +318,7 @@ function toBackgroundedBashOutput(
       interrupted: false,
       status: "backgrounded",
       backgroundTaskId: task.taskId,
+      ...(timedOutAfterMs !== undefined && timedOutAfterMs > 0 ? { timedOutAfterMs } : {}),
       rawOutputPath: task.outputPath,
       persistedOutputPath: task.outputPath,
       stdoutPersistedOutputPath: task.stdoutPersistedOutputPath,
@@ -515,6 +524,8 @@ export const bashToolEntry: ToolEntry = {
   },
   formatModelContent: formatBashModelContent,
   formatPersistedModelContent: formatPersistedBashModelContent,
+  // Failure bodies already keep head/tail by characters; no longer persisted under a byte budget.
+  isModelContentBounded: isBashModelContentBounded,
   handler: bashHandler,
   resolveTimeoutBudgetMs: createBashTimeoutBudgetResolver(DEFAULT_BASH_TIMEOUT_POLICY),
   resolvePermissionCapability: resolveBashPermissionCapability,
@@ -618,7 +629,7 @@ function createBashInputJsonSchema(timeoutPolicy: BashTimeoutPolicy): Record<str
       ...properties,
       timeout: {
         ...timeoutProperty,
-        description: `Optional timeout in milliseconds (max ${timeoutPolicy.maxTimeoutMs})`,
+        description: `Optional timeout in milliseconds (max ${timeoutPolicy.maxTimeoutMs} for a foreground command)`,
       },
     },
   };

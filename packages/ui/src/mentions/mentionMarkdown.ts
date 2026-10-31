@@ -3,7 +3,7 @@ import type { MentionItem } from "./mentionTypes.js";
 const LINK_MENTION_MARKDOWN_PATTERN =
   /\[((?:\\.|[^\\\]])*)\]\((?:<((?:\\.|[^>])*?)>|((?:\\.|[^)])*))\)/g;
 const INLINE_MENTION_TOKEN_PATTERN =
-  /(^|\s)(\$[a-zA-Z0-9._-]+|\/[a-zA-Z0-9._-]+|@[a-zA-Z0-9._-]+|#sess_[a-zA-Z0-9._-]+)(?=$|\s)/g;
+  /(^|\s)(\$[a-zA-Z0-9._-]+|\/[a-zA-Z0-9._-]+|@[a-zA-Z0-9._-]+|#(?:sess|session)_[a-zA-Z0-9._-]+)(?=$|\s)/g;
 
 function escapeMarkdownLabel(label: string): string {
   return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
@@ -225,7 +225,8 @@ export function parseMentionMarkdown(content: string): MentionTextPart[] {
     if (matchStart > cursor) {
       parts.push(...parseInlineMentionTokens(content.slice(cursor, matchStart)));
     }
-    if (/^#sess_[a-zA-Z0-9._-]+$/.test(destination)) {
+    // Legacy session_ references must keep rendering as sessions; matching the sess_ prefix alone would misroute them into the file branch.
+    if (/^#(?:sess|session)_[a-zA-Z0-9._-]+$/.test(destination)) {
       parts.push({ type: "session", label: label.startsWith("#") ? label.slice(1) : label });
     } else if (destination.startsWith("plugin://")) {
       // Plugin reference links must never enter the file branch or be handled as external links.

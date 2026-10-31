@@ -110,9 +110,15 @@ export function usePluginUiSidePaneModel({
   const presentation = useMemo<PluginUiPresentation | null>(() => {
     if (scopeRef.kind === "toolCall") return rowPresentation;
     return tab.serverName
-      ? { serverName: tab.serverName, pluginId: tab.pluginId, resourceUri: tab.resourceUri }
+      ? {
+          serverName: tab.serverName,
+          pluginId: tab.pluginId,
+          resourceUri: tab.resourceUri,
+          // A surface tab carries routing identity only; keep the display choice from the last successful result instead of losing it when the side pane opens.
+          preferredDisplayMode: feed.result?.presentation.preferredDisplayMode,
+        }
       : null;
-  }, [rowPresentation, scopeRef.kind, tab.pluginId, tab.resourceUri, tab.serverName]);
+  }, [rowPresentation, scopeRef.kind, tab.pluginId, tab.resourceUri, tab.serverName, feed.result]);
   const placementKey = buildPluginUiSurfaceKey(
     { ...tab, sessionId: tab.parentSessionId },
     resolvePluginUiLogicalScope(presentation ?? {}, scopeRef),

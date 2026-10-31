@@ -202,7 +202,8 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     expect(guest.status).toBe(SUBMITTED_TEXT);
     expect(guest.width).toBe(375);
     expect(guest.height).toBe(667);
-    expect(guest.devicePixelRatio).toBe(1);
+    // The turn tail releases CDP and the natural Retina DPR restores with it; DPR=1 is verified
+    // by the real tool result's ACTIONABILITY_OK condition, and the idle phase keeps checking CSS size and page state.
     expect((await readV4ComposerSnapshot()).text).toBe("");
 
     // The layout convergence window after the model's own setViewportSize must not produce a false positive; right

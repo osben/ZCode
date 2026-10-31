@@ -1,5 +1,5 @@
-// V4 已提交命令的 renderer 持久账本。
-// 它只保存客户端恢复线索，不参与 conversation projection，也绝不能据此自动重放。
+// Renderer-side persistent ledger of committed V4 commands.
+// It stores only client recovery hints: it takes no part in conversation projection and must never auto-replay from it.
 import type {
   CommandAck,
   CommandEnvelope,
@@ -29,7 +29,6 @@ export type PendingCommandResolution =
   | "accepted"
   | "duplicate"
   | "authoritative"
-  | "unknown"
   | "failed"
   | "discarded";
 
@@ -110,9 +109,10 @@ function isRuntimeLocalDiscard(ack: CommandAck): boolean {
 }
 
 /**
- * ACK、queue 与 transcript 曾分别维护临时状态；renderer 刷新或 ACK 丢失后，
- * UI 已清空但无法证明 CLI 是否 admission。这里把“待对账线索”先于上行持久化，并用
- * queue/guided/transcript sourceCommandId 或显式终态收口；registry 本身永远不产生权威事实。
+ * ACK, queue, and transcript each used to keep their own transient state; after a renderer refresh or
+ * a lost ACK the UI had cleared with no way to prove CLI admission. This ledger persists the
+ * "pending reconciliation hint" before the uplink, and settles it via queue/guided/transcript
+ * sourceCommandId or an explicit terminal state; the registry itself never produces authoritative facts.
  */
 export class PendingCommandRegistry {
   private readonly storage: StorageLike | undefined;
@@ -165,14 +165,14 @@ export class PendingCommandRegistry {
       clientId: envelope.clientId,
       sessionId: envelope.sessionId,
       issuedAt: envelope.issuedAt,
-      // TTL 锚定首次登记时间；reload/reconcile 不得续期。
+      // TTL anchors to first registration; reload/reconcile must not extend it.
       expiresAt: this.now() + PENDING_COMMAND_TTL_MS,
       replay,
       ...(clientContext ? { clientContext } : {}),
     };
     this.entries.set(key, entry);
     const composer = clientContext?.composer;
-    // 首发恢复线索必须先持久化；失败时拒绝上行，不能留下无法查询的待发送身份。
+    // The first-send recovery hint must be persisted first; on failure refuse the uplink rather than leave an unqueryable pending identity.
     if (!this.commit() && composer?.draftId) {
       this.entries.delete(key);
       throw new Error("composer.draft-storage-unavailable");
@@ -204,9 +204,17 @@ export class PendingCommandRegistry {
     return [...this.entries.values()].find((entry) => entry.commandId === commandId);
   }
 
+  // Called on every streamed frame: iterate directly instead of copying the entry array for one existence check.
+  private hasEntriesForSession(sessionId: string): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   listRecoverable(sessionId: string | null): readonly PendingCommandEntry[] {
     return this.list(sessionId).filter(
-      // 兼容 V4 初版已经写入 localStorage 的 unknown：它不是可操作错误，不能再进入 UI。
+      // Compatibility with unknown states already written to localStorage by the first V4 version: it is not an actionable error and must not re-enter the UI.
       (entry) => entry.recovery === "discarded" && !entry.recoveryDismissed,
     );
   }
@@ -234,7 +242,7 @@ export class PendingCommandRegistry {
     let entry = this.entries.get(keyOf(envelope.sessionId, envelope.commandId));
     if (!entry) return;
     if (entry.replay.kind === "sensitiveDigest") {
-      // 交互答案不可重放；拿到确定 ACK 后其对账职责已结束。
+      // Interactive answers are not replayable; once a definite ACK arrives, its reconciliation duty is over.
       this.settle(entry.sessionId, entry.commandId);
       return;
     }
@@ -266,12 +274,10 @@ export class PendingCommandRegistry {
       let entry = this.entries.get(keyOf(item.key.sessionId, item.key.commandId));
       if (!entry) continue;
       if (item.result === "unknown") {
-        // 首发结果未知不能释放目录或删除唯一的查询线索。
-        if (this.ownsPendingDraft(entry)) continue;
-        // V4 初版把“权威事实未命中”提升成需要用户处理的错误横幅，导致正常的
-        // App/CLI 生命周期切换也频繁打扰用户。unknown 没有可操作结论，renderer 静默清账。
-        this.notifyResolution(item.key.commandId, "unknown");
-        this.settle(entry.sessionId, entry.commandId);
+        // A query may overtake a send still being prepared on the Host; a miss is not a rejection.
+        // Settling early would restore already-sent text and drop the settlement subscription for a
+        // late ACK. Keep the hint and let an explicit result, the authoritative projection, or the
+        // existing TTL close it out.
         continue;
       }
       if (
@@ -312,12 +318,19 @@ export class PendingCommandRegistry {
   }
 
   reconcileSnapshot(snapshot: ConversationSnapshot): void {
+    // Bug root cause: every streamed frame rescanned the whole history to collect sourceCommandIds.
+    // The scan can only matter when this session still has pending entries or someone awaits a
+    // command's settlement; with neither, return immediately — the result is unchanged.
+    if (this.resolutionListeners.size === 0 && !this.hasEntriesForSession(snapshot.sessionId)) {
+      return;
+    }
     const settled = new Set<string>();
     for (const item of snapshot.queue.items) {
       if (item.sourceCommandId) {
-        // 把“进入 queue”当成仍未投递的话，直到 transcript 才清理
-        // localStorage；App/CLI 重启后旧 runtime queue 被正常丢弃，却又触发重发提示。
-        // queue projection 已是 CLI 权威接收证据，renderer ingress 账本应在此结算。
+        // Treating "entered queue" as still-undelivered meant localStorage was only
+        // cleaned at transcript time; after an App/CLI restart the old runtime queue is dropped
+        // normally, yet the resend prompt fired anyway. The queue projection is already the CLI's
+        // authoritative receipt, so the renderer ingress ledger should settle here.
         settled.add(item.sourceCommandId);
       }
     }
@@ -326,7 +339,7 @@ export class PendingCommandRegistry {
         settled.add(row.sourceCommandId);
       }
       if (row.kind === "timelineMarker" && row.marker.type === "compact" && row.sourceCommandId) {
-        // compact 不产生 user row；timeline marker 是该维护命令已开始执行的权威证据。
+        // compact produces no user row; the timeline marker is the authoritative evidence that the maintenance command started executing.
         settled.add(row.sourceCommandId);
       }
     }
@@ -355,8 +368,10 @@ export class PendingCommandRegistry {
           V4_DRAFT_SCOPE_ROOT,
           composer.scope,
         );
-        // 首发期间可能已经切走；下一条输入仍归该 session，不能遗留给下一份任务目录。
-        // 传输失败恢复的原文已被权威接纳，应清除而不是再次放入正式会话输入框。
+        // The user may have switched away during first send; the next input still belongs to this
+        // session and must not leak into the next task directory. The recovered transport-failure
+        // text has been authoritatively accepted, so clear it instead of putting it back into the
+        // live conversation input.
         if (draft && entry.replay.kind === "input") {
           const payload = entry.replay.payload;
           const sentText =
@@ -435,7 +450,12 @@ export class PendingCommandRegistry {
         : {}),
       ...(entry.clientContext ? { clientContext: entry.clientContext } : {}),
     };
-    // 用户已确认以新 commandId 重发，旧 discarded 线索在本地完成收口。
+    // Bug cause: the first-send admission already persisted the old session, and a confirmed resend
+    // reusing the old ID is rejected by the CLI. Drop the ID only when the user confirms generating
+    // a new command; retries of the same command keep the original envelope, which also stays
+    // compatible with old recovery records.
+    if (request.type === "createSession") delete request.payload.sessionId;
+    // The user confirmed a resend with a new commandId; the old discarded hint settles locally.
     this.rejectComposer(entry);
     this.settle(entry.sessionId, entry.commandId);
     return request;
@@ -446,7 +466,7 @@ export class PendingCommandRegistry {
     query: QueryCommands,
     workspaceKey?: string,
   ): Promise<void> {
-    // null bucket 会收集各 workspace 的创建；只能向命令原属 Agent 查询。
+    // The null bucket collects creates from every workspace; query only the Agent the command originally belonged to.
     const entries = this.list(sessionId).filter(
       (entry) =>
         workspaceKey === undefined ||
@@ -513,7 +533,7 @@ export class PendingCommandRegistry {
       }
       this.pruneExpired();
     } catch {
-      // storage 损坏不能阻断聊天；丢弃的是客户端恢复线索，不影响 CLI 权威事实。
+      // Corrupted storage must not block chat; what is dropped is a client recovery hint, not a CLI authoritative fact.
       this.entries.clear();
     }
   }
@@ -547,7 +567,7 @@ export class PendingCommandRegistry {
           this.storage.setItem(STORAGE_KEY, JSON.stringify([...this.entries.values()]));
         }
       } catch {
-        // 普通命令保持原有内存降级；首发目录交接由 record 检查写入结果。
+        // Plain commands keep the existing in-memory fallback; first-send directory handover checks the write result in record.
         written = false;
       }
     }

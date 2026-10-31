@@ -160,15 +160,20 @@ export function lowerWorkflow(workflow: WorkflowProgram, table: SiteTable): Lowe
     const siteArg = (id: string): ts.Expression => factory.createStringLiteral(id);
 
     const visit: ts.Visitor = (node) => {
-      // `args` is the facade's only **value** rather than callable, so it is the only symbol
-      // rewritten at identifier level. Reading it is not a wait point, has no site, and does not
-      // enter the causal graph. Check the symbol resolved by the checker (same identity mechanism
-      // as site lookup), so a script's local `args` resolves to the script symbol and remains unchanged.
+      // `args` and `run` are the facade's only **values** that are not callables, so only they
+      // get identifier-level rewriting: reading them is not a wait point — no site, no causal
+      // graph. The decision follows the checker's resolution (the same mechanism as site
+      // identity), so a script's own local `args` / `run` declarations resolve to the script
+      // file's symbols and stay untouched.
       //
       // Deliberately **do not** inject `const args = ...` into the wrapper body: if the user script
       // also declares `args`, this becomes a duplicate-declaration runtime SyntaxError that compile-time checks cannot detect.
-      if (ts.isIdentifier(node) && node.text === "args" && isFacadeArgsRead(node, checker)) {
-        return hostMember("args");
+      if (
+        ts.isIdentifier(node) &&
+        FACADE_VALUE_NAMES.has(node.text) &&
+        isFacadeValueRead(node, checker)
+      ) {
+        return hostMember(node.text);
       }
       if (ts.isCallExpression(node)) {
         const emit = siteMap.get(node);
@@ -395,17 +400,21 @@ function workflowBody(sourceFile: ts.SourceFile): ts.NodeArray<ts.Statement> {
  * site-producing facade calls already match siteMap and return before reaching this point.
  */
 
+/** Values in the facade (not callables): the sandbox exposes them as same-named members on `__host`. */
+const FACADE_VALUE_NAMES: ReadonlySet<string> = new Set(["args", "run"]);
+
 /**
- * True iff this `args` identifier is a READ of the facade global (not a shadowing local,
- * not a property name, not a declaration site).
+ * True iff this `args` / `run` identifier is a READ of the facade global (not a shadowing
+ * local, not a property name, not a declaration site).
  *
  * Identity comes from the checker, exactly as facade call sites do: a script that writes
  * its own `const args = ...` resolves to a symbol declared in the script file, so it is
  * left alone and keeps shadowing benignly. The syntactic guards below are for positions
- * where an identifier is not a value read at all — `x.args`, `{ args: 1 }`, and the name
- * in `const args = ...` — where rewriting would produce nonsense like `{ __host.args: 1 }`.
+ * where an identifier is not a value read at all — `x.args`, `{ args: 1 }`, the `run` in
+ * `world.run`, and the name in `const args = ...` — where rewriting would produce nonsense
+ * like `{ __host.args: 1 }`.
  */
-function isFacadeArgsRead(node: ts.Identifier, checker: ts.TypeChecker): boolean {
+function isFacadeValueRead(node: ts.Identifier, checker: ts.TypeChecker): boolean {
   const parent = node.parent as ts.Node | undefined;
   if (parent !== undefined) {
     if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;

@@ -28,14 +28,13 @@ export function isOffPeakTerminalStatus(
   return (OFF_PEAK_TERMINAL_STATUSES as readonly string[]).includes(status);
 }
 
-/**
- * 票据不可用（服务端 400/3102：active 3h 到期 / ready 5min 废票 / settled / 非本人）的
- * 稳定错误标记。zcode-cli 适配层把该业务码分类为不可重试失败并在错误消息里嵌入本标记；
- * 旧 Host 终态兼容分支据此重新取号；驻留执行通过严格生命周期通知申请新票，
- * 不依赖错误文本控制续跑。兼容标记保持稳定；与
- * apps/zcode-cli/packages/adapters/src/model/offpeak-retry.ts 的同名常量跨包同值。
- */
+/** The expiry marker stays consistent across App/CLI; the concrete ready/active reason stays in the original business error code. */
 export const OFF_PEAK_TICKET_EXPIRED_MARKER = "off-peak-ticket-expired";
+
+/** The server splits inactive missed-slot and run timeout into separate codes; both need Host settlement — never miss the active timeout. */
+export function isOffPeakTicketExpiredCode(code: string | number | undefined): boolean {
+  return code === "3102" || code === 3102 || code === "3106" || code === 3106;
+}
 
 /** Off-Peak Provider has the identity of the current account Family; tasks preserve the exact choice and never silently migrate across Families. */
 export const OFF_PEAK_PROVIDER_IDS = {
@@ -102,9 +101,9 @@ export function isOffPeakTicketExpiredError(message: string | undefined): boolea
 export interface ZCodeOffPeakTask {
   projectId?: string | null;
   hostId?: string;
-  /** 创建定义时固化，之后不跟随虚拟项目 roots 编辑。 */
+  /** Frozen when the definition is created; later edits to the virtual project roots do not affect it. */
   additionalDirectories?: string[];
-  /** 本地主键，同时用作服务端 task_id（稳定，跨多个 ticket，D26）。 */
+  /** Local primary key, also used as the server task_id (stable, spans multiple tickets, D26). */
   offPeakTaskId: string;
   /** Snowflake ticket_id returned by the server; updated whenever a new ticket is requested (resume after 3h expiry / Continue retry). */
   serverTicketId?: string;
@@ -172,7 +171,7 @@ export interface ZCodeOffPeakTask {
 export interface ZCodeOffPeakTaskCreateParams {
   projectId?: string | null;
   hostId?: string;
-  /** 创建定义时固化，之后不跟随虚拟项目 roots 编辑。 */
+  /** Frozen when the definition is created; later edits to the virtual project roots do not affect it. */
   additionalDirectories?: string[];
   title: string;
   prompt: string;

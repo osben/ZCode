@@ -4,7 +4,9 @@ import { runWithModelInvocationContext, traceContextToLogContext } from "../deps
 import type { ModelReasoningContentBlock, ModelToolCall, ModelUsage, ToolCallId } from "../deps.js";
 import {
   buildSuspiciousEmptyDiagnostics,
+  createContentFilteredModelResultError,
   finalizeSuspiciousEmptyModelResult,
+  isContentFilteredEmptyModelResult,
   isContextExceededFinishReason,
   isSuspiciousEmptyModelResult,
   logModelRequestMediaSummary,
@@ -24,6 +26,14 @@ import { createModelStreamingEventQueue } from "./model-streaming-event-queue.js
 import { getOrCreateReasoningBlock } from "./reasoning-stream.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { isOutputTokenLimitFinishReason } from "./turn-output-token-continuation.js";
+import {
+  finishProviderToolCard,
+  persistProviderToolRoundContent,
+  providerToolOutputText,
+  settleUnfinishedProviderToolCards,
+  startProviderToolCard,
+  type ProviderToolRound,
+} from "../provider-tool-rounds/contract.js";
 
 const TOOL_INPUT_STREAM_DELTA_FALLBACK_FLUSH_CHARS = 4096;
 
@@ -156,16 +166,30 @@ export async function runModelTextRequest(
     };
   }
 
+  // text/reasoning belong to the current round only; each server-side built-in tool closes it into providerToolRounds and starts over.
   let text = "";
   let finishReason = "unknown";
   let usage: ModelUsage = {};
   let providerMetadata: Record<string, unknown> | undefined;
-  const reasoning: ModelReasoningContentBlock[] = [];
+  let reasoning: ModelReasoningContentBlock[] = [];
   const reasoningById = new Map<string, ModelReasoningContentBlock>();
   const toolCalls: ModelToolCall[] = [];
   const toolCallIds = new Set<string>();
   const toolInputDeltaBuffers = new Map<ToolCallId, string>();
-  const publishStreamSnapshot = () => options.onStreamSnapshot?.({ reasoning, text });
+  const providerToolRounds: ProviderToolRound[] = [];
+  const providerToolStartedAt = new Map<string, number>();
+  let roundStartedAt = Date.now();
+  const providerToolCardContext = {
+    assistantMessageId: options.assistantMessageId,
+    events: options.events,
+    traceContext: options.traceContext,
+  };
+  const publishStreamSnapshot = () =>
+    options.onStreamSnapshot?.({
+      reasoning,
+      text,
+      ...(providerToolRounds.length > 0 ? { providerToolRounds } : {}),
+    });
   const streamingEventQueue = createModelStreamingEventQueue({
     events: options.events,
     runtime: this,
@@ -330,8 +354,10 @@ export async function runModelTextRequest(
           break;
         }
 
-        // 原始参数流保留包装结构；目标身份由公共准入产生，再通过工具事件交给展示投影。
-        // 不从参数 delta 推测执行目标，也不为展示身份调整模型流或工具调度时序。
+        // The raw argument stream keeps its wrapper structure; the target identity comes from
+        // the common admission and reaches the display projection via tool events. Do not infer
+        // the execution target from argument deltas, nor adjust model-stream or tool scheduling
+        // timing for display identity.
         case "tool_input_start": {
           const toolCallId = event.id as ToolCallId;
           toolInputDeltaBuffers.delete(toolCallId);
@@ -420,6 +446,50 @@ export async function runModelTextRequest(
             toolName: toolCall.name,
           });
           options.onStreamToolCall?.(toolCall);
+          if (toolCall.providerExecuted) {
+            // Server already executed: close the current round, persist in stream order; the card
+            // first shows as running and the result event completes it. messageId is the message
+            // this round's parts persist into, and the compact grouping key (same as the cold
+            // restore's message.info.id).
+            const round: ProviderToolRound = {
+              messageId: options.assistantMessageId,
+              reasoning,
+              text,
+              toolCall,
+            };
+            providerToolRounds.push(round);
+            await persistProviderToolRoundContent(
+              this,
+              providerToolCardContext,
+              round,
+              roundStartedAt,
+            );
+            text = "";
+            reasoning = [];
+            reasoningById.clear();
+            roundStartedAt = Date.now();
+            providerToolStartedAt.set(toolCall.id, roundStartedAt);
+            await startProviderToolCard(this, providerToolCardContext, toolCall, roundStartedAt);
+            publishStreamSnapshot();
+          }
+          break;
+        }
+
+        case "provider_tool_result": {
+          const round = providerToolRounds.find(
+            (candidate) => candidate.toolCall.id === event.toolCallId && !candidate.result,
+          );
+          if (!round) break;
+          const result = { output: providerToolOutputText(event.output), isError: event.isError };
+          round.result = result;
+          await streamingEventQueue.drain();
+          await finishProviderToolCard(
+            this,
+            providerToolCardContext,
+            { ...round, result },
+            providerToolStartedAt.get(round.toolCall.id) ?? roundStartedAt,
+          );
+          publishStreamSnapshot();
           break;
         }
 
@@ -453,14 +523,43 @@ export async function runModelTextRequest(
     }
   } catch (error) {
     await streamingEventQueue.drain();
+    // When failure or cancellation lands between the server-side call and its result, the card still needs a terminal state; a settle failure must not mask the original error.
+    await settleUnfinishedProviderToolCards(
+      this,
+      providerToolCardContext,
+      providerToolRounds,
+      providerToolStartedAt,
+    ).then(
+      (settled) => settled && publishStreamSnapshot(),
+      (settleError) =>
+        this.logger?.warn("Failed to settle provider tool cards after stream failure", {
+          ...traceContextToLogContext(options.traceContext),
+          event: "model.runtime.stream.provider_tool_settle_failed",
+          module: "core.runtime",
+          error: settleError instanceof Error ? settleError.message : String(settleError),
+        }),
+    );
     throw error;
   }
   await streamingEventQueue.drain();
+  if (
+    await settleUnfinishedProviderToolCards(
+      this,
+      providerToolCardContext,
+      providerToolRounds,
+      providerToolStartedAt,
+    )
+  ) {
+    publishStreamSnapshot();
+  }
 
   const rawFinishReason = readRawFinishReason(providerMetadata);
   const outputTokenLimit = isOutputTokenLimitFinishReason(finishReason, rawFinishReason);
+  // Same accounting as the turn layer: server-side built-in tools already split into earlier rounds do not count as this step's calls; over-window still goes to Reactive Compact.
   const contextExceeded =
-    toolCalls.length === 0 &&
+    toolCalls.every((toolCall) =>
+      providerToolRounds.some((round) => round.toolCall.id === toolCall.id),
+    ) &&
     !outputTokenLimit &&
     isContextExceededFinishReason(finishReason, rawFinishReason);
   if (contextExceeded) {
@@ -476,6 +575,25 @@ export async function runModelTextRequest(
       rawFinishReason,
       textLength: text.length,
       toolCallCount: toolCalls.length,
+    });
+  }
+
+  if (
+    isContentFilteredEmptyModelResult(finishReason, rawFinishReason, text.length, toolCalls.length)
+  ) {
+    this.logger?.warn("Model stream was blocked by provider content filter", {
+      ...traceContextToLogContext(options.traceContext),
+      event: "model.runtime.stream.content_filtered",
+      finishReason,
+      module: "core.runtime",
+      modelProviderId: executionModelSelection.providerId,
+      modelId: executionModelSelection.modelId,
+      rawFinishReason,
+    });
+    throw createContentFilteredModelResultError({
+      finishReason,
+      model: executionModelSelection,
+      rawFinishReason,
     });
   }
 
@@ -516,6 +634,7 @@ export async function runModelTextRequest(
     reasoning: reasoning.length > 0 ? reasoning : undefined,
     text,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    ...(providerToolRounds.length > 0 ? { providerToolRounds } : {}),
     usage,
   };
 }

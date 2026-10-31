@@ -22,6 +22,7 @@ import { createConfiguredHookRunner, createInMemoryHookRunner } from "../src/hoo
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { respondToCoordinatorToolEntry } from "../src/tool/handlers/respond-to-coordinator.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
+import { createRuntimeCommandId } from "../src/runtime/command-queue.js";
 
 describe("AgentRuntime lifecycle hooks", () => {
   it("queues deferred input as TurnSteerQueued when no active turn is steerable", async () => {
@@ -279,7 +280,7 @@ describe("AgentRuntime lifecycle hooks", () => {
     });
     const runtime = createTestAgentRuntime(
       sessionId,
-      {},
+      { outputStyle: { name: "Learning", prompt: "Explain tradeoffs while solving the task." } },
       {
         eventStore,
         hookRunner,
@@ -303,6 +304,71 @@ describe("AgentRuntime lifecycle hooks", () => {
     expect(modelCallCount).toBe(2);
     expect(capturedRequests[1]).toContain("draft answer");
     expect(capturedRequests[1]).toContain("revise with the stop hook feedback");
+    // A Stop hook continuation is not new input: input attachments are not collected again, and output_style stays the single turn-start one.
+    expect(capturedRequests[1]!.match(/Learning output style is active/g)).toHaveLength(1);
+  });
+
+  it("leaves a notification queued during a Stop hook continuation", async () => {
+    const sessionId = createSessionId("runtime-hooks-stop-no-notification-drain");
+    let modelCallCount = 0;
+    const capturedRequests: string[] = [];
+    let internal:
+      | {
+          branchGeneration: number;
+          enqueueRuntimeCommand(command: unknown): void;
+          rootTraceContext: unknown;
+        }
+      | undefined;
+    const hookRunner = createInMemoryHookRunner({
+      hooks: [
+        {
+          event: HookEventName.Stop,
+          callback: async () => {
+            if (modelCallCount > 1) return undefined;
+            internal!.enqueueRuntimeCommand({
+              branchGeneration: internal!.branchGeneration,
+              createdAt: new Date(),
+              id: createRuntimeCommandId(),
+              mode: "task-notification",
+              priority: "next",
+              source: "background_task",
+              taskId: "bg-task",
+              text: "<task-notification>background task done</task-notification>",
+              traceContext: internal!.rootTraceContext,
+            });
+            return { decision: "block", reason: "revise" };
+          },
+        },
+      ],
+    });
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      {},
+      {
+        eventStore: createTestSessionEventStore(),
+        hookRunner,
+        modelFactory: createTestModelFactory({
+          async generateText(request: { messages: Array<{ content: ModelMessageContent }> }) {
+            modelCallCount++;
+            capturedRequests.push(
+              request.messages
+                .map((message) => modelMessageContentToText(message.content))
+                .join("\n"),
+            );
+            return modelTextResult(`answer ${modelCallCount}`);
+          },
+        } as never),
+      },
+    );
+    internal = runtime as unknown as NonNullable<typeof internal>;
+
+    await runtime.executeTurn("write an answer");
+    await vi.waitFor(() => expect(modelCallCount).toBe(3));
+
+    // Notifications are drained only after a full tool batch; a Stop hook continuation resends the same input without inserting notifications.
+    expect(capturedRequests[1]).not.toContain("background task done");
+    // The notification stays queued and opens a new turn after this one ends.
+    expect(capturedRequests[2]).toContain("background task done");
   });
 
   it("caps consecutive Stop hook continuations at three", async () => {

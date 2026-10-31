@@ -10,7 +10,7 @@ import type {
   FileTextSlice,
   WorkspaceFileEntry,
 } from "@zcode/shared";
-import { getMediaPreviewFormat } from "@zcode/shared";
+import { getMediaPreviewFormat, REMOTE_WORKSPACE_PREPARATION_TIMEOUT_MS } from "@zcode/shared";
 import { packWorkspaceFileEntries } from "@zcode/shared/workspaceFileEntriesCodec";
 import type { IFileService, WorkspaceFileSearchParams } from "./file.js";
 import { WORKSPACE_FILE_SEARCH_DISPLAY_CAP } from "@zcode/shared/workspaceFileSearch";
@@ -227,6 +227,31 @@ async function statWorkspaceFileSearchIgnoreFingerprint(rootPath: string): Promi
   }
 }
 
+// Bug cause (ZCT-2113660144497782784): a directory readdir may never return (e.g. macOS waiting for
+// folder-access permission, an unresponsive network drive) and cannot be cancelled, so each call holds a
+// libuv thread. Desktop restart, reconnect, or reopening the same project on mobile reads again; once the
+// thread pool (default 4) is exhausted, no file operation in this process ever returns.
+// Fix: when a read of the same path has exceeded the unresponsiveness threshold without returning, reuse it
+// instead of taking a new thread; delete it immediately after it returns, do not cache the result.
+// The threshold reuses R8's directory-unresponsiveness rule; healthy directories never reach it, so
+// behavior is unchanged.
+const inFlightDirectoryReads = new Map<string, { startedAt: number; entries: Promise<Dirent[]> }>();
+
+function readDirectoryEntries(path: string): Promise<Dirent[]> {
+  const pending = inFlightDirectoryReads.get(path);
+  if (pending && Date.now() - pending.startedAt >= REMOTE_WORKSPACE_PREPARATION_TIMEOUT_MS)
+    return pending.entries;
+  const read = { startedAt: Date.now(), entries: readdir(path, { withFileTypes: true }) };
+  if (!pending) {
+    const clear = () => {
+      if (inFlightDirectoryReads.get(path) === read) inFlightDirectoryReads.delete(path);
+    };
+    read.entries.then(clear, clear);
+    inFlightDirectoryReads.set(path, read);
+  }
+  return read.entries;
+}
+
 export function createFileService(options: CreateFileServiceOptions = {}): IFileService {
   const workspaceFileSearchFilter =
     options.workspaceFileSearchFilter ?? defaultWorkspaceFileSearchFilter;
@@ -376,7 +401,7 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
 
   return {
     async readdir(params: { path: string; includeHidden?: boolean }): Promise<FileEntry[]> {
-      const entries = await readdir(params.path, { withFileTypes: true });
+      const entries = await readDirectoryEntries(params.path);
       const visibleEntries = await Promise.all(
         entries
           .filter((e) => {

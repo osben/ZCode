@@ -27,6 +27,7 @@ import {
 } from "./sharp-package-assets.mjs";
 import { stageKoffiIntoBundledAgents } from "./koffi-package-assets.mjs";
 import { officialPluginPackages } from "./official-plugin-packages.mjs";
+import { BUNDLED_NPM_VERSION, stageBundledNpm } from "./bundled-npm-assets.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptDir, "..");
@@ -264,6 +265,16 @@ function stageBundledSkillPack() {
   console.log(`[prepare:agent-bundle] staged bundled skill pack ${bundledSkillPack.stagedPath}`);
 }
 
+// Fallback npm/npx for stdio MCP servers (runs the bundled npm on Electron Node when the user has no Node).
+// The tarball is cached by sha512 under node_modules/.cache, so repeated packaging does not download it again.
+async function stageBundledNpmRuntime() {
+  const stagedRoot = await stageBundledNpm({
+    cacheDir: resolve(repoRoot, "node_modules", ".cache", "zcode-bundled-npm"),
+    glmDir,
+  });
+  console.log(`[prepare:agent-bundle] staged npm@${BUNDLED_NPM_VERSION} into ${stagedRoot}`);
+}
+
 function stageSharpForNodeReplPlugin() {
   if (!isSharpRequiredByComputerUse({ desktopPackageRoot: desktopRoot })) {
     console.log(
@@ -328,5 +339,6 @@ buildOfficialPluginRuntimes();
 stageBundle();
 stageOfficialPlugins();
 stageBundledSkillPack();
+await stageBundledNpmRuntime();
 stageKoffiForCuaPlugin();
 stageSharpForNodeReplPlugin();

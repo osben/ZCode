@@ -106,9 +106,9 @@ export const errorAttributionSchema = z
     statusCode: z.number().int().min(100).max(599).optional(),
     providerErrorCode: z.string().min(1).max(160).optional(),
     retryable: z.boolean().optional(),
-    /** string=使用该 Highspeed 卡，null=明确未使用，undefined=旧 Agent 未发布。 */
+    /** string=the Highspeed card in use, null=explicitly not in use, undefined=not published by older Agents. */
     highspeedCardId: z.string().nullable().optional(),
-    /** true=本轮 Highspeed 失败已命中退回声明但无可用退回目标；Renderer 据此作废匹配卡。 */
+    /** true=this round's Highspeed failure matched a fallback declaration but no fallback target is available; the Renderer invalidates the matching card on this. */
     highspeedFallbackUnavailable: z.boolean().optional(),
   })
   .strict();
@@ -258,6 +258,8 @@ export const queueItemSchema = conversationInputIntentSchema.extend({
   dispatch: conversationInputDispatchSchema.extend({
     state: z.enum(["queued", "reserved", "promoting"]),
   }),
+  /** Trusted automation identity injected by Host admission; only queue promotion may replay it verbatim. */
+  automationId: z.string().min(1).optional(),
   toolDisallowlist: z.array(z.string().min(1)).optional(),
 });
 export type QueueItem = z.infer<typeof queueItemSchema>;
@@ -517,7 +519,14 @@ export const workspaceHookAdmissionStateSchema = z.object({
 });
 export type WorkspaceHookAdmissionSnapshotState = z.infer<typeof workspaceHookAdmissionStateSchema>;
 
-// 冷历史可读不代表 runtime 已可执行；缺席兼容旧发送端。
+export const workspaceMcpAdmissionStateSchema = z.object({
+  pendingCount: z.number().int().nonnegative(),
+  bundleDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+  workspaceIdentity: z.string().min(1).optional(),
+});
+export type WorkspaceMcpAdmissionSnapshotState = z.infer<typeof workspaceMcpAdmissionStateSchema>;
+
+// Readable cold history does not mean the runtime is executable yet; absence stays compatible with older senders.
 export const runtimeInitializationSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("initializing"), attemptId: z.string().min(1) }),
   z.object({ status: z.literal("ready"), attemptId: z.string().min(1) }),
@@ -566,6 +575,8 @@ export const conversationSnapshotSchema = z.object({
   // Older snapshots/senders omit it, so it parses as null and remains compatible (per the frozen-schema rule).
   // The projection sets it to null when pendingCount === 0, hiding the banner.
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().default(null),
+  // Older senders may omit it; both null and absence mean no MCP pending-review notice.
+  workspaceMcpAdmission: workspaceMcpAdmissionStateSchema.nullable().optional(),
   // (2026-09-12): the former additive field pluginUiSurfaces was removed; plugin panel widgetState now
   // lives only in the host renderer's memory.
   // Section B

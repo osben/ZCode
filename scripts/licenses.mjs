@@ -14,8 +14,8 @@
 import { generateThirdPartyNotices } from "./generate-third-party-notices.mjs";
 import { readVerifiedNotices } from "./third-party-notices.mjs";
 import {
+  isAllowedLicenseIdentifier,
   isReviewedLegacyLicense,
-  isReviewedBundledFontLicense,
   legacyLicenseIdentifier,
 } from "./license-identifiers.mjs";
 import { readFile } from "node:fs/promises";
@@ -44,6 +44,8 @@ const MANUAL_LICENSE = {
   semaphore: "MIT", // License section in the package README
   "css-value": "MIT", // License section in the package Readme
   "@fig/autocomplete-helpers": "MIT", // LICENSE in the package
+  // react-scan dev dependency chain; license field missing, the in-package LICENSE is Aiden Bai's standard MIT.
+  "@react-grab/cli": "MIT",
 };
 function normLicense(value) {
   if (typeof value === "string") return value.trim();
@@ -64,8 +66,6 @@ for (const [key, { pkg }] of scanned) {
   });
 }
 // ---------- Categories ----------
-const GREEN =
-  /^(MIT|MIT-0|ISC|BSD-2-Clause|BSD-3-Clause|BSD-4-Clause|0BSD|Unlicense|Apache-2\.0|Zlib|WTFPL|Artistic-2\.0|BlueOak-1\.0\.0|CC0-1\.0|CC-BY-4\.0|CC-BY-3\.0|BSD|Python-2\.0)$/i;
 function classify(raw) {
   const s = raw.replace(/[()]/g, " ").trim();
   if (s === "(missing)" || s === "missing" || s === "") return "missing";
@@ -74,12 +74,12 @@ function classify(raw) {
     .split(/\s+OR\s+/i)
     .map((x) => x.trim())
     .filter(Boolean);
-  if (or.length > 1 && or.some((x) => GREEN.test(x))) return "green";
+  if (or.length > 1 && or.some((x) => isAllowedLicenseIdentifier(x))) return "green";
   const and = s
     .split(/\s+AND\s+/i)
     .map((x) => x.trim())
     .filter(Boolean);
-  if (and.length > 1 && and.every((x) => GREEN.test(x))) return "green";
+  if (and.length > 1 && and.every((x) => isAllowedLicenseIdentifier(x))) return "green";
   const t = or[0] || and[0] || s;
   if (/\bAGPL/i.test(t)) return "red-agpl";
   if (/\bLGPL/i.test(t)) return "yellow-lgpl";
@@ -88,12 +88,23 @@ function classify(raw) {
   if (/^(BUSL|BSL|Elastic|SSPL|PolyForm|FSL|CAL-1)/i.test(t)) return "red-semiopen";
   if (/^CC-BY-NC/i.test(t)) return "red-nc";
   if (/^CC-BY-(ND|SA)/i.test(t)) return "yellow-cc";
-  return GREEN.test(t) ? "green" : "review";
+  return isAllowedLicenseIdentifier(t) ? "green" : "review";
 }
 for (const r of installed.values()) r.bucket = classify(r.license);
 
 // ---------- Build-tool license identifier review (does not waive binary distribution obligations) ----------
-const WEAK_ALLOW = [[/^lightningcss/, "当前仅构建依赖；进入生产图时需重新核对 MPL 源码提供义务"]];
+const WEAK_ALLOW = [
+  [/^lightningcss/, "当前仅构建依赖；进入生产图时需重新核对 MPL 源码提供义务"],
+  // react-scan dev dependency chain. The license field says SEE LICENSE IN LICENSE; the package
+  // actually ships a Modified MIT: MIT plus two use restrictions — "no ML training data" and
+  // "no reselling as a paid hosting service". Currently runs only as a dev-mode diagnostic tool
+  // locally/in CI, is not distributed with the product and falls under no restricted use;
+  // re-review before it enters the production graph.
+  [
+    /react-doctor$/,
+    "仅开发态 react-scan 诊断工具；Modified MIT 的用途限制不影响内部使用，不随产品分发",
+  ],
+];
 // ---------- Per-package review of production dependencies, recorded by package name and license category; block again if a license changes ----------
 const PROD_REVIEWED = [
   [
@@ -120,8 +131,12 @@ function weakAllowReason(r) {
 if (command === "check") {
   const bad = [];
   for (const r of installed.values()) {
-    if (r.bucket === "green" || isReviewedLegacyLicense(r) || isReviewedBundledFontLicense(r))
-      continue;
+    if (r.bucket === "green" || isReviewedLegacyLicense(r)) continue;
+    // Build dependencies with a registered WEAK_ALLOW review verdict may sit in the
+    // missing/unresolved buckets: their license fields are often absent or say
+    // SEE LICENSE IN <file>, so they cannot be auto-bucketed into yellow; the manual review
+    // record itself is the pass verdict.
+    if (!r.isProd && weakAllowReason(r)) continue;
     if (r.bucket.startsWith("yellow") && weakAllowReason(r)) continue;
     bad.push(r);
   }

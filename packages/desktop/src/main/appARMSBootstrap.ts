@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import armsRum from "@arms/rum-electron";
 import { ZCODE_AGENT_LIFECYCLE_LOG_MARKER } from "@zcode/shared/process-diagnostic";
-import { ZCODE_ARMS_RUM_ENDPOINT, ZCODE_VERSION, mapZCodeEnvToArmsRumEnv } from "@zcode/shared";
+import {
+  ZCODE_ARMS_RUM_ENDPOINT,
+  ZCODE_TELEMETRY_REPORT_ENDPOINT,
+  ZCODE_VERSION,
+  mapZCodeEnvToArmsRumEnv,
+} from "@zcode/shared";
 import { ARMS_BROWSER_COLLECTORS, parseArmsViewName } from "../shared/armsRumShared.js";
 import { redactArmsEventBatch } from "./armsEventRedaction.js";
 import { ensureDesktopDeviceMidSync } from "./desktopDeviceMid.js";
@@ -11,6 +16,77 @@ import { ingestArmsApiEventsFromBatch } from "./desktopNetworkTelemetry.js";
 import { desktopRuntimeEnv, runtimeApplicationName } from "./desktopRuntimeEnv.js";
 import { summarizeLongTaskAttribution } from "./longTaskAttributionSummary.js";
 import { logger } from "./logger.js";
+
+function reportEndpointKey(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? `${url.origin}${url.pathname}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const reportEndpoints = new Set(
+  [ZCODE_ARMS_RUM_ENDPOINT, ZCODE_TELEMETRY_REPORT_ENDPOINT]
+    .map(reportEndpointKey)
+    .filter((value): value is string => value !== undefined),
+);
+
+function shouldExcludeArmsEvent(event: Record<string, unknown>): boolean {
+  if (event.event_type === "api" || (event.event_type === "resource" && event.type === "api")) {
+    // Report requests being captured again by the API collector would pollute network stats; exclude by full origin/path before aggregation.
+    return [event.url, event.name].some((value) => {
+      const key = reportEndpointKey(value);
+      return key !== undefined && reportEndpoints.has(key);
+    });
+  }
+  if (
+    event.event_type !== "exception" ||
+    event.type !== "error" ||
+    typeof event.message !== "string"
+  ) {
+    return false;
+  }
+  // Exclude only the telemetry transport layer's fixed error text; business request failures and telemetry programming errors must not be swallowed.
+  if (
+    /^Telemetry report failed(?:: (?:network|timeout)| with status [1-5]\d{2})$/u.test(
+      event.message,
+    )
+  ) {
+    return true;
+  }
+  if (event.source === "console.error") {
+    // Node prints the SQLite experimental-feature notice via console.error, so the SDK collects the warning as a JS error.
+    // Strip only Node's process id and the fixed notice line before matching exactly; logs that also contain database errors must be kept.
+    const sqliteWarning = "SQLite is an experimental feature and might change at any time";
+    const warningText = event.message
+      .replace(/^\(node:\d+\)\s+/u, "")
+      .replace(
+        /\s+\(Use `[^`\r\n]+ --trace-warnings \.\.\.` to show where the warning was created\)$/u,
+        "",
+      );
+    if (
+      warningText === `ExperimentalWarning: ${sqliteWarning}` ||
+      (event.name === "ExperimentalWarning" && event.message === sqliteWarning)
+    ) {
+      return true;
+    }
+  }
+  // A misaligned tab lifecycle makes later IPC keep emitting the same console noise; filter only the reported copy —
+  // local logs and genuine uncaught exceptions are kept, and the registration/scope issue is still fixed by the browser lifecycle.
+  return (
+    event.source === "console.error" &&
+    (event.message.includes(ZCODE_AGENT_LIFECYCLE_LOG_MARKER) ||
+      /^browser tab '(?:browser|iab-tab):[^'\r\n]+' is unavailable for renderer scope$/u.test(
+        event.message,
+      ))
+  );
+}
 
 // LoAF long-task snapshots (the SDK-collected top-five attributions) are not written to SLS by
 // default. Add them to event.properties here so attribution summaries (top duration/ratio/invokerType)
@@ -213,23 +289,15 @@ export const armsInitPromise = armsRum
       // from external descendant processes. Keep only native crashes containing the current
       // product executable; filtering examines existing batch metadata and adds no I/O.
       const events = filterAndEnrichNativeCrashEvents(
-        // Do not collect local error logs again as console JS exceptions when they already have a
-        // structured lifecycle report. Filter only explicitly marked wrapped events, preserving
-        // real uncaughtException events and other console.error calls.
-        (payload?.events ?? []).filter(
-          (event) =>
-            !(
-              event.event_type === "exception" &&
-              event.type === "error" &&
-              event.source === "console.error" &&
-              typeof event.message === "string" &&
-              event.message.includes(ZCODE_AGENT_LIFECYCLE_LOG_MARKER)
-            ),
-        ),
+        (payload?.events ?? []).filter((event) => !shouldExcludeArmsEvent(event)),
         runtimeApplicationName,
         basename(process.execPath),
       );
       payload.events = events;
+      if (events.length === 0) {
+        // The SDK stops sending only when it receives a null return; merely clearing events still uploads an empty batch.
+        return null;
+      }
       ingestArmsApiEventsFromBatch(events);
       enrichLongTaskAttribution(events);
       // Apply privacy redaction after ingest and attribution summaries: network aggregation uses

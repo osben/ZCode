@@ -1,5 +1,5 @@
 import { normalizeRemoteConnectionError } from "@zcode/shared";
-/* eslint-disable max-lines -- 远程连接、OAuth 回调、遥测和通知 IPC 共用窗口级上下文，集中注册避免跨文件状态漂移。 */
+/* eslint-disable max-lines -- Remote connection, OAuth callback, telemetry, and notification IPC share a window-scoped context; registering them together avoids cross-file state drift. */
 import { app, BrowserWindow, ipcMain, shell, type WebContents } from "electron";
 import armsRum from "@arms/rum-electron";
 import {
@@ -15,6 +15,7 @@ import {
   PlatformChannels,
   remoteTargetSchema,
   rendererTelemetryEventPayloadSchema,
+  telemetryRendererContextSchema,
   type ArmsRumEnv,
   type BindRemoteWorkspaceSessionContextIpcResult,
   type RemoteTarget,
@@ -45,8 +46,9 @@ import {
 import { openFileUrlInDefaultApp, openPathInDefaultApp } from "./desktopMainIpcHelpers.js";
 
 function isPublicRemoteReasonCode(code: string | undefined): code is string {
-  // Bug 原因：前缀 OR 形成第二份公开码真源，任何内部 source-server-* 字符串都会穿透
-  // Main 暴露给 Renderer。公开边界只消费 shared 登记表，新增码必须先进入统一合同。
+  // Bug cause: a prefix OR formed a second source of truth for public codes, letting any internal
+  // source-server-* string leak through Main to the Renderer. The public boundary consumes only the
+  // shared registry; new codes must enter the unified contract first.
   return isPublicZCodeErrorCode(code);
 }
 
@@ -64,6 +66,24 @@ function toBindIpcFailure(error: unknown): BindRemoteWorkspaceSessionContextIpcR
     error: normalized.message,
     ...(reasonCode ? { reasonCode } : {}),
     ...(retryable !== undefined ? { retryable } : {}),
+  };
+}
+
+/**
+ * Bug cause: Error's message/stack are non-enumerable; handing the error to the logger serializes it
+ * to `{}`, leaving on-site logs with just "detect failed: {}" and no wsl.exe / docker exit code or
+ * output. Expand into a plain object before logging.
+ */
+function describeDiscoveryError(error: unknown): Record<string, unknown> {
+  const normalized = normalizeUnknownError(error);
+  const exitCode =
+    error && typeof error === "object" && "exitCode" in error ? error.exitCode : undefined;
+  return {
+    name: error instanceof Error ? error.name : undefined,
+    message: normalized.message,
+    code: normalized.code,
+    exitCode,
+    stack: error instanceof Error ? error.stack : undefined,
   };
 }
 
@@ -185,7 +205,7 @@ export function registerRemoteIpcHandlers(options: {
     syncRendererContext(payload: { rendererId: number; context: unknown }): void;
     onOAuthCallbackHandled(payload: { rendererId: number }): void;
   };
-  /** OAuth 回调处理完成后的额外副作用（如刷新 ARMS user.id）；不影响既有 runtime 流程 */
+  /** Extra side effects after OAuth callback handling (e.g. refreshing the ARMS user.id); does not affect the existing runtime flow. */
   onOAuthCallbackHandledSideEffect?: () => void;
   appTelemetryCore: {
     reportEvent(payload: unknown): Promise<void>;
@@ -197,7 +217,7 @@ export function registerRemoteIpcHandlers(options: {
     appVersion: string;
     armsEnv: ArmsRumEnv;
   };
-  /** 仅由 VITE_ZCODE_E2E_STORE_BRIDGE + test runner 双门禁打开。 */
+  /** Opened only by the VITE_ZCODE_E2E_STORE_BRIDGE + test runner double gate. */
   finalArmsCustomEventE2EEnabled?: boolean;
   webRemoteControlManager: WebRemoteControlIpcManager;
   createRemoteWorkspaceSession: (
@@ -248,7 +268,7 @@ export function registerRemoteIpcHandlers(options: {
     try {
       options.reportRemoteUsageEvent(rendererId, event);
     } catch (error) {
-      // 埋点是旁路能力，不能把已成功的远程连接改写成业务失败。
+      // Telemetry is a side channel; it must not rewrite an already-successful remote connection as a business failure.
       options.logger.warn("[remote-usage-telemetry] dispatch failed", {
         elementName: event.elementName,
         error,
@@ -350,8 +370,8 @@ export function registerRemoteIpcHandlers(options: {
       typeof sender?.loadURL === "function" &&
       shouldKeepCodingPlanOpenExternalInWebview(sourceUrl, url)
     ) {
-      // 官网 embedded bridge 的 openExternal 会绕过 webview 导航守卫；
-      // PayPal 授权完成后的可信回调仍需回到当前 webview，不能拉起系统默认浏览器。
+      // The site's embedded bridge openExternal bypasses the webview navigation guard;
+      // the trusted callback after PayPal authorization must still return to this webview, not launch the system default browser.
       void sender.loadURL(url).catch((error: unknown) => {
         options.logger.warn("[open-external] failed to load coding-plan callback in webview", {
           error: error instanceof Error ? error.message : String(error),
@@ -380,10 +400,12 @@ export function registerRemoteIpcHandlers(options: {
     });
   });
 
-  ipcMain.on(PlatformChannels.SyncTelemetryContext, (event, context) => {
+  ipcMain.on(PlatformChannels.SyncTelemetryContext, (event, context: unknown) => {
+    const result = telemetryRendererContextSchema.safeParse(context);
+    if (!result.success) return;
     options.appTelemetryRuntime.syncRendererContext({
       rendererId: event.sender.id,
-      context,
+      context: result.data,
     });
   });
 
@@ -418,8 +440,8 @@ export function registerRemoteIpcHandlers(options: {
           rendererId: event.sender.id,
         },
         e2eController: finalArmsCustomEventE2E,
-        // FinalArmsCustomEventPayload 是 SDK RumCustomEvent 的收窄子集；SDK 额外要求
-        // BaseObject 索引签名，但这里不会动态追加未声明字段。
+        // FinalArmsCustomEventPayload is a narrowed subset of the SDK's RumCustomEvent; the SDK also
+        // requires the BaseObject index signature, but no undeclared fields are appended dynamically here.
         sendCustom: (payload) =>
           armsRum.sendCustom(payload as Parameters<typeof armsRum.sendCustom>[0]),
       });
@@ -448,9 +470,10 @@ export function registerRemoteIpcHandlers(options: {
   app.on("browser-window-created", (_, win) => {
     const windowWebContentsId = win.webContents.id;
     win.on("closed", () => {
-      // BrowserWindow 的 closed 阶段里 webContents 可能已被 Electron 释放。
-      // 之前这里直接读取 win.webContents.id，会把正常关窗流程变成主进程未捕获异常。
-      // 提前缓存 id 后再做清理，避免访问已经销毁的对象。
+      // During the BrowserWindow "closed" phase, webContents may already be released by Electron.
+      // Reading win.webContents.id here directly used to turn a normal window close into an
+      // uncaught exception in the main process. Cache the id up front and clean up with it,
+      // avoiding access to a destroyed object.
       clearOAuthRoutesForWindow(windowWebContentsId);
     });
   });
@@ -548,8 +571,9 @@ export function registerRemoteIpcHandlers(options: {
     } catch (error) {
       const normalizedError = normalizeRemoteConnectionError(error);
       const errorCategory = classifyRemoteUsageError(error);
-      // 这里之前直接把 Error 对象交给 logger，落盘时会被 JSON.stringify 压成 `{}`。
-      // 改成显式展开 message/code/stack，保证远程建连失败时主进程日志里能看到真实上下文。
+      // Handing the Error object to the logger directly used to persist as JSON.stringify'd `{}`.
+      // Explicitly expand message/code/stack so a remote-connection failure leaves the real context
+      // in main-process logs.
       options.logger.error("[connect-remote] caught error:", {
         requestId,
         confirmSourceServerInstall,
@@ -635,9 +659,11 @@ export function registerRemoteIpcHandlers(options: {
         typeof payload.requestId === "string" && payload.requestId.trim().length > 0
           ? payload.requestId.trim()
           : undefined;
-      // 连接建立前没有 sessionId，renderer 之前无法精准通知 main 取消正在进行的连接。
-      // 现在优先按 requestId 精确取消当前弹窗发起的连接，避免误伤同窗口其他并发连接。
-      // 若 requestId 缺失则回退到按窗口取消，兼容旧调用端。
+      // Before a connection is established there is no sessionId, so the renderer previously could
+      // not precisely tell main to cancel an in-flight connection. Now cancel by requestId first so
+      // only the connection this dialog started is cancelled, sparing other concurrent connections
+      // in the same window; if requestId is missing, fall back to per-window cancellation for old
+      // callers.
       options.cancelPendingRemoteWorkspaceSessionsForWindow(
         event.sender.id,
         `cancel-pending-remote-connection:${event.sender.id}`,
@@ -696,7 +722,7 @@ export function registerRemoteIpcHandlers(options: {
     try {
       return await options.isDockerDaemonAvailable();
     } catch (error) {
-      options.logger.warn("[is-docker-available] detect failed:", error);
+      options.logger.warn("[is-docker-available] detect failed:", describeDiscoveryError(error));
       return false;
     }
   });
@@ -705,7 +731,7 @@ export function registerRemoteIpcHandlers(options: {
     try {
       return await options.listAvailableWSLDistros();
     } catch (error) {
-      options.logger.warn("[list-wsl-distros] detect failed:", error);
+      options.logger.warn("[list-wsl-distros] detect failed:", describeDiscoveryError(error));
       return [];
     }
   });
@@ -714,7 +740,7 @@ export function registerRemoteIpcHandlers(options: {
     try {
       return await options.listAvailableDockerContainers();
     } catch (error) {
-      options.logger.warn("[list-docker-containers] detect failed:", error);
+      options.logger.warn("[list-docker-containers] detect failed:", describeDiscoveryError(error));
       return [];
     }
   });
@@ -724,8 +750,9 @@ export function registerRemoteIpcHandlers(options: {
       return await options.listSSHConfigAliases();
     } catch (error) {
       const normalizedError = normalizeUnknownError(error);
-      // Error 对象直接落盘会被序列化成 `{}`，SSH config 解析失败时无法定位具体 pattern。
-      // 显式展开错误字段，保留 UI 返回空列表的兼容行为，同时让日志能看到根因。
+      // Persisting the Error object directly serializes it to `{}`, making an SSH config parse
+      // failure impossible to trace to a specific pattern. Expand the error fields explicitly,
+      // keeping the UI's empty-list fallback behavior while letting logs show the root cause.
       options.logger.warn("[list-ssh-config-aliases] detect failed:", {
         message: normalizedError.message,
         code: normalizedError.code,

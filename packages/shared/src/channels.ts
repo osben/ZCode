@@ -1,5 +1,5 @@
 import type { WebRemoteControlAuthStateChange } from "./web-remote-control.js";
-/* eslint-disable max-lines -- 通信频道和请求响应映射必须集中定义，避免跨进程 channel 字符串散落。 */
+/* eslint-disable max-lines -- communication channels and request/response mappings must be defined in one place, keeping cross-process channel strings from scattering. */
 import type {
   ResourceUsageSnapshot,
   LoadCliMcpFromUserDirectoryRequest,
@@ -18,6 +18,10 @@ import type {
   WebRemoteControlStatus,
   WebRemoteControlWorkspaceTarget,
 } from "./web-remote-control.js";
+import type {
+  WebRemoteControlRendererActionRequest,
+  WebRemoteControlRendererActionResult,
+} from "#src/web-remote-relay/index.js";
 import type { AppSettings, Locale } from "./protocol.js";
 import type { StorageCleanRequest, StorageCleanResult, StorageUsageSnapshot } from "./storage.js";
 import type {
@@ -56,6 +60,8 @@ import type {
   EmbeddedBrowserSitePermissionResetRequest,
   EmbeddedBrowserSitePermissionsSnapshot,
   EditorInfo,
+  FileApplicationInfo,
+  FileApplicationTarget,
   CreateTempTextAttachmentRequest,
   CreateTempTextAttachmentResult,
   MaterializeWorkflowArtifactFileRequest,
@@ -122,11 +128,11 @@ export const ServiceChannels = {
   /** Fork: composer quick prompts (specs/composer-quick-prompts.md). */
   QuickPrompts: "quick-prompts",
   RemoteProjects: "remote-projects",
-  /** 手机远端 attachment 的窗口目录；原 project 继续属于工作区。 */
+  /** Window directory of a mobile remote attachment; the original project keeps belonging to the workspace. */
   WindowProject: "window-project",
   WindowRemoteProjects: "window-remote-projects",
   WindowProjectChanges: "window-project-changes",
-  /** 会话分享发布、预览与 continuation API 编排 */
+  /** Session share publishing, preview, and continuation API orchestration */
   ConversationShare: "conversation-share",
   /** File-system watcher service */
   FileWatcher: "file-watcher",
@@ -138,11 +144,15 @@ export const ServiceChannels = {
   ModelSelection: "model-selection",
   /** Internal Provider Provisioning target for remote Environments */
   ProviderProvisioningTarget: "provider-provisioning-target",
-  /** Source Server 端 workspace 身份解析服务 */
+  /** Source Server side workspace identity resolution service */
   SourceServerWorkspace: "source-server-workspace",
-  /** 桌面 Host 的 Source Server 目录与连接管理服务 */
+  /** Desktop Host's Source Server directory and connection management service */
   SourceServerManagement: "source-server-management",
-  /** 本地 usage 统计服务 */
+  /** Desktop Host's data-sync device state (last sync result per sourceServerId; registered locally only) */
+  DeviceSyncState: "device-sync-state",
+  /** Desktop Host's data-sync page model providers: read / retry the Main coordinator's Provisioning lane (registered locally only) */
+  ProviderProvisioningStatus: "provider-provisioning-status",
+  /** Local usage statistics service */
   UsageStats: "usage-stats",
   /** Coding Plan subscription purchase service */
   CodingPlanSubscription: "coding-plan-subscription",
@@ -159,6 +169,8 @@ export const ServiceChannels = {
   McpSync: "mcp-sync",
   /** SSH remote plugin synchronization service */
   PluginSync: "plugin-sync",
+  /** Data sync: user-config sync channel shared by subagents, commands, and hooks (split by category; not in the mobile allowlist) */
+  UserConfigSync: "user-config-sync",
   /** Plugin management service */
   Plugins: "plugins",
   /** Settings-page plugin management service (consolidates UI platform capabilities and no longer calls zcodeAgentService directly) */
@@ -209,7 +221,7 @@ export const PlatformChannels = {
   PluginSandboxDispose: "zcode:plugin-sandbox-dispose",
   PluginSandboxCopyImage: "zcode:plugin-sandbox-copy-image",
   PluginSandboxExecutionActive: "zcode:plugin-sandbox-execution-active",
-  /** renderer → main：一次性消费插件 UI 沙箱 guest 的用户手势 token */
+  /** renderer → main: one-shot consumption of the plugin UI sandbox guest's user-gesture token */
   PluginSandboxConsumeUserGesture: "zcode:plugin-sandbox-consume-user-gesture",
   /** renderer → main: query its own webContents id to use as the sandbox registration owner */
   PluginSandboxOwnerWebContentsId: "zcode:plugin-sandbox-owner-web-contents-id",
@@ -237,15 +249,15 @@ export const PlatformChannels = {
   RemoteConnectionLog: "zcode:remote-connection-log",
   /** Main → Renderer: the remote workspace session has closed */
   RemoteSessionClosed: "zcode:remote-session-closed",
-  /** Main → Renderer：Source 自动重连后的 logical session 已换代并完成 port ready */
+  /** Main → Renderer: after a Source auto-reconnect, the logical session has rotated and the port is ready */
   RemoteSessionReconnected: "zcode:remote-session-reconnected",
-  /** 检查目录是否已在其他窗口打开，如果是则激活该窗口 */
+  /** Check whether the directory is already open in another window; if so, activate that window */
   ActivateOrSetWorkspace: "zcode:activate-or-set-workspace",
   /** Establish an SSH remote connection */
   ConnectRemote: "zcode:connect-remote",
-  /** Desktop Renderer → Main：为在线 Source 创建配置专用 attachment */
+  /** Desktop Renderer → Main: create a settings-dedicated attachment for an online Source */
   RequestSourceSettingsAttachment: "zcode:request-source-settings-attachment",
-  /** 取消当前窗口正在进行中的远程连接 */
+  /** Cancel the remote connection in progress for the current window */
   CancelPendingRemoteConnection: "zcode:cancel-pending-remote-connection",
   /** Renderer → Main: bind the canonical workspace context to a remote logical session */
   BindRemoteWorkspaceSessionContext: "zcode:bind-remote-workspace-session-context",
@@ -253,13 +265,13 @@ export const PlatformChannels = {
   StartWebRemoteControl: "zcode:start-web-remote-control",
   /** Refresh the Web remote-control QR code: closes the runtime and registers a new device. */
   ResetWebRemoteControlPairing: "zcode:reset-web-remote-control-pairing",
-  /** 关闭当前窗口的 Web 远程控制 */
+  /** Turn off Web remote control for the current window */
   StopWebRemoteControl: "zcode:stop-web-remote-control",
   /** Query the current window’s Web remote-control status */
   GetWebRemoteControlStatus: "zcode:get-web-remote-control-status",
-  /** Renderer → Main：OAuth 会话变化通知，不携带凭据 */
+  /** Renderer → Main: OAuth session change notification; carries no credentials */
   WebRemoteControlAuthStateChanged: "zcode:web-remote-control-auth-state-changed",
-  /** Main → Renderer：当前窗口 Web 远程控制状态变化 */
+  /** Main → Renderer: Web remote-control status changed for the current window */
   WebRemoteControlStatusChanged: "zcode:web-remote-control-status-changed",
   /** Release the remote session in the current window */
   DisposeRemoteSession: "zcode:dispose-remote-session",
@@ -283,8 +295,10 @@ export const PlatformChannels = {
   SyncWindowTabs: "zcode:sync-window-tabs",
   /** Renderer → Main: sync the workspaces available for Web remote-control switching in the current window */
   SyncWebRemoteControlWorkspaces: "zcode:sync-web-remote-control-workspaces",
-  /** Main → Renderer：手机端请求重连当前窗口里的远程 workspace */
+  /** Main → Renderer: the phone requests reconnecting the remote workspace in the current window */
   WebRemoteControlReconnectWorkspace: "zcode:web-remote-control-reconnect-workspace",
+  /** Main → Renderer: the phone requests pin/archiving a task or creating a local project; the Renderer runs the same sidebar path */
+  WebRemoteControlRendererAction: "zcode:web-remote-control-renderer-action",
   /** Renderer → Main: sync the unread task count for the current window */
   SyncWindowUnreadCount: "zcode:sync-window-unread-count",
   /** Renderer → Main: report the active task for the current window; update only Main's temporary focus mapping. */
@@ -441,6 +455,7 @@ export const PlatformChannels = {
    */
   BrowserViewAttachGuest: "zcode:browser-view-attach-guest",
   /** Renderer → Main: proactively disconnect the old guest's CDP before rebuilding the `<webview>`. */
+  BrowserViewDownloadStarted: "zcode:browser-view-download-started",
   BrowserViewDetachGuest: "zcode:browser-view-detach-guest",
   /** Renderer → Main: the user explicitly closed a Browser tab. */
   BrowserViewCloseTabFromRenderer: "zcode:browser-view-close-tab-from-renderer",
@@ -510,6 +525,8 @@ export const PlatformChannels = {
   QuitAndInstallUpdate: "zcode:quit-and-install-update",
   /** Renderer → Main: list installed system editors/terminals (including icons) */
   GetInstalledEditors: "zcode:get-installed-editors",
+  GetFileApplications: "zcode:get-file-applications",
+  OpenFileWithApplication: "zcode:open-file-with-application",
   /** Renderer → Main: get a system application icon by bundle ID */
   GetApplicationIcon: "zcode:get-application-icon",
   /** Renderer → Main: open a path with the specified editor */
@@ -600,9 +617,9 @@ export const InternalChannels = {
   ScopedServicePort: "zcode:scoped-service-port",
   /** renderer → main: the scoped MessagePort is registered and its attachment can be switched safely */
   ScopedServicePortReady: "zcode:scoped-service-port-ready",
-  /** main → renderer：在线 Source 的配置专用 MessagePort */
+  /** main → renderer: settings-dedicated MessagePort for an online Source */
   SourceSettingsServicePort: "zcode:source-settings-service-port",
-  /** preload → renderer：主进程已确认系统通知展示，renderer 可播放提示音 */
+  /** preload → renderer: the main process confirmed the system notification was shown; the renderer may play the sound */
   TaskNotificationSound: "zcode:task-notification-sound",
   /** main → host renderer: the plugin UI sandbox MessagePort group (port2[]), payload { sandboxId, initId, names } */
   PluginSandboxPorts: "zcode:plugin-sandbox-ports",
@@ -619,7 +636,7 @@ export const ZCODE_RPC_HOST_CAPABILITY_HEADER = "x-zcode-rpc-host-capability";
 
 /** Initialization message types from main to the host process */
 export const HostMessageTypes = {
-  /** main → Host：准备手机项目目录，只复用已在线物理 Source。 */
+  /** main → Host: prepare the mobile project directory, reusing only already-online physical Sources. */
   PrepareProjectWorkspace: "prepare-project-workspace",
   DatabaseStartupControl: "database-startup-control",
   /** Initialize local services */
@@ -630,11 +647,12 @@ export const HostMessageTypes = {
   CancelRemoteWorkspaceConnect: "cancel-remote-workspace-connect",
   /** main → window Host: bind the canonical workspace identity to a logical session */
   BindRemoteWorkspaceContext: "bind-remote-workspace-context",
-  /** main → window Host：取消已超时的 workspace bind */
+  /** main → window Host: cancel a workspace bind that has timed out */
   CancelRemoteWorkspaceBind: "cancel-remote-workspace-bind",
-  /** main → window Host：释放一个远程 logical session */
+  /** main → window Host: release a remote logical session */
   DisposeRemoteWorkspaceSession: "dispose-remote-workspace-session",
   /** main → host: expose an existing service through a new RPC MessagePort */
+  SetTerminalOwner: "set-terminal-owner",
   AttachServicePort: "attach-service-port",
   /** main → host: release a specific RPC MessagePort attachment */
   DetachServicePort: "detach-service-port",
@@ -682,30 +700,32 @@ export const HostMessageTypes = {
   CuaPipFocusChanged: "cua-pip-focus-changed",
   /** main → host: ask the Host to read the local Source now and sync the specified Remote Environment. */
   ProviderProvisioningExecute: "provider-provisioning-execute",
+  /** main → host: results of the data-sync page's read / retry of the Provisioning lane. */
+  ProviderProvisioningLaneResult: "provider-provisioning-lane-result",
   /** main → host: the Resource Manager requests CPU and memory sampling for the Host's descendant processes (Agent/MCP/terminal) */
   ResourceUsageSnapshotRequest: "resource-usage-snapshot-request",
   ResourceUsageSnapshotCancel: "resource-usage-snapshot-cancel",
   NetworkCapture: "network-capture",
-  /** main → host：Main 的实时界面语言变化（Host 用于 ZCode endpoint 的 X-Client-Language） */
+  /** main → host: the Main UI language changed in real time (the Host uses it for the ZCode endpoint's X-Client-Language) */
   ApplicationLocaleChanged: "application-locale-changed",
 } as const;
 
 /** Response message types from the host process to the main process */
 export const HostResponseTypes = {
-  /** Host → main：已准入的目录与 scope，main 不解释项目业务。 */
+  /** Host → main: admitted directories and scopes; main interprets no project business. */
   ProjectWorkspacePrepared: "project-workspace-prepared",
   DatabaseStartupState: "database-startup-state",
   /** window Host → main: report remote connection progress logs by requestId */
   RemoteWorkspaceConnectionLog: "remote-workspace-connection-log",
   /** window Host → main: remote logical session established */
   RemoteWorkspaceConnected: "remote-workspace-connected",
-  /** window Host → main：workspace canonical 准备完成，可安全建立新 attachment */
+  /** window Host → main: workspace canonical preparation finished; a new attachment can be established safely */
   RemoteWorkspaceContextBound: "remote-workspace-context-bound",
-  /** window Host → main：workspace canonical 准备失败 */
+  /** window Host → main: workspace canonical preparation failed */
   RemoteWorkspaceContextBindFailed: "remote-workspace-context-bind-failed",
-  /** window Host → main：Source transport 重连后 logical session 已换代 */
+  /** window Host → main: the logical session rotated after a Source transport reconnect */
   RemoteWorkspaceReconnected: "remote-workspace-reconnected",
-  /** window Host → main：远程 logical session 建立失败 */
+  /** window Host → main: remote logical session establishment failed */
   RemoteWorkspaceConnectFailed: "remote-workspace-connect-failed",
   /** window Host → main: connected remote logical session closed */
   RemoteWorkspaceClosed: "remote-workspace-closed",
@@ -730,8 +750,9 @@ export const HostResponseTypes = {
   ToolExecResource: "tool-exec-resource",
   /** The automation Host reports a newly created Session after its first input is accepted. */
   SessionCreateTelemetry: "session-create-telemetry",
+  RemoteConversationTelemetry: "remote-conversation-telemetry",
   PluginTelemetry: "plugin-telemetry",
-  /** host → main：资源管理器采样结果（按 requestId 关联） */
+  /** host → main: Resource Manager sampling results (correlated by requestId) */
   ResourceUsageSnapshotResult: "resource-usage-snapshot-result",
   NetworkCaptureBatch: "network-capture-batch",
   /** Number of Agent sessions currently executing prompts inside the host changed */
@@ -798,6 +819,8 @@ export const HostResponseTypes = {
   ProviderProvisioningSourceChanged: "provider-provisioning-source-changed",
   /** host → main: a Remote Environment sync execution completed. */
   ProviderProvisioningExecutionResult: "provider-provisioning-execution-result",
+  /** host → main: the data-sync page reads or retries the Provisioning lane per device. */
+  ProviderProvisioningLaneRequest: "provider-provisioning-lane-request",
 } as const;
 
 // ============================================================================
@@ -968,6 +991,10 @@ export interface PlatformChannelMap {
     request: WebRemoteControlReconnectWorkspaceRequest;
     response: WebRemoteControlReconnectWorkspaceResult;
   };
+  [PlatformChannels.WebRemoteControlRendererAction]: {
+    request: WebRemoteControlRendererActionRequest;
+    response: WebRemoteControlRendererActionResult;
+  };
   [PlatformChannels.SyncWindowUnreadCount]: {
     request: number;
     response: void;
@@ -1035,6 +1062,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.ResetEmbeddedBrowserSitePermission]: {
     request: EmbeddedBrowserSitePermissionResetRequest;
     response: EmbeddedBrowserSitePermissionsSnapshot;
+  };
+  [PlatformChannels.BrowserViewDownloadStarted]: {
+    request: { webContentsId: number; urls: string[] };
+    response: void;
   };
   [PlatformChannels.BrowserViewReady]: {
     request: {
@@ -1364,6 +1395,14 @@ export interface PlatformChannelMap {
   [PlatformChannels.GetInstalledEditors]: {
     request: string | undefined;
     response: EditorInfo[];
+  };
+  [PlatformChannels.GetFileApplications]: {
+    request: FileApplicationTarget;
+    response: FileApplicationInfo[];
+  };
+  [PlatformChannels.OpenFileWithApplication]: {
+    request: { applicationId: string; target: FileApplicationTarget };
+    response: { success: boolean; error?: string };
   };
   [PlatformChannels.GetApplicationIcon]: {
     request: string | import("./platform.js").ApplicationIconRequest;

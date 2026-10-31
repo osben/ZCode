@@ -82,7 +82,7 @@ export function useRootPlatformEffects({
   ) => void;
   startNewTaskFromActiveWorkspace: (source: string) => void;
   openWorkspace: () => void;
-  openWorkspacePath: (workspacePath: string) => void | Promise<void>;
+  openWorkspacePath: (workspacePath: string, activateOtherWindow?: boolean) => void | Promise<void>;
   setWorkspaceActionError: (message: string | null) => void;
   allowOpenWorkspace?: boolean;
   isDesktop?: boolean;
@@ -115,6 +115,23 @@ export function useRootPlatformEffects({
     }
 
     didBootstrapInitialWorkspaceRef.current = true;
+    if (
+      isDesktop &&
+      initialWorkspaceAbsPath &&
+      initialWorkspacePurpose === "project" &&
+      clientMode === "desktop-continuous" &&
+      !initialWorkspaceIdentity &&
+      !initialTaskId &&
+      !initialTaskDraft &&
+      !isRendererReloadNavigation()
+    ) {
+      // A cold-start project marker only describes the tab and cannot replace the draft projectId; it shares Host project admission with the running system directory
+      // entry and keeps the startup barrier until it completes, so an unowned draft is not warmed up first.
+      void Promise.resolve(openWorkspacePath(initialWorkspaceAbsPath)).finally(() => {
+        setIsBootstrappingInitialWorkspace(false);
+      });
+      return;
+    }
     if (initialWorkspaceAbsPath) {
       const savedScope = readComposerWorkspaceScope(
         initialWorkspaceAbsPath,
@@ -166,6 +183,8 @@ export function useRootPlatformEffects({
     setIsBootstrappingInitialWorkspace(false);
   }, [
     addTab,
+    openWorkspacePath,
+    isDesktop,
     canBootstrapInitialWorkspace,
     initialTaskId,
     initialTaskDraft,
@@ -181,11 +200,8 @@ export function useRootPlatformEffects({
   useEffect(() => {
     const disposeFocusTab = platform.onFocusTab((path: string) => {
       logger.info("[Root] onFocusTab:", path);
-      if (activateTabByPath(path)) {
-        // 系统 workspace focus 是 workspace-only 导航；任务通知另有
-        // 显式 taskId 路径，不能在这里隐式恢复这个 workspace 上次选中的 session。
-        startDraftInWorkspace(path);
-      }
+      // Cross-window open lets the target window complete project admission, avoiding an unclassified draft left behind after only activating the directory.
+      void openWorkspacePath(path, false);
     });
     const disposeNewTab = platform.onNewTab(() => {
       logger.info("[Root] onNewTab");
@@ -194,6 +210,7 @@ export function useRootPlatformEffects({
       // 现在新标签语义收敛为“打开工作区”动作，由 Root 决定目录选择或默认 workspace 兜底。
       openWorkspace();
     });
+    // The new-task callback includes the current language; the subscription is updated in sync so the shortcut hint does not show a stale-language prompt before a language switch.
     const disposeNewTask = platform.onNewTask(() => {
       startNewTaskFromActiveWorkspace("onNewTask");
     });
@@ -343,7 +360,13 @@ export function useRootPlatformEffects({
       disposeNotificationClick();
       disposeUpdateCheckResult();
     };
-  }, [activeWorkspaceIdentity, activeWorkspacePath, platform, tabs]);
+  }, [
+    activeWorkspaceIdentity,
+    activeWorkspacePath,
+    platform,
+    startNewTaskFromActiveWorkspace,
+    tabs,
+  ]);
 
   useEffect(() => {
     const pending = pendingShareImportRef.current;

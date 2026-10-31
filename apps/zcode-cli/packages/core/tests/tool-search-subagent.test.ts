@@ -48,7 +48,7 @@ it.each([
             toolCalls: [
               {
                 id: "child-search",
-                name: "ToolSearch",
+                name: local ? "LocalToolSearch" : "ToolSearch",
                 input: { query: explore ? "select:WebFetch" : "select:WebFetch,TodoWrite" },
               },
             ],
@@ -104,9 +104,7 @@ it.each([
         childRequests[0]?.tools?.some(
           (tool) => tool.name === (local ? "LocalToolSearch" : "ToolSearch"),
         ),
-      ).toBe(
-        childEnabled,
-      );
+      ).toBe(childEnabled);
       if (childEnabled) {
         expect(childRequests[0]?.tools?.some((tool) => tool.name === "WebFetch")).toBe(false);
         if (local) {

@@ -7,12 +7,8 @@ import {
   type ToolResultBudget,
   type TraceContext,
 } from "@zcode/contracts";
-import {
-  OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION,
-  containsOfficialCuaImageRefCredentialText,
-} from "@zcode/zcode-cua/frame-contract";
+import { OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION } from "@zcode/zcode-cua/frame-contract";
 import type { ToolEntry, ToolResultSerialization } from "../types.js";
-import { formatHookAdditionalContexts } from "./hook-flow.js";
 import { formatGenericPersistedOutputContent } from "../result-persistence-format.js";
 import {
   appendHookToPersistedArtifactPreview,
@@ -81,6 +77,21 @@ export async function serializeOutput(
     Math.min(effectiveBudget.maxModelBytes, effectiveBudget.maxInlineBytes),
   );
   const artifactPath = findArtifactPath(output);
+  if (entry.isModelContentBounded?.(output) === true) {
+    // Fix reason: a failed Bash result already keeps the head and tail of the captured segment by
+    // character count (about 10k characters), but multi-byte text such as Chinese can still exceed the
+    // 30000-byte budget. It was then persisted again as a 2KB head-only preview, so the model never saw
+    // the tail that the head/tail truncation had kept.
+    return {
+      content,
+      modelContent,
+      originalBytes,
+      returnedBytes: originalBytes,
+      truncated: false,
+      budgetStrategy: effectiveBudget.strategy,
+      artifactPath,
+    };
+  }
   const referenceProjection = projectToolReferenceContent(
     modelContent,
     maxModelBytes,
@@ -231,32 +242,14 @@ export async function serializeOutput(
   };
 }
 
-export function appendHookAdditionalContexts(
-  serialization: ToolResultSerialization,
-  additionalContexts: string[],
-  entry: ToolEntry,
-): ToolResultSerialization {
-  if (additionalContexts.length === 0) return serialization;
-  const filteredAdditionalContexts =
-    entry.modelContentProtection === OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION
-      ? additionalContexts.filter((context) => !containsOfficialCuaImageRefCredentialText(context))
-      : additionalContexts;
-  const omittedFrameCredential = filteredAdditionalContexts.length !== additionalContexts.length;
-  if (filteredAdditionalContexts.length === 0) {
-    return omittedFrameCredential ? { ...serialization, truncated: true } : serialization;
-  }
-  const hookContext = formatHookAdditionalContexts(filteredAdditionalContexts);
-  const projected = appendFormattedContextToSerialization(serialization, hookContext, entry);
-  return omittedFrameCredential ? { ...projected, truncated: true } : projected;
-}
-
 /** Separator written between the tool output and an appended formatted context block. */
 export const FORMATTED_CONTEXT_SEPARATOR = "\n\n";
 
 /**
  * Bytes available for one formatted context block appended after `serialization`: the result budget minus what the
- * result already returns, minus the separator. Hook contexts already appended are counted in `returnedBytes`. The
- * caller must keep the block whole when it fits; the appender may cut the block to fit this budget otherwise.
+ * result already returns, minus the separator. Tool hook contexts are not part of the result (they travel as
+ * attachments). The caller must keep the block whole when it fits; the appender may cut the block to fit this budget
+ * otherwise.
  */
 export function resolveFormattedContextBudgetBytes(
   serialization: ToolResultSerialization,
@@ -268,7 +261,7 @@ export function resolveFormattedContextBudgetBytes(
 
 /**
  * Appends an already-formatted context block to the model-visible result, keeping the result budget, persisted-artifact
- * previews and the official CUA structured-content path. Shared by PostToolUse hook contexts and nested AGENTS.md reminders.
+ * previews and the official CUA structured-content path. Used by nested AGENTS.md reminders.
  */
 export function appendFormattedContextToSerialization(
   serialization: ToolResultSerialization,
@@ -325,6 +318,11 @@ export function appendFormattedContextToSerialization(
   };
 }
 
+function resolveMaxModelBytes(entry: ToolEntry): number {
+  const budget = entry.resultBudget ?? DEFAULT_RESULT_BUDGET;
+  return Math.max(0, Math.min(budget.maxModelBytes, budget.maxInlineBytes));
+}
+
 function hasImageBlock(content: ModelMessageContent): content is ModelMessageContentBlock[] {
   return Array.isArray(content) && content.some((block) => block.type === "image");
 }
@@ -339,11 +337,6 @@ function structuredMediaBytes(content: ModelMessageContent): number {
       return total + Buffer.byteLength(block.dataUrl, "utf8");
     return total;
   }, 0);
-}
-
-function resolveMaxModelBytes(entry: ToolEntry): number {
-  const budget = entry.resultBudget ?? DEFAULT_RESULT_BUDGET;
-  return Math.max(0, Math.min(budget.maxModelBytes, budget.maxInlineBytes));
 }
 
 async function tryWriteToolArtifact(

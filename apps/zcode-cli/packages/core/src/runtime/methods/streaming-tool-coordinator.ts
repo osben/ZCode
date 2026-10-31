@@ -164,6 +164,8 @@ export function createStreamingToolCoordinator(
         });
         return undefined;
       });
+      // A bounded abandon return can still leave tool-part writes behind; session close must wait for real execution to land.
+      void runtime.trackResidencyBlockingWork(promise).catch(() => undefined);
       handles.set(normalizedToolCall.id, promise);
     },
 
@@ -335,6 +337,7 @@ async function executeDuringStream(
     model: state.model,
     toolSearch: options.toolSearch,
     automationTurn: isAutomationMutationRestrictedTurn(state),
+    automationId: state.automationId,
     offPeakTurn: isOffPeakCreateRestrictedTurn(state),
     signal: options.abortSignal,
     traceContext: options.traceContext,

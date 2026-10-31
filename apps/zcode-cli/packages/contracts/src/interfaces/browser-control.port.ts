@@ -124,6 +124,8 @@ export type BrowserCommandMethod =
   | "markDeliverable"
   | "markHandoff"
   | "nameSession"
+  | "openScope"
+  | "releaseScope"
   | "turnEnded"
   | "closeSession"
   | "cancelRequest"
@@ -372,6 +374,8 @@ export type BrowserCommand =
   | { method: "markHandoff"; tabId: string }
   | { method: "nameSession"; name: string }
   | { method: "finalize"; tabId?: string; deliverable?: boolean }
+  | { method: "openScope" }
+  | { method: "releaseScope"; closeTabs?: boolean }
   | { method: "turnEnded"; turnId?: string }
   // closeTabs: close its tabs too, including tabs released back to this session. Only for sessions that will never reclaim them (DWF subagents).
   | { method: "closeSession"; closeTabs?: boolean }
@@ -502,6 +506,7 @@ export interface BrowserRecordingJob {
 }
 
 export interface BrowserCommandResult {
+  scope?: { id: string; state: "open" | "released" | "absent" | "rejected" };
   ok: boolean;
   state?: BrowserPageState;
   snapshot?: BrowserSnapshot;

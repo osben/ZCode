@@ -1,10 +1,10 @@
 # @zcode/rpc
 
-A VS Code-style IPC communication abstraction framework. Transport-independent, type-safe, and supports bidirectional RPC and remote connections.
+VS Code 风格的 IPC 通信抽象框架。传输无关、类型安全、支持双向 RPC 和远程连接。
 
-## Architecture Overview
+## 架构总览
 
-The framework has seven layers, built from the bottom up:
+框架分 7 层，从底到顶依次构建：
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -15,16 +15,16 @@ The framework has seven layers, built from the bottom up:
 │  Layer 5: ProxyChannel                                       │
 │  fromService(service) ↔ toService(channel)                   │
 ├──────────────────────────────────────────────────────────────┤
-│  Layer 4: IPCServer (1:N) / IPCClient (1:1 bidirectional)    │
-│  Connection management, routing, multicast                    │
+│  Layer 4: IPCServer (1:N) / IPCClient (1:1 双向)             │
+│  连接管理、路由、多播                                          │
 ├──────────────────────────────────────────────────────────────┤
 │  Layer 3: ChannelServer / ChannelClient                      │
-│  Channel-based RPC (call / listen)                            │
+│  基于 Channel 的 RPC (call / listen)                          │
 ├──────────────────────────────────────────────────────────────┤
 │  Layer 2: IMessagePassingProtocol                            │
 │  send(buffer) / onMessage: Event<buffer>                     │
 ├──────────────────────────────────────────────────────────────┤
-│  Layer 1: Serialization (VQL + type tags)                     │
+│  Layer 1: Serialization (VQL + 类型标签)                      │
 │  serialize() / deserialize()                                  │
 ├──────────────────────────────────────────────────────────────┤
 │  Layer 0: Foundation                                         │
@@ -32,45 +32,45 @@ The framework has seven layers, built from the bottom up:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Each layer depends only on the one below it. Layer 3 and above are independent of the transport: Electron IPC, MessagePort, WebSocket and TCP share the same RPC code.
+**关键洞察**：每一层只依赖下面一层。Layer 3+ 完全不关心底层传输——Electron IPC、MessagePort、WebSocket、TCP 都能用同一套 RPC 代码。
 
-## File Structure
+## 文件结构
 
 ```
 packages/rpc/src/
-├── index.ts            # Unified exports
+├── index.ts            # 统一导出
 ├── foundation.ts       # Layer 0: Event, Emitter, Disposable
-├── buffer.ts           # Cross-platform binary abstraction for VSBuffer
-├── serialization.ts    # Layer 1: Binary serialization
-├── protocol.ts         # Layer 2: Message-passing protocol
+├── buffer.ts           # VSBuffer 跨平台二进制抽象
+├── serialization.ts    # Layer 1: 二进制序列化
+├── protocol.ts         # Layer 2: 消息传递协议
 ├── channels.ts         # Layer 3: Channel RPC
-├── ipc.ts              # Layer 4: Multi-connection management
-├── proxy-channel.ts    # Layer 5: Automatic service proxy
-└── remote.ts           # Layer 6: Remote connection infrastructure
+├── ipc.ts              # Layer 4: 多连接管理
+├── proxy-channel.ts    # Layer 5: 服务自动代理
+└── remote.ts           # Layer 6: 远程连接基础设施
 ```
 
 ---
 
 ## Layer 0: Foundation
 
-### Disposable — Resource Lifecycle
+### Disposable — 资源生命周期
 
 ```typescript
 import { IDisposable, toDisposable, DisposableStore } from "@zcode/rpc";
 
-// Wrap a cleanup function
+// 包装清理函数
 const d = toDisposable(() => socket.close());
 
-// Manage a group
+// 批量管理
 const store = new DisposableStore();
 store.add(subscription1);
 store.add(subscription2);
-store.dispose(); // Dispose everything at once
+store.dispose(); // 一次性清理全部
 ```
 
-### Event / Emitter — Event System
+### Event / Emitter — 事件系统
 
-`Event<T>` is a function signature: `(listener: (e: T) => void) => IDisposable`. Subscriptions return a disposable that can be used to unsubscribe.
+`Event<T>` 是一个函数签名：`(listener: (e: T) => void) => IDisposable`。订阅返回 disposable，用于取消订阅。
 
 ```typescript
 import { Emitter, Event } from "@zcode/rpc";
@@ -84,54 +84,56 @@ class FileWatcher {
   }
 }
 
-// Usage
+// 使用
 const watcher = new FileWatcher();
 const sub = watcher.onDidChange((path) => console.log("changed:", path));
-sub.dispose(); // Unsubscribe
+sub.dispose(); // 取消订阅
 ```
 
-Emitter supports lazy-initialization hooks, which are central to the framework's network efficiency:
+Emitter 支持懒初始化钩子，这是整个框架网络效率的核心：
 
 ```typescript
 const emitter = new Emitter<Data>({
   onWillAddFirstListener: () => {
-    /* Start fetching data when the first subscriber arrives. */
+    /* 第一个订阅者来了，开始拉取数据 */
   },
   onDidRemoveLastListener: () => {
-    /* Stop fetching data when the last subscriber leaves. */
+    /* 最后一个订阅者走了，停止拉取 */
   },
 });
 ```
 
-**Event utility methods**:
+**Event 工具方法**：
 
-| Method                    | Purpose                                     |
-| ------------------------- | ------------------------------------------- |
-| `Event.once(event)`       | Fires once, then unsubscribes automatically |
-| `Event.toPromise(event)`  | Converts an event to a Promise              |
-| `Event.filter(event, fn)` | Filters events                              |
-| `Event.map(event, fn)`    | Transforms event values                     |
+| 方法                      | 用途                 |
+| ------------------------- | -------------------- |
+| `Event.once(event)`       | 只触发一次，自动取消 |
+| `Event.toPromise(event)`  | 事件转 Promise       |
+| `Event.filter(event, fn)` | 过滤事件             |
+| `Event.map(event, fn)`    | 变换事件值           |
 
-### CancellationToken — Async Cancellation
+### CancellationToken — 异步取消
 
 ```typescript
 import { CancellationTokenSource } from "@zcode/rpc";
 
 const cts = new CancellationTokenSource();
 doWork(cts.token);
-cts.cancel(); // Notify listeners of cancellation
-cts.dispose(); // Release resources
+cts.cancel(); // 通知取消
+cts.dispose(); // 释放资源
 ```
 
 ---
 
 ## Layer 1: Serialization
 
-Binary serialization, with the format `[1-byte type tag] [VQL-encoded length] [data]`.
+二进制序列化，格式为 `[1 字节类型标签] [VQL 编码长度] [数据]`。
 
-Supported types: Undefined, String (UTF-8), Buffer, VSBuffer, Array (recursive), Object (JSON fallback), Int (VQL-encoded).
+支持的类型：Undefined、String (UTF-8)、Buffer、VSBuffer、Array (递归)、Object (JSON fallback)、Int (VQL 编码)。
 
-VQL (Variable-Length Quantity) encoding: small integers need only 1 byte (vs. 4 bytes in JSON), saving significant space.
+Object 内嵌的二进制字段（`Uint8Array`，包括 Node `Buffer`）按 base64 加标记编码，体积约为原始字节的 4/3，接收端还原为 `Uint8Array`。判断依据是字段的原值，不是 `JSON.stringify` 传给 replacer 的值：`Buffer` 有 `toJSON()`，会先被展开成 `{type:"Buffer",data:[...]}`。按数字数组传输时体积约为 3.6 倍，解码一个 15MB 的归档需要十几秒，超过约 28MB 时还会超出远端 WebSocket 单条消息 100MiB 的上限。
+
+VQL (Variable-Length Quantity) 编码：小整数只需 1 字节（vs JSON 的 4 字节），非常节省空间。
 
 ```typescript
 import { BufferWriter, BufferReader, serialize, deserialize } from "@zcode/rpc";
@@ -148,9 +150,9 @@ const value = deserialize(reader); // { name: 'test', count: 42, data: [1, 2, 3]
 
 ## Layer 2: Protocol
 
-### IMessagePassingProtocol — Transport Abstraction
+### IMessagePassingProtocol — 传输抽象
 
-This is the framework's key abstraction boundary. Any transport that implements this interface can use all higher-level capabilities:
+这是整个框架的关键抽象边界。任何传输只要实现这个接口，就能接入所有上层能力：
 
 ```typescript
 interface IMessagePassingProtocol {
@@ -160,31 +162,31 @@ interface IMessagePassingProtocol {
 }
 ```
 
-### Built-in Protocol Implementations
+### 内置协议实现
 
-| Implementation        | Scenario                               | Features                                                              |
-| --------------------- | -------------------------------------- | --------------------------------------------------------------------- |
-| `SocketProtocol`      | TCP / raw Socket                       | 13-byte message frame header; handles TCP coalescing/splitting        |
-| `PersistentProtocol`  | Scenarios requiring reliable transport | ACKs + replay of unacknowledged messages + heartbeat (5s) + reconnect |
-| `MessagePortProtocol` | Web Worker / Electron IPC              | No framing needed (MessagePort preserves message boundaries)          |
-| `createQueuePair()`   | Tests / in-process communication       | Returns two in-memory interconnected protocols                        |
+| 实现                  | 场景                      | 特性                                             |
+| --------------------- | ------------------------- | ------------------------------------------------ |
+| `SocketProtocol`      | TCP / 原始 Socket         | 13 字节消息帧头，处理 TCP 粘包/拆包              |
+| `PersistentProtocol`  | 需要可靠传输的场景        | ACK 确认 + 未确认消息重放 + 心跳 (5s) + 断线重连 |
+| `MessagePortProtocol` | Web Worker / Electron IPC | 无需分帧（MessagePort 天然保持消息边界）         |
+| `createQueuePair()`   | 测试 / 进程内通信         | 返回两个内存中互联的 protocol                    |
 
-### createQueuePair — Testing Utility
+### createQueuePair — 测试利器
 
 ```typescript
 import { createQueuePair } from "@zcode/rpc";
 
 const [clientProtocol, serverProtocol] = createQueuePair();
-// Data from clientProtocol.send() appears in serverProtocol.onMessage, and vice versa
+// clientProtocol.send() 的数据会出现在 serverProtocol.onMessage 中，反之亦然
 ```
 
 ---
 
 ## Layer 3: Channel RPC
 
-### Core Concepts
+### 核心概念
 
-**IChannel** (client view):
+**IChannel**（客户端视角）：
 
 ```typescript
 interface IChannel {
@@ -193,7 +195,7 @@ interface IChannel {
 }
 ```
 
-**IServerChannel** (server view):
+**IServerChannel**（服务端视角）：
 
 ```typescript
 interface IServerChannel<TContext = string> {
@@ -207,7 +209,7 @@ interface IServerChannel<TContext = string> {
 }
 ```
 
-The only difference is the `ctx` parameter, which identifies the client that made the request.
+区别只有一个 `ctx` 参数——标识请求来自哪个客户端。
 
 ### ChannelServer + ChannelClient
 
@@ -216,88 +218,95 @@ import { ChannelServer, ChannelClient, createQueuePair } from "@zcode/rpc";
 
 const [cp, sp] = createQueuePair();
 
-// Server
+// 服务端
 const server = new ChannelServer(sp, "server-ctx");
 server.registerChannel("calc", myCalculatorChannel);
 
-// Client
+// 客户端
 const client = new ChannelClient(cp);
 const calc = client.getChannel("calc");
-const result = await calc.call<number>("add", [1, 2]); // Call a method
-calc.listen<string>("onDidLog")((msg) => console.log(msg)); // Subscribe to an event
+const result = await calc.call<number>("add", [1, 2]); // 调用方法
+calc.listen<string>("onDidLog")((msg) => console.log(msg)); // 订阅事件
 ```
 
-### Message Protocol
+### 消息协议
 
 ```
-Client → Server:
-  Promise(100)       Call method
-  PromiseCancel(101) Cancel call
-  EventListen(102)   Subscribe to event
-  EventDispose(103)  Unsubscribe
+客户端 → 服务端:
+  Promise(100)       调用方法
+  PromiseCancel(101) 取消调用
+  EventListen(102)   订阅事件
+  EventDispose(103)  取消订阅
 
-Server → Client:
-  Initialize(200)      Handshake complete
-  PromiseSuccess(201)  Call succeeded
-  PromiseError(202)    Call failed (Error)
-  PromiseErrorObj(203) Call failed (non-Error)
-  EventFire(204)       Event fired
+服务端 → 客户端:
+  Initialize(200)      握手完成
+  PromiseSuccess(201)  调用成功
+  PromiseError(202)    调用失败 (Error)
+  PromiseErrorObj(203) 调用失败 (非 Error)
+  EventFire(204)       事件触发
+  EventError(205)      订阅建立失败，终结该次订阅
 ```
+
+事件订阅的失败属于请求边界。`ChannelServer` 在取得事件及绑定监听器时捕获同步错误，
+返回独立的 `EventError`，不建立活动订阅，也不让服务拒绝请求的错误退出 Host。
+`ChannelClient` 收到后释放对应事件监听器并记录频道、事件名和原因，错误不得作为
+业务事件交给监听器。调用方重新请求需创建新的订阅；失败不影响同通道的其他调用。
+旧客户端忽略未知的 `205` 响应；服务端仍不建立失败订阅，因此不会把错误伪装成正常事件。
 
 ---
 
 ## Layer 4: IPCServer / IPCClient
 
-### IPCServer — One-to-Many
+### IPCServer — 一对多
 
-One server manages multiple client connections. Supports reverse RPC (server calls client).
+一个 server 管理多个 client 连接。支持反向 RPC（server 调用 client）。
 
 ```typescript
 import { IPCServer, IPCClient, StaticRouter, createQueuePair } from "@zcode/rpc";
 
-// Server listens for connection events
+// server 监听连接事件
 const server = new IPCServer(onDidClientConnect);
 
-// Register a global service (available to all clients)
+// 注册全局服务（所有 client 都能访问）
 server.registerChannel("config", configChannel);
 
-// Reverse RPC: server calls a specific client
+// 反向 RPC：server 调用特定 client
 const windowChannel = server.getChannel(
   "windowInfo",
   new StaticRouter((ctx) => ctx === "window-1"),
 );
 const title = await windowChannel.call<string>("getTitle");
 
-// Multicast: aggregate events from all clients
+// 多播：聚合所有 client 的事件
 const allEvents = server.getChannel("notifications", () => true).listen("onNotification");
 ```
 
-### IPCClient — One-to-One, Bidirectional
+### IPCClient — 一对一双向
 
-Acts as both client and server, suitable for peer-to-peer communication:
+既是 client 又是 server，适合对等通信：
 
 ```typescript
 const ipcClient = new IPCClient(protocol, "my-client-id");
 
-// Call the remote side as a client
+// 作为 client 调用远程
 const remote = ipcClient.getChannel("service");
 
-// Register a local service as a server
+// 作为 server 注册本地服务
 ipcClient.registerChannel("localService", myChannel);
 ```
 
 ---
 
-## Layer 5: ProxyChannel
+## Layer 5: ProxyChannel ⭐
 
-ProxyChannel exposes and consumes services with zero boilerplate.
+**这是框架的杀手锏**——零样板代码暴露和消费服务。
 
-### The Problem
+### 问题
 
-Without ProxyChannel, every service needs a hand-written switch-case mapping:
+没有 ProxyChannel 时，每个服务都要手写 switch-case 映射：
 
 ```typescript
-// Repeated for every service
+// 😩 每个服务都要写一遍
 class FileServiceChannel implements IServerChannel {
   call(ctx, command, arg) {
     switch (command) {
@@ -305,53 +314,53 @@ class FileServiceChannel implements IServerChannel {
         return this.service.readFile(arg[0]);
       case "writeFile":
         return this.service.writeFile(arg[0], arg[1]);
-      // ... manually map every method
+      // ... 每个方法都要手动映射
     }
   }
 }
 ```
 
-### The Solution
+### 解决
 
 ```typescript
 import { ProxyChannel } from "@zcode/rpc";
 
-// Server: expose in one line
+// ✅ 服务端：一行暴露
 const channel = ProxyChannel.fromService(fileService);
 server.registerChannel("fs", channel);
 
-// Client: consume in one line
+// ✅ 客户端：一行消费
 const fs = ProxyChannel.toService<IFileService>(client.getChannel("fs"));
-await fs.readFile("/path"); // Just like calling a local method
-fs.onDidChangeFile((e) => console.log(e)); // Event subscription is just as transparent
+await fs.readFile("/path"); // 就像调用本地方法
+fs.onDidChangeFile((e) => console.log(e)); // 事件订阅也是透明的
 ```
 
-### Naming Convention
+### 命名约定
 
-ProxyChannel automatically distinguishes methods and events by naming convention:
+ProxyChannel 通过命名约定自动区分方法和事件：
 
-| Naming pattern           | Type                                 | Example                       |
-| ------------------------ | ------------------------------------ | ----------------------------- |
-| `onXxx` (on + uppercase) | Static event                         | `onDidChange`, `onError`      |
-| `onDynamicXxx`           | Dynamic event (method returns Event) | `onDynamicDidChangeFile(uri)` |
-| Other                    | RPC method                           | `readFile`, `writeFile`       |
+| 命名模式            | 类型                       | 示例                          |
+| ------------------- | -------------------------- | ----------------------------- |
+| `onXxx` (on + 大写) | 静态事件                   | `onDidChange`, `onError`      |
+| `onDynamicXxx`      | 动态事件（方法返回 Event） | `onDynamicDidChangeFile(uri)` |
+| 其他                | RPC 方法                   | `readFile`, `writeFile`       |
 
-### Event Buffering
+### 事件缓冲
 
-`fromService` buffers events automatically—events fired before the first subscriber arrives are not lost; the buffer is flushed when the subscription starts.
+`fromService` 会自动缓冲事件——在第一个订阅者出现之前触发的事件不会丢失，订阅时会先 flush 缓冲区。
 
 ---
 
 ## Layer 6: Remote
 
-Complete remote connection infrastructure supporting SSH, WSL, Docker, and other scenarios.
+完整的远程连接基础设施，支持 SSH、WSL、Docker 等场景。
 
-### Core Components
+### 核心组件
 
-**RemoteAuthorityResolverService** — resolves remote authorities:
+**RemoteAuthorityResolverService** — 解析远程 authority：
 
 ```typescript
-// Authority format: "type+identifier", e.g. "ssh+myserver", "wsl+Ubuntu"
+// authority 格式: "type+identifier"，如 "ssh+myserver", "wsl+Ubuntu"
 const resolver = new RemoteAuthorityResolverService();
 resolver.register("ssh", sshResolver);
 
@@ -359,7 +368,7 @@ const result = await resolver.resolve("ssh+myserver");
 // → { authority, connectTo: WebSocketRemoteConnection | ManagedRemoteConnection }
 ```
 
-**RemoteSocketFactoryService** — creates connections:
+**RemoteSocketFactoryService** — 创建连接：
 
 ```typescript
 const factory = new RemoteSocketFactoryService();
@@ -368,29 +377,29 @@ factory.register(RemoteConnectionType.WebSocket, webSocketFactory);
 const socket = await factory.connect(connectTo, path, query);
 ```
 
-**createURITransformer** — transforms URI schemes:
+**createURITransformer** — URI 方案转换：
 
 ```
-Client → Server:
+客户端 → 服务端:
   vscode-remote://ssh+myserver/home/user/file.txt → file:///home/user/file.txt
 
-Server → Client:
+服务端 → 客户端:
   file:///home/user/file.txt → vscode-remote://ssh+myserver/home/user/file.txt
 ```
 
 ### RemoteAgentConnection
 
-Manages the full lifecycle: resolve authority → create socket → wrap in PersistentProtocol → return IPCClient. Supports automatic reconnect after disconnection (exponential backoff: 0, 5, 5, 10, 10, 10, 10, 10, 30 seconds).
+完整生命周期管理：解析 authority → 创建 socket → 包装 PersistentProtocol → 返回 IPCClient。支持断线自动重连（指数退避：0, 5, 5, 10, 10, 10, 10, 10, 30 秒）。
 
 ```typescript
 const connection = new RemoteAgentConnection("ssh+myserver", resolver, socketFactory);
 const ipcClient = await connection.connect();
 
-// Use remote services transparently
+// 透明使用远程服务
 const remoteFS = ProxyChannel.toService<IFileService>(ipcClient.getChannel("filesystem"));
 await remoteFS.readFile("/remote/path");
 
-// Listen for connection status
+// 监听连接状态
 connection.onDidStateChange((state) => {
   // 'connected' | 'reconnecting' | 'disconnected'
 });
@@ -398,9 +407,9 @@ connection.onDidStateChange((state) => {
 
 ---
 
-## Typical Usage Patterns
+## 典型使用模式
 
-### Simplest Pattern: Direct RPC
+### 最简模式：直连 RPC
 
 ```typescript
 const [cp, sp] = createQueuePair();
@@ -413,53 +422,53 @@ const remote = ProxyChannel.toService<IMyService>(client.getChannel("myService")
 await remote.doSomething();
 ```
 
-### Electron Main Process ↔ Renderer Process
+### Electron 主进程 ↔ 渲染进程
 
 ```typescript
-// Main process
+// 主进程
 const protocol = new MessagePortProtocol(electronPort);
 const server = new ChannelServer(protocol, "main");
 server.registerChannel("app", ProxyChannel.fromService(appService));
 
-// Renderer process
+// 渲染进程
 const protocol = new MessagePortProtocol(electronPort);
 const client = new ChannelClient(protocol);
 const app = ProxyChannel.toService<IAppService>(client.getChannel("app"));
 ```
 
-### Multi-Window Management
+### 多窗口管理
 
-> General RPC capability note: Each ZCode workspace window owns a single Window Host. Base and remote-scoped
-> MessagePorts connect to that Host; SSH/WSL pools and Docker/Server dedicated connections are Host-internal resources,
-> and do not correspond to additional Host processes. Channels/contexts must isolate window, remoteSessionId, attachment, and workspaceKey.
+> 通用 RPC 能力说明：ZCode 的每个 workspace window 各自拥有唯一 Window Host。base 与 remote-scoped
+> MessagePort 都连接该 Host；SSH/WSL pool 和 Docker/Server dedicated connection 是 Host 内部资源，
+> 不再对应额外 Host 进程。channel/context 必须保持窗口、remoteSessionId、attachment 和 workspaceKey 隔离。
 
 ```typescript
 const server = new IPCServer(onDidWindowConnect);
 server.registerChannel("config", ProxyChannel.fromService(configService));
 
-// Send a command to a specific window
+// 向特定窗口发送命令
 const targetWindow = server.getChannel("window", (ctx) => ctx === "window-2");
 await targetWindow.call("focus");
 
-// Aggregate events from all windows
+// 聚合所有窗口的事件
 const allCloses = server.getChannel("window", () => true).listen("onDidClose");
 ```
 
 ---
 
-## Design Principles
+## 设计原则
 
-1. **Transport-independent** — `IMessagePassingProtocol` is the sole abstraction boundary; a new transport only needs to implement this interface
-2. **Lazy subscriptions** — events generate network traffic only when subscribed to (driven by Emitter hooks)
-3. **Disposable everything** — every component implements `IDisposable`, preventing resource leaks
-4. **Error propagation** — exceptions are serialized and reconstructed automatically, preserving the stack trace
-5. **Zero-boilerplate proxies** — ProxyChannel uses naming conventions + ES6 Proxy to eliminate hand-written mappings
-6. **Reliable transport** — PersistentProtocol provides ACKs + message replay + heartbeats + reconnect after disconnection
+1. **传输无关** — `IMessagePassingProtocol` 是唯一的抽象边界，新传输只需实现这个接口
+2. **懒订阅** — 事件只在有订阅者时才产生网络流量（Emitter 钩子驱动）
+3. **Disposable 一切** — 每个组件都实现 `IDisposable`，杜绝资源泄漏
+4. **错误透传** — 异常自动序列化重建，保留 stack trace
+5. **零样板代理** — ProxyChannel 利用命名约定 + ES6 Proxy，消除手写映射
+6. **可靠传输** — PersistentProtocol 提供 ACK + 消息重放 + 心跳 + 断线重连
 
-## Run Examples
+## 运行示例
 
 ```bash
-pnpm --filter @zcode/rpc demo:basic    # Basic RPC
+pnpm --filter @zcode/rpc demo:basic    # 基础 RPC
 pnpm --filter @zcode/rpc demo:proxy    # ProxyChannel
-pnpm --filter @zcode/rpc demo:remote   # Remote connection
+pnpm --filter @zcode/rpc demo:remote   # 远程连接
 ```

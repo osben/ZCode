@@ -1,3 +1,4 @@
+import { createMcpTransportFetch } from "@zcode/adapters";
 import { createConfig, resolvePath } from "@zcode/adapters/config";
 import { createNodeFileSystemAdapter } from "@zcode/adapters/fs";
 import { createLanguageServerPool } from "@zcode/adapters/lsp";
@@ -15,7 +16,7 @@ import {
   type ZCodeMcpResourceSample,
   type ZCodeMcpTelemetryEvent,
 } from "@zcode/shared";
-import type { SqliteSessionStore } from "@zcode/adapters/storage";
+import { createNodeSessionDataFiles, type SqliteSessionStore } from "@zcode/adapters/storage";
 import { traceContextToLogContext, createRootTraceContext } from "@zcode/contracts";
 import type { McpPort, ModelSelection } from "@zcode/contracts";
 import { createLspDocumentSync, type PresentationSurface } from "@zcode/core";
@@ -23,7 +24,6 @@ import type { RunZCodeProtocolAgentOptions, ZCodeAppOptions } from "./app/types.
 import { createZCodeApp } from "./app/create-app.js";
 import { createLspPreferencesStore } from "./app/lsp-preferences.js";
 import { createLspRuntimeHub, type LspRuntimeHub } from "./app/lsp-runtime-hub.js";
-import { getCliStorageRoot } from "./app/paths.js";
 import { resolveZCodePlugins } from "./plugins.js";
 import {
   createNodeReplBrowserBroker,
@@ -34,6 +34,8 @@ import {
   prepareProtocolStartupStorage,
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
+import { resolveMcpNodeFallbackProvider } from "./app/mcp-node-fallback.js";
+import { getCliStorageRoot, getProjectMemoryRoot } from "./app/paths.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 import type { AcpSessionPool } from "./acp-agent/acp-session-pool.js";
 import { createAcpWorkerAgents } from "./acp-agent/acp-worker-agents.js";
@@ -42,9 +44,14 @@ import { resolveProcessProviderEndpointRoutingPort } from "./provider-endpoint-r
 import { StartupTimer, startupNow } from "./startup-logging.js";
 import { installZCodeProtocolAiSdkWarningLogger } from "./zcode-protocol/ai-sdk-warning-logger.js";
 import {
+  createOfficialCommandAuthHeadersPort,
   createOfficialMcpAuthHeadersPort,
   type OfficialMcpAuthRequestContext,
 } from "./zcode-protocol/official-mcp-auth-port.js";
+import {
+  createOfficialCommandEndpoint,
+  type OfficialCommandEndpoint,
+} from "./official-command-endpoint/index.js";
 import {
   createOfficialMcpTrustedOriginRegistry,
   OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV,
@@ -134,6 +141,7 @@ export async function runZCodeProtocolAgent(
   let sessionStore: SqliteSessionStore | undefined;
   let serverForCleanup: ZCodeProtocolAgentServer | undefined;
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
+  let officialCommandEndpoint: OfficialCommandEndpoint | undefined;
   let mcpConnectionPool: McpConnectionPool | undefined;
   let lspRuntimeHub: LspRuntimeHub | undefined;
   let mcpPort: McpPort | undefined;
@@ -246,6 +254,21 @@ export async function runZCodeProtocolAgent(
         resolveZCodeApiOrigin,
       }),
     };
+    // Proxy endpoint for official plugin command processes (design 5.8): the CLI holds no
+    // credentials; per request the endpoint fetches identity headers from the host and forwards to
+    // zcode-server. Uses the same origin expression and network config as official MCP.
+    const endpointEnv = options.env ?? process.env;
+    officialCommandEndpoint = createOfficialCommandEndpoint({
+      resolveHeaders: createOfficialCommandAuthHeadersPort({
+        resolveContext: () => officialMcpAuthContext,
+        logger,
+      }).resolveHeaders,
+      resolveZCodeApiOrigin,
+      appVersion: endpointEnv.ZCODE_APP_VERSION?.trim() || options.version,
+      fetch: createMcpTransportFetch({ env: endpointEnv, network: configResult.config.network }),
+      logger,
+    });
+    const activeOfficialCommandEndpoint = officialCommandEndpoint;
     // MCP elicitation belongs to the protocol server's session; the pool is created before the server, so the port binds lazily.
     let elicitationServer: {
       requestMcpElicitation: McpElicitationPort["requestElicitation"];
@@ -274,6 +297,10 @@ export async function runZCodeProtocolAgent(
               noProxy: configResult.config.network.noProxy,
               caCertFile: configResult.config.network.caCertFile,
             },
+            nodeFallback: resolveMcpNodeFallbackProvider({
+              cliStorageRoot: getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
+              logger,
+            }),
             officialMcpAuth,
             telemetry: mcpTelemetryTracker,
             workingDirectory: options.cwd,
@@ -302,6 +329,7 @@ export async function runZCodeProtocolAgent(
     });
     acpSessionPool = acpAgents.pool;
     const externalAgents = acpAgents.externalAgents;
+    const protocolCliStorageRoot = getCliStorageRoot(resolvePath(configResult.config.storage.dir));
     const modelSelectionFacade = createNodeModelSelectionFacade(
       activeProviderRegistryRuntime.runtime.registryService,
     );
@@ -340,6 +368,8 @@ export async function runZCodeProtocolAgent(
               }
             : {}),
           providerEndpointRoutingPort,
+          officialCommandEnv: (sessionId, workspace) =>
+            activeOfficialCommandEndpoint.envForSession(sessionId, workspace),
           sourceTitle: "electron",
           onToolExecResource: (params) =>
             connection.send({ method: zcodeProtocolNotifications.toolExecResource, params }),
@@ -353,6 +383,13 @@ export async function runZCodeProtocolAgent(
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,
       storageRoot: resolvePath(configResult.config.storage.dir),
+      sessionDataFiles: createNodeSessionDataFiles({
+        cliStorageRoot: protocolCliStorageRoot,
+        // Same function the session runtime uses to resolve memory, so the deleted directory is
+        // exactly the one the CLI reads and writes.
+        memoryRoot: ({ workspacePath, workspaceIdentity }) =>
+          getProjectMemoryRoot(protocolCliStorageRoot, workspacePath, workspaceIdentity),
+      }),
       syncAccountProviderConfig: activeProviderRegistryRuntime.syncAccountProviderConfig,
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);
@@ -422,6 +459,12 @@ export async function runZCodeProtocolAgent(
     throw error;
   } finally {
     options.lifecycle?.requestShutdown();
+    await officialCommandEndpoint?.close().catch((error: unknown) => {
+      logger.warn("Official command endpoint close failed", {
+        error: error instanceof Error ? error.message : String(error),
+        event: "zcode_protocol.official_command_endpoint.close_failed",
+      });
+    });
     await cleanupProtocolRuntime({
       logger,
       deadlineAt: options.lifecycle?.deadlineAt,

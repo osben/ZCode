@@ -64,12 +64,57 @@ export class ProjectAccessTokenError extends Error {
   }
 }
 
+/**
+ * Request failure category confirmed by the I/O adapter; keeps only the category and HTTP
+ * status code, never carrying the raw response, URL, token, or cause.
+ * Failure-code mapping lives in docs/model-provider-project-access-token.md, "token refresh
+ * failure error codes".
+ */
+export type ProjectAccessTokenRequestFailure =
+  | { readonly kind: "network" }
+  | { readonly kind: "timeout" }
+  | { readonly kind: "http"; readonly status: number };
+
 /** Transient failure confirmed by the I/O adapter; carries no raw response, URL, token, or cause. */
 export class ProjectAccessTokenTransientError extends Error {
-  constructor() {
+  constructor(readonly failure?: ProjectAccessTokenRequestFailure) {
     super("project_token_transient_failure");
     this.name = "ProjectAccessTokenTransientError";
   }
+}
+
+/** Non-transient HTTP status (e.g. 401/403) confirmed by the I/O adapter; keeps only the
+ *  status code and does not trigger the legacy PAT fallback. */
+export class ProjectAccessTokenHttpStatusError extends Error {
+  readonly failure: ProjectAccessTokenRequestFailure;
+
+  constructor(status: number) {
+    super("project_token_http_status");
+    this.name = "ProjectAccessTokenHttpStatusError";
+    this.failure = { kind: "http", status };
+  }
+}
+
+/**
+ * Bug cause: the token-refresh catch used to collapse network, timeout, and 401/403/5xx all
+ * into project_token_request_failed, so remote feedback (ZCT-2111046389485834240) saw a single
+ * code and could not distinguish proxy/offline from an auth rejection. Here only the
+ * structured category projects onto fixed codes; a status code is not a credential, and
+ * out-of-range values still fall back to the unclassified code.
+ */
+export function projectAccessTokenRequestFailureCode(
+  failure: ProjectAccessTokenRequestFailure | undefined,
+): string {
+  if (failure?.kind === "network") return "project_token_network_error";
+  if (failure?.kind === "timeout") return "project_token_timeout";
+  if (
+    failure?.kind === "http" &&
+    Number.isInteger(failure.status) &&
+    failure.status >= 100 &&
+    failure.status <= 599
+  )
+    return `project_token_http_${failure.status}`;
+  return "project_token_request_failed";
 }
 
 interface CacheEntry {

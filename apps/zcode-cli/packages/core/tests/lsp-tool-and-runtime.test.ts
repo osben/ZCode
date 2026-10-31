@@ -7,7 +7,7 @@ import { editHandler } from "../src/tool/handlers/edit.js";
 import { readHandler } from "../src/tool/handlers/read.js";
 import { registerBuiltInTools } from "../src/tool/handlers/index.js";
 import { createToolRegistry } from "../src/tool/registry.js";
-import { createReadFileStateKey } from "../src/tool/read-file-state.js";
+import { createReadFileStatePathKey } from "../src/tool/read-file-state.js";
 import type { ReadFileStateMap, ToolExecutionContext } from "../src/tool/types.js";
 import { AgentRuntime } from "../src/runtime.js";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
@@ -259,7 +259,7 @@ describe("Write, Edit and Read hooks", () => {
     const stat = await fs.stat({ path: FILE });
     const readFileState: ReadFileStateMap = new Map([
       [
-        createReadFileStateKey(FILE, 1, undefined),
+        createReadFileStatePathKey(FILE),
         {
           path: FILE,
           content: "one\ntwo\nthree\n",

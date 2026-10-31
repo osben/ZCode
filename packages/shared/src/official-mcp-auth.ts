@@ -94,6 +94,14 @@ export const OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS = [
 export type OfficialMcpAuthPortFailureReason =
   (typeof OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS)[number];
 
+/**
+ * Consumer kind of the identity header. `mcp-server` is the official MCP (default; older agents omit the field);
+ * `plugin-command` is an official plugin's command process accessing zcode-server via the agent-side proxy endpoint (design doc 5.8).
+ */
+export const OFFICIAL_AUTH_CONSUMER_KINDS = ["mcp-server", "plugin-command"] as const;
+
+export type OfficialAuthConsumerKind = (typeof OFFICIAL_AUTH_CONSUMER_KINDS)[number];
+
 /** Complete failure categories on the MCP adapter side, including network results. Used only for status recording and logs. */
 export type OfficialMcpAuthFailureKind =
   | OfficialMcpAuthFailureReason

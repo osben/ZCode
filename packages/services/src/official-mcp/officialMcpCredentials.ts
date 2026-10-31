@@ -19,6 +19,7 @@ import {
   OFFICIAL_MCP_AUTH_HEADER_NAMES,
   getModelProviderFamilySpec,
   zcodeProviderAccountAccessSchema,
+  type OfficialAuthConsumerKind,
   type OfficialMcpAuthFailureReason,
   type ZCodeAccountAccess,
   type ZCodeProviderAccountAccess,
@@ -90,6 +91,16 @@ export function createCredentialResolvedLogKey(input: {
 }
 
 let lastCredentialResolvedLogKey: string | undefined;
+
+export interface OfficialMcpCredentialResolveOptions {
+  /**
+   * Plan-optional (plugin command process, design doc 5.8): when the selected connection has no
+   * valid plan, do not return plan_required — only the ZCode login identity, letting the server
+   * treat it as the free tier. An incomplete login state (missing MaaS JWT, cross-family) still
+   * returns unavailable; never downgrade a paying user to free.
+   */
+  planOptional?: boolean;
+}
 
 export interface OfficialMcpCredentialResolverDeps {
   accountRequestAuthService: {
@@ -283,6 +294,7 @@ function identityOnlyOutcome(identity: OfficialMcpIdentitySnapshot): OfficialMcp
  */
 export async function resolveOfficialMcpCredentials(
   deps: OfficialMcpCredentialResolverDeps,
+  options: OfficialMcpCredentialResolveOptions = {},
 ): Promise<OfficialMcpCredentialOutcome> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const identity = await readIdentitySnapshot(deps);
@@ -305,7 +317,22 @@ export async function resolveOfficialMcpCredentials(
       selectedProvider.provider.access,
     );
     const selected = resolveSelectedPlan(selectedProvider.provider, accountAccess);
-    if (!selected.ok) return selected;
+    if (!selected.ok) {
+      if (!options.planOptional || selected.reason !== "official_auth_plan_required") {
+        return selected;
+      }
+      // Plan-optional: the selected Coding Plan connection currently has no valid plan (expired,
+      // wrong type); treat it as login identity only. As with "no plan selected" above, first
+      // confirm the identity did not change during resolution.
+      const latestIdentity = await readIdentitySnapshot(deps);
+      if (
+        !latestIdentity.ok ||
+        !isSameIdentitySnapshot(identity.snapshot, latestIdentity.snapshot)
+      ) {
+        continue;
+      }
+      return identityOnlyOutcome(identity.snapshot);
+    }
 
     // The zcode JWT mirrors the global login identity; checking only selectedKey could combine a ZAI JWT with a BigModel key in one request.
     if (identity.snapshot.activeProvider !== selected.plan.providerFamily) {
@@ -418,6 +445,7 @@ export function buildOfficialMcpAuthHeaders(
 
 /** Request context passed through by the host handler; not used to select credentials. */
 export interface OfficialMcpAuthHeadersRequestContext {
+  consumer: OfficialAuthConsumerKind;
   mcpKey: string;
   pluginId: string;
   targetOrigin: string;
@@ -440,25 +468,34 @@ export function createOfficialMcpAuthHeadersResolver(deps: OfficialMcpCredential
     request?: OfficialMcpAuthHeadersRequestContext,
   ): Promise<OfficialMcpAuthHeadersOutcome>;
 } {
-  let pending: Promise<OfficialMcpAuthHeadersOutcome> | null = null;
+  // The two consumers resolve differently (plan-optional or not); merge in-flight requests per mode.
+  const pending = new Map<
+    "plan-required" | "plan-optional",
+    Promise<OfficialMcpAuthHeadersOutcome>
+  >();
 
   return {
-    // request is present only for contract alignment (the host handler has already performed trust validation; see zcodeAgentService).
+    // request only selects the resolution mode (the host handler has already done the trusted
+    // validation before this, see zcodeAgentService);
     // Credentials are global host state and are **not** bucketed by plugin/mcpKey/workspace; bucketing would weaken in-flight
-    // deduplication without adding isolation. Keep the parameter so future audits do not require another interface change.
-    resolveHeaders(_request?: OfficialMcpAuthHeadersRequestContext) {
-      if (pending) return pending;
+    // deduplication without adding isolation.
+    resolveHeaders(request?: OfficialMcpAuthHeadersRequestContext) {
+      const mode = request?.consumer === "plugin-command" ? "plan-optional" : "plan-required";
+      const existing = pending.get(mode);
+      if (existing) return existing;
       const inFlight = (async (): Promise<OfficialMcpAuthHeadersOutcome> => {
-        const outcome = await resolveOfficialMcpCredentials(deps);
+        const outcome = await resolveOfficialMcpCredentials(deps, {
+          planOptional: mode === "plan-optional",
+        });
         if (!outcome.ok) return { ok: false, reason: outcome.reason };
         return { ok: true, headers: buildOfficialMcpAuthHeaders(outcome.snapshot) };
       })();
-      pending = inFlight;
+      pending.set(mode, inFlight);
       // Use then with both handlers instead of finally: finally creates a derived Promise that also rejects,
       // and callers await only inFlight, leaving that derived Promise unhandled.
       // Clear the slot on resolution errors too, or later requests will reuse the failed Promise forever.
       const clear = (): void => {
-        if (pending === inFlight) pending = null;
+        if (pending.get(mode) === inFlight) pending.delete(mode);
       };
       inFlight.then(clear, clear);
       return inFlight;

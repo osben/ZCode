@@ -64,6 +64,7 @@ import type {
 } from "@zcode/contracts";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type { LspService } from "../lsp/service.js";
+import type { SystemReminderSource } from "../system-reminder/source.js";
 import type {
   PersistedReadFileStateMetadata,
   PersistedReadFileStateTool,
@@ -152,6 +153,8 @@ export interface ToolExecutionContext {
   telemetry?: ToolExecutionSpanWriter;
   /** Whether this tool call belongs to an automation dispatch turn; write-tool handlers use it for final permission checks. */
   automationTurn?: boolean;
+  /** The automationId of this turn injected by Host admission; the only pause target of CronPauseSelf, never taken from model input. */
+  automationId?: string;
   /** Whether this tool call belongs to an off-peak task dispatch turn; OffPeakCreate uses it for the final denial check. */
   offPeakTurn?: boolean;
   traceContext?: TraceContext;
@@ -241,11 +244,22 @@ export interface ReadFileStateEntry {
   isPartialView: boolean;
   readAt: Date;
   sourceTool?: PersistedReadFileStateTool;
+  /**
+   * The original spelling of `file_path` in the tool input; present only when it differs from path. Read permission
+   * rules match against the original string, so compaction restore evaluates deny once with it and once with path
+   * (see file restore in rewind-compact.md).
+   */
+  requestedPath?: string;
   revisionId?: string;
   mtimeMs?: number;
   sizeBytes?: number;
+  /** Written by context at session start (MEMORY.md index); in-process only, never put into tool part metadata. */
+  seededFromContext?: true;
+  /** Written from a tool part snapshot on cold resume; in-process only. Compaction orders files to restore by read time. */
+  restoredFromSession?: true;
 }
 
+/** The key is `createReadFileStatePathKey(path)`: one entry per file. */
 export type ReadFileStateMap = Map<string, ReadFileStateEntry>;
 
 // -----------------------------------------------
@@ -379,6 +393,14 @@ export interface ToolEntry extends ToolContractDeclaration {
     context: ToolInputResolutionContext,
   ) => ToolInputAdjustmentResult;
   formatModelContent?: (output: unknown) => ModelMessageContent;
+  /**
+   * Returns true when formatModelContent has already bounded the length of this output itself (for example, a failed
+   * Bash result keeps its head and tail by character count); the serializer then no longer persists or truncates
+   * such output according to resultBudget.
+   */
+  isModelContentBounded?: (output: unknown) => boolean;
+  /** A notice placed right after this batch of results once the tool batch settles; not part of tool_result (for example, the truncation note for a Read partial view). */
+  formatBatchNotice?: (output: unknown) => ToolBatchNotice | undefined;
   formatPersistedModelContent?: (
     input: ToolPersistedModelContentInput,
   ) => ModelMessageContent | undefined;
@@ -461,6 +483,11 @@ export interface ToolExecutionModelContext {
 // Execution Results
 // -----------------------------------------------
 
+export interface ToolBatchNotice {
+  source: SystemReminderSource;
+  content: string;
+}
+
 export interface ToolExecutionResult {
   toolCallId: string;
   toolName: string;
@@ -470,6 +497,12 @@ export interface ToolExecutionResult {
   followUpUserInput?: ToolExecutionFollowUpUserInput;
   display?: ToolResultDisplayPayload;
   modelContent?: ModelMessageContent;
+  /**
+   * Additional context a tool Hook gives the model; each entry is already written as
+   * `<Event>:<ToolName> hook additional context: …`. It is not part of the tool result; settlement writes each entry
+   * as a `tool_hook_context` attachment after this batch of tool results.
+   */
+  hookAdditionalContexts?: string[];
   readFileStateMetadata?: PersistedReadFileStateMetadata;
   serialization?: ToolResultSerialization;
   /** Internal performance facts aggregated by the executor; not part of model-visible Tool Output. */

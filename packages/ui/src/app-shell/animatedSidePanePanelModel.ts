@@ -1,6 +1,10 @@
 export const MIN_PREVIEW_PANE_HEAVY_CONTENT_VISIBLE_INLINE_SIZE_PX = 96;
 
+/** Official plugin opened by the built-in Sites entry in "Open tab" (it has a single surface). */
+export const SITES_PLUGIN_ID = "zcode-site@zcode-plugins-official";
+
 export type OpenTabLauncherItemId =
+  | "sites"
   | "selection-side-conversation"
   | "files"
   | "review"
@@ -15,6 +19,7 @@ export function resolveOpenTabLauncherItemIds({
   hasActiveTask,
   hasReviewTab,
   canOpenSelectionSideConversation = false,
+  canOpenSites = false,
   supportsEmbeddedBrowser = true,
 }: {
   developerToolsEnabled: boolean;
@@ -22,6 +27,7 @@ export function resolveOpenTabLauncherItemIds({
   hasActiveTask: boolean;
   hasReviewTab: boolean;
   canOpenSelectionSideConversation?: boolean;
+  canOpenSites?: boolean;
   supportsEmbeddedBrowser?: boolean;
 }): OpenTabLauncherItemId[] {
   const itemIds: OpenTabLauncherItemId[] = ["files"];
@@ -34,6 +40,11 @@ export function resolveOpenTabLauncherItemIds({
 
   if (!hasReviewTab) {
     itemIds.push("review");
+  }
+
+  // The Sites panel is the UI surface of the official zcode-site plugin; product requires it as a built-in entry before the side conversation.
+  if (canOpenSites) {
+    itemIds.push("sites");
   }
 
   if (canOpenSelectionSideConversation) {
@@ -106,14 +117,15 @@ export function shouldRenderPreviewPaneHeavyContent({
   }
 
   if (isMobileOverlay) {
-    // Bugfix: 手机远控右侧栏用 transform 抽屉滑入，首次测量时可能还在视口外。
-    // transform 动画结束不会触发 ResizeObserver，不能用桌面窄条优化延迟真实预览。
+    // Bugfix: the mobile remote-control side pane slides in as a transform drawer and may still be
+    // outside the viewport at first measurement. Transform animation end does not fire ResizeObserver,
+    // so the desktop narrow-strip optimization cannot defer the real preview here.
     return true;
   }
 
   if (isResizeSettling) {
-    // 原生 video/audio 进入 HTML fullscreen 时会触发 resize；如果此时卸载
-    // 媒体节点，浏览器会因 fullscreen 元素消失而立即退出全屏。
+    // Native video/audio entering HTML fullscreen triggers a resize; if the media node is
+    // unmounted at that moment, the browser exits fullscreen immediately because the fullscreen element is gone.
     return isMediaPreview;
   }
 

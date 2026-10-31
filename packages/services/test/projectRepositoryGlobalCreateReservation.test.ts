@@ -8,10 +8,12 @@ describe("global create reservation (projectId = null)", () => {
     const repo = port.repository(db);
     repo.saveProject({ roots: ["/sandbox"] });
     const task = { workspacePath: "/workspace/uuid", taskId: "global-ok" };
+    // The plain create result also carries the Host-allocated taskId (upstream creation receipts).
     expect(repo.reserveCreatedTask({ task, projectId: null })).toEqual({
       workspacePath: "/workspace/uuid",
       projectId: null,
       additionalDirectories: [],
+      taskId: "global-ok",
     });
     expect(db.prepare("SELECT project_id FROM tasks WHERE task_id='global-ok'").get()).toEqual({
       project_id: null,

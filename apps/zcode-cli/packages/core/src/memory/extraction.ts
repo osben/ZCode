@@ -1,5 +1,7 @@
 import type { MessageId, MessageWithParts, ToolPart } from "@zcode/contracts";
 import { DEFAULT_MEMORY_EXTRACTION_PROMPT, renderSystemPromptTemplate } from "@zcode/shared";
+import { INTERRUPT_MARKER_SOURCE } from "../agent/message-history.js";
+import { isHiddenReminderMessage } from "../runtime/helpers/conversation.js";
 import { resolveContainedMemoryFilePath } from "./memory-file-path.js";
 import { formatMemoryManifest } from "./recall/manifest.js";
 import type { MemoryManifestEntry } from "./recall/types.js";
@@ -212,9 +214,16 @@ function countMessagesAfterCursor(
   messages: readonly MessageWithParts[],
   cursor: MessageId | undefined,
 ): number {
-  if (!cursor) return messages.length;
-  const cursorIndex = messages.findIndex((message) => message.info.id === cursor);
-  return cursorIndex < 0 ? messages.length : messages.length - cursorIndex - 1;
+  const cursorIndex = cursor ? messages.findIndex((message) => message.info.id === cursor) : -1;
+  return messages.slice(cursorIndex + 1).filter(isConversationMessage).length;
+}
+
+// Cause: once announcements are persisted as hidden records, "~N messages" counted them too and overstated the conversation.
+// Count conversation messages only: hidden reminder records are skipped; interrupt markers are plain user text and still count.
+function isConversationMessage(message: MessageWithParts): boolean {
+  return (
+    !isHiddenReminderMessage(message) || message.info.semantics?.source === INTERRUPT_MARKER_SOURCE
+  );
 }
 
 function containsDirectMemoryWrite(

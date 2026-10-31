@@ -1,6 +1,7 @@
 import { fork as nodeFork, type ForkOptions } from "node:child_process";
 
 import {
+  HELPER_GHOST_CURSOR_OVERLAY_ARG,
   mintBrokerSocketPath,
   probeHelperHealth,
   type HelperHealth,
@@ -14,6 +15,8 @@ import type { WindowsCuaRuntime } from "#src/cua-permission-broker/windowsCuaDev
 
 export const CONTROL_PROTOCOL = WINDOWS_DEV_CONTROL_PROTOCOL;
 export const ADDON_ENV = HELPER_ADDON_ENV;
+/** Argv that keeps the ghost overlay always on (spec §4.9, Windows product chain aligned with macOS). */
+export const GHOST_CURSOR_OVERLAY_ARG = HELPER_GHOST_CURSOR_OVERLAY_ARG;
 
 export interface WindowsCuaChild {
   readonly pid?: number;

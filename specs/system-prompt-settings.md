@@ -309,7 +309,7 @@ keeps the pinned host and the draft. Disconnected remote hosts cannot write. `me
 ## Acceptance scenarios
 
 Unit and component tests cover the rules above. The desktop E2E scenarios are written in
-`packages/desktop/test/e2e/settings/manual-review/pending/system-prompt-settings.test.ts`:
+`packages/desktop/test/e2e/settings/system-prompt-settings.test.ts`:
 
 - SP-01 (existing): edit `cli-prefix`, save, restore, file created then deleted.
 - SP-02: the editor opens inline under the row and is focused; with a dirty draft, the dirty dot and note show,

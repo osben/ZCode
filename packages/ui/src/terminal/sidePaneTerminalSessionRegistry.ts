@@ -15,7 +15,55 @@
 
 import type { FitAddon } from "@xterm/addon-fit";
 import type { ITheme, Terminal as XTerm } from "@xterm/xterm";
+import type { ITerminalService } from "@zcode/services";
+import type { IDisposable } from "@zcode/rpc";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
+
+/** The connection binding of one PTY stays with its keep-alive entry; a proxy generation change does not recreate the terminal. */
+export function createSidePaneTerminalConnection(options: {
+  id: string;
+  service: ITerminalService;
+  onData: (data: string) => void;
+  onExit: (exitCode: number) => void;
+}) {
+  let binding: { service: ITerminalService } | undefined;
+  let subscriptions: IDisposable[] = [];
+  let disposed = false;
+  const clearSubscriptions = () => {
+    for (const subscription of subscriptions.splice(0)) subscription.dispose();
+  };
+  const rebind = (service: ITerminalService) => {
+    if (disposed || binding?.service === service) return;
+    // A mobile bridge generation change releases the old RPC. Revoke the old callbacks' generation identity before unbinding, so late output cannot leak in.
+    binding = undefined;
+    clearSubscriptions();
+    const current = { service };
+    binding = current;
+    subscriptions = [
+      service.onDynamicData(options.id)((data) => {
+        if (binding === current) options.onData(data);
+      }),
+      service.onDynamicExit(options.id)((exitCode) => {
+        if (binding === current) options.onExit(exitCode);
+      }),
+    ];
+  };
+  rebind(options.service);
+  return {
+    rebind,
+    write(data: string): Promise<void> {
+      return binding?.service.write({ id: options.id, data }) ?? Promise.resolve();
+    },
+    dispose(): Promise<void> {
+      if (disposed) return Promise.resolve();
+      disposed = true;
+      const current = binding;
+      binding = undefined;
+      clearSubscriptions();
+      return current?.service.dispose({ id: options.id }) ?? Promise.resolve();
+    },
+  };
+}
 
 /**
  * Persistent resources for one side-pane terminal session.
@@ -35,6 +83,8 @@ export interface SidePaneTerminalSessionEntry {
   profileFontFamily: string | undefined;
   profileFontIsCustom: boolean;
   profileFontIsFallback: boolean;
+  /** Holds the current connection once PTY creation completes; input, subscription and close do not capture the service proxy of a stale React effect. */
+  connection?: ReturnType<typeof createSidePaneTerminalConnection>;
   cwd: string;
   /**
    * workspaceKey for the terminal (workspaceIdentity?.trim() || workspacePath).
@@ -42,6 +92,9 @@ export interface SidePaneTerminalSessionEntry {
    * Switching workspaces does not dispose sessions; disposal occurs only when that workspace is removed from openWorkspaceKeys.
    */
   workspaceKey: string;
+  /** Reuses the existing client namespace, distinguishing same-named local directories on different devices of the mobile connection. */
+  clientNamespace: string;
+  terminalOwnerId?: string;
   hostEl: HTMLDivElement;
   /**
    * Terminal profile theme returned by terminalService.create() (the colors configured by the user).
@@ -95,16 +148,27 @@ function releaseEntry(key: string): void {
 /**
  * Module-level singleton for side-pane terminal sessions.
  *
- * It does not instantiate XTerm or call terminalService; the TerminalSession persistentKey path creates resources,
- * then registers them here. The registry only handles storage, DOM movement, and disposal, staying decoupled from the service layer.
+ * xterm and the PTY are created and registered by TerminalSession; the entry holds the injected connection binding.
+ * The registry handles storage, DOM moves and reclamation; it does not create platform services or choose the workspace execution target.
  */
 export const sidePaneTerminalSessionRegistry = {
   has(key: string): boolean {
     return sessions.has(key);
   },
 
-  get(key: string): SidePaneTerminalSessionEntry | undefined {
-    return sessions.get(key);
+  get(
+    key: string,
+    scope?: { workspaceKey: string; clientNamespace: string },
+  ): SidePaneTerminalSessionEntry | undefined {
+    const entry = sessions.get(key);
+    if (
+      scope &&
+      (entry?.workspaceKey !== scope.workspaceKey ||
+        entry.clientNamespace !== scope.clientNamespace)
+    ) {
+      return undefined;
+    }
+    return entry;
   },
 
   /** After the TerminalSession persistentKey path creates resources for the first time, store the entry in the registry for reuse. */
@@ -148,6 +212,15 @@ export const sidePaneTerminalSessionRegistry = {
   releaseByPredicate(pred: (entry: SidePaneTerminalSessionEntry) => boolean): void {
     for (const [key, entry] of sessions) {
       if (pred(entry)) {
+        releaseEntry(key);
+      }
+    }
+  },
+
+  /** Cleans up the old xterm/id once the Host owner has ended; the owner is unchanged on a same-page bridge generation change, so the entry stays alive. */
+  releaseStaleOwner(clientNamespace: string, terminalOwnerId: string | undefined): void {
+    for (const [key, entry] of sessions) {
+      if (entry.clientNamespace === clientNamespace && entry.terminalOwnerId !== terminalOwnerId) {
         releaseEntry(key);
       }
     }

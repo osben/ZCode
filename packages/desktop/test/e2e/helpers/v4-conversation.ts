@@ -6,6 +6,7 @@
 // The old helper's login/workspace/provider parts are still reused
 // (desktop-app.ts / upstream-provider.ts).
 import {
+  TID_CHAT_ERROR_DETAILS_BUTTON,
   TID_CHAT_MODE_SELECT_ITEM,
   TID_CHAT_MODE_SELECT_TRIGGER,
   TID_CHAT_SUMMARY_PANEL,
@@ -30,7 +31,6 @@ import {
   TID_V4_COMPOSER_INPUT,
   TID_V4_COMPOSER_KEEP_QUEUE_SEND,
   TID_V4_COMPOSER_SEND,
-  TID_V4_DELETE_SESSION,
   TID_V4_EDIT,
   TID_V4_EDIT_INPUT,
   TID_V4_EDIT_REWIND_WORKSPACE,
@@ -45,8 +45,6 @@ import {
   TID_V4_QUEUE_ITEM,
   TID_V4_QUEUE_PAUSED_BANNER,
   TID_V4_QUEUE_RESUME,
-  TID_V4_RENAME_INPUT,
-  TID_V4_RENAME_SUBMIT,
   TID_V4_ROW,
   TID_V4_ROW_ATTACHMENTS,
   TID_V4_SESSION_PANE,
@@ -76,6 +74,7 @@ import {
 } from "./upstream-provider.js";
 import { readV4ChatRootSnapshotInBrowser } from "./conversation-session-chat-root-snapshot-script.js";
 import { getTaskStoreSnapshot as readTaskStoreSnapshotForDiagnostics } from "./conversation-session-store.js";
+import { consumeDraftRegenerationResend } from "#e2e/helpers/draft-regeneration-resend";
 import { sel } from "./selectors.js";
 import { skipOccupationOnboardingIfPresent } from "./occupation-onboarding.js";
 
@@ -136,7 +135,7 @@ export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2E
     await ensureV4ShellReady();
   }
   if (!options.skipShellReady || options.resetDraftBeforeProvider) {
-    // Provider helper 也校验固定 cwd，必须先返回夹具项目，且不能把模型写入上一条会话。
+    // The provider helper also validates the fixed cwd; return to the fixture project first and never write the model into the previous session.
     await ensureV4PreparationDraft(options);
   }
   if (!options.skipProvider) {
@@ -176,9 +175,10 @@ async function ensureV4ShellReady() {
 }
 
 async function ensureV4PreparationDraft(options: PrepareV4ConversationE2EOptions) {
-  // Bug 根因：全局新建会创建独立 cwd；反复点击会让固定目录夹具与 Agent 工作区分离。
-  // 只按实际 cwd 复用空草稿；为补项目标签而新建会打断冷启动预热，导致首发失败。
-  // 其他 cwd 或已有内容才走项目级新建；显式全局新建 helper 保持原语义。
+  // Bug root cause: global new-task creation makes an independent cwd; repeated clicks drift the fixed-directory
+  // fixture away from the Agent workspace. Reuse an empty draft by actual cwd only; creating a new one just to
+  // backfill the project tag interrupts cold-start warmup and fails the first dispatch. Other cwds or drafts
+  // with content still go through project-level creation; the explicit global-new helper keeps its semantics.
   const ready = await browser.execute(
     (inputId, paneId, stopId, workspacePath) => {
       const pane = document.querySelector<HTMLElement>(`[data-testid="${paneId}"]`);
@@ -414,6 +414,17 @@ export async function getV4ConversationState(): Promise<V4ConversationStateSnaps
  * state).
  */
 export async function sendV4Prompt(prompt: string) {
+  const resendOnDraftRegeneration = consumeDraftRegenerationResend();
+  for (let attempt = 1; ; attempt += 1) {
+    const since = resendOnDraftRegeneration ? await readRendererNow() : 0;
+    await submitV4Prompt(prompt);
+    if (!resendOnDraftRegeneration || attempt >= DRAFT_REGENERATION_MAX_ATTEMPTS) return;
+    if (!(await isDraftRegenerationSendFailure(since))) return;
+    console.warn(`[e2e][draft-regeneration] 第 ${attempt} 次发送遇到草稿换代，按产品提示重发`);
+  }
+}
+
+async function submitV4Prompt(prompt: string) {
   await setV4ComposerText(prompt);
   const mainPaneTestId = testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID);
   try {
@@ -503,6 +514,72 @@ export async function sendV4Prompt(prompt: string) {
   if (!submitResult.submitted) {
     throw new Error(`v4 composer 没有派发 submit 事件: ${JSON.stringify(submitResult)}`);
   }
+}
+
+// First-send failure from draft regeneration (existing staging behavior, separately scheduled): after a
+// restart plus model switch, the draft's warmup session may regenerate before the first send; the product
+// reports "draft session switched, please resend" and the text falls back to the composer. All three throw
+// sites fire before prompt dispatch, so resending never double-delivers. Until the product fix lands, only
+// the one send right after restart preparation is resent per the product hint (with a cap);
+// other failures surface as usual.
+const DRAFT_REGENERATION_SEND_ERROR = "草稿会话已切换，请重新发送";
+const DRAFT_REGENERATION_MAX_ATTEMPTS = 3;
+const DRAFT_SEND_RESULT_TIMEOUT_MS = 30_000;
+
+/** Read the renderer's current clock as the start point of send funnel events "after this click". */
+function readRendererNow(): Promise<number> {
+  return browser.execute(() => Date.now());
+}
+
+async function isDraftRegenerationSendFailure(since: number): Promise<boolean> {
+  // send_click and send_result pair one-to-one; judge this send's outcome by this click's send_result.
+  // The error banner alone is not enough: a failure banner stays until the next successful send, so it cannot tell which send failed.
+  let status: string | null = null;
+  await browser
+    .waitUntil(
+      async () => {
+        status = await browser.execute((sinceMs) => {
+          type SendFunnelEvent = {
+            name: string;
+            recordedAt?: number;
+            properties?: Record<string, unknown>;
+          };
+          const events =
+            (window as Window & { __zcodeArmsCustomEventsE2E?: SendFunnelEvent[] })
+              .__zcodeArmsCustomEventsE2E ?? [];
+          const click = events.find(
+            (event) => event.name === "send_click" && (event.recordedAt ?? 0) >= sinceMs,
+          );
+          const clickId = click?.properties?.send_click_id;
+          if (!clickId) return null;
+          const result = events.find(
+            (event) => event.name === "send_result" && event.properties?.send_click_id === clickId,
+          );
+          return typeof result?.properties?.status === "string" ? result.properties.status : null;
+        }, since);
+        return status !== null;
+      },
+      { timeout: DRAFT_SEND_RESULT_TIMEOUT_MS },
+    )
+    .catch(() => undefined);
+  if (status !== "fail") return false;
+  // The banner only shows a generic "send failed"; the reason lives in the details dialog — confirm it is the regeneration error before resending.
+  const paneTestId = testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID);
+  await $(`[data-testid="${paneTestId}"] [data-testid="${TID_CHAT_ERROR_DETAILS_BUTTON}"]`).click();
+  const dialog = $('[role="dialog"]');
+  await dialog.waitForDisplayed({ timeout: 5000, timeoutMsg: "发送失败详情弹窗没有打开" });
+  const detail = await dialog.getText();
+  await browser.keys("Escape");
+  await dialog.waitForDisplayed({
+    reverse: true,
+    timeout: 5000,
+    timeoutMsg: "发送失败详情弹窗没有关闭",
+  });
+  if (!detail.includes(DRAFT_REGENERATION_SEND_ERROR)) {
+    console.warn(`[e2e][draft-regeneration] 发送失败但不是草稿换代，不重发: ${detail}`);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -1003,9 +1080,29 @@ export function getV4ComposerBackgroundWorkCounts(): Promise<{
   }, TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER);
 }
 
+/**
+ * Collect background-work evidence on failure. Distinguishes three cases: tool_use missed the fixture,
+ * a permission dialog kept the tool from starting, or the event arrived but the UI did not project it.
+ */
+export async function describeV4BackgroundFailureState(): Promise<string> {
+  const [counts, works, snapshot] = await Promise.all([
+    getV4ComposerBackgroundWorkCounts(),
+    getV4BackgroundWorks(),
+    getV4PaneSnapshot(),
+  ]);
+  return JSON.stringify({
+    canStop: snapshot.canStop,
+    composer: counts,
+    backgroundWorks: works,
+    timelineTail: snapshot.timelineText.slice(-1500),
+  });
+}
+
+/** The Electron driver does not implement WebDriver window/rect; resize the viewport via the main-process BrowserWindow. */
 export async function setV4ElectronWindowSize(width: number, height: number) {
-  // Bug 根因：外框和 renderer 内容区的差值随平台及 zoom 改变，固定误差会误报超时。
-  // 复用精确绑定当前窗口的内容区 helper，同时保留尺寸应用失败的断言。
+  // Bug root cause: the delta between the outer frame and the renderer content area varies by platform and
+  // zoom, so a fixed margin misreports timeouts. Reuse the helper that binds exactly to this window's
+  // content area, keeping the assertion for failed size application.
   await setCurrentElectronRendererContentSize(width, height);
 }
 
@@ -1131,12 +1228,54 @@ export async function clickV4BackgroundWorkCancel(workId: string) {
   }, workId);
 }
 
-/** Clicks the session delete button (the deleteSession command). */
+/** Archive via the sidebar, then permanently delete the current session from archive management. */
 export async function clickV4DeleteSession() {
-  return clickTestIdByDom(TID_V4_DELETE_SESSION, {
-    timeout: 15000,
-    timeoutMsg: "v4 删除按钮没有出现",
-  });
+  const { sessionId } = await getV4PaneSnapshot();
+  if (!sessionId || sessionId === "draft") throw new Error("删除要求已建立的会话");
+  // Reason: the Header delete entry was removed; the user-visible task lifecycle entry is the only path.
+  const row = $(`[data-testid="${TID_TASK_ITEM}-${sessionId}"]`);
+  await row.waitForDisplayed({ timeout: 15000 });
+  await row.click({ button: "right" });
+  const archive = $(
+    '//*[@role="menuitem" and (normalize-space(.)="归档任务" or normalize-space(.)="Archive task")]',
+  );
+  await archive.waitForDisplayed({ timeout: 15000 });
+  await archive.click();
+  await row.waitForExist({ reverse: true, timeout: 15000 });
+  await $('[data-testid="task-settings-button"]').click();
+  await $('[data-testid="settings-section-nav-archives"]').click();
+  // Archive management collapses groups by default; expand via the UI first — never mistake a still-collapsed task for a lost archive.
+  await $('[data-testid="archive-group-toggle"]').waitForDisplayed({ timeout: 15000 });
+  for (const toggle of await $$('[data-testid="archive-group-toggle"]')) {
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  }
+  const archived = $(`[data-testid="archive-task"][data-task-id="${sessionId}"]`);
+  await archived.waitForDisplayed({ timeout: 15000 });
+  // Run logs show: during the expand animation the row is visible but the delete button is still clipped and
+  // a native click reports not interactable. Wait for the real animation to finish and the button to become
+  // clickable, then click exactly once — no fixed pauses or repeated-click retries.
+  await browser.waitUntil(
+    () =>
+      browser.execute((id) => {
+        const task = document.querySelector(`[data-testid="archive-task"][data-task-id="${id}"]`);
+        const content = task?.closest('[data-state="open"]');
+        return (
+          Boolean(content) &&
+          content!
+            .getAnimations({ subtree: true })
+            .every((animation) => animation.playState !== "running")
+        );
+      }, sessionId),
+    { timeout: 15000, timeoutMsg: "归档分组展开动画未结束" },
+  );
+  const deleteButton = archived.$('[data-testid="archive-delete"]');
+  await deleteButton.waitForClickable({ timeout: 15000 });
+  await deleteButton.click();
+  const confirm = $('[data-testid="confirm-dialog-confirm"]');
+  await confirm.waitForDisplayed({ timeout: 15000 });
+  await confirm.click();
+  await archived.waitForExist({ reverse: true, timeout: 15000 });
+  await $('[data-testid="settings-back-button"]').click();
 }
 
 /** Reads the Composer's current mode/model selection display. */
@@ -1548,16 +1687,24 @@ export function getV4SessionTitle(): Promise<string | null> {
   }, TID_V4_SESSION_TITLE);
 }
 
-/** Writes a title into the header rename input and clicks submit (the renameSession command). */
+/** Rename via the current session's sidebar context menu. */
 export async function renameV4Session(title: string) {
-  await setInputValueByTestIdDom(TID_V4_RENAME_INPUT, title, {
-    timeout: 15000,
-    timeoutMsg: "v4 重命名输入框没有出现",
-  });
-  await clickTestIdByDom(TID_V4_RENAME_SUBMIT, {
-    timeout: 15000,
-    timeoutMsg: "v4 重命名提交按钮没有出现",
-  });
+  const { sessionId } = await getV4PaneSnapshot();
+  if (!sessionId || sessionId === "draft") throw new Error("重命名要求已建立的会话");
+  // Reason: the Header no longer offers a rename form; the sidebar menu is the current product entry.
+  const row = $(`[data-testid="${TID_TASK_ITEM}-${sessionId}"]`);
+  await row.waitForDisplayed({ timeout: 15000 });
+  await row.click({ button: "right" });
+  const rename = $(
+    '//*[@role="menuitem" and (normalize-space(.)="重命名任务" or normalize-space(.)="Rename task")]',
+  );
+  await rename.waitForDisplayed({ timeout: 15000 });
+  await rename.click();
+  const input = $('[role="dialog"] input');
+  await input.waitForDisplayed({ timeout: 15000 });
+  await input.setValue(title);
+  await input.addValue("\uE007");
+  await input.waitForExist({ reverse: true, timeout: 15000 });
 }
 
 /** Reads the input control bar: autoDrain (data-auto-drain) and followupMode (data-followup-mode). */
@@ -2408,7 +2555,7 @@ export function isV4ComposerFocused(): Promise<boolean> {
 
 /** Reads the composer attachment cards' observable filename and ready state. */
 export function getV4ComposerAttachments(): Promise<
-  Array<{ text: string; uploadStatus: string | null }>
+  Array<{ text: string; kind: string | null; uploadStatus: string | null }>
 > {
   return browser.execute(
     (attachmentPrefix) =>
@@ -2420,6 +2567,7 @@ export function getV4ComposerAttachments(): Promise<
           const mediaFilename = element.querySelector<HTMLImageElement>("img[alt]")?.alt.trim();
           return {
             text: mediaFilename || (element.innerText || element.textContent || "").trim(),
+            kind: element.getAttribute("data-composer-attachment-kind"),
             uploadStatus: element.getAttribute("data-upload-status"),
           };
         }),
@@ -2478,13 +2626,23 @@ export async function clickV4SlashOption(optionId: string) {
   return dispatched;
 }
 
-/** Switches the collaboration mode via the composer toolbar (the switchCollaborationMode command). */
+/** Switch draft permission via the Composer toolbar, explicitly confirming entry into full access. */
 export async function switchV4Mode(mode: string) {
+  const previous = mode === "yolo" ? (await getV4ModelConfig()).mode : null;
   await selectRadixOption(
     TID_CHAT_MODE_SELECT_TRIGGER,
     testId(TID_CHAT_MODE_SELECT_ITEM, mode),
     `v4 模式选择器没有出现目标模式项: ${mode}`,
   );
+  if (mode === "yolo" && previous !== "yolo") {
+    const risk = $('[data-testid="yolo-confirmation-risk"]');
+    await risk.waitForClickable();
+    await risk.click();
+    const confirm = $('[data-testid="yolo-confirmation-confirm"]');
+    await confirm.waitForClickable();
+    await confirm.click();
+    await $('[data-testid="yolo-confirmation-dialog"]').waitForDisplayed({ reverse: true });
+  }
 }
 
 /** Reads the config projection's extension anchor (data-mode / data-usage-*, M5 additive). */

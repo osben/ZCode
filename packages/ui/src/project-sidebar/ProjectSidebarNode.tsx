@@ -21,6 +21,7 @@ import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { toast } from "@/components/ui/toast.js";
 import { logger } from "@/logger.js";
+import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 
 export function runProjectAction(body: () => Promise<void>) {
   void body().catch((cause) => {
@@ -77,6 +78,11 @@ export const ProjectSidebarNode = memo(
     const tabStore = useTabStoreApi();
     const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
     const sourceServerId = projectSourceServerId(project);
+    // The local preference only controls the desktop inline label; mobile and the full identity details keep the device name.
+    const hideDeviceName = useZCodeStoreWithDefault(
+      (state) => Boolean(isDesktop) && state.hideProjectDeviceNames,
+      false,
+    );
     const { refresh, availability } = display;
     const platform = useOptionalPlatform();
     const primaryRoot = project.roots.find((root) => root.isPrimary) ?? project.roots[0];
@@ -113,10 +119,19 @@ export const ProjectSidebarNode = memo(
         {...display}
         project={project}
         remoteHost={remoteHost}
+        hideDeviceName={hideDeviceName}
         onOpenDeviceSettings={
           isDesktop && sourceServerId
             ? () => {
                 setPendingSettingsSectionIntent("remoteDevices", { sourceServerId });
+                tabStore.getState().openSettingsTab();
+              }
+            : undefined
+        }
+        onManageProjects={
+          isDesktop
+            ? () => {
+                setPendingSettingsSectionIntent("projects");
                 tabStore.getState().openSettingsTab();
               }
             : undefined

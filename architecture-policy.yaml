@@ -68,6 +68,27 @@ modules:
     roots: [apps/zcode-cli]
     managed: false
   # sqlite-migrations：由 architecture:adopt 登记
+  - id: conversation-telemetry-engine
+    roots: [packages/shared/src/conversation-telemetry]
+    managed: true
+    requires: [shared]
+    publicEntrypoints:
+      - packages/shared/src/conversation-telemetry/index.ts
+      - packages/shared/src/conversation-telemetry/contract.ts
+      - packages/shared/src/conversation-telemetry/messageTelemetry.ts
+      - packages/shared/src/conversation-telemetry/providerTelemetryIdentity.ts
+      - packages/shared/src/conversation-telemetry/remoteTelemetryEvent.ts
+    layers: { app: "." }
+    owner: conversation
+  - id: conversation-telemetry-service
+    roots: [packages/services/src/conversation-telemetry]
+    managed: true
+    requires: [shared, services, rpc, conversation-telemetry-engine]
+    publicEntrypoints:
+      - packages/services/src/conversation-telemetry/remoteConversationTelemetry.ts
+      - packages/services/src/conversation-telemetry/contract.ts
+    layers: { app: "." }
+    owner: conversation
   - id: sqlite-migrations
     roots:
       - packages/shared/src/sqlite-migrations
@@ -134,6 +155,7 @@ modules:
       - conversation-workspace-target
       - web-remote-control-ui
       - remote-connection-flow
+      - data-sync
     publicEntrypoints:
       - packages/ui/src/project-sidebar/index.tsx
       - packages/ui/src/project-sidebar/contract.ts
@@ -561,12 +583,139 @@ modules:
       - apps/zcode-cli/packages/core/src/runtime/methods/tool-result-settlement.ts
       - apps/zcode-cli/packages/core/tests/tool-result-settlement
     managed: true
-    requires: [zcode-cli]
+    requires: [zcode-cli, session-features]
     publicEntrypoints:
       - apps/zcode-cli/packages/core/src/runtime/methods/tool-result-settlement.ts
       - apps/zcode-cli/packages/core/src/runtime/tool-result-settlement/contract.ts
     layers: { app: . }
     owner: agent
+
+  # remote-input-prediction: phone remote-control input prediction (v4 wire format, Host-side switch, read-only CLI query).
+  # Spec: docs/web-remote-control/mobile-input-prediction.md.
+  - id: remote-input-prediction
+    roots:
+      - packages/shared/src/zcode-protocol-v4/input-prediction
+      - packages/services/src/zcode-agent/inputPredictionSwitch.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/input-prediction-handler.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/input-prediction-sidecar.ts
+    managed: true
+    requires: [shared, zcode-cli]
+    publicEntrypoints:
+      - packages/shared/src/zcode-protocol-v4/input-prediction/contract.ts
+      - packages/services/src/zcode-agent/inputPredictionSwitch.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/input-prediction-handler.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/input-prediction-sidecar.ts
+    layers: { app: . }
+    owner: remote
+  # remote-resident-rows-range: Host-side executor capability confirmation for read-only hot sessions (residency="resident-only") rowsRange,
+  # used for phone task list preloading; an older CLI that does not recognize this parameter is rejected directly by the Host and does not trigger cold recovery.
+  - id: remote-resident-rows-range
+    roots:
+      - packages/services/src/zcode-agent/resident-rows-range
+    managed: true
+    requires: [shared, services]
+    publicEntrypoints:
+      - packages/services/src/zcode-agent/resident-rows-range/contract.ts
+    layers: { app: . }
+    owner: remote
+  - id: tool-discovery
+    roots:
+      - apps/zcode-cli/packages/core/src/tool/search
+      - apps/zcode-cli/packages/core/src/tool/handlers/tool-search.ts
+      - apps/zcode-cli/packages/core/src/tool/handlers/deferred-tool-call.ts
+      - apps/zcode-cli/packages/contracts/src/tools/tool-search.ts
+      - apps/zcode-cli/packages/core/tests/tool-discovery
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/core/src/tool/search/contract.ts
+      - apps/zcode-cli/packages/core/src/tool/search/exposure.ts
+      - apps/zcode-cli/packages/core/src/tool/search/history.ts
+      - apps/zcode-cli/packages/core/src/tool/search/search.ts
+      - apps/zcode-cli/packages/core/src/tool/search/description.ts
+      - apps/zcode-cli/packages/core/src/tool/search/local-projection.ts
+      - apps/zcode-cli/packages/core/src/tool/handlers/tool-search.ts
+      - apps/zcode-cli/packages/core/src/tool/handlers/deferred-tool-call.ts
+      - apps/zcode-cli/packages/contracts/src/tools/tool-search.ts
+    layers: { app: . }
+    owner: agent
+  # node-repl-call-ledger: the single source of trusted facts in node_repl results (apps/zcode-cli/docs/design/v2/tool/20-node-repl-call-ledger.md)
+  - id: node-repl-call-ledger
+    roots:
+      - apps/zcode-cli/packages/node-repl-host/src/call-ledger
+      - apps/zcode-cli/packages/node-repl-host/test/call-ledger
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/node-repl-host/src/call-ledger/contract.ts
+    layers: { adapters: . }
+    owner: agent
+  - id: session-features
+    roots:
+      - apps/zcode-cli/packages/core/src/runtime/session-features
+      - apps/zcode-cli/packages/core/tests/session-features
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/core/src/runtime/session-features/contract.ts
+    layers: { app: . }
+    owner: agent
+  - id: provider-tool-rounds
+    roots:
+      - apps/zcode-cli/packages/core/src/runtime/provider-tool-rounds
+      - apps/zcode-cli/packages/core/tests/provider-tool-rounds
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/core/src/runtime/provider-tool-rounds/contract.ts
+    layers: { app: . }
+    owner: agent
+  - id: provider-builtin-tool-compat
+    roots:
+      - apps/zcode-cli/packages/adapters/src/model/provider-builtin-tool-compat
+      - apps/zcode-cli/packages/adapters/tests/provider-builtin-tool-compat
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - apps/zcode-cli/packages/adapters/src/model/provider-builtin-tool-compat/contract.ts
+    layers: { adapters: . }
+    owner: agent
+  - id: conversation-quote-context
+    roots:
+      - apps/zcode-cli/packages/core/src/runtime/conversation-quote-context
+      - apps/zcode-cli/packages/core/src/runtime/helpers/conversation-quotes.ts
+      - apps/zcode-cli/packages/core/tests/conversation-quote-context
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/core/src/runtime/conversation-quote-context/contract.ts
+      - apps/zcode-cli/packages/core/src/runtime/helpers/conversation-quotes.ts
+    layers: { domain: . }
+    owner: agent
+  - id: tool-search-comparison
+    roots:
+      - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison-contract
+      - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison.ts
+      - apps/zcode-cli/tools/prompt-trajectory/tests/tool-search-comparison
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison-contract/contract.ts
+      - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison.ts
+    layers: { domain: . }
+    owner: agent
+  - id: window-topic-resource-relay
+    roots:
+      - packages/desktop/src/host/topic-resource-relay
+      - packages/desktop/src/host/windowTopicResourceRelay.ts
+      - packages/desktop/test/topic-resource-relay
+    managed: true
+    requires: [services, shared]
+    publicEntrypoints:
+      - packages/desktop/src/host/topic-resource-relay/contract.ts
+      - packages/desktop/src/host/windowTopicResourceRelay.ts
+    layers: { adapters: . }
+    owner: desktop
   - id: channel-reply-tool
     roots:
       - apps/zcode-cli/packages/core/src/tool/channel-reply
@@ -709,6 +858,77 @@ modules:
     layers:
       app: .
     owner: desktop
+  # data-sync-service: data-sync classification service shape and local device sync status (docs/remote/data-sync.md)
+  - id: data-sync-service
+    roots:
+      - packages/services/src/data-sync
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/data-sync/index.ts
+      - packages/services/src/data-sync/contract.ts
+      - packages/services/src/data-sync/node.ts
+    layers:
+      app: .
+    owner: remote
+  # provider-provisioning-status: the data-sync page's model provider reads and retries the Main coordinator's Provisioning lane (R3 §8.3.6)
+  - id: provider-provisioning-status
+    roots:
+      - packages/services/src/provider-provisioning-status
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/provider-provisioning-status/index.ts
+      - packages/services/src/provider-provisioning-status/contract.ts
+      - packages/services/src/provider-provisioning-status/node.ts
+    layers:
+      app: .
+    owner: remote
+  # data-sync: Settings page "Data sync" and the sync dialog (docs/remote/data-sync.md)
+  - id: data-sync
+    roots:
+      - packages/ui/src/data-sync
+    managed: true
+    requires:
+      - services
+      - shared
+      - ui
+      - conversation-workspace-target
+    publicEntrypoints:
+      - packages/ui/src/data-sync/index.ts
+      - packages/ui/src/data-sync/contract.ts
+    layers:
+      contract: contract.ts
+      domain: domain
+      app: app
+      ui: .
+    layerOrder: [contract, domain, app, ui]
+    owner: remote
+  # settings-scope: Settings page Scope menu grouped by device (docs/remote/data-sync.md "Scope menu grouped by device")
+  - id: settings-scope
+    roots:
+      - packages/ui/src/settings-scope
+    managed: true
+    requires:
+      - services
+      - shared
+      - ui
+      - conversation-workspace-target
+      - workspace-config-catalog
+    publicEntrypoints:
+      - packages/ui/src/settings-scope/index.ts
+      - packages/ui/src/settings-scope/contract.ts
+    layers:
+      contract: contract.ts
+      domain: domain
+      app: app
+      ui: .
+    layerOrder: [contract, domain, app, ui]
+    owner: remote
   # side-pane-full-view: registered by architecture:adopt
   - id: side-pane-full-view
     roots:
@@ -901,6 +1121,221 @@ modules:
     layers:
       adapters: .
     owner: agent
+
+  # Release policy uses its own directory; modified files are boundary-checked by this module.
+  - id: request-security-edition
+    roots: [packages/shared/src/request-security-edition]
+    managed: true
+    requires: [shared]
+    publicEntrypoints:
+      - packages/shared/src/request-security-edition/index.ts
+      - packages/shared/src/request-security-edition/policy.ts
+      - packages/shared/src/request-security-edition/verification-policy.ts
+      - packages/shared/src/request-security-edition/contract.ts
+    layers: { adapters: . }
+    owner: request-security
+
+  # local-ttft-contract: registered by architecture:adopt
+  - id: local-ttft-contract
+    roots:
+      - packages/shared/src/local-ttft
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/local-ttft/contract.ts
+    layers:
+      contract: .
+  # local-ttft-renderer: registered by architecture:adopt
+  - id: local-ttft-renderer
+    roots:
+      - packages/ui/src/v4/telemetry/local-ttft
+    managed: true
+    requires:
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/v4/telemetry/local-ttft/contract.ts
+    layers:
+      ui: .
+  # local-ttft-desktop: registered by architecture:adopt
+  - id: local-ttft-desktop
+    roots:
+      - packages/desktop/src/renderer/src/local-ttft
+    managed: true
+    requires:
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/desktop/src/renderer/src/local-ttft/contract.ts
+    layers:
+      ui: .
+  # local-ttft-cli: registered by architecture:adopt
+  - id: local-ttft-cli
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/local-ttft
+    managed: true
+    requires:
+      - shared
+      - zcode-cli
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/local-ttft/contract.ts
+    layers:
+      adapters: .
+  # cli-official-command-endpoint: registered by architecture:adopt
+  - id: cli-official-command-endpoint
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/official-command-endpoint
+      - apps/zcode-cli/packages/bootstrap/tests/official-command-endpoint
+    managed: true
+    requires:
+      - shared
+      - zcode-cli
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/official-command-endpoint/index.ts
+      - apps/zcode-cli/packages/bootstrap/src/official-command-endpoint/contract.ts
+    layers:
+      adapters: .
+    owner: identity
+  # zcode-site-panel: the Sites panel bundled with the zcode-site plugin (MCP server + pages), registered by architecture:adopt
+  - id: zcode-site-panel
+    roots:
+      - apps/zcode-cli/packages/zcode-site-plugin/src
+    managed: true
+    requires:
+      - shared
+    publicEntrypoints:
+      - apps/zcode-cli/packages/zcode-site-plugin/src/index.ts
+      - apps/zcode-cli/packages/zcode-site-plugin/src/contract.ts
+    layers:
+      app: .
+    owner: plugin
+
+  # file-open-apps: registered by architecture:adopt
+  - id: file-open-apps
+    roots:
+      - packages/desktop/src/main/file-open-apps
+    managed: true
+    requires: [shared]
+    publicEntrypoints:
+      - packages/desktop/src/main/file-open-apps/index.ts
+      - packages/desktop/src/main/file-open-apps/contract.ts
+    layers:
+      adapters: .
+    owner: desktop
+  # ui-file-menu: registered by architecture:adopt
+  - id: ui-file-menu
+    roots:
+      - packages/ui/src/file-menu
+    managed: true
+    requires:
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/file-menu/index.ts
+      - packages/ui/src/file-menu/contract.ts
+    layers:
+      ui: .
+    owner: file-preview
+
+  # web-platform: registered by architecture:adopt
+  - id: web-platform
+    roots:
+      - packages/web/src/platform
+    managed: true
+    requires:
+      - shared
+      - ui
+      - web
+    publicEntrypoints:
+      - packages/web/src/platform/index.ts
+      - packages/web/src/platform/contract.ts
+    layers:
+      adapters: .
+    owner: web
+
+  # image-preview-editor: registered by architecture:adopt
+  - id: image-preview-editor
+    roots:
+      - packages/ui/src/image-preview-editor
+    managed: true
+    requires: [ui]
+    publicEntrypoints:
+      - packages/ui/src/image-preview-editor/index.ts
+      - packages/ui/src/image-preview-editor/contract.ts
+    layers:
+      ui: .
+    owner: conversation
+  # protocol-session-data: registered by architecture:adopt
+  - id: protocol-session-data
+    roots:
+      - packages/shared/src/zcode-protocol-v4/session-data
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/zcode-protocol-v4/session-data/index.ts
+      - packages/shared/src/zcode-protocol-v4/session-data/contract.ts
+    layers:
+      domain: .
+  # cli-session-data-files: registered by architecture:adopt
+  - id: cli-session-data-files
+    roots:
+      - apps/zcode-cli/packages/adapters/src/storage/session-data-files
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - apps/zcode-cli/packages/adapters/src/storage/session-data-files/index.ts
+      - apps/zcode-cli/packages/adapters/src/storage/session-data-files/contract.ts
+    layers:
+      adapters: .
+  # cli-session-data: registered by architecture:adopt
+  - id: cli-session-data
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-data
+    managed: true
+    requires:
+      - shared
+      - zcode-cli
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-data/index.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-data/contract.ts
+    layers:
+      app: .
+
+  - id: provider-regression
+    roots: [apps/zcode-cli/tools/provider-regression]
+    managed: true
+    requires: [zcode-cli, provider, provider-node, shared]
+    publicEntrypoints:
+      - apps/zcode-cli/tools/provider-regression/index.ts
+      - apps/zcode-cli/tools/provider-regression/contract.ts
+    layers: { adapters: . }
+    owner: agent
+  # session-lifecycle: registered by architecture:adopt
+  - id: session-lifecycle
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/session-lifecycle
+      - apps/zcode-cli/packages/bootstrap/tests/session-lifecycle
+    managed: true
+    requires: [shared]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/session-lifecycle/index.ts
+      - apps/zcode-cli/packages/bootstrap/src/session-lifecycle/contract.ts
+    layers:
+      app: .
+    owner: agent-runtime
+  # workspace-mcp-trust: registered by architecture:adopt
+  - id: workspace-mcp-trust
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/workspace-mcp-trust
+    managed: true
+    requires: [zcode-cli, shared]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/workspace-mcp-trust/index.ts
+      - apps/zcode-cli/packages/bootstrap/src/workspace-mcp-trust/contract.ts
+    layers:
+      adapters: .
+    owner: cli
+
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。
@@ -961,27 +1396,56 @@ exceptions:
       - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/external-agent-config.ts
       - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/command-inbox-creations.ts
     reason: Chat delegation to external ACP agents (specs/acp-agent-runtime.md "Chat delegation (phase 4)") adds the external-agent turn port (contract), its turn runner in core (side-effect free apart from the existing turn ports), and the bootstrap composition root (process pool and driver). The zcode-cli tree has no managed module yet; the same reasoning as acp-agent-fork-sidecar-unmanaged-files applies, so adopting apps/zcode-cli needs a separate module boundary refactor. Core keeps no import of the ACP runtime; only bootstrap binds it. S6 (agent configuration options) adds the config option contract, its non-transcript session events in core, the driver reconcile in bootstrap, and the v4 command handler with its narrow store port; none of them imports the ACP runtime outside bootstrap. The createSession wait (command-inbox-creations.ts) keeps the command inbox under the staged-size cap and imports nothing from the ACP runtime.
+  - id: session-features-attribution-header-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/adapters/src/model/runner-attribution.ts]
+    reason: The admitted attribution header builder only appends x-zcode-session-features (docs/design/v2/model/session-features-header.md); it remains the single write point for all attribution headers, with unchanged signature and module boundary. Taking over the whole adapters package is out of scope.
+  - id: session-features-workflow-command-pattern-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/methods/dynamic-workflow-activation.ts]
+    reason: The admitted dynamic workflow activation only exports the existing `/workflow` history criterion constant, so session-features history derivation reuses the same criterion; activation behavior, owner and module boundary are unchanged.
+  - id: node-repl-call-ledger-cua-bridge-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/node-repl-host/src/cua-bridge.ts]
+    reason: The admitted node_repl CUA bridge only removes the Worker-side session info construction and target app identity recording; both move to the main-thread CUA broker (apps/zcode-cli/docs/design/v2/tool/20-node-repl-call-ledger.md). Subagent rejection and model-facing behavior are unchanged; taking over the whole node-repl-host package is out of scope.
+  - id: node-repl-call-ledger-cua-broker-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/node-repl-host/src/cua-broker.ts]
+    reason: The admitted node_repl CUA broker now only accepts the per-call token issued by node-repl-call-ledger, builds session info from the ledger entry and records the target app identity in the ledger (20-node-repl-call-ledger.md "CUA broker"); MR !3207 additionally records computerUse, used for the session capability label, in the ledger after token validation (docs/design/v2/model/session-features-header.md). Runtime call and response formats are unchanged.
+  - id: node-repl-call-ledger-result-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/node-repl-host/src/result.ts]
+    reason: The admitted node_repl result assembly now takes only trusted keys from the ledger facts and ignores same-named fields in the Worker result message (20-node-repl-call-ledger.md "Result assembly"); MR !3207 appends the zcode/nodeReplBrowserUse and zcode/nodeReplComputerUse keys in the same way (docs/design/v2/model/session-features-header.md). Result content and other meta handling are unchanged.
+  - id: offpeak-expiration-codes-existing-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/off-peak/model-binding.ts]
+    reason: The admitted idle-request wrapper only reuses the shared error code check, adding the existing lifecycle notice for the 3106 run timeout; owner, control protocol and module boundary are unchanged, and it does not expand to takeover of the whole CLI runtime directory.
+  - id: multi-cursor-badge-title-passthrough-edit
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/node-repl-host/src/cua-broker.ts
+    reason: The admitted node_repl CUA broker only adds pass-through of an optional actionTitle field (node_repl cell title to badge text, docs/cua/producer/multi-session-cursor-overlay-spec.md §4.8); cua-broker injects it into the requestContext built from ledger meta and adds the field to the parseContext allowlist; signature, broker shape and module boundary are unchanged; the zcode-cli directory is not taken over.
   - id: side-pane-full-view-shortcut-command-edit
     rule: unmanaged-new-file
     paths: [packages/shared/src/shortcutCommands.ts]
     reason: The admitted shortcut command table only gains one toggleSidePaneFullView command (side pane full view, docs/ui/side-pane-full-view.md); the table stays the single source of truth with unchanged signatures and module boundaries. Adopting the whole shared package is out of scope.
+  - id: zcode-site-deploy-runtime-template
+    rule: unmanaged-new-file
+    paths:
+      [apps/zcode-cli/packages/zcode-site-plugin/skills/site-deploy/templates/static-server.mjs]
+    reason: Static site server template copied into the user's deployment package by the site-deploy skill; it is executed only by start.sh inside the Sites runner container. Repository code does not import it and it belongs to no runtime module. The start.sh template in the same directory is shell and is not covered by this rule.
   - id: opensource-cua-test-project-config
     rule: unmanaged-new-file
     paths: [packages/zcode-cua/vitest.config.ts]
     reason: 该文件只装配测试项目，开源占位版本用于保持根单测入口可运行；不包含 producer 运行逻辑，不为同目录实现文件开放例外。
-  - id: opensource-tool-search-comment-cleanup
-    rule: unmanaged-new-file
-    paths:
-      - apps/zcode-cli/packages/contracts/src/tools/tool-search.ts
-      - apps/zcode-cli/packages/core/src/tool/handlers/tool-search.ts
-    reason: 已有上游文件仅去掉两行产品对标注释；去除注释后的 TypeScript 输出与 staging 完全一致。契约、实现和模块边界不变，整目录接管不在本次开源整理范围内；后续逻辑修改须重新核对模块治理。
   - id: project-location-cache-recovery-existing-edit
     rule: unmanaged-new-file
     paths:
+      - packages/shared/src/project-access-token.ts
       - packages/shared/src/project-access-token-client.ts
       - packages/services/src/model-provider/accountProjectTokenClient.ts
       - packages/services/src/credential/credentialService.ts
-    reason: 已有项目 Token 与凭据存储增加派生缓存的局部恢复端口；保持原有 owner 和共享文件锁，不接管全目录。
+    reason: Adds a derived-cache partial recovery port to the existing project token and credential storage, and classifies token exchange request failures into fixed categories (ZCT-2111046389485834240); keeps the original owner and shared file lock, and does not take over the whole directory.
   - id: test-ids-subpath-import-unmanaged-edit
     rule: unmanaged-new-file
     paths:
@@ -989,6 +1453,14 @@ exceptions:
       - packages/ui/src/hooks/useStartPlanRecommendation.ts
       - packages/ui/src/settings/DynamicWorkflowModeSetting.tsx
     reason: 已准入的存量文件只把 TID 导入从 @zcode/shared 根入口改为 @zcode/shared/test-ids 子路径（根入口不再导出 test-ids，以收窄受影响单测范围）；行为与模块边界不变，接管 ui 目录不在本次范围内。
+  - id: remote-workspace-admission-deadline-existing-edit
+    rule: unmanaged-new-file
+    paths: [packages/desktop/src/host/remoteWorkspacePreparation.ts]
+    reason: The admitted remote project directory admission only adds a 30-second deadline and a retryable no-response error code (3.16.2 remote regression R8, docs/remote/project-first-remote-navigation-spec.md §2.4); owner, callers and module boundary are unchanged; taking over the desktop host directory is out of scope for this fix.
+  - id: gen-ui-existing-capability-check
+    rule: unmanaged-new-file
+    paths: [packages/services/src/zcode-agent/independentPlanSupport.ts]
+    reason: Adds a GenUI context capability check to the existing CLI capability query entry, so an old CLI does not silently drop state; keeps the existing services/agent boundary and does not expand this fix to takeover of the whole zcode-agent module.
   - id: connection-log-secret-token-unmanaged-edit
     rule: unmanaged-new-file
     paths: [packages/shared/src/source-server/connectionLog.ts]
@@ -997,6 +1469,14 @@ exceptions:
     rule: unmanaged-new-file
     paths: [packages/shared/src/source-server/connectionErrors.ts]
     reason: 已存在的连接错误归一化码表补一项 ECONNRESET → remote-host-unreachable，修复在线断连恢复失败被误报为预检失败；签名与模块边界不变，接管整个 shared 包不在本次修复范围内。
+  - id: remote-authentication-unsupported-presentation-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [packages/ui/src/lib/remoteConnectionPresentationErrors.ts]
+    reason: Maps the existing remote connection error display to a new public code, remote-authentication-unsupported, adding a title and a "View details" action, so a failed SSH second-factor check is no longer shown as a password check; signature and module boundary are unchanged; taking over the ui directory is out of scope for this fix.
+  - id: source-server-operation-log-level-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [packages/desktop/src/host/sourceServerOperationLogs.ts]
+    reason: The existing connection log wrapper passes through the level defined by TransportContext, so the low-glibc hint keeps warn; Host remains the only log owner; signature and module boundary are unchanged; taking over the whole desktop package is out of scope.
   - id: client-config-public-field-unmanaged-edit
     rule: unmanaged-new-file
     paths: [packages/shared/src/clientConfig.ts]
@@ -1005,6 +1485,57 @@ exceptions:
     rule: unmanaged-new-file
     paths: [apps/zcode-cli/packages/core/src/runtime/methods/turn-execution-fallback.ts]
     reason: 合并已存在于 staging 的加速卡回退模块，仅将可变 Session 读取替换为本轮固定候选；保持现有 Core 模块边界，不在同步分支时机械拆分整个 runtime。
+  - id: session-owned-workflow-shutdown-existing-files
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-submit.ts
+      - apps/zcode-cli/packages/bootstrap/src/app/workflow-driver-quiescence.ts
+    reason: Both files already exist in the integration baseline; this change adds startup/shutdown mutual exclusion and actor cleanup waiting within the existing bootstrap owner, without adding modules or cross-layer dependencies. Taking over the whole bootstrap/app is governed separately; the public lifecycle module boundary is unchanged.
+  - id: workflow-quota-auto-resume-unmanaged-file
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-quota-resume.ts]
+    reason: Auto-resume of runs stopped at the quota limit when the reset time arrives; a host module beside the run service (reads journal rows, subscribes to settlement, resumes via an injected resume). It belongs to the unmanaged zcode-cli bootstrap together with the run service files in the same directory; taking over this directory needs a separate module boundary cleanup.
+  - id: mcp-node-fallback-unmanaged-file
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/adapters/src/mcp/node-fallback.ts
+      - apps/zcode-cli/packages/bootstrap/src/app/mcp-node-fallback.ts
+    reason: stdio MCP node/npm/npx fallback under Desktop Electron Node (apps/zcode-cli/docs/design/v2/mcp-node-fallback.md). The adapters file only handles the shim directory and child process env merge, injected via CreateMcpAdapterOptions.nodeFallback; the bootstrap file only detects Electron and provides the bundled npm candidate directory. Both belong to the unmanaged zcode-cli; taking over adapters/mcp or bootstrap/app needs a separate module boundary cleanup.
+  - id: workflow-unrecognized-code-cap-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/adapters/src/model/workflow-model-failure-policy.ts]
+    reason: The admitted workflow model error policy table only adds one row (stop the run when an unrecognized business code appears 10 times in a row within the same request), a consecutive counter input and two counting pure functions; the constraint that the runner and driver read the same function and the module boundary are unchanged; taking over the adapters/model directory is out of scope.
+  - id: automation-self-pause-turn-visibility-existing-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/methods/turn-tool-visibility.ts]
+    reason: The existing turn tool visibility owner only adds the reverse visibility rule for the current automation's self-pause; no new cross-module dependency or owner is introduced; taking over the whole zcode-cli runtime is beyond the scope of this defect fix.
+  - id: compact-bundle-reminder-builder-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/methods/runtime-reminder-persistence.ts]
+    reason: The already-landed hidden reminder persistence function is split so that a separate function only builds the record, letting compaction hand the announcement, summary and attachment to the same store transaction; the record no longer writes the tools field, and the interrupt marker body is taken as plain user text. Core module boundary is unchanged; taking over the whole runtime directory is out of scope.
+  - id: tool-search-schema-key-order-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/contracts/src/tools/tool-search.ts]
+    reason: The already-landed ToolSearch input schema now goes through the shared toToolJsonSchema, so key order matches other tools, and $schema changes from draft-07 to 2020-12 accordingly; contracts module boundary is unchanged; taking over the whole tools directory is out of scope.
+  - id: tool-search-removal-reason-unmanaged-edit
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/adapters/src/model/tool-search.ts
+      - apps/zcode-cli/packages/core/src/tool/search/exposure.ts
+      - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison.ts
+    reason: The already-landed ToolSearch capability resolution, announcement rendering and offline trajectory recognition are segmented by removal reason, and the adapter declares the reminder-folding capability for the Anthropic protocol; incremental facts, persistence and module boundary are unchanged; taking over the whole zcode-cli directory is out of scope.
+  - id: interrupt-marker-unmanaged-new-file
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/methods/interrupt-marker.ts]
+    reason: The interrupt marker given to the model after a stopped turn is placed in a separate small file under runtime/methods, to avoid growing turn.ts further (it is already over the line limit); it reuses the hidden reminder persistence function (persistRuntimeReminderMessage) and history commit; Core module boundary is unchanged; taking over the whole zcode-cli directory is out of scope.
+  - id: off-peak-takeover-context-prefix-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/off-peak/turn.ts]
+    reason: The already-landed idle takeover function now rebuilds the Context Prefix for the user's model after switching, sharing rebuildContextPrefix with the guide model switch; takeover timing, ownership and Core module boundary are unchanged; taking over the whole zcode-cli directory is out of scope.
+  - id: turn-work-segment-comment-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [packages/ui/src/v4/conversationTurnRenderUnitTypes.ts]
+    reason: The already-landed render unit type only updates the workSegments field comment, so it matches the behavior of a guide that shares a segment at the same drain boundary; the type and ui module boundary are unchanged; taking over the whole v4 directory is out of scope.
   - id: shortcut-settings-existing-ui-edit
     rule: unmanaged-new-file
     paths:
@@ -1034,16 +1565,19 @@ exceptions:
     rule: disable-count
     paths: [packages/desktop/src/renderer/src/plugin-sandbox/genUiTweakRuntime.js]
     reason: Allow the control-character validation regex and the single-file parameter-control runtime.
-  - id: settings-machine-unmanaged-edit
-    rule: unmanaged-new-file
-    paths: [packages/ui/src/settings/SettingsMachine.tsx]
-    reason: Admitted upstream file edited only to remove settings notices; adopting packages/ui/src/settings needs a separate module boundary refactor.
   - id: workflow-amend-provider-boundary-unmanaged-edit
     rule: unmanaged-new-file
     paths:
       - apps/zcode-cli/packages/contracts/src/tools/amend-workflow.ts
       - apps/zcode-cli/packages/core/src/tool/handlers/amend-workflow-resolve.ts
     reason: Admitted upstream files edited only to make an own-run AmendWorkflow that brings in a new provider ask the user; adopting the zcode-cli contracts and core handlers needs a separate module boundary refactor.
+  - id: remote-device-list-unmanaged-new-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/settings/SourceServerDeviceRow.tsx
+      - packages/ui/src/settings/sourceServerDeviceList.ts
+      - packages/ui/src/lib/remoteConnectionPresentation.ts
+    reason: Settings remote device list (RDUX-13) splits the presentational row and pure ordering/search helpers out of the existing SourceServerManagementPanel, and removes the now-unused settings navigation status aggregate from the admitted presentation model; adopting packages/ui/src/settings or packages/ui/src/lib needs a separate module boundary refactor (same pattern as settings-machine-unmanaged-edit).
   - id: workflow-share-unmanaged-new-files
     rule: unmanaged-new-file
     paths:
@@ -1168,3 +1702,65 @@ exceptions:
       - packages/ui/src/settings/DynamicWorkflowModeSetting.tsx
       - packages/ui/src/store/dynamicWorkflowAvailabilityStore.ts
     reason: Admitted upstream files edited only to let the user's dynamic workflow mode choice always win and keep the settings row visible; adopting packages/shared/src and packages/ui/src needs a separate module boundary refactor.
+  - id: workflow-source-error-hint-unmanaged-edit
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/contracts/src/tools/fill-workflow-hole.ts
+    reason: Admitted upstream file edited only to rename the constant its comment refers to (CREATE_WORKFLOW_SOURCE_ERROR split into conflict and missing messages); adopting apps/zcode-cli needs a separate module boundary refactor.
+  - id: workflow-analyzer-complexity-unmanaged-edit
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-bindings.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-calls.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-functions.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-loops.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-settle.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-state.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-strands.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-order-types.ts
+      - apps/zcode-cli/packages/dynamic-workflow/src/analysis/flow-strands.ts
+    reason: Admitted upstream analyzer files edited only to stop the workflow analysis from growing much faster than the script (callback bindings, loop regions, join control, flow strands); adopting apps/zcode-cli/packages/dynamic-workflow needs a separate module boundary refactor that first breaks its 24 internal import cycles.
+  - id: off-peak-model-descriptor-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/off-peak/model-binding.ts]
+    reason: The already-landed idle Model wrapper now uses contracts' modelDescriptorOf to copy all data fields, fixing requestCapabilities being dropped by field-by-field copying; wrapper behavior and Core module boundary are unchanged; taking over the whole runtime directory is out of scope.
+  - id: workflow-draft-read-state-per-path-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/tool/handlers/workflow-draft-read-state.ts]
+    reason: The already-landed workflow draft read-state registration now goes through setReadFileStateEntry, with read state tracked as one entry per path; the draft flow and Core module boundary are unchanged; taking over the whole tool directory is out of scope.
+  - id: workflow-skill-gate-compact-read-state-comment-unmanaged-edit
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/tool/handlers/workflow-skill-gate.ts]
+    reason: The already-landed workflow skill gate only updates one comment line; after compaction the read state is reduced to only the restored files; the gate's criterion, code and Core module boundary are unchanged; taking over the whole tool directory is out of scope.
+  - id: conversation-telemetry-existing-state-machine-size
+    rule: max-file-lines
+    paths:
+      - packages/shared/src/conversation-telemetry/conversationTelemetryEngine.ts
+      - packages/shared/src/conversation-telemetry/messageTelemetry.ts
+    reason: Relocate the existing renderer state machine and builders unchanged so desktop and execution share token/step semantics; retain one lifecycle owner instead of splitting state to meet line counts.
+  - id: conversation-telemetry-existing-state-machine-lint
+    rule: disable-count
+    paths:
+      - packages/shared/src/conversation-telemetry/conversationTelemetryEngine.ts
+      - packages/shared/src/conversation-telemetry/messageTelemetry.ts
+    reason: Preserve the two original file-length annotations while relocating the existing implementation.
+  - id: host-service-telemetry-existing-file
+    rule: unmanaged-new-file
+    paths: [packages/desktop/src/host/hostServiceResourceTelemetry.ts]
+    reason: Existing main-branch registration point gains a Host-only event and capability gate; adopting the whole Host runtime is outside this telemetry change.
+  - id: request-verification-config-recovery-presentation
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/request-security-edition/errors.ts
+    reason: Adds classification and localization of config read failures to the existing official version security check display entry; state owner and module boundary are unchanged; the public errors.ts entry and its open-source placeholder implementation carry the same contract and are admitted by this exact path; taking over the whole UI security check directory is not part of this network recovery fix.
+  - id: node-repl-no-progress-hint-unmanaged-edit
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/node-repl-host/src/no-progress-guard.ts
+      - apps/zcode-cli/packages/node-repl-host/src/tool-contract.ts
+    reason: Admitted upstream node_repl host gains a self-contained no-progress hint file and a serverInfo version bump; adopting the whole node-repl-host package needs a separate module boundary refactor.
+  - id: zcode-cua-unmanaged-new-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/zcode-cua/src/**
+    reason: The whole zcode-cua producer package (broker, native adapters, tools) entered the repo after the gate timestamp as pre-existing code moved from a separate repository; adopting its internal layers needs a dedicated CONTRACT pass (it has known internal cycles by design), not a mechanical split in this branch.

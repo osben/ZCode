@@ -439,9 +439,13 @@ export function launchDynamicWorkflowRun(
     // Persist the correlation anchor with the run: after restart, the tool-card join and resume
     // notification can recover it only from dwf_run.
     ...(toolCallId === undefined ? {} : { toolCallId }),
-    // Amended resume: persist the lineage pointer (write once in createRun) and inject the import
-    // cache into the engine (plain data; no core I/O).
-    ...(resumedFrom === undefined ? {} : { resumedFrom }),
+    // Revised continuation: the lineage pointer is persisted once (written once by createRun),
+    // and the imported cache is injected into the engine (pure data, zero I/O in core).
+    // Pass lineageFrom rather than the input parameter: it doubles as the run.resumedFrom the
+    // script reads; the resume generation's input parameter is absent, so passing only that
+    // would have the script read undefined on continuation (the engine skips re-persisting when
+    // it hits an existing row, so passing it is harmless).
+    ...(lineageFrom === undefined ? {} : { resumedFrom: lineageFrom }),
     ...(importedCache === undefined ? {} : { importedCache }),
     // Usage starting point travels with the cache: the engine writes it as initial spent_tokens in
     // createRun and ignores it when reusing an existing row.
@@ -464,7 +468,7 @@ export function launchDynamicWorkflowRun(
 /**
  * Spawn strategy for the sandbox subprocess: under SEA, use the hidden subcommand to re-exec;
  * otherwise leave it unspecified (the harness default
- * `node --max-old-space-size=… <entry>`）。
+ * `node --max-old-space-size=… <entry>`).
  *
  * A SEA single-file binary does not interpret Node CLI flags. The harness's default argv includes
  * `--max-old-space-size`, which reaches the CLI's strict parseArgs unchanged and makes the child

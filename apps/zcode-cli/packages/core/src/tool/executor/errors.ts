@@ -1,6 +1,10 @@
 import { CoreErrorType, createCoreError, isCoreError } from "@zcode/contracts";
 import type { ErrorAttribution } from "@zcode/contracts";
-import { projectExecutionErrorPayload } from "../../errors/error-payload.js";
+import {
+  projectExecutionErrorPayload,
+  selectExecutionErrorMessage,
+} from "../../errors/error-payload.js";
+import { truncateMiddleForModel } from "../result-persistence-format.js";
 import type {
   ExecutableToolCall,
   ToolErrorAttribution,
@@ -38,15 +42,21 @@ export function createErrorResult(
       error.context?.reasonSource === "workflow_refine_feedback")
       ? error.context.reasonSource
       : undefined;
+  const preservesReason = reasonSource !== undefined || options?.preserveReasonFormatting === true;
   // User feedback for ExitPlanMode / workflow Refine is temporarily stored in
   // PermissionDenied.message and later passed unchanged as steer input. Do not truncate
   // it in the display summarizer, or oversized feedback will not trigger input_too_large.
   // Preserve free-form feedback attached to ordinary denials (preserveReasonFormatting)
   // unchanged for the same reason.
-  const message =
-    reasonSource !== undefined || options?.preserveReasonFormatting === true
-      ? error.message
-      : projectedError.message;
+  const message = preservesReason ? error.message : projectedError.message;
+  // Other errors reach the model as the original text of the same frame: keep newlines and
+  // truncate the middle only past 10k characters; not stored separately when equal to the summary.
+  // Fix reason: when the model received the UI summary, whitespace was collapsed and it was cut
+  // at 500 characters, losing the details of multi-line errors.
+  const errorText = preservesReason
+    ? undefined
+    : truncateMiddleForModel(selectExecutionErrorMessage(error));
+  const fullErrorText = errorText !== undefined && errorText !== message ? errorText : undefined;
   // Without the provider's terminal facts the parent model invents causes and retry plans
   // for a failed child (e.g. 405/3012 read as a concurrency limit). Stored as modelContent
   // so persistence and cold resume replay the same text the live run sent.
@@ -55,7 +65,8 @@ export function createErrorResult(
       ? formatTerminalProviderFailureFacts(attribution)
       : undefined;
   const modelContent =
-    ownModelContent ?? (providerFactsLine ? `${message}\n\n${providerFactsLine}` : undefined);
+    ownModelContent ??
+    (providerFactsLine ? `${fullErrorText ?? message}\n\n${providerFactsLine}` : fullErrorText);
   return {
     toolCallId: toolCall.id,
     toolName: toolCall.name,
@@ -102,7 +113,7 @@ function toToolErrorAttribution(
  * retryable=false, so only an explicit provider source marks it; tool or runtime errors must not be
  * labelled as provider facts. Callers branch on this structured check, never on the rendered text.
  */
-export function isTerminalProviderFailure(attribution: ToolErrorAttribution | undefined): boolean {
+function isTerminalProviderFailure(attribution: ToolErrorAttribution | undefined): boolean {
   return (
     attribution?.source === "provider" &&
     attribution.retryable === false &&

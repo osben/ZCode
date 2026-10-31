@@ -1,5 +1,5 @@
 import { PluginUiWorkspaceProvider } from "@/plugin-ui/index.js";
-/* eslint-disable max-lines -- App 当前集中编排 workspace 级状态、导航、Git 派生数据和 shell wiring；已将新增 side pane memory 桥接抽出，剩余拆分需要按 shell 边界单独重构。 */
+/* eslint-disable max-lines -- App currently orchestrates workspace-level state, navigation, Git-derived data, and shell wiring; the new side pane memory bridge has been extracted, and further splits need a dedicated refactor along shell boundaries. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } from "@zcode/shared";
@@ -136,7 +136,7 @@ export function App({
   isWindowsDesktop,
   supportsEmbeddedBrowser: explicitSupportsEmbeddedBrowser,
 }: AppProps) {
-  // 展示 label 统一从快捷键生效表取（用户改键后 tooltip 同步更新），不再硬编码键位。
+  // Display labels all come from the effective-shortcut table (tooltips update after user rebinding); no hardcoded key combos.
   const toggleSidebarShortcutLabel = useShortcutCommandLabel("toggleSidebar");
   const newTaskShortcutLabel = useShortcutCommandLabel("newTask");
   const goBackShortcutLabel = useShortcutCommandLabel("navigateBack");
@@ -150,9 +150,9 @@ export function App({
   const { intl, locale, setLocale } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
   const platform = usePlatform();
-  // 进程内存本地诊断日志：每窗口一个 60s 采样器，
-  // 经门控后写桌面主日志；Web 端无日志桥时为 no-op。同一次读数还经 preload 桥把 heap 送 main 的
-  // renderer_main 资源事件，无桥时同样 no-op。
+  // Process-memory local diagnostics: one 60s sampler per window, gated before
+  // writing to the desktop main log; no-op on Web without a log bridge. The same reading also
+  // goes through the preload bridge as a renderer_main resource event to main; no-op without a bridge.
   const reportRendererHeapSample = platform.reportRendererHeapSample;
   useEffect(() => {
     const memoryDiagnosticsLogger = startMemoryDiagnosticsLogger({
@@ -195,8 +195,8 @@ export function App({
     explicitWorkspaceIdentity,
     explicitRemoteSessionId: workspaceRemoteSessionId,
   });
-  // Settings tab 覆盖 workspace 时 active tab 不是 workspace tab。
-  // 这里必须使用 Root 传入的 workspaceIdentity 兜底，否则远程断连态会把 /home/... 当成本地 base workspace 预热。
+  // When the Settings tab covers the workspace, the active tab is not a workspace tab.
+  // The Root-provided workspaceIdentity must be the fallback here, or the remote-disconnected state would warm /home/... as the local base workspace.
   const workspaceIdentity = workspaceRpcTarget.workspaceIdentity;
   const { rpcReady: workspaceRpcReady } = useWorkspaceServicesResolution(
     workspaceAbsPath,
@@ -320,7 +320,7 @@ export function App({
     platform,
     formatMessage: intl.formatMessage,
   });
-  // 闲时任务终态/等确认通知：仅桌面本地链路，main 进程按 status:taskId 去重多窗口重复。
+  // Off-peak task terminal/pending-confirmation notifications: desktop local link only; main deduplicates multi-window repeats by status:taskId.
   useOffPeakTaskNotifications({
     offPeakTaskService: services.offPeakTaskService,
     platform,
@@ -354,15 +354,16 @@ export function App({
       return;
     }
 
-    // 新建任务只会把 activeTaskId 切到 draft，不会触发 side pane 的 workspace 级内存切换。
-    // 因此用 startDraft 递增的版本号统一收起右侧面板，覆盖按钮、菜单、快捷键和远控入口。
+    // Creating a task only switches activeTaskId to the draft; it does not trigger the side
+    // pane's workspace-level memory switch.
+    // So the startDraft-incremented version uniformly collapses the right pane, covering button, menu, shortcut, and remote-control entries.
     const sidePaneTabCount = sidePaneState?.tabs.length ?? 0;
     if (!isSidePaneCollapsed) {
       logger.info(
         `[App] 新建任务时收起右侧面板 workspace=${workspaceAbsPath} tabs=${sidePaneTabCount}`,
       );
     }
-    // scope effect 可能在同一轮更新展开态，不能用本次渲染的旧值跳过新草稿收起。
+    // A scope effect may update the expand state in the same tick; do not use this render's stale value to skip collapsing for the new draft.
     setIsSidePaneCollapsed(true);
   }, [
     draftFocusVersion,
@@ -536,8 +537,9 @@ export function App({
     gitPaneState.sourceOptions[0]?.id ??
     "unstaged";
   const gitChangeSummaryBySourceId = useMemo(() => {
-    // 关键业务逻辑：workspace header 和 Git pane 都依赖同一套来源统计，
-    // 这里先把各来源的 +/- 汇总成稳定映射，避免不同位置各自重复计算后出现展示不一致。
+    // Key business logic: the workspace header and Git pane both depend on the same per-source
+    // stats; aggregate each source's +/- into a stable map here so separate recomputation at
+    // different sites cannot diverge in display.
     return Object.fromEntries(
       gitState.sourceOptions.map((option) => {
         const dataset = gitState.datasets[option.id] ?? gitState.datasets.unstaged;
@@ -619,9 +621,9 @@ export function App({
         return;
       }
 
-      // 桌面菜单的 Cmd/Ctrl+W 会先到 main 进程。
-      // 这里在可见 workspace 层拦下请求，确保右侧 side pane 打开时关闭的是 active tab，
-      // 而不是让 Root fallback 继续关闭整个窗口。
+      // The desktop menu's Cmd/Ctrl+W reaches the main process first.
+      // Intercept the request at the visible-workspace layer so that, with the right side pane
+      // open, it closes the active tab instead of letting the Root fallback close the whole window.
       event.preventDefault();
       handleCloseSidePaneTab(activeTab.id);
     };
@@ -635,12 +637,14 @@ export function App({
     };
   }, [handleCloseSidePaneTab, isSidePaneCollapsed, isWorkspaceVisible, sidePaneState]);
   const handleToggleSidePane = useCallback(() => {
-    // 交互说明：toggle panel 只改变右侧容器显隐，不隐式创建或切换任何 tab。
-    // 之前无 tab 时会按 diff/browser 兜底自动开内容，导致用户只是想打开 side pane
-    // 却得到一个新 Browser 或 Review。现在空内容统一交给 Open tab 空态承接。
+    // Interaction note: toggling the panel only changes the right container's visibility; it
+    // never implicitly creates or switches any tab.
+    // Previously, with no tab it would auto-open diff/browser fallback content, so a user who
+    // just wanted the side pane got a new Browser or Review instead. Empty content now goes to
+    // the Open tab's empty state.
     handleToggleSidePaneCollapse();
   }, [handleToggleSidePaneCollapse]);
-  // Side Pane 完整视图只在桌面端提供（docs/ui/side-pane-full-view.md）。
+  // Side Pane full view is desktop-only (docs/ui/side-pane-full-view.md).
   const supportsSidePaneFullView = Boolean(isDesktop) && !webRemoteControlWorkspaceSwitcher;
   const sidePaneFullView = useSidePaneFullView({
     workspacePath: workspaceAbsPath,
@@ -650,7 +654,7 @@ export function App({
     enabled: supportsSidePaneFullView,
   });
   const handleToggleSidePaneFullView = useCallback(() => {
-    // 面板关闭时快捷键先打开面板再进入完整视图；记录先写入，面板展开后即生效。
+    // When the panel is closed, the shortcut opens the panel then enters full view; the record is written first so it takes effect once the panel expands.
     if (!sidePaneFullView.fullView && !isSidePaneOpen) {
       handleToggleSidePaneCollapse();
       sidePaneFullView.enter();
@@ -715,8 +719,9 @@ export function App({
   );
   const projectName = getPathLeaf(workspaceAbsPath);
   const handleOpenTaskFind = useCallback(() => {
-    // Cmd/Ctrl+F 语义是“查找对话”，之前误复用了 Cmd/Ctrl+P 的文件搜索入口，
-    // 导致用户在 quick pick 里点 Find 或按快捷键时会跳到打开文件。这里拆成独立状态，避免影响文件搜索链路。
+    // Cmd/Ctrl+F means "find in conversation"; it previously reused Cmd/Ctrl+P's file-search
+    // entry, so clicking Find in the quick pick or pressing the shortcut jumped to open-file.
+    // Split into independent state here to keep the file-search path unaffected.
     runVisibleWorkspaceCommand(() => {
       setTaskFindFocusRequestId((requestId) => requestId + 1);
       setIsTaskFindOpen(true);
@@ -735,16 +740,20 @@ export function App({
     setConversationFindState((state) => changeTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleConversationFindNavigate = useCallback((query: string, activeIndex: number) => {
-    // 单命中时上/下/Enter 都会回到同一 index；独立版本确保重复导航仍触发滚动。
+    // With a single hit, up/down/Enter all return to the same index; a separate version ensures repeated navigation still triggers scrolling.
     setConversationFindState((state) => navigateTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleConversationFindMatchStateChange = useCallback(
     (state: ConversationFindMatchState) => {
       setConversationFindMatchCount(state.matchCount);
       if (state.activeIndex !== undefined) {
-        setConversationFindState((current) =>
-          changeTaskFindSelection(current, current.query, state.activeIndex ?? -1),
-        );
+        setConversationFindState((current) => {
+          const activeIndex = state.activeIndex ?? -1;
+          // The message index repeatedly reports the same hit across streaming frames; a passive report carries no navigation intent and must not update the whole App.
+          return current.activeIndex === activeIndex
+            ? current
+            : changeTaskFindSelection(current, current.query, activeIndex);
+        });
       }
     },
     [],
@@ -768,7 +777,7 @@ export function App({
     setFileChangeFindState((state) => changeTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleFileChangeFindNavigate = useCallback((query: string, activeIndex: number) => {
-    // 文件变更范围也可能只有一个命中；重复导航必须重新展开并聚焦同一处。
+    // The file-change scope can also have a single hit; repeated navigation must re-expand and re-focus the same spot.
     setFileChangeFindState((state) => navigateTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleOpenQuickPick = useCallback(() => {
@@ -782,8 +791,8 @@ export function App({
   }, [platform]);
 
   useEffect(() => {
-    // 内置反馈中心合并了"提交反馈 / 我的反馈"两个 Tab，
-    // 老的 OpenTicketsPanel IPC 仍然兼容（直接打开列表），未来如果还需要单独入口可以复用。
+    // The built-in feedback center merged the "Submit feedback / My feedback" tabs;
+    // the old OpenTicketsPanel IPC stays compatible (opens the list directly) and can be reused if a separate entry is ever needed again.
     const disposeFeedbackDialog = platform.onOpenFeedbackDialog?.(() => {
       openFeedbackSubmit();
     });
@@ -838,13 +847,16 @@ export function App({
         workspaces: store.workspaces,
       });
 
-      // 空态里的 workspace 选择器要表达"在这个项目里开始工作"，
-      // 目标 workspace 如果已经记住了自己的 Agent，切过去后应当继续沿用那份选择；
-      // 只有首次进入、还没建立 workspace UI 状态时，才继承当前空态里正在看的 Agent。
-      // 否则来回切项目时会把目标项目刚用过的 Agent 覆盖掉，看起来就像“总是重置成默认值”。
-      // 另外 Home 这类固定入口并不保证已经存在于 tab 列表里，之前直接 activateTabByPath 会静默失败，
-      // 看起来就像"点了没反应"。这里先确保目标 workspace 已打开，再把当前空态的 provider 一并传给 startDraft，
-      // 保证首次进入的新 workspace 也能继续沿用当前上下文。
+      // The empty-state workspace selector expresses "start working in this project".
+      // If the target workspace already remembers its own Agent, switching to it should keep
+      // that choice; only on first entry, before any workspace UI state exists, does it inherit
+      // the Agent currently viewed in this empty state.
+      // Otherwise, switching projects back and forth would overwrite the Agent the target just
+      // used, looking like "always resets to the default".
+      // Also, fixed entries like Home are not guaranteed to exist in the tab list; calling
+      // activateTabByPath directly used to fail silently, looking like "clicking does nothing".
+      // Ensure the target workspace is open first, then pass the current empty state's provider
+      // to startDraft so a first-entry workspace also keeps the current context.
       const targetTabOptions =
         resolvedTargetWorkspaceIdentity || targetWorkspacePurpose
           ? {
@@ -855,7 +867,7 @@ export function App({
             }
           : undefined;
       if (targetWorkspacePurpose) {
-        // purpose 是分类元数据；即使 tab 已存在也要合并，避免首次从项目解绑时被默认成 project。
+        // purpose is classification metadata; merge it even when the tab exists, so the first unbind from a project is not defaulted to project.
         addTab(targetWorkspacePath, targetTabOptions);
       } else if (
         !activateTabByPath(
@@ -868,9 +880,10 @@ export function App({
         addTab(targetWorkspacePath, targetTabOptions);
       }
       if (!webRemoteControlWorkspaceSwitcher) {
-        // 修复原因：workspace 行“新建对话”以前由叶子组件直接 activateTab + startDraft，
-        // 没有退出重启恢复的 workbench group/pane。group primary binding 因而仍可覆盖草稿。
-        // desktop 所有显式新建入口统一先回到单 primary pane；手机 /remote 不消费这份本地布局。
+        // Root cause: the workspace row's "new conversation" used to call activateTab +
+        // startDraft directly from a leaf component, with no quit-restart-restorable workbench
+        // group/pane. The group primary binding could therefore still override the draft.
+        // All explicit desktop new-task entries now return to a single primary pane first; mobile /remote does not consume this local layout.
         useWorkbenchGroupStore.getState().deactivateActiveGroup();
         usePaneLayoutStore.getState().resetToPrimaryPane();
       }
@@ -986,7 +999,7 @@ export function App({
     setOpenAutomationId(null);
     setOpenAutomationTab(null);
   }, []);
-  // 中枢深链（「已保存」芯片 → 那个工作流的详情页）：中枢定位后由它回调清空。
+  // Hub deep link (the "Saved" chip → that workflow's detail page): cleared by its callback once the hub locates it.
   const [openWorkflow, setOpenWorkflow] = useState<SavedWorkflowsOpenTarget | null>(null);
   const handleOpenWorkflowConsumed = useCallback(() => setOpenWorkflow(null), []);
   const {
@@ -1008,9 +1021,10 @@ export function App({
     onNavigateToAutomations: handleNavigateToAutomationsMain,
     onNavigateToPluginStore: handleNavigateToPluginStoreMain,
   });
-  // 完成卡「已保存」芯片的落点（docs/dynamic-workflow/transcript-and-notifications.md「Saving the
-  // run, and running it again」）：走「自动化」入口的同一条导航（进历史、切主视图），落在「工作流」
-  // 标签，再由深链把中枢定位到那一页。项目档按 workspaceKey 找组，全局档只要名字。
+  // Landing spot for the completion card's "Saved" chip (docs/dynamic-workflow/transcript-and-notifications.md,
+  // "Saving the run, and running it again"): follows the same navigation as the "Automations"
+  // entry (enter history, switch main view), lands on the "Workflows" tab, and the deep link then
+  // locates the hub to that page. Project-scoped entries find the group by workspaceKey; global ones need only the name.
   const handleOpenSavedWorkflowInHub = useCallback(
     (target: SavedWorkflowHubTarget) => {
       setOpenWorkflow(
@@ -1054,7 +1068,7 @@ export function App({
   );
   const handleOpenPluginStoreForScope = useCallback(
     (_target: PluginStoreOpenTarget = {}) => {
-      // 管理范围由市场内视图持有，重复打开只重置市场导航。
+      // The management scope is held by the in-market view; reopening only resets market navigation.
       if (workspaceMainView === "plugin-store") {
         setPluginStoreOpenVersion((version) => version + 1);
         return;
@@ -1074,8 +1088,9 @@ export function App({
         const workspaceState = sessionState.getWorkspaceState(workspaceAbsPath, workspaceIdentity);
         const fallbackTaskIds = getVisibleTaskMetas(workspaceState).map((task) => task.taskId);
         const taskQueryCacheState = useTaskQueryCacheStore.getState();
-        // 性能修复：task meta 在恢复和流式事件期间会高频写入 query cache。
-        // 上/下一个会话只在快捷键触发时需要最新快照，不能让 App 订阅整个 cache 后带动 shell 重渲染。
+        // Performance fix: task meta writes to the query cache at high frequency during recovery
+        // and streaming events. Next/previous conversation needs a fresh snapshot only when the
+        // shortcut fires — the App must not subscribe to the whole cache and drag the shell into re-rendering.
         const quickPickConversationNavigation = resolveQuickPickConversationNavigation({
           taskIds: selectQuickPickConversationTaskIds({
             workspacePath: workspaceAbsPath,
@@ -1118,14 +1133,14 @@ export function App({
 
   useAppKeyboard({
     openCommandCenter: handleOpenQuickPick,
-    // 打开设置页：与设置入口按钮共用 tabStore.openSettingsTab；默认 ⌘,/Ctrl+,（系统惯例）
+    // Open settings: shares tabStore.openSettingsTab with the settings entry button; default ⌘,/Ctrl+, (system convention).
     openSettings: openSettingsTab,
     findInTask: handleOpenTaskFind,
     toggleSidebar: () => runVisibleWorkspaceCommand(handleToggleSidebar),
     switchTheme: handleSwitchTheme,
     toggleTerminal: () => runVisibleWorkspaceCommand(handleToggleTerminalIfWritable),
-    // ⌥⌘B 与 header 最右侧按钮共用同一条 toggle 入口，
-    // 避免快捷键和按钮行为漂移；空面板的展示统一由 Open tab 空态承接。
+    // ⌥⌘B shares the same toggle entry as the header's rightmost button,
+    // avoiding drift between shortcut and button behavior; an empty panel is presented by the Open tab's empty state.
     toggleSidePane: () => runVisibleWorkspaceCommand(handleToggleSidePane),
     toggleSidePaneFullView: supportsSidePaneFullView
       ? () => runVisibleWorkspaceCommand(handleToggleSidePaneFullView)
@@ -1170,8 +1185,8 @@ export function App({
         canOpenCommunity: canOpenCommunityFromQuickPick,
         isSidebarVisible,
         supportsEmbeddedBrowser,
-        // quick pick 命令只关心登录态布尔值。
-        // 如果依赖完整 user 对象，auth store 返回等价新引用时会重建整组 command/run 闭包。
+        // Quick pick commands only care about the logged-in boolean.
+        // Depending on the full user object would rebuild the whole command/run closure set whenever the auth store returns an equal-but-new reference.
         isLoggedIn,
         themeTarget,
         themeMode: theme,
@@ -1305,8 +1320,9 @@ export function App({
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />
-      {/* Bugfix: 反馈是应用级能力，必须固定走本机 base host；SSH session 连接中或断开时，
-          workspace-scoped services 会切成断连代理，不能让反馈提交跟随远程 session 失效。 */}
+      {/* Bugfix: feedback is an app-level capability and must always go through the local base
+          host; while an SSH session is connecting or disconnected, workspace-scoped services
+          switch to disconnected proxies, and feedback submission must not fail along with the remote session. */}
       <FeedbackHost feedbackService={baseFeedbackService} platform={platform} />
       <PluginUiWorkspaceProvider onOpenSidePane={handleOpenPluginUi}>
         <WorkspaceShellLayout
@@ -1475,7 +1491,7 @@ export function App({
           handleBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
           setIsTerminalOpen={setIsTerminalOpen}
           setGitSelectedSourceId={setGitSelectedSourceId}
-          // taskFindDialogProps 是对象 prop，内联创建会让 shell 在流式刷新中每轮都看到新引用。
+          // taskFindDialogProps is an object prop; creating it inline would give the shell a new reference on every streaming refresh.
           taskFindDialogProps={taskFindDialogProps}
         />
       </PluginUiWorkspaceProvider>

@@ -27,7 +27,7 @@ import {
 } from "../src/fs/index.js";
 
 const execFile = promisify(execFileCallback);
-// Bugfix: 这些测试可能从仓库根或 apps/zcode-cli 子工程启动；fixture 路径必须绑定到当前测试文件位置。
+// Bugfix: these tests may run from the repo root or the apps/zcode-cli sub-workspace; fixture paths must be anchored to this test file's location.
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const GB2312_FIXTURE_PATH = join(TEST_DIR, "..", "..", "..", "tests", "gb2312.js");
 const GB2312_THIS_IS_BYTES = Buffer.from([0xd5, 0xe2, 0xca, 0xc7]);
@@ -868,7 +868,8 @@ describe("Node file and context adapters", () => {
 
       expect(snapshot.envInfo.cwd).toBe(dir);
       expect(snapshot.envInfo.shell).toBe("zsh");
-      expect(snapshot.envInfo.isGitRepository).toBe(false);
+      // A .git directory means repository, the same fact as the project root; the old git-process-based check treated an empty .git as "not a repository".
+      expect(snapshot.envInfo.isGitRepository).toBe(true);
       expect(snapshot.userInstructions?.content).toBe("project instructions");
       expect(snapshot.projectContext).toMatchObject({
         type: "node",
@@ -1115,6 +1116,55 @@ describe("Node file and context adapters", () => {
       expect(statusText).toContain('run "git status" using Bash');
       expect(statusText).not.toContain("git status truncated after 20 entries");
       expect(statusText.length).toBeGreaterThan(2000);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("reads the unborn branch from a nested working directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-context-git-unborn-"));
+    const adapter = createNodeContextSourceAdapter();
+    try {
+      await runGit(dir, ["init"]);
+      await runGit(dir, ["checkout", "-B", "topic/no-commits"]);
+      const nested = join(dir, "nested");
+      await mkdir(nested);
+      const snapshot = await adapter.resolveContextSources({ workingDirectory: nested });
+      expect(snapshot.envInfo.gitBranch).toBe("topic/no-commits");
+      expect(snapshot.envInfo.recentCommits).toEqual([]);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("reads an unborn branch in a linked worktree instead of the parent repository HEAD", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-context-git-worktree-"));
+    const adapter = createNodeContextSourceAdapter();
+    try {
+      await runGit(dir, ["init"]);
+      await runGit(dir, ["checkout", "-B", "main"]);
+      await runGit(dir, [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ]);
+      const worktree = join(dir, "linked");
+      await runGit(dir, ["worktree", "add", "-b", "topic/worktree", worktree]);
+      // The linked worktree is on a branch with no commits yet: rev-parse --abbrev-ref HEAD
+      // exits 128 there and falls back to HEAD; only symbolic-ref, which reads this worktree's
+      // symbolic ref, yields the branch name.
+      // The parent repository is still on main with commits; the result must not be the parent's HEAD.
+      await runGit(worktree, ["checkout", "--orphan", "topic/unborn-worktree"]);
+      const snapshot = await adapter.resolveContextSources({ workingDirectory: worktree });
+      expect(snapshot.envInfo.gitBranch).toBe("topic/unborn-worktree");
+      expect(snapshot.envInfo.recentCommits).toEqual([]);
     } finally {
       await rm(dir, { force: true, recursive: true });
     }

@@ -1,14 +1,10 @@
-# Tool Calling Loop Implementation Plan
+# Tool Calling Loop 实现计划
 
-> Model anomaly fallbacks and tool call counting policy: see [`model-anomaly-fallbacks.md`](./model-anomaly-fallbacks.md).
-> ZCode targets long-running tasks, so the tool call count has no hard stop condition. Context/token
-> limits trigger auto compact; provider context overflow triggers reactive compact.
+> 模型异常兜底和 tool call 计数策略见 [`model-anomaly-fallbacks.md`](./model-anomaly-fallbacks.md)。ZCode 面向长程任务，tool call 数量不设硬停止条件；context/token limit 触发 auto compact，provider context overflow 触发 reactive compact。
 
-## Core loop
+## 核心循环
 
-> Steering semantics for input sent while a turn runs: see [`turn-steering.md`](./turn-steering.md).
-> Pending input may only be drained at the next model request boundary after tool results are injected,
-> never between the assistant tool calls and their tool results.
+> 运行中继续输入的 steering 语义见 [`turn-steering.md`](./turn-steering.md)。pending input 只能在 tool results 已注入后的下一次 model request 边界 drain，不能插入 assistant tool calls 和对应 tool results 中间。
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -61,104 +57,394 @@
 
 ---
 
-## 1. Component responsibilities
+## 一、关键组件职责
 
-| Stage | Component | Responsibility |
+| 阶段 | 组件 | 职责 |
 |------|------|------|
-| Call Model | `AgentRuntime` | Maintains messages, calls the model adapter |
-| Permission Check | `PermissionService` / broker | See `permission-broker.md` (originally skipped in this plan) |
-| Schedule | `ToolScheduler` | Topological sort, determines parallel groups |
-| Execute | `ToolExecutor` | Executes tools, returns results |
-| Inject Results | `MessageHistory` | Appends tool results to messages |
-| Drain Pending Input | `AgentRuntime` | Appends user input from the active turn queue as user messages |
-| Continue | Loop | Exits when there are no tool calls |
+| Call Model | `AgentRuntime` | 维护 messages，调用 model adapter |
+| ~~Permission Check~~ | ~~暂跳过，后续实现~~ | |
+| Schedule | `ToolScheduler` | 拓扑排序，确定并行组 |
+| Execute | `ToolExecutor` | 执行工具，返回结果 |
+| Inject Results | `MessageHistory` | 将 tool results 追加到 messages |
+| Drain Pending Input | `AgentRuntime` | 将 active turn queue 中的用户输入追加为 user messages |
+| Continue | Loop | 无 tool calls 时退出 |
 
-The executor may stop later batches because of permission denial, cancellation or a high-risk failure,
-but the provider-visible history must still inject one tool result for every tool call returned by the
-assistant in this round. If a later batch did not actually run, the executor returns a synthetic
-skipped/error result, so the next model request has no dangling tool call.
+执行器可以因为权限拒绝、取消或高风险失败停止后续批次，但 provider-visible 历史仍必须为本轮 assistant 返回的每个 tool call 注入一个 tool result。若后续批次未实际执行，执行器返回合成的 skipped/error result，避免下一次模型请求出现 dangling tool call。
 
 ---
 
-## 2. Implementation structure
+## 二、实现文件
 
-- `MessageHistory` (`packages/core/src/agent/message-history.ts`): session-level message history reused
-  across turns of one runtime. Operations: `init(systemPrompt?)`, `addUser`, `addSystem` (necessary
-  runtime context only; never used for a tool call count hard stop), `addAssistant(content, toolCalls?)`,
-  `addToolResult(toolCallId, toolName, content, success)` (a failure is stored as
-  `JSON.stringify({ error: content })`), `toModelMessages()`, `getMessageCount()`,
-  `getCacheableMessages()`.
-- `Runtime.executeTurn` (`packages/core/src/runtime.ts`), core loop per turn:
-  1. Create `turnId` / `traceId`, start the `TurnMachine`, append the `turn_started` event.
-  2. `history.addUser(input)`.
-  3. Loop: call the model with `history.toModelMessages()`, cached tools and the abort signal; record
-     usage (for cache analysis).
-  4. No tool calls: `history.addAssistant(text)`, complete the `TurnMachine`, append `turn_complete`
-     (response, tokenCount, toolCallCount, duration, `resultType: 'success'`), increment the turn number,
-     rebuild the projection and return `{ response, turnId, events, projection }`.
-  5. Tool calls: `toolCallCount += toolCalls.length` (telemetry only; long-running tasks are bounded by
-     cancellation, permissions, tool contracts, provider retry limits and context/token compaction, never
-     by a global tool call count), `history.addAssistant(text, toolCalls)`, schedule tools, emit
-     `tool_call_scheduled` for each item, execute per schedule, feed each result to the `TurnMachine`
-     (`completeTool`, then `aggregateResults`), inject results with `history.addToolResult(...)`
-     (non-string output is JSON-stringified), and loop back to the model call.
-- `extractToolCalls` (`packages/adapters/src/model/transform.ts`): collects the tool calls
-  (`{ id, name, input }`) of assistant responses from the generate result.
-- Tool cache (`packages/core/src/runtime.ts`): `getTools()` caches `registry.toContracts()`;
-  `registerTool(entry)` registers and invalidates the cache.
+### 2.1 MessageHistory (新增)
+
+**文件**: `packages/core/src/agent/message-history.ts`
+
+```typescript
+export interface MessageHistory {
+  messages: ModelMessage[];
+
+  // 初始化（可选：加载历史消息）
+  init(systemPrompt?: string): void;
+
+  // 追加用户消息
+  addUser(content: string): void;
+
+  // 追加必要的 runtime context；不得用于 tool call 数量硬停
+  addSystem(content: string): void;
+
+  // 追加助手消息（可能包含 tool_calls）
+  addAssistant(content: string, toolCalls?: ToolCall[]): void;
+
+  // 追加工具结果
+  addToolResult(toolCallId: string, toolName: string, content: string, success: boolean): void;
+
+  // 转为模型格式
+  toModelMessages(): ModelInputMessage[];
+
+  // 获取当前消息数
+  getMessageCount(): number;
+
+  // 获取可缓存的消息（用于缓存优化）
+  getCacheableMessages(): ModelMessage[];
+}
+
+export class MessageHistoryImpl implements MessageHistory {
+  private messages: ModelMessage[] = [];
+
+  addAssistant(content: string, toolCalls?: ToolCall[]): void {
+    this.messages.push({
+      role: 'assistant',
+      content,
+      toolCalls: toolCalls?.map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        input: tc.input,
+      })),
+    });
+  }
+
+  addToolResult(toolCallId: string, toolName: string, content: string, success: boolean): void {
+    this.messages.push({
+      role: 'tool',
+      content: success ? content : JSON.stringify({ error: content }),
+      toolCallId,
+      toolName,
+    });
+  }
+}
+```
+
+### 2.2 Runtime.executeTurn (核心循环)
+
+**文件**: `packages/core/src/runtime.ts`
+
+```typescript
+async executeTurn(input: string, attachments?: TurnAttachment[]): Promise<TurnResult> {
+  const turnId = createTurnId();
+  const traceId = createTraceId();
+  const events: SessionEvent[] = [];
+  let turnMachine = TurnMachineImpl.create(this.sessionId, this.turnNumber, input, traceId);
+  turnMachine = new TurnMachineImpl(turnMachine.start());
+
+  // 复用 session 级消息历史；同一个 runtime 内多轮对话会累积 user/assistant/tool 消息
+  const history = this.messageHistory;
+
+  // 记录 turn_started
+  const turnStartedEvent = this.createEvent('turn_started', { turnNumber: this.turnNumber, input }, { turnId, traceId });
+  events.push(turnStartedEvent);
+  await this.eventStore.append(turnStartedEvent);
+
+  try {
+    // Step 1: 添加本轮用户输入到 session 消息历史
+    history.addUser(input);
+
+    // Step 2: Tool Calling 循环
+    // toolCallCount is telemetry only. Long-running tasks are bounded by
+    // cancellation, permissions, tool contracts, provider retry limits, and
+    // context/token compaction rather than by a global tool-call count.
+    let toolCallCount = 0;
+
+    while (true) {
+      // ===== 调用模型 =====
+      const tools = this.getTools();  // 缓存的工具列表
+
+      let modelResponse: string;
+      let toolCalls: ToolCall[] = [];
+
+      turnMachine = new TurnMachineImpl(
+        turnMachine.startModelRequest('claude', history.toModelMessages())
+      );
+
+      if (this.modelAdapter) {
+        const result = await this.modelAdapter.generateText({
+          model: this.defaultModelRef,
+          messages: history.toModelMessages(),
+          tools,
+          abortSignal,
+        });
+        modelResponse = result.text;
+        toolCalls = this.extractToolCalls(result);
+
+        // 记录 usage（用于缓存分析）
+        this.recordUsage(result.usage);
+      }
+
+      // ===== 循环退出条件：无 tool calls =====
+      if (toolCalls.length === 0) {
+        history.addAssistant(modelResponse);
+        turnMachine = new TurnMachineImpl(turnMachine.complete(modelResponse));
+
+        const completeEvent = this.createEvent('turn_complete', {
+          response: modelResponse,
+          tokenCount: 0,
+          toolCallCount,
+          duration: Date.now() - turnMachine.state.startedAt.getTime(),
+          resultType: 'success',
+        }, { turnId, traceId });
+
+        events.push(completeEvent);
+        await this.eventStore.append(completeEvent);
+
+        this.turnNumber++;
+        const projection = await this.rebuildProjection();
+
+        return {
+          response: modelResponse,
+          turnId,
+          events,
+          projection,
+        };
+      }
+
+      // ===== 记录 tool call 计数 =====
+      toolCallCount += toolCalls.length;
+      await this.recordToolCallTelemetry({ toolCallCount });
+
+      // ===== 记录 assistant 消息（含 tool_calls）=====
+      history.addAssistant(modelResponse, toolCalls);
+
+      // ===== ~~权限检查~~ 暂跳过 =====
+
+      // ===== 调度工具 =====
+      const schedule = await this.scheduleTools(toolCalls);
+      turnMachine = new TurnMachineImpl(
+        turnMachine.scheduleTools(toolCalls, this.toScheduleState(schedule))
+      );
+      for (const item of schedule.items) {
+        await this.emitToolCallScheduled(item, schedule);
+      }
+
+      // ===== 按 schedule 执行工具 =====
+      turnMachine = new TurnMachineImpl(turnMachine.startToolExecution());
+      const results = await this.executeTools(toolCalls, schedule, { abortSignal });
+      for (const result of results) {
+        turnMachine = new TurnMachineImpl(
+          turnMachine.completeTool(result.toolCallId, {
+            success: result.success,
+            content: stringifyToolOutput(result),
+          })
+        );
+      }
+      turnMachine = new TurnMachineImpl(turnMachine.aggregateResults());
+
+      // ===== 注入 Tool Results 到消息 =====
+      for (const result of results) {
+        history.addToolResult(
+          result.toolCallId,
+          result.toolName,
+          typeof result.output === 'string' ? result.output : JSON.stringify(result.output),
+          result.success
+        );
+      }
+
+      // ===== 继续循环 =====
+    }
+  } catch (error) {
+    // 错误处理...
+    throw error;
+  }
+}
+```
+
+### 2.3 extractToolCalls 适配
+
+**文件**: `packages/adapters/src/model/transform.ts`
+
+```typescript
+import type { ToolCall } from '@zcode/core';
+
+export function extractToolCalls(result: GenerateTextResult): ToolCall[] {
+  const calls: ToolCall[] = [];
+
+  for (const response of result.responses ?? []) {
+    if (response.role === 'assistant' && response.toolCalls) {
+      for (const tc of response.toolCalls) {
+        calls.push({
+          id: tc.id,
+          name: tc.name,
+          input: tc.input,
+        });
+      }
+    }
+  }
+
+  return calls;
+}
+```
+
+### 2.4 工具缓存
+
+**文件**: `packages/core/src/runtime.ts`
+
+```typescript
+export class AgentRuntime {
+  private cachedTools: ModelToolContract[] | null = null;
+
+  private getTools(): ModelToolContract[] {
+    if (this.cachedTools === null) {
+      this.cachedTools = this.registry.toContracts();
+    }
+    return this.cachedTools;
+  }
+
+  getToolRegistry(): ToolRegistry {
+    return this.registry;
+  }
+
+  // 工具注册变更时 invalidate
+  registerTool(entry: ToolEntry): void {
+    this.registry.register(entry);
+    this.cachedTools = null;
+  }
+}
+```
 
 ---
 
-## 3. Permission check integration
+## 三、权限检查集成
 
-For each tool call: look up the registry entry (missing: `{ allowed: false, reason: 'Tool not found' }`);
-build a `PermissionContext` (`toolName`, `input`, `riskLevel` from entry metadata, `mode` default
-`'auto'`); call `permissionService.checkPermission`; for a non-allowed decision emit the permission
-request event (`emitPermissionRequest`) and record the decision. The ask/broker flow is specified in
-`permission-broker.md`.
+```typescript
+private async checkPermissions(toolCalls: ToolCall[]): Promise<Map<ToolCallId, PermissionDecisionResult>> {
+  const results = new Map<ToolCallId, PermissionDecisionResult>();
 
----
+  for (const tc of toolCalls) {
+    const entry = this.registry.get(tc.name);
+    if (!entry) {
+      results.set(tc.id, { allowed: false, reason: 'Tool not found' });
+      continue;
+    }
 
-## 4. Scheduling and execution
+    const context: PermissionContext = {
+      toolName: tc.name,
+      input: tc.input,
+      riskLevel: entry.metadata.riskLevel,
+      mode: this.config.mode ?? 'auto',
+    };
 
-The schedule result is the runtime execution contract, not a log or hint. The runtime must hand
-`ToolSchedule.parallelGroups` to the executor's `executeSchedule()`; after obtaining a schedule it must
-not fall back to `executeBatch()` and run all tool calls in parallel at once. This is what makes
-parallel read-only tools, serial side-effecting tools, dependency order, permission blocking and failure
-short-circuit observable on a single state machine path.
+    const decision = this.permissionService.checkPermission(context, {
+      riskLevel: entry.metadata.riskLevel,
+    });
 
-Concurrency is decided per input: if a tool provides `resolvePermissionCapability`, scheduling and the
-permission check use the same runtime capability (for example, a read-only Bash that does not change
-directory declares `concurrentSafe: true`); otherwise they fall back to static metadata. Resolution order
-is runtime capability > `entry.permission` > metadata. `scheduleTools` builds a `ToolDependency` per call
-(`toolCallId`, `toolName`, `dependsOn: []` plus the scheduling flags) and calls
-`toolScheduler.schedule(...)`; `toScheduleState` maps the schedule to `ToolScheduleState` (`items`,
-`parallelGroups`, `executionOrder`).
+    if (decision.allowed) {
+      results.set(tc.id, decision);
+    } else {
+      // 记录权限请求事件
+      await this.emitPermissionRequest(tc.id, tc.name, entry.metadata.riskLevel);
+      results.set(tc.id, decision);
+    }
+  }
 
-The execution phase must meet these event and cancellation contracts:
-
-1. Each scheduled tool call writes `tool_call_scheduled` before execution; the payload contains at least
-   `toolCallId`, `toolName`, `input`, `dependencies`, `parallelGroupIndex`, `canRunParallel` and the full
-   schedule summary.
-2. At the start of each parallel group only the persisted tool parts of that group are marked running;
-   after the group completes, `tool_batch_complete` is written.
-3. The `TurnMachine` phase truly drives the loop:
-   `ProcessingInput -> AwaitingModelResponse -> Streaming -> SchedulingTools -> ExecutingTools -> AggregatingResults -> AwaitingModelResponse/Completing`.
-4. `executeTurn(..., { abortSignal })` must pass the same signal to the model adapter, the tool executor
-   and every `ToolExecutionContext`; cancellation at any layer is attributed to the same `traceId`.
-
----
-
-## 5. Cache awareness
-
-- `MessageHistory` exposes `getCachedMessageCount()` / `setCachedMessageCount(count)` (the current
-  cached prefix size, used to judge cache hits).
-- `recordUsage(usage)`: when the provider reports `cacheReadTokens > 0`, record the cache hit
-  (`lastCacheHit`, `lastCacheTokens`) for cache statistics.
+  return results;
+}
+```
 
 ---
 
-## 6. Full loop sequence
+## 四、调度与执行
+
+调度结果是 runtime 的执行契约，不是日志或提示信息。runtime 必须把 `ToolSchedule.parallelGroups`
+交给 executor 的 `executeSchedule()` 消费；不得在拿到 schedule 后退回 `executeBatch()` 把所有 tool call
+一次性并行执行。这样才能保证只读工具并行、有副作用工具串行、依赖顺序、权限阻塞和失败短路在同一条状态机路径里被观测。
+
+```typescript
+private async scheduleTools(toolCalls: ToolCall[]): Promise<ToolSchedule> {
+  const dependencies: ToolDependency[] = toolCalls.map((tc) => ({
+    toolCallId: tc.id,
+    toolName: tc.name,
+    dependsOn: [],
+    ...this.registry.getMetadata(tc.name),
+  }));
+
+  return this.toolScheduler.schedule(dependencies, READ_ONLY_TOOLS);
+}
+
+private toScheduleState(schedule: ToolSchedule): ToolScheduleState {
+  return {
+    items: schedule.items.map(item => ({
+      toolCallId: item.toolCallId,
+      dependencies: item.dependencies,
+      canRunParallel: item.canRunParallel,
+    })),
+    parallelGroups: schedule.parallelGroups,
+    executionOrder: schedule.executionOrder,
+  };
+}
+```
+
+执行阶段必须满足以下事件和取消契约：
+
+1. 每个被调度的 tool call 在执行前写入 `tool_call_scheduled`，payload 至少包含 `toolCallId`、`toolName`、`input`、`dependencies`、`parallelGroupIndex`、`canRunParallel` 和完整 schedule 摘要。
+2. 每个 parallel group 开始时只把该组对应的持久化 tool part 标记为 running；组完成后写入 `tool_batch_complete`。
+3. `TurnMachine` phase 真实驱动 loop：`ProcessingInput -> AwaitingModelResponse -> Streaming -> SchedulingTools -> ExecutingTools -> AggregatingResults -> AwaitingModelResponse/Completing`。
+4. `executeTurn(..., { abortSignal })` 必须把同一个 signal 传给 model adapter、tool executor 和每个 `ToolExecutionContext`；任何一层取消都应向上归属到同一 `traceId`。
+5. 中断标记：轮次被停止（`TurnCancelled`），或被宿主外部故障中止（例如投影超限，本轮记为 TurnError）后，在已提交的 assistant / tool result 之后追加一条普通 user 文本，下一次请求的模型可以看到。
+   - 工具批次结算时已停止（包括结算中 checkpoint 被取消）：`[Request interrupted by user for tool use]`；其他时候（模型请求、等待首 token、流式输出中）：`[Request interrupted by user]`。
+   - send-now 抢占（`preserveQueueAutoDrainOnCancel`）是为了交付下一条输入，不加标记；轮次循环开始前取消（例如排队中的 prompt 被取消）也不加。
+   - 标记是 runtime source `interrupt_marker` 的 message entry：不冒泡、MCS 下不转 system；附件冒泡越过它；按用户输入参与相邻 user 的换行规则（只在 Anthropic 协议上：前一条 user 文本补 `\n`，后面接用户输入时标记自身补 `\n`）。
+   - 与其他动态公告一样按隐藏提醒持久化：model-only synthetic user 消息，不写顶层 `source`（App 按封闭列表校验这个字段，新值会让旧版本拒绝整个会话），类型记在 `runtimeMessage.source = "interrupt_marker"`；冷恢复还原同一条 entry，旧版本不认识这个类型时也不报错。写入失败只记 warn，不替换取消结果。
+   - 冷恢复的轮次结果以标记为准：本轮有标记时按 cancelled 收口（已有持久化错误时仍显示该错误）。场景：最终文本已完整输出后再停止，assistant 记录是 `finish=stop`、没有 error；live 显示 cancelled，冷恢复也必须是 cancelled。
+   - 工具取消结果的文字：被停止或被宿主故障中止的批次里，被取消的工具（`ToolCancelled`：未开始、执行中、等待权限）给模型的 tool_result 统一为 `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`，`is_error: true`。只换 `modelContent`（冷恢复从 part metadata 重放）；`error.message` 不变，工具卡片仍显示各工具自己的取消原因。停止前已完成的结果、超时等其他错误不变。send-now 抢占的取消结果不换。
+
+---
+
+## 五、缓存感知
+
+### 5.1 消息历史与缓存
+
+```typescript
+export interface MessageHistory {
+  // 获取当前缓存前缀大小（用于判断 cache hit）
+  getCachedMessageCount(): number;
+
+  // 标记已缓存的消息数
+  setCachedMessageCount(count: number): void;
+}
+
+export class MessageHistoryImpl implements MessageHistory {
+  private cachedMessageCount = 0;
+
+  setCachedMessageCount(count: number): void {
+    this.cachedMessageCount = count;
+  }
+}
+```
+
+### 5.2 缓存命中检测
+
+```typescript
+private recordUsage(usage: ModelUsage): void {
+  if (usage.cacheReadTokens && usage.cacheReadTokens > 0) {
+    // Provider 报告了 cache hit
+    // 可以更新缓存统计
+    this.lastCacheHit = true;
+    this.lastCacheTokens = usage.cacheReadTokens;
+  }
+}
+```
+
+---
+
+## 六、完整循环时序
 
 ```
 Turn Start
@@ -224,29 +510,29 @@ Turn Start
 
 ---
 
-## 7. Task list
+## 七、任务清单
 
-| # | Task | File | Depends on |
+| # | Task | File | 依赖 |
 |---|------|------|------|
-| 1 | MessageHistory class | `agent/message-history.ts` | none |
-| 2 | extractToolCalls | `adapters/model/transform.ts` | none |
-| 3 | Runtime tool loop | `runtime.ts` | 1, 2 |
-| 4 | Tool cache | `runtime.ts` | 3 |
-| 5 | Permission check integration | `runtime.ts` | 3 |
-| 6 | Cache-aware statistics | `agent/cache-aware.ts` | 1 |
-| 7 | Unit tests | `runtime.test.ts` | 1-5 |
+| 1 | MessageHistory 类 | `agent/message-history.ts` | 无 |
+| 2 | extractToolCalls | `adapters/model/transform.ts` | 无 |
+| 3 | Runtime Tool Loop | `runtime.ts` | 1, 2 |
+| 4 | 工具缓存 | `runtime.ts` | 3 |
+| 5 | 权限检查集成 | `runtime.ts` | 3 |
+| 6 | 缓存感知统计 | `agent/cache-aware.ts` | 1 |
+| 7 | 单元测试 | `runtime.test.ts` | 1-5 |
 
 ---
 
-## 8. Verification cases
+## 八、验证用例
 
 ```
-Case 1: No tool call
+Case 1: 无 Tool Call
   Input: "Hello"
   Model: "Hi!"
   Output: "Hi!"
 
-Case 2: Single tool call
+Case 2: 单次 Tool Call
   Input: "Read package.json"
   Model: (calls Read tool)
   Execute: Read package.json
@@ -254,7 +540,7 @@ Case 2: Single tool call
   Model: "The package.json contains..."
   Output: "The package.json contains..."
 
-Case 3: Multiple tool calls
+Case 3: 多次 Tool Calls
   Input: "Read all config files"
   Model: (calls Read x3)
   Execute: Read file1, file2, file3
@@ -262,14 +548,14 @@ Case 3: Multiple tool calls
   Model: "Here are the configs..."
   Output: "Here are the configs..."
 
-Case 4: Long-running tool calls
+Case 4: 长程 Tool Calls
   Input: (triggers many tool calls)
   Count > 100
   Event: telemetry/log records toolCallCount
   No hard stop; tools remain available
   Context/token limit may compact before the next model request
 
-Case 5: Tool execution failure
+Case 5: 工具执行失败
   Input: "Do something"
   Model: (calls Tool X)
   Execute: FAIL

@@ -205,10 +205,9 @@ describe("ZCode plugins", () => {
         await readFile(join(packageRoot, ".zcode-plugin", "plugin.json"), "utf8"),
       ) as { ui?: { surfaces?: unknown[] } };
       // 卸载后的可恢复条目没有运行时信息，商店只能靠定义里的 componentTypes 归入「UI 插件」。
-      expect(
-        plugin.componentTypes?.includes("ui") ?? false,
-        plugin.name,
-      ).toBe((pluginManifest.ui?.surfaces?.length ?? 0) > 0);
+      expect(plugin.componentTypes?.includes("ui") ?? false, plugin.name).toBe(
+        (pluginManifest.ui?.surfaces?.length ?? 0) > 0,
+      );
     }
   });
 
@@ -653,7 +652,7 @@ describe("ZCode plugins", () => {
             id: "zcode-plugins-official",
             isOfficial: true,
             name: "zcode-plugins-official",
-            pluginCount: 15,
+            pluginCount: 16,
             source: {
               source: "url",
               url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
@@ -2434,7 +2433,7 @@ describe("ZCode plugins", () => {
       expect(
         overview.marketplaces.find((marketplace) => marketplace.id === "zcode-plugins-official"),
       ).toMatchObject({
-        pluginCount: 15,
+        pluginCount: 16,
         source: {
           source: "url",
           url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",

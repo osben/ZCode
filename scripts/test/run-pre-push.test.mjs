@@ -85,16 +85,21 @@ if (process.env.FAIL_STAGE && process.argv[3] === process.env.FAIL_STAGE) proces
 }
 
 const allStages = [
+  "check:push-worktree",
+  "check:e2e-remote-targets",
   "lint",
+  "docs:stale-phrases:check",
+  "db:schema:check",
+  "test:architecture",
   "architecture:check",
   "test-copy:check",
   "instruction-commands:check",
   "db:migrations:check",
-  "test:unit:affected",
+  "test:engineering:affected",
   "test:node",
 ];
 // Documentation-only pushes run the static stages and skip both test stages.
-const staticStages = allStages.slice(0, 5);
+const staticStages = allStages.slice(0, -2);
 
 test("supports executable package managers as well as JS entry points", async (t) => {
   const f = await fixture(t);
@@ -123,7 +128,12 @@ test("documentation-only commits run static checks and skip both test stages", a
   assert.match(result.stdout, /documentation-only.*skip/iu);
   assert.match(result.stdout, /lint.*passed.*\d+\.\d+s/u);
   assert.match(result.stdout, /total.*\d+\.\d+s/u);
-  assert.deepEqual(result.calls[1].args, ["run", "architecture:check", "--", "--changed"]);
+  assert.deepEqual(result.calls[allStages.indexOf("architecture:check")].args, [
+    "run",
+    "architecture:check",
+    "--",
+    "--changed",
+  ]);
 });
 
 test("deleted documentation is safe to skip", async (t) => {
@@ -217,7 +227,7 @@ test("a failing stage preserves its status, reports timing and stops subsequent 
   await f.commit();
   const result = await f.run({ FAIL_STAGE: "architecture:check" });
   assert.equal(result.code, 7);
-  assert.deepEqual(result.stages, allStages.slice(0, 2));
+  assert.deepEqual(result.stages, allStages.slice(0, allStages.indexOf("architecture:check") + 1));
   assert.match(result.stdout, /architecture:check.*failed.*7.*\d+\.\d+s/u);
   assert.match(result.stdout, /total.*\d+\.\d+s/u);
 });
@@ -231,7 +241,7 @@ test("new branches pass the resolved merge-base to affected tests without origin
     ZCODE_PRE_PUSH_STDIN: `refs/heads/feature ${head} refs/heads/feature ${zeroSha}\n`,
   });
   assert.equal(result.code, 0, result.stderr);
-  const affected = result.calls.find((call) => call.args[1] === "test:unit:affected");
+  const affected = result.calls.find((call) => call.args[1] === "test:engineering:affected");
   assert.equal(affected.affectedBase, f.base);
 });
 

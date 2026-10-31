@@ -1,4 +1,5 @@
 import type { ModelToolReferenceContentBlock } from "../tools/tool-search.js";
+import { zcodeProviderRuntimeHeadersErrorCode } from "@zcode/shared";
 // ============================================================
 // Model Protocol - provider-neutral model contracts
 // ============================================================
@@ -120,6 +121,7 @@ export const ModelErrorCode = {
   InvalidModelResponse: "invalid_model_response",
   ModelRequestFailed: "model_request_failed",
   ModelRequestAuthMissing: "model_request_auth_missing",
+  ModelRequestVerificationConfigNetwork: zcodeProviderRuntimeHeadersErrorCode.configNetwork,
   ModelRequestCancelled: "model_request_cancelled",
   ModelRequestTimeout: "model_request_timeout",
   ModelRateLimited: "model_rate_limited",
@@ -242,7 +244,7 @@ export interface ModelRequestCompletedStatusEvent extends ModelNetworkStatusBase
 
 export interface ModelRequestFailedStatusEvent extends ModelNetworkStatusBase {
   type: "model_request_failed";
-  /** Provider 已报告的失败请求用量；不为失败响应伪造成功完成事件。 */
+  /** Usage for failed requests as reported by the provider; no success-completion event is fabricated for a failed response. */
   usage?: ModelUsage;
   durationMs?: number;
   reason: ModelFailureReason;
@@ -847,6 +849,18 @@ export type ModelStreamEvent =
   | {
       type: "tool_call";
       toolCall: ModelToolCall;
+    }
+  | {
+      /**
+       * Result streamed down after the provider finished executing a built-in tool server-side
+       * (toolCall.providerExecuted). The client does not execute such tools; used only for
+       * display, persistence, and replay in the next request.
+       */
+      type: "provider_tool_result";
+      toolCallId: string;
+      toolName: string;
+      output: unknown;
+      isError: boolean;
     }
   | {
       type: "finish";

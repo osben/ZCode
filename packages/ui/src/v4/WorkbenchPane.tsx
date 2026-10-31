@@ -248,6 +248,7 @@ export interface WorkbenchShellBinding {
   readOnlySessionId?: string | null;
   selectionSideChatSessionId?: string | null;
   readOnly?: boolean;
+  readOnlyReason?: string;
   allowEscapeStopOutsidePane?: boolean;
   compactForRemoteControl?: boolean;
   sessionId: string | null;
@@ -471,6 +472,7 @@ export function WorkbenchLeafPane({
           paneId={paneId}
           readOnly={readOnly}
           selectionSideChat={selectionSideChat}
+          readOnlyReason={isShellWorkspace ? shell.readOnlyReason : undefined}
           sessionId={sessionId}
           openTrigger={isPrimary ? "sidebar" : "split"}
           activeSelectionSideChatSessionId={resolvePaneActiveSelectionSideChatSessionId(

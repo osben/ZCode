@@ -8,6 +8,7 @@ import type {
   RemoteWorkspaceSessionEntry,
 } from "@zcode/shared";
 import {
+  isCredentialDecryptError,
   REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE,
   REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE,
   stripRemoteTargetSecrets,
@@ -87,17 +88,37 @@ export interface SshReconnectCredentials {
 }
 
 export interface ReconnectRemoteWorkspaceOptions {
-  /** 用户原地重连先检查已有凭据，缺失交接向导；自动恢复保留 Host admission。 */
+  /** User-initiated in-place reconnect checks stored credentials first and hands off to the wizard when missing; automatic recovery keeps Host admission. */
   requireStoredCredentials?: boolean;
   activateWorkspaceAfterReconnect?: boolean;
   showErrorToast?: boolean;
   requestId?: string;
   throwOnFailure?: boolean;
   recoveryMode?: "automatic" | "manual";
-  /** 共享 Host ready 后，sibling 复用 initiator 凭据附着，禁止再次读取各自历史凭据。 */
+  /** After the shared Host is ready, siblings reuse the initiator's credentials to attach; reading their own stored credentials again is forbidden. */
   sshCredentialsOverride?: SshReconnectCredentials;
-  /** logical connect 已返回，表示共享 SSH Host ready；workspace 初始化仍可能继续或失败。 */
+  /** Logical connect has returned, meaning the shared SSH Host is ready; workspace initialization may still be running or fail. */
   onSshHostReady?: (credentials: SshReconnectCredentials) => void;
+}
+
+/**
+ * Read a Profile secret; undecryptable on this machine counts as missing, matching the Host `SourceServerDirectory` rule.
+ * Bug cause: after ~/.zcode moved machines/users, saved passwords no longer decrypt. The Renderer read
+ * credentials directly and the decrypt error bubbled all the way up, so clicking a project or connecting from
+ * settings showed only a generic "connection failed" and never reached the existing supplemental-credential
+ * branch. Other read errors still propagate as usual.
+ */
+async function loadUsableProfileCredential(
+  loadCredential: IServiceAccessor["credentialService"]["load"],
+  key: string,
+): Promise<string | null> {
+  try {
+    return await loadCredential(key);
+  } catch (error) {
+    if (!isCredentialDecryptError(error)) throw error;
+    logger.warn("[RemoteWorkspace] Profile 凭据在本机无法解密，按缺失处理");
+    return null;
+  }
 }
 
 export async function loadConnectionProfileCredentials(params: {
@@ -111,10 +132,13 @@ export async function loadConnectionProfileCredentials(params: {
   }
   return {
     password: target.passwordCredentialKey
-      ? await params.loadCredential(target.passwordCredentialKey)
+      ? await loadUsableProfileCredential(params.loadCredential, target.passwordCredentialKey)
       : null,
     privateKeyPassphrase: target.privateKeyPassphraseCredentialKey
-      ? await params.loadCredential(target.privateKeyPassphraseCredentialKey)
+      ? await loadUsableProfileCredential(
+          params.loadCredential,
+          target.privateKeyPassphraseCredentialKey,
+        )
       : null,
   };
 }
@@ -136,8 +160,9 @@ function resolveSshReconnectSnapshot(params: {
   );
   if (!profile || profile.target.kind !== "ssh") return previous;
   const target = profile.target;
-  // 旧历史可能只有 session 凭据引用；仅相同认证配置且 Profile 没有新引用时兼容。
-  // 更换私钥后不能把旧密码/口令带给新密钥，也不能把旧口令引用误判成仍需凭据。
+  // Old history may carry only session credential references; compatible only when the auth config matches and
+  // the Profile has no new references. After a private-key change, old passwords/passphrases must not be handed
+  // to the new key, and old passphrase references must not be misjudged as still needing credentials.
   if (
     !target.passwordCredentialKey &&
     !target.privateKeyPassphraseCredentialKey &&
@@ -194,17 +219,21 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
   let resolvedWorkspaceIdentity = fallbackWorkspaceIdentity;
   try {
     const settings = getSettings ? await getSettings() : undefined;
-    // 根因：原项目重连只取 Profile 的新凭据，却继续用 session 的旧地址，
-    // 编辑线路后会连回旧端口并被 Host 注册成第二条 Profile。目标与凭据须来自同一份配置。
+    // Root cause: the original project's reconnect took the Profile's new credentials but kept using the
+    // session's old address, so after editing the route it connected back to the old port and the Host
+    // registered it as a second Profile. Target and credentials must come from the same config snapshot.
     const targetSnapshot = resolveSshReconnectSnapshot({ sessionEntry, settings });
     const sshCredentials = options?.sshCredentialsOverride ?? {
       password:
         targetSnapshot.kind === "ssh" && targetSnapshot.passwordCredentialKey
-          ? await loadCredential(targetSnapshot.passwordCredentialKey)
+          ? await loadUsableProfileCredential(loadCredential, targetSnapshot.passwordCredentialKey)
           : null,
       privateKeyPassphrase:
         targetSnapshot.kind === "ssh" && targetSnapshot.privateKeyPassphraseCredentialKey
-          ? await loadCredential(targetSnapshot.privateKeyPassphraseCredentialKey)
+          ? await loadUsableProfileCredential(
+              loadCredential,
+              targetSnapshot.privateKeyPassphraseCredentialKey,
+            )
           : null,
     };
     const token =
@@ -234,9 +263,11 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
         connectTrigger: "reconnect",
       });
     } catch (error) {
-      // 该结构化错误只由 Host 在 Source 已上线后的目录 admission 发出。发起项目被删
-      // 不代表 SSH 凭据失败；先放行复用同一凭据的 siblings，再按原路径记录该项目失败。
-      // An unresponsive folder is also a per-project failure: the Source is online, so siblings may reuse its credentials.
+      // These two structured errors are emitted only by Host directory admission after the Source is up.
+      // The initiating project being deleted does not mean the SSH credentials failed; let siblings reusing
+      // the same credentials through first, then record this project's failure on the original path.
+      // Bug cause: a 30-second unresponsive directory read was not let through before, so the SSH-group
+      // reconnect judged the Host unready and not a single other project on the device reconnected.
       if (
         reconnectTarget.kind === "ssh" &&
         error &&
@@ -250,20 +281,24 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
       throw error;
     }
     if (reconnectTarget.kind === "ssh") {
-      // Host ready 与 provider/task 等 workspace 初始化必须分阶段通知。
-      // sibling 从此刻即可复用 initiator credential 创建 attachment，无需等待或重复读取凭据。
+      // Host-ready and workspace initialization (provider/task etc.) must be notified in separate stages.
+      // From this moment siblings can reuse the initiator credential to create attachments, with no waiting or repeated credential reads.
       options?.onSshHostReady?.(sshCredentials);
     }
     resolvedWorkspacePath = await resolveRemoteWorkspaceCanonicalPath(
       sessionId,
       sessionEntry.workspacePath,
     );
-    // Bug 原因：Renderer 过去用 transport target 本地推导 identity，与 Host 绑定的 remote:server:*
-    // 权威 identity 分裂。这里和首次连接保持一致：先完成 Host bind，再只消费返回的权威 scope。
-    // 这次 bind 也是手机远控桥接能通过的前提：bridge 按 tab 的 path/identity 三元比对 main descriptor，
-    // 缺少 bind 或 bind 落后于 tab 回填会被 REMOTE_WORKSPACE_IDENTITY_MISMATCH 拒绝（3.12.0 曾因此连不上远程项目）。
-    // bind 必须位于下方保留校验之前：校验与 upsertWorkspaceTab 之间不能再有 await，否则用户在等待
-    // ready ACK 期间移除 tab 后，过期的校验结果会把 workspace 重新加回。
+    // Bug cause: the Renderer used to derive identity locally from the transport target, splitting from the
+    // authoritative remote:server:* identity bound by the Host. Keep this consistent with first connect:
+    // complete the Host bind first, then consume only the returned authoritative scope.
+    // This bind is also a prerequisite for the mobile remote-control bridge to pass: the bridge compares the
+    // tab's path/identity triple against the main descriptor, and a missing bind — or a bind lagging behind
+    // the tab backfill — is rejected with REMOTE_WORKSPACE_IDENTITY_MISMATCH (3.12.0 could not connect to
+    // remote projects because of this).
+    // The bind must sit before the retention check below: no await may sit between the check and
+    // upsertWorkspaceTab, otherwise a stale check result would re-add the workspace after the user removed
+    // the tab while waiting for the ready ACK.
     const boundScope = await bindRemoteWorkspaceScope(
       sessionId,
       resolvedWorkspacePath,
@@ -272,8 +307,9 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
     );
     resolvedWorkspacePath = boundScope.workspacePath;
     resolvedWorkspaceIdentity = boundScope.workspaceIdentity;
-    // Bugfix: 手动重连过程中，用户可能先点重连再立即把该远端 tab 移除。
-    // 如果这里不在成功落库前再做一次保留校验，会把用户刚移除的 workspace 又重新加回来。
+    // Bugfix: during a manual reconnect the user may click reconnect and then immediately remove that
+    // remote tab. Without one more retention check before the successful commit, the just-removed workspace
+    // would be added back.
     if (
       shouldKeepReconnectedWorkspace &&
       !shouldKeepReconnectedWorkspace({
@@ -300,9 +336,10 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
       workspacePurpose: sessionEntry.workspacePurpose,
     });
     if (activateWorkspaceAfterReconnect) {
-      // 侧栏重连过去会先激活只有 identity、尚无 remoteSessionId 的断连 tab，
-      // conversation provider 因 remote-waiting 返回 null，导致连接期间右侧整块黑屏。
-      // 必须先绑定 services 并静默回填 tab 的 session 元数据，再一次性激活 tab 与草稿。
+      // The sidebar reconnect used to first activate the disconnected tab that had only an identity and no
+      // remoteSessionId yet; the conversation provider returned null due to remote-waiting, blacking out the
+      // right pane during connection. Bind services and silently backfill the tab's session metadata first,
+      // then activate the tab and draft in one shot.
       const activated = activateTabByPath(resolvedWorkspacePath, {
         workspaceIdentity: resolvedWorkspaceIdentity,
       });
@@ -333,6 +370,20 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
       workspacePath: resolvedWorkspacePath,
       error: message,
     });
+    const reasonCode =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      error.code.trim()
+        ? error.code
+        : "remote-connection-unknown";
+    // Bug cause: failure records used to store only localized copy. Wait points (installation needed etc.)
+    // were also written as failures, so handoff could not tell the two apart, route-unrecognized old tabs had
+    // to reconnect unconditionally, and after an ordinary failure every click silently redialed without
+    // opening the wizard. The error code is persisted alongside the copy now.
+    // CR-01: new exceptions may also lack a valid code; write the generic failure code so the record is never
+    // again treated as a codeless old one that redials forever.
     await commitRemoteWorkspaceSessionMutation(
       buildRemoteWorkspaceSessionMutation({
         remoteSessions: getRemoteSessions(),
@@ -341,18 +392,17 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
         target: reconnectTarget,
         lastConnectionStatus: "failed",
         lastConnectionError: message,
+        lastConnectionErrorCode: reasonCode,
         touchOpenedAt: false,
       }),
     );
-    // 失败事实只在此写回；手动入口收到结构化异常后决定是否交接唯一向导。
-    const reasonCode =
-      error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+    // Failure facts are written back only here; the manual entry decides whether to hand off to the single wizard after receiving the structured exception.
     if (showErrorToast && shouldShowStandaloneRemoteErrorToast(reasonCode)) {
       toast(message);
     }
     if (options?.throwOnFailure) {
-      // 桌面端重连按钮需要吞掉异常并通过 toast/状态落库反馈，
-      // 但手机端 Web 远控是 RPC 语义，必须把失败明确回传给手机端。
+      // The desktop reconnect button needs to swallow the exception and feed back via toast/persisted status,
+      // but mobile Web remote control is RPC semantics and must explicitly return the failure to the phone.
       throw error;
     }
   } finally {

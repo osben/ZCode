@@ -98,20 +98,29 @@ export const workflowNotificationMetaSchema = z.discriminatedUnion("kind", [
 ]);
 export type WorkflowNotificationMeta = z.infer<typeof workflowNotificationMetaSchema>;
 
-// 主代理闲着、run 还欠着决定时的提醒（docs/dynamic-workflow/transcript-and-notifications.md
-// 「Reminding an idle main agent」）：每个 run 一条，只带发出那一刻的计数与最久的等待——每个决定的
-// 原文在它自己那条 escalation / hole 行上，这一行不重复，也不随后续状态翻转。
+// Reminder for when the main agent is idle while a run still owes decisions
+// (docs/dynamic-workflow/transcript-and-notifications.md, "Reminding an idle main agent"): one per
+// run, carrying only the counts and longest wait at emission time — each decision's original text
+// stays on its own escalation / hole row; this row repeats none of it and does not flip with later state.
 //
-// ⚠ 它是 originMeta 上**独立的键**，不是上面那个 union 的成员（同一篇文档「The payload」）。它曾经是
-// `kind: "blocked"`：闭集多一个成员，不认识它的客户端（手机远控页单独部署，可能比 CLI 旧）解析整帧
-// 失败，强制快照里是同一行、再次失败，于是整个会话打不开。不认识的**键**
-// 则只是被剥掉，行退回裸标题。所以新的通知种类一律加新的可选键，这个 union 不再加成员。
+// ⚠ It is a **separate key** on originMeta, not a member of the union above (same doc, "The
+// payload"). It used to be `kind: "blocked"`: adding a member to the closed set made clients that
+// do not know it (the mobile remote page deploys separately and may be older than the CLI) fail
+// to parse the whole frame; the forced snapshot contains the same row and fails again, so the
+// entire session cannot open. An unrecognized **key** is merely stripped and the row falls back
+// to a bare title. So new notification kinds always add a new optional key; this union gains no members.
 export const workflowBlockedMetaSchema = z.object({
   questions: z.number().int().nonnegative(),
   holes: z.number().int().nonnegative(),
   sinceMs: z.number().int().nonnegative(),
 });
 export type WorkflowBlockedMeta = z.infer<typeof workflowBlockedMetaSchema>;
+
+// Background Agent terminal state and raw failure text (contracts' SubagentResultMeta); product status reads this instead of parsing notification text.
+export const subagentResultMetaSchema = z.object({
+  status: z.enum(["completed", "failed", "killed"]),
+  error: z.string().optional(),
+});
 
 export const backgroundResultOriginMetaSchema = z.object({
   // Keep these values in sync with BackgroundResultOriginMeta in contracts.
@@ -124,9 +133,11 @@ export const backgroundResultOriginMetaSchema = z.object({
   // unknown keys, so omitting it here would silently drop the value throughout the pipeline; this is
   // the only data source for rendering the manifest.
   workflowNotification: workflowNotificationMetaSchema.optional(),
-  // 提醒载荷，与 workflowNotification 至多在场一个。`.catch(undefined)`：将来它的形状变了，认识这个
-  // 键的客户端把它当作缺席（裸标题行），而不是丢掉整帧。
+  // Reminder payload; at most one of it and workflowNotification is present. `.catch(undefined)`: if
+  // its shape changes later, clients that know the key treat it as absent (bare-title row) instead of dropping the whole frame.
   workflowBlocked: workflowBlockedMetaSchema.optional().catch(undefined),
+  // Present only on a subagent's single-notification turn; treated as absent when the shape is unrecognized, and the UI falls back to notification text.
+  subagentResult: subagentResultMetaSchema.optional().catch(undefined),
 });
 export type BackgroundResultOriginMeta = z.infer<typeof backgroundResultOriginMetaSchema>;
 

@@ -11,22 +11,8 @@ import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
 const probe = vi.hoisted(() => ({
   renders: new Map<string, number>(),
   durations: new Map<string, number | undefined>(),
-  builds: 0,
+  units: new Map<string, unknown>(),
 }));
-
-// Call-through spy on the builder: a clock tick must not re-run it, only the live unit's clock patch.
-vi.mock("@/v4/conversationTurnRenderUnits.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/v4/conversationTurnRenderUnits.js")>();
-  return {
-    ...actual,
-    buildConversationTurnRenderUnits: (
-      ...args: Parameters<typeof actual.buildConversationTurnRenderUnits>
-    ) => {
-      probe.builds += 1;
-      return actual.buildConversationTurnRenderUnits(...args);
-    },
-  };
-});
 
 // The virtualizer reports the three historic turns as mounted items; the running turn is the
 // normal-flow live tail and is not virtualized.
@@ -64,6 +50,7 @@ vi.mock("@/v4/ConversationTurnGroup.js", async () => {
   const ConversationTurnGroup = memo(function ConversationTurnGroupProbe(props: Props) {
     probe.renders.set(props.unit.turnId, (probe.renders.get(props.unit.turnId) ?? 0) + 1);
     probe.durations.set(props.unit.turnId, props.unit.workStatus?.durationMs);
+    probe.units.set(props.unit.turnId, props.unit);
     return React.createElement("div", { "data-turn-id": props.unit.turnId });
   });
   return { ConversationTurnGroup };
@@ -169,7 +156,7 @@ function rendersOf(turnId: string): number {
 beforeEach(() => {
   probe.renders.clear();
   probe.durations.clear();
-  probe.builds = 0;
+  probe.units.clear();
   vi.useFakeTimers();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
@@ -200,18 +187,21 @@ describe("ConversationTimeline clock ticks", () => {
     expect(rendersOf("turn-live")).toBeGreaterThan(liveBefore);
   });
 
-  it("does not rebuild the render units on a clock tick, but still advances the running duration", () => {
+  it("keeps the historic render units on a clock tick, but still advances the running duration", () => {
     act(() => renderTimeline());
-    const buildsBefore = probe.builds;
+    const historicUnitsBefore = ["turn-a", "turn-b", "turn-c"].map((id) => probe.units.get(id));
     const durationBefore = probe.durations.get("turn-live");
-    expect(buildsBefore).toBeGreaterThan(0);
+    expect(historicUnitsBefore.every((unit) => unit !== undefined)).toBe(true);
     expect(durationBefore).toBeTypeOf("number");
 
     act(() => {
       vi.advanceTimersByTime(3_000);
     });
 
-    expect(probe.builds).toBe(buildsBefore);
+    // Unit identity is what the turn group memo compares; a rebuilt historic unit would re-render it.
+    ["turn-a", "turn-b", "turn-c"].forEach((id, index) => {
+      expect(probe.units.get(id)).toBe(historicUnitsBefore[index]);
+    });
     expect(probe.durations.get("turn-live")).toBe((durationBefore as number) + 3_000);
   });
 });

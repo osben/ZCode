@@ -1,12 +1,16 @@
-import type { RequestVerificationReason } from "@zcode/shared";
+import { ZCODE_PROVIDER_CONFIG_NETWORK_ERROR, type RequestVerificationReason } from "@zcode/shared";
 import type { ModelRequestAuth } from "@zcode/contracts";
 import { ModelErrorCode, ModelProtocolError } from "@zcode/contracts";
 import type { AiSdkModelTextRequest, ResolvedAiSdkModel } from "./runner-runtime.js";
 
 export class RuntimeHeadersRefreshError extends Error {
+  readonly retryable: boolean;
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "RuntimeHeadersRefreshError";
+    // Trust the Host's structured classification only; legacy text may also come from an invalid config, so do not widen retries by matching text.
+    this.retryable = typeof cause === "object" && cause !== null &&
+      "code" in cause && cause.code === ZCODE_PROVIDER_CONFIG_NETWORK_ERROR;
   }
 }
 

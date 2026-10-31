@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   buildE2ERunIdArg,
@@ -350,4 +352,22 @@ describe("desktop e2e process cleanup", () => {
       ).toEqual([]);
     },
   );
+});
+
+describe("desktop e2e runner waits", () => {
+  it("keeps the runner process alive while it waits, so the exit code still reflects the run", () => {
+    // Same as when onComplete force-kills leftover Electron: only the awaited timer keeps the process alive.
+    // Code after the wait must still run and decides the exit code; the process must not exit with 0 mid-wait.
+    const helperUrl = pathToFileURL(
+      fileURLToPath(new URL("./e2e/helpers/e2e-process-cleanup.ts", import.meta.url)),
+    ).href;
+    const script = `const { waitE2EDelay } = await import(${JSON.stringify(helperUrl)}); await waitE2EDelay(50); process.exitCode = 3;`;
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "--eval", script],
+      { cwd: fileURLToPath(new URL(".", import.meta.url)), encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(3);
+  });
 });

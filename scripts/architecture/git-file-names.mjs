@@ -1,5 +1,21 @@
 import { spawn } from "node:child_process";
 
+export function gitAddedFilesSince(cwd, { since, ref = "HEAD" }) {
+  // Git appends the current time and host timezone to a bare date, so the admitted set for the same ref
+  // drifts with execution time. Bare dates are pinned to UTC midnight; explicit timestamps keep the
+  // caller-provided boundary.
+  const boundary = /^\d{4}-\d{2}-\d{2}$/.test(since) ? `${since}T00:00:00Z` : since;
+  return gitFileNames(cwd, [
+    "log",
+    "--diff-filter=A",
+    "--name-only",
+    "-z",
+    "--format=",
+    `--since=${boundary}`,
+    ref,
+  ]);
+}
+
 export function gitFileNames(cwd, args) {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });

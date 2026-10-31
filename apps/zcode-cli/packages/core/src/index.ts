@@ -35,6 +35,12 @@ export type {
   EditDiagnosticsResult,
   LspServerMatch,
 } from "./lsp/index.js";
+export {
+  supportsBackgroundTaskWaiter,
+  supportsBashBackgroundLifecycle,
+  type BackgroundTaskWaiterExecutionPort,
+  type BashBackgroundLifecycleExecutionPort,
+} from "./tool/handlers/bash-background-lifecycle.js";
 // The DWF driver's submit-profile runtime guard converts the typed declaration back to a generic declaration.
 export {
   createSubmitResultToolEntry,
@@ -167,6 +173,20 @@ export { DREAM_COMMAND_USAGE_RESPONSE } from "./runtime/methods/dream.js";
 // remapping parentID and anchors embedded in parts. Export this instead of duplicating it because symptoms of a missed remap
 // (a dangling parentID or an anchor pointing to the parent session) are far from the cause.
 export { cloneMessageForFork, clonePartForFork } from "./runtime/helpers/steering.js";
+// Mobile remote-control input prediction: the bootstrap v4 inputPrediction handler consumes these pure functions directly.
+export {
+  decideInputPrediction,
+  generateInputPredictionCandidates,
+  normalizeInputPredictionDraft,
+  inputPredictionMinTurns,
+  INPUT_PREDICTION_QUERY_SOURCE,
+} from "./runtime/methods/input-prediction-sidecar.js";
+export type {
+  InputPredictionCandidate,
+  InputPredictionModelCall,
+  InputPredictionOutcome,
+  InputPredictionTurnContext,
+} from "./runtime/methods/input-prediction-sidecar.js";
 export type {
   ChildClientPortsContext,
   ClientFacingPorts,
@@ -214,3 +234,5 @@ export type {
   SessionEventSink,
 } from "@zcode/contracts";
 export { LogLevel, SessionEventType } from "@zcode/contracts";
+
+export { normalizeGenUiInput } from "./agent/message-history.js";

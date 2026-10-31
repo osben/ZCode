@@ -43,6 +43,9 @@ import {
   KEY_ARROW_UP_COMMAND,
   KEY_BACKSPACE_COMMAND,
   COMMAND_PRIORITY_HIGH,
+  COMMAND_PRIORITY_LOW,
+  COMPOSITION_END_COMMAND,
+  COMPOSITION_START_COMMAND,
   KEY_ENTER_COMMAND,
   type EditorState,
   type LexicalEditor,
@@ -80,6 +83,11 @@ export interface ChatComposerPasteEvent {
   clipboardData: DataTransfer | null;
   preventDefault: () => void;
   stopPropagation?: () => void;
+}
+
+export interface UserInputPresence {
+  raw: boolean;
+  trimmed: boolean;
 }
 
 export interface LexicalChatInputHandle {
@@ -923,6 +931,40 @@ export function KeyboardPlugin({
   return null;
 }
 
+export function shouldRecordUserInputStart(tags: ReadonlySet<string>): boolean {
+  return !tags.has(PROGRAMMATIC_UPDATE_TAG) && !tags.has(HISTORY_NAVIGATION_UPDATE_TAG);
+}
+
+interface TextContentPublicationState {
+  lastPublishedText: string;
+  pendingComposition: boolean;
+}
+
+export function resolveTextContentPublication(params: {
+  composing: boolean;
+  nextText: string;
+  state: TextContentPublicationState;
+}): { publish: string | null; state: TextContentPublicationState } {
+  if (params.composing) {
+    return {
+      publish: null,
+      state: { ...params.state, pendingComposition: true },
+    };
+  }
+  if (params.nextText === params.state.lastPublishedText) {
+    return {
+      publish: null,
+      state: params.state.pendingComposition
+        ? { ...params.state, pendingComposition: false }
+        : params.state,
+    };
+  }
+  return {
+    publish: params.nextText,
+    state: { lastPublishedText: params.nextText, pendingComposition: false },
+  };
+}
+
 /**
  * True when an editor update came from the app rather than from typing: programmatic writes
  * (clear, restore, replace) and prompt-history recall. The history tag is separate from the
@@ -942,9 +984,15 @@ export function isProgrammaticEditorUpdate(tags: ReadonlySet<string>): boolean {
  */
 function TextContentPlugin({
   onChange,
+  onUserInputClear,
+  onUserInputPresenceChange,
+  onUserInputStart,
   taskId,
 }: {
   onChange?: (text: string, meta: { programmatic: boolean }) => void;
+  onUserInputClear?: () => void;
+  onUserInputPresenceChange?: (presence: UserInputPresence) => void;
+  onUserInputStart?: () => void;
   taskId?: string | null;
 }) {
   const [editor] = useLexicalComposerContext();
@@ -952,28 +1000,90 @@ function TextContentPlugin({
   // when the update listener runs synchronously is timing-dependent. Missing true would misreport the high
   // latency of composing long Chinese/Japanese text as typing lag. Maintain the flag from compositionstart/compositionend instead.
   const composingRef = useRef(false);
+  const compositionEndFrameRef = useRef<number | null>(null);
+  const publicationRef = useRef<TextContentPublicationState | null>(null);
+  if (!publicationRef.current) {
+    publicationRef.current = {
+      lastPublishedText: getEditorMarkdown(editor.getEditorState()),
+      pendingComposition: false,
+    };
+  }
+
+  const publishEditorState = useCallback(() => {
+    if (!onChange || composingRef.current) return false;
+    const nextText = getEditorMarkdown(editor.getEditorState());
+    onUserInputPresenceChange?.({
+      raw: nextText.length > 0,
+      trimmed: nextText.trim().length > 0,
+    });
+    const publication = resolveTextContentPublication({
+      composing: false,
+      nextText,
+      state: publicationRef.current!,
+    });
+    publicationRef.current = publication.state;
+    if (publication.publish === null) return false;
+    // Composition-end publication only follows typing, so it is never a programmatic update.
+    onChange(publication.publish, { programmatic: false });
+    return true;
+  }, [editor, onChange, onUserInputPresenceChange]);
 
   useEffect(() => {
-    const handleCompositionStart = () => {
+    const startComposition = () => {
       composingRef.current = true;
+      publicationRef.current = {
+        ...publicationRef.current!,
+        pendingComposition: true,
+      };
+      if (compositionEndFrameRef.current !== null) {
+        cancelAnimationFrame(compositionEndFrameRef.current);
+        compositionEndFrameRef.current = null;
+      }
     };
-    const handleCompositionEnd = () => {
-      // compositionend fires just after composition, but the update listener for the committed text usually
-      // runs synchronously in the same task. Setting false immediately would misclassify its latency as typing lag.
-      // Defer clearing the flag with queueMicrotask so that commit is still skipped as composition, then resume normal measurement.
-      queueMicrotask(() => {
-        composingRef.current = false;
+    const finishComposition = () => {
+      composingRef.current = false;
+      if (compositionEndFrameRef.current !== null) {
+        cancelAnimationFrame(compositionEndFrameRef.current);
+      }
+      // Chrome processes input before compositionend; Firefox/Safari may process it afterwards.
+      // The next frame is only a cross-browser fallback; if the real update listener publishes first, this is a no-op because the body is identical.
+      compositionEndFrameRef.current = requestAnimationFrame(() => {
+        compositionEndFrameRef.current = null;
+        publishEditorState();
       });
     };
-
-    // The root may remount; use registerRootListener to detach from the old root and attach to the new one.
-    return editor.registerRootListener((rootElement, previousRootElement) => {
-      previousRootElement?.removeEventListener("compositionstart", handleCompositionStart);
-      previousRootElement?.removeEventListener("compositionend", handleCompositionEnd);
-      rootElement?.addEventListener("compositionstart", handleCompositionStart);
-      rootElement?.addEventListener("compositionend", handleCompositionEnd);
+    const unregisterStart = editor.registerCommand(
+      COMPOSITION_START_COMMAND,
+      () => {
+        startComposition();
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    const unregisterEnd = editor.registerCommand(
+      COMPOSITION_END_COMMAND,
+      () => {
+        finishComposition();
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    const unregisterRoot = editor.registerRootListener((rootElement, previousRootElement) => {
+      previousRootElement?.removeEventListener("compositionstart", startComposition);
+      previousRootElement?.removeEventListener("compositionend", finishComposition);
+      rootElement?.addEventListener("compositionstart", startComposition);
+      rootElement?.addEventListener("compositionend", finishComposition);
     });
-  }, [editor]);
+    return () => {
+      unregisterStart();
+      unregisterEnd();
+      unregisterRoot();
+      if (compositionEndFrameRef.current !== null) {
+        cancelAnimationFrame(compositionEndFrameRef.current);
+        compositionEndFrameRef.current = null;
+      }
+    };
+  }, [editor, publishEditorState]);
 
   useEffect(() => {
     if (!onChange) {
@@ -981,37 +1091,58 @@ function TextContentPlugin({
     }
 
     const readEditorMarkdown = createCachedEditorMarkdownReader();
-    return editor.registerUpdateListener(
-      ({ dirtyElements, dirtyLeaves, editorState, prevEditorState, tags }) => {
-        if (dirtyElements.size === 0 && dirtyLeaves.size === 0) {
-          return;
-        }
+    return editor.registerUpdateListener(({ dirtyElements, dirtyLeaves, editorState, tags }) => {
+      if (dirtyElements.size === 0 && dirtyLeaves.size === 0) {
+        return;
+      }
 
-        // Typing-lag timing covers the hot path of full serialization plus synchronous onChange rerendering.
-        const startedAt = performance.now();
-
-        const nextText = readEditorMarkdown(editorState);
-        const previousText = readEditorMarkdown(prevEditorState);
-        if (nextText === previousText) {
-          return;
-        }
-
-        // Consumers that must tell typing from the app's own writes (clears, restores, history recall)
-        // read this flag.
-        onChange(nextText, { programmatic: isProgrammaticEditorUpdate(tags) });
-
-        const lagMs = performance.now() - startedAt;
-        // Programmatic edits and IME composition do not count as typing lag (recordInputLag filters them centrally).
-        recordInputLag({
-          lagMs,
-          textLength: nextText.length,
-          isProgrammatic: tags.has(PROGRAMMATIC_UPDATE_TAG),
-          isComposing: composingRef.current,
-          taskId: taskId ?? undefined,
+      const userInputUpdate = shouldRecordUserInputStart(tags);
+      if (userInputUpdate) onUserInputStart?.();
+      // The composition text stays in Lexical, but the send button keeps its old behaviour and only subscribes to a boolean for whether text exists.
+      if (composingRef.current) {
+        editorState.read(() => {
+          const nextText = $getRoot().getTextContent();
+          onUserInputPresenceChange?.({
+            raw: nextText.length > 0,
+            trimmed: nextText.trim().length > 0,
+          });
         });
-      },
-    );
-  }, [editor, onChange, taskId]);
+        return;
+      }
+      // Typing-lag timing: an ordinary keystroke serializes the current state only once; the IME candidate phase stays entirely in Lexical,
+      // and only the final update after compositionend serializes and publishes to the React draft owner.
+      const startedAt = performance.now();
+      const nextText = readEditorMarkdown(editorState);
+      onUserInputPresenceChange?.({
+        raw: nextText.length > 0,
+        trimmed: nextText.trim().length > 0,
+      });
+      if (nextText.length === 0 && userInputUpdate) onUserInputClear?.();
+      const publicationState = publicationRef.current!;
+      const compositionCommit = publicationState.pendingComposition;
+      const publication = resolveTextContentPublication({
+        composing: composingRef.current,
+        nextText,
+        state: publicationState,
+      });
+      publicationRef.current = publication.state;
+      if (publication.publish === null) return;
+
+      // Consumers that must tell typing from the app's own writes (clears, restores, history recall)
+      // read this flag.
+      onChange(publication.publish, { programmatic: isProgrammaticEditorUpdate(tags) });
+
+      const lagMs = performance.now() - startedAt;
+      // Programmatic rewrites and IME composition do not count as typing lag (recordInputLag short-circuits them centrally).
+      recordInputLag({
+        lagMs,
+        textLength: nextText.length,
+        isProgrammatic: tags.has(PROGRAMMATIC_UPDATE_TAG),
+        isComposing: composingRef.current || compositionCommit,
+        taskId: taskId ?? undefined,
+      });
+    });
+  }, [editor, onChange, onUserInputClear, onUserInputPresenceChange, onUserInputStart, taskId]);
 
   return null;
 }
@@ -1493,6 +1624,9 @@ interface LexicalChatInputProps {
   /** Enter while submitDisabled, only when the caller names the blocked state (see KeyboardPlugin). */
   onSubmitBlocked?: () => void;
   onChange?: (text: string, meta: { programmatic: boolean }) => void;
+  onUserInputClear?: () => void;
+  onUserInputPresenceChange?: (presence: UserInputPresence) => void;
+  onUserInputStart?: () => void;
   onFocus?: () => void;
   triggerPanelContainer?: HTMLElement | null;
   workspacePath: string;
@@ -1532,6 +1666,9 @@ export function LexicalChatInput({
   onSubmit,
   onModifiedSubmit,
   onChange,
+  onUserInputClear,
+  onUserInputPresenceChange,
+  onUserInputStart,
   onFocus,
   triggerPanelContainer,
   workspacePath,
@@ -1676,7 +1813,13 @@ export function LexicalChatInput({
           <VoiceGhostPreview preview={voicePreview ?? null} />
           <HistoryPlugin />
           <PromptClipboardPlugin />
-          <TextContentPlugin onChange={onChange} taskId={taskId} />
+          <TextContentPlugin
+            onChange={onChange}
+            onUserInputClear={onUserInputClear}
+            onUserInputPresenceChange={onUserInputPresenceChange}
+            onUserInputStart={onUserInputStart}
+            taskId={taskId}
+          />
           <KeyboardPlugin
             onSubmit={handleSubmit}
             onModifiedSubmit={onModifiedSubmit}

@@ -1,6 +1,7 @@
 import type { LspService } from "../lsp/service.js";
 import type { NestedInstructionTracker } from "../context/nested-instructions/tracker.js";
 import { PermissionService, ToolScheduler } from "./deps.js";
+import type { ModelRequestSessionFeature } from "@zcode/contracts";
 import type {
   Logger,
   ModelSelection,
@@ -101,9 +102,19 @@ export interface AgentRuntimeInternal
   lspService?: LspService;
   /** Whether the LSP tool is currently registered (service present, enabled, and a server binary installed). */
   lspToolAvailable: boolean;
+  /** Capability tags used by this session (the session-features module is the only writer); append-only. */
+  sessionFeatures: Set<ModelRequestSessionFeature>;
+  /** Tail of the session-features entry write queue; writes are serial so an older set never overwrites a newer one. */
+  sessionFeaturesWrite: Promise<void>;
   contextBuilder: ContextBuilder | null;
   contextInitialized: boolean;
   contextSourceSnapshot?: ContextSourceSnapshot;
+  // Git state just read during new-session init has not been announced yet; cleared after the first check, never set for restored sessions.
+  sessionStartGitPrefetch?: boolean;
+  // Directories this runtime confirmed are not Git repositories; not rechecked (a later git init is picked up by a new runtime).
+  nonGitDirectories?: Set<string>;
+  // A runtime restored from storage has not checked for a repository itself yet; read once on the first environment announcement, then cleared.
+  repositoryRecheckPending?: boolean;
   latestContextBuildResult?: ContextBuildResult;
   memoryRoot?: string;
   memoryIndexContent?: string;
@@ -119,6 +130,7 @@ export interface AgentRuntimeInternal
   mcpPort?: McpPort;
   mcpStartupPromise?: Promise<McpConnectionSnapshot>;
   residencyBlockingWorkCount: number;
+  residencyBlockingWork: Set<Promise<unknown>>;
   mcpInitialized: boolean;
   mcpToolsRegistered: boolean;
   /** 初始化 / 上次刷新时注册的 MCP 工具名与集合签名。 */
@@ -159,7 +171,6 @@ export interface AgentRuntimeInternal
   mainTurnCacheHitAggregate: MainTurnCacheHitAggregate;
   currentTurnFileChanges: RuntimeTurnFileChangeMap;
   lastAssistantCompletedAtMs?: number;
-  lastEmittedLocalDate?: string;
   autoCompactConsecutiveFailures: number;
   runtimeCommandQueue: RuntimeCommandQueue;
   runtimeCommandDrainActive: boolean;
@@ -175,6 +186,8 @@ export interface AgentRuntimeInternal
   queueAutoDrain: boolean;
   queueExternalDrainActive: boolean;
   shuttingDown: boolean;
+  readonly shutdownSignal: AbortSignal;
+  workChanged: Set<() => void>;
   backgroundTaskNotificationsSealed: boolean;
   backgroundTaskNotificationSealReason?: BackgroundTaskNotificationSealReason;
   pendingModelChangeTimeline?: PendingModelChangeTimeline;

@@ -215,13 +215,13 @@ export const TID_SSH_PORT_INPUT = "ssh-port-input";
 export const TID_SSH_USERNAME_INPUT = "ssh-username-input";
 /** SSH config alias selector. */
 export const TID_SSH_CONFIG_ALIAS_SELECT = "ssh-config-alias-select";
-/** 设置入口「从 SSH config 导入」按钮。 */
+/** Settings entry "Import from SSH config" button. */
 export const TID_SSH_CONFIG_IMPORT = "remote-ssh-config-import";
-/** 已关联 SSH config Host 的标签。 */
+/** Chip for an associated SSH config Host. */
 export const TID_SSH_CONFIG_ALIAS_CHIP = "remote-ssh-config-alias-chip";
-/** 新建连接表单头部的实时目标预览。 */
+/** Live target preview in the new-connection form header. */
 export const TID_REMOTE_NEW_CONNECTION_PREVIEW = "remote-new-connection-preview";
-/** SSH 密码输入框 */
+/** SSH password input */
 export const TID_SSH_PASSWORD_INPUT = "ssh-password-input";
 /** SSH private-key path input. */
 export const TID_SSH_PRIVATE_KEY_INPUT = "ssh-private-key-input";
@@ -265,33 +265,33 @@ export const TID_WORKSPACE_CLOSE = "workspace-close";
 export const TID_CONVERSATION_SECTION = "conversation-section";
 /** Project subsection in the project view. */
 export const TID_PROJECT_SECTION = "project-section";
-/** 项目分区新建项目按钮 */
+/** New-project button in the projects section */
 export const TID_VIRTUAL_PROJECT_ADD = "virtual-project-add";
-/** 任务分区新建任务按钮（全局新建，cwd 为默认执行目录） */
+/** New-task button in the tasks section (global creation; cwd is the default execution directory) */
 export const TID_VIRTUAL_PROJECT_NEW_TASK = "virtual-project-new-task";
-/** 项目行（父级 section 带 data-project-id / data-project-name） */
+/** Project row (parent section carries data-project-id / data-project-name) */
 export const TID_VIRTUAL_PROJECT_ROW = "virtual-project-row";
-/** 项目行展开/收起触发器（aria-expanded 表示任务列表是否展开） */
+/** Project row expand/collapse trigger (aria-expanded shows whether the task list is expanded) */
 export const TID_VIRTUAL_PROJECT_TOGGLE = "virtual-project-toggle";
-/** 项目行折叠态未读指示 */
+/** Project row unread indicator in collapsed state */
 export const TID_VIRTUAL_PROJECT_UNREAD = "virtual-project-unread";
-/** 项目行任务列表容器 */
+/** Project row task list container */
 export const TID_VIRTUAL_PROJECT_TASKS = "virtual-project-tasks";
-/** 项目行 hover 操作区 */
+/** Project row hover action area */
 export const TID_VIRTUAL_PROJECT_ACTIONS = "virtual-project-actions";
-/** 项目行更多菜单触发器 */
+/** Project row more-menu trigger */
 export const TID_VIRTUAL_PROJECT_MENU = "virtual-project-menu";
-/** 项目行打开文件树按钮（多 root 时为下拉触发器） */
+/** Project row open-file-tree button (dropdown trigger when there are multiple roots) */
 export const TID_VIRTUAL_PROJECT_FILES = "virtual-project-files";
-/** 项目行新建任务按钮（cwd = 项目主要目录） */
+/** Project row new-task button (cwd = the project's primary directory) */
 export const TID_VIRTUAL_PROJECT_CREATE_TASK = "virtual-project-create-task";
-/** 项目行菜单 / 右键动作前缀，见 virtualProjectActionTestId */
+/** Project row menu / context-menu action prefix; see virtualProjectActionTestId */
 export const TID_VIRTUAL_PROJECT_ACTION_PREFIX = "virtual-project";
-/** 全局置顶任务区 */
+/** Global pinned tasks section */
 export const TID_PROJECT_PINNED_TASKS = "project-pinned-tasks";
-/** 远端 host 分组（data-host-id 为 host id） */
+/** Remote host group (data-host-id is the host id) */
 export const TID_REMOTE_PROJECT_HOST = "remote-project-host";
-/** Composer workspace 选择触发器 */
+/** Composer workspace selection trigger */
 export const TID_COMPOSER_WORKSPACE_TRIGGER = "composer-workspace-trigger";
 /** Remote-connection entry in the Composer workspace menu. */
 export const TID_COMPOSER_REMOTE_CONNECTION = "composer-remote-connection";
@@ -410,7 +410,7 @@ export const TID_SETTINGS_PAGE = "settings-page";
 export const TID_SETTINGS_BACK_BUTTON = "settings-back-button";
 /** Settings left-side section entry (dynamic suffix is the section ID). */
 export const TID_SETTINGS_SECTION_NAV = "settings-section-nav";
-/** 常规设置中的增强 Find/Grep 开关 */
+/** Enhanced Find/Grep switch in General Settings */
 export const TID_SETTINGS_TOOL_SEARCH_SELECT = "settings-tool-search-select";
 export const TID_SETTINGS_TOOL_SEARCH_OPTION = "settings-tool-search-option";
 export const TID_SETTINGS_NATIVE_SEARCH_SWITCH = "settings-native-search-switch";
@@ -540,7 +540,7 @@ export const TID_SUBAGENT_ROW = "subagent-row";
 export const TID_SUBAGENT_BUILT_IN_MODEL_TRIGGER = "subagent-built-in-model-trigger";
 /** Top-level usage-statistics tab in Settings (dynamic suffix is the usage tab ID). */
 export const TID_SETTINGS_USAGE_TAB = "settings-usage-tab";
-/** 侧边栏头像菜单使用统计入口 */
+/** Usage-statistics entry in the sidebar account menu */
 export const TID_SIDEBAR_CODING_PLAN_USAGE_BUTTON = "sidebar-coding-plan-usage-button";
 /** Interface zoom submenu trigger in the sidebar account menu. */
 export const TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER = "sidebar-interface-zoom-trigger";
@@ -636,7 +636,7 @@ export const TID_WORKSPACE_MORE_BUTTON = "workspace-more-button";
 export const TID_WORKSPACE_HELP_MENU_TRIGGER = "workspace-help-menu-trigger";
 /** "Resource Manager" item in the question-mark help menu (Desktop only). */
 export const TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER = "workspace-help-menu-resource-manager";
-/** 工作区文件树面板 */
+/** Workspace file-tree panel */
 export const TID_WORKSPACE_FILE_TREE_PANEL = "workspace-file-tree-panel";
 /** Workspace file-tree refresh button. */
 export const TID_WORKSPACE_FILE_TREE_REFRESH_BUTTON = "workspace-file-tree-refresh-button";
@@ -653,14 +653,23 @@ export const TID_SSH_SUCCESS = "ssh-success";
 export const TID_V4_SESSION_PANE = "v4-session-pane";
 /** v4 message timeline container. */
 export const TID_V4_TIMELINE = "v4-timeline";
-/** v4 投影行（动态后缀为 rowId） */
+/** v4 projection row (dynamic suffix is rowId) */
 export const TID_V4_ROW = "v4-row";
-/** v4 workspace Hook pending-review banner container. */
-export const TID_V4_WORKSPACE_HOOK_PENDING_BANNER = "v4-workspace-hook-pending-banner";
-/** "Review" button in the v4 workspace Hook pending-review banner. */
+/** v4 composer workspace Hook pending-review entry and unread dot */
+export const TID_V4_WORKSPACE_HOOK_PENDING_TRIGGER = "v4-workspace-hook-pending-trigger";
+export const TID_V4_WORKSPACE_HOOK_PENDING_UNREAD = "v4-workspace-hook-pending-unread";
+/** v4 workspace Hook pending-review click popover */
+export const TID_V4_WORKSPACE_HOOK_PENDING_POPOVER = "v4-workspace-hook-pending-popover";
+/** v4 workspace Hook pending-review popover "Review" button */
 export const TID_V4_WORKSPACE_HOOK_PENDING_REVIEW = "v4-workspace-hook-pending-review";
-/** "Dismiss" button in the v4 workspace Hook pending-review banner. */
+/** v4 workspace Hook pending-review popover "Ignore" button */
 export const TID_V4_WORKSPACE_HOOK_PENDING_DISMISS = "v4-workspace-hook-pending-dismiss";
+/** v4 composer workspace MCP pending-review entry, unread dot, and click popover */
+export const TID_V4_WORKSPACE_MCP_PENDING_TRIGGER = "v4-workspace-mcp-pending-trigger";
+export const TID_V4_WORKSPACE_MCP_PENDING_UNREAD = "v4-workspace-mcp-pending-unread";
+export const TID_V4_WORKSPACE_MCP_PENDING_POPOVER = "v4-workspace-mcp-pending-popover";
+export const TID_V4_WORKSPACE_MCP_PENDING_REVIEW = "v4-workspace-mcp-pending-review";
+export const TID_V4_WORKSPACE_MCP_PENDING_DISMISS = "v4-workspace-mcp-pending-dismiss";
 /** v4 Composer container. */
 export const TID_V4_COMPOSER = "v4-composer";
 /** v4 Composer text input. */
@@ -882,15 +891,16 @@ export function testId(base: string, suffix: string): string {
 }
 
 /**
- * 项目行菜单 / 右键动作的 test id（动作 id 如 edit / pin / delete / remove-entry / create-task /
- * files-<index>）。右键菜单里 create-task 与 files-* 带 `context-` 前缀，和更多菜单区分。
+ * Test id for project row menu / context-menu actions (action ids such as edit / pin / delete /
+ * remove-entry / create-task / files-<index>). In the context menu, create-task and files-*
+ * carry the `context-` prefix to distinguish them from the more-menu.
  */
 export function virtualProjectActionTestId(actionId: string, context = false): string {
   const scoped = context && (actionId.startsWith("files-") || actionId === "create-task");
   return `${TID_VIRTUAL_PROJECT_ACTION_PREFIX}-${scoped ? "context-" : ""}${actionId}`;
 }
 
-/** 左侧栏头像上方的可手动领取 Start Plan banner。 */
+/** Manually claimable Start Plan banner above the sidebar avatar. */
 export const TID_MANUAL_CLAIM_PLAN_BANNER = "manual-claim-plan-banner";
 
 /** Plugin UI sandbox card container and the webview inside it. */

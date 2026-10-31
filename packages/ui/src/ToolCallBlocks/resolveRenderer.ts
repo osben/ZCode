@@ -73,8 +73,10 @@ export function resolveToolCallRenderer(context: ToolCallBlockRenderContext) {
 
   // 工具目录查询只复用搜索卡片；不改 search family，避免被聚合为 Explore 内容搜索。
   const toolCall = context.toolCallNode.toolCall;
-  const searchToolName = toolCall.toolName ?? toolCall.kind;
-  if (searchToolName === "ToolSearch" || searchToolName === "LocalToolSearch") {
+  const toolName = toolCall.toolName ?? toolCall.kind;
+  // Parameter generation and mid-stream stops have not gone through execution normalization yet,
+  // so the Local tool name must also reuse the same card and copy.
+  if (toolName === "ToolSearch" || toolName === "LocalToolSearch") {
     return ToolSearchToolCallBlock;
   }
 

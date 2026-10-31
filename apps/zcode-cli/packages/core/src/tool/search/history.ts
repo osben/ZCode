@@ -1,20 +1,22 @@
-import type { RuntimeMessageEntry } from "../../agent/message-history.js";
 import {
-  LOCAL_TOOL_SEARCH_NAME,
-  TOOL_SEARCH_NAME,
   isToolSearchName,
   toolSearchNameForMode,
-  type CompactBoundaryPayload,
-  type ModelMessageContentBlock,
-  type ModelToolContract,
-  type ResolvedToolSearchMode,
+  TOOL_SEARCH_NAME,
+  LOCAL_TOOL_SEARCH_NAME,
+} from "@zcode/contracts";
+import { renderToolSearchAnnouncement } from "./description.js";
+import type { RuntimeMessageEntry } from "../../agent/message-history.js";
+import type {
+  CompactBoundaryPayload,
+  ModelMessageContentBlock,
+  ModelToolContract,
+  ResolvedToolSearchMode,
 } from "@zcode/contracts";
 import {
   createLocalToolDefinitionRenderer,
   localToolsAlreadyLoadedReminder,
   localToolsLoadedReminder,
 } from "./local-projection.js";
-import { renderToolSearchAnnouncement } from "./description.js";
 
 export function compactDiscoveryMetadata(
   boundary: Pick<CompactBoundaryPayload, "boundaryId" | "preCompactDiscoveredTools">,
@@ -53,24 +55,60 @@ export function projectToolReferences(
   tools: readonly ModelToolContract[],
   deferred: ReadonlySet<string> = new Set(),
 ): { entries: RuntimeMessageEntry[]; loadedToolCallIds: ReadonlySet<string> } {
-  const catalog =
-    mode === "off"
-      ? undefined
-      : buildProjectionCatalog(tools, toolSearchNameForMode(mode));
+  const catalog = mode === "off" ? undefined : new Map(tools.map((tool) => [tool.name, tool]));
+  const searchName = toolSearchNameForMode(mode);
+  const searchTool = catalog?.get(searchName);
+  if (searchTool) {
+    catalog!.set(TOOL_SEARCH_NAME, searchTool);
+    catalog!.set(LOCAL_TOOL_SEARCH_NAME, searchTool);
+  }
   const renderDefinition = mode === "local" ? createLocalToolDefinitionRenderer() : undefined;
-  // 同批结果尚未被模型看到：直到下一条 assistant 才合入已交付集合，避免并行搜索互相去重。
+  // Results from the same batch have not been seen by the model yet: they join the delivered set only at the next assistant message, so parallel searches do not dedupe each other.
   const visible = mode === "local" ? new Set<string>() : undefined;
   const pending = mode === "local" ? new Set<string>() : undefined;
   const projected: RuntimeMessageEntry[] = [];
   const loadedToolCallIds = new Set<string>();
-  for (const sourceEntry of entries) {
-    if (pending && sourceEntry.kind !== "attachment" && sourceEntry.message.role === "assistant") {
+  for (const originalEntry of entries) {
+    let entry = originalEntry;
+    if (pending && entry.kind !== "attachment" && entry.message.role === "assistant") {
       for (const name of pending) visible!.add(name);
       pending.clear();
     }
-    if (mode === "off" && sourceEntry.metadata?.toolSearchAnnouncement) continue;
-    // 请求副本才使用当前模式名称；历史行保持原样，不能为了一种模式迁移存储。
-    const entry = mode === "off" ? sourceEntry : projectSearchNames(sourceEntry, mode);
+    if (mode === "off" && entry.metadata?.toolSearchAnnouncement) continue;
+    // A session can switch modes; names are rewritten in pairs only in the request copy, without polluting the original history or the request being sent.
+    if (mode !== "off") {
+      if (entry.kind === "attachment") {
+        if (entry.metadata?.toolSearchAnnouncement) {
+          const content = renderToolSearchAnnouncement(
+            entry.metadata.toolSearchAnnouncement,
+            mode,
+            entry.metadata.toolSearchHiddenNames,
+          );
+          if (content !== entry.content) entry = { ...entry, content };
+        }
+      } else {
+        const message = entry.message;
+        const renameResult = isToolSearchName(message.toolName) && message.toolName !== searchName;
+        const renameCalls = message.toolCalls?.some(
+          (call) => isToolSearchName(call.name) && call.name !== searchName,
+        );
+        if (renameResult || renameCalls)
+          entry = {
+            ...entry,
+            message: {
+              ...message,
+              ...(renameResult ? { toolName: searchName } : {}),
+              ...(renameCalls
+                ? {
+                    toolCalls: message.toolCalls!.map((call) =>
+                      isToolSearchName(call.name) ? { ...call, name: searchName } : call,
+                    ),
+                  }
+                : {}),
+            },
+          };
+      }
+    }
     if (
       entry.kind === "attachment" ||
       entry.message.role !== "tool" ||
@@ -84,8 +122,7 @@ export function projectToolReferences(
     let definitions: string[] | undefined;
     let alreadyLoaded: Set<string> | undefined;
     let newlyLoaded: Set<string> | undefined;
-    const successfulSearch =
-      isToolSearchName(entry.message.toolName ?? "") && !entry.message.isError;
+    const successfulSearch = isToolSearchName(entry.message.toolName) && !entry.message.isError;
     for (let index = 0; index < original.length; index++) {
       const block = original[index]!;
       if (block.type !== "tool_reference") {
@@ -98,32 +135,29 @@ export function projectToolReferences(
       }
       const tool = catalog?.get(block.toolName);
       if (tool && !renderDefinition) {
-        // 结果外的成功提示仅用于 Native；Local 已在结果内给出加载和调用指引。
+        // The success hint outside the result is used only by Native; Local already gives loading and calling guidance inside the result.
         if (successfulSearch && entry.message.toolCallId)
           loadedToolCallIds.add(entry.message.toolCallId);
-        // 别名引用写回注册表规范名称，与执行入口解析保持一致。
         if (tool.name !== block.toolName) {
           content ??= original.slice(0, index);
           content.push({ ...block, toolName: tool.name });
-        } else {
-          content?.push(block);
-        }
+        } else content?.push(block);
         continue;
       }
-      // 仅在引用确实被移除/展开时复制；普通结果与有效 Native 引用直接共享原历史。
+      // Copy only when a reference is actually removed or expanded; ordinary results and valid Native references share the original history directly.
       content ??= original.slice(0, index);
       if (tool && renderDefinition) {
         if (successfulSearch && deferred.has(tool.name) && visible!.has(tool.name)) {
           (alreadyLoaded ??= new Set()).add(tool.name);
         } else {
           (definitions ??= []).push(renderDefinition(tool));
-          // 常驻及 compact 提升工具仍直接调用，不能混入包装调用的首搜指引。
+          // Resident and compact-promoted tools are still called directly; they must not be mixed into the first-search guidance for wrapped calls.
           if (successfulSearch && deferred.has(tool.name))
             (newlyLoaded ??= new Set()).add(tool.name);
         }
         if (successfulSearch) pending!.add(tool.name);
       }
-      // 被删除的引用不切断连续段，保持原来“先过滤再展开”的合并语义。
+      // A removed reference does not break the contiguous run, keeping the original "filter first, then expand" merge semantics.
     }
     if (definitions) content!.push(localDefinitionsBlock(definitions));
     if (newlyLoaded)
@@ -155,57 +189,19 @@ export function projectToolReferences(
   return { entries: projected, loadedToolCallIds };
 }
 
-// Both search names resolve to the mode's search definition, as the registry alias does at execution time.
-function buildProjectionCatalog(
-  tools: readonly ModelToolContract[],
-  searchName: string,
-): Map<string, ModelToolContract> {
-  const catalog = new Map(tools.map((tool) => [tool.name, tool]));
-  const search = catalog.get(searchName);
-  if (search) {
-    catalog.set(TOOL_SEARCH_NAME, search);
-    catalog.set(LOCAL_TOOL_SEARCH_NAME, search);
-  }
-  return catalog;
-}
-
-// Announcements are re-rendered from metadata, and tool-call names are rewritten only in the request copy.
-function projectSearchNames(
-  entry: RuntimeMessageEntry,
-  mode: ResolvedToolSearchMode,
-): RuntimeMessageEntry {
-  if (entry.kind === "attachment") {
-    const delta = entry.metadata.toolSearchAnnouncement;
-    if (!delta) return entry;
-    const content = renderToolSearchAnnouncement(delta, mode);
-    return content === entry.content ? entry : { ...entry, content };
-  }
-  const searchName = toolSearchNameForMode(mode);
-  const message = entry.message;
-  const renameTool =
-    message.toolName !== undefined &&
-    isToolSearchName(message.toolName) &&
-    message.toolName !== searchName;
-  const renameCalls =
-    message.toolCalls?.some((call) => isToolSearchName(call.name) && call.name !== searchName) ===
-    true;
-  if (!renameTool && !renameCalls) return entry;
-  return {
-    ...entry,
-    message: {
-      ...message,
-      ...(renameTool ? { toolName: searchName } : {}),
-      ...(renameCalls
-        ? {
-            toolCalls: message.toolCalls!.map((call) =>
-              isToolSearchName(call.name) ? { ...call, name: searchName } : call,
-            ),
-          }
-        : {}),
-    },
-  };
-}
-
 function localDefinitionsBlock(definitions: readonly string[]): ModelMessageContentBlock {
   return { type: "text", text: `<functions>\n${definitions.join("\n")}\n</functions>` };
+}
+
+/** Announcement hidden names are a lenient field: cold resume keeps only the strings listed in the announcement removedNames and ignores the rest. */
+export function parseToolSearchHiddenNames(
+  value: unknown,
+  announcement: { removedNames: readonly string[] },
+): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const removed = new Set(announcement.removedNames);
+  const names = value.filter(
+    (name): name is string => typeof name === "string" && removed.has(name),
+  );
+  return names.length ? names : undefined;
 }

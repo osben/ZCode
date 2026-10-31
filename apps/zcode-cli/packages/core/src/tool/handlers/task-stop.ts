@@ -50,7 +50,9 @@ const taskStopHandler: ToolHandler = async (input, context) => {
   }
 
   const result = await context.backgroundTaskControlPort.stopBackgroundTask(taskId, {
-    // The model itself stopped the run: the terminal notification says “stopped by you,” rather than attributing the decision to the user.
+    // Stopped by the model itself: the terminal notification is written as model-initiated
+    // (sub-agent reads "was stopped by ZCode", workflow reads "was stopped by you (TaskStop)",
+    // background commands just say "was stopped"), not as the user's decision.
     initiator: "model",
     strict: true,
     traceContext: context.traceContext,
@@ -77,7 +79,7 @@ const taskStopHandler: ToolHandler = async (input, context) => {
         toolCallId: context.toolCallId,
       });
     }
-    // 单纯提示未找到任务容易被模型误读为已停止；明确查找失败不代表终态，并要求使用完整 ID。
+    // A bare "task not found" is easily misread by the model as already stopped; state clearly that the lookup failed (not a terminal state) and require the full ID.
     throw taskStopError(`Invalid task ID "${taskId}". ${TASK_STOP_LOOKUP_FAILURE_GUIDANCE}`, 1, {
       reason: result.reason,
       taskId,

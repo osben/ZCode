@@ -93,8 +93,8 @@ export function LoginPanel({ active, onComplete }: LoginPanelProps) {
     providers,
     loadingProviders,
     pendingProvider,
-    refreshProviders,
     authorizeUrl,
+    refreshProviders,
   } = useOAuth();
   const user = useZCodeStore((s) => s.user);
   const oauthError = useZCodeStore((s) => s.oauthError);

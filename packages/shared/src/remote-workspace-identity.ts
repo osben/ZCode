@@ -17,9 +17,9 @@ export type RemoteWorkspaceIdentityKind = "ssh" | "wsl" | "docker" | "server";
 
 export interface ParsedRemoteWorkspaceIdentity {
   kind: RemoteWorkspaceIdentityKind;
-  /** kind=server 时的稳定 Source Server id。 */
+  /** Stable Source Server id when kind=server. */
   sourceServerId?: string;
-  /** 远端真实路径（posix 归一形态）。 */
+  /** Real path on the remote (posix-normalized form). */
   workspacePath: string;
 }
 
@@ -131,7 +131,12 @@ export function parseRemoteWorkspaceIdentity(
   let cursor = kindEnd + 1;
   let sourceServerId: string | undefined;
   for (let i = 0; i < AUTHORITY_SEGMENTS[kind]; i++) {
-    const next = rest.indexOf(":", cursor);
+    // An SSH username may contain colons; cutting at the first single colon would make connection
+    // admission and directory-state reads falsely reject the identity. The third segment ends at the
+    // ":/" before the absolute path, preserving the original identity string and username without
+    // changing credentials or existing keys.
+    const separator = kind === "ssh" && i === 2 ? ":/" : ":";
+    const next = rest.indexOf(separator, cursor);
     if (next <= cursor) {
       return null;
     }
@@ -187,13 +192,13 @@ export function rebaseRemoteWorkspaceIdentity(
   return `${authorityPrefix}${normalizeWorkspacePathForIdentity(workspacePath)}`;
 }
 
-/** 虚拟项目的 host 身份；只在统一 identity 模块裁剪路径，业务层不得自行拆 authority。 */
+/** Host identity of a virtual project; only the unified identity module trims the path — business layers must not split the authority themselves. */
 export function remoteHostIdFromWorkspaceIdentity(identity: string): string | null {
   const parsed = parseRemoteWorkspaceIdentity(identity);
   return parsed ? identity.slice(0, -(parsed.workspacePath.length + 1)) : null;
 }
 
-/** 从已登记的 Host 身份构造目录身份；不让业务模块拼接或解析 authority。 */
+/** Build a directory identity from a registered host identity; business modules must not concatenate or parse the authority. */
 export function buildRemoteHostWorkspaceIdentity(hostId: string, workspacePath: string): string {
   const identity = `${hostId}:${normalizeWorkspacePathForIdentity(workspacePath)}`;
   if (remoteHostIdFromWorkspaceIdentity(identity) !== hostId)

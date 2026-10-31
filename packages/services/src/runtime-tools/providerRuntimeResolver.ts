@@ -224,7 +224,8 @@ function findGlmDevEntry(): GlmDevEntry | null {
   const anchorDirs = [repoRoot, process.cwd()].filter((anchor): anchor is string =>
     Boolean(anchor),
   );
-  const candidates = ["zcode-cli", "glm", "cc-refactor"];
+  // Historical dev directories could accidentally capture the release entry point; custom directories are set explicitly via ZCODE_AGENT_WORKDIR only.
+  const candidates = ["zcode-cli", "glm"];
   const seen = new Set<string>();
   for (const anchorDir of anchorDirs) {
     for (const name of candidates) {

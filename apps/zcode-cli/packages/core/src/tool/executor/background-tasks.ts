@@ -1,17 +1,10 @@
 import {
   SessionEventType,
   traceContextToLogContext,
-  type BackgroundResultOriginMeta,
-  type DynamicWorkflowRunError,
-  type DynamicWorkflowRunStopReason,
   type ExecutionPort,
   type SessionEvent,
-  type DynamicWorkflowRunSnapshot,
-  type SubagentTaskSnapshot,
   type TraceContext,
   type TurnId,
-  type WorkflowNotificationMeta,
-  type WorkflowTaskSnapshot,
 } from "@zcode/contracts";
 import { isSubagentDispatchToolName } from "../compat.js";
 import type { ExecutableToolCall } from "../types.js";
@@ -29,8 +22,17 @@ import {
 } from "./background-task-registry.js";
 import { backgroundTaskOutputMetadata } from "./background-task-output.js";
 import {
-  buildWorkflowReportsManifestSection,
   buildWorkflowReportsNotificationSection,
+  type BackgroundTaskSnapshot,
+  buildWorkflowTaskSummary,
+  workflowSnapshotTerminal,
+  workflowTaskSubject,
+  runtimeString,
+  buildWorkflowNotificationOriginMeta,
+  workflowSnapshotScriptPath,
+  workflowSnapshotReports,
+  workflowSnapshotReportCount,
+  workflowSnapshotArtifacts,
   serializeWorkflowArtifact,
 } from "./workflow-artifact.js";
 // Two artifacts: the one above is the script's **top-level return value** (the engine-internal
@@ -38,20 +40,9 @@ import {
 // for the user** through `artifact.*` (shown in `<artifacts>`). Both appear side by side in the
 // same completion notification, so keep them as separate fields.
 import {
-  buildWorkflowArtifactsManifestSection,
   buildWorkflowArtifactsNotificationSection,
-  toPublishedArtifactSummaries,
   WORKFLOW_ARTIFACTS_NOTIFICATION_MAX_LINES,
 } from "./workflow-published-artifacts.js";
-
-type BackgroundTaskSnapshot =
-  | NonNullable<Awaited<ReturnType<NonNullable<ExecutionPort["getBackgroundTask"]>>>>
-  | SubagentTaskSnapshot
-  | WorkflowTaskSnapshot
-  // The workflow-run snapshot keeps the WorkflowTaskSnapshot shape but widens output to unknown
-  // (the artifact comes from the script's top-level return value), so it is not a subtype of
-  // WorkflowTaskSnapshot and needs its own union branch.
-  | DynamicWorkflowRunSnapshot;
 
 type BackgroundTaskWaiter = {
   waitForBackgroundTask(
@@ -164,6 +155,13 @@ export class BackgroundTaskTracker {
       return;
     }
 
+    // The registry's terminal precedes event persistence; the owner must await the whole tracker, not just watch the state.
+    const tracking = Promise.withResolvers<void>();
+    this.deps.registerResidencyBlockingWork?.(tracking.promise);
+    const track = (work: Promise<void>) => {
+      this.deps.registerResidencyBlockingWork?.(work);
+      return work;
+    };
     let lastSnapshotSignature = "";
     let completing = false;
     let polling = false;
@@ -177,6 +175,7 @@ export class BackgroundTaskTracker {
       if (maxRuntimeTimer) clearTimeout(maxRuntimeTimer);
       maxRuntimeTimer = undefined;
       this.backgroundPollers.delete(taskId);
+      tracking.resolve();
     };
 
     if (
@@ -193,22 +192,23 @@ export class BackgroundTaskTracker {
           taskId,
           toolName: toolCall.name,
         });
-        void Promise.resolve(
-          this.deps.executionPort?.cancelBackgroundTask?.(taskId),
-        ).catch((error) => {
-          this.deps.logger?.warn("Subagent background Bash cancellation failed", {
-            ...traceContextToLogContext(traceContext),
-            errorMessage: error instanceof Error ? error.message : String(error),
-            event: "background_task.subagent_bash.cancel_failed",
-            module: "core.tool.executor",
-            taskId,
-            toolName: toolCall.name,
-          });
-        });
+        void Promise.resolve(this.deps.executionPort?.cancelBackgroundTask?.(taskId)).catch(
+          (error) => {
+            this.deps.logger?.warn("Subagent background Bash cancellation failed", {
+              ...traceContextToLogContext(traceContext),
+              errorMessage: error instanceof Error ? error.message : String(error),
+              event: "background_task.subagent_bash.cancel_failed",
+              module: "core.tool.executor",
+              taskId,
+              toolName: toolCall.name,
+            });
+          },
+        );
       }, this.deps.subagentBackgroundBashMaxMs);
     }
 
     const emitRunningUpdate = async (snapshot: BackgroundTaskSnapshot) => {
+      if (stopped) return;
       const signature = this.backgroundSnapshotSignature(snapshot);
       if (signature === lastSnapshotSignature) return;
       lastSnapshotSignature = signature;
@@ -267,13 +267,16 @@ export class BackgroundTaskTracker {
         }
 
         if (this.isNotifiedLocalAgentSnapshot(toolCall, snapshot)) {
-          this.deps.logger?.debug?.("Background task terminal notification already handled by subagent", {
-            ...traceContextToLogContext(traceContext),
-            event: "background_task.tracking.notification_already_handled",
-            module: "core.tool.executor",
-            taskId,
-            toolName: toolCall.name,
-          });
+          this.deps.logger?.debug?.(
+            "Background task terminal notification already handled by subagent",
+            {
+              ...traceContextToLogContext(traceContext),
+              event: "background_task.tracking.notification_already_handled",
+              module: "core.tool.executor",
+              taskId,
+              toolName: toolCall.name,
+            },
+          );
           stopped = true;
           stopTracking();
           return;
@@ -313,6 +316,7 @@ export class BackgroundTaskTracker {
       polling = true;
       try {
         const snapshot = await this.getBackgroundTaskSnapshot(toolCall, taskId);
+        if (stopped || completing) return;
         if (!snapshot) {
           await emitTerminalSnapshot(undefined);
           return;
@@ -356,14 +360,14 @@ export class BackgroundTaskTracker {
 
     if (hasSnapshotProvider) {
       timer = setInterval(() => {
-        void poll();
+        void track(poll());
       }, 1_000);
       timer.unref?.();
-      await poll();
+      await track(poll());
     }
 
     if (hasDirectWaiter && !stopped) {
-      void waitForCompletion();
+      void track(waitForCompletion());
     }
   }
 
@@ -573,7 +577,13 @@ export class BackgroundTaskTracker {
         // with originMeta.
         ...(isDynamicWorkflowRunDispatchToolName(toolCall.name)
           ? {
-              originMeta: buildWorkflowNotificationOriginMeta(toolCall, taskId, status, snapshot, output),
+              originMeta: buildWorkflowNotificationOriginMeta(
+                toolCall,
+                taskId,
+                status,
+                snapshot,
+                output,
+              ),
             }
           : {}),
         taskId,
@@ -767,7 +777,9 @@ export class BackgroundTaskTracker {
     if (isSubagentDispatchToolName(toolCall.name)) {
       const getTask = deps.subagentPort?.getTask;
       return {
-        ...(getTask ? { getSnapshot: (taskId: string) => getTask.call(deps.subagentPort, taskId) } : {}),
+        ...(getTask
+          ? { getSnapshot: (taskId: string) => getTask.call(deps.subagentPort, taskId) }
+          : {}),
         // Reason for the fix: background Agents are stopped through subagentPort.stopTask;
         // the started payload cannot reuse Bash's executionPort capability check.
         cancellable: Boolean(deps.subagentPort?.stopTask),
@@ -799,7 +811,9 @@ export class BackgroundTaskTracker {
       const getTask = deps.workflowPort?.getTask;
       const waiter = getWorkflowTaskWaiter(deps.workflowPort);
       return {
-        ...(getTask ? { getSnapshot: (taskId: string) => getTask.call(deps.workflowPort, taskId) } : {}),
+        ...(getTask
+          ? { getSnapshot: (taskId: string) => getTask.call(deps.workflowPort, taskId) }
+          : {}),
         ...(waiter ? { waitForTerminal: (taskId: string) => waiter.waitForTask(taskId) } : {}),
         cancellable: false,
       };
@@ -858,10 +872,7 @@ function normalizeBackgroundTaskNotificationStatus(status: string): BashTaskNoti
   }
 }
 
-function resolveBashBackgroundResultTitle(
-  toolCall: ExecutableToolCall,
-  taskId: string,
-): string {
+function resolveBashBackgroundResultTitle(toolCall: ExecutableToolCall, taskId: string): string {
   const input = isRecord(toolCall.input) ? toolCall.input : {};
   const description = stringField(input, "description")?.trim();
   const command = stringField(input, "command")?.trim();
@@ -887,324 +898,6 @@ function buildBackgroundTaskSummary(input: {
     case "killed":
       return `${prefix} was stopped`;
   }
-}
-
-function buildWorkflowTaskSummary(input: {
-  lost?: boolean;
-  status: BashTaskNotificationStatus;
-  runStatus?: WorkflowTerminalRunStatus;
-  stopReason?: DynamicWorkflowRunStopReason | undefined;
-  subject: string;
-}): string {
-  const prefix = `Workflow "${input.subject}"`;
-  if (input.lost) return `${prefix} failed because its in-process state was lost.`;
-  // The summary must say how the task ended in one sentence; the model reads it before the XML
-  // fields. Prefer the three dwf terminal states; legacy `Workflow` has no runStatus and falls
-  // back to the tracker's generic wording.
-  if (input.runStatus === "errored") return `${prefix} errored: the script failed.`;
-  if (input.runStatus === "stopped" || input.status === "killed") {
-    switch (input.stopReason) {
-      case "user":
-        return `${prefix} was stopped by the user.`;
-      case "model":
-        return `${prefix} was stopped by you (TaskStop).`;
-      case "provider":
-        return `${prefix} was stopped on a provider error.`;
-      case "interrupted":
-        return `${prefix} was stopped: the process that owned it exited.`;
-      case "superseded":
-        return `${prefix} was stopped and superseded by an amended run.`;
-      default:
-        return `${prefix} was stopped.`;
-    }
-  }
-  return input.status === "completed" ? `${prefix} completed.` : `${prefix} failed.`;
-}
-
-type WorkflowTerminalRunStatus = "completed" | "errored" | "stopped";
-
-/**
- * Three terminal-state facts from a dwf snapshot. Only the dwf snapshot branch has
- * `runStatus` / `stopReason` / `failure` (port contract `DynamicWorkflowRunSnapshot`). If an old
- * port or stub omits them, map using the tracker's generic wording: `failed` → errored,
- * `cancelled` → stopped (reason absent, so the caller falls back to the registry). Nonterminal
- * states return undefined.
- */
-function workflowSnapshotTerminal(
-  status: string,
-  snapshot: BackgroundTaskSnapshot | undefined,
-):
-  | {
-      runStatus: WorkflowTerminalRunStatus;
-      stopReason?: DynamicWorkflowRunStopReason;
-      failure?: DynamicWorkflowRunError;
-    }
-  | undefined {
-  const record = snapshot === undefined ? undefined : (snapshot as Record<string, unknown>);
-  const declared = record?.runStatus;
-  const runStatus: WorkflowTerminalRunStatus | undefined =
-    declared === "completed" || declared === "errored" || declared === "stopped"
-      ? declared
-      : status === "completed"
-        ? "completed"
-        : status === "failed"
-          ? "errored"
-          : status === "cancelled"
-            ? "stopped"
-            : undefined;
-  if (runStatus === undefined) return undefined;
-  const reason = record?.stopReason;
-  const stopReason =
-    runStatus === "stopped" &&
-    (reason === "user" ||
-      reason === "model" ||
-      reason === "provider" ||
-      reason === "interrupted" ||
-      reason === "superseded")
-      ? reason
-      : undefined;
-  const failure = isRecord(record?.failure)
-    ? (record?.failure as unknown as DynamicWorkflowRunError)
-    : undefined;
-  return {
-    runStatus,
-    ...(stopReason === undefined ? {} : { stopReason }),
-    ...(failure === undefined ? {} : { failure }),
-  };
-}
-
-function workflowTaskSubject(
-  toolCall: ExecutableToolCall,
-  taskId: string,
-  snapshot: BackgroundTaskSnapshot | undefined,
-  output: Record<string, unknown> | undefined,
-): string {
-  const input = isRecord(toolCall.input) ? toolCall.input : {};
-  return (
-    stringField(input, "description") ??
-    (snapshot && "description" in snapshot ? runtimeString(snapshot.description) : undefined) ??
-    (snapshot && "name" in snapshot ? runtimeString(snapshot.name) : undefined) ??
-    stringField(output, "name") ??
-    stringField(input, "name") ??
-    stringField(input, "scriptPath") ??
-    taskId
-  );
-}
-
-function runtimeString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-/** Bounds for fields in the manifest payload (`WorkflowNotificationMeta`). Truncate at the
- * emission site: the payload travels through the protocol and snapshot with the turnHeader row,
- * and the shared `workflowNotificationMetaSchema` enforces the same `.max()` limits, rejecting
- * the entire row on persistence if exceeded. Truncation is therefore a **pre-construction**
- * requirement, not optional cleanup. */
-const WORKFLOW_NOTIFICATION_SUMMARY_MAX_CHARS = 500;
-const WORKFLOW_NOTIFICATION_RESULT_MAX_CHARS = 4_000;
-const WORKFLOW_NOTIFICATION_ERROR_MAX_CHARS = 2_000;
-
-/**
- * workflow originMeta for a workflow run terminal notification (including manifest payload).
- * CreateWorkflow and ResumeWorkflowRun have the same shape and both are constructed here:
- * title and summary share a source (`workflowTaskSubject`), and the payload is included only
- * when the task is **terminal and a snapshot is present** (nonterminal / lost without a snapshot
- * means the field is absent and the GUI falls back to a bare title row).
- */
-function buildWorkflowNotificationOriginMeta(
-  toolCall: ExecutableToolCall,
-  taskId: string,
-  status: string,
-  snapshot: BackgroundTaskSnapshot | undefined,
-  output: Record<string, unknown> | undefined,
-): BackgroundResultOriginMeta {
-  const subject = workflowTaskSubject(toolCall, taskId, snapshot, output);
-  const workflowNotification = buildWorkflowTerminalNotification(status, subject, snapshot);
-  return {
-    backgroundSource: "workflow",
-    title: subject,
-    workId: taskId,
-    ...(workflowNotification ? { workflowNotification } : {}),
-  };
-}
-
-/**
- * Snapshot facts → manifest payload for the terminal-state branch.
- *
- * Construct only for the three terminal states (completed / failed / cancelled) when a snapshot
- * is present. `lost` (snapshot missing) and nonterminal states return `undefined`; an absent
- * payload lets the GUI fall back to the current title row instead of reporting an empty shell.
- * **Usage/tokens are unavailable at emission time** (only an in-memory projection is available),
- * so include only durationMs and let the GUI look up tokens by runId at render time.
- */
-function buildWorkflowTerminalNotification(
-  status: string,
-  summary: string,
-  snapshot: BackgroundTaskSnapshot | undefined,
-): WorkflowNotificationMeta | undefined {
-  const terminalStatus = workflowTerminalNotificationStatus(status);
-  if (terminalStatus === undefined || snapshot === undefined) return undefined;
-
-  const terminal = workflowSnapshotTerminal(status, snapshot);
-  const meta: Extract<WorkflowNotificationMeta, { kind: "terminal" }> = {
-    kind: "terminal",
-    status: terminal?.runStatus ?? terminalStatus,
-    ...(terminal?.stopReason === undefined ? {} : { stopReason: terminal.stopReason }),
-    summary: summary.slice(0, WORKFLOW_NOTIFICATION_SUMMARY_MAX_CHARS),
-  };
-
-  // Artifact: any top-level return value from the script, serialized uniformly. Truncation is
-  // explicit: when `resultTruncated` is present, the preview is partial; fetch the full value by
-  // run ID / GetWorkflowRun. resultForm matches serializeWorkflowArtifact's branches: strings
-  // are unchanged (prose), everything else uses JSON.stringify (json).
-  const outputValue = snapshot && "output" in snapshot ? snapshot.output : undefined;
-  const serialized = serializeWorkflowArtifact(outputValue);
-  if (serialized !== undefined) {
-    if (serialized.length > WORKFLOW_NOTIFICATION_RESULT_MAX_CHARS) {
-      meta.result = serialized.slice(0, WORKFLOW_NOTIFICATION_RESULT_MAX_CHARS);
-      meta.resultTruncated = true;
-    } else {
-      meta.result = serialized;
-    }
-    meta.resultForm = typeof outputValue === "string" ? "prose" : "json";
-  }
-
-  const error = snapshot && "error" in snapshot ? runtimeString(snapshot.error) : undefined;
-  if (error !== undefined) meta.error = error.slice(0, WORKFLOW_NOTIFICATION_ERROR_MAX_CHARS);
-
-  // Include progressive artifacts for all three terminal states: a run that dies on ask 12
-  // still completed 11 asks' worth of work.
-  const reports = buildWorkflowReportsManifestSection(
-    workflowSnapshotReports(snapshot),
-    workflowSnapshotReportCount(snapshot),
-  );
-  if (reports !== undefined) meta.reports = reports;
-
-  // Chips payload for user-facing artifacts. This is the **only** data source for notification
-  // row chips: cold hydration reads it back unchanged through the shared Zod schema, and a
-  // missing key would make the chips disappear permanently. Include it for all three terminal
-  // states, as with reports.
-  const artifactsSection = buildWorkflowArtifactsManifestSection(workflowSnapshotArtifacts(snapshot));
-  if (artifactsSection !== undefined) {
-    meta.artifacts = artifactsSection.artifacts;
-    if (artifactsSection.artifactsTruncated) meta.artifactsTruncated = true;
-  }
-
-  const durationMs = workflowNotificationDurationMs(snapshot);
-  if (durationMs !== undefined) meta.durationMs = durationMs;
-
-  return meta;
-}
-
-/**
- * Map tracker terminal status to one of the three manifest terminal literals (`failed` → errored,
- * `cancelled` → stopped); return undefined for nonterminal states (running / lost, etc.) and omit
- * the payload. When the snapshot provides `runStatus`, it is authoritative (see
- * workflowSnapshotTerminal).
- */
-function workflowTerminalNotificationStatus(
-  status: string,
-): "completed" | "errored" | "stopped" | undefined {
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "failed":
-      return "errored";
-    case "cancelled":
-      return "stopped";
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Wall-clock duration in the notification (the “Time” field on the completion card; see
- * docs/dynamic-workflow/transcript-and-notifications.md「How long it took」）。
- *
- * Two sources; take the **larger** value:
- *   - This run: `completedAt - startedAt`, the interval observed by the process that settled it.
- *   - Active duration across the full lineage: `activeDurationMs`, summed by the port from the
- *     journal (each resumed run and every predecessor reached through `resumedFrom`); absent
- *     means unavailable.
- *
- * Defect (2026-09-21): reporting only the current generation can show a run that “ran for four hours and was amended once” as 12 seconds—each amendment
- * and resume restarts the in-process clock, and most of that generation may be cache replay. Use the greater value instead of always using lineage to preserve
- * “never underreport what this process observed”: if older events predate this process's accounting and the journal read port is absent, `activeDurationMs`
- * is missing and we fall back to the current generation; normally lineage is greater because it includes it.
- *
- * If neither source is available, omit the field (the card shows `—`) instead of writing 0.
- */
-function workflowNotificationDurationMs(snapshot: BackgroundTaskSnapshot): number | undefined {
-  const startedAt =
-    "startedAt" in snapshot && snapshot.startedAt instanceof Date
-      ? snapshot.startedAt.getTime()
-      : undefined;
-  const completedAt =
-    "completedAt" in snapshot && snapshot.completedAt instanceof Date
-      ? snapshot.completedAt.getTime()
-      : undefined;
-  const ownLifeMs =
-    startedAt === undefined || completedAt === undefined
-      ? undefined
-      : nonNegativeFinite(completedAt - startedAt);
-  const lineageMs =
-    "activeDurationMs" in snapshot ? nonNegativeFinite(snapshot.activeDurationMs) : undefined;
-  if (ownLifeMs === undefined) return lineageMs;
-  return lineageMs === undefined ? ownLifeMs : Math.max(ownLifeMs, lineageMs);
-}
-
-/** Only finite nonnegative numbers count as durations; NaN / Infinity / negatives / non-numbers are treated as unavailable. */
-function nonNegativeFinite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-/**
- * Progressive artifacts on a dwf snapshot. `BackgroundTaskSnapshot` is a union type (bash /
- * subagent / legacy workflow / dwf branches), and only the dwf branch has `reports`, so narrow
- * with `in` rather than an assertion. Still validate the shape defensively: this path receives
- * input from a port implementation, and the snapshot is a cross-package contract.
- */
-/**
- * dwf script file on the snapshot (absolute path). Narrow it like
- * {@link workflowSnapshotReports} (`in`, not an assertion: `BackgroundTaskSnapshot` has four
- * branches and only dwf has this key), then validate with typeof. The snapshot is a cross-package
- * contract, and old ports/stubs may omit this field.
- */
-function workflowSnapshotScriptPath(
-  snapshot: BackgroundTaskSnapshot | undefined,
-): string | undefined {
-  if (snapshot === undefined || !("scriptPath" in snapshot)) return undefined;
-  return typeof snapshot.scriptPath === "string" && snapshot.scriptPath.length > 0
-    ? snapshot.scriptPath
-    : undefined;
-}
-
-function workflowSnapshotReports(
-  snapshot: BackgroundTaskSnapshot | undefined,
-): readonly unknown[] | undefined {
-  if (snapshot === undefined || !("reports" in snapshot)) return undefined;
-  return Array.isArray(snapshot.reports) ? snapshot.reports : undefined;
-}
-
-/** Actual report count from the snapshot (`reports` contains only the first 256); absent means an older snapshot, so readers fall back to the item count. */
-function workflowSnapshotReportCount(
-  snapshot: BackgroundTaskSnapshot | undefined,
-): number | undefined {
-  if (snapshot === undefined || !("reportCount" in snapshot)) return undefined;
-  return typeof snapshot.reportCount === "number" ? snapshot.reportCount : undefined;
-}
-
-/**
- * dwf **user-facing artifacts** on the snapshot (outputs published through `artifact.*`, not
- * the return value in `output`). Narrow it like {@link workflowSnapshotReports} (`in`, not an
- * assertion: `BackgroundTaskSnapshot` has four branches and only dwf has this key), then parse
- * the shape defensively; the snapshot is a cross-package contract.
- */
-function workflowSnapshotArtifacts(
-  snapshot: BackgroundTaskSnapshot | undefined,
-): ReturnType<typeof toPublishedArtifactSummaries> {
-  if (snapshot === undefined || !("artifacts" in snapshot)) return undefined;
-  return toPublishedArtifactSummaries(snapshot.artifacts);
 }
 
 function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {

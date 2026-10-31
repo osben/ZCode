@@ -48,8 +48,13 @@ function parsePriority(value: string | undefined): AssistantCodeCommentPriority 
 }
 
 export function extractAssistantCodeComments(content: string): AssistantCodeComment[] {
+  const directives = extractAssistantDirectives(content, CODE_COMMENT_DIRECTIVE_NAME);
+  // Bug root cause: search projects every history body; scanning all Markdown code ranges even
+  // when no directive exists added avoidable linear cost.
+  // Confirm a candidate exists first, then apply code-range protection, keeping directive text inside code examples intact.
+  if (directives.length === 0) return [];
   const protectedRanges = findMarkdownCodeRanges(content);
-  return extractAssistantDirectives(content, CODE_COMMENT_DIRECTIVE_NAME).flatMap((directive) => {
+  return directives.flatMap((directive) => {
     if (
       !directive.parameters ||
       overlapsAssistantTextRanges(directive.start, directive.start + 1, protectedRanges)

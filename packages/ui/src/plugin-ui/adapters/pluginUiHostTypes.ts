@@ -46,7 +46,7 @@ export interface UsePluginUiHostResult {
   handle: PluginSandboxHandle | null;
   height: number;
   error: string | null;
-  /** Capabilities declared by the page's `ui/initialize`; undefined before the handshake. `availableDisplayModes` decides whether the host can switch it to fullscreen. */
+  /** Capabilities declared by the page's `ui/initialize`; undefined before the handshake, at least {} after. Both display placement and mode requests are bound by it. */
   appCapabilities: McpUiAppCapabilities | undefined;
   /** Destroys the current instance and re-prepares (Agent run credentials rotated); triggered by the error-state button after a guest crash / load failure. */
   reload(): void;

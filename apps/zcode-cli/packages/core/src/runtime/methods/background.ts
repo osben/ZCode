@@ -107,7 +107,7 @@ export async function stopBackgroundTask(
   }
 
   if (target.taskType === "local_agent") {
-    return stopLocalAgentBackgroundTask.call(this, target);
+    return stopLocalAgentBackgroundTask.call(this, target, options.initiator);
   }
 
   if (target.taskType === "local_bash") {
@@ -181,11 +181,13 @@ function unsupportedBackgroundStopResult(
 async function stopLocalAgentBackgroundTask(
   this: AgentRuntimeInternal,
   target: TypedRuntimeBackgroundStopTarget,
+  initiator: RuntimeBackgroundStopOptions["initiator"],
 ): Promise<RuntimeBackgroundStopResult> {
   if (!this.subagentPort?.stopTask) {
     return unsupportedBackgroundStopResult(target);
   }
-  const snapshot = await this.subagentPort.stopTask(target.taskId);
+  // The stop initiator travels with the stop request to the subagent: the killed notification uses it to write "by ZCode" / "by user" / nothing.
+  const snapshot = await this.subagentPort.stopTask(target.taskId, { initiator });
   if (!snapshot) {
     return {
       ok: false,
@@ -320,27 +322,32 @@ async function stopLocalDreamBackgroundTask(
 
 export async function cancelRunningRuntimeBackgroundTasks(
   this: AgentRuntimeInternal,
-  input: { reason: "subagent_cancelled"; traceContext?: TraceContext },
+  input: { reason: "subagent_cancelled" | "session_closed"; traceContext?: TraceContext },
 ): Promise<void> {
-  if (this.config.taskType !== "subagent_child") return;
+  if (input.reason !== "session_closed" && this.config.taskType !== "subagent_child") return;
   const traceContext = input.traceContext ?? this.rootTraceContext;
   const tasks = Object.values(this.runtimeTaskRegistry.all()).filter(
     (task) =>
       task.type === "local_bash" && task.isBackgrounded === true && task.status === "running",
   );
 
-  for (const task of tasks) {
-    this.logger?.info?.("Cancelling subagent background task during runtime cleanup", {
-      ...traceContextToLogContext(traceContext),
-      event: "runtime.background_task.cleanup_cancel",
-      module: "core.runtime",
-      reason: input.reason,
-      taskId: task.taskId,
-    });
-    await this.stopBackgroundTask(task.taskId, {
-      traceContext,
-    });
-  }
+  const results = await Promise.allSettled(
+    tasks.map(async (task) => {
+      this.logger?.info?.("Cancelling background task during runtime cleanup", {
+        ...traceContextToLogContext(traceContext),
+        event: "runtime.background_task.cleanup_cancel",
+        module: "core.runtime",
+        reason: input.reason,
+        taskId: task.taskId,
+      });
+      await this.stopBackgroundTask(task.taskId, {
+        traceContext,
+      });
+    }),
+  );
+  // Even if one cancellation fails, wait for the other tasks to finish cleanup; otherwise upper layers close the shared store and executor too early.
+  const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+  if (errors.length) throw new AggregateError(errors, "Background tasks cleanup failed");
 }
 
 export function buildBackgroundTaskPayload(

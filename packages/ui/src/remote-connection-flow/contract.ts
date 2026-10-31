@@ -6,15 +6,15 @@ export { requestRemoteProjectConnection } from "@/remote-connection-flow/request
 import { type RemoteTarget, type RemoteWorkspaceSessionEntry } from "@zcode/shared";
 
 export interface RemoteConnectionFlowOptions {
-  /** 新的显式入口；卡片恢复不改变该标识。 */
+  /** A new explicit entry; card recovery does not change this identifier. */
   openIntentId?: number;
   completion?: RemoteConnectionOpenPreference["completion"];
-  /** 设备管理连接成功；导航由发起入口负责，不创建项目。 */
+  /** Device-management connection succeeded; navigation is the entry point's job, no project is created. */
   onDeviceConnected?: (
     sourceServerId: string | undefined,
     canDeliver?: () => boolean,
   ) => void | Promise<void>;
-  /** 只有用户明确取消才触发；成功关闭和后台收起不触发。 */
+  /** Fires only on an explicit user cancel; successful close and background collapse do not fire it. */
   onCancelled?: (background?: boolean) => void;
   initialFailure?: RemoteConnectionOpenPreference["initialFailure"];
   onConnect: (
@@ -23,7 +23,7 @@ export interface RemoteConnectionFlowOptions {
     context?: { confirmSourceServerInstall?: boolean },
     feedback?: RemoteConnectionFeedbackOptions,
   ) => Promise<string>;
-  /** 项目向导在连接完成后接管目录选择，不准备会话。 */
+  /** The project wizard takes over directory selection after the connection completes; no session is prepared. */
   onConnectionReady?: (sessionId: string) => Promise<void>;
   onSelectProject: (
     sessionId: string,
@@ -46,7 +46,7 @@ export interface RemoteConnectionFlowOptions {
   preferredProfileId?: string;
   preferredDirectoryPath?: string;
   preferredTarget?: RemoteTarget;
-  /** 用户改选线路或新建连接后，释放 Root 对原项目的恢复互斥。 */
+  /** After the user picks a different route or creates a new connection, releases Root's recovery mutex on the original project. */
   onProjectIntentCleared?: () => void;
 }
 
@@ -114,7 +114,7 @@ export function normalizeRemoteConnectionOptions({
 }
 export type RemoteConnectionOptions = ReturnType<typeof normalizeRemoteConnectionOptions>;
 
-/** 同一 Root flow 的只读 UI 投影；不含凭据，不保存连接事实。 */
+/** Read-only UI projection of the single Root flow; holds no credentials and persists no connection facts. */
 export interface RemoteConnectionProgress {
   operationId: string;
   view: import("@/RemoteConnectionWizardChrome.js").RemoteWizardStep;
@@ -123,9 +123,9 @@ export interface RemoteConnectionProgress {
   sourceServerId?: string;
   profileId?: string;
   name?: string;
-  /** The project folder this connection opens; when set, the progress includes the "Open project folder" step. */
-  workspacePath?: string;
   logs: import("@/hooks/useRemoteConnectionLogs.js").RemoteConnectionLogEntry[];
+  /** The project folder this connection opens; when set, the flow gains an extra "Open project folder" step, matching the connection screen. */
+  workspacePath?: string;
   error: string;
   reason: string;
   waiting: boolean;

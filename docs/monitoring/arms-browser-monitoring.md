@@ -1,190 +1,191 @@
-# ARMS Electron Monitoring
+# ARMS Electron 监控
 
-Only `@arms/rum-electron` is integrated, on the Electron desktop. The Web/mobile remote-control end is not
-connected to the ARMS Browser SDK. The ARMS SDK is initialized at the main-process entry only, never in
-`packages/ui`.
+当前只在 Electron 桌面端接入 `@arms/rum-electron`。Web/手机远控端暂不接入 ARMS Browser SDK。ARMS SDK 只接在 main 进程入口，不进入 `packages/ui`。
 
-Reference: [Alibaba Cloud ARMS Electron integration documentation](https://www.alibabacloud.com/help/zh/arms/user-experience-monitoring/integrating-with-an-electron-application)
+参考：[阿里云 ARMS Electron 接入文档](https://www.alibabacloud.com/help/zh/arms/user-experience-monitoring/integrating-with-an-electron-application)
 
-## Monitoring scope
+## 监控范围
 
-ARMS covers Electron runtime user-experience monitoring:
+ARMS 负责 Electron 运行时用户体验监控：
 
-- Global JS errors and Promise rejections (main process + Renderer via SDK auto-injection).
-- XHR/fetch API success rate, failure rate, duration, status code.
-- Renderer longTask / LoAF / rAF main-thread stall events; main-process `beforeReport` only adds a
-  low-cardinality attribution summary, never the original script name or URL.
-- Electron main-process exceptions, native crashes, application startup events (`application` collector).
-- RPC calls (`rpc` collector; main-process tRPC must use `instrumentTRPC`).
+- 全局 JS Error、Promise rejection（主进程 + SDK 自动注入 Renderer）。
+- XHR/fetch API 成功率、失败率、耗时、状态码。
+- Renderer longTask / LoAF / rAF 主线程卡顿事件；主进程 `beforeReport` 仅补低基数归因摘要，不补原始脚本名或 URL。
+- Electron main 进程异常、原生崩溃、应用启动相关事件（`application` collector）。
+- RPC 调用（`rpc` collector，需主进程 tRPC 使用 `instrumentTRPC`）。
 
-ARMS does not cover Host/Agent business logs, the quality statistics database, `/report` business events or
-Web remote-control RUM. Unexpected Agent exit is not collected by the SDK automatically: the Host lifecycle
-bridge actively sends sanitized `perf_agent_crash` / `perf_agent_spawn_error` custom events.
+ARMS 不负责：Host/Agent 业务日志、质量统计数据库、`/report` 业务埋点、Web 远控端 RUM。Agent 非预期退出不依赖 SDK 自动采集，由 Host lifecycle bridge 主动发送脱敏的 `perf_agent_crash` / `perf_agent_spawn_error` 自定义事件。
 
-## Console error collection boundary
+## Console Error 采集边界
 
-The desktop main logger writes errors as `console.error(prefix, message, context)`, where `prefix` is the common
-`[timestamp] [pid] [source]` prefix and `source` is `main`, `renderer`, etc. The ARMS Electron SDK console
-collector must normalize multi-parameter calls at the collection boundary instead of treating only the first
-parameter as `exception.message`:
+Desktop main logger 会按 `console.error(prefix, message, context)` 输出错误，其中 `prefix` 是
+`[timestamp] [pid] [source]` 公共前缀，`source` 包括 `main`、`renderer` 等来源。ARMS Electron
+SDK 的 console collector 必须在采集边界归一化多参数调用，不能只把第一个参数当作
+`exception.message`：
 
 ```text
 console.error(prefix, message, context/Error)
                     │
                     ▼
           ARMS console collector
-          ├─ Error: keep name / message / stack
-          └─ non-Error: drop the common prefix, then safely serialize the remaining arguments
+          ├─ Error：保留 name / message / stack
+          └─ 非 Error：去掉公共 prefix，安全序列化其余参数
                     │
                     ▼
-         bounded, redacted exception.message
+         有界、脱敏的 exception.message
 ```
 
-- When the arguments contain an `Error`, that object is reported first and its original stack is kept.
-- For non-`Error` multi-argument calls, remove the first main-logger common prefix (`main` / `renderer` etc.),
-  then concatenate strings and contexts in call order.
-- Redact object keys and common token text; recursive references must not make the collector throw.
-- The final message is at most 2000 characters; a call with only the common prefix and no business text
-  produces no exception event.
-- Controlled exits such as `clean-exit` / `killed` are lifecycle information and use `info`; recoverable
-  exceptions use `warn`; only confirmed crash, OOM or startup failure uses `error`.
+归一化规则：
 
-## Dependency patch constraints
+- 参数中存在 `Error` 时继续优先上报该对象，保留原始堆栈。
+- 非 `Error` 多参数调用去掉首个 main logger 公共前缀（`main` / `renderer` 等 source），再按调用顺序拼接字符串和上下文。
+- 对对象键名及常见 token 文本做脱敏；循环引用不得让采集器抛错。
+- 最终 message 最长 2000 字符；只有公共前缀、没有业务正文时不产生 exception 事件。
+- `clean-exit` / `killed` 等受控退出属于生命周期信息，使用 `info`；可恢复异常退出使用
+  `warn`；只有确认的 crash、OOM、启动失败等才使用 `error`。
 
-The repository uses `node-linker=hoisted`; the ZCode patch is fixed against `@arms/rum-electron@0.0.3`. A
-patch change must regenerate a complete unified diff in one go from that version's original `dist/index.mjs`;
-never append hunks to the existing patch, otherwise later hunks' target line numbers and target blob hash
-disagree with the full result and the second `pnpm install` under pnpm 10 re-applies the patch to an already
-patched file and fails with `ERR_PNPM_PATCH_FAILED`. After changing the patch, verify that the patch head's
-target blob matches the installed product and that two consecutive `pnpm install` runs in the same workspace
-both succeed.
+## 上报排除规则
 
-## Configuration (hardcoded)
+主进程 `beforeReport` 统一过滤 main 与 Renderer 汇总的事件。本地日志保持原样。
 
-| Item                       | Location / value                                                                                                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Endpoint                   | `ZCODE_ARMS_RUM_ENDPOINT` (`packages/shared/src/env.ts`)                                                                                        |
-| Upload environment         | `mapZCodeEnvToArmsRumEnv(runtimeEnv)`: local development runtime is always `local`; for non-local runtime only `ZCODE_ENV=production` is `prod` |
-| `sessionConfig.sampleRate` | `1` (100% session sampling)                                                                                                                     |
-| `autoInject`               | `true` (the SDK injects the Browser SDK at `dom-ready`; do not init manually in preload/renderer)                                               |
-| `browserCollectors`        | `perf/webvitals/exception/whiteScreen/api/staticResource/click/longTask: true` (see `ARMS_BROWSER_COLLECTORS`)                                  |
-| `spaMode`                  | `false` (Electron loads whole pages, not History SPA)                                                                                           |
-| `parseViewName`            | `file://` uses the html filename; http dev-server uses the pathname                                                                             |
-| `tracing`                  | `arms_env=prod`: `enable: true`, `sample: 0.1` (0.1%); `arms_env=local`: `sample: 1`                                                            |
+- `exception / error / console.error` 的 message 精确匹配
+  `browser tab 'browser:…' is unavailable for renderer scope` 或
+  `browser tab 'iab-tab:…' is unavailable for renderer scope` 时不上报。
+  该规则只消除已确认的 tab 生命周期噪音，不代表 tab 登记或 scope 问题已修复；
+  同文案的未捕获异常仍保留。
+- `exception / error` 的 message 精确匹配 `Telemetry report failed: network`、
+  `Telemetry report failed: timeout` 或 `Telemetry report failed with status <三位 HTTP 状态码>`
+  时不上报。这些是 telemetry 传输层生成的固定错误，不扩大为通用 network / timeout 过滤。
+- `exception / error / console.error` 中 Node 的
+  `ExperimentalWarning: SQLite is an experimental feature and might change at any time`
+  不上报，兼容 `(node:<pid>)` 前缀和下一行 `--trace-warnings` 提示；
+  Error 对象形式则要求 name 为 `ExperimentalWarning` 且 message 为同一条 SQLite 固定文案。
+  其他实验性警告、SQLite 数据库错误、混有其他错误的日志和未捕获异常继续上报。
+- `api` 或 `resource / api` 事件的 URL 命中配置中的 `ZCODE_TELEMETRY_REPORT_ENDPOINT`、
+  `ZCODE_ARMS_RUM_ENDPOINT` 时不上报，也不进入 `perf_network_window`。
+  匹配 URL 的 origin 与 pathname，忽略 query 和 fragment；其他域名或路径的请求保留。
+- 已有 agent 生命周期包装日志与原生 crash 过滤规则继续生效；自定义指标与其他异常继续上报。
 
-No `ZCODE_ARMS_*` environment variables exist.
+```text
+main / Renderer SDK 事件
+          ↓
+beforeReport：排除已知噪音与上报接口自身的请求
+          ↓
+网络聚合 → longTask 归因 → 脱敏 → ARMS
+          └─ 过滤后为空：返回 null，SDK 不发送空批次
+```
 
-## longTask attribution summary
+过滤只读取已有事件与配置，不增加网络请求、IO、定时器或日志。回归测试覆盖两类 tab ID、
+telemetry 传输错误、SQLite 实验性警告、接口 URL 匹配边界、普通业务错误保留、聚合顺序和空批次。
 
-The Browser SDK `longTask` collector puts LoAF / rAF attribution into `snapshots`. To ease SLS queries and avoid
-high cardinality and path leakage, main-process `appARMSBootstrap.beforeReport` puts only a top-attribution
-summary into the same longTask's `properties`:
+## 依赖补丁安装约束
 
-| Field                   | Meaning                                                          |
-| ----------------------- | ---------------------------------------------------------------- |
-| `loaf_script_count`     | Number of attribution entries in `snapshots`, at most 5.         |
-| `loaf_top_duration_ms`  | Duration of the top attribution in ms.                           |
-| `loaf_top_invoker_type` | `user-callback` / `event-listener` / `script` / `unknown`.       |
-| `loaf_top_share_pct`    | Top attribution as an integer percentage of longTask `duration`. |
+仓库使用 `node-linker=hoisted`，当前 ZCode 补丁固定基于 `@arms/rum-electron@0.0.3`。修改补丁时
+必须从该版本的原始 `dist/index.mjs` 一次性重新生成完整 unified diff，禁止直接向现有 patch
+追加 hunk；否则后续 hunk 的目标行号和目标 blob hash 会与完整结果不一致，pnpm 10 第二次
+`pnpm install` 会对已 patch 文件再次应用补丁并报 `ERR_PNPM_PATCH_FAILED`。补丁变更后必须校验
+patch 头的目标 blob 与安装产物一致，并验证同一工作区连续执行两次 `pnpm install` 都成功。
 
-This adds no events and does not change sampling; it is skipped when `snapshots` is missing or unparsable.
-Original script name, URL, file path, selector, stack or source fragments must never be written to these
-properties.
+## 配置（硬编码）
 
-## Auto-Collected Event Redaction Boundary
+| 项                         | 位置 / 值                                                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Endpoint                   | `ZCODE_ARMS_RUM_ENDPOINT`（`packages/shared/src/env.ts`）                                                            |
+| 上报环境                   | `mapZCodeEnvToArmsRumEnv(runtimeEnv)`：本地开发运行态始终为 `local`；非本地运行态仅 `ZCODE_ENV=production` 为 `prod` |
+| `sessionConfig.sampleRate` | `1`（100% 会话采样）                                                                                                 |
+| `autoInject`               | `true`（SDK 在 `dom-ready` 注入 Browser SDK；勿再 preload/renderer 手动 init）                                       |
+| `browserCollectors`        | `perf/webvitals/exception/whiteScreen/api/staticResource/click/longTask: true`（见 `ARMS_BROWSER_COLLECTORS`）       |
+| `spaMode`                  | `false`（Electron 单页整页加载，非 History SPA）                                                                     |
+| `parseViewName`            | `file://` 取 html 文件名；http dev-server 取 pathname                                                                |
+| `tracing`                  | `arms_env=prod` 时 `enable: true`、`sample: 0.1`（0.1%）；`arms_env=local` 时 `sample: 1`                            |
 
-Fields gathered by the SDK collectors are decided by ARMS and may contain UI text, native paths and full URLs.
-`appARMSBootstrap.beforeReport` must redact the whole batch before events leave the machine, after the longTask
-attribution summary and before returning the payload. Redaction rewrites only the reporting copy; local logs,
-error rendering, crash archives and the aggregation of `perf_network_window` are unchanged (network aggregation
-ingests before redaction and keeps the `normalizeHttpInterface` dimension rules).
+无 `ZCODE_ARMS_*` 环境变量。
+
+## longTask 归因摘要
+
+Browser SDK 的 `longTask` collector 会把 LoAF / rAF attribution 写入 `snapshots`。为便于 SLS 查询且避免高基数与路径泄露，主进程 `appARMSBootstrap.beforeReport` 只把 top attribution 摘要合入同一条 longTask 的 `properties`：
+
+| 字段                    | 含义                                                        |
+| ----------------------- | ----------------------------------------------------------- |
+| `loaf_script_count`     | `snapshots` 中 attribution 条数，最多 5。                   |
+| `loaf_top_duration_ms`  | top attribution 耗时 ms。                                   |
+| `loaf_top_invoker_type` | `user-callback` / `event-listener` / `script` / `unknown`。 |
+| `loaf_top_share_pct`    | top attribution 占 longTask `duration` 的百分比整数。       |
+
+该增强不新增事件、不改变采样率；`snapshots` 缺失或解析失败时跳过。禁止把原始脚本名、URL、文件路径、selector、堆栈或源码片段写入这些 properties。
+
+## 自动采集事件的脱敏边界
+
+SDK collector 采集的字段由 ARMS 决定，其原始内容可能包含用户界面文本、本机路径和完整
+URL。`appARMSBootstrap.beforeReport` 是这些事件离开本机前的唯一收口，必须在 longTask 归因
+摘要之后、返回 payload 之前对整批事件执行脱敏。脱敏只改写上报副本，不改变本地日志、错误
+展示、崩溃归档和 `perf_network_window` 的聚合口径（网络聚合在脱敏前完成 ingest，沿用
+`normalizeHttpInterface` 自己的维度规则）。
 
 ### `click`
 
-The Browser SDK `name` looks like `click on <type-><tag>: <first 20 chars of innerText>...` and `snapshots` is
-JSON of `{id,name,className,href,src}`. ZCode clickable text includes conversation titles, workspace directory
-names, filenames, message bodies and account emails, so:
+Browser SDK 的 `name` 形如 `click on <type-><tag>: <innerText 前 20 字符>...`，
+`snapshots` 为 `{id,name,className,href,src}` 的 JSON。ZCode 的可点击文本包含会话标题、
+工作区目录名、文件名、消息正文和账号邮箱，因此：
 
-- `name` keeps only `click on <type-><tag>`; the element text after `: ` is cut.
-- `snapshots` is deleted (`href` / `src` may be local file paths; `id` / `className` have no diagnostic value).
-- `target_name` (an XPath expressing structure only, no text) and non-content fields such as duration and view
-  are kept.
+- `name` 只保留 `click on <type-><tag>`，截掉 `: ` 之后的元素文本。
+- 删除 `snapshots`（`href` / `src` 可能是本地文件路径，`id` / `className` 无诊断价值）。
+- 保留 `target_name`（XPath 只表达结构位置，不含文本）与耗时、视图等非内容字段。
 
 ### `exception`
 
-`message` / `stack` / `file` / `snapshots` of `jsError` (`uncaughtException` / `unhandledRejection`),
-`consoleError`, `whiteScreen` and renderer-side exceptions follow the unified text redaction rules: URLs keep
-only `protocol//host` plus unified routing, absolute paths become `{path}`, emails `{email}`, credentials and
-Authorization `{redacted}` / `{secret}`, with bounded truncation. The console redaction in the dependency patch
-covers credential keywords only; paths and emails are closed by this section. `file` is the script URL the SDK
-collects from `ErrorEvent.filename` (Windows installs live under `C:\Users\<username>\AppData\...`) and follows
-the same rules as `stack`. `crashReporter` native dump events are out of scope here; their `binary_images`
-remain used for product binary determination.
+`jsError`（`uncaughtException` / `unhandledRejection`）、`consoleError`、`whiteScreen` 与
+renderer 侧 exception 的 `message` / `stack` / `file` / `snapshots` 按统一文本脱敏规则处理：URL 只留
+`protocol//host` 与归一化路由、绝对路径归一为 `{path}`、邮箱归一为 `{email}`、凭据与
+Authorization 归一为 `{redacted}` / `{secret}`，并做有界截断。依赖补丁中的 console 脱敏只覆盖
+凭据关键字，路径与邮箱由本节收口补齐。`file` 是 SDK 从 `ErrorEvent.filename` 采到的脚本 URL，
+Windows 安装版位于 `C:\Users\<用户名>\AppData\...`，必须与 `stack` 同规则处理；
+`crashReporter` 原生 dump 事件不在本节范围，其 `binary_images` 仍用于产品二进制判定。
 
 ### `api` / `resource`
 
-`url` and `name` keep only `protocol//host` plus unified routing and drop query and fragment; ID, hash and
-email shapes in routing segments become placeholders. `message` (statusText or error summary) follows the text
-redaction rules.
+`url` 与 `name` 只保留 `protocol//host` 加归一化路由，丢弃 query 与 fragment；路由分段中的
+ID、hash、邮箱形态归一为占位符。`message`（statusText 或错误摘要）按文本脱敏规则处理。
 
-The text implementation is `redactTelemetryText` in `@zcode/shared`, kept in the same mode as the CLI
-[`error-sanitizer`](../trace/cli-agent-telemetry.md). Adding an automatic collector or a field carrying free
-text must extend this section together with that implementation.
+上述规则的文本实现是 `@zcode/shared` 的 `redactTelemetryText`，与 CLI
+[`error-sanitizer`](../trace/cli-agent-telemetry.md) 保持同一套模式；新增自动采集器或新增
+携带自由文本的字段时必须同步扩展本节与该实现。
 
-## Structured exception text (`[Object]` etc.)
+## 初始化位置与顺序
 
-Exception text may contain unreliable JSON objects or markers such as `[Object]`. Automatic collection must
-handle these robustly with the same redaction rules and bounded truncation, keeping the text and the whole JSON
-object; markers like `[Object]` are no longer stripped for readability. Do not treat `[Object]` as an illegal
-character, filter it or truncate midway; assertions must first parse the JSON in a way that may throw and only
-on failure safely filter illegal characters.
+1. `desktopEarlyDataBaseDirBootstrap`（`dataBaseDir`）
+2. `appCrashCaptureBootstrap`（`crashDumps` + 本地 archive）
+3. `appARMSBootstrap`：模块加载时**启动** `armsRum.init()`，导出 `armsInitPromise`
+4. `app.whenReady()` 内、**创建主窗口之前** `await armsInitPromise`
+5. Renderer：由主进程 `autoInject` + `browserCollectors` 在 `dom-ready` 注入并 `RumSDK.init`（无 preload/renderer 手动 init）
 
-Out of scope here: exporting auto-collected event data from ARMS to other destinations (app tray upload,
-production Web RUM SDK, etc.); introducing such metadata requires updating this document.
+`init()` 必须在 `app.ready` 之前被调用（side-effect import 链保证）；同时必须 **await** 完成后再开首窗。`browserCollectors` 仅作用于注入到 renderer 的采集器；主进程 `collectors` 仍管 Electron 侧（crash、rpc 等）。
 
-## Initialization location and order
+## 本地验证
 
-1. `desktopEarlyDataBaseDirBootstrap` (`dataBaseDir`)
-2. `appCrashCaptureBootstrap` (`crashDumps` + local archive)
-3. `appARMSBootstrap`: **starts** `armsRum.init()` at module load and exports `armsInitPromise`
-4. Inside `app.whenReady()`, **before creating the main window**, `await armsInitPromise`
-5. Renderer: main-process `autoInject` + `browserCollectors` inject and `RumSDK.init` at `dom-ready` (no manual
-   init in preload/renderer)
+1. 开发态启动 Desktop（`pnpm dev:desktop` 或等价命令）。
+2. 打开主窗口并操作（切换页面、触发请求）。
+3. 查看主进程日志：
+   - 成功：`[arms] electron initialized env=local version=...`
+   - 开发态每次上报前：`[arms] beforeReport batch=N perf=1 ... [view:perf, ...]`（`perf` 应 ≥1）
+   - 失败：`[arms] electron init failed:`
+4. 等待约 1–2 分钟，在 ARMS 控制台 **用户体验监控 > 应用列表** 查看；开发构建上报环境为 **`local`**，筛选勿只选 `prod`。
 
-`init()` must be called before `app.ready` (guaranteed by the side-effect import chain) and must be **awaited**
-before opening the first window. `browserCollectors` only applies to collectors injected into the renderer;
-main-process `collectors` still cover the Electron side (crash, rpc, etc.).
+## 控制台仍无数据时排查
 
-## Local verification
-
-1. Start Desktop (`pnpm dev:desktop` or equivalent).
-2. Open the main window and operate (switch pages, trigger requests).
-3. Check main-process logs:
-   - Success: `[arms] electron initialized env=local version=...`
-   - In development before each report: `[arms] beforeReport batch=N perf=1 ... [view:perf, ...]` (`perf` should be >= 1)
-   - Failure: `[arms] electron init failed:`
-4. Wait about 1-2 minutes, then check **User Experience Monitoring > Application List** in the ARMS console;
-   development builds upload with environment **`local`**, so do not filter to `prod` only.
-
-## No data in the console
-
-| Symptom                                                                    | Possible cause                                                                                                                                         |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| No `electron initialized` log                                              | `init` threw (wrong endpoint, remote config fetch failed, etc.)                                                                                        |
-| Initialized but no `beforeReport`                                          | Session not sampled (`sessionConfig.sampleRate: 1` required), or the renderer process produced no events                                               |
-| `beforeReport` present but `perf=0` (`view:webvitals` without `view:perf`) | `autoInject` ran later than `load`, so perf-collector did not `sendPerf`; the main window's `scheduleArmsBrowserPerfLoadNudge` re-sends `load`         |
-| `beforeReport` present but still no console data                           | Console environment filter set to `prod`, region/application mismatch, intranet cannot reach `*.aliyuncs.com`                                          |
-| `[RUM] Invalid bundle received from renderer, dropped`                     | The SDK reports `events[]` upstream; the ARMS frame preload closure bypasses the ipc patch; preload must call `patchArmsEventBridgeSend` synchronously |
-| Renderer console `[RUM] ArmsEventBridge is not available`                  | First window opened before init finished (fixed by `await armsInitPromise`)                                                                            |
+| 现象                                                                | 可能原因                                                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 无 `electron initialized` 日志                                      | `init` 抛错（endpoint 错误、网络拉远程配置失败等）                                                            |
+| 有 initialized 但无 `beforeReport`                                  | 会话未采样（须 `sessionConfig.sampleRate: 1`）、或渲染进程未产生事件                                          |
+| 有 `beforeReport` 但 `perf=0`（有 `view:webvitals` 无 `view:perf`） | `autoInject` 晚于 `load`，perf-collector 未 `sendPerf`；主窗口 `scheduleArmsBrowserPerfLoadNudge` 补发 `load` |
+| 有 `beforeReport` 控制台仍无数据                                    | 控制台环境筛成 `prod`、地域与应用不一致、内网无法访问 `*.aliyuncs.com`                                        |
+| `[RUM] Invalid bundle received from renderer, dropped`              | SDK 上报 events[]；ARMS frame preload 闭包绕过 ipc 补丁；须 preload 同步 `patchArmsEventBridgeSend`           |
+| Renderer 控制台 `[RUM] ArmsEventBridge is not available`            | 首窗早于 init 完成（应已通过 `await armsInitPromise` 修复）                                                   |
 
 ## SourceMap
 
-Production builds use hidden sourcemaps. `@arms/rum-vite-plugin` automatic upload is not integrated; when needed,
-upload manually in the ARMS console by application ID `arms-id-placeholder` and the root `package.json`
-`version`.
+生产构建使用 hidden sourcemap。未接入 `@arms/rum-vite-plugin` 自动上传；需要时在 ARMS 控制台按应用 ID `arms-id-placeholder` 与根 `package.json` 的 `version` 手动上传。
 
-## Sentry removal impact
+## Sentry 移除影响
 
-Desktop Sentry has been removed; Renderer/main crashes and JS errors are covered by ARMS. Host utility and Web
-remote-control RUM are not in this chain; CLI Agent unexpected exit and spawn errors are reported only through
-desktop main's custom stability events, not by the Electron crash collector.
+Desktop Sentry 已移除，Renderer/main 崩溃与 JS 错误由 ARMS 承接。Host utility 与 Web 远控 RUM 不在此链路内；CLI Agent 仅通过 desktop main 的自定义稳定性事件上报非预期退出和 spawn error，不由 Electron crash collector 自动采集。

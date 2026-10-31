@@ -11,6 +11,16 @@ export const CONVERSATION_STATUS_PANEL_INLINE_OFFSET_PX = 168;
 export const CONVERSATION_STATUS_PANEL_WIDE_OFFSET_CLASS_NAME =
   "@min-[1280px]/conversation:-translate-x-42";
 
+// The status pill floats over the conversation's top-right corner (ConversationStatusPanel: top-0 + pt-4 +
+// pill max-h-8.5, bottom edge at 50px); content at the very top of the conversation must yield this height,
+// or it is covered by the pill and clicks land on the pill.
+// Bug root cause: this clearance used to be a side effect of the pt-14 above the first turn's user bubble;
+// turns started directly by the hub have no bubble and zero top padding, so the run card's header
+// config / stop / details buttons ended up under the pill and unclickable.
+// The timeline now explicitly reserves this inset for the session's first turn, and the first turn itself
+// no longer adds top padding (see presentation.md "The run card").
+export const CONVERSATION_STATUS_PANEL_TOP_CLEARANCE_CLASS_NAME = "pt-14";
+
 export type ConversationStatusPanelResolvedVariant = ChatViewSummaryPanelVariant | "auto";
 
 export function getConversationContentWidthClassName(params: {

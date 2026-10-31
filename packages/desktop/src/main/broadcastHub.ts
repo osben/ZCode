@@ -37,6 +37,8 @@ function createClaimToken(windowId: number, requestId: string): string {
 }
 
 export class BroadcastHub {
+  onMobilePushRun: ((payload: unknown) => void) | undefined;
+  onMobilePushEvent: ((payload: unknown) => void) | undefined;
   private processes = new Map<number, ElectronUtilityProcess>();
   /** Generic opaque reservation/claim; does not store business state such as Coding Plan. */
   private readonly claims = new Map<string, BroadcastClaimRecord>();
@@ -188,6 +190,15 @@ export class BroadcastHub {
       return;
     }
 
+    // Notification facts go only to the Main network adapter; do not replay them to other Hosts as a second event.
+    if (result.data.channel === "mobile-push:run") {
+      this.onMobilePushRun?.(result.data.payload);
+      return;
+    }
+    if (result.data.channel === "mobile-push:event") {
+      this.onMobilePushEvent?.(result.data.payload);
+      return;
+    }
     // Add source information so receivers can deduplicate.
     const enriched: BroadcastMessage = { ...result.data, sourceWindowId };
 

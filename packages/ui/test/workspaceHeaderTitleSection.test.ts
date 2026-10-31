@@ -35,6 +35,10 @@ const headerManagement = vi.hoisted(() => ({
   onDidChangeDirectory: () => ({ dispose() {} }),
 }));
 const capturedGitBranchSwitcherProps = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+// The Data Sync entry is offered only where the platform can request a source-settings attachment.
+const platformState = vi.hoisted(() => ({
+  optional: null as null | { requestSourceSettingsAttachment: () => void },
+}));
 
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
@@ -152,7 +156,7 @@ vi.mock("@/hooks/useGlobalTaskList.js", () => ({
 vi.mock("@/hooks/usePlatform.js", () => ({
   usePlatform: () => ({}),
   // The header's pull request chip opens PRs through the optional platform.
-  useOptionalPlatform: () => null,
+  useOptionalPlatform: () => platformState.optional,
 }));
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
@@ -356,7 +360,7 @@ describe("WorkspaceHeaderTitleSection", () => {
     },
   );
 
-  it("shows Skills and MCP sync actions for connected SSH workspace header menu", async () => {
+  it("drops the per-kind remote sync items from the SSH header menu", async () => {
     const { WorkspaceHeaderTitleSection } = await import("@/WorkspaceHeaderSections.js");
 
     const html = renderToStaticMarkup(
@@ -393,9 +397,57 @@ describe("WorkspaceHeaderTitleSection", () => {
       }),
     );
 
-    // 同步菜单已按原型 L1197-1203 收敛为 remote.sync* key 与分化图标（wand/cable）。
-    expect(html).toContain("remote.syncSkills");
-    expect(html).toContain("remote.syncMcp");
+    // The per-kind remote sync items (RemoteSyncActions) were replaced by upstream's Data Sync entry,
+    // which resolves only for source-server workspaces. A legacy SSH identity therefore gets no sync
+    // action from this menu. Product follow-up: SSH workspaces have no skills/MCP sync entry.
+    expect(html).not.toContain("remote.syncSkills");
+    expect(html).not.toContain("remote.syncMcp");
+  });
+
+  it("offers the Data Sync entry for a source-server workspace on a platform that can attach sources", async () => {
+    platformState.optional = { requestSourceSettingsAttachment: () => {} };
+    try {
+      const { WorkspaceHeaderTitleSection } = await import("@/WorkspaceHeaderSections.js");
+
+      const html = renderToStaticMarkup(
+        createElement(WorkspaceHeaderTitleSection, {
+          workspaceAbsPath: "/root/folder1",
+          remoteSessionId: "remote-session-1",
+          workspaceIdentity: "remote:server:srv-sync-1:/root/folder1",
+          remoteTarget: {
+            kind: "ssh",
+            host: "localhost",
+            port: 2223,
+            username: "root",
+            sshConfigAlias: "linux-arm64",
+          },
+          projectName: "folder1",
+          activeTaskTitle: "hello",
+          activeTaskId: "task-1",
+          activeTraceId: "trace-1",
+          activeSessionId: "session-1",
+          activeTaskProvider: "glm",
+          gitSummary: { isRepository: false },
+          gitDirtyFileCount: 0,
+          sessionLogPath: null,
+          nativeSessionLogProvider: null,
+          nativeSessionLogPath: null,
+          nativeSessionLogExists: false,
+          nativeSessionLogLoading: false,
+          providerWorkspaceConfigPath: null,
+          providerWorkspaceConfigExists: false,
+          providerWorkspaceConfigLoading: false,
+          workspaceHeaderState: { selectedProvider: "glm" },
+          selectedEditor: null,
+          onRefreshGit: vi.fn(),
+        }),
+      );
+
+      expect(html).toContain("remote.syncSkills");
+      expect(html).toContain("remote.syncMcp");
+    } finally {
+      platformState.optional = null;
+    }
   });
 });
 

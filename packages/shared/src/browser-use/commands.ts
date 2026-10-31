@@ -577,6 +577,8 @@ export const browserCommandSchema = z.discriminatedUnion("method", [
       deliverable: z.boolean().optional(),
     })
     .strict(),
+  z.object({ method: z.literal("openScope") }).strict(),
+  z.object({ method: z.literal("releaseScope"), closeTabs: z.boolean().optional() }).strict(),
   z.object({ method: z.literal("turnEnded"), turnId: z.string().min(1).optional() }).strict(),
   // closeTabs: also close the tabs owned by the session (including tabs already released back to it).
   // Intended only for sessions that never return to claim them—dwf subagents

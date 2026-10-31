@@ -162,6 +162,122 @@ export function softDeleteSession(
   );
 }
 
+/**
+ * Expand descendants only along "attached sessions": subagent / workflow / side-chat child
+ * sessions exist as long as their parent does. A fork's parent_id also points at the source
+ * session, but a fork is a user-visible independent task (possibly already filed under another
+ * project) and must never be cascade-deleted with the source; interactive / workflow_parent are
+ * likewise not expanded.
+ */
+const OWNED_CHILD_TASK_TYPES: readonly SessionTaskType[] = [
+  "selection_side_chat",
+  "workflow_child",
+  "subagent_child",
+  "nested_workflow_child",
+];
+const SQL_ID_CHUNK = 400;
+
+function chunked<T>(items: readonly T[]): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += SQL_ID_CHUNK)
+    chunks.push(items.slice(index, index + SQL_ID_CHUNK));
+  return chunks;
+}
+
+/** Each root session → the root itself plus all attached descendants; an empty array when the root does not exist. */
+export function listOwnedSessionTrees(
+  db: DatabaseSync,
+  sessionIDs: readonly SessionId[],
+): Map<SessionId, SessionId[]> {
+  const exists = db.prepare("select 1 from session where id = ?");
+  const children = db.prepare(
+    `select id from session where parent_id = ? and task_type in (${OWNED_CHILD_TASK_TYPES.map(() => "?").join(",")})
+     union select child_session_id as id from session_task_link where parent_session_id = ?`,
+  );
+  const trees = new Map<SessionId, SessionId[]>();
+  for (const root of sessionIDs) {
+    if (!exists.get(root)) {
+      trees.set(root, []);
+      continue;
+    }
+    const seen = new Set<SessionId>([root]);
+    const queue = [root];
+    while (queue.length) {
+      const current = queue.shift()!;
+      for (const row of children.all(current, ...OWNED_CHILD_TASK_TYPES, current) as Array<{
+        id: SessionId;
+      }>) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        queue.push(row.id);
+      }
+    }
+    trees.set(root, [...seen]);
+  }
+  return trees;
+}
+
+const ARTIFACT_URI_SCHEME = "zcode-artifact://";
+const ARTIFACT_URI_SESSION = /zcode-artifact:\/\/([^/"\\\s]+)\//g;
+
+/**
+ * Each target session → other undeleted sessions still referencing its artifacts
+ * (`zcode-artifact://<target>/…`). Forks, rewinds, and workflow transcripts copy parts by value
+ * while URIs still point into the source session's artifact directory; detection works on part
+ * content, independent of fork lineage, so any copy path is covered. Called only on hard delete;
+ * a single full-table scan is acceptable.
+ */
+export function listArtifactReferrers(
+  db: DatabaseSync,
+  sessionIDs: readonly SessionId[],
+): Map<SessionId, SessionId[]> {
+  const targets = new Set<string>(sessionIDs);
+  const referrers = new Map<SessionId, Set<SessionId>>();
+  if (!targets.size) return new Map();
+  const rows = db
+    .prepare(
+      `select p.session_id, p.data from part p join session s on s.id = p.session_id
+       where s.time_deleted is null and instr(p.data, ?) > 0`,
+    )
+    .iterate(ARTIFACT_URI_SCHEME) as Iterable<{ session_id: SessionId; data: string }>;
+  for (const row of rows) {
+    for (const match of row.data.matchAll(ARTIFACT_URI_SESSION)) {
+      const target = decodeURIComponent(match[1]!) as SessionId;
+      if (target === row.session_id || !targets.has(target)) continue;
+      referrers.set(target, (referrers.get(target) ?? new Set()).add(row.session_id));
+    }
+  }
+  return new Map([...referrers].map(([target, ids]) => [target, [...ids]]));
+}
+
+/**
+ * Hard-delete all rows of the given sessions and their attached descendants. message/part/todo/
+ * usage cascade via foreign keys; input_history, dwf_run, workflow_run have no cascading foreign
+ * key to session and must be deleted explicitly or they leave orphan rows. The caller deletes the
+ * session files first: on file failure this function is not called, so the next retry can still
+ * find them via the session.
+ */
+export function purgeSessions(db: DatabaseSync, sessionIDs: readonly SessionId[]): void {
+  const ids = [...new Set([...listOwnedSessionTrees(db, sessionIDs).values()].flat())];
+  if (!ids.length) return;
+  // foreign_keys cannot be toggled inside a transaction; it was enabled at startup — ensure cascades are in effect once more.
+  db.exec("pragma foreign_keys = on");
+  db.exec("begin immediate");
+  try {
+    for (const chunk of chunked(ids)) {
+      const marks = chunk.map(() => "?").join(",");
+      db.prepare(`delete from input_history where session_id in (${marks})`).run(...chunk);
+      db.prepare(`delete from dwf_run where parent_session_id in (${marks})`).run(...chunk);
+      db.prepare(`delete from workflow_run where parent_session_id in (${marks})`).run(...chunk);
+      db.prepare(`delete from session where id in (${marks})`).run(...chunk);
+    }
+    db.exec("commit");
+  } catch (error) {
+    db.exec("rollback");
+    throw error;
+  }
+}
+
 export function getSession(db: DatabaseSync, sessionID: SessionId): SessionInfo | null {
   const row = db.prepare("select * from session where id = ?").get(sessionID) as
     | SessionRow

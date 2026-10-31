@@ -105,6 +105,9 @@ export type PluginComponentKind = "agent" | "command" | "skill" | "hook" | "mcp"
 
 export interface PluginComponentItem {
   name: string;
+  /** Discovered agent source file path; for CLI loading only, not projected into the
+ *   component detail protocol. */
+  path?: string;
   /** Description from the component frontmatter / manifest; omitted when missing, never fabricated. */
   description?: string;
 }
@@ -129,7 +132,8 @@ export interface PluginStoreListing {
   /** Icon image: an HTTPS URL or a local asset path for a built-in plugin. */
   icon?: string;
   category?: string;
-  /** 官方市场内的维护归属；不参与执行权限和安装来源判定。 */
+  /** Maintenance ownership within the official marketplace; plays no part in execution
+ *   permission or install-source decisions. */
   publisherType?: "official" | "community";
   author?: string;
   authorUrl?: string;

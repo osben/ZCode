@@ -55,7 +55,7 @@ export function loadProjectConfigFile(
     workingDirectory?: string;
   } = {},
 ): ProjectConfigFile {
-  const result = loadFileConfig(path);
+  const result = loadFileConfig(path, { scope: "project" });
   const baseDir = getProjectConfigBaseDir(result.path);
   const diagnostics = [...result.diagnostics];
   const hooks = result.loaded ? result.config.hooks : undefined;
@@ -128,6 +128,12 @@ function normalizeProjectConfig(config: RuntimeConfigPatch, baseDir: string): Ru
         return safeConfig;
       })()
     : { ...config };
+
+  if (normalized.plugins?.dirs) {
+    // Workspace directory plugins once registered Hook/MCP directly, bypassing user install; project config must not pull in plugin root directories.
+    const { dirs: _dirs, ...plugins } = normalized.plugins;
+    normalized.plugins = plugins;
+  }
 
   if (!normalized.mcp?.servers) return normalized;
 

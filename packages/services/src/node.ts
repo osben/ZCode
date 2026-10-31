@@ -2,7 +2,7 @@ import { IGenUiService } from "./gen-ui/contract.js";
 import { createGenUiService } from "./gen-ui/node.js";
 import { IDefinitionPreviewService } from "./definition-preview/contract.js";
 import { createDefinitionPreviewService } from "./definition-preview/node.js";
-import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
+// import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- Host-process service registration and startup wiring must stay together so dependency injection order remains easy to trace. */
 // Node.js service implementations — NOT safe to import in browser code
 import { createHash, createHmac, randomBytes } from "node:crypto";
@@ -28,7 +28,7 @@ import {
   buildLocalMediaPreviewUrl,
   parseChatGptPlanAccountProviderId,
   type DynamicWorkflowMode,
-  type ProviderProvisioningTrigger,
+  type ProviderProvisioningSourceTrigger,
 } from "@zcode/shared";
 
 // Stable only for this process: revisions are cache keys, and a per-process random HMAC key
@@ -68,6 +68,7 @@ export { createFileService } from "./file/fileService.js";
 export {
   bindRemoteProjectIdentities,
   createLegacySingleRootProjectService,
+  createRemoteIdentityRegistrationCache,
 } from "#src/project/index.js";
 export {
   attributeHostProcessTree,
@@ -268,6 +269,8 @@ export { createClientConfigService } from "./client-config/clientConfigService.j
 export { createClientScenesService } from "./client-scenes/clientScenesService.js";
 export { createSkillsService } from "./skills/skillsService.js";
 export { createSkillSyncService } from "./skill-sync/skillSyncService.js";
+export { createDeviceSyncStateService, createUserConfigSyncService } from "./data-sync/node.js";
+export { createHostProviderProvisioningStatus } from "./provider-provisioning-status/node.js";
 export { createMcpSyncService } from "./mcp-sync/mcpSyncService.js";
 export { createPluginSyncService } from "./plugin-sync/pluginSyncService.js";
 export { createPluginsService } from "./plugins/pluginsService.js";
@@ -382,6 +385,8 @@ import { ISkillsService } from "./skills/skills.js";
 import { ISkillSyncService } from "./skill-sync/skillSync.js";
 import { IMcpSyncService } from "./mcp-sync/mcpSync.js";
 import { IPluginSyncService } from "./plugin-sync/pluginSync.js";
+import { IUserConfigSyncService } from "./data-sync/contract.js";
+import { createUserConfigSyncService } from "./data-sync/userConfigSyncService.js";
 import { IPluginsService } from "./plugins/plugins.js";
 import { IPluginManagementService } from "./plugins/pluginManagement.js";
 import { ISubagentsService } from "./subagents/subagents.js";
@@ -399,7 +404,7 @@ import { createMediaPreviewService } from "./media-preview/mediaPreview.js";
 import type { WorkspaceFileSearchFilter } from "./file/workspaceFileMentionFilter.js";
 import { IProjectService } from "./project/contract.js";
 import { IRemoteProjectService } from "./remote-projects/contract.js";
-import { createProjectService } from "./project/index.js";
+import { createProjectDataPort, createProjectService } from "./project/index.js";
 import { createTaskGroupService, groupTaskKey } from "#src/task-groups/index.js";
 import { ITaskGroupService } from "./task-groups/contract.js";
 import {
@@ -412,6 +417,7 @@ import { createRemoteProjectService } from "#src/remote-projects/index.js";
 import { createGitService } from "./git/gitService.js";
 import { GitCommitMessageGenerator } from "./git/gitCommitMessageGenerator.js";
 import { createGitCheckpointService } from "./git/gitCheckpointService.js";
+import { getWorkspaceCheckpointDirectory } from "./git/repo/gitCheckpointStore.js";
 import { createSystemService } from "./system/systemService.js";
 import { createTerminalService } from "./terminal/terminalService.js";
 import { createSettingServiceWithMigrations } from "./setting/settingService.js";
@@ -544,6 +550,7 @@ import {
 import { ensureAppCaCert } from "./runtime-tools/appCaCert.js";
 import { buildHelperOpenArgs, isCuaLocalDevelopmentRuntime } from "@zcode/zcode-cua/broker/server";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
+import { ensureTelemetryDeviceMid } from "#src/telemetry/telemetryCore.js";
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
 import type { HighspeedMockScenario } from "@zcode/shared";
 import { IHighspeedCardService } from "./highspeed/highspeedCard.js";
@@ -1285,9 +1292,7 @@ export function createLocalServices(options: {
   /** HTTP Server exposes a cross-Environment Provisioning target only when the caller explicitly configures authentication. */
   providerProvisioningTargetEnabled?: boolean;
   /** Private notification for Desktop Host; ask Main to schedule a remote mirror only after Source is persisted successfully. */
-  onProviderProvisioningSourceChanged?: (
-    trigger: Exclude<ProviderProvisioningTrigger, "environment-online">,
-  ) => void;
+  onProviderProvisioningSourceChanged?: (trigger: ProviderProvisioningSourceTrigger) => void;
   serviceAuthorityMode?: ServiceAuthorityMode;
   /**
    * Standalone Source Server storage identity. Accepted for the host assembly contract only: the fork
@@ -1757,6 +1762,7 @@ export function createLocalServices(options: {
   const mcpSyncService = createMcpSyncService({
     // Consolidate the host-side consumer for mcp/list in mcpSync; the Agent process still checks the actual state.
     listMcpServerStatuses: (params) => zcodeAgentService.listMcpServerStatuses(params),
+    setWorkspaceMcpTrust: (params) => zcodeAgentService.setWorkspaceMcpTrust(params),
   });
   const pluginSyncService = createPluginSyncService();
   const pluginUiAccounts = createPluginUiAccountBindings({
@@ -1953,10 +1959,16 @@ export function createLocalServices(options: {
     // hand-building them at multiple call sites. Read-only permission checks from Settings do not host
     // PiP, so they omit --launcher-pid and --pip-mode; their exit log is .settings.exit.log. Define any
     // new arguments in HelperLaunchSpec for callers to share.
+    // ghostCursorOverlay must be passed: the overlay is a process-wide switch and the Helper stays resident.
+    // The Settings page may launch it first, and a later real CUA action reuses the same process; omitting
+    // the flag would leave the whole round of actions without a virtual cursor (observed locally on
+    // 2026-10-27 as the 6th missing argv; see docs/cua/producer/ghost-cursor-revival-and-polish.md section 0).
+    // PiP is different: it depends on the --launcher-pid lifecycle binding, so it stays omitted by design.
     const args = buildHelperOpenArgs({
       appPath,
       socketPath,
       exitLogPath: `${socketPath}.settings.exit.log`,
+      ghostCursorOverlay: true,
       ...(isCuaLocalDevelopmentRuntime(process.env)
         ? { allowUnsignedLauncherLocalDev: true, allowExternalBrokerClientLocalDev: true }
         : {}),
@@ -2255,13 +2267,20 @@ export function createLocalServices(options: {
     workspaceIdentity: undefined,
   });
   const zcodeAgentService = createZCodeAgentService({
+    useSharedTaskRuntime: async (target) => {
+      if (options?.projectStorageHostId && options.projectStorageHostId !== "local") return false;
+      return !(await taskIndexRepo.getProjectRepository()).hasProjectWorkspace(target);
+    },
     prepareProjectExecution,
-    prepareSessionCreation: async (target) =>
-      (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
+    prepareSessionCreation: async (target) => {
+      const prepared = (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
         task: { ...target, taskId: target.sessionId },
         projectId: target.projectId,
+        creationCommand: target.creationCommand,
         additionalDirectories: target.additionalDirectories,
-      }).additionalDirectories,
+      });
+      return { sessionId: prepared.taskId, additionalDirectories: prepared.additionalDirectories };
+    },
     discardSessionReservation: async (target) =>
       (await taskIndexRepo.getProjectRepository()).discardCreatedTaskReservation({
         task: {
@@ -2291,6 +2310,8 @@ export function createLocalServices(options: {
       : {}),
     accountRequestAuthService,
     chatGptPlanRequestAuth,
+    readRequestVerificationConfig: () =>
+      codingPlanSubscriptionService.getRequestVerificationConfig(),
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
@@ -2318,20 +2339,21 @@ export function createLocalServices(options: {
     // onRequest browserExecute handler.
     browserControlExecutor: options?.browserControlExecutor,
     // Robot credentials belong only to the authorized Host; a standalone remote service must not borrow local configuration to widen its read scope.
-    channelReplyExecutor: async (value) => {
-      const request = channelReplyHostRequestSchema.parse(value);
-      if (
-        options?.topicResourceRelayChannel &&
-        (isDesktopAttachedRemote || request.remoteSessionId)
-      )
-        return channelReplyResultSchema.parse(
-          await options.topicResourceRelayChannel(request).call("reply", request),
-        );
-      if (isDesktopAttachedRemote) throw new Error("Desktop channel reply peer unavailable");
-      const bots = services.getOptional(IBotsService);
-      if (!bots?.replyToChannel) throw new Error("Bot channel reply unavailable");
-      return bots.replyToChannel(request);
-    },
+    // The channel tool awaits plugin-entry integration; only the default send wiring is disabled and the full implementation is kept.
+    // channelReplyExecutor: async (value) => {
+    //   const request = channelReplyHostRequestSchema.parse(value);
+    //   if (
+    //     options?.topicResourceRelayChannel &&
+    //     (isDesktopAttachedRemote || request.remoteSessionId)
+    //   )
+    //     return channelReplyResultSchema.parse(
+    //       await options.topicResourceRelayChannel(request).call("reply", request),
+    //     );
+    //   if (isDesktopAttachedRemote) throw new Error("Desktop channel reply peer unavailable");
+    //   const bots = services.getOptional(IBotsService);
+    //   if (!bots?.replyToChannel) throw new Error("Bot channel reply unavailable");
+    //   return bots.replyToChannel(request);
+    // },
     topicResourceExecutor: async (request, signal) => {
       if (
         options?.topicResourceRelayChannel &&
@@ -2399,8 +2421,6 @@ export function createLocalServices(options: {
     // explicitly configured. Changes take effect when the Agent next starts.
     resolveSpawnEnv: async (context) => {
       const [settings] = await Promise.all([settingService.get(), providerRuntime.start()]);
-      // The local Host prepares the resolution snapshot; the remote CLI keeps reading and migrating configuration through its own file loader.
-      if (!isDesktopAttachedRemote) await subagentsService.prepareRuntimeState(context);
       const agentNetwork =
         isDesktopAttachedRemote && options?.remoteAgentNetwork
           ? options.remoteAgentNetwork
@@ -2475,7 +2495,10 @@ export function createLocalServices(options: {
       };
     },
     ...(!isDesktopAttachedRemote
-      ? { readSubagentRuntimeConfig: subagentsService.readRuntimeConfig }
+      ? {
+          prepareRuntimeWorkspace: subagentsService.prepareRuntimeState,
+          readSubagentRuntimeConfig: subagentsService.readRuntimeConfig,
+        }
       : {}),
     ...(isDesktopAttachedRemote
       ? { sessionRuntimePreferencesAuthority: "external" as const }
@@ -2706,6 +2729,23 @@ export function createLocalServices(options: {
     repository: () => taskIndexRepo.getProjectRepository(),
     workspaceDirectory: join(projectDataRoot(), "workspace"),
     afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
+    // The port calls zcodeAgentService lazily, only when a project data command runs.
+    data: {
+      repository: () => taskIndexRepo.getProjectDataRepository(),
+      port: createProjectDataPort({
+        agent: {
+          measure: (params) => {
+            if (!zcodeAgentService.measureSessionData) throw new Error("project.data-unavailable");
+            return zcodeAgentService.measureSessionData(params);
+          },
+          purge: (params) => {
+            if (!zcodeAgentService.purgeSessionData) throw new Error("project.data-unavailable");
+            return zcodeAgentService.purgeSessionData(params);
+          },
+        },
+        checkpointDirectory: (workspacePath) => getWorkspaceCheckpointDirectory(workspacePath),
+      }),
+    },
   });
   const taskGroupService = createTaskGroupService({
     database: () => taskIndexRepo.getOrganizationDatabase(),
@@ -3023,6 +3063,8 @@ export function createLocalServices(options: {
     // RemoteServiceAccess still requests this channel, local candidate enumeration timed out and remote
     // synchronization could not start.
     .register(IPluginSyncService, pluginSyncService)
+    // Data sync: the user-config sync channel shared by sub-agents, commands, and hooks; both the local Host and remote Hosts register through here.
+    .register(IUserConfigSyncService, createUserConfigSyncService())
     .register(IPluginsService, createPluginsService({ isDesktopRuntime: true }))
     // Thin plugin-management service for Settings; the only host-side consumer of the legacy plugins/*
     // protocol terms.
@@ -3336,7 +3378,10 @@ export async function migrateApplicationStorage(): Promise<{ backupSkipped: bool
   }
 }
 
-/** Standalone Source Server assembly: one storage identity, one workspace alias owner, one identity mapper. */
+/**
+ * Standalone Source Server assembly: one storage identity, one workspace alias owner, one identity mapper.
+ * Standalone entry points share the migration barrier and identity assembly; they must not expose remote project RPC under the local owner.
+ */
 export async function createServerHostServices(options: {
   topicResourceRelayChannel?: NonNullable<
     Parameters<typeof createLocalServices>[0]
@@ -3349,6 +3394,19 @@ export async function createServerHostServices(options: {
     buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath: "/" }),
   );
   if (!projectStorageHostId) throw new Error("Invalid Source Server storage identity");
+  // Bug cause: billing/balance treats X-Device-Mid as required, but standalone Server hosts have no Desktop main
+  // writing a device identity, and buildZCodeSourceHeaders() only reads it and never generates one. The original fix
+  // lived only in the legacy stdio entry, while the Core and Lite HTTP entries for SSH/WSL/Docker share this assembly
+  // without ensuring it, so the first Start Plan entitlement query returned 400 and Start models were judged unavailable.
+  // The fix is consolidated here: every standalone Server entry gets the host's own deviceMid before services are created.
+  // Failures only warn, never block startup, and never fabricate an ID.
+  await ensureTelemetryDeviceMid().catch((error: unknown) => {
+    createServiceLogger("server-host").warn(
+      undefined,
+      "deviceMid 初始化失败，ZCode endpoint 请求将不带 X-Device-Mid:",
+      error instanceof Error ? error.message : String(error),
+    );
+  });
   await migrateApplicationStorage();
   const workspaceAliasRepo = new SourceServerWorkspaceAliasRepo();
   const workspaceIdentityMapper = new SourceServerWorkspaceIdentityMapper();

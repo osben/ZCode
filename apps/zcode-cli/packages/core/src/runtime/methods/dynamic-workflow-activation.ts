@@ -39,8 +39,9 @@ export interface DynamicWorkflowActivationEntryData {
 /**
  * Built-in `/workflow` command name (BUILTIN_WORKFLOW_COMMAND_NAME in bootstrap/src/builtin-workflow-command.ts).
  * core does not depend on bootstrap, so this is written as a literal from the reserved-word table; user messages persist `displayInput` — the command text as typed.
+ * Historical derivation of the session capability tag (session-features) reuses the same criterion.
  */
-const WORKFLOW_COMMAND_TEXT_PATTERN = /^\/workflow(?:\s|$)/i;
+export const WORKFLOW_COMMAND_TEXT_PATTERN = /^\/workflow(?:\s|$)/i;
 
 /** Sessions activated at birth: not onDemand (alwaysOn; TUI / headless / subagent never set the field). */
 export function resolveInitialDynamicWorkflowToolsActivated(config: AgentRuntimeConfig): boolean {

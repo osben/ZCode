@@ -153,7 +153,23 @@ function stripViteRequestQuery(id: string) {
   return id.split("?")[0] ?? id;
 }
 
-export default defineConfig(({ mode }) => {
+function createReactScanDevPlugin(): Plugin {
+  const scriptPath = normalizePathForVite(desktopRequire.resolve("react-scan/dist/auto.global.js"));
+  return {
+    name: "zcode:react-scan",
+    apply: "serve",
+    transformIndexHtml: {
+      order: "post",
+      handler(_html, context) {
+        if (context.path !== "/index.html") return [];
+        // Scan must install its hook before React loads; a plain head script guarantees the order so an async import cannot miss the first mount.
+        return [{ tag: "script", attrs: { src: `/@fs/${scriptPath}` }, injectTo: "head-prepend" }];
+      },
+    },
+  };
+}
+
+export default defineConfig(({ command, mode }) => {
   // `.env*` provides only link constants; the startup script or CI injects the current product
   // environment through ZCODE_ENV.
   const env = loadEnv(mode, "../..", "");
@@ -180,6 +196,10 @@ export default defineConfig(({ mode }) => {
   const codingPlanWebviewOrigin =
     env.VITE_CODING_PLAN_WEBVIEW_ORIGIN ?? process.env.VITE_CODING_PLAN_WEBVIEW_ORIGIN ?? "";
   const plugins = [
+    // Wired up only in the dev server, never injected in builds; the backend's ZCODE_ENV does not decide whether dev tooling is on.
+    ...(command === "serve" && mode !== "production" && env.ZCODE_REACT_SCAN !== "0"
+      ? [createReactScanDevPlugin()]
+      : []),
     ...(e2eCoverageEnabled ? [createE2EUIRendererCoveragePlugin(repoRoot)] : []),
     pdfJsCMapsPlugin(),
     react(),

@@ -50,11 +50,9 @@ const healthyAttemptsByCardId = new Map<
   string,
   { expiryAttempted: boolean; completionRetryAttempted: boolean }
 >();
-let version = 0;
 const listeners = new Set<() => void>();
 
 function publishChange(): void {
-  version += 1;
   for (const listener of listeners) listener();
 }
 
@@ -346,8 +344,36 @@ export function subscribeHighspeedTurns(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function getHighspeedTurnVersion(): number {
-  return version;
+// Records are immutable snapshots. Consumers shallow-compare these dependencies and must not
+// subscribe to a global version that updates unrelated sessions together.
+// Card-level aggregation spans sessions: it must include all records and TPS of the same card,
+// not just the current session's slice.
+function highspeedCardDependencies(
+  cardIds: ReadonlySet<string>,
+): readonly (HighspeedTurnRecord | number | undefined)[] {
+  return [
+    ...records.filter((record) => cardIds.has(record.card.cardId)),
+    ...Array.from(cardIds, getHighspeedCardTps),
+  ];
+}
+
+export function getHighspeedSessionDependencies(
+  sessionId: string | null,
+): readonly (HighspeedTurnRecord | number | undefined)[] {
+  return highspeedCardDependencies(
+    new Set(
+      records
+        .filter((record) => record.sessionId === sessionId)
+        .map((record) => record.card.cardId),
+    ),
+  );
+}
+
+export function getHighspeedTurnDependencies(
+  sourceCommandId: string | undefined,
+): readonly (HighspeedTurnRecord | number | undefined)[] {
+  const record = getHighspeedTurnByCommandId(sourceCommandId);
+  return highspeedCardDependencies(new Set(record ? [record.card.cardId] : []));
 }
 
 export function aggregateHighspeedCardMetrics(cardId: string): HighspeedShareMetrics {

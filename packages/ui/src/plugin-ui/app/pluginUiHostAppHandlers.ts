@@ -23,6 +23,7 @@ export interface PluginUiHostAppHandlerDeps {
   /** In-flight page tool call ids; each is cancelled to the agent when the controller disposes. */
   activeCalls: Set<string>;
   onBusyChange?(): void;
+  onActivity?(): void;
   onOpenExternal(url: string): void;
 }
 
@@ -36,9 +37,10 @@ export function installPluginUiHostAppHandlers(
     const context = deps.currentContext();
     const current = context.displayMode ?? "inline";
     const available = context.availableDisplayModes ?? [current];
-    const mode = deps.onDisplayModeRequest(
-      resolveRequestedDisplayMode(params.mode, current, available),
-    );
+    const resolved = resolveRequestedDisplayMode(params.mode, current, available);
+    // A rejected request only returns the current mode; it must not be executed again as a new open/close action.
+    if (resolved !== params.mode) return { mode: current };
+    const mode = deps.onDisplayModeRequest(resolved);
     if (mode !== context.displayMode) deps.applyDisplayMode(mode);
     return { mode };
   };
@@ -61,6 +63,8 @@ export function installPluginUiHostAppHandlers(
         ...(params.arguments ? { arguments: params.arguments } : {}),
         callId,
       });
+      // Long polls are renewed only when real work is delivered; mark activity before clearing busy so reclaim never races task delivery.
+      if (result._meta?.["zcode/activity"] === true) deps.onActivity?.();
       return result as CallToolResult;
     } finally {
       signal?.removeEventListener("abort", onAbort);

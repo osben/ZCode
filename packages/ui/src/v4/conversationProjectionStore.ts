@@ -1,3 +1,5 @@
+import type { SessionLifecycleSnapshot } from "@zcode/shared";
+import { getLocalTtftObserver } from "@/v4/telemetry/local-ttft/contract.js";
 /* eslint-disable max-lines -- projection/base/recovery/optimistic must share one atomic store state machine; splitting them would reintroduce races across objects. */
 // Per-session projection store (read-only projection store).
 // Subscription pushes are the only writers; the UI only reads. The client follows three rules:
@@ -13,6 +15,7 @@ import {
   type ConversationDelta,
   SUBSCRIPTION_CONTENT_REJECTED,
   type ConversationRow,
+  type ConversationRowsPartition,
   type ConversationSnapshot,
   type ConversationOpenTiming,
   type ConversationTopicFrame,
@@ -104,6 +107,8 @@ export interface OptimisticCommand {
 
 export interface ConversationStoreState {
   status: ConversationStoreStatus;
+  lifecycle?: SessionLifecycleSnapshot;
+  projectionReady?: boolean;
   snapshot: ConversationSnapshot | null;
   subscriptionId: string | null;
   lastError: string | null;
@@ -212,6 +217,7 @@ export function hasOlderRows(snapshot: ConversationSnapshot | null): boolean {
   return first.rowId > snapshot.rows.firstRowId;
 }
 
+/** Whether the tail window of a cold snapshot starts in the middle of a turn. turnHeader is the authoritative start of a complete turn; the first row may be a lightBoundary, so checking only the first row kind is insufficient. Check whether the first turn has a header in the current window. */
 // Shared pure function for stores and components; missing snapshots, empty windows, or unknown firstRowId values return false.
 export function shouldAutoLoadIncompleteLeadingTurn(
   snapshot: ConversationSnapshot | null,
@@ -225,7 +231,7 @@ export function shouldAutoLoadIncompleteLeadingTurn(
   );
 }
 
-/** Whether the tail window of a cold snapshot starts in the middle of a turn. turnHeader is the authoritative start of a complete turn; the first row may be a lightBoundary, so checking only the first row kind is insufficient. Check whether the first turn has a header in the current window. */
+/** Merge rows/range results into the local window: key by rowId, accept only rows before the first row in the window, deduplicate, then prepend; sort by rowId ascending (total order). Return null when there are no rows to merge (the window is unchanged, so callers keep the same reference). */
 export function mergeOlderRows(
   window: readonly ConversationRow[],
   fetched: readonly ConversationRow[],
@@ -241,7 +247,127 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** Merge rows/range results into the local window: key by rowId, accept only rows before the first row in the window, deduplicate, then prepend; sort by rowId ascending (total order). Return null when there are no rows to merge (the window is unchanged, so callers keep the same reference). */
+/**
+ * Partitioned cache of rows.window: "frozen history + tail turn" (type: ConversationRowsPartition;
+ * spec: docs/ui/chat-virtual-scroll.md, "per-frame derivation cost").
+ *
+ * Why it exists: stream frames only change the last turn, but rows is a new array on every frame,
+ * so consumers can only learn that history is unchanged by comparing row by row, and the per-frame
+ * cost grows linearly with history length. The partition keeps the history segment as the same array
+ * reference across frames that only change the tail turn, so consumers cache history-derived results
+ * by reference and recompute only the tail every frame.
+ *
+ * The partition is a pure derived cache of rows keyed by the window array identity: readers always get
+ * a partition that matches the current rows, not a second copy of message state.
+ */
+const EMPTY_ROWS_PARTITION: ConversationRowsPartition = { history: [], tail: [] };
+const rowsPartitions = new WeakMap<readonly ConversationRow[], ConversationRowsPartition>();
+
+export function getConversationRowsPartition(
+  rows: readonly ConversationRow[],
+): ConversationRowsPartition {
+  let partition = rowsPartitions.get(rows);
+  if (!partition) {
+    partition = splitConversationRows(rows);
+    rowsPartitions.set(rows, partition);
+  }
+  return partition;
+}
+
+/**
+ * Generic cache for per-row-scan derivations on the partition (spec: docs/ui/chat-virtual-scroll.md,
+ * "per-frame derivation cost").
+ *
+ * Why it exists: to reach constant per-frame cost for per-row-scan derivations, the history segment
+ * result is cached by the history array reference, only the tail segment is computed each frame, and
+ * the consumer then merges the two segments. This only collects the get/compute/set boilerplate for
+ * "cache by row array"; merge strategies (OR, latest, sorted binary search, index building) differ per
+ * consumer and stay in those consumers. It is only for deduplication: it cannot stop a new derivation
+ * from walking the whole window directly and falling back to O(N).
+ *
+ * `fn` must depend only on the rows passed in (protocol rows are immutable). Results are cached by array
+ * reference: history keeps its reference across stream frames, so it is recomputed only when history
+ * changes, and multiple reads of the same tail within one frame compute once. WeakMap does not extend
+ * the array lifetime.
+ */
+export function memoizeByRows<T>(
+  fn: (rows: readonly ConversationRow[]) => T,
+): (rows: readonly ConversationRow[]) => T {
+  const results = new WeakMap<readonly ConversationRow[], T>();
+  return (rows) => {
+    if (!results.has(rows)) results.set(rows, fn(rows));
+    return results.get(rows) as T;
+  };
+}
+
+/**
+ * Called after applying a delta frame. When a frame only changes the tail turn, the previous history
+ * array is reused, at cost O(delta + tail turn). In other cases (a new turn starts, an older row is
+ * updated, or a rewind into history) nothing is registered, and the whole window is rebuilt on first read.
+ * The check relies on the window being sorted by rowId ascending: rowId >= the tail's first row means
+ * the row is inside the tail.
+ */
+export function advanceConversationRowsPartition(
+  previousRows: readonly ConversationRow[],
+  nextRows: readonly ConversationRow[],
+  deltas: readonly ConversationDelta[],
+): void {
+  if (nextRows === previousRows) return;
+  const previous = rowsPartitions.get(previousRows);
+  const tailStartRowId = previous?.tail[0]?.rowId;
+  if (!previous || tailStartRowId === undefined) return;
+  const isTailTurn = (turnId: string) => previous.tail.some((row) => row.turnId === turnId);
+  for (const delta of deltas) {
+    switch (delta.op) {
+      case "row.appended":
+        if (!isTailTurn(delta.row.turnId)) return;
+        break;
+      case "row.upserted":
+        if (delta.row.rowId < tailStartRowId || !isTailTurn(delta.row.turnId)) return;
+        break;
+      case "row.delta":
+        if (delta.rowId < tailStartRowId) return;
+        break;
+      case "row.removed":
+        if (delta.fromRowId <= tailStartRowId) return;
+        break;
+      default:
+        // state / pluginUi / workflowRun deltas do not change rows.
+        break;
+    }
+  }
+  rowsPartitions.set(nextRows, {
+    history: previous.history,
+    tail: nextRows.slice(previous.history.length),
+  });
+}
+
+/**
+ * Tail start = the first row of the turn that contains the last row. If a turn inside the tail segment
+ * also appears earlier, the start moves back to that position, until the turns of the two segments no
+ * longer intersect; per-turn derivations can then be computed per segment and concatenated. O(N),
+ * executed only when history changes.
+ */
+function splitConversationRows(rows: readonly ConversationRow[]): ConversationRowsPartition {
+  const last = rows.at(-1);
+  if (!last) return EMPTY_ROWS_PARTITION;
+  const firstIndexByTurnId = new Map<string, number>();
+  rows.forEach((row, index) => {
+    if (!firstIndexByTurnId.has(row.turnId)) firstIndexByTurnId.set(row.turnId, index);
+  });
+  let start = firstIndexByTurnId.get(last.turnId)!;
+  let checkedFrom = rows.length;
+  while (start < checkedFrom) {
+    let nextStart = start;
+    for (let index = start; index < checkedFrom; index += 1) {
+      nextStart = Math.min(nextStart, firstIndexByTurnId.get(rows[index]!.turnId)!);
+    }
+    checkedFrom = start;
+    start = nextStart;
+  }
+  return { history: rows.slice(0, start), tail: rows.slice(start) };
+}
+
 /** External store (useSyncExternalStore compatible: subscribe + getState return stable references). SessionDataLayer owns its lifecycle (reference counting + keep-warm); components do not instantiate it directly. */
 // Memory diagnostics counters: track the number of live stores and total rows in their rows.window collections to observe window-data growth. Add on construction and remove on close().
 const liveProjectionStores = new Set<ConversationProjectionStore>();
@@ -284,6 +410,7 @@ export class ConversationProjectionStore {
     /** This flight was started for a deterministic content failure; classify its terminal result as contentRejected, outside transient-failure statistics. */
     contentFault: boolean;
   } | null = null;
+  private readonly offSessionLifecycle: (() => void) | undefined;
   private readonly offAssemblyFault: () => void;
   private readonly offRuntimeRestart: (() => void) | null = null;
   private readonly offRuntimeLifecycle: (() => void) | null = null;
@@ -322,6 +449,9 @@ export class ConversationProjectionStore {
     private readonly onSessionGone?: () => void,
   ) {
     liveProjectionStores.add(this);
+    this.offSessionLifecycle = transport.onSessionLifecycle?.((snapshot) =>
+      this.handleSessionLifecycle(snapshot),
+    );
     this.offAssemblyFault = transport.onAssemblyFault((fault) => {
       if (fault.topic === this.topic) {
         this.handleAssemblyFault(fault.subscriptionId, fault.deliveryKind, fault.reasonCode);
@@ -384,7 +514,43 @@ export class ConversationProjectionStore {
     for (const listener of this.listeners) listener();
   }
 
-  /** Start or restart the subscription. Take base from the current snapshot watermark (include it only when we hold the consistent state at that point); forceSnapshot is the fallback when resumed frames still contain a gap, and dropping base requests a full snapshot. */
+  /**
+   * Start or resend the subscription. The base comes from the current snapshot watermark (watermark invariant:
+   * it is carried only while the state is truly consistent at that moment). forceSnapshot is the fallback when resume frames still have a gap; dropping the base requires a full snapshot.
+   */
+  private handleSessionLifecycle(snapshot: SessionLifecycleSnapshot, queried = false): void {
+    if (this.closed || snapshot.sessionId !== parseConversationTopic(this.topic)) return;
+    const previous = this.state.lifecycle;
+    if (previous && snapshot.revision <= previous.revision) return;
+    this.setState({ lifecycle: snapshot });
+    if (snapshot.state === "stopping" || snapshot.state === "faulted") {
+      this.generation += 1;
+      this.clearRuntimeRecycleRetry();
+      this.discardRecovery();
+      this.awaitingInitial = null;
+      this.subscriptionHasAppliedBase = false;
+      this.setState({
+        subscriptionId: null,
+        projectionReady: false,
+        status: snapshot.state === "faulted" ? "error" : "connecting",
+        lastError: snapshot.lastError?.message ?? null,
+      });
+      return;
+    }
+    if (snapshot.state === "unloaded" && snapshot.lastError) {
+      this.setState({ status: "error", lastError: snapshot.lastError.message });
+      return;
+    }
+    if (
+      !queried &&
+      (snapshot.state === "starting" || snapshot.state === "ready") &&
+      !this.state.subscriptionId &&
+      this.connectInFlight === 0
+    ) {
+      void this.connect({ forceSnapshot: true });
+    }
+  }
+
   async connect(
     options: {
       forceSnapshot?: boolean;
@@ -412,8 +578,20 @@ export class ConversationProjectionStore {
     };
     this.initialSubscribeAckAt = null;
     this.connectInFlight += 1;
-    this.setState({ status: "connecting", rendererTiming: this.sessionOpenRendererTiming });
+    this.setState({
+      status: "connecting",
+      projectionReady: false,
+      rendererTiming: this.sessionOpenRendererTiming,
+    });
     try {
+      const sessionId = parseConversationTopic(this.topic);
+      if (sessionId && this.transport.getSessionLifecycle) {
+        const lifecycle = await this.transport.getSessionLifecycle(sessionId);
+        if (generation !== this.generation || this.closed) return;
+        if (lifecycle) this.handleSessionLifecycle(lifecycle, true);
+        if (this.state.lifecycle?.state === "stopping" || this.state.lifecycle?.state === "faulted")
+          return;
+      }
       const result = await this.transport.subscribe({
         topic: this.topic,
         base: snapshot ? { logEpoch: snapshot.logEpoch, seq: snapshot.seq } : undefined,
@@ -452,6 +630,7 @@ export class ConversationProjectionStore {
       this.subscriptionHasAppliedBase = Boolean(
         snapshot && result.ack.mode === "resume" && result.ack.logEpoch === snapshot.logEpoch,
       );
+      if (this.subscriptionHasAppliedBase) this.setState({ projectionReady: true });
       // The public result is already ACK-only; initial and online frames both use notifications.
       // Store subscriptionId before activate so it can synchronously release its own initial frame buffered in the same read.
       this.awaitingInitial = {
@@ -531,6 +710,16 @@ export class ConversationProjectionStore {
       this.setState({ status: "error", lastError: message });
     } finally {
       this.connectInFlight -= 1;
+      // A stale subscribe may arrive late after stopping; if starting/ready has already arrived, continue with one new subscription.
+      if (
+        generation !== this.generation &&
+        !this.closed &&
+        this.connectInFlight === 0 &&
+        !this.state.subscriptionId &&
+        (this.state.lifecycle?.state === "starting" || this.state.lifecycle?.state === "ready")
+      ) {
+        void this.connect({ forceSnapshot: true });
+      }
     }
   }
 
@@ -579,7 +768,12 @@ export class ConversationProjectionStore {
     this.subscriptionHasAppliedBase = false;
     this.generation += 1;
     // The old subscriptionId belongs to a dead runtime; do not unsubscribe because its host-side owner is already invalid.
-    this.setState({ status: "connecting", subscriptionId: null });
+    this.setState({
+      status: "connecting",
+      subscriptionId: null,
+      lifecycle: undefined,
+      projectionReady: false,
+    });
     // Do not just become dormant and wait for available: the Agent starts lazily, and after dispose no one may start it,
     // so that signal would never arrive and the panel would spin forever. Backoff reconnect starts the runtime itself; if available arrives first, reset attempts and reconnect immediately.
     if (this.scheduleRuntimeRecycleReconnect(this.generation)) return;
@@ -682,6 +876,7 @@ export class ConversationProjectionStore {
       // Rule 1: replace everything with the new snapshot (row objects reuse old references when their values match, but semantics remain full replacement).
       this.setState({
         snapshot,
+        projectionReady: true,
         planDirectoryRevision: this.state.planDirectoryRevision + 1,
         // Replacing the whole snapshot may change the real-user query set, so invalidate terminal-state caches.
         turnNavigatorDirectoryRevision: this.state.turnNavigatorDirectoryRevision + 1,
@@ -739,6 +934,8 @@ export class ConversationProjectionStore {
     const applied = applyConversationDeltas(current, frame.payload.deltas);
     // seq is the snapshot-alignment watermark (R-03); after applying a delta frame, advance it to the frame's right endpoint.
     const next = this.shareDeltaRows({ ...applied, seq: frame.toSeq }, frame.payload.deltas);
+    // Register the partition before setState: subscribers that read the new rows in the same notification find the partition ready.
+    advanceConversationRowsPartition(current.rows.window, next.rows.window, frame.payload.deltas);
     logSubagentProjectionTransition(this.topic, current, next, "deltas");
     const removedFromRowId = frame.payload.deltas.reduce<number | null>(
       (earliest, delta) =>
@@ -771,6 +968,7 @@ export class ConversationProjectionStore {
     this.reconcileOptimistic(next);
     this.reconcileAcceptedInputProjection(next);
     this.observeModelTransition(next, context.online);
+    if (context.online && !context.recovery) getLocalTtftObserver()?.projected(frame);
     if (context.recovery) this.markRecoveryFrameSeen();
     for (const listener of this.liveDeltaListeners) listener(frame.payload.deltas);
   }
@@ -808,18 +1006,29 @@ export class ConversationProjectionStore {
       else if (delta.op === "row.delta") rememberIds.add(delta.rowId);
     }
     if (shareIds.size === 0 && rememberIds.size === 0) return snapshot;
+    // When one rowId is both upserted and delta-updated, the share wins (same priority as the original if / else if).
+    for (const rowId of shareIds) rememberIds.delete(rowId);
+    // Root cause of the bug: the old code ran forEach over the whole window every frame to find the few rows hit by deltas,
+    // so long sessions scanned all history each frame. Sharing between rows is independent (the pool is keyed by topic + rowId)
+    // and rowIds are unique in the window, so scan once from the tail and stop once every target is found; streamed hits are almost always in the tail.
+    // If a target is not in the window, it degrades to a full-window scan, same as before.
+    const rows = snapshot.rows.window;
     let window: ConversationRow[] | null = null;
-    snapshot.rows.window.forEach((row, index) => {
+    let remaining = shareIds.size + rememberIds.size;
+    for (let index = rows.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      const row = rows[index]!;
       if (shareIds.has(row.rowId)) {
+        remaining -= 1;
         const shared = this.rowPool.shareRow(this.topic, row);
         if (shared !== row) {
-          window ??= [...snapshot.rows.window];
+          window ??= [...rows];
           window[index] = shared;
         }
       } else if (rememberIds.has(row.rowId)) {
+        remaining -= 1;
         this.rowPool.remember(this.topic, row);
       }
-    });
+    }
     return window === null ? snapshot : { ...snapshot, rows: { ...snapshot.rows, window } };
   }
 
@@ -1036,7 +1245,12 @@ export class ConversationProjectionStore {
     this.discardRecovery();
     this.awaitingInitial = null;
     this.subscriptionHasAppliedBase = false;
-    this.setState({ status: "connecting", subscriptionId: null });
+    this.setState({
+      status: "connecting",
+      subscriptionId: null,
+      lifecycle: undefined,
+      projectionReady: false,
+    });
     // Proxy handoff is not a CLI runtime restart. Forcing a snapshot would replace user-loaded older rows with the tail window.
     // Handoff preserves a consistent projection watermark, letting the server choose resume or snapshot by logEpoch/seq;
     // a real runtime restart still uses full subscribe.
@@ -1457,6 +1671,7 @@ export class ConversationProjectionStore {
       topic: this.topic,
     });
     this.closed = true;
+    this.offSessionLifecycle?.();
     this.offAssemblyFault();
     this.offRuntimeRestart?.();
     this.offRuntimeLifecycle?.();

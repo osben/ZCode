@@ -27,7 +27,7 @@ import type {
   TurnState,
   ToolSchedule,
 } from "../deps.js";
-import { getLatestActiveSessionMessageId } from "../helpers/index.js";
+import { getLatestActiveSessionMessageId, isHiddenReminderMessage } from "../helpers/index.js";
 import type { ResumeSessionOptions, ResumeSessionResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import {
@@ -37,12 +37,14 @@ import {
 } from "./session-shell-environment.js";
 import { resetProjectMemoryRecall } from "../helpers/project-memory-recall.js";
 import { restoreDynamicWorkflowActivationOnResume } from "./dynamic-workflow-activation.js";
+import { restoreSessionFeaturesOnResume } from "../session-features/contract.js";
 import { repairPersistedRemoteSessionPaths } from "../helpers/persisted-remote-session-path-repair.js";
 import {
   restoreWorkspaceCheckpointEntries,
   restoreWorkspaceFileRewindEntries,
 } from "./workspace-checkpoint-persistence.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
+import { refreshRestoredAnnouncements } from "./context-refresh.js";
 
 export function toScheduleState(
   this: AgentRuntimeInternal,
@@ -73,8 +75,8 @@ export async function resumeFromStore(
 
   const traceContext = options?.traceContext ?? this.rootTraceContext;
   const persistedSession = await this.sessionStore.getSession(this.sessionId);
-  // 删除 = CLI 软删除（time_deleted）。归档已归 Host 组织态，CLI 不再有归档列；
-  // 旧的 time.archived 判断永远为 false，这里改为拒绝恢复已软删除的会话。
+  // Deleted = CLI soft delete (time_deleted). Archiving moved to Host organization state and the CLI has no archive column;
+  // the old time.archived check was always false, so this now refuses to resume soft-deleted sessions instead.
   if (!persistedSession || persistedSession.time.deleted !== undefined) {
     throw createCoreError(CoreErrorType.SessionNotFound, `Session not found: ${this.sessionId}`, {
       context: { sessionId: this.sessionId },
@@ -167,11 +169,11 @@ export async function resumeFromStore(
   this.messageHistory = new MessageHistoryImpl();
   this.contextBuilder = null;
   this.contextInitialized = false;
-  this.lastEmittedLocalDate = undefined;
   // Cold-resume history hydration clears runtime-local read-state first. Complete this before
   // Context initialization so the single subsequent load of MEMORY.md matches what the provider sees.
   const readFileStateHydration = await hydrateReadFileStateFromSession({
     branchCutAfterMessageId,
+    markRestoredFromSession: true,
     messages,
     readFileState: this.readFileState,
     rewindCreatedMessageId,
@@ -181,6 +183,10 @@ export async function resumeFromStore(
     workspaceRoot: this.workspaceRoot,
   });
   await this.ensureContextInitialized(traceContext);
+  // Resumed envInfo comes from storage, not a fresh Git read, so it cannot count as prefetch; the resumed window has not decided staleness yet, so the next request re-reads.
+  this.sessionStartGitPrefetch = false;
+  // The stored "is repository" flag was not read by this runtime; re-read once for the first environment announcement and announce on change.
+  this.repositoryRecheckPending = true;
   const recoveredCompactTimelineCount = await this.recoverInterruptedCompactTimelines(
     messages,
     traceContext,
@@ -195,6 +201,7 @@ export async function resumeFromStore(
     rewindKeptMessageIds,
     rewindTargetMessageId,
   });
+  refreshRestoredAnnouncements(this);
   announceSessionShellEnvironmentNoticeAfterResume(this, {
     persistedEnvInfo,
     restore: shellRestore,
@@ -254,6 +261,9 @@ export async function resumeFromStore(
   // Restore the tool surface for onDemand sessions from persisted state (launch.md, “On demand: activation”): activate if an entry exists or history
   // contains `/workflow` / one of the ten tool calls. This must finish before the first turn, so do it during resume rather than waiting for the next turn.
   await restoreDynamicWorkflowActivationOnResume.call(this, messages);
+  // Session feature tags grow but never shrink: entry ∪ persisted history, and this must finish before the first model request
+  // (docs/design/v2/model/session-features-header.md, "Inheritance and resume").
+  await restoreSessionFeaturesOnResume.call(this, messages, traceContext);
 
   await restorePermissionGrantMarker(this, traceContext);
 
@@ -261,8 +271,10 @@ export async function resumeFromStore(
     activeMessages,
     persistedMessages: messages,
   });
+  // Hidden reminders are not conversation messages and do not count as a turn (same criterion as rewind-message.ts).
   this.turnNumber = activeMessages.filter(
-    (message) => message.info.role === "user" && !message.info.summary,
+    (message) =>
+      message.info.role === "user" && !message.info.summary && !isHiddenReminderMessage(message),
   ).length;
   this.sessionPersisted = true;
   await syncPersistedSessionTitleForResume.call(this, {
@@ -345,7 +357,6 @@ export async function resumeFromStore(
     module: "core.runtime",
     partCount: hydration.partCount,
     readFileStateRestoredCount: readFileStateHydration.restoredCount,
-    readFileStateSkippedRangeReadCount: readFileStateHydration.skippedRangeReadCount,
     readFileStateSkippedUnreadableEditCount: readFileStateHydration.skippedUnreadableEditCount,
     recoveredCompactTimelineCount,
     resumedTodoCount: resumedTodos.length,
@@ -361,7 +372,6 @@ export async function resumeFromStore(
     // messages to V4, or the first frame will briefly revive the started/retrying state.
     persistedMessagesReloadRequired: recoveredCompactTimelineCount > 0,
     readFileStateRestoredCount: readFileStateHydration.restoredCount,
-    readFileStateSkippedRangeReadCount: readFileStateHydration.skippedRangeReadCount,
     readFileStateSkippedUnreadableEditCount: readFileStateHydration.skippedUnreadableEditCount,
     traceId: traceContext.traceId,
   };

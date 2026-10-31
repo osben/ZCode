@@ -31,7 +31,8 @@ export function parseAgentMcpServers(
     for (const [serverName, config] of Object.entries(spec)) {
       const normalizedServerName = serverName.trim();
       if (normalizedServerName.length === 0) continue;
-      if (!isMcpServerConfig(config)) {
+      // Inline declarations come from Agent docs and must not fake a Host source to bypass workspace MCP trust; named references keep their authoritative source.
+      if (!isMcpServerConfig(config) || "source" in config || "official" in config) {
         invalidServerNames.push(normalizedServerName);
         continue;
       }

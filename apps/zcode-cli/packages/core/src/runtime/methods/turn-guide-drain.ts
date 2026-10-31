@@ -4,9 +4,10 @@ import { applySubmissionExecutionState, sameModelSelection } from "./turn-model.
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { appendTurnRequestEntries } from "./turn-output-token-continuation.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
+import { throwIfTurnAborted } from "../helpers/turn-errors.js";
 
 /**
- * Consume at most one guide at a valid model-step boundary and prepare the next provider request.
+ * Consume all waiting guides at once, FIFO, at a legal model-step boundary, and prepare the next provider request.
  * SendMessage may arrive while a child model request is in progress; if that step ends normally with text only,
  * waiting for a future tool batch would leave coordinator input permanently in a queue with no wake-up source.
  */
@@ -14,6 +15,8 @@ export async function drainInlineGuideForNextRequest(
   runtime: AgentRuntimeInternal,
   state: RegularTurnLoopState,
 ): Promise<boolean> {
+  // A stopped turn no longer consumes pending input and just ends; guides are returned to the queue by the cancellation path.
+  throwIfTurnAborted(state.turnAbortSignal);
   const activeTurn = state.activeTurn;
   if (!activeTurn || !runtime.hasInlineGuidePendingInput(activeTurn)) return false;
 
@@ -49,9 +52,9 @@ export async function drainInlineGuideForNextRequest(
     }
   }
   state.currentUserMessageId = drained?.latestMessageId ?? state.currentUserMessageId;
-  const nextQueryId = drained?.queryIds?.[0];
+  const nextQueryId = drained?.queryIds?.at(-1);
   if (nextQueryId) {
-    // Continue the current active turn with the guide as a user role; attribute later requests to that input's query.
+    // The guide continues the current active turn in the user role; later requests are attributed to the last input's query.
     state.turnTraceContext = { ...state.turnTraceContext, queryId: nextQueryId };
   }
   if ((drained.toolDisallowlist?.length ?? 0) > 0) {

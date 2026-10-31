@@ -34,6 +34,8 @@ import type {
   WebRemoteControlContext,
   WebRemoteControlReconnectWorkspaceRequest,
   WebRemoteControlReconnectWorkspaceResult,
+  WebRemoteControlRendererActionRequest,
+  WebRemoteControlRendererActionResult,
   WebRemoteControlStartOperationResult,
   WebRemoteControlStatus,
   WebRemoteControlWorkspaceTarget,
@@ -81,13 +83,17 @@ declare global {
       requestSourceSettingsAttachment?(sourceServerId: string): Promise<{ attachmentId: string }>;
       /** Cancel a remote connection that has not yet been established in the current window. */
       cancelPendingRemoteConnection?(requestId?: string): Promise<void>;
-      /** Bind the canonical workspace context for a remote logical session. */
+      /**
+       * Bind the canonical workspace context of a remote logical session.
+       * On failure it does not reject but returns `{ success: false, reasonCode }`: an Error thrown in preload loses
+       * code/retryable across the contextBridge. Callers must use `unwrapRemoteWorkspaceBindResult` to recover them.
+       */
       bindRemoteWorkspaceSessionContext?(context: {
         remoteSessionId: string;
         workspacePath: string;
         workspaceIdentity?: string;
-      }): Promise<import("@zcode/shared").BindRemoteWorkspaceSessionContextResult>;
-      /** Enable Web remote control for the current workspace. */
+      }): Promise<import("@zcode/shared").BindRemoteWorkspaceSessionContextIpcResult>;
+      /** Enable Web remote control for the current workspace */
       startWebRemoteControl(
         context: WebRemoteControlContext,
       ): Promise<WebRemoteControlStartOperationResult>;
@@ -158,6 +164,12 @@ declare global {
         handler: (
           request: WebRemoteControlReconnectWorkspaceRequest,
         ) => Promise<WebRemoteControlReconnectWorkspaceResult>,
+      ): () => void;
+      /** Register the callback for mobile remote-control actions (pin/archive/create local project) */
+      onWebRemoteControlRendererAction?(
+        handler: (
+          request: WebRemoteControlRendererActionRequest,
+        ) => Promise<WebRemoteControlRendererActionResult>,
       ): () => void;
       /** Sync the unread task count for the current window with the main process. */
       syncWindowUnreadCount(count: number): void;

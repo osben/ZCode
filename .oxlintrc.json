@@ -13,14 +13,20 @@
         "**/apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts",
         // MCP connection entry keeps the upstream implementation; the connection barrier fix does not reflow the adapter.
         "**/apps/zcode-cli/packages/adapters/src/mcp/index.ts",
+        // The streaming runner keeps the upstream large-file shape; the workflow unknown-business-code retry limit only passes
+        // the attempt count to the policy table, and the attempt loop is not split to satisfy line counts.
+        "**/apps/zcode-cli/packages/adapters/src/model/runner-stream.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/plugins.ts",
         "**/apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts",
         "**/apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/app/create-app.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts",
-        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts",
+        // The v4 authoritative projection keeps the upstream large-file shape; the queue identity fix does not split the projector mechanically for line counts.
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts",
+        // Background agent terminal states are now delivered as structured originMeta; this only adds pass-through and cold-recovery read-back,
+        // and does not split the projection mechanically for line counts.
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts",
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/conversation-topic-publisher.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-event-merge.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts",
@@ -29,9 +35,10 @@
         "**/apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts",
         // Already over the limit at origin/integration; the 3.16.1 sync keeps these shapes and only warns.
         "**/apps/zcode-cli/packages/adapters/src/fs/index.ts",
-        "**/apps/zcode-cli/packages/adapters/src/model/runner-stream.ts",
         "**/apps/zcode-cli/packages/adapters/src/plugins/index.ts",
+        // The model contract inherits the upstream 901-line file; this change only adds configuration network error codes and does not split the public contract for it.
         "**/apps/zcode-cli/packages/contracts/src/model/index.ts",
+        // The fork selection fallback only adds one hidden-reminder check; the fork flow is not split mechanically for line counts.
         "**/apps/zcode-cli/packages/core/src/runtime/methods/session-fork.ts",
         "**/apps/zcode-cli/packages/core/src/tool/executor/background-tasks.ts",
         "**/apps/zcode-cli/packages/debug/server/analyzer.ts",
@@ -43,10 +50,10 @@
         "**/apps/zcode-cli/packages/core/src/runtime/methods/turn.ts",
         "**/apps/zcode-cli/packages/core/src/runtime/methods/turn-model-step.ts",
         // Inside the core package, oxlint runs with --no-ignore and matches the same files by cwd-relative paths.
+        "src/runtime/methods/session-fork.ts",
         "src/runtime/methods/steering.ts",
         "src/runtime/methods/turn.ts",
         "src/runtime/methods/turn-model-step.ts",
-        "src/runtime/methods/session-fork.ts",
         "src/tool/executor/background-tasks.ts",
         "**/packages/ui/src/remote-connection-flow/index.ts"
       ],

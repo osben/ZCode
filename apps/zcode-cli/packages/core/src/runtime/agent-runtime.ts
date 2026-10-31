@@ -7,6 +7,7 @@ import {
 } from "../subagent/definitions.js";
 import { DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY, resolveExecutionState } from "@zcode/shared";
 import type { BackgroundBashOutputResult } from "@zcode/shared";
+import type { ModelRequestSessionFeature } from "@zcode/contracts";
 import {
   createDenyPermissionBroker,
   createRootTraceContext,
@@ -191,6 +192,9 @@ export class AgentRuntime {
   private dynamicWorkflowActivationSource?: DynamicWorkflowActivationSource;
   private lspService?: LspService;
   private lspToolAvailable = false;
+  /** docs/design/v2/model/session-features-header.md: capability tags used by this session; empty at birth. */
+  private sessionFeatures = new Set<ModelRequestSessionFeature>();
+  private sessionFeaturesWrite: Promise<void> = Promise.resolve();
   private contextBuilder: ContextBuilder | null = null;
   private contextInitialized = false;
   private contextSourceSnapshot?: ContextSourceSnapshot;
@@ -208,6 +212,12 @@ export class AgentRuntime {
   private mcpPort?: McpPort;
   private mcpStartupPromise?: Promise<McpConnectionSnapshot>;
   private residencyBlockingWorkCount = 0;
+  private readonly residencyBlockingWork = new Set<Promise<unknown>>();
+  private ownedWorkClose?: Promise<void>;
+  private readonly shutdownController = new AbortController();
+  private resourceClose?: Promise<void>;
+  private retirement?: Promise<void>;
+  private readonly workChanged = new Set<() => void>();
   private mcpInitialized = false;
   private mcpToolsRegistered = false;
   private registeredMcpToolNames?: string[];
@@ -246,7 +256,6 @@ export class AgentRuntime {
   };
   private currentTurnFileChanges: RuntimeTurnFileChangeMap = new Map();
   private lastAssistantCompletedAtMs?: number;
-  private lastEmittedLocalDate?: string;
   private autoCompactConsecutiveFailures = 0;
   private runtimeCommandQueue: RuntimeCommandQueue;
   private runtimeCommandDrainActive = false;
@@ -383,6 +392,79 @@ export class AgentRuntime {
     runtime.startMcpStartup(this.rootTraceContext);
   }
 
+  get shutdownSignal(): AbortSignal {
+    return this.shutdownController.signal;
+  }
+
+  /** The child stops accepting execution, but existing background work may finish naturally; the owner may drop the reference only after release completes. */
+  retire(): Promise<void> {
+    this.beginShutdown();
+    this.retirement ??= (async () => {
+      await this.drainMemoryExtractions(null);
+      while (this.residencyBlockingWork.size > 0 || this.hasRunningBackgroundTasks()) {
+        // Subscribe before checking/waiting so the only notification is not lost when the ledger or tasks reach zero just then.
+        const changed = Promise.withResolvers<void>();
+        const notify = () => changed.resolve();
+        const unsubscribe = this.runtimeTaskRegistry.subscribe?.(notify);
+        this.workChanged.add(notify);
+        try {
+          if (this.residencyBlockingWork.size > 0 || this.hasRunningBackgroundTasks())
+            await changed.promise;
+        } finally {
+          unsubscribe?.();
+          this.workChanged.delete(notify);
+        }
+      }
+      await this.sessionFeaturesWrite;
+      await this.releaseRuntimeResources();
+    })();
+    return this.retirement;
+  }
+
+  /** Force-stop owned work; shares the resource-close flight with natural release, and a failure retries only resources not yet released. */
+  async close(): Promise<void> {
+    const work = await Promise.allSettled([this.closeOwnedWork()]);
+    const resources = await Promise.allSettled([this.releaseRuntimeResources()]);
+    const errors = [...work, ...resources].flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "Runtime cleanup failed");
+  }
+
+  private releaseRuntimeResources(): Promise<void> {
+    this.resourceClose ??= this.closeBrowserSession().catch((error) => {
+      this.resourceClose = undefined;
+      throw error;
+    });
+    return this.resourceClose;
+  }
+
+  closeOwnedWork(): Promise<void> {
+    this.beginShutdown();
+    this.stopActiveForegroundExecution({ reason: "session_closed" });
+    this.ownedWorkClose ??= (async () => {
+      const results = await Promise.allSettled([
+        this.subagentPort?.close?.(),
+        this.cancelRunningRuntimeBackgroundTasks({ reason: "session_closed" }),
+        this.drainMemoryExtractions(null),
+      ]);
+      // The existing ledger also holds title, MCP startup, tool parts and turn finalization; closing must not rely on counts alone.
+      while (this.residencyBlockingWork.size > 0) {
+        await Promise.allSettled(this.residencyBlockingWork);
+      }
+      await this.sessionFeaturesWrite;
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length) throw new AggregateError(errors, "Session owned work cleanup failed");
+    })().catch((error) => {
+      // The child owner keeps the failed handle; a retry must re-enter it instead of returning the old rejection forever.
+      this.ownedWorkClose = undefined;
+      throw error;
+    });
+    return this.ownedWorkClose;
+  }
+
   async closeBrowserSession(): Promise<void> {
     this.beginShutdown();
     disposeNodeReplSession(this.sessionId);
@@ -392,11 +474,12 @@ export class AgentRuntime {
         traceContext: this.rootTraceContext,
       });
     } catch (error) {
-      // Failure to clean up the browser backend must not block shutdown of execution/MCP/session store.
+      // The caller closes resources in parallel; the failure must propagate here so the lifecycle never treats an unreleased browser as safe.
       this.logger?.warn("Browser session cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
         event: "browser.session_cleanup.failed",
       });
+      throw error;
     }
   }
 
@@ -404,21 +487,24 @@ export class AgentRuntime {
     // ExecutionPort.close() settles background Bash tasks as cancelled. If teardown
     // terminal events wake the model, they can race with the later session-store close.
     this.shuttingDown = true;
-    // The process remains alive after one session closes, so stop this runtime's
-    // Extraction first rather than merely abandoning the wait after a timeout.
+    this.shutdownController.abort(new Error("Session runtime closed"));
     // 同一条理由：会话在关，提醒钟不能再到点唤起一轮。
     this.workflowBlockedReminder.stop();
     // 关闭单个 session 后进程仍存活，
     // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
     this.memoryExtractionScheduler?.shutdown();
     for (const run of this.backgroundDreamRuns.values()) run.controller.abort();
+    this.memoryRecallPrefetch?.abortController.abort();
   }
 }
 
 export interface AgentRuntime {
   lastPermissionGrantId?: string;
+  retire(): Promise<void>;
+  close(): Promise<void>;
   beginShutdown(): void;
   closeBrowserSession(): Promise<void>;
+  closeOwnedWork(): Promise<void>;
   updateConfig(
     patch: Pick<
       AgentRuntimeConfig,
@@ -644,6 +730,14 @@ export interface AgentRuntime {
     source: DynamicWorkflowActivationSource;
     traceContext?: TraceContext;
   }): Promise<boolean>;
+  /**
+   * Record a capability this session used (docs/design/v2/model/session-features-header.md). Append-only;
+   * a no-op returning false when already present. Later model requests carry it in `x-zcode-session-features`.
+   */
+  recordSessionFeature(input: {
+    feature: ModelRequestSessionFeature;
+    traceContext?: TraceContext;
+  }): boolean;
   trackResumedDynamicWorkflowRun(input: {
     runId: string;
     toolCallId?: string;
@@ -711,7 +805,7 @@ export interface AgentRuntime {
     options: RuntimeBackgroundStopOptions,
   ): Promise<RuntimeBackgroundStopResult>;
   cancelRunningRuntimeBackgroundTasks(input: {
-    reason: "subagent_cancelled";
+    reason: "subagent_cancelled" | "session_closed";
     traceContext?: TraceContext;
   }): Promise<void>;
   sealBackgroundTaskNotifications(input: {

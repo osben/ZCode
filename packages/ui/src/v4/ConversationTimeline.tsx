@@ -1,5 +1,4 @@
 import { useBotTopicPreparations } from "@/v4/BotTopicPreparation.js";
-import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
 import {
   withAfterFirstUserInputSlot,
   withOptimisticFirstInputRow,
@@ -43,9 +42,8 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
 import {
-  deriveLogicalUiInstances,
-  getPluginUiDisclosureVersion,
-  getPluginUiManualPin,
+  createLogicalUiInstancesSelector,
+  getPluginUiDisclosureSnapshot,
   setPluginUiInstanceDerivation,
   subscribePluginUiDisclosure,
   type PluginUiRowPinResolver,
@@ -59,22 +57,24 @@ import {
   isSameConversationLatestTurnSummary,
   resolveConversationLatestTurnSummary,
   splitConversationTimelineLiveTail,
+  withTopicPreparationUnits,
   type ConversationLatestTurnSummary,
 } from "@/v4/conversationTimelineLiveTail.js";
 import { armHighspeedFooterExpiryClock } from "@/highspeed/highspeedFooterExpiryClock.js";
+import { resolveNextHighspeedExpiryMsInPartition } from "@/highspeed/highspeedConversationRows.js";
+import { getConversationRowsPartition } from "@/v4/conversationProjectionStore.js";
 import {
+  CONVERSATION_STATUS_PANEL_TOP_CLEARANCE_CLASS_NAME,
   getConversationContentWidthClassName,
   getConversationStatusPanelOffsetClassName,
 } from "@/v4/conversationLayout.js";
 import {
-  applyConversationTurnLiveClock,
-  buildConversationTurnRenderUnits,
-  createConversationTurnRenderUnitCache,
-  resolveNextHighspeedExpiryMs,
+  createConversationTurnRenderUnitsSelector,
   type ConversationTurnRenderUnit,
-  type ConversationTurnRenderUnitCache,
 } from "@/v4/conversationTurnRenderUnits.js";
 import {
+  CONVERSATION_TURN_NAVIGATOR_MIN_WIDTH_PX,
+  createConversationTurnNavigatorQueryRowIdsSelector,
   resolveConversationTurnNavigatorActiveQueryRowId,
   resolveConversationTurnNavigatorHydrationRetryDelayMs,
   shouldHydrateConversationTurnNavigatorDirectory,
@@ -122,7 +122,9 @@ import type { ConversationSelectionReference } from "@/lib/conversationSelection
 // 让未传该属性的渲染绕过稳定引用边界；共享只读空数组可保持默认值恒定。
 const EMPTY_PENDING_GUIDES: readonly QueueItem[] = [];
 
-const ROW_OVERSCAN = 8;
+// Root cause of the bug: a virtual unit is a whole long turn body, so 8 turns on each side would mount a lot of off-screen Markdown synchronously during search jumps.
+// Keep a two-turn scroll buffer so the overscan of a small row list does not grow into dozens of screens of layout work.
+const ROW_OVERSCAN = 2;
 const RUNNING_WORK_DURATION_TICK_MS = 1000;
 const COMPOSER_MESSAGE_MASK_FADE_PX = 24;
 const COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX = 96;
@@ -133,35 +135,7 @@ const USER_SCROLL_INTENT_TTL_MS = 1200;
  * spread units on every rebuild, and ConversationTurnGroup is memoized by unit identity, so without this a
  * clock tick or unrelated row change would re-render historic turns (docs/ui/v4-chat-turn-render-units.md).
  */
-function keepUnchangedRenderUnitIdentity(
-  units: readonly ConversationTurnRenderUnit[],
-  identity: { current: Map<string, ConversationTurnRenderUnit> },
-): ConversationTurnRenderUnit[] {
-  const previous = identity.current;
-  const next = new Map<string, ConversationTurnRenderUnit>();
-  const stable = units.map((unit) => {
-    const prior = previous.get(unit.key);
-    const result = prior !== undefined && isShallowSameRenderUnit(prior, unit) ? prior : unit;
-    next.set(unit.key, result);
-    return result;
-  });
-  identity.current = next;
-  return stable;
-}
 
-function isShallowSameRenderUnit(a: ConversationTurnRenderUnit, b: ConversationTurnRenderUnit) {
-  const left = a as unknown as Record<string, unknown>;
-  const right = b as unknown as Record<string, unknown>;
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  for (const key of keys) {
-    const x = left[key];
-    const y = right[key];
-    if (Object.is(x, y)) continue;
-    if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
-    if (!x.every((item, index) => Object.is(item, y[index]))) return false;
-  }
-  return true;
-}
 const LAYOUT_SCROLL_GUARD_MS = 250;
 const CONTENT_WIDTH_RESIZE_SETTLE_MS = 120;
 const SCROLL_MEMORY_RESTORE_TOLERANCE_PX = 1;
@@ -509,80 +483,81 @@ function ConversationTimelineImpl({
     return () => observer.disconnect();
   }, [hasHeaderSlot]);
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
-  const renderUnitCacheRef = useRef<ConversationTurnRenderUnitCache | null>(null);
-  if (renderUnitCacheRef.current === null) {
-    renderUnitCacheRef.current = createConversationTurnRenderUnitCache();
-  }
-  const renderUnitIdentityRef = useRef<Map<string, ConversationTurnRenderUnit>>(new Map());
+  // Partition of "frozen history + tail turn" (spec: docs/ui/chat-virtual-scroll.md, "per-frame derivation cost"):
+  // the derivations below cache the history segment by its history array reference, so stream frames compute only the tail turn.
+  const rowsPartition = getConversationRowsPartition(rows);
   // 插件卡片展示模型——同资源替代 + 最近三回合自动展开 + 手动固定；推导结果发布给卡片自己读。
-  const pluginUiDerivation = useMemo(() => deriveLogicalUiInstances(rows), [rows]);
+  const selectPluginUiDerivation = useMemo(() => createLogicalUiInstancesSelector(), []);
+  const pluginUiDerivation = useMemo(
+    () => selectPluginUiDerivation(rows, rowsPartition),
+    [rows, rowsPartition, selectPluginUiDerivation],
+  );
   useEffect(() => {
     setPluginUiInstanceDerivation(sessionKey, pluginUiDerivation);
   }, [pluginUiDerivation, sessionKey]);
-  const pluginUiDisclosureVersion = useSyncExternalStore(
+  const pluginUiPins = useSyncExternalStore(
     subscribePluginUiDisclosure,
-    getPluginUiDisclosureVersion,
-    getPluginUiDisclosureVersion,
+    () => getPluginUiDisclosureSnapshot(sessionKey),
+    () => getPluginUiDisclosureSnapshot(sessionKey),
   );
-  const pluginUiPinResolver = useMemo<PluginUiRowPinResolver>(() => {
-    // 手动固定 / 收起变化（version 递增）时重建 resolver，折叠边界随之重算。
-    void pluginUiDisclosureVersion;
-    return (toolCallId) => ({
+  const pluginUiPinResolver = useMemo<PluginUiRowPinResolver>(
+    () => (toolCallId) => ({
       disposition: pluginUiDerivation.byToolCallId[toolCallId],
-      manualPinned: getPluginUiManualPin(sessionKey, toolCallId),
-    });
-  }, [pluginUiDerivation, sessionKey, pluginUiDisclosureVersion]);
-  const topicPreparations = useBotTopicPreparations();
-  const nextHighspeedExpiryMs = useMemo(
-    () => resolveNextHighspeedExpiryMs(rows, liveNowMs),
-    [liveNowMs, rows],
+      manualPinned: pluginUiPins.get(toolCallId),
+    }),
+    [pluginUiDerivation, pluginUiPins],
   );
-  // Built on rows, phase, pins and slots, not per tick. The builder reads the clock only for the highspeed
-  // footer, and nextHighspeedExpiryMs changes exactly when a footer becomes due, so it is the only clock input here.
-  const baseRenderUnits = useMemo(() => {
-    void nextHighspeedExpiryMs;
-    return keepUnchangedRenderUnitIdentity(
-      withAfterFirstUserInputSlot(
+  const selectRenderUnits = useMemo(() => createConversationTurnRenderUnitsSelector(), []);
+  const topicPreparations = useBotTopicPreparations();
+  const renderUnits = useMemo(() => {
+    const topicPrepared = withTopicPreparationUnits(
+      selectRenderUnits(rowsPartition, {
+        nowMs: liveNowMs,
+        sessionPhase,
+        pluginUiPinResolver,
+      }),
+      rows,
+      topicPreparations,
+    );
+    if (!afterFirstUserInputSlot && !optimisticFirstInputRow) return topicPrepared;
+    // The first-submission slots attach to the first unit or prepend a unit, so they are applied to the flattened
+    // units. Their result is kept as one history segment with an empty tail.
+    return {
+      history: withAfterFirstUserInputSlot(
         withOptimisticFirstInputRow(
-          withTopicPreparationMessages(
-            buildConversationTurnRenderUnits(rows, {
-              sessionPhase,
-              pluginUiPinResolver,
-              cache: renderUnitCacheRef.current ?? undefined,
-            }),
-            rows,
-            topicPreparations,
-          ),
+          [...topicPrepared.history, ...topicPrepared.tail],
           optimisticFirstInputRow,
         ),
         afterFirstUserInputSlot,
       ),
-      renderUnitIdentityRef,
-    );
+      tail: [],
+    };
   }, [
-    nextHighspeedExpiryMs,
+    afterFirstUserInputSlot,
+    liveNowMs,
+    optimisticFirstInputRow,
     pluginUiPinResolver,
     rows,
+    rowsPartition,
     sessionPhase,
     topicPreparations,
-    afterFirstUserInputSlot,
-    optimisticFirstInputRow,
+    selectRenderUnits,
   ]);
-  // The live work clock only changes running turns; the per-tick pass returns every other unit by identity.
-  const renderUnits = useMemo(
-    () => applyConversationTurnLiveClock(baseRenderUnits, liveNowMs),
-    [baseRenderUnits, liveNowMs],
-  );
+  const renderUnitCount = renderUnits.history.length + renderUnits.tail.length;
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
     () => splitConversationTimelineLiveTail(renderUnits),
     [renderUnits],
   );
-  const hasRunningUnit = useMemo(
-    () => baseRenderUnits.some((unit) => unit.isRunning),
-    [baseRenderUnits],
+  const historyHasRunningUnit = useMemo(
+    () => renderUnits.history.some((unit) => unit.isRunning),
+    [renderUnits.history],
   );
+  const hasRunningUnit = historyHasRunningUnit || renderUnits.tail.some((unit) => unit.isRunning);
   const latestTurnSummary = useMemo(
-    () => resolveConversationLatestTurnSummary(renderUnits),
+    () =>
+      resolveConversationLatestTurnSummary(
+        renderUnits.tail.length > 0 ? renderUnits.tail : renderUnits.history,
+      ),
     [renderUnits],
   );
   // The callback changes with the session owner; a new callback must be reported again even when the value is unchanged.
@@ -608,24 +583,32 @@ function ConversationTimelineImpl({
     };
     onLatestTurnSummaryChange(latestTurnSummary);
   }, [latestTurnSummary, onLatestTurnSummaryChange]);
+  const nextHighspeedExpiryMs = useMemo(
+    () => resolveNextHighspeedExpiryMsInPartition(rowsPartition, liveNowMs),
+    [liveNowMs, rowsPartition],
+  );
+  const selectTurnNavigatorQueryRowIds = useMemo(
+    () => createConversationTurnNavigatorQueryRowIdsSelector(),
+    [],
+  );
+  // Collect directory members by partition: stream frames only look at the tail, and the same Set is kept while members are unchanged (anchor registration is invalidated by its identity).
   const turnNavigatorQueryRowIds = useMemo(
-    () =>
-      new Set(
-        baseRenderUnits.flatMap((unit) =>
-          unit.visibleUserInputs.filter((row) => row.origin === "realUser").map((row) => row.rowId),
-        ),
-      ),
-    [baseRenderUnits],
+    () => selectTurnNavigatorQueryRowIds(renderUnits),
+    [renderUnits, selectTurnNavigatorQueryRowIds],
   );
   const turnNavigatorQueryRowIdsRef = useRef(turnNavigatorQueryRowIds);
   turnNavigatorQueryRowIdsRef.current = turnNavigatorQueryRowIds;
-  const centeredEmptyLayout = centerEmptyStateWithDock && renderUnits.length === 0;
+  // When the session's first turn is in the window and there is no shared-import block above it, it is the topmost content of the conversation; its virtual item carries
+  // the status-capsule inset. The inset sits on the virtual item rather than the list, so height measurement, jump-to-first-turn and prepend anchors all include it.
+  // Key on the "session first turn", not the "window first item": if the old first item dropped the inset when earlier history is prepended, the reading position would jump 56px.
+  const sessionStartAtTop = !headerSlot && !canLoadOlder && totalCount <= rows.length;
+  const centeredEmptyLayout = centerEmptyStateWithDock && renderUnitCount === 0;
   const responsiveCenteredEmptyLayout = centeredEmptyLayout && !compactEmptyStateWithDock;
   // 高频值经 ref 供稳定回调读取（不进依赖数组）。
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
-  const unitsRef = useRef(renderUnits);
-  unitsRef.current = renderUnits;
+  const renderUnitCountRef = useRef(renderUnitCount);
+  renderUnitCountRef.current = renderUnitCount;
   const virtualizedUnitsRef = useRef(virtualizedUnits);
   virtualizedUnitsRef.current = virtualizedUnits;
   const liveTailRef = useRef<HTMLDivElement>(null);
@@ -635,6 +618,7 @@ function ConversationTimelineImpl({
   const contentWidthResizeActiveRef = useRef(false);
   const contentWidthResizeSettleTimerRef = useRef<number | null>(null);
   const committingMeasuredLayoutRef = useRef(false);
+  const contentMeasurementPendingRef = useRef(false);
   const messageLayerMaskObserverRef = useRef<ResizeObserver | null>(null);
   const isContentWidthChanging = useCallback(() => {
     const currentContentWidth = virtualHistoryRef.current?.clientWidth ?? null;
@@ -681,12 +665,18 @@ function ConversationTimelineImpl({
     heightCacheRef.current = new TimelineRowHeightCache();
   }
   const [backToBottomVisible, setBackToBottomVisible] = useState(false);
-  const [turnNavigatorViewport, setTurnNavigatorViewport] = useState({
-    scrollOffsetPx: 0,
-    viewportHeightPx: 0,
-    activeQueryRowId: undefined as number | undefined,
-  });
-  const [turnNavigatorContainerWidthPx, setTurnNavigatorContainerWidthPx] = useState(0);
+  const [turnNavigatorActiveQueryRowId, setTurnNavigatorActiveQueryRowId] = useState<number>();
+  const [turnNavigatorContainerWide, setTurnNavigatorContainerWide] = useState(false);
+  const turnNavigatorEnabled =
+    !hideTurnNavigator && turnNavigatorContainerWide && turnNavigatorQueryRowIds.size >= 2;
+  const turnNavigatorEnabledRef = useRef(turnNavigatorEnabled);
+  turnNavigatorEnabledRef.current = turnNavigatorEnabled;
+  const turnNavigatorAnchorsRef = useRef<{
+    root: HTMLDivElement;
+    mountedKey: string;
+    queryIds: ReadonlySet<number>;
+    elements: HTMLElement[];
+  } | null>(null);
   const turnNavigatorJumpFrameRef = useRef<number | null>(null);
   const turnNavigatorHydrationAttemptRef = useRef<{
     attemptCount: number;
@@ -802,10 +792,8 @@ function ConversationTimelineImpl({
     // 资格边界，手机远控与窄分屏也会请求全部 rows。这里仅同步只读分页资格；
     // rail 的显隐、占位与过渡仍完全由 CSS 裁决，不恢复 composer 几何测量。
     const commitWidth = (width: number) => {
-      const normalizedWidth = Math.max(0, Math.round(width));
-      setTurnNavigatorContainerWidthPx((current) =>
-        current === normalizedWidth ? current : normalizedWidth,
-      );
+      // Only the eligibility is decided here; every pixel of window dragging is not propagated to the directory.
+      setTurnNavigatorContainerWide(width >= CONVERSATION_TURN_NAVIGATOR_MIN_WIDTH_PX);
     };
     const readWidth = () => commitWidth(element.clientWidth);
     readWidth();
@@ -826,9 +814,10 @@ function ConversationTimelineImpl({
 
   useEffect(() => {
     if (
+      hideTurnNavigator ||
       !shouldHydrateConversationTurnNavigatorDirectory({
         canLoadOlder,
-        containerWidthPx: turnNavigatorContainerWidthPx,
+        containerWidthPx: turnNavigatorContainerWide ? CONVERSATION_TURN_NAVIGATOR_MIN_WIDTH_PX : 0,
         hasLoadHandler: Boolean(onLoadAllOlder),
         loadingOlder,
       })
@@ -891,7 +880,8 @@ function ConversationTimelineImpl({
     rows,
     sessionKey,
     totalCount,
-    turnNavigatorContainerWidthPx,
+    turnNavigatorContainerWide,
+    hideTurnNavigator,
     turnNavigatorDirectoryRevision,
     turnNavigatorHydrationRetryRevision,
   ]);
@@ -914,7 +904,9 @@ function ConversationTimelineImpl({
     (index: number) =>
       heightCacheRef.current?.estimate(
         getUnitHeightCacheKey(virtualizedUnitsRef.current[index]),
-        DEFAULT_ROW_HEIGHT_ESTIMATE_PX,
+        // A virtual unit is a whole turn; estimating an unknown long turn at the 72px of a small row would mount a dozen turn bodies on the first screen.
+        // Use one screen as a conservative budget; the actual size is still decided by the cache and ResizeObserver.
+        scrollRef.current?.clientHeight || DEFAULT_ROW_HEIGHT_ESTIMATE_PX,
       ) ?? DEFAULT_ROW_HEIGHT_ESTIMATE_PX,
     [],
   );
@@ -931,7 +923,7 @@ function ConversationTimelineImpl({
     return height;
   }, []);
 
-  const [, commitMeasuredLayout] = useState(0);
+  const [measuredLayoutRevision, commitMeasuredLayout] = useState(0);
   const virtualizer = useVirtualizer({
     count: virtualizedUnits.length,
     getScrollElement,
@@ -946,11 +938,18 @@ function ConversationTimelineImpl({
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
     return shouldAdjustVirtualizerForItemSizeChange({
-      suppressAdjustment: suppressVirtualizerAdjustmentDuringRestoreRef.current,
+      // The prepended batch is compensated uniformly by the prepend anchor below; measuring row by row and compensating again would push the reading position to the bottom.
+      suppressAdjustment:
+        suppressVirtualizerAdjustmentDuringRestoreRef.current ||
+        (contentMeasurementPendingRef.current &&
+          prependAnchorRef.current.firstRowId !== null &&
+          (rowsRef.current[0]?.rowId ?? Infinity) < prependAnchorRef.current.firstRowId),
       following: followingRef.current,
       contentWidthChanging: isContentWidthChanging(),
       itemEnd: item.end,
-      scrollTop: scrollRef.current?.scrollTop ?? 0,
+      // Item coordinates of the same RO batch are not recomputed yet while the native scrollTop already includes the previous row's compensation; mixing them would classify rows after the target
+      // as above the viewport. Compare offsets from the same virtualizer measurement batch, then record them through the native scroll.
+      scrollTop: virtualizer.scrollOffset ?? scrollRef.current?.scrollTop ?? 0,
     });
   };
   const virtualRows = virtualizer.getVirtualItems();
@@ -975,11 +974,14 @@ function ConversationTimelineImpl({
   const mountedRowsKey = useMemo(
     () =>
       [
-        ...virtualRows.map((row) => String(row.key)),
+        measuredLayoutRevision,
+        ...virtualRows.map((row) => `${row.key}:${row.start}:${row.size}`),
         ...(liveUnit === null ? [] : [String(liveUnit.key)]),
       ].join(":"),
-    [liveUnit, virtualRows],
+    [liveUnit, measuredLayoutRevision, virtualRows],
   );
+  const mountedRowsKeyRef = useRef(mountedRowsKey);
+  mountedRowsKeyRef.current = mountedRowsKey;
 
   const markProgrammaticScroll = useCallback(() => {
     if (programmaticScrollFrameRef.current !== null) {
@@ -993,7 +995,7 @@ function ConversationTimelineImpl({
   const commitFollowing = useCallback((following: boolean) => {
     if (followingRef.current === following) return;
     followingRef.current = following;
-    setBackToBottomVisible(shouldShowBackToBottom(following, unitsRef.current.length));
+    setBackToBottomVisible(shouldShowBackToBottom(following, renderUnitCountRef.current));
   }, []);
 
   const clearUserScrollIntent = useCallback(() => {
@@ -1150,35 +1152,44 @@ function ConversationTimelineImpl({
   const syncTurnNavigatorViewport = useCallback(
     (element: HTMLDivElement) => {
       syncMessageLayerMask(element);
+      if (!turnNavigatorEnabledRef.current) {
+        turnNavigatorAnchorsRef.current = null;
+        return;
+      }
+      let anchors = turnNavigatorAnchorsRef.current;
+      if (
+        !anchors ||
+        anchors.root !== element ||
+        anchors.mountedKey !== mountedRowsKeyRef.current ||
+        anchors.queryIds !== turnNavigatorQueryRowIdsRef.current ||
+        anchors.elements.some((anchor) => !anchor.isConnected)
+      ) {
+        anchors = {
+          root: element,
+          mountedKey: mountedRowsKeyRef.current,
+          queryIds: turnNavigatorQueryRowIdsRef.current,
+          elements: Array.from(element.querySelectorAll<HTMLElement>("[data-row-id]")).filter(
+            (row) => turnNavigatorQueryRowIdsRef.current.has(Number(row.dataset.rowId)),
+          ),
+        };
+        turnNavigatorAnchorsRef.current = anchors;
+      }
       const viewportRect = element.getBoundingClientRect();
       const queryPositions: ConversationTurnNavigatorQueryPosition[] = [];
-      for (const rowElement of element.querySelectorAll<HTMLElement>("[data-row-id]")) {
+      // Register nodes when the virtual window or directory members change; scrolling reuses the nodes but reads live geometry, so expansion and streaming measurement never go stale.
+      for (const rowElement of anchors.elements) {
         const rowId = Number(rowElement.dataset.rowId);
-        if (!Number.isSafeInteger(rowId) || !turnNavigatorQueryRowIdsRef.current.has(rowId)) {
-          continue;
-        }
         const rowRect = rowElement.getBoundingClientRect();
         const start = element.scrollTop + rowRect.top - viewportRect.top;
         queryPositions.push({ rowId, start, end: start + rowRect.height });
       }
-      const nextViewport = {
+      // Publish only semantic changes. Pixel scrolling is already owned by the virtualizer and must not drive the whole timeline state again.
+      const activeQueryRowId = resolveConversationTurnNavigatorActiveQueryRowId({
+        positions: queryPositions,
         scrollOffsetPx: element.scrollTop,
         viewportHeightPx: element.clientHeight,
-        // turn 级 active 只能命中同 turn 的第一条 query。这里从已挂载
-        // 的稳定 row anchor 推导当前 query；虚拟 turn 尚未挂载时组件再回退 unit。
-        activeQueryRowId: resolveConversationTurnNavigatorActiveQueryRowId({
-          positions: queryPositions,
-          scrollOffsetPx: element.scrollTop,
-          viewportHeightPx: element.clientHeight,
-        }),
-      };
-      setTurnNavigatorViewport((current) =>
-        current.scrollOffsetPx === nextViewport.scrollOffsetPx &&
-        current.viewportHeightPx === nextViewport.viewportHeightPx &&
-        current.activeQueryRowId === nextViewport.activeQueryRowId
-          ? current
-          : nextViewport,
-      );
+      });
+      setTurnNavigatorActiveQueryRowId(activeQueryRowId);
     },
     [syncMessageLayerMask],
   );
@@ -1204,7 +1215,7 @@ function ConversationTimelineImpl({
 
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
-  }, [syncMessageLayerMask, renderUnits.length === 0]);
+  }, [syncMessageLayerMask, renderUnitCount === 0]);
 
   const buildCurrentScrollMemoryState = useCallback(
     (element: HTMLDivElement): ChatSessionScrollMemoryState => {
@@ -1390,6 +1401,9 @@ function ConversationTimelineImpl({
         stableContentWidthRef.current = contentColumn.clientWidth;
         contentWidthResizeActiveRef.current = false;
         contentWidthResizeSettleTimerRef.current = null;
+        // Disable height-measurement compensation during width correction; publish the end of the existing lifecycle so that the pending locate search takes over now.
+        // Otherwise, centering too early would push the match out of the viewport when newly mounted buffer rows above it are measured.
+        commitMeasuredLayout((revision) => revision + 1);
         if (followingRef.current) {
           scrollToBottom();
         }
@@ -1413,7 +1427,7 @@ function ConversationTimelineImpl({
     getActiveUserScrollIntent,
     markLayoutScrollGuard,
     measureElement,
-    renderUnits.length === 0,
+    renderUnitCount === 0,
     scrollToBottom,
     virtualizer,
   ]);
@@ -1494,7 +1508,7 @@ function ConversationTimelineImpl({
       element.scrollTop = resolveChatSessionScrollRestoreTop(state, element);
       lastObservedScrollTopRef.current = element.scrollTop;
       followingRef.current = false;
-      setBackToBottomVisible(shouldShowBackToBottom(false, unitsRef.current.length));
+      setBackToBottomVisible(shouldShowBackToBottom(false, renderUnitCountRef.current));
       syncTurnNavigatorViewport(element);
       userAdjustedScrollSinceRestoreRef.current = false;
       cacheCurrentScrollMemoryState(element);
@@ -1693,7 +1707,8 @@ function ConversationTimelineImpl({
 
   const scrollToRow = useCallback(
     (rowId: number) => {
-      const unitIndex = renderUnits.findIndex((unit) =>
+      const units = [...renderUnits.history, ...renderUnits.tail];
+      const unitIndex = units.findIndex((unit) =>
         unit.renderRows.some((row) => row.rowId === rowId),
       );
       if (unitIndex === -1) {
@@ -1746,9 +1761,23 @@ function ConversationTimelineImpl({
         syncTurnNavigatorViewport(element);
         return;
       }
-      virtualizer.scrollToIndex(unitIndex, { align: "start", behavior });
+      // Root cause of the bug: scrollToIndex keeps correcting the turn start and competes with the centering of the matched Range for scroll ownership;
+      // it also measures row by row during the synchronous commit of scroll, which repeatedly mounts the wrong window. Here only the coarse position is written,
+      // and later corrections are driven by the find request following committed measurements, ending once the match is in place.
+      const offset = virtualizer.getOffsetForIndex(unitIndex, "start")?.[0];
+      if (offset !== undefined) scrollRef.current?.scrollTo({ top: offset, behavior });
     },
     [clearUserScrollIntent, commitFollowing, liveUnitIndex, syncTurnNavigatorViewport, virtualizer],
+  );
+
+  const isMountedLayoutMeasured = useCallback(
+    () =>
+      !isContentWidthChanging() &&
+      virtualizer.getVirtualItems().every((row) => {
+        const node = virtualizer.elementsCache.get(row.key);
+        return node?.isConnected && measureRowHeight(node, undefined) === row.size;
+      }),
+    [isContentWidthChanging, virtualizer],
   );
 
   useConversationTimelineFind({
@@ -1767,6 +1796,7 @@ function ConversationTimelineImpl({
     searchResultHighlightRequest,
     onSearchResultHighlightDone,
     scrollToUnit,
+    isMountedLayoutMeasured,
   });
 
   const saveCurrentScrollMemoryRef = useRef(saveCurrentScrollMemory);
@@ -1779,7 +1809,7 @@ function ConversationTimelineImpl({
     };
   }, []);
 
-  const rowCount = renderUnits.length;
+  const rowCount = renderUnitCount;
   const rowWindowKey = `${rows.length}:${rows[0]?.rowId ?? "none"}:${rows[rows.length - 1]?.rowId ?? "none"}`;
   const pendingGuideKey = pendingGuides.map((item) => item.queueItemId).join(":");
 
@@ -1802,7 +1832,7 @@ function ConversationTimelineImpl({
     const pendingRestoreWait = resolvePendingScrollMemoryRestoreWait(
       restoredState,
       scrollRef.current,
-      unitsRef.current.length > 0,
+      renderUnitCountRef.current > 0,
     );
     pendingDetachedScrollRestoreRef.current =
       scrollMemoryKey && restoredState && pendingRestoreWait
@@ -1850,7 +1880,27 @@ function ConversationTimelineImpl({
     virtualizer,
   ]);
 
+  // Cold recovery shows the tail window first and then fills in the body of the same turnId; the stable ref does not re-measure,
+  // so waiting only for ResizeObserver would paint the new body with old coordinates and overlap for one frame. After the commit, read the mounted turns in a batch
+  // and update the existing virtualizer in the layout phase; reconcile the anchor after the next synchronous commit.
   useLayoutEffect(() => {
+    const renderedSizes = new Map(virtualRows.map((row) => [row.index, row.size]));
+    const measurements = Array.from(
+      virtualHistoryRef.current?.querySelectorAll(":scope > [data-index]") ?? [],
+      (node) => ({
+        index: Number(node.getAttribute("data-index")),
+        height: measureElement(node, undefined),
+      }),
+    ).filter((item) => renderedSizes.get(item.index) !== item.height);
+    contentMeasurementPendingRef.current = measurements.length > 0;
+    if (measurements.length === 0) return;
+    for (const item of measurements) virtualizer.resizeItem(item.index, item.height);
+    // RO may have written the cache without committing the DOM yet; then resizeItem has no delta, but the coordinates must still be committed.
+    commitMeasuredLayout((revision) => revision + 1);
+  }, [measureElement, rowWindowKey, virtualRows, virtualizer]);
+
+  useLayoutEffect(() => {
+    if (contentMeasurementPendingRef.current) return;
     const pendingRestore = pendingDetachedScrollRestoreRef.current;
     if (rowCount === 0 || !pendingRestore || pendingRestore.key !== scrollMemoryKey) {
       return;
@@ -1897,6 +1947,7 @@ function ConversationTimelineImpl({
     restoreScrollMemory,
     rowCount,
     rowWindowKey,
+    measuredLayoutRevision,
     scrollMemoryKey,
     totalCount,
     totalSize,
@@ -1907,6 +1958,7 @@ function ConversationTimelineImpl({
   // 即恢复锚点（绘制前完成，无闪动）；本效应声明在会话切换效应之后，切换 commit 上
   // 先重置基线再对账，防跨会话 rowId 误判为前插。
   useLayoutEffect(() => {
+    if (contentMeasurementPendingRef.current) return;
     const prev = prependAnchorRef.current;
     const nextFirstRowId = rowsRef.current[0]?.rowId ?? null;
     const nextTotalSize = virtualizer.getTotalSize();
@@ -1972,6 +2024,7 @@ function ConversationTimelineImpl({
   // 触发 virtualizer 多阶段测高；这些 scrollTop 回退属于布局，必须保持 following。
   // 若同帧有用户向上滚动，capture handler 会先登记 awayFromBottom，本 effect 必须让位。
   useLayoutEffect(() => {
+    if (contentMeasurementPendingRef.current) return;
     const element = scrollRef.current;
     markLayoutScrollGuard();
     if (element) {
@@ -1999,6 +2052,7 @@ function ConversationTimelineImpl({
     markLayoutScrollGuard,
     commitFollowing,
     headerSlotHeight,
+    measuredLayoutRevision,
     pendingGuideKey,
     rowCount,
     rows,
@@ -2010,7 +2064,15 @@ function ConversationTimelineImpl({
     if (scrollRef.current) {
       syncTurnNavigatorViewport(scrollRef.current);
     }
-  }, [pendingGuideKey, rowCount, syncTurnNavigatorViewport, totalSize]);
+  }, [
+    pendingGuideKey,
+    rowCount,
+    syncTurnNavigatorViewport,
+    totalSize,
+    mountedRowsKey,
+    turnNavigatorEnabled,
+    turnNavigatorQueryRowIds,
+  ]);
 
   // 行清空（如 editUserQuery 大范围 rewind）：重置为跟随并收起按钮，
   // 后续重新出现的行走上面的锚定 effect 贴底。
@@ -2062,14 +2124,13 @@ function ConversationTimelineImpl({
           必须隐藏对话轮导航，避免两个绝对定位控件互相覆盖。退出分享选择后自动恢复。 */}
       {hideTurnNavigator ? null : (
         <ConversationTurnNavigator
+          enabled={turnNavigatorEnabled}
           renderUnits={renderUnits}
           isHydratingDirectory={loadingOlder}
-          scrollOffsetPx={virtualizer.scrollOffset ?? turnNavigatorViewport.scrollOffsetPx}
-          viewportHeightPx={
-            virtualizer.scrollRect?.height ?? turnNavigatorViewport.viewportHeightPx
-          }
+          scrollOffsetPx={virtualizer.scrollOffset ?? 0}
+          viewportHeightPx={virtualizer.scrollRect?.height ?? 0}
           virtualItems={turnNavigatorVirtualItems}
-          activeQueryRowId={turnNavigatorViewport.activeQueryRowId}
+          activeQueryRowId={turnNavigatorActiveQueryRowId}
           onJumpToQuery={scrollToQuery}
         />
       )}
@@ -2081,7 +2142,7 @@ function ConversationTimelineImpl({
         data-markdown-table-layout-root="true"
         data-row-count={rows.length}
         data-window-row-count={rows.length}
-        data-render-unit-count={renderUnits.length}
+        data-render-unit-count={renderUnitCount}
         data-total-row-count={totalCount}
         data-following={backToBottomVisible ? "false" : "true"}
         data-loading-older={loadingOlder ? "true" : "false"}
@@ -2100,7 +2161,7 @@ function ConversationTimelineImpl({
           // 横向跳动；稳定预留 gutter，让桌面与手机 Web 共用的滚动区宽度保持不变。
           // 只声明 overflow-y-auto 会让浏览器把横轴计算为 auto，宽内容会把
           // 整条 Conversation 撑出横向滚动；表格和代码块应由各自内部容器滚动。
-          "min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable] [--markdown-table-layout-left-inset:16px] [--markdown-table-layout-right-inset:16px] max-md:[--markdown-table-layout-left-inset:8px] max-md:[--markdown-table-layout-right-inset:8px]",
+          "min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable_both-edges] [--markdown-table-layout-left-inset:16px] [--markdown-table-layout-right-inset:16px] max-md:[--markdown-table-layout-left-inset:8px] max-md:[--markdown-table-layout-right-inset:8px]",
           // 分享选择面板展开时改为 overflow-hidden：scrollTop 与 scrollbar-gutter 都保持不变，
           // 但原生滚动条、滚轮和键盘翻页都不再能移动背景，勾选目标不会漂走。
           backgroundScrollLocked && "!overflow-y-hidden",
@@ -2122,9 +2183,9 @@ function ConversationTimelineImpl({
             responsiveCenteredEmptyLayout
               ? // Bugfix 根因：动态修改原生窗口下限会把内容换行反馈到窗口拖动，产生阻尼；
                 // 容器保留固有最小高度，由外层 timeline 统一承接受限高度下的溢出内容。
-                "flex min-h-full flex-col items-center px-4 before:block before:min-h-[52px] before:w-full before:shrink before:basis-[29dvh] before:content-[''] after:block after:min-h-4 after:w-full after:flex-1 after:content-['']"
+                "flex min-h-full flex-col items-center px-2 before:block before:min-h-[52px] before:w-full before:shrink before:basis-[29dvh] before:content-[''] after:block after:min-h-4 after:w-full after:flex-1 after:content-['']"
               : centeredEmptyLayout
-                ? "flex min-h-full flex-col items-center justify-center gap-4 px-4"
+                ? "flex min-h-full flex-col items-center justify-center gap-4 px-2"
                 : "flex min-h-full flex-col",
           )}
           // session 切到 draft 时内容高度骤降，Chrome 会把子树里的
@@ -2132,7 +2193,7 @@ function ConversationTimelineImpl({
           // V4 已自管 prepend、吸底和记忆锚点；和其它虚拟列表一致，应从内容子树禁用锚点候选。
           style={{ overflowAnchor: "none" }}
         >
-          {renderUnits.length === 0 && !headerSlot ? (
+          {renderUnitCount === 0 && !headerSlot ? (
             <div
               className={cn(
                 centeredEmptyLayout
@@ -2185,6 +2246,7 @@ function ConversationTimelineImpl({
                 {virtualRows.map((virtualRow) => {
                   const unit = virtualizedUnits[virtualRow.index];
                   if (!unit) return null;
+                  const clearsStatusPanel = sessionStartAtTop && virtualRow.index === 0;
                   return (
                     <div
                       key={`${virtualRow.key}:${rowContext.logEpoch ?? ""}`}
@@ -2194,7 +2256,10 @@ function ConversationTimelineImpl({
                       data-turn-id={unit.turnId}
                       // virtual history 的子项通过 absolute 定位，父级 padding 不会缩小
                       // 它们的 containing block；正文响应式内边距必须落在 turn wrapper 自身。
-                      className="absolute left-0 top-0 w-full"
+                      className={cn(
+                        "absolute left-0 top-0 w-full",
+                        clearsStatusPanel && CONVERSATION_STATUS_PANEL_TOP_CLEARANCE_CLASS_NAME,
+                      )}
                       style={{ transform: `translateY(${virtualRow.start - headerSlotHeight}px)` }}
                     >
                       <ConversationTurnGroup
@@ -2208,6 +2273,7 @@ function ConversationTimelineImpl({
                         onFeedbackChange={onFeedbackChange}
                         onPinChange={onPinChange}
                         onEdit={onEdit}
+                        topClearedByTimeline={clearsStatusPanel}
                       />
                     </div>
                   );
@@ -2227,11 +2293,14 @@ function ConversationTimelineImpl({
                     "relative mx-auto w-full shrink-0 transition-[width,max-width,transform] duration-150 ease-out @min-[1280px]/conversation:transition-[transform]",
                     contentWidthClassName,
                     summaryPanelInlineOffsetClassName,
+                    sessionStartAtTop &&
+                      liveUnitIndex === 0 &&
+                      CONVERSATION_STATUS_PANEL_TOP_CLEARANCE_CLASS_NAME,
                   )}
                 >
                   <ConversationTurnGroup
                     unit={liveUnit}
-                    nowMs={liveNowMs}
+                    nowMs={liveUnit.isRunning ? liveNowMs : undefined}
                     apiRetry={apiRetry}
                     externalAgentStall={externalAgentStall}
                     context={rowContext}
@@ -2240,6 +2309,7 @@ function ConversationTimelineImpl({
                     onFeedbackChange={onFeedbackChange}
                     onPinChange={onPinChange}
                     onEdit={onEdit}
+                    topClearedByTimeline={sessionStartAtTop && liveUnitIndex === 0}
                   />
                 </div>
               ) : null}
@@ -2293,7 +2363,7 @@ function ConversationTimelineImpl({
                   "pointer-events-auto relative z-10 w-full shrink-0 transition-[width,max-width,transform] duration-150 ease-out @min-[1280px]/conversation:transition-[transform]",
                   contentWidthClassName,
                   // 浮窗形态下输入框外壳就是浮窗最外层，不留内边距。
-                  !centeredEmptyLayout && !floatingComposerDock && "px-4 pb-4",
+                  !centeredEmptyLayout && !floatingComposerDock && "px-2 pb-4",
                   !centeredEmptyLayout && summaryPanelInlineOffsetClassName,
                 )}
               >

@@ -22,6 +22,7 @@ import type {
   ZCodeAgentRuntimePolicy,
   ZCodeAgentWorkspaceTarget,
 } from "./zcodeAgent.js";
+import { isRemoteInputPredictionEnabled } from "./inputPredictionSwitch.js";
 
 export type ZCodeAgentV4ClientMode = "desktop-continuous" | "web-remote-replayable";
 
@@ -224,10 +225,15 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       durableFirstSubmission: true,
       incognitoSession: true,
       incognitoPromptToggles: true,
+      genUiContext: true,
       // This Host forwards `workflowRun.*` key-level deltas, so clients can see them and declare support in clientHello
       // (that capabilities object is .strict(), which would otherwise prevent handshakes with older Hosts).
       workflowRunDeltas: true,
       historyFirst: true,
+      // Mobile remote input prediction: gated by the Host switch; when absent or false, mobile must not start inputPrediction.
+      inputPrediction: isRemoteInputPredictionEnabled(),
+      // Mobile task list preload: rowsRange supports residency=resident-only (read-only hot sessions).
+      residentRowsRange: true,
     },
     auth: {},
   };
@@ -675,6 +681,29 @@ export function createZCodeAgentConnectionScope(
       });
 
   const overrides: Partial<IZCodeAgentService> = {
+    onDynamicSessionLifecycle(params) {
+      return (listener) =>
+        base.onDynamicSessionLifecycle(params)((snapshot) => {
+          if (snapshot.state === "stopping") {
+            const topic = conversationTopic(snapshot.sessionId);
+            const key = workspaceKey(params);
+            // Clear only the current session's owner; must not invalidate subscriptions of other tasks or sessions-index.
+            for (const entry of owned.values()) {
+              if (workspaceKey(entry.target) === key && entry.topic === topic) forget(entry);
+            }
+            for (const group of [...pendingByOwnership.values()]) {
+              for (const pending of [...group]) {
+                if (workspaceKey(pending.target) !== key || pending.topic !== topic) continue;
+                pending.invalidatedByRuntimeRestart = true;
+                removePendingOwnership(pending);
+                pending.frames.length = 0;
+                pending.stagedBytes = 0;
+              }
+            }
+          }
+          listener(snapshot);
+        });
+    },
     async helloConversationV4() {
       assertOpen();
       helloIssued = true;
@@ -900,7 +929,7 @@ export function createZCodeAgentConnectionScope(
     },
     onDynamicPluginUiToolResult() {
       assertOpen();
-      // 页面创建只属于本地桌面；手机回放和 relay 不拥有原生 guest。
+      // Page creation belongs only to the local desktop; mobile replay and relay do not own a native guest.
       if (role !== "terminal-client" || context.clientMode !== "desktop-continuous")
         return RpcEvent.None;
       // The member is optional on the agent contract until the desktop consumer is synced (services part 4).
@@ -932,6 +961,10 @@ export function createZCodeAgentConnectionScope(
       // Resource facts are not part of the session stream; neither desktop continuous nor mobile replayable attachments may subscribe.
       if (disposed || role !== "trusted-host-relay") return RpcEvent.None;
       return base.onDynamicMcpResourceSamples();
+    },
+    onDynamicRemoteConversationTelemetry() {
+      if (disposed || role !== "trusted-host-relay") return RpcEvent.None;
+      return base.onDynamicRemoteConversationTelemetry();
     },
     onDynamicMcpTelemetry() {
       assertOpen();
@@ -1087,5 +1120,5 @@ export function createZCodeAgentConnectionScope(
   };
 }
 
-// Share RPC 复用同一内部 carrier 写入规则，不能复制一套连接身份拼装。
+// Share RPC reuses the same internal carrier write rule; the connection identity assembly must not be duplicated.
 export { withTrustedConnection as withTrustedZCodeAgentV4Connection };

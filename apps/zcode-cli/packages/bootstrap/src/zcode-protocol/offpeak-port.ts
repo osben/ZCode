@@ -38,6 +38,14 @@ export function createProtocolOffPeakPort(
   context: ZCodeProtocolAgentServerContext,
   resolveOwnSession?: () => ZCodeProtocolSessionRecord | undefined,
 ): OffPeakPort {
+  // Shared connections must not fall back to the first workspace; list requests with only an automationId or empty params included.
+  const requestClient: typeof context.requestClient = (...args) => {
+    if (!context.sessionWorkspaceRoutingEnabled) return context.requestClient(...args);
+    const workspace = resolveOwnSession?.()?.workspace;
+    if (!workspace) throw new Error("Session workspace is unavailable");
+    const [method, params, schema, ...options] = args;
+    return context.requestClient(method, { ...(params as object), workspace }, schema, ...options);
+  };
   return {
     async create(input, createContext) {
       const activeSession =
@@ -53,13 +61,14 @@ export function createProtocolOffPeakPort(
       if (boundSessionId) {
         let bound: boolean;
         try {
-          const listed = await context.requestClient(
+          const listed = await requestClient(
             zcodeProtocolMethods.offPeakList,
             {},
             zcodeOffPeakListResultSchema,
           );
           bound = listed.tasks.some(
-            (task) => task.sessionId === boundSessionId && !OFF_PEAK_TERMINAL_STATUSES.has(task.status),
+            (task) =>
+              task.sessionId === boundSessionId && !OFF_PEAK_TERMINAL_STATUSES.has(task.status),
           );
         } catch (error) {
           context.logger?.warn("Failed to check bound idle-time tasks before OffPeakCreate", {
@@ -73,7 +82,7 @@ export function createProtocolOffPeakPort(
         }
         if (bound) throw new Error(OFF_PEAK_CREATE_IN_BOUND_SESSION_ERROR);
       }
-      const result = await context.requestClient(
+      const result = await requestClient(
         zcodeProtocolMethods.offPeakCreate,
         {
           title: input.title,
@@ -100,7 +109,7 @@ export function createProtocolOffPeakPort(
       return { ok: true, task: toOffPeakTaskSummary(result.task) };
     },
     async list() {
-      const result = await context.requestClient(
+      const result = await requestClient(
         zcodeProtocolMethods.offPeakList,
         {},
         zcodeOffPeakListResultSchema,

@@ -16,11 +16,19 @@ interface UseCommandsOptions {
   commandsService: ICommandsService;
   workspacePath?: string;
   workspaceIdentity?: string;
+  /** Authority of the remote "user"; it is the only thing distinguishing two devices on the same home. */
+  cacheAuthorityKey?: string;
   enabled?: boolean;
 }
 
 export function useCommands(options: UseCommandsOptions) {
-  const { commandsService, workspacePath, workspaceIdentity, enabled = true } = options;
+  const {
+    commandsService,
+    workspacePath,
+    workspaceIdentity,
+    cacheAuthorityKey,
+    enabled = true,
+  } = options;
 
   const commands = useCommandsStore((state) => state.commands);
   const userCommands = useCommandsStore((state) => state.userCommands);
@@ -31,12 +39,15 @@ export function useCommands(options: UseCommandsOptions) {
   const operatingCommandId = useCommandsStore((state) => state.operatingCommandId);
   const loadedWorkspacePath = useCommandsStore((state) => state.loadedWorkspacePath);
   const loadedWorkspaceIdentity = useCommandsStore((state) => state.loadedWorkspaceIdentity);
+  const loadedAuthorityKey = useCommandsStore((state) => state.loadedAuthorityKey);
   // commandsStore is a singleton, and Scope can switch targets on the same page. Until its projection matches the current
   // target, do not render commands from the previous host: their filePath belongs to another machine, and delete/toggle
-  // would execute against the current target's host using that stale path.
+  // delete/toggle would then run stale paths on the current target's host. Two remote "users" on the same home
+  // share the same paths and have no identity, so authority must be compared as well.
   const projectionMatchesTarget =
+    (loadedAuthorityKey ?? "") === (cacheAuthorityKey?.trim() || "") &&
     (loadedWorkspaceIdentity?.trim() || loadedWorkspacePath || "") ===
-    (workspaceIdentity?.trim() || workspacePath || "");
+      (workspaceIdentity?.trim() || workspacePath || "");
   const initialize = useCommandsStore((state) => state.initialize);
   const refreshStore = useCommandsStore((state) => state.refresh);
   const createStore = useCommandsStore((state) => state.createCommand);
@@ -48,8 +59,8 @@ export function useCommands(options: UseCommandsOptions) {
     if (!enabled) {
       return;
     }
-    void initialize(workspacePath, commandsService, workspaceIdentity);
-  }, [enabled, workspacePath, workspaceIdentity, commandsService, initialize]);
+    void initialize(workspacePath, commandsService, workspaceIdentity, cacheAuthorityKey);
+  }, [enabled, workspacePath, workspaceIdentity, cacheAuthorityKey, commandsService, initialize]);
 
   const refresh = useCallback(() => refreshStore(commandsService), [commandsService, refreshStore]);
 

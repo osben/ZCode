@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- 公开 Row 的 allow-list 构建与闭包校验必须同处一个策略边界，拆分会让 builder/validator 规则漂移。 */
+/* oxlint-disable eslint(max-lines) -- the public Row allow-list build and closure validation must share one policy boundary; splitting them lets builder/validator rules drift. */
 import {
   projectShareToolDisplay,
   conversationShareContentBlockSchema,
@@ -71,12 +71,10 @@ function assertSafeString(value: string): void {
       "Artifact references must be represented by formal conversation artifact rows",
     );
   }
-  if (/^(?:data|file):/iu.test(value)) {
-    throwProjectionError("unsafe_structure", "Local and inline URLs cannot be shared");
-  }
+  // A URI prefix cannot decide whether text is an attachment; plain file/data text stays, attachments are validated by their formal references.
 }
 
-// display 的闭集独立于 row.kind 演进；复用正式 schema，避免浅拷贝把未知嵌套字段送到 confirm。
+// display's closed set evolves independently of row.kind; reuse the formal schema so shallow copies cannot smuggle unknown nested fields into confirm.
 function projectToolDisplay(row: ToolCallRow) {
   const parsed = toolCallDisplaySchema.safeParse(row.display);
   if (!parsed.success) {
@@ -86,7 +84,7 @@ function projectToolDisplay(row: ToolCallRow) {
       field: ["display", ...(parsed.error.issues[0]?.path ?? [])].join("."),
     });
   }
-  // 插件交互资源属于宿主能力，公开卡片只保留 MCP 的静态描述。
+  // Plugin interaction resources are a host capability; the public card keeps only the MCP static description.
   if (parsed.data.kind === "mcp_tool") {
     const { ui: _ui, ...display } = parsed.data;
     return display;
@@ -163,13 +161,14 @@ function assertTerminalAndSafe(rows: ConversationRow[]): void {
         );
       }
     }
-    // artifact.ref 是 Host 内部授权的读取引用，公开投影会替换；它不能参与通用 URL 泄漏检查。
+    // artifact.ref is a Host-internal authorized read reference that the public projection replaces; it must not take part in the generic URL leak check.
     if (row.kind === "artifact") {
       const { ref: _localRef, ...safeFields } = row;
       visitStrings(safeFields, assertSafeString);
     } else if (row.kind === "toolCall" && row.output) {
-      // truncated.ref 只用于本地按需读取大工具输出，公开投影本来就只保留 output.text；
-      // 对不会出现在请求里的内部 ref 做安全校验会误阻断同一轮正式结果物上传。
+      // truncated.ref is only for local on-demand reads of large tool outputs; the public
+      // projection keeps output.text anyway — safety-checking an internal ref that never appears
+      // in requests would falsely block the same turn's formal artifact upload.
       visitStrings({ ...row, output: { text: row.output.text } }, assertSafeString);
     } else if (row.kind === "userInput") {
       const { attachments: _attachments, ...safeFields } = row;
@@ -283,11 +282,12 @@ function projectTimelineMarker(
 }
 
 /**
- * 每类 Row 用 allow-list 新建对象。
+ * Each Row kind builds a fresh object via an allow-list.
  *
- * 这个 switch 故意穷尽且**不带 default**：返回类型非可选，所以 conversationRowSchema 新增
- * 一种 kind 时这里会编译失败。那是有意的闸门——公开投影是跨版本数据交换格式，往里加一种
- * 老客户端读不了的 kind 必须是个显式决定，不能靠 default 悄悄放过去。
+ * This switch is deliberately exhaustive and has **no default**: the return type is non-optional,
+ * so adding a kind to conversationRowSchema fails compilation here. That is an intentional gate —
+ * the public projection is a cross-version data exchange format, and adding a kind older clients
+ * cannot read must be an explicit decision, not something a default silently lets through.
  */
 function projectRow(row: ConversationRow, index: number, ids: PublicIdMaps): ConversationRow {
   const base = projectBase(row, index, ids);
@@ -497,7 +497,7 @@ export function assertConversationSharePublicProjection(input: {
           "Conversation public entity identity is invalid",
         );
       }
-      // entityId 是持久实体身份，同一实体可以对应多个 Row；这里只收集引用闭包，不校验 Row 间唯一性。
+      // entityId is a persistent entity identity; one entity can map to multiple Rows. Only the reference closure is collected here — no cross-Row uniqueness validation.
       entityIds.add(row.entityId);
     }
     if (row.actions !== undefined) {
@@ -647,8 +647,8 @@ export function buildConversationSharePublicProjection(input: {
     );
   }
 
-  // 本地运行投影包含 subagent 详情和写入态标识，不能直接作为公开载荷；
-  // 必须先过滤非 V1 Row，再基于剩余内容生成一套闭合的公开 ID。
+  // The local runtime projection contains subagent details and write-state identifiers and cannot
+  // be a public payload directly; non-V1 Rows must be filtered out first, then a closed set of public IDs generated from what remains.
   const retainedRows = input.rows.filter(
     (row) => row.kind !== "subagent" && row.kind !== "hookInvocation",
   );

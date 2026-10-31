@@ -1,5 +1,4 @@
 export type SystemReminderDeliveryChannel =
-  | "request_prefix"
   | "current_turn"
   | "tool_result"
   | "history_continuity"
@@ -7,7 +6,6 @@ export type SystemReminderDeliveryChannel =
   | "real_user";
 
 export type SystemReminderLifecycle =
-  | "request_prefix"
   | "per_current_turn"
   | "runtime_local"
   | "tool_result"
@@ -17,12 +15,21 @@ export type SystemReminderLifecycle =
 
 export type SystemReminderProviderVisibility = "provider_visible" | "provider_hidden";
 
-export const SYSTEM_REMINDER_PREFIX_SOURCES = ["context_prefix", "skills_listing"] as const;
-
 export const SYSTEM_REMINDER_PERSISTED_SOURCES = [
+  "context_prefix",
+  "session_context",
+  "environment",
+  "model",
+  "output_style_instructions",
+  "date",
+  "skills_listing",
+  "gen_ui_state",
   "tool_search_announcement",
   "agent_listing_delta",
   "todo_reminder",
+  "silent_turn_reminder",
+  "read_truncation_notice",
+  "tool_hook_context",
   "task_status",
   "tool_result_warning",
   "nested_agents_md",
@@ -49,21 +56,16 @@ export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
   "runtime_mode",
   "plan_mode_exit",
   "output_style",
-  "date_change",
   "referenced_session_context",
   "model_anomaly",
   "prompt_attachment",
   "diagnostics",
 ] as const;
 
-export type SystemReminderPrefixSource = (typeof SYSTEM_REMINDER_PREFIX_SOURCES)[number];
 export type SystemReminderPersistedSource = (typeof SYSTEM_REMINDER_PERSISTED_SOURCES)[number];
 export type SystemReminderPerRequestSource = (typeof SYSTEM_REMINDER_PER_REQUEST_SOURCES)[number];
 
-export type SystemReminderSource =
-  | SystemReminderPrefixSource
-  | SystemReminderPersistedSource
-  | SystemReminderPerRequestSource;
+export type SystemReminderSource = SystemReminderPersistedSource | SystemReminderPerRequestSource;
 
 export interface SystemReminderSourceDescriptor {
   source: SystemReminderSource;
@@ -78,14 +80,16 @@ type DescriptorShape = Omit<SystemReminderSourceDescriptor, "source">;
 
 const SYSTEM_REMINDER_TAG_PATTERN = /<\/?system-reminder\b/i;
 const SYSTEM_REMINDER_NESTED_TAG_PATTERN = /<\/?system-reminder\b/gi;
-const SYSTEM_REMINDER_TRAILING_NEWLINE_SOURCES = new Set<SystemReminderSource>(["context_prefix"]);
 const NON_MID_CONVERSATION_SYSTEM_SOURCES = new Set<SystemReminderSource>([
+  // Page state is untrusted data and must stay in the user-side untrusted wrapper; it cannot be
+  // promoted to system. It is derived only after projection ordering and never reaches MCS
+  // merging; this registration is defensive — ordering is guaranteed by the derivation step.
+  "gen_ui_state",
+  "session_context",
   "context_prefix",
-  "resume_referenced_session_context",
   // Fork and auxiliary-conversation boundaries must appear before the new question; using MCS would move them after the question and change context order.
   "conversation_fork",
   "selection_side_chat",
-  "plan_file_reference",
   "target_continuation",
   "tool_result_warning",
   "nested_agents_md",
@@ -93,12 +97,25 @@ const NON_MID_CONVERSATION_SYSTEM_SOURCES = new Set<SystemReminderSource>([
 ]);
 
 const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape> = {
+  gen_ui_state: descriptor("current_turn", "resume_history", true, "sr.gen_ui_state"),
   tool_search_announcement: descriptor(
     "current_turn",
     "resume_history",
     true,
     "sr.tool_search_announcement",
   ),
+  session_context: descriptor("current_turn", "resume_history", true, "sr.session_context"),
+  environment: descriptor("current_turn", "resume_history", true, "sr.environment"),
+  model: descriptor("current_turn", "resume_history", true, "sr.model"),
+  // Output style instructions: announced once when content changes, reset announced when
+  // cleared; after compaction, restate the most recent version.
+  output_style_instructions: descriptor(
+    "current_turn",
+    "resume_history",
+    true,
+    "sr.output_style_instructions",
+  ),
+  date: descriptor("current_turn", "resume_history", true, "sr.date"),
   agent_listing_delta: descriptor("current_turn", "resume_history", true, "sr.agent_listing_delta"),
   incoming_message: descriptor("mid_turn_event", "mid_turn_event", true, "sr.incoming_message"),
   bot_topic_context: descriptor(
@@ -107,15 +124,14 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     true,
     "sr.bot_topic_context",
   ),
-  context_prefix: descriptor("request_prefix", "request_prefix", true, "sr.context_prefix"),
-  skills_listing: descriptor("request_prefix", "request_prefix", true, "sr.skills_listing"),
+  context_prefix: descriptor("current_turn", "resume_history", true, "sr.context_prefix"),
+  skills_listing: descriptor("current_turn", "resume_history", true, "sr.skills_listing"),
   hook_context: descriptor("current_turn", "per_current_turn", true, "sr.hook_context"),
   memory_update: descriptor("current_turn", "per_current_turn", true, "sr.memory_update"),
   relevant_memory: descriptor("current_turn", "per_current_turn", true, "sr.relevant_memory"),
   runtime_mode: descriptor("current_turn", "per_current_turn", true, "sr.runtime_mode"),
   plan_mode_exit: descriptor("current_turn", "runtime_local", true, "sr.plan_mode_exit"),
   output_style: descriptor("current_turn", "per_current_turn", true, "sr.output_style"),
-  date_change: descriptor("current_turn", "runtime_local", true, "sr.date_change"),
   referenced_session_context: descriptor(
     "current_turn",
     "per_current_turn",
@@ -126,23 +142,35 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   // model-only synthetic notice; append to it later without rewriting. Cold recovery rebuilds the original text to preserve the cache prefix.
   plugin_reference: descriptor("current_turn", "per_current_turn", true, "sr.plugin_reference"),
   todo_reminder: descriptor("current_turn", "per_current_turn", true, "sr.todo_reminder"),
+  silent_turn_reminder: descriptor(
+    "current_turn",
+    "resume_history",
+    true,
+    "sr.silent_turn_reminder",
+  ),
+  // Read partial-view notice: projected immediately after that batch of tool results, like the
+  // other attachments following the tool batch.
+  read_truncation_notice: descriptor(
+    "current_turn",
+    "resume_history",
+    true,
+    "sr.read_truncation_notice",
+  ),
+  // Tool hook attachment context: same batch channel as the Read partial-view notice, ordered
+  // after this batch of tool results and before the notice.
+  tool_hook_context: descriptor("current_turn", "resume_history", true, "sr.tool_hook_context"),
   task_status: descriptor("mid_turn_event", "mid_turn_event", true, "sr.task_status"),
   // Used only for warnings embedded in Read and other tool-result content; do not persist it as a synthetic user notice.
   tool_result_warning: descriptor("tool_result", "tool_result", true, "sr.tool_result_warning"),
   // Nested AGENTS.md rides inside the tool result that triggered it (tool/executor/call-runner.ts), so it is never a standalone message.
   nested_agents_md: descriptor("tool_result", "tool_result", true, "sr.nested_agents_md"),
   resume_referenced_session_context: descriptor(
-    "history_continuity",
+    "current_turn",
     "resume_history",
     true,
     "sr.resume_referenced_session_context",
   ),
-  plan_file_reference: descriptor(
-    "history_continuity",
-    "resume_history",
-    true,
-    "sr.plan_file_reference",
-  ),
+  plan_file_reference: descriptor("current_turn", "resume_history", true, "sr.plan_file_reference"),
   resume_goal_state: descriptor(
     "history_continuity",
     "resume_history",
@@ -189,7 +217,6 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
 };
 
 export const SYSTEM_REMINDER_SOURCES = Object.freeze([
-  ...SYSTEM_REMINDER_PREFIX_SOURCES,
   ...SYSTEM_REMINDER_PERSISTED_SOURCES,
   ...SYSTEM_REMINDER_PER_REQUEST_SOURCES,
 ]);
@@ -224,9 +251,7 @@ export function wrapSystemReminderForSource(
   if (sourceDescriptor.providerVisibility !== "provider_visible") {
     throw new Error(`System reminder source ${source} is not provider-visible`);
   }
-  const wrapped = wrapSystemReminder(sanitizeSystemReminderBody(body));
-
-  return SYSTEM_REMINDER_TRAILING_NEWLINE_SOURCES.has(source) ? `${wrapped}\n` : wrapped;
+  return wrapSystemReminder(sanitizeSystemReminderBody(body));
 }
 
 export function wrapSystemReminder(body: string | readonly string[]): string {

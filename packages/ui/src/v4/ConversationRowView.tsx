@@ -1,3 +1,4 @@
+import { getLocalTtftObserver } from "@/v4/telemetry/local-ttft/contract.js";
 import { GenUiMessageResponse } from "@/gen-ui/index.js";
 import { ConversationUserInputBubble } from "@/v4/ConversationUserInputBubble.js";
 import { expandTopicInputMessages } from "@/v4/topicInputMessages.js";
@@ -9,6 +10,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1805,6 +1807,56 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
     [projectsCodeComments, row.text, streaming],
   );
   const visiblePreviewCards = previewCards && previewCards.length > 0 ? previewCards : null;
+  const textElement = useRef<HTMLDivElement>(null);
+  const paintFrames = useRef<number[]>([]);
+  useEffect(
+    () => () => {
+      for (const frame of paintFrames.current) cancelAnimationFrame(frame);
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    if (context.workspaceIdentity || !context.sessionId) return;
+    const observer = getLocalTtftObserver();
+    const args = [context.workspacePath, context.sessionId, row.turnId, row.rowId] as const;
+    if (!observer?.needsTextRender(...args)) return;
+    const element = textElement.current;
+    if (!element?.textContent?.trim()) return;
+    const visible = () => {
+      if (
+        !element.isConnected ||
+        document.visibilityState !== "visible" ||
+        !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+      )
+        return false;
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
+    };
+    if (!observer.textRendered(...args, "committed", visible())) return;
+    // The frame arrives before the React commit; two rAFs only mean a paint opportunity has passed and must not claim that pixels reached the screen.
+    // Streaming text updates must not cancel the first-frame observation; only unmount cancels it, so frequent updates do not stretch the timing to the end of the whole turn.
+    paintFrames.current.push(
+      requestAnimationFrame(() => {
+        paintFrames.current.push(
+          requestAnimationFrame(() => {
+            observer.textRendered(...args, "paint_estimate", visible());
+          }),
+        );
+      }),
+    );
+  }, [
+    context.workspaceIdentity,
+    context.workspacePath,
+    context.sessionId,
+    row.turnId,
+    row.rowId,
+    visibleText,
+  ]);
   return (
     <RowShell rowId={row.rowId} className="group/assistant-row">
       {/* M5④ phase 2: Assistant text uses streamdown (MessageResponse) for Markdown and code block rendering;
@@ -1813,7 +1865,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           the real DOM. Although the assistant body was marked selectable in JSX, the selection
           logic could never find it. Put selectable on a stable DOM wrapper and use the same path
           for completed and streaming messages. */}
-      <div data-conversation-selectable="true" className="w-full text-ui-base">
+      <div ref={textElement} data-conversation-selectable="true" className="w-full text-ui-base">
         <GenUiMessageResponse
           completed={row.state === "complete"}
           messageKey={`${row.rowId}:${row.entityId ?? ""}`}

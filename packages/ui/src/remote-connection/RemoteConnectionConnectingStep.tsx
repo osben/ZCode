@@ -48,23 +48,18 @@ const REMOTE_CONNECTION_PHASES = [
   ["identify", "remote.phase.identify"],
   ["deploy", "remote.phase.deploy"],
   ["handshake", "remote.phase.handshake"],
+  // Bug cause (R8): a connection with a project folder still has the remote read and register that folder after the handshake. This step used to be counted in
+  // "Start and check compatibility", so when the remote folder read hung the user saw the compatibility check spin forever. Device-level connections have no such step.
+  ["workspace", "remote.phase.workspace"],
 ] as const;
 
-/** Shown only when the connection opens a project folder; its logs are tagged `[source-server:workspace]`. */
-const REMOTE_CONNECTION_WORKSPACE_PHASE = ["workspace", "remote.phase.workspace"] as const;
-
-const REMOTE_CONNECTION_ALL_PHASES = [
-  ...REMOTE_CONNECTION_PHASES,
-  REMOTE_CONNECTION_WORKSPACE_PHASE,
-] as const;
+function remoteConnectionPhases(includeWorkspace: boolean) {
+  return includeWorkspace
+    ? REMOTE_CONNECTION_PHASES
+    : REMOTE_CONNECTION_PHASES.filter(([key]) => key !== "workspace");
+}
 
 export type RemoteConnectionPhaseStatus = "pending" | "active" | "complete" | "failed";
-
-function listRemoteConnectionPhases(
-  includeWorkspace: boolean,
-): ReadonlyArray<readonly [string, string]> {
-  return includeWorkspace ? REMOTE_CONNECTION_ALL_PHASES : REMOTE_CONNECTION_PHASES;
-}
 
 function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
   if (rawPhase === "probe") return "channel";
@@ -84,7 +79,7 @@ function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
     return "deploy";
   }
   if (rawPhase === "channel") return "channel";
-  return REMOTE_CONNECTION_ALL_PHASES.some(([key]) => key === rawPhase) ? rawPhase : null;
+  return REMOTE_CONNECTION_PHASES.some(([key]) => key === rawPhase) ? rawPhase : null;
 }
 
 export function resolveRemoteConnectionPhases(
@@ -92,16 +87,18 @@ export function resolveRemoteConnectionPhases(
   options: { connectionReady?: boolean; includeWorkspace?: boolean } = {},
 ) {
   const includeWorkspace = options.includeWorkspace === true;
-  const phases = listRemoteConnectionPhases(includeWorkspace);
+  const phaseList = remoteConnectionPhases(includeWorkspace);
   let activeIndex = -1;
   let failedIndex = -1;
   for (const log of logs) {
     const match = /^\[source-server:([^\]]+)\]/u.exec(log.message);
     if (!match) continue;
     const normalized = normalizeRemoteConnectionPhase(match[1]!);
-    // Without a folder step, workspace preparation still belongs to the handshake the user sees.
-    const key = normalized === "workspace" && !includeWorkspace ? "handshake" : normalized;
-    const phaseIndex = phases.findIndex(([phaseKey]) => phaseKey === key);
+    // A device-level connection (folder /) also reads a folder, but does not show "Open project folder"; its result is attributed to the last step.
+    const phaseIndex = phaseList.findIndex(
+      ([key]) =>
+        key === (normalized === "workspace" && !includeWorkspace ? "handshake" : normalized),
+    );
     if (phaseIndex < 0) continue;
     activeIndex = Math.max(activeIndex, phaseIndex);
     if (log.level === "error") failedIndex = phaseIndex;
@@ -109,13 +106,13 @@ export function resolveRemoteConnectionPhases(
   // 修复原因：成功连接后 publish-online 不是 Renderer 日志流的可靠终结事件，
   // 仅按日志推断会出现顶部已连接但阶段轨永久停在握手中的状态。连接 session ready
   // 是同一条连接流程的权威终态；没有错误阶段时用它完成最终阶段，不改变连接中的日志进度。
-  // With a folder step, publish-online is not the end: the folder must still be read before the connection is usable.
+  // With a project folder, "Open project folder" still follows the Source going online (publish-online); only the window connection being ready counts as complete.
   const connectionReady =
     (options.connectionReady === true ||
       (!includeWorkspace &&
         logs.some((log) => log.message.startsWith("[source-server:publish-online]")))) &&
     failedIndex < 0;
-  return phases.map(([key, titleId], index) => ({
+  return phaseList.map(([key, titleId], index) => ({
     key,
     titleId,
     status: (failedIndex === index
@@ -151,10 +148,12 @@ export function resolveRemoteOperationProgress(
   // 说明该操作已结束，按尚无日志展示，等下一次尝试由 Host 替换日志。
   const tail = allLogs.at(-1);
   const logs = tail && (tail.phase === "ready" || tail.level === "error") ? [] : allLogs;
+  // The Source operation logs end when it goes online (ready) and do not include "Open project folder"; the device progress is fixed at four steps.
+  const phaseList = remoteConnectionPhases(false);
   let index = 0;
   for (const log of logs) {
     const key = normalizeRemoteConnectionPhase(log.phase);
-    const found = REMOTE_CONNECTION_PHASES.findIndex(([phase]) => phase === key);
+    const found = phaseList.findIndex(([phase]) => phase === key);
     if (found > index) index = found;
   }
   const latest = logs.at(-1);
@@ -162,8 +161,8 @@ export function resolveRemoteOperationProgress(
     latest?.progress !== undefined && (latest.phase === "upload" || latest.phase === "download");
   return {
     index,
-    total: REMOTE_CONNECTION_PHASES.length,
-    titleId: REMOTE_CONNECTION_PHASES[index]![1],
+    total: phaseList.length,
+    titleId: phaseList[index]![1],
     ...(transfer ? { percent: Math.floor(latest.progress! * 100) } : {}),
     ...(logs[0] ? { startedAt: logs[0].timestamp } : {}),
   };
@@ -232,10 +231,7 @@ export function resolveRemoteConnectionPhaseSub(
         : null;
     case "workspace":
       return phase.status === "active" && context.workspacePath
-        ? {
-            id: "remote.phaseSub.workspaceReading",
-            values: { path: context.workspacePath },
-          }
+        ? { id: "remote.phaseSub.workspaceReading", values: { path: context.workspacePath } }
         : null;
     case "ready":
       return phase.status === "complete" || phase.status === "active"
@@ -265,9 +261,11 @@ export function RemoteConnectionConnectingStep({
   upgradeRequired = false,
   upgradeLoading = false,
   onUpgrade,
+  downgradedFrom,
+  downgradeVersion,
+  onDowngrade,
   onReinstall,
   connectionReady = false,
-  workspacePath,
   cancelled = false,
   onCancelConnection,
   credentials,
@@ -276,7 +274,10 @@ export function RemoteConnectionConnectingStep({
   onClose,
   onBackToDevices,
   backToDevicesLabel,
+  workspacePath,
 }: {
+  /** The remote project folder this connection opens; when set, the "Open project folder" step is shown. */
+  workspacePath?: string;
   forceUpdate?: { tasks?: SourceServerRunningTask[]; onConfirm: () => void; onCancel: () => void };
   credentials?: {
     passphrase: boolean;
@@ -319,11 +320,14 @@ export function RemoteConnectionConnectingStep({
   upgradeRequired?: boolean;
   upgradeLoading?: boolean;
   onUpgrade?: () => void;
-  /** "Reinstall remote service" (RDRI-01); shown only on connection failure, availability decided by the wizard through the same helper. */
+  /** The version the remote was explicitly switched back from by an older Desktop; the wizard waits for the user to confirm the update. */
+  downgradedFrom?: string;
+  /** The local version an older Desktop can switch the remote to. */
+  downgradeVersion?: string;
+  onDowngrade?: () => void;
+  /** "Reinstall remote service" (RDRI-01); shown only on connection failure; the wizard decides availability with the same helper. */
   onReinstall?: () => void;
   connectionReady?: boolean;
-  /** The project folder being opened; when set, the connecting progress shows the "Open project folder" step. */
-  workspacePath?: string;
   cancelled?: boolean;
   onCancelConnection?: () => void;
   onContinueToDirectory?: () => void;
@@ -349,10 +353,9 @@ export function RemoteConnectionConnectingStep({
       : installConfirmation || forceUpdate
         ? "deploy"
         : undefined;
-  const projectFolder = workspacePath?.trim() || undefined;
   const phases = resolveRemoteConnectionPhases(logs, {
     connectionReady,
-    includeWorkspace: projectFolder !== undefined,
+    includeWorkspace: Boolean(workspacePath),
   }).map((phase, index, all) => {
     const waitingIndex = all.findIndex((item) => item.key === waitingPhase);
     if (waitingIndex >= 0)
@@ -437,8 +440,8 @@ export function RemoteConnectionConnectingStep({
       return;
     }
 
-    // As logs keep arriving, scrollHeight grows; always writing scrollTop would pull users reading earlier logs back to the bottom.
-    // Continue following new logs only if the user was already at the bottom.
+    // Log appends keep raising scrollHeight; writing scrollTop unconditionally would pull a user reading older logs back to the bottom.
+    // Only keep following the newest logs when the user was already pinned to the bottom.
     if (
       scrollRemoteConnectionLogsToLatestIfFollowing(container, shouldFollowLatestLogRef.current)
     ) {
@@ -447,8 +450,8 @@ export function RemoteConnectionConnectingStep({
   }, [logs.length, latestLogId, latestLogTimestamp]);
 
   const handleOpenFeedback = async () => {
-    // On remote connection failure, users see the connection log context.
-    // The feedback entry only pre-fills a redacted error summary; users choose any attachments themselves.
+    // The entry draft once explicitly turned logs off, overriding the form default, so connection feedback had the body but no diagnostic attachment.
+    // New feedback now defaults to on; users can still uncheck it in the form. The body keeps the redacted connection log.
     openFeedbackSubmit({
       title:
         errorMessage.slice(0, 80) ||
@@ -456,7 +459,7 @@ export function RemoteConnectionConnectingStep({
       type: "bug",
       module: kind === "ssh" ? "SSH连接失败" : kind === "wsl" ? "WSL连接失败" : "Agent任务执行失败",
       severity: "P2-中",
-      includeLogs: false,
+      includeLogs: true,
       description: buildRemoteConnectionFeedbackDescription(errorMessage, logs, (id, values) =>
         intl.formatMessage({ id }, values),
       ),
@@ -601,6 +604,14 @@ export function RemoteConnectionConnectingStep({
             <p className="text-ui-xs text-remote-foreground-muted">
               {intl.formatMessage({ id: errorPresentation.reasonId })}
             </p>
+            {upgradeRequired && downgradedFrom ? (
+              <p className="text-ui-xs text-remote-foreground-muted">
+                {intl.formatMessage(
+                  { id: "remote.downgradedHint" },
+                  { from: downgradedFrom.replace(/^v/iu, "") },
+                )}
+              </p>
+            ) : null}
             <details ref={errorDetailsRef} className="text-ui-xs text-remote-foreground-muted">
               <summary className="cursor-pointer">
                 {intl.formatMessage({ id: "remote.error.details" })}
@@ -658,6 +669,10 @@ export function RemoteConnectionConnectingStep({
                 else if (presentation.primaryAction === "update-desktop")
                   void platform.executeDesktopCommand(DesktopCommandIds.CheckForUpdates);
                 else if (presentation.primaryAction === "update-server" && onUpgrade) onUpgrade();
+                // Bug cause: while waiting for install confirmation this button shows "Install and connect", but the old logic fell through to an onRetry without confirmation,
+                // which again produced "install confirmation needed". With an install confirmation pending it runs the same confirm action as the install panel.
+                else if (presentation.primaryAction === "install" && installConfirmation)
+                  installConfirmation.onConfirm();
                 else if (
                   ["credentials", "edit-auth", "edit-host"].includes(presentation.primaryAction)
                 )
@@ -686,6 +701,20 @@ export function RemoteConnectionConnectingStep({
               disabled={loading || upgradeLoading}
             >
               {intl.formatMessage({ id: "settings.source.reinstallRemoteService" })}
+            </Button>
+          ) : null}
+          {presentation.primaryAction === "update-desktop" && onDowngrade && downgradeVersion ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onDowngrade}
+              disabled={loading || upgradeLoading}
+            >
+              {intl.formatMessage(
+                { id: "remote.action.downgrade-server" },
+                { version: downgradeVersion.replace(/^v/iu, "") },
+              )}
             </Button>
           ) : null}
           {onUseRemoteDownload && errorPresentation.allowRemoteDownload ? (
@@ -777,9 +806,9 @@ export function RemoteConnectionConnectingStep({
             const phaseSub = resolveRemoteConnectionPhaseSub(phase, {
               kind,
               rawPhase,
-              workspacePath: projectFolder,
               recognizedDeviceName,
               installConfirmationPending: Boolean(installConfirmation),
+              workspacePath,
               deployErrorReason: deploymentFailedLog?.message.replace(
                 /^\[source-server:[^\]]+\]\s*/u,
                 "",

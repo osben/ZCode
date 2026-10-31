@@ -7,6 +7,12 @@ import {
   createRuntimeUserEntry,
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
+import {
+  createProviderToolRoundEntries,
+  hasProviderToolRoundContent,
+  providerToolRoundsCompactGroupKey,
+  withCompactGroupKey,
+} from "../provider-tool-rounds/contract.js";
 import type { RegularTurnLoopState, TurnRequestState } from "./turn-loop-state.js";
 
 export const OUTPUT_TOKEN_CONTINUE_PROMPT =
@@ -112,21 +118,51 @@ export function commitAssistantToTurnRequest(
   toolCalls: Parameters<typeof createRuntimeAssistantEntry>[1],
 ): boolean {
   const reasoning = result.reasoning?.filter(hasAssistantReasoningContent);
-  const hasAssistantContent =
+  const hasFinalRoundContent =
     state.modelResponse.length > 0 || (reasoning?.length ?? 0) > 0 || (toolCalls?.length ?? 0) > 0;
-  if (!hasAssistantContent) return false;
+  const hasProviderRounds = hasProviderToolRoundContent(result.providerToolRounds);
+  if (!hasFinalRoundContent && !hasProviderRounds) return false;
   // Provider result metadata may report a different model; attribute the assistant using the Model already bound to the Turn
   // so the recovery chain does not reintroduce an old provider-owned model identity.
   const modelRef = { providerId: state.model.providerId, modelId: state.model.modelId };
-  commitTurnRequestEntries(runtime, state.turnRequestState, [
-    createRuntimeAssistantEntry(
-      state.modelResponse,
-      toolCalls,
-      reasoning,
-      modelRef,
-      toTokenUsageInfo(result.usage),
+  // Earlier rounds split off by server-side built-in tools precede the final round, each carrying its own calls and results.
+  const providerRoundEntries = createProviderToolRoundEntries(
+    result.providerToolRounds,
+    modelRef,
+    hasAssistantReasoningContent,
+  );
+  // The earlier rounds and the final round belong to one persisted assistant; compact must count them as one group.
+  const compactGroupKey = providerToolRoundsCompactGroupKey(result.providerToolRounds);
+  // With server-side built-in tool rounds present, provider usage is the sum of the server's
+  // internal multi-round requests (roughly the round count times a single context) and cannot
+  // serve as a context estimation anchor; attach no tokens, so estimation falls back to the
+  // last real anchor plus the local delta. Cold restore attaches none either.
+  const contextUsage = compactGroupKey ? undefined : toTokenUsageInfo(result.usage);
+  if (!hasFinalRoundContent) {
+    commitTurnRequestEntries(
+      runtime,
+      state.turnRequestState,
+      withCompactGroupKey(providerRoundEntries, compactGroupKey),
+    );
+    return true;
+  }
+  commitTurnRequestEntries(
+    runtime,
+    state.turnRequestState,
+    withCompactGroupKey(
+      [
+        ...providerRoundEntries,
+        createRuntimeAssistantEntry(
+          state.modelResponse,
+          toolCalls,
+          reasoning,
+          modelRef,
+          contextUsage,
+        ),
+      ],
+      compactGroupKey,
     ),
-  ]);
+  );
   return true;
 }
 

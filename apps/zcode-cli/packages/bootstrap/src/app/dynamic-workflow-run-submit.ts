@@ -64,6 +64,7 @@ import { createWorkflowRunControl } from "./workflow-run-control.js";
  * the upper bound from current concurrency for submit (resume reuses the caps recorded in the journal).
  */
 export interface DynamicWorkflowRunEntryContext {
+  assertOpen(): void;
   deps: DynamicWorkflowRunServiceDeps;
   runs: Map<string, RunRegistryEntry>;
   escalations: WorkflowEscalationRegistry;
@@ -412,6 +413,8 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
     // Replaced by the real settlement promise below; this placeholder satisfies the type and is synchronously visible.
     settlement: Promise.resolve<RunSettlement>({ status: "stopped", reason: "user" }),
   };
+  // amend/resume may already be past an await; after close, registering new engines on the old owner is forbidden.
+  ctx.assertOpen();
   runs.set(runId, entry);
 
   // Fire-and-forget: never await settlement in submit. The submit contract is "launch and return the runId."
@@ -591,6 +594,8 @@ export async function resumeDynamicWorkflowRun(
     ...(resumedPhaseNames === undefined ? {} : { phaseNames: resumedPhaseNames }),
     settlement: Promise.resolve<RunSettlement>({ status: "stopped", reason: "user" }),
   };
+  // amend/resume may already be past an await; after close, registering new engines on the old owner is forbidden.
+  ctx.assertOpen();
   runs.set(runId, entry);
 
   entry.settlement = ctx.trackSettlement(

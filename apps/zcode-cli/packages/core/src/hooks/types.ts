@@ -5,6 +5,7 @@ import type {
   HookInput,
   HookJSONOutput,
   HookPermissionDecision,
+  HookOnError,
   HookSourceKind,
   HooksRuntimeConfig,
   WorkspaceHookBundleSnapshot,
@@ -58,6 +59,8 @@ export interface HookRegistration {
   descriptor?: HookExecutionDescriptor | ((input: HookInput) => HookExecutionDescriptor);
   event: HookEventName;
   matcher?: string;
+  /** Disposition when the hook itself errors (contracts' HookOnError); absent = allow. */
+  onError?: HookOnError;
   source?: string;
   sourceKind?: HookSourceKind;
   timeoutMs?: number;

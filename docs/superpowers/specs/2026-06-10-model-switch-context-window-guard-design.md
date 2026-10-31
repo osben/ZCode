@@ -1,51 +1,68 @@
 # Model Switch Context Window Guard Design
 
-Product rule: when the current session's used context exceeds the target model's effective input budget, a model switch must not happen directly — compact with the current model first, and switch only after fresh usage proves it fits. V4 composer previously called `switchModelConfig` directly with no guard (legacy toolbar had one) — a `bug-candidate`; this spec is the source of truth for the intended behavior.
+## Feature/change summary
 
-Semantics adjustments versus the old guard: a running task is no longer rejected. The confirm button reads "立即停止并压缩" ("stop now and compact"); the CLI atomically stops current foreground work, freezes but preserves the existing queue, and runs this guard compact ahead of the queue. Plain `/compact` keeps its FIFO and is unaffected.
+V4 composer 当前直接执行 `switchModelConfig`，没有恢复 legacy toolbar 的模型切换上下文守卫。已有产品语义要求：当当前会话已使用上下文超过目标模型可用于输入侧的预算时，不能直接切换，必须先使用当前模型压缩，压缩后确认可容纳才切换。
 
-User rulings (2026-07-15), folded into the rules below:
+本次恢复同时调整旧语义：运行中的 task 不再拒绝 guard。确认按钮显示“立即停止并压缩”，由 CLI 原子地停止当前 foreground work、冻结但保留已有队列，并让本次 guard compact 抢在队列前执行。普通 `/compact` 仍保持现有 FIFO，不受本特例影响。
 
-- Running task + insufficient window → offer "stop now and compact": after confirmation, stop foreground work; no implicit UI intent waiting for the turn to finish naturally.
-- Existing queue does not block the guard compact; the compact preempts the queue without deleting or reordering it.
-- Only the model-switch guard has preemption semantics; plain `/compact` FIFO (A08/B13) is unchanged.
-- After success, the queue returns to its pre-guard state: previously `autoDrain=true` resumes consuming after the switch lands; previously held stays held.
-- Compact failure or still-over-window → safe stop state: no model switch, stopped turns stay stopped, queue preserved and held.
-- An in-flight auto compact is not duplicated: wait for its terminal state, re-check usage, never interrupt or start a second compact.
+当前 V4 未实现上述行为，属于 `bug-candidate`；本文是实现前事实源，不代表代码已经完成。
 
-Goals:
+## Clarification log
 
-- Guard applies only to model selection on an existing active session; draft-workspace default model selection is unchanged.
-- Before switching, test `currentUsedTokens > targetEffectiveContextWindow`.
-- Insufficient window shows a confirmation dialog: "压缩" ("compact") when idle, "立即停止并压缩" when running.
-- Idle: compact immediately with the current model. Running: atomically stop foreground work, then compact.
-- The guard compact ignores existing queue/held choices but preserves queue contents, order, and submitter info.
-- Switch only after compact succeeds and fresh usage fits the target budget.
-- After a successful switch, resume queue consumption only if `autoDrain` was true before the guard.
-- Desktop continuous and mobile web-remote replayable share the same CLI session/command state machine.
+| 日期       | 问题                                                      | 用户裁决               | 固定边界                                                                         |
+| ---------- | --------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| 2026-07-15 | 目标窗口不足且 task 正在运行时，是拒绝切换还是等待/抢占？ | 提供“立即停止并压缩”   | 用户确认后停止当前 foreground work，不保留一个等待当前轮自然结束的隐式 UI intent |
+| 2026-07-15 | 已有 queue 是否阻止 guard compact？                       | 不阻止，点击后直接压缩 | guard compact 越过已有 queue；queue 内容和相对顺序不删除、不修改                 |
+| 2026-07-15 | guard 是否改变普通 `/compact`？                           | 否                     | 仅模型切换 guard 使用抢占语义；A08/B13 的普通 `/compact` FIFO 语义保留           |
+| 2026-07-15 | 成功后 queue 如何恢复？                                   | 恢复操作前状态         | 原来 `autoDrain=true` 则模型切换落稳后继续消费；原来 held 则继续 held            |
+| 2026-07-15 | compact 失败或仍超窗怎么办？                              | 保持安全停态           | 不切模型；已停止的 turn 不恢复；queue 保留并保持 held                            |
+| 2026-07-15 | 已有 auto compact 怎么办？                                | 不重复压缩             | 等已有 compact 终态后复核 usage，不中断、不创建第二个 compact                    |
 
-Non-goals: plain `/compact` FIFO unchanged (append to tail when running, to held queue when held); auto compact thresholds and lifecycle unchanged; no guard for draft sessions; no queue item deletion/edit/reorder; no auto-resume of stopped assistant turns, tool work, or goal continuations; no forced "switch anyway" escape; no guard/queue/compact/model-switch business state in relay, desktop main, or remote bridge.
+## Goals
 
-Domain scope and high-risk cross-products:
+- 只拦截已有 active session 的模型选择；draft workspace 默认模型选择不变。
+- 在真正切换前判断 `currentUsedTokens > targetEffectiveContextWindow`。
+- 目标窗口不足时显示确认弹窗；空闲态确认按钮为“压缩”，运行态为“立即停止并压缩”。
+- 空闲态使用当前模型立即 compact；运行态原子停止当前 foreground work 后立即 compact。
+- guard compact 不受已有 queue/held choice 阻挡，但必须保留 queue 内容、顺序和提交端信息。
+- 压缩成功且 fresh usage 满足目标预算后才执行目标模型切换。
+- 模型切换成功后，仅在 guard 前 `autoDrain=true` 时恢复 queue 消费。
+- 保持 desktop continuous 与 mobile web-remote replayable 共用同一 CLI session/command 状态机。
 
-| Domain                   | State owner                                                    | Responsibility here                                                                      | High-risk crossings                                                                        |
-| ------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| V4 composer/model config | `packages/ui/src/v4/SessionPane.tsx` + CLI `switchModelConfig` | resolve target, show confirmation, consume authoritative projection, submit final switch | late selections, revision CAS, custom/native provider metadata                             |
-| Context usage/compact    | CLI session runtime + V4 projection                            | compact with the current model, produce marker and fresh usage                           | compact ACK ≠ completion, duplicate compacts, failure/cancel                               |
-| Stop/queue               | CLI command core                                               | freeze auto-drain, stop foreground work, preserve queue, make guard compact preempt FIFO | late stop terminals, held queue, input added while running, goal pause                     |
-| Client delivery          | shared host/CLI session                                        | desktop continuous and mobile replayable observe the same command facts                  | reconnect, model changed on the other end, `workspaceIdentity`/`remoteSessionId` isolation |
+## Non-goals
 
-Current facts:
+- 不改变普通 `/compact` 的 FIFO：running 时追加队尾，held 时仍追加暂停队列。
+- 不改变 agent 自动 compact 阈值或 auto compact lifecycle。
+- 不为 draft session 增加 guard。
+- 不删除、编辑或重排已有 queue item。
+- 不自动恢复已被 stop 的 assistant turn、tool work 或 goal continuation。
+- 不允许用户强制忽略目标窗口不足继续切换。
+- 不在 relay、desktop main 或 remote bridge 中保存 guard、queue、compact 或模型切换业务状态。
 
-- Model entry: `packages/ui/src/v4/composer/V4ComposerToolbar.tsx` hands selections to `onSelectModel`; model write goes through `switchModelConfigWithRecovery` with revision CAS in `packages/ui/src/v4/SessionPane.tsx`.
-- Authoritative usage: `usage.contextWindow.usedTokens/maxTokens/autoCompactThresholdTokens` in `packages/shared/src/zcode-protocol-v4/snapshot.ts`.
-- Target metadata: `ModelProviderModelConfig.contextWindow/maxOutputTokens`; `resolveModelProviderContextWindow()` owns fallbacks and `[1m]`.
-- Plain compact: `commandPayloadSchemas.compact` is an empty payload; CLI `goal-compact.ts` appends it to the FIFO when busy/held.
-- Stop: CLI `session-flow.ts` pauses the active goal, then aborts the current controller; B02–B04 require queue preservation and auto-drain off.
-- Projection: a command ACK proves admission only — the guard must wait for the compact marker terminal state and subsequent fresh usage, never treat ACK as compact success.
-- The legacy `manual-review/pending/conversation-session-model-switch-auto-compact.test.ts` is historical evidence, not current V4 coverage.
+## Domain scope and high-risk cross-products
 
-Budget rule (aligned with agent auto compact policy):
+| Domain                   | State owner                                                    | 本次责任                                                                      | 高风险交叉                                                     |
+| ------------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| V4 composer/model config | `packages/ui/src/v4/SessionPane.tsx` + CLI `switchModelConfig` | 解析用户目标、显示确认、消费权威投影、提交最终模型切换                        | 迟到选择、revision CAS、custom/native provider metadata        |
+| Context usage/compact    | CLI session runtime + V4 projection                            | 以当前模型执行 compact，产出 marker 和 fresh usage                            | compact ACK 不等于完成、重复 compact、失败/取消                |
+| Stop/queue               | CLI command core                                               | 冻结 auto-drain、停止 foreground work、保留 queue、使 guard compact 抢占 FIFO | stop 终态迟到、held queue、运行中新增输入、goal pause          |
+| Client delivery          | shared host/CLI session                                        | desktop continuous 与 mobile replayable 观察同一命令事实                      | 重连、另一端改模型、`workspaceIdentity`/`remoteSessionId` 隔离 |
+
+## Concept map and current facts
+
+- V4 模型入口：`packages/ui/src/v4/composer/V4ComposerToolbar.tsx` 当前把选择直接交给 `onSelectModel`。
+- V4 模型写入：`packages/ui/src/v4/SessionPane.tsx` 当前通过 `switchModelConfigWithRecovery` 和 revision CAS 写 session config。
+- usage 权威字段：`packages/shared/src/zcode-protocol-v4/snapshot.ts` 的 `usage.contextWindow.usedTokens/maxTokens/autoCompactThresholdTokens`。
+- 目标模型 metadata：`ModelProviderModelConfig.contextWindow/maxOutputTokens`；`resolveModelProviderContextWindow()` 负责 fallback 与 `[1m]`。
+- 普通 compact：`commandPayloadSchemas.compact` 当前为空 payload；CLI `goal-compact.ts` 在 busy/held 下把它追加到 FIFO。
+- stop：CLI `session-flow.ts` 先 pause active goal，再 abort 当前 controller；既有 B02-B04 语义要求 queue 保留并关闭 auto-drain。
+- projection：command ACK 只证明 admission，guard 必须等待 compact marker 终态和后续 fresh usage，不能把 ACK 当作压缩成功。
+- 旧 `packages/desktop/test/e2e/conversation-session/conversation-session-model-switch-auto-compact.test.ts` 只作历史证据，不能计为当前 V4 正式覆盖。
+
+## Budget rule
+
+目标有效输入预算与 agent auto compact policy 保持一致：
 
 ```text
 outputReserve = positive(maxOutputTokens) ?? 64_000
@@ -54,11 +71,12 @@ targetEffectiveContextWindow = max(0, contextWindow - effectiveReserve)
 needsGuard = currentUsedTokens > targetEffectiveContextWindow
 ```
 
-- native/custom/`modelIdByKind` all resolve through the same target metadata path; `[1m]` models reuse `resolveModelProviderContextWindow()`.
-- Missing/invalid current usage or target metadata keeps the legacy fail-open (stale metadata never wedges existing switches); covered by unit tests, not an E2E matrix.
-- Missing/invalid post-compact usage is fail-closed: without proof it fits, do not switch.
+- native/custom/modelIdByKind 都必须解析到同一条目标模型 metadata。
+- `[1m]` 等模型继续复用 `resolveModelProviderContextWindow()`。
+- 当前 usage 或目标 metadata 缺失/无效时保持 legacy fail-open，不因陈旧 metadata 卡死既有切换链路；该分支用单测覆盖，不扩成 E2E 矩阵。
+- compact 后 usage 缺失/无效则 fail-closed：不能证明可容纳时不切换。
 
-Product state and sequence:
+## Product state and sequence
 
 ```text
 desktop-continuous / web-remote-replayable renderer
@@ -99,76 +117,101 @@ desktop-continuous / web-remote-replayable renderer
               when it was previously true
 ```
 
-Command/protocol design:
+## Command/protocol design
 
-- The renderer must not send `stop` + plain `compact` as two commands: between them the queue can auto-drain or another client can insert commands, and plain compact lands at the FIFO tail anyway.
-- The strict command schema exported from `packages/shared/src/zcode-protocol-v4/index.ts` gains a dedicated preemption command (suggested name `preemptCompact`):
-  - Must carry `baseRevision`; stale confirmations are rejected before the CLI starts the destructive stop.
-  - `commandId` is the idempotency boundary; an existing manual/guard compact running or queued returns `compactOperationLock`.
-  - CLI command core, in one adjudication: read the original `autoDrain`, set it false, apply the existing Stop semantics (pause goal, abort the foreground controller), wait for idle, then call the single `startManualCompact` path.
-  - The preemption command never enters the plain input FIFO; queue items are preserved verbatim. Input arriving during the compact still enqueues and cannot interrupt it.
-  - The compact terminal state is expressed by the existing timeline marker/usage projection; no new relay/main state.
-  - The renderer calls the existing `switchModelConfigWithRecovery` only when the compact succeeded, fresh usage qualifies, and the original session/selection is still valid.
-  - After a successful switch, `setAutoDrain(true)` runs with the new revision, only if it was true before the guard. On failure, unknown usage, or still-over-window, auto-drain is not restored.
-  - If the initiating renderer disconnects after the compact, the CLI keeps the old model and held queue; on reconnect the user continues from the authoritative projection — no ghost model switch.
+不能在 renderer 连续发送 `stop` 和普通 `compact`：两个 command 之间存在 queue auto-drain/跨端命令插入竞态，普通 compact 还会按当前协议落到队尾。
 
-UI behavior:
+计划在 `packages/shared/src/zcode-protocol-v4/index.ts` 导出的严格 command schema 中增加独立的 guard 抢占命令（实现命名建议 `preemptCompact`）：
 
-- The dialog appears only for `needsGuard=true`. Idle title stays "需要压缩上下文后再切换模型" with button "压缩"; running/stoppable explains that the current response stops immediately and the queue is preserved, with button "立即停止并压缩".
-- Cancel/Esc/overlay close stops nothing, compacts nothing, switches nothing.
-- While the guard runs, repeat confirmations of the same action are disabled and the existing compact lifecycle is shown; no fabricated user message.
-- If the user selects a different model in the same session while waiting, the old target's selection token is invalidated; an already-started compact may finish, but the old target must never late-override the new selection.
-- Switching to another task lets the original session's compact finish per CLI facts, but never switches the model on the new task.
-- Desktop, Web, and mobile Web share components and i18n per `DESIGN.md` (existing ConfirmDialog, semantic colors, compact sizes, both themes, responsive).
+- 必须携带 `baseRevision`，在 CLI 开始 destructive stop 前拒绝陈旧确认。
+- commandId 是幂等边界；同一 session 已有 manual/guard compact running 或 queued 时返回 `compactOperationLock`。
+- CLI command core 在同一裁决中依次：读取原 `autoDrain`、设置 `false`、按既有 Stop 语义 pause goal/abort foreground controller、等待 idle、直接调用唯一 `startManualCompact` 路径。
+- 抢占命令不进入普通 input FIFO；queue item 原样保留。
+- compact 运行期间新增输入仍进入 queue，不能打断 compact。
+- compact 终态由既有 timeline marker/usage projection 表达，不新增 relay/main 状态。
+- renderer 只有在 compact 成功、fresh usage 合格、原 session/选择仍有效时才调用既有 `switchModelConfigWithRecovery`。
+- 模型切换成功后以新的 revision 调 `setAutoDrain(true)`；仅 guard 开始前为 true 时执行。失败、usage 不明、仍超窗时不恢复 auto-drain。
+- 若发起 renderer 在 compact 后断连，CLI 保持旧模型和 held queue；重连后用户能从权威投影继续操作，不执行幽灵模型切换。
 
-Dimensions and pruning:
+## UI behavior
 
-| Dimension     | Equivalence classes                                                               | Handling                                                                                                                              |
-| ------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Session phase | draft / completed / running / compacting                                          | draft pruned; completed and running accepted; existing auto compact reuses N14                                                        |
-| Queue         | empty / auto-drain queue / held queue                                             | all three kept; counts `1/2/3+` fold into the "contents and order unchanged" invariant, representative value 2                        |
-| Guard result  | cancel / compact success fits / success still too large / failed or usage unknown | cancel, fits, and fail-closed must all be proven                                                                                      |
-| Client        | desktop continuous / mobile replayable                                            | same product semantics, separate projection evidence; replay-gap logic stays out of desktop                                           |
-| Provider      | native / custom / mapped runtime id / metadata unknown                            | resolver pairwise in unit tests; E2E uses a controllable native fixture                                                               |
-| Active work   | assistant output / tool or goal foreground / independent background work          | shared existing Stop-foreground invariant; background work's stop scope is not widened                                                |
-| Workspace     | local / SSH-WSL-Docker identity                                                   | commands isolated per session; remote validated via `workspaceIdentity + remoteSessionId` focus, not a full OS/provider cross-product |
+- 弹窗只在 `needsGuard=true` 时出现。
+- 空闲态标题沿用“需要压缩上下文后再切换模型”，确认按钮为“压缩”。
+- running/stoppable 时说明当前响应会立即停止、已有队列会保留；确认按钮为“立即停止并压缩”。
+- 取消、Esc、遮罩关闭均不停止、不 compact、不切换模型。
+- guard 进行中禁用同一动作的重复确认，并展示现有 compact lifecycle；不能额外伪造 user message。
+- 等待期间用户在同一 session 选择别的模型时，旧目标 selection token 失效；已经开始的 compact 可以完成，但旧目标不得迟到覆盖新选择。
+- 用户切换到其他 task 时，原 session 的 compact 继续按 CLI 事实收口，但不得把模型切到新 task。
+- desktop、Web、手机 Web 复用相同组件和 i18n；遵守 `DESIGN.md` 的现有 ConfirmDialog、语义色、紧凑尺寸、双主题和响应式规则。
 
-Pruning decisions: plain `/compact` × preemption pruned (command-entry invariant; A08/B13 unchanged); queue-count full cross-product pruned (queue is neither deleted nor reordered; representative value suffices); draft × guard pruned (no active session usage); unknown metadata × E2E pruned to resolver unit tests (product stays fail-open); provider × desktop/mobile pruned (metadata resolver and delivery projection proven in layers); direct V4 switch to an undersized model is the `bug-candidate` closed by N05/N09–N14 once implemented.
+## Dimensions and pruning
 
-Accepted cases:
+| Dimension     | Equivalence classes                                                               | 处理                                                                                                      |
+| ------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Session phase | draft / completed / running / compacting                                          | draft pruned；completed、running accepted；已有 auto compact 复用 N14                                     |
+| Queue         | empty / auto-drain queue / held queue                                             | 三类保留；数量 `1/2/3+` 由“内容与相对顺序不变”不变量折叠，代表值取 2                                      |
+| Guard result  | cancel / compact success fits / success still too large / failed or usage unknown | cancel、fits、fail-closed 都必须证明                                                                      |
+| Client        | desktop continuous / mobile replayable                                            | 产品语义相同但投影证据分开；不把 replay gap 逻辑扩散到 desktop                                            |
+| Provider      | native / custom / mapped runtime id / metadata unknown                            | resolver 用单测做 pairwise；E2E 取可控的 native fixture                                                   |
+| Active work   | assistant output / tool or goal foreground / independent background work          | 共用既有 Stop foreground 不变量；background work 不因本 guard 扩大停止范围                                |
+| Workspace     | local / SSH-WSL-Docker identity                                                   | command 按 session 隔离；remote 用 `workspaceIdentity + remoteSessionId` 聚焦验证，不全量叉乘 OS/provider |
 
-| ID  | Setup                                                                              | Action                                                                                    | Assertions                                                                                                                            | Evidence                                                               |
-| --- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| N05 | completed, queue=0, used over target budget                                        | select target, then cancel/confirm                                                        | cancel changes nothing; confirm compacts with the old model; switch only after fresh usage fits                                       | dialog, compact request/marker, snapshot usage/config                  |
-| N09 | running, queue=0, used over budget                                                 | click “立即停止并压缩”                                                                    | foreground turn interrupted; guard compact then starts; switch after success                                                          | stop/compact timeline, provider request model, config projection       |
-| N10 | running, queue=2, autoDrain=true                                                   | confirm guard                                                                             | queue contents/order unchanged; compact runs ahead of the queue; auto-drain restored after switch; queue consumed by the target model | CLI queue projection, request order, model config                      |
-| N11 | completed/interrupted, queue=2, autoDrain=false                                    | confirm guard                                                                             | no held-queue clear/keep dialog; compact starts immediately; queue stays held; the switch triggers no consumption                     | inputRouting, queue IDs/order, compact/config projection               |
-| N12 | running or completed, compact failed/cancelled, usage unknown or still over budget | confirm guard                                                                             | no switch; stopped turn not resumed; queue preserved and held; clear user feedback                                                    | failed marker, usage/config, queue autoDrain                           |
-| N13 | guard confirmed, compact pending/running                                           | new model selected in the same session, task switch, or config updated from the other end | the old selection token must not late-switch the wrong model/task; the newest selection wins per latest config/revision               | command/revision, session-scoped projection, final config on both ends |
-| N14 | auto compact already running, target context insufficient                          | select model                                                                              | no stop, no second compact; wait for the existing compact, re-check, then apply the latest valid selection                            | single compact lifecycle, pending selection, config CAS                |
+Pruning decisions：
 
-Error handling:
+- 普通 `/compact` × 抢占语义：`pruned`，由命令入口 invariant 隔离，A08/B13 不变。
+- queue 数量全笛卡尔积：`pruned`，queue 不删除、不重排，代表值覆盖即可。
+- draft × guard：`pruned`，没有 active session usage。
+- unknown metadata × E2E：`pruned` 到 resolver unit test；产品保持 fail-open。
+- 每种 provider × desktop/mobile：`pruned`，metadata resolver 与 delivery projection 分层证明。
+- 当前 V4 直接切换过小模型：`bug-candidate`，实现后由 N05/N09-N14 收口。
 
-- Preempt command rejected for stale revision: no stop, no compact; re-evaluate from the latest snapshot.
-- Operation lock: no duplicate compact; an existing auto compact is awaited then re-checked; another manual compact's terminal state is reused without faking success.
-- Compact start failure after stop: old model unchanged, queue held, interrupted/failed facts preserved.
-- Compact succeeds but fresh usage invalid or still over window: old model unchanged, queue held, toast explains the cancelled switch.
-- Later model switch failure: existing model-config error handling; auto-drain not restored.
-- `setAutoDrain(true)` restore failure: the completed model switch is not rolled back; queue stays held with a prompt for the user to continue manually.
+## Accepted cases
 
-Test and E2E handoff:
+| ID  | Setup                                                                    | Action                                           | Assertions                                                                              | Evidence                                                         |
+| --- | ------------------------------------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| N05 | completed、queue=0、used 超过目标预算                                    | 选择目标并取消/确认                              | 取消不变；确认用旧模型 compact；fresh usage 合格后才切换                                | dialog、compact request/marker、snapshot usage/config            |
+| N09 | running、queue=0、used 超预算                                            | 点击“立即停止并压缩”                             | foreground turn interrupted；guard compact 随后启动；成功后切模型                       | stop/compact timeline、provider request model、config projection |
+| N10 | running、queue=2、autoDrain=true                                         | 确认 guard                                       | queue 内容/顺序不变；compact 抢在 queue 前；切换后恢复 auto-drain，queue 用目标模型消费 | CLI queue projection、request order、model config                |
+| N11 | completed/interrupted、queue=2、autoDrain=false                          | 确认 guard                                       | 不弹 held queue clear/keep；compact 立即启动；queue 保持 held，模型切换不触发消费       | inputRouting、queue IDs/order、compact/config projection         |
+| N12 | running 或 completed、compact failed/cancelled、usage unknown 或仍超预算 | 确认 guard                                       | 不切模型；已停止 turn 不恢复；queue 保留且 held；给出明确提示                           | failed marker、usage/config、queue autoDrain                     |
+| N13 | guard 已确认，compact 等待/运行中                                        | 同 session 新选模型、切 task 或另一端更新 config | 旧 selection token 不得迟到切错模型/task；新选择以最新 config/revision 为准             | command/revision、session-scoped projection、两端最终 config     |
+| N14 | auto compact 已在运行且目标模型上下文不足                                | 选择模型                                         | 不停止、不发第二个 compact；等待现有 compact 后复核并执行最新有效选择                   | single compact lifecycle、pending selection、config CAS          |
 
-- Docs precede tests: update `docs/conversation-session-case-catalog.md` and `docs/testing/conversation-session-e2e-coverage-matrix.md` first, marking N05/N09–N14 `planned`; the legacy MG pending spec must no longer be recorded as coverage.
-- Unit/integration: metadata resolver (native, custom, `modelIdByKind`, `[1m]`, `maxOutputTokens`, 64k fallback, unknown fail-open); budget/guard (fits, cancel, completed compact, running preempt, failed/unknown/too-large fail-closed); command core (stale revision has no side effects, queue preserved/ordered, goal pause + controller idle barrier, compact operation lock, plain compact FIFO regression); UI (button per phase; late selection/task/revision does not apply the old target); delivery (both clients settle from the same CLI command/projection; remote identity never matches by `workspacePath` alone).
-- E2E: case-local provider fixtures build a small target context window and post-compact usage — no reliance on production models. N05, N09, N10 first as formal coverage; N11–N14 start in manual-review/pending and promote once evidence stabilizes. Desktop formal E2E proves UI, provider request order, and queue/config projection; mobile replayable uses focused service/integration cases for the same command facts, disconnect recovery, and identity isolation. "Path passes through running/queue" never substitutes for setup/action/assert — every covered case must show stop, compact, usage, switch, and queue results separately.
+## Error handling
 
-Acceptance criteria:
+- preempt command 因 revision stale 被拒绝：不 stop、不 compact；基于最新 snapshot 重新判断。
+- operation lock：不重复 compact；如果是已有 auto compact，等待其终态后复核；如果是另一手动 compact，复用同一终态但不伪造成功。
+- stop 后 compact 启动失败：旧模型不变、queue held，并保留 interrupted/failed 事实。
+- compact 成功但 fresh usage 无效或仍超窗：旧模型不变、queue held，toast 说明切换取消。
+- 后续模型切换失败：沿用现有 model config 错误处理，queue 不恢复 auto-drain。
+- `setAutoDrain(true)` 恢复失败：模型已切换事实不回滚；queue 保持 held，并提示用户手动继续。
 
-- Selecting an undersized model on a completed session asks to compact first; cancel changes nothing.
-- A running session's confirm button is "立即停止并压缩"; confirming stops the current foreground work.
-- Regardless of queue presence or held state, the guard compact preempts the queue immediately while queue contents and order stay intact.
-- The compact uses the pre-switch model; the switch happens only after fresh usage fits.
-- After success only a previously-on auto-drain is restored; a held queue is never started implicitly.
-- Compact failure, unknown usage, or still-over-window keeps the old model and held queue.
-- Plain `/compact` running/held FIFO shows no regression.
-- Desktop continuous and mobile replayable observe the same stop/compact/model/queue facts with no relay/main business state.
+## Test and E2E handoff plan
+
+文档顺序必须先于测试代码：先更新 `docs/conversation-session-case-catalog.md` 与 `docs/testing/conversation-session-e2e-coverage-matrix.md`，N05/N09-N14 初始标记为 `planned`，不得继续把 legacy MG pending spec 记作覆盖。
+
+Unit/integration：
+
+- metadata resolver：native、custom、`modelIdByKind`、`[1m]`、`maxOutputTokens`、64k fallback、unknown fail-open。
+- budget/guard：fits、cancel、completed compact、running preempt、failed/unknown/too-large fail-closed。
+- command core：revision stale 无副作用；queue 保留/顺序不变；goal pause + controller idle barrier；compact operation lock；普通 compact FIFO 回归。
+- UI：按钮按 phase 显示“压缩”或“立即停止并压缩”；迟到 selection/task/revision 不应用旧目标。
+- delivery：desktop continuous 与 mobile replayable 都从同一 CLI command/projection 收口；remote identity 不只按 `workspacePath` 匹配。
+
+E2E：
+
+- 基于 case-local provider fixture 构造可控的小目标 context window 和 compact 后 usage，不依赖线上模型碰运气。
+- 优先正式覆盖 N05、N09、N10；N11-N14 先进入 manual-review/pending，证据稳定后再晋级。
+- desktop formal E2E 证明 UI、provider request 顺序和 queue/config 投影；mobile replayable 用聚焦 service/integration case 证明同一命令事实、断线恢复和 identity 隔离。
+- 不以“路径经过 running/queue”替代 setup/action/assert；每个 covered case 必须分别看到 stop、compact、usage、switch 和 queue 结果。
+
+## Acceptance criteria
+
+- completed session 选择过小模型会先确认压缩，取消不改变模型。
+- running session 的确认按钮为“立即停止并压缩”，确认后当前 foreground work 被停止。
+- 无论 queue 是否存在或 held，guard compact 都立即越过 queue，但 queue 内容和顺序不变。
+- compact 使用切换前模型；fresh usage 满足预算后才切换目标模型。
+- 成功后只恢复 guard 前已开启的 auto-drain；held queue 不被擅自启动。
+- compact 失败、usage 不明或仍超窗时保持旧模型和 held queue。
+- 普通 `/compact` running/held FIFO 行为无回归。
+- desktop continuous 与 mobile replayable 最终观察同一 stop/compact/model/queue 事实，没有 relay/main 业务状态。

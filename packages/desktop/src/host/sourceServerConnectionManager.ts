@@ -1,5 +1,9 @@
-import { sourceServerRunningTasksSchema, type SourceServerRunningTask } from "@zcode/shared";
-/* eslint-disable max-lines -- Source 连接状态机、重试、更新和单连接归并必须共享同一代际状态。 */
+import {
+  sourceServerRunningTasksSchema,
+  type SourceServerRunningTask,
+  type SourceServerRunningTasksResult,
+} from "@zcode/shared";
+/* eslint-disable max-lines -- The Source connection state machine, retries, updates, and single-connection merging must share one generation state. */
 import { SourceServerOperationLogs } from "./sourceServerOperationLogs.js";
 import { Emitter, type Event } from "@zcode/rpc";
 import type {
@@ -31,8 +35,10 @@ import {
 } from "@zcode/server/remote";
 import {
   createSourceServerTransportAdapter,
+  readServerCommandResult,
   type ServerReleaseAsset,
   type SourceServerFileTransfer,
+  type SourceServerIngressInfo,
   type SourceServerTransportAdapter,
   type TransportContext,
 } from "@zcode/server/source-server";
@@ -50,7 +56,7 @@ export type {
 } from "@zcode/shared";
 
 export interface ManagedSourceServerConnection {
-  /** 本次调用复用物理连接时的实际脱敏目标；不写入在线 owner。 */
+  /** The actual redacted target used when this call reuses a physical connection; not written to the online owner. */
   reusedConnectionTarget?: RemoteTarget;
   sourceServerId: string;
   profileId: string;
@@ -58,10 +64,20 @@ export interface ManagedSourceServerConnection {
   services: IServiceAccessor;
 }
 
+/** Device-level lifecycle operations that make the remote side drop the connection on purpose. */
+type LifecycleOperationKind = "update" | "stop" | "restart";
+
+/**
+ * Lifecycle operations that turn the closing of a same-Source online connection into an "expected disconnect": update and restart, after which reconnect bumps the generation.
+ * Stop deletes the recovery intent and releases the connection before running the remote command, so it is not in this category.
+ */
+type ExpectedDisconnectOperationKind = Exclude<LifecycleOperationKind, "stop">;
+
 export type SourceServerConnectionInvalidatedEvent =
   | {
       sourceServerId: string;
-      reason: "update";
+      /** An update or restart of the remote service invalidates the online connection; both are recoverable, and reconnect bumps the generation afterwards. */
+      reason: ExpectedDisconnectOperationKind;
     }
   | {
       sourceServerId: string;
@@ -126,6 +142,16 @@ class SourceServerProfileRemovedError extends Error {
   }
 }
 
+/** A stop, restart, or update is already in progress on this device (R3 §8.4.5 mutual-exclusion matrix); not a public error code, the UI shows it with management error copy. */
+class SourceServerLifecycleOperationInProgressError extends Error {
+  public readonly code = "source-server-operation-in-progress";
+  public readonly retryable = true;
+  public constructor(public readonly sourceServerId: string) {
+    super(`Another lifecycle operation is in progress for Source Server: ${sourceServerId}`);
+    this.name = "SourceServerLifecycleOperationInProgressError";
+  }
+}
+
 class SourceServerHandshakeClosedError extends Error {
   public readonly retryable = true;
   public constructor(reason: string) {
@@ -135,7 +161,7 @@ class SourceServerHandshakeClosedError extends Error {
 }
 
 export interface SourceServerConnectionManagerOptions {
-  /** 成员关系归持久化端口；连接管理器只负责 admission 和握手提交的时序。 */
+  /** Membership is owned by the persistence port; the connection manager only handles the ordering of admission and handshake commit. */
   admitConnection?: (input: {
     profile: ConnectionProfile;
     intent: "add" | "retain";
@@ -179,7 +205,7 @@ export interface ConnectSourceServerOptions {
   resolveRelease?: SourceServerConnectionManagerOptions["resolveRelease"];
   context?: TransportContext;
   onDiagnosticPhase?: (phase: string) => void;
-  /** 仅实际执行探测/握手的 flight 在升级等待点调用，join 请求不得提交另一份凭据。 */
+  /** Only called at the upgrade wait point by a flight that actually performs the probe/handshake; join requests must not commit a second credential. */
   onAuthenticatedUpgradeRequired?: () => Promise<void>;
 }
 
@@ -207,8 +233,46 @@ interface ConnectFlight {
   controller: AbortController;
 }
 
+/**
+ * Lifecycle operation flight: while an update or restart exists, closing of a same-Source online connection counts as an expected disconnect; it only invalidates the connection,
+ * and does not schedule retries. Explicit disconnect, profile removal, and dispose abort it. Only multiple update flights may coexist for one Source
+ * (initiated through sibling Profiles); stop and restart are mutually exclusive with every operation (R3 §8.4.5).
+ */
+interface LifecycleOperationFlight {
+  kind: LifecycleOperationKind;
+  profileId: string;
+  sourceServerId?: string;
+  controller: AbortController;
+}
+
+/** Connection and credentials used by device-level operations (stop, restart, reading running tasks) to run remote commands. */
+type SourceOperationRoute = Pick<ReconnectInput, "profile" | "target">;
+
 const ONLINE_RETRY_DELAYS_MS = [2_000, 4_000, 8_000] as const;
 const OFFLINE_PROBE_INTERVAL_MS = 2 * 60_000;
+
+/**
+ * Error fields written to connection state when a lifecycle operation (update, stop, restart) fails. errorCode and retryable come from the same normalized
+ * result (single source): when the error code comes from an inner cause, retryable must not be read from the outer wrapper. When the remote does not declare retryable,
+ * it is treated as retryable (confirmed 2026-10-21, including stop failures).
+ */
+function describeLifecycleOperationFailure(
+  error: unknown,
+): Pick<SourceServerConnectionStateSnapshot, "error" | "errorCode" | "retryable"> {
+  const normalized = normalizeRemoteConnectionError(error);
+  return {
+    error: normalized.message,
+    ...(isPublicZCodeErrorCode(normalized.code) ? { errorCode: normalized.code } : {}),
+    retryable: normalized.retryable ?? true,
+  };
+}
+
+/** Status projection on a connection invalidated by an expected-disconnect operation: restart only shows "connecting" and must not show as updating (RDLC-01). */
+function expectedDisconnectProjection(
+  kind: ExpectedDisconnectOperationKind,
+): "updating" | "bootstrapping" {
+  return kind === "restart" ? "bootstrapping" : "updating";
+}
 
 function readErrorRetryable(error: unknown): boolean | undefined {
   if (!error || typeof error !== "object" || !("retryable" in error)) {
@@ -295,7 +359,12 @@ function preserveCompatibilityState(
   snapshot: SourceServerConnectionStateSnapshot,
 ): Pick<
   SourceServerConnectionStateSnapshot,
-  "updateAvailability" | "currentVersion" | "availableVersion" | "minimumVersion" | "upgradeTarget"
+  | "updateAvailability"
+  | "currentVersion"
+  | "availableVersion"
+  | "minimumVersion"
+  | "upgradeTarget"
+  | "downgradedFrom"
 > {
   return {
     ...(snapshot.updateAvailability ? { updateAvailability: snapshot.updateAvailability } : {}),
@@ -303,6 +372,7 @@ function preserveCompatibilityState(
     ...(snapshot.availableVersion ? { availableVersion: snapshot.availableVersion } : {}),
     ...(snapshot.minimumVersion ? { minimumVersion: snapshot.minimumVersion } : {}),
     ...(snapshot.upgradeTarget ? { upgradeTarget: snapshot.upgradeTarget } : {}),
+    ...(snapshot.downgradedFrom ? { downgradedFrom: snapshot.downgradedFrom } : {}),
   };
 }
 
@@ -347,11 +417,7 @@ export class SourceServerConnectionManager {
   private readonly profileIdsBySourceServerId = new Map<string, Set<string>>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly offlineProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly updateFlights = new Set<{
-    profileId: string;
-    sourceServerId?: string;
-    controller: AbortController;
-  }>();
+  private readonly lifecycleOperationFlights = new Set<LifecycleOperationFlight>();
   public readonly onDidChangeState: Event<SourceServerConnectionStateSnapshot> =
     this.stateEmitter.event;
   public readonly onDidReconnect: Event<ManagedSourceServerConnection> =
@@ -415,10 +481,15 @@ export class SourceServerConnectionManager {
   public async connect(
     options: ConnectSourceServerOptions,
   ): Promise<ManagedSourceServerConnection> {
-    return await this.connectForSource(
-      { ...options, membershipIntent: options.membershipIntent ?? "add" },
-      options.profile.sourceServerId,
-    );
+    try {
+      return await this.connectForSource(
+        { ...options, membershipIntent: options.membershipIntent ?? "add" },
+        options.profile.sourceServerId,
+      );
+    } finally {
+      // When a connection fails, is rejected, or reuses an existing one, this target did not become the recovery intent and must not leave an idle session behind.
+      this.releaseTargetTransport(options.target);
+    }
   }
 
   private reusedConnection(
@@ -504,9 +575,9 @@ export class SourceServerConnectionManager {
     if (candidates.length === 0) return [];
     const timeoutMs = options.timeoutMs ?? 10_000;
     const globalGate = createConcurrencyGate(Math.max(1, options.maxConcurrency ?? 3));
-    // Bug 原因：多个 Docker Source 共用本机 Docker daemon、磁盘和 CPU。三条冷启动 probe
-    // 同时校验大体积 release 时，单条手动连接只需约 4.6 秒，三条并发却会一起撞上 10 秒
-    // 上限。Docker 冷启动在 transport 内串行，SSH 仍可占用其余全局槽位。
+    // Bug cause: multiple Docker Sources share the local Docker daemon, disk, and CPU. When three cold-start probes
+    // validating large release archives at the same time, a single manual connection needs only about 4.6 seconds, but three concurrent ones all hit the 10-second
+    // limit together. Docker cold start is serialized inside the transport; SSH may still occupy the other global slots.
     const dockerGate = createConcurrencyGate(1);
     const reconnectCandidate = async (
       candidate: (typeof candidates)[number],
@@ -557,9 +628,9 @@ export class SourceServerConnectionManager {
         releaseTransport?.();
       }
     };
-    // 最近在线的 Source 对应用户最可能仍在使用的 workspace。首个候选独占启动窗口，
-    // 避免和其余 Source 同时 probe/握手而在应用冷启动峰值中耗尽 10 秒预算；完成后其余
-    // Source 再按全局 3 并发继续，不改变单 Source 超时和只尝试一次的合同。
+    // The most recently online Source corresponds to the workspace the user most likely still uses. The first candidate holds the startup window exclusively,
+    // so it does not probe/handshake at the same time as the other Sources and exhaust the 10-second budget at the app's cold-start peak; the remaining
+    // Sources then continue at the global concurrency of 3, without changing the single-Source timeout or the try-once contract.
     const [firstCandidate, ...remainingCandidates] = candidates;
     const firstResult = await reconnectCandidate(firstCandidate!);
     return [firstResult, ...(await Promise.all(remainingCandidates.map(reconnectCandidate)))];
@@ -575,7 +646,7 @@ export class SourceServerConnectionManager {
     if (!online || !input) throw new Error("Source Server file transfer is unavailable");
     const backend = this.getAdapter(input.profile.transport).createFileTransfer(input.target);
     const assertCurrent = () => {
-      // 暂存属于当前 attachment generation；旧能力不能在重连后悄悄使用新线路或重建连接。
+      // Staging belongs to the current attachment generation; old capabilities must not silently use a new route or rebuild a connection after a reconnect.
       if (this.onlineBySourceServerId.get(sourceServerId) !== online) {
         throw new Error("Source Server file transfer generation is unavailable");
       }
@@ -593,40 +664,54 @@ export class SourceServerConnectionManager {
     };
   }
 
-  public async updateServer(
-    options: Parameters<SourceServerConnectionManager["updateServerOnce"]>[0],
-  ): Promise<ManagedSourceServerConnection> {
-    return this.operationLogs.run(
-      "update",
-      options.profile,
-      options.target,
-      options.context,
-      (context) => this.updateServerOnce({ ...options, context }),
-    );
-  }
-
-  private async updateServerOnce(options: {
+  public async updateServer(options: {
     profile: ConnectionProfile;
     target: Exclude<RemoteTarget, { kind: "server" }>;
     force?: boolean;
+    allowDowngrade?: boolean;
     context?: TransportContext;
     release?: ServerReleaseAsset;
     resolveRelease?: SourceServerConnectionManagerOptions["resolveRelease"];
   }): Promise<ManagedSourceServerConnection> {
+    const { profile } = options;
+    // Must reject before writing the operation log: logs are owned per device and keep only the most recent operation, so a rejected update must not overwrite the stop log.
+    if (profile.sourceServerId) {
+      this.assertLifecycleOperationCanStart(profile.sourceServerId, "update");
+    }
+    // Bug cause: updates are not in connectFlights, so a late install result after a disconnect could still republish the connection.
+    // Register by operation identity, so profiles that have not handshaken can also be canceled; cancellation removes the owner first, so an old update no longer blocks recovery of a new connection.
+    const flight = this.registerLifecycleOperation(
+      "update",
+      profile.profileId,
+      profile.sourceServerId,
+    );
+    const signal = options.context?.signal
+      ? AbortSignal.any([options.context.signal, flight.controller.signal])
+      : flight.controller.signal;
+    try {
+      return await this.operationLogs.run(
+        "update",
+        profile,
+        options.target,
+        { ...options.context, signal },
+        (context) => this.updateServerOnce({ ...options, context }, flight.controller),
+      );
+    } finally {
+      this.lifecycleOperationFlights.delete(flight);
+      this.releaseTargetTransport(options.target);
+    }
+  }
+
+  private async updateServerOnce(
+    options: Parameters<SourceServerConnectionManager["updateServer"]>[0] & {
+      context: TransportContext;
+    },
+    controller: AbortController,
+  ): Promise<ManagedSourceServerConnection> {
+    const { context } = options;
     const sourceServerId = options.profile.sourceServerId;
     const previousState = this.getStateByProfile(options.profile.profileId);
     const previousCompatibility = preserveCompatibilityState(previousState);
-    const controller = new AbortController();
-    const flight = { profileId: options.profile.profileId, sourceServerId, controller };
-    const context: TransportContext = {
-      ...options.context,
-      signal: options.context?.signal
-        ? AbortSignal.any([options.context.signal, controller.signal])
-        : controller.signal,
-    };
-    // Bug 原因：更新不在 connectFlights 中，断开后安装的迟到结果仍能重新发布连接。
-    // 按操作身份登记，尚未握手的 Profile 也可取消；取消时先摘 owner，旧更新不再压住新连接的恢复。
-    this.updateFlights.add(flight);
     if (sourceServerId) {
       this.clearRecoveryTimers(sourceServerId);
     }
@@ -639,8 +724,8 @@ export class SourceServerConnectionManager {
     try {
       context.signal?.throwIfAborted();
       const adapter = this.getAdapter(options.profile.transport);
-      // Bug 原因：已握手分支曾改走远端 `zcode update`，但正常安装链没有配置远端 release
-      // manifest URL，生产更新必然失败。所有 Profile 都由 Desktop 解析同一 archive 并经 Adapter 应用。
+      // Bug cause: the handshaken branch used to run the remote `zcode update` instead, but the normal install chain had no remote release
+      // manifest URL configured, so production updates always failed. All profiles now have Desktop resolve the same archive and apply it through the Adapter.
       const probe = await adapter.probe(options.target, context);
       context.signal?.throwIfAborted();
       const releaseResolver = options.resolveRelease ?? this.options.resolveRelease;
@@ -650,15 +735,16 @@ export class SourceServerConnectionManager {
       if (!release) throw new Error("Source Server update release is unavailable");
       await adapter.installOrUpdate(options.target, release, context, {
         force: options.force === true,
+        ...(options.allowDowngrade ? { allowDowngrade: true } : {}),
       });
       context.signal?.throwIfAborted();
       const online = sourceServerId ? this.onlineBySourceServerId.get(sourceServerId) : undefined;
       if (sourceServerId && online) {
-        this.invalidateOnlineConnectionForUpdate(sourceServerId, online);
+        this.invalidateOnlineConnectionForLifecycleOperation(sourceServerId, online, "update");
       }
-      // 失效事件的同步订阅者也可能提交断开，不能在该终态后进入 bootstrapping。
+      // An invalidation event's synchronous subscribers may also submit a disconnect, so this must not enter bootstrapping after that terminal state.
       context.signal?.throwIfAborted();
-      // 重连事件由 connectOnce 的发布点统一 fire，这里不再重复发布。
+      // The reconnect event is fired uniformly at connectOnce's publish point; it is not published again here.
       return await this.connectForSource(
         {
           profile: options.profile,
@@ -669,7 +755,7 @@ export class SourceServerConnectionManager {
         false,
       );
     } catch (error) {
-      // 终态由断开/删除/释放操作发布；旧更新的成功或失败都不能写回捕获的旧状态。
+      // Terminal states are published by disconnect/remove/release operations; the success or failure of an old update must not write back the captured old state.
       controller.signal.throwIfAborted();
       if (
         error &&
@@ -677,78 +763,283 @@ export class SourceServerConnectionManager {
         "code" in error &&
         error.code === "source-server-update-running-tasks"
       ) {
-        // 清单走只读控制命令，不扩展持久化 status 格式，旧远端不支持时保持未知。
-        try {
-          const result = await this.getAdapter(options.profile.transport).exec(
-            options.target,
-            ["running-tasks", "--json"],
-            context,
-          );
-          if (result.exitCode === 0) {
-            const parsed = sourceServerRunningTasksSchema.safeParse(
-              JSON.parse(result.stdout.trim()),
-            );
-            if (parsed.success) runningTasks = parsed.data;
-          }
-        } catch {
-          /* 清单不可用不能绕过 force=false 的运行任务守卫。 */
-        }
+        // An unavailable task list must not bypass the force=false running-task guard; leaving it unknown is enough.
+        runningTasks = await this.readRunningTasks(
+          options.profile.transport,
+          options.target,
+          context,
+        );
       }
-      // running-tasks 读取同样会让出执行权，断开可能发生在错误收尾期间。
+      // Reading running-tasks also yields execution, so a disconnect may happen during error cleanup.
       controller.signal.throwIfAborted();
-      const normalized = normalizeRemoteConnectionError(error);
-      const errorCode = isPublicZCodeErrorCode(normalized.code) ? normalized.code : undefined;
-      const retryable =
-        error && typeof error === "object" && "retryable" in error
-          ? (error as { retryable?: unknown }).retryable
-          : undefined;
-      if (sourceServerId && !this.onlineBySourceServerId.has(sourceServerId)) {
-        // 更新期间 transport 已断开时不能恢复捕获的 online 快照，否则会产生无连接、无 timer 的假在线。
-        if (this.reconnectInputs.has(sourceServerId)) {
-          if (!this.stopAutomaticRecoveryForTerminalFailure(sourceServerId, error)) {
-            this.scheduleOnlineRetry(sourceServerId, 0);
-          }
-        } else {
-          this.setState(options.profile.profileId, {
-            state: "offline",
-            sourceServerId,
-            ...previousCompatibility,
-            ...(runningTasks ? { runningTasks } : {}),
-            ...(errorCode ? { errorCode } : {}),
-            retryable: typeof retryable === "boolean" ? retryable : true,
-            error: normalized.message,
-          });
+      this.settleFailedLifecycleOperation({
+        kind: "update",
+        profileId: options.profile.profileId,
+        sourceServerId,
+        previousState,
+        runningTasks,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Read-only `running-tasks --json` executed through the transport. The list uses a control command and does not extend the persisted status format;
+   * if the remote outputs null (Core has not reported yet), the command fails, or the output does not match the schema, it returns undefined, meaning "task list unavailable".
+   */
+  private async readRunningTasks(
+    transport: ConnectionProfile["transport"],
+    target: Exclude<RemoteTarget, { kind: "server" }>,
+    context: TransportContext,
+  ): Promise<SourceServerRunningTask[] | undefined> {
+    try {
+      const result = await this.getAdapter(transport).exec(
+        target,
+        ["running-tasks", "--json"],
+        context,
+      );
+      if (result.exitCode !== 0) return undefined;
+      const parsed = sourceServerRunningTasksSchema.safeParse(JSON.parse(result.stdout.trim()));
+      return parsed.success ? parsed.data : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Reads running tasks per device before the stop/restart confirmation (RDLC-01, R3 §8.4.5). Routing and credential rules are the same as for stop and restart:
+   * when a recovery intent exists, its connection and in-memory credentials are reused; otherwise the caller resolves an offline route whose credentials can be obtained silently
+   * (throws `credentials-required` if they cannot). Read-only: it does not register a lifecycle operation, change connection state, or write the device
+   * operation log (logs keep only the most recent operation per device, and a read must not overwrite it).
+   */
+  public async getSourceRunningTasks(input: {
+    sourceServerId: string;
+    resolveOfflineRoute: () => Promise<SourceOperationRoute>;
+  }): Promise<SourceServerRunningTasksResult> {
+    const route = await this.resolveSourceOperationRoute(input);
+    try {
+      const tasks = await this.readRunningTasks(route.profile.transport, route.target, {});
+      return tasks ? { available: true, tasks } : { available: false };
+    } finally {
+      this.releaseTargetTransport(route.target);
+    }
+  }
+
+  /**
+   * The single route resolution for device-level operations (stop, restart, reading running tasks): when the Source has a recovery intent (online, retrying, or offline probing),
+   * its connection and in-memory credentials are reused; otherwise the caller resolves an offline route, by default the connection or most recent connection, whose credentials can be obtained silently.
+   * Reading credentials yields execution, and a manual connection may publish a recovery intent during that time: the recovery intent's connection takes precedence, so the operation's Profile
+   * is the connection that later takes over recovery. The mutual-exclusion recheck after yielding execution is the caller's responsibility.
+   */
+  private async resolveSourceOperationRoute(input: {
+    sourceServerId: string;
+    resolveOfflineRoute: () => Promise<SourceOperationRoute>;
+  }): Promise<SourceOperationRoute> {
+    const current = this.reconnectInputs.get(input.sourceServerId);
+    if (current) return current;
+    const offlineRoute = await input.resolveOfflineRoute();
+    return this.reconnectInputs.get(input.sourceServerId) ?? offlineRoute;
+  }
+
+  /**
+   * Unified handling of update and restart failures (R3 §8.4.5). When the physical connection is gone: if there is a non-terminal recovery intent, automatic recovery starts from the first tier;
+   * without a recovery intent, an update stays offline with its error, and a restart shows connection failed (`failed`). If the connection is still up, the state from before the operation is restored.
+   */
+  private settleFailedLifecycleOperation(input: {
+    kind: ExpectedDisconnectOperationKind;
+    profileId: string;
+    sourceServerId?: string;
+    previousState: SourceServerConnectionStateSnapshot;
+    runningTasks?: SourceServerRunningTask[];
+    error: unknown;
+  }): void {
+    const { profileId, sourceServerId, previousState, runningTasks, error } = input;
+    const failure = {
+      ...preserveCompatibilityState(previousState),
+      ...(runningTasks ? { runningTasks } : {}),
+      ...describeLifecycleOperationFailure(error),
+    };
+    if (sourceServerId && !this.onlineBySourceServerId.has(sourceServerId)) {
+      // If the transport disconnected during the operation, the captured online snapshot must not be restored, or a fake online with no connection and no timer would result.
+      if (this.reconnectInputs.has(sourceServerId)) {
+        if (!this.stopAutomaticRecoveryForTerminalFailure(sourceServerId, error)) {
+          this.scheduleOnlineRetry(sourceServerId, 0);
         }
       } else {
-        this.setState(options.profile.profileId, {
-          // 更新失败不是新的兼容性事实；真实连接仍在时恢复操作前状态。
-          state: previousState.state === "absent" ? "failed" : previousState.state,
-          ...(sourceServerId ? { sourceServerId } : {}),
-          ...previousCompatibility,
-          ...(runningTasks ? { runningTasks } : {}),
-          ...(errorCode ? { errorCode } : {}),
-          retryable: typeof retryable === "boolean" ? retryable : true,
-          error: normalized.message,
+        this.setState(profileId, {
+          // Starting a restart from the never-connected state means "make the device available again", so failure must show connection failed rather than the neutral not-connected state.
+          state: input.kind === "restart" ? "failed" : "offline",
+          sourceServerId,
+          ...failure,
         });
       }
+      return;
+    }
+    this.setState(profileId, {
+      // A failure is not a new compatibility fact; if the real connection is still up, restore the state from before the operation.
+      state: previousState.state === "absent" ? "failed" : previousState.state,
+      ...(sourceServerId ? { sourceServerId } : {}),
+      ...failure,
+    });
+  }
+
+  /**
+   * Restarts the remote service on the device (RDLC-01, R3 §8.4.5). Registers a `restart` lifecycle operation flight and clears recovery timers;
+   * the device shows "connecting"; runs `restart --json` through the transport; closing of the online connection caused by the old remote process exiting counts as an expected disconnect.
+   * After the remote confirms the new daemon is ready, the existing connection flow runs and emits reconnect, and the Registry bumps the generation for already-open workspaces.
+   *
+   * Routing is the same as for stop: when the Source has a recovery intent, its connection and in-memory credentials are reused; otherwise the caller resolves, by default the connection or most recent connection,
+   * a connection whose credentials can be obtained silently.
+   */
+  public async restartSource(input: {
+    sourceServerId: string;
+    resolveOfflineRoute: () => Promise<SourceOperationRoute>;
+  }): Promise<ManagedSourceServerConnection> {
+    const { sourceServerId } = input;
+    // Must reject before writing the operation log: a rejected restart must not overwrite the log of the operation in progress.
+    this.assertLifecycleOperationCanStart(sourceServerId, "restart");
+    const { profile, target } = await this.resolveSourceOperationRoute(input);
+    // Reading credentials for an offline route yields execution, and other lifecycle operations may register during that time.
+    this.assertLifecycleOperationCanStart(sourceServerId, "restart");
+    const flight = this.registerLifecycleOperation("restart", profile.profileId, sourceServerId);
+    const { controller } = flight;
+    try {
+      return await this.operationLogs.run(
+        "restart",
+        profile,
+        target,
+        { signal: controller.signal },
+        async (context) => {
+          const previousState = this.getStateByProfile(profile.profileId);
+          this.clearRecoveryTimers(sourceServerId);
+          // No new Host state: during restart the projection is "connecting", not updating, and it carries no automatic retry count.
+          this.setState(profile.profileId, { state: "bootstrapping", sourceServerId });
+          try {
+            const status = readServerCommandResult(
+              await this.getAdapter(profile.transport).exec(target, ["restart", "--json"], context),
+              "Remote service failed to restart",
+            );
+            // Older remotes treat restart as an ack that only swaps Core; the connection may start only once the new daemon is ready.
+            if (status.state !== "ready") {
+              throw new Error("Remote service did not confirm that it restarted");
+            }
+            controller.signal.throwIfAborted();
+            // Bug cause: after the old remote process exits, the WS close may arrive later than the command's return; the connection flow would treat the connection still registered as online
+            // as reusable and return directly, and the late close would then schedule a retry as an ordinary disconnect. Invalidate it proactively before connecting.
+            const online = this.onlineBySourceServerId.get(sourceServerId);
+            if (online) {
+              this.invalidateOnlineConnectionForLifecycleOperation(
+                sourceServerId,
+                online,
+                "restart",
+              );
+            }
+            // An invalidation event's synchronous subscribers may also submit a disconnect, so this must not enter the connection flow after that terminal state.
+            controller.signal.throwIfAborted();
+            // The reconnect event is fired uniformly at connectOnce's publish point.
+            return await this.connectForSource({ profile, target, context }, sourceServerId, false);
+          } catch (error) {
+            // A disconnect, removal, or release has already published a terminal state; an aborted restart must not write back its state.
+            controller.signal.throwIfAborted();
+            this.settleFailedLifecycleOperation({
+              kind: "restart",
+              profileId: profile.profileId,
+              sourceServerId,
+              previousState,
+              error,
+            });
+            throw error;
+          }
+        },
+      );
+    } finally {
+      this.lifecycleOperationFlights.delete(flight);
+      this.releaseTargetTransport(target);
+    }
+  }
+
+  /**
+   * Stops the remote service on the device (RDLC-01, R3 §8.4.5). First fully performs explicit-disconnect teardown (clears timers, aborts in-flight connections,
+   * deletes the recovery intent, releases the connection, and sets offline), then runs `stop --wait --json` through the transport. The recovery intent is already deleted,
+   * so connection closes caused by the remote exiting do not schedule retries or offline probes; both success and failure stay offline.
+   *
+   * Routing: while the Source still has a recovery intent (online, retrying, or offline probing), its connection and in-memory credentials are reused;
+   * otherwise the caller resolves a connection, by default the connection or most recent connection, whose credentials can be obtained silently.
+   */
+  public async stopSource(input: {
+    sourceServerId: string;
+    resolveOfflineRoute: () => Promise<SourceOperationRoute>;
+  }): Promise<void> {
+    const { sourceServerId } = input;
+    // Must reject before writing the operation log: a rejected stop must not overwrite the log of the operation in progress.
+    this.assertLifecycleOperationCanStart(sourceServerId, "stop");
+    const route = await this.resolveSourceOperationRoute(input);
+    // Reading credentials for an offline route yields execution, and other lifecycle operations may have registered in the meantime; this must be rechecked before the explicit disconnect
+    // (which aborts all flights of the same Source), otherwise the disconnect would abort the operation in progress first.
+    this.assertLifecycleOperationCanStart(sourceServerId, "stop");
+    // When the route is taken from the recovery intent, the route.target handed back by the disconnect is used: the remote command reuses its session without re-authenticating, and it is released after completion.
+    this.disconnectSource(sourceServerId);
+    const profileId = route.profile.profileId;
+    const flight = this.registerLifecycleOperation("stop", profileId, sourceServerId);
+    const { controller } = flight;
+    // Clears the reason left on this connection by the previous failed stop; the device stays disconnected for the whole stop process.
+    this.setState(profileId, { state: "offline", sourceServerId });
+    try {
+      await this.operationLogs.run(
+        "stop",
+        route.profile,
+        route.target,
+        { signal: controller.signal },
+        async (context) => {
+          const status = readServerCommandResult(
+            await this.getAdapter(route.profile.transport).exec(
+              route.target,
+              ["stop", "--wait", "--json"],
+              context,
+            ),
+            "Remote service failed to stop",
+          );
+          // Older remotes without --wait only return an ack; only a final stopped state may be reported as "stopped".
+          if (status.state !== "stopped" && status.state !== "uninstalled") {
+            throw new Error("Remote service did not confirm that it stopped");
+          }
+          return { sourceServerId, profileId };
+        },
+      );
+      controller.signal.throwIfAborted();
+    } catch (error) {
+      // A disconnect, removal, or release has already published a terminal state; an aborted stop must not write back its state.
+      controller.signal.throwIfAborted();
+      // The device stays disconnected; the failure reason stays on this connection's state for classified display in the failure details.
+      this.setState(profileId, {
+        state: "offline",
+        sourceServerId,
+        ...describeLifecycleOperationFailure(error),
+      });
       throw error;
     } finally {
-      this.updateFlights.delete(flight);
+      this.lifecycleOperationFlights.delete(flight);
+      this.releaseTargetTransport(route.target);
     }
   }
 
   public disconnect(sourceServerId: string): void {
-    this.disconnectSource(sourceServerId);
+    const droppedTarget = this.disconnectSource(sourceServerId);
+    if (droppedTarget) this.releaseTargetTransport(droppedTarget);
   }
 
   public removeProfile(profileId: string): void {
     this.operationLogs.removeProfile(profileId);
     this.pendingHostKeys.delete(profileId);
-    const canceledUpdateSources = new Set<string>();
-    for (const flight of this.updateFlights) {
+    // Record canceled expected-disconnect operations and their kinds; teardown judges the projection each one left on the recovery owner by its kind.
+    const canceledExpectedDisconnects = new Map<string, ExpectedDisconnectOperationKind>();
+    for (const flight of this.lifecycleOperationFlights) {
       if (flight.profileId !== profileId) continue;
-      if (flight.sourceServerId) canceledUpdateSources.add(flight.sourceServerId);
-      this.updateFlights.delete(flight);
+      if (flight.sourceServerId && flight.kind !== "stop") {
+        canceledExpectedDisconnects.set(flight.sourceServerId, flight.kind);
+      }
+      this.lifecycleOperationFlights.delete(flight);
       flight.controller.abort(new SourceServerProfileRemovedError(profileId));
     }
     const connectingSourceServerId = this.connectFlights.get(profileId)?.sourceServerId;
@@ -763,10 +1054,11 @@ export class SourceServerConnectionManager {
       [...this.onlineBySourceServerId].find(([, online]) => online.profileId === profileId)?.[0] ??
       sourceOwnedOnlyByConnectingProfile;
     if (currentSourceServerId) {
-      // Bug 原因：Directory 删除当前线路后，旧实现只删展示状态，恢复 owner、timer 和
-      // 已解析的 secret 仍存活，断线后会继续使用已删除线路。删除当前线路等价于显式
-      // 断开整个 Source；其他线路只能由用户后续手动选择，不能在这里静默接管。
-      this.disconnectSource(currentSourceServerId, profileId);
+      // Bug cause: after Directory removes the current route, the old implementation only deleted the display state, while the recovery owner, timers, and
+      // resolved secret still lived on, and after a disconnect it would keep using the removed route. Removing the current route is equivalent to explicitly
+      // disconnecting the whole Source; other routes can only be selected manually by the user later and must not be silently taken over here.
+      const droppedTarget = this.disconnectSource(currentSourceServerId, profileId);
+      if (droppedTarget) this.releaseTargetTransport(droppedTarget);
       return;
     }
 
@@ -784,37 +1076,47 @@ export class SourceServerConnectionManager {
       if (!profileIds.delete(profileId)) continue;
       if (profileIds.size === 0) this.profileIdsBySourceServerId.delete(sourceServerId);
     }
-    // Bug 原因：非当前线路的更新可能已移除旧物理连接；取消后跳过更新收尾，原 owner
-    // 会永久停在 updating。删除操作接回仍保留的恢复意图，不依赖已取消更新的迟到结果。
-    for (const sourceServerId of canceledUpdateSources) {
+    // Bug cause: updates or restarts on a non-current route may already have removed the old physical connection; after cancellation the operation teardown is skipped, and the original owner
+    // would stay permanently in that operation's projection (updating for update, bootstrapping for restart). Deleting the operation hands back the recovery intent that is still kept,
+    // without depending on the late result of the canceled operation. The projection is judged by the kind of the canceled flight, not inferred from the state.
+    for (const [sourceServerId, kind] of canceledExpectedDisconnects) {
       const input = this.reconnectInputs.get(sourceServerId);
       if (
         input &&
         !this.onlineBySourceServerId.has(sourceServerId) &&
-        this.getStateByProfile(input.profile.profileId).state === "updating" &&
-        ![...this.updateFlights].some((flight) => flight.sourceServerId === sourceServerId)
+        this.getStateByProfile(input.profile.profileId).state ===
+          expectedDisconnectProjection(kind) &&
+        // If the owner itself already has an in-flight connection, that connection finishes the teardown and must not schedule another retry.
+        !this.connectFlights.has(input.profile.profileId) &&
+        !this.expectedDisconnectOperation(sourceServerId)
       )
         this.scheduleOnlineRetry(sourceServerId, 0);
     }
   }
 
-  private disconnectSource(sourceServerId: string, removedProfileId?: string): void {
+  /**
+   * Explicit-disconnect teardown. Returns the removed recovery-intent target: its transport session is released by the caller (stop must first use it to run the remote command).
+   */
+  private disconnectSource(
+    sourceServerId: string,
+    removedProfileId?: string,
+  ): Exclude<RemoteTarget, { kind: "server" }> | undefined {
     const online = this.onlineBySourceServerId.get(sourceServerId);
     const reconnectInput = this.reconnectInputs.get(sourceServerId);
     const profileIds = new Set(this.profileIdsBySourceServerId.get(sourceServerId) ?? []);
     for (const profileId of online?.profileIds ?? []) profileIds.add(profileId);
     if (reconnectInput) profileIds.add(reconnectInput.profile.profileId);
-    for (const flight of this.updateFlights) {
+    for (const flight of this.lifecycleOperationFlights) {
       if (flight.sourceServerId !== sourceServerId) continue;
-      this.updateFlights.delete(flight);
+      this.lifecycleOperationFlights.delete(flight);
       flight.controller.abort(new SourceServerExplicitDisconnectError(sourceServerId));
       profileIds.add(flight.profileId);
     }
 
-    // Bug 原因：意外断线会先摘除 online owner；显式断开若再用 online 是否存在判断生命周期，
-    // 就只会清掉 timer 而永久遗留 retrying。必须在删除恢复索引前捕获 Source 的全部 Profile，
-    // 中止仍在执行的 Source flight，并且无论当前是否还有物理连接都发布 offline 终态；否则
-    // 已进入 bootstrapping 的迟到成功还会覆盖用户刚刚提交的 offline 意图。
+    // Bug cause: an unexpected disconnect removes the online owner first; if explicit disconnect then judged the lifecycle by whether an online entry exists,
+    // it would only clear the timer and leave retrying stuck forever. All profiles of the Source must be captured before the recovery index is deleted,
+    // in-flight Source flights must be aborted, and an offline terminal state must be published whether or not a physical connection still exists; otherwise
+    // a late success already in bootstrapping would overwrite the offline intent the user just submitted.
     this.clearRecoveryTimers(sourceServerId);
     for (const [profileId, flight] of this.connectFlights) {
       if (flight.sourceServerId !== sourceServerId) continue;
@@ -849,22 +1151,23 @@ export class SourceServerConnectionManager {
       this.pendingHostKeys.delete(removedProfileId);
       this.compatibilityByProfileId.delete(removedProfileId);
     }
+    return reconnectInput?.target;
   }
 
   public dispose(): void {
     const reason = Object.assign(new Error("Source Server manager disposed"), {
       code: "remote-connection-canceled",
     });
-    for (const flight of this.updateFlights) flight.controller.abort(reason);
-    this.updateFlights.clear();
+    for (const flight of this.lifecycleOperationFlights) flight.controller.abort(reason);
+    this.lifecycleOperationFlights.clear();
     this.pendingHostKeys.clear();
-    // 更新的重握手可能尚无 online owner，不能只遍历 online 表来回收在途连接。
+    // A late reconnect of an update may have no online owner yet, so in-flight connections cannot be reclaimed by iterating only the online table.
     for (const flight of this.connectFlights.values()) flight.controller.abort(reason);
     this.connectFlights.clear();
     for (const sourceServerId of this.retryTimers.keys()) this.clearRecoveryTimers(sourceServerId);
     for (const sourceServerId of this.offlineProbeTimers.keys())
       this.clearRecoveryTimers(sourceServerId);
-    // 离线恢复也持有连接意图；只清 online 会让被中止 flight 的迟到 catch 重新排重试。
+    // Offline recovery also holds the connection intent; clearing only online would let a late catch from an aborted flight schedule a retry again.
     for (const sourceServerId of new Set([
       ...this.reconnectInputs.keys(),
       ...this.onlineBySourceServerId.keys(),
@@ -905,7 +1208,7 @@ export class SourceServerConnectionManager {
           confirmIdentityChange: options.confirmIdentityChange === true,
         });
       } catch (error) {
-        // 线路已移除时，迟到 admission 错误不再有权重建 failed 展示行。
+        // Once the route has been removed, a late admission error no longer has the right to rebuild a failed display row.
         throwIfAborted();
         this.setState(profile.profileId, {
           state: "failed",
@@ -920,7 +1223,7 @@ export class SourceServerConnectionManager {
       const existing = this.onlineBySourceServerId.get(profile.sourceServerId);
       if (existing) {
         await commitMembership?.(profile.sourceServerId);
-        // 复用也经过异步成员提交；这段等待可能已被用户断开，不能返回旧 socket。
+        // Reuse also goes through the asynchronous membership commit; this wait may have been ended by a user disconnect, so the old socket must not be returned.
         throwIfAborted();
         if (this.onlineBySourceServerId.get(profile.sourceServerId) !== existing)
           throw new Error("Source Server connection changed during admission");
@@ -969,8 +1272,8 @@ export class SourceServerConnectionManager {
               this.compatibilityManifest.minCompatibleVersion,
             ) >= 0;
         } catch {
-          // Bug 原因：pre-R3 或损坏安装可能返回空值/unknown。继续执行新版本 ensureDaemon
-          // 只会在 ingress-token 合同处变成通用 failed，用户也失去升级入口。
+          // Bug cause: pre-R3 or corrupted installs may return an empty value/unknown. Continuing to run the new version's ensureDaemon
+          // would only turn into a generic failed at the ingress-token contract, and the user would also lose the upgrade entry point.
           compatibleInstalledVersion = false;
         }
         if (!compatibleInstalledVersion) {
@@ -981,6 +1284,8 @@ export class SourceServerConnectionManager {
             availableVersion: this.compatibilityManifest.productVersion,
             minimumVersion: this.compatibilityManifest.minCompatibleVersion,
             upgradeTarget: "server",
+            // When the remote is explicitly switched back by an older Desktop, the wizard must wait for user confirmation before upgrading, and must not silently override the other side's choice.
+            ...(probe.downgradedFrom ? { downgradedFrom: probe.downgradedFrom } : {}),
             errorCode: SOURCE_SERVER_UPGRADE_REQUIRED_ERROR_CODE,
             retryable: false,
           });
@@ -1005,11 +1310,11 @@ export class SourceServerConnectionManager {
             release.version === installedVersion &&
             release.sha256.toLowerCase() !== probe.installedArchiveSha256?.toLowerCase()
           ) {
-            // Bug 原因（R3A-B-06）：开发态同版本刷新过去在这里直接 installOrUpdate，绕开了
-            // updateServer 的 updating 状态、操作日志和 force 守卫确认；远端有运行中任务时 guard
-            // 只能表现为普通连接失败，UI 既没有“强制更新”入口也不会在任务结束后重试。
-            // 开发态与生产态只在“是否需要更新”的判定上不同（SHA vs 版本兼容），判定之后必须
-            // 走同一条 needs-upgrade → updateSource/updateServer 链路，连接流程本身不执行更新。
+            // Bug cause (R3A-B-06): the development-mode same-version refresh used to call installOrUpdate directly here, bypassing
+            // updateServer's updating state, operation log, and force-guard confirmation; when the remote had running tasks, the guard
+            // could only show as an ordinary connection failure, and the UI had no "force update" entry and would not retry after the tasks ended.
+            // Development and production differ only in how "needs an update" is decided (SHA vs version compatibility); after that decision they must
+            // follow the same needs-upgrade → updateSource/updateServer chain, and the connection flow itself does not perform the update.
             this.setState(profile.profileId, {
               state: "needs-upgrade",
               updateAvailability: "required",
@@ -1043,7 +1348,7 @@ export class SourceServerConnectionManager {
             : undefined);
         throwIfAborted();
         if (!release) {
-          // 预览是附加信息；CDN/缓存元数据不可用时仍保留安装等待点。实际安装解析继续严格失败。
+          // The preview is supplementary information; when CDN/cache metadata is unavailable, the install wait point is still kept. The actual install resolution still fails strictly.
           const previewRelease = releaseResolver
             ? await releaseResolver(probe, target, { metadataOnly: true }).catch(() => undefined)
             : undefined;
@@ -1075,25 +1380,65 @@ export class SourceServerConnectionManager {
       throwIfAborted();
       let published: { sourceServerId: string; connection: ServerRemoteConnection } | undefined;
       let closedBeforePublish: string | undefined;
+      // Only the close event of the current handshake counts: a late close from a connection of a failed handshake must not count toward the handshake after fallback.
+      let liveHandshake: object | undefined;
+      const onHandshakeClose = (attempt: object, reason: string) => {
+        if (ignoreConnectionClose || liveHandshake !== attempt) return;
+        // Bug cause (RV-P1-1): the close event used to be routed only by sourceServerId, and guarded by whether an online-table entry existed.
+        // If the connection closed during handshake persistence (recordHandshake), the online table was either empty (the event was dropped, and the already-closed
+        // connection was then published as online), or pointed at another healthy connection of the same Source (a sibling's close would tear down the online
+        // owner and clear its retries). Before publish, only record the close fact and let the publish point settle it as a connection failure; process it after publish,
+        // and always carry this connection's identity so a close only affects the connection it belongs to.
+        if (!published) {
+          closedBeforePublish = reason || "connection closed";
+          return;
+        }
+        this.handleUnexpectedClose(published.sourceServerId, reason, published.connection);
+      };
+      const handshake = async (daemon: SourceServerIngressInfo) => {
+        const attempt = {};
+        liveHandshake = attempt;
+        // Bug cause: when ws fails an upgrade it emits error and then close in the same tick, so the close callback runs before the catch below,
+        // and liveHandshake cannot stop it. A close record left by the previous handshake would make the healthy connection after fallback be judged closed at the publish point.
+        // The close record belongs only to the current handshake, so it is cleared when the handshake starts.
+        closedBeforePublish = undefined;
+        try {
+          return await this.connectServer({
+            ingressToken: daemon.ingressToken,
+            createConnection: async () =>
+              await adapter.openChannel(target, daemon, options.context ?? {}),
+            onClose: ({ reason }) => onHandshakeClose(attempt, reason),
+          });
+        } catch (error) {
+          liveHandshake = undefined;
+          throw error;
+        }
+      };
       options.onDiagnosticPhase?.("protocol-handshake");
-      const connection = await this.connectServer({
-        ingressToken: ingress.ingressToken,
-        createConnection: async () =>
-          await adapter.openChannel(target, ingress, options.context ?? {}),
-        onClose: ({ reason }) => {
-          if (ignoreConnectionClose) return;
-          // Bug 原因（RV-P1-1）：close 事件过去只按 sourceServerId 路由，并用在线表是否存在做守卫。
-          // 握手落盘（recordHandshake）期间连接关闭时，在线表要么为空（事件被丢弃，随后把已关闭的
-          // 连接发布为 online），要么指向同一 Source 上另一条健康连接（sibling 的关闭会拆掉在线
-          // owner 并清掉它的重试）。发布前只记录关闭事实，由发布点按连接失败收口；发布后才处理，
-          // 且必须带上本连接身份，close 只作用于它所属的那条连接。
-          if (!published) {
-            closedBeforePublish = reason || "connection closed";
-            return;
-          }
-          this.handleUnexpectedClose(published.sourceServerId, reason, published.connection);
-        },
-      });
+      let connection: ServerRemoteConnection;
+      try {
+        connection = await handshake(ingress);
+      } catch (error) {
+        throwIfAborted();
+        if (!ingress.reusedProbeStatus) throw error;
+        // Bug cause: probe reused the port just because status.json says ready and the Core PID passes kill -0. After a remote restart the snapshot remains stale,
+        // the PID is reused by another process of the same user, no one listens on the port any more, the handshake reports socket hang up, and the daemon is never restarted.
+        // The snapshot is only an optimization that saves one serve --daemon; when the handshake fails, fall back once, and let serve --daemon read the live Supervisor state via control,
+        // taking over a stale lock and restarting if needed.
+        this.options.logWarn?.(
+          "reused Source Server did not answer the handshake; running serve --daemon",
+          error instanceof Error ? error : new Error(String(error)),
+        );
+        options.context?.onLog?.({
+          phase: "daemon",
+          message: "Reused Source Server did not respond; checking it with serve --daemon",
+        });
+        options.onDiagnosticPhase?.("daemon");
+        const restarted = await adapter.ensureDaemon(target, options.context ?? {});
+        throwIfAborted();
+        options.onDiagnosticPhase?.("protocol-handshake");
+        connection = await handshake(restarted);
+      }
       unpublishedConnection = connection;
       throwIfAborted();
       const compatibility = connection.serverInfo.compatibility;
@@ -1162,7 +1507,7 @@ export class SourceServerConnectionManager {
         throw new SourceServerIdentityChangePendingError(profile.profileId, sourceServerId);
       }
       const effectiveProfile = handshakeResult.effectiveProfile ?? profile;
-      // 关闭发生于目录落盘时不能再提交成员；健康 sibling owner 可继续承接本次 admission。
+      // If the connection closed when the directory was written, membership must not be committed; a healthy sibling owner can continue to take over this admission.
       if (closedBeforePublish !== undefined && !this.onlineBySourceServerId.has(sourceServerId))
         throw new SourceServerHandshakeClosedError(closedBeforePublish);
       await commitMembership?.(sourceServerId);
@@ -1187,8 +1532,8 @@ export class SourceServerConnectionManager {
         return this.reusedConnection(existing);
       }
       if (closedBeforePublish !== undefined) {
-        // 握手期间连接已死：不能发布，按普通连接失败抛出，让手动连接显示可重试失败、
-        // 自动恢复路径继续下一档重试。放在 sibling join 之后：owner 健康时 join 才是正确结果。
+        // The connection died during the handshake: it cannot be published, so throw as an ordinary connection failure, letting a manual connect show a retryable failure
+        // and the automatic recovery path continue with the next tier. Placed after the sibling join: join is the correct result only when the owner is healthy.
         throw new SourceServerHandshakeClosedError(closedBeforePublish);
       }
       const managed: OnlineConnection = {
@@ -1201,7 +1546,7 @@ export class SourceServerConnectionManager {
       };
       if (this.options.onProjectChange) {
         managed.projectSubscription = connection.services.broadcastService.onMessage((event) => {
-          // 换代/断开后迟到广播不能代表当前 Source；通知仅触发读取，不带项目数据。
+          // A late broadcast after a generation change or disconnect cannot represent the current Source; the notification only triggers a read and carries no project data.
           if (
             event.channel === "state:projects" &&
             this.onlineBySourceServerId.get(sourceServerId) === managed
@@ -1209,13 +1554,14 @@ export class SourceServerConnectionManager {
             this.options.onProjectChange?.(sourceServerId);
         });
       }
-      // Bug 原因：onDidReconnect 过去只挂在 retry/probe timer 回调和 updateServer 上；
-      // retrying/offline 期间由 connect()（connectProfile / confirmIdentityChange）手动连接成功，
-      // Manager 会清掉待触发的 retry timer 并发布 online，却不发 reconnect。Host wrapper 只在
-      // reconnect 时换 services，Registry entry 的 recoveryReady 因此无人 resolve，同 route 新
-      // connect 永久等待。reconnectInputs 只在首次发布时写入、显式断开时删除，「再次发布同一
-      // Source」就是唯一的重连事实源：无论谁触发的连接，非在线 -> 在线都在这里统一 fire。
+      // Bug cause: onDidReconnect used to be attached only to the retry/probe timer callbacks and to updateServer;
+      // during retrying/offline, a manual connect (connectProfile / confirmIdentityChange) succeeded via connect(), and the Manager cleared the pending retry timer
+      // and published online without firing reconnect. The Host wrapper only swaps services on reconnect, so the Registry entry's recoveryReady was never resolved;
+      // new connects on the same route waited forever. reconnectInputs is only written on first publish and deleted on explicit disconnect,
+      // so "publishing the same Source again" is the only source of truth for reconnects: whichever path triggers a connection,
+      // a transition from not-online to online fires reconnect here.
       const isRepublish = this.reconnectInputs.has(sourceServerId);
+      const replacedTarget = this.reconnectInputs.get(sourceServerId)?.target;
       this.onlineBySourceServerId.set(sourceServerId, managed);
       published = { sourceServerId, connection };
       unpublishedConnection = undefined;
@@ -1224,10 +1570,12 @@ export class SourceServerConnectionManager {
       this.reconnectInputs.set(sourceServerId, {
         profile: effectiveProfile,
         target,
-        // 操作级 onLog 捕获本次日志及凭据；恢复不得持有旧闭包，下一次操作会重新建日志上下文。
+        // The operation-level onLog captures this run's logs and credentials; recovery must not hold the old closure, and the next operation rebuilds its log context.
         context: {},
       });
       this.pendingHostKeys.delete(profile.profileId);
+      // Bug cause: when an update, identity confirmation, or other flow republishes with a new target, the old target's session lost its owner and was kept until Host exit, leaving one idle SSH connection to the device per update. Release the old session when the recovery intent switches target.
+      if (replacedTarget) this.releaseTargetTransport(replacedTarget);
       this.setState(effectiveProfile.profileId, {
         state: "online",
         sourceServerId,
@@ -1281,9 +1629,9 @@ export class SourceServerConnectionManager {
     } finally {
       signal?.removeEventListener("abort", cancelTargetTransport);
       explicitDisconnectSignal?.removeEventListener("abort", cancelTargetTransport);
-      // Bug 原因：分支内释放遗漏了握手落盘拒绝和兼容版本解析异常，恢复重试会累积连接。
-      // 握手、目录写入、身份确认、成员提交共用这一个未发布资源出口；在线表接管前始终由本次
-      // 尝试持有连接，统一释放并忽略其关闭事件，避免影响后继 owner。
+      // Bug cause: the in-branch release missed handshake-persistence rejection and compatible-version parse errors, so recovery retries accumulated connections.
+      // Handshake, directory write, identity confirmation, and membership commit share this single unpublished-resource exit; until the online table takes over, this attempt always owns the connection,
+      // so it is released uniformly and its close event is ignored, avoiding effects on the successor owner.
       if (unpublishedConnection) {
         ignoreConnectionClose = true;
         unpublishedConnection.dispose();
@@ -1300,22 +1648,42 @@ export class SourceServerConnectionManager {
     return adapter;
   }
 
+  /**
+   * Releases the target's transport session (SSH connection, WSL child process, etc., including credentials in it). Kept while the recovery intent still holds the same target,
+   * for reuse by retries, offline probes, and device operations.
+   *
+   * Bug cause: the Adapter caches sessions per target object and only closes them when a connection is aborted or the Host releases it; explicit disconnect, stop, a recovery intent switching target,
+   * and one-off operations ending all left them unreleased, so after stopping the remote service the local machine stayed connected to the device. The owner of a target releases it here on exit.
+   */
+  private releaseTargetTransport(target: RemoteTarget): void {
+    for (const input of this.reconnectInputs.values()) {
+      if (input.target === target) return;
+    }
+    this.adapters.get(target.kind)?.cancel?.(target);
+  }
+
   private handleUnexpectedClose(
     sourceServerId: string,
     reason: string,
     connection: ServerRemoteConnection,
   ): void {
     const online = this.onlineBySourceServerId.get(sourceServerId);
-    // 只处理属于当前 online owner 的关闭；已被替换或从未发布的连接迟到的 close 不得拆掉后继者。
+    // Only handle the close of the current online owner; a late close from a connection that was replaced or never published must not tear down its successor.
     if (!online || online.connection !== connection) return;
-    if ([...this.updateFlights].some((flight) => flight.sourceServerId === sourceServerId)) {
-      this.invalidateOnlineConnectionForUpdate(sourceServerId, online);
+    // A lifecycle operation makes the remote drop the connection on purpose: only invalidate the connection, do not remove the recovery intent, and do not schedule retries.
+    const expectedDisconnect = this.expectedDisconnectOperation(sourceServerId);
+    if (expectedDisconnect) {
+      this.invalidateOnlineConnectionForLifecycleOperation(
+        sourceServerId,
+        online,
+        expectedDisconnect,
+      );
       return;
     }
     this.onlineBySourceServerId.delete(sourceServerId);
-    // Bug 原因：意外断线后旧 RPC generation 只从在线表移除，却没有显式释放 protocol/socket；
-    // 多次重连会让旧 generation 的 pending 状态依赖 GC。先摘 owner 再 dispose，重复 close 回调会
-    // 因 online 表已无该 Source 而幂等返回。
+    // Bug cause: after an unexpected disconnect the old RPC generation was only removed from the online table, without explicitly releasing protocol/socket;
+    // repeated reconnects made old-generation pending state depend on GC. Remove the owner first and then dispose; repeated close callbacks
+    // return idempotently because the online table no longer has this Source.
     online.projectSubscription?.dispose();
     online.connection.dispose();
     for (const profileId of online.profileIds) {
@@ -1330,22 +1698,64 @@ export class SourceServerConnectionManager {
     this.scheduleOnlineRetry(sourceServerId, 0);
   }
 
-  private invalidateOnlineConnectionForUpdate(
+  /**
+   * Makes the closing of an online connection an "expected disconnect" operation (update or restart; by the mutual-exclusion matrix they never coexist). Before a stop runs the remote command,
+   * the recovery intent has been deleted and the connection released; a new connection the user establishes in the meantime is recovered as an ordinary disconnect and must not be swallowed as a generation change.
+   */
+  private expectedDisconnectOperation(
+    sourceServerId: string,
+  ): ExpectedDisconnectOperationKind | undefined {
+    for (const flight of this.lifecycleOperationFlights) {
+      if (flight.sourceServerId === sourceServerId && flight.kind !== "stop") return flight.kind;
+    }
+    return undefined;
+  }
+
+  /** Same-Source mutual exclusion: stop and restart are exclusive with every operation; multiple updates may coexist through sibling Profiles, as before. */
+  private assertLifecycleOperationCanStart(
+    sourceServerId: string,
+    kind: LifecycleOperationKind,
+  ): void {
+    const conflict = [...this.lifecycleOperationFlights].some(
+      (flight) =>
+        flight.sourceServerId === sourceServerId && (kind !== "update" || flight.kind !== "update"),
+    );
+    if (conflict) throw new SourceServerLifecycleOperationInProgressError(sourceServerId);
+  }
+
+  /**
+   * The only entry point for registering a lifecycle operation flight. The caller must first complete the mutual-exclusion check (recheck after yielding execution), and register before writing
+   * the operation log; the flight is removed by the same caller after the operation log ends.
+   */
+  private registerLifecycleOperation(
+    kind: LifecycleOperationKind,
+    profileId: string,
+    sourceServerId: string | undefined,
+  ): LifecycleOperationFlight {
+    const flight: LifecycleOperationFlight = {
+      kind,
+      profileId,
+      sourceServerId,
+      controller: new AbortController(),
+    };
+    this.lifecycleOperationFlights.add(flight);
+    return flight;
+  }
+
+  private invalidateOnlineConnectionForLifecycleOperation(
     sourceServerId: string,
     online: OnlineConnection,
+    operation: ExpectedDisconnectOperationKind,
   ): void {
     if (this.onlineBySourceServerId.get(sourceServerId) !== online) return;
-    // Bug 原因：显式更新过去只替换 Manager 内的物理连接，没有先失效仍指向旧 services 的
-    // logical workspace；更新成功后 UI 会看到 online，但 scoped RPC 仍命中已关闭 generation。
-    // 先摘物理 owner 并发布一次 Source 级失效，再释放连接，Registry 才能 fail-closed 后换代。
+    // Bug cause: an explicit update used to replace only the physical connection inside the Manager, without first invalidating the logical workspace still pointing at the old services;
+    // after a successful update the UI showed online, but scoped RPC still hit the closed generation.
+    // Remove the physical owner and publish one Source-level invalidation first, then release the connection, so the Registry can fail closed and then bump the generation.
     this.onlineBySourceServerId.delete(sourceServerId);
     for (const profileId of online.profileIds) {
-      this.setState(profileId, { state: "updating", sourceServerId });
+      this.setState(profileId, { state: expectedDisconnectProjection(operation), sourceServerId });
     }
-    this.connectionInvalidatedEmitter.fire({
-      sourceServerId,
-      reason: "update",
-    });
+    this.connectionInvalidatedEmitter.fire({ sourceServerId, reason: operation });
     online.projectSubscription?.dispose();
     online.connection.dispose();
   }
@@ -1399,8 +1809,8 @@ export class SourceServerConnectionManager {
     if (!input) return;
     const normalized = error === undefined ? undefined : normalizeRemoteConnectionError(error);
     if (normalized) {
-      // Bug 原因：预算耗尽后的最终 cause 只留在 state.error，而 UI 按合同不展示裸 Host
-      // 原文，导致诊断信息无稳定出口。终态每轮只记一条 warn，不按探测心跳刷盘。
+      // Bug cause: the final cause after the recovery budget is exhausted stayed only in state.error, while the UI, per contract, does not display the raw Host
+      // text, so diagnostic information had no stable outlet. The terminal state records only one warn per round and does not flush to disk on every probe heartbeat.
       this.options.logWarn?.(
         `[source-server] recovery budget exhausted source=${sourceServerId}`,
         error instanceof Error ? error : new Error(normalized.message),
@@ -1460,8 +1870,8 @@ export class SourceServerConnectionManager {
     ) {
       return false;
     }
-    // Bug 原因：旧恢复调度只识别 UpgradeRequired，其他用户动作和 retryable:false
-    // 会被下一次 retry/offline probe 覆盖。终态必须在创建后续 timer 前截断自动路径。
+    // Bug cause: the old recovery scheduling only recognized UpgradeRequired, so other user actions and retryable:false
+    // would be overwritten by the next retry/offline probe. The terminal state must cut off the automatic path before creating subsequent timers.
     this.clearRecoveryTimers(sourceServerId);
     if (input && !isSourceServerAutomaticRecoveryTerminalState(ownerState)) {
       this.setState(input.profile.profileId, {
@@ -1476,8 +1886,8 @@ export class SourceServerConnectionManager {
     if (input) {
       for (const profileId of this.profileIdsForSource(sourceServerId, input.profile.profileId)) {
         if (profileId === input.profile.profileId) continue;
-        // Bug 原因：Source 级恢复停止后，sibling Profile 若遗留 retrying，聚合状态仍会显示
-        // 连接中且其 logical wrapper 不会收到终态。只有真实 owner 保留可操作 pending 状态。
+        // Bug cause: after Source-level recovery stops, if a sibling Profile is left retrying, the aggregate state would still show
+        // connecting while its logical wrapper never receives the terminal state. Only the real owner keeps an actionable pending state.
         this.setState(profileId, {
           state: "offline",
           sourceServerId,
@@ -1522,8 +1932,8 @@ export class SourceServerConnectionManager {
         : {};
     const snapshot: SourceServerConnectionStateSnapshot = {
       profileId,
-      // 恢复/离线/更新是连接生命周期状态，不会产生新的版本兼容事实；保留最后一次
-      // Host 握手判定，避免 UI 在状态跃迁时丢失当前/可用/最低版本字段。
+      // Recovery, offline, and update are connection lifecycle states and produce no new version-compatibility fact; keep the last
+      // Host handshake judgment, so the UI does not lose the current/available/minimum version fields during state transitions.
       ...inheritedCompatibility,
       ...patch,
       updatedAt: this.now(),
@@ -1533,7 +1943,7 @@ export class SourceServerConnectionManager {
     }
     this.states.set(profileId, snapshot);
     if (previous?.state === "online" && snapshot.state !== "online" && previous.sourceServerId) {
-      // 最近在线是最后在线时刻，不是握手开始时间；失败重试不能把离线设备伪装成刚在线。
+      // The most recent online time is the last time it was online, not the handshake start time; a failed retry must not make an offline device look just online.
       void this.options.directory
         .recordLastOnline?.(previous.sourceServerId, snapshot.updatedAt)
         .catch((error: unknown) =>
