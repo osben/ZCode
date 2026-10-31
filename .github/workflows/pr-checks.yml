@@ -15,7 +15,9 @@ env:
   # Persistent V8 compile cache (Node >= 22.1). The unit suite is import-bound (module
   # load dominates wall time), and a local A/B with the same worker count measured
   # ~-30% wall. Safe across node_modules updates: cache entries are keyed per source.
-  NODE_COMPILE_CACHE: .v8-cache
+  # Absolute: a relative path resolves against each process cwd, so Node children started in
+  # temp fixture repos would write .v8-cache there and make them look dirty.
+  NODE_COMPILE_CACHE: ${{ github.workspace }}/.v8-cache
 
 jobs:
   checks:

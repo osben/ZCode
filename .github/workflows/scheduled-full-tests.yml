@@ -19,7 +19,9 @@ concurrency:
 env:
   # Persistent V8 compile cache (Node >= 22.1), same contract as pr-checks.yml: the unit suite is
   # import-bound, and the cache step below persists this directory between runs.
-  NODE_COMPILE_CACHE: .v8-cache
+  # Absolute: a relative path resolves against each process cwd, so Node children started in
+  # temp fixture repos would write .v8-cache there and make them look dirty.
+  NODE_COMPILE_CACHE: ${{ github.workspace }}/.v8-cache
 
 jobs:
   unit-tests:
