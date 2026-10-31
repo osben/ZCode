@@ -116,6 +116,7 @@ import { usePromptEditorDragState } from "@/prompt-editor/usePromptEditorDragSta
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { advanceComposerDraftRevision } from "@/v4/composer/composerDraftRevision.js";
 import type { AppSlashCommand } from "@/slashCommandHelpers.js";
+import { selectComposerAppSlashCommands } from "@/v4/composer/composerAppSlashCommands.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 import { runUserAction, startUserAction } from "@/lib/userActionTelemetry.js";
@@ -2402,8 +2403,6 @@ function ConversationComposerImpl({
       const finalizeSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
         submissionDraftTransaction.finalize();
-        if (activeSubmissionDraftTransactionRef.current === submissionDraftTransaction)
-          activeSubmissionDraftTransactionRef.current = null;
         if (activeSubmissionDraftTransactionRef.current === submissionDraftTransaction)
           activeSubmissionDraftTransactionRef.current = null;
         draftSubmissionClaimed = false;
@@ -4738,7 +4737,10 @@ function ConversationComposerImpl({
           // Bugfix 原因：命令目录必须完整来自 CLI workspace slash catalog；UI 只在
           // secondary pane 按产品能力隐藏 goal，不再追加任何内建命令或别名。
           excludedSlashCommandNames={suppressGoalCommands ? ["goal"] : undefined}
-          appSlashCommands={runtimeBlocked ? [] : appSlashCommands}
+          appSlashCommands={selectComposerAppSlashCommands(appSlashCommands, {
+            runtimeBlocked,
+            recoveryAvailable,
+          })}
           quickPrompts={runtimeBlocked ? undefined : quickPromptSlashItems}
           enableMentionPanel
           leadingActions={leadingActionsNode}

@@ -235,3 +235,18 @@ L-уровень (поштучно не портировать — зависи�
 2. Тестовый пайплайн после merge: перенос форковых тестов в engineering-манифест vs сохранение параллельного fork-пайплайна.
 3. Electron 44: принимать в том же PR или отдельным шагом (форк имеет свои нативные зависимости).
 4. pending-баги апстрима (38 шт., в т.ч. 19 e2e-promotion): фиксить форку самостоятельно или ждать апстрим.
+
+## 7. Аудит после merge (#373)
+
+Сверка HEAD с `a60ba6a7` по всем hunk-ам апстрима. Потерянное при разрешении конфликтов восстановлено отдельным PR после squash-merge #373:
+
+- Toast: у `variant: "success"` снова иконка `CircleCheck` (`packages/ui/src/components/ui/toast.tsx`); тест `packages/ui/test/toastHost.test.ts`.
+- Слэш-меню композера: при заблокированном runtime команда с `recovery` (например `/reload`) остаётся в списке, если восстановление доступно; обычные команды скрыты. Правило вынесено в `packages/ui/src/v4/composer/composerAppSlashCommands.ts`; тест `packages/ui/test/composerAppSlashCommands.test.ts`.
+- Текст `chat.quota.startPlan.concurrentLimit.retryExhausted` (en-US, zh-CN, uk-UA) снова предлагает перейти на подписку Coding Plan.
+- Остатки разрешения конфликтов: дубль сброса `activeSubmissionDraftTransactionRef` в `finalizeSubmittedDraft`, неиспользуемый импорт в `mcpSyncService.ts`, лишние зависимости `useCallback` в `useRootWorkspaceActions.ts`.
+
+Не восстановлено намеренно:
+
+- `packages/desktop/test/e2e/web-remote-control-session-events.test.ts`: форк удалил его ещё при создании (`a6cfcca1`) вместе с auth-gate fixture и её wdio-подключением (specs/relay-v2-migration.md, п. 13); апстрим лишь перенёс файл из `manual-review/pending`. Без relay fixture в wdio тест не запускается.
+
+Открыто (решение владельца): предупреждение апстрима об обрезке MEMORY.md (`core/memory/index-content.ts`).
