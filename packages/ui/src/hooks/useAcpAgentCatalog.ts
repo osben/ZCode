@@ -1,9 +1,11 @@
 // The options an ACP agent offered in its last handshake (specs/acp-agent-runtime.md "S6 readiness"). The composer
 // shows them before a session exists; the host reads the fork-owned catalog file, never a session projection.
 // The same read carries the model values hidden in Settings ("Settings: models and Advanced").
+// The caller passes the host's service: the composer its workspace context's, Settings the workspace host's
+// (`useAcpSettingsHost`, "Settings: workspace host"), so both read the same host's files.
 import { useCallback, useEffect, useState } from "react";
+import type { IProviderSettingsService } from "@zcode/services";
 import type { ExternalAgentConfigOption } from "@zcode/shared/zcode-protocol-v4";
-import { useServices } from "@/hooks/useServices.js";
 
 export interface AcpAgentCatalogState {
   /** Undefined while the read is pending; null when the agent has no catalog or ACP is unsupported here. */
@@ -20,9 +22,7 @@ export interface AcpAgentCatalogHandle extends AcpAgentCatalogState {
 /** A mutable copy in the turn contract's shape (the service returns readonly arrays). */
 function copyCatalogOptions(
   options: NonNullable<
-    Awaited<
-      ReturnType<ReturnType<typeof useServices>["providerSettingsService"]["getAcpAgentCatalog"]>
-    >["options"]
+    Awaited<ReturnType<IProviderSettingsService["getAcpAgentCatalog"]>>["options"]
   >,
 ): ExternalAgentConfigOption[] {
   return options.map((option) => ({
@@ -31,16 +31,18 @@ function copyCatalogOptions(
   }));
 }
 
-export function useAcpAgentCatalog(agentId: string | null): AcpAgentCatalogHandle {
-  const { providerSettingsService } = useServices();
+export function useAcpAgentCatalog(
+  providerSettingsService: IProviderSettingsService,
+  agentId: string | null,
+): AcpAgentCatalogHandle {
   const [state, setState] = useState<AcpAgentCatalogState>({ options: undefined });
   const [revision, setRevision] = useState(0);
   const reload = useCallback(() => setRevision((value) => value + 1), []);
 
-  // A new agent starts from the pending state; a reload of the same agent keeps the shown state until it settles.
+  // A new agent or host starts from the pending state; a reload of the same agent keeps the shown state until it settles.
   useEffect(() => {
     setState({ options: agentId === null ? null : undefined });
-  }, [agentId]);
+  }, [agentId, providerSettingsService]);
 
   useEffect(() => {
     if (agentId === null) return;

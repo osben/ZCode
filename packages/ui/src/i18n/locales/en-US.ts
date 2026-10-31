@@ -8205,6 +8205,10 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.acp.notInstalled": "Not installed",
   "settings.modelProvider.acp.docs": "Documentation",
   "settings.modelProvider.acp.unsupported": "ACP agents are not supported in this environment.",
+  "settings.modelProvider.acp.remoteHostNote":
+    "These agents run on the remote host of the active workspace.",
+  "settings.modelProvider.acp.remoteDisconnected":
+    "The remote host is not connected. Its ACP agents load when it connects.",
   "settings.modelProvider.acp.sectionLaunch": "Launch configuration",
   "settings.modelProvider.acp.sectionLogin": "Login",
   "settings.modelProvider.ollama.groupTitle": "Local models",

@@ -136,6 +136,23 @@ vi.mock("@/hooks/useServices.js", () => ({
   },
 }));
 
+// The ACP group resolves the workspace host (specs/acp-agent-runtime.md "Settings: workspace host"); this case
+// only covers the subscription OAuth, so the host answers nothing.
+// The host object is stable across renders, as the real hook's memo is.
+const acpSettingsHost = vi.hoisted(() => ({
+  providerSettingsService: {
+    detectAcpAgents: async () => ({ supported: false, agents: [], detectedAt: 0 }),
+  },
+  view: null,
+  commitView: () => {},
+  rpcReady: true,
+  isRemote: false,
+  hostKey: "",
+}));
+vi.mock("@/hooks/useAcpSettingsHost.js", () => ({
+  useAcpSettingsHost: () => acpSettingsHost,
+}));
+
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStore: (selector: (state: { activeWorkspacePath: null; tabs: [] }) => unknown) =>
     selector({

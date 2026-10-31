@@ -137,13 +137,14 @@ value to everything it builds:
 - Settings bridge (`detect`, `catalog`, `test`, `status`, `login`): answers `supported: false` and
   spawns nothing on an unsupported host. The renderer has no predicate of its own. It reads
   `supported` from the host's detection, so a web client sees the state of the host it is connected
-  to, not of the browser.
+  to, not of the browser. In Settings that host is the workspace host (see "Settings: workspace
+  host"): a remote workspace on a Linux host has no ACP group even when the desktop is macOS.
 
 Surface behavior (all layers derive from the same value):
 
-- Settings → Model Providers: the ACP group is built only while detection reports `supported`. Until
-  the first detection settles it shows the loading row, so an unsupported host shows that row briefly
-  and then no group.
+- Settings → Model Providers: the ACP group is built only while the workspace host's detection
+  reports `supported`. Until the first detection settles it shows the loading row, so an
+  unsupported host shows that row briefly and then no group.
 - Providers: `acp:<agentId>` providers exist only when the host is supported. ACP-managed providers
   (`acp-agent` access) are never listed under the custom group, whatever the platform, so a legacy
   inline `acp-agent` rule on an unsupported host is listed nowhere. The file is left untouched.
@@ -188,8 +189,8 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Navigation: a dedicated group `id: "acp"` ("ACP agents") rendered directly after the `custom`
   group. Each installed agent, and each uninstalled agent that still has an ACP-managed provider, is
   one nav item (`type: "acpAgent"`, key `acp-agent:<agentId>`) with the agent initial, its name, and
-  the status dot defined below. The group is built only while the host reports `supported` (see
-  "Availability (platform rule)").
+  the status dot defined below. The group is built only while the workspace host reports
+  `supported` (see "Availability (platform rule)" and "Settings: workspace host").
 - `acp:<agentId>` personal providers are listed only in the `acp` group, never also under `custom`.
 - Detection has one owner: a single hook called once by `ModelProviderSection`; navigation and
   detail read its result. Rescan keeps the previous list visible while it runs.
@@ -286,13 +287,9 @@ Owner and storage:
 - `getAcpAgentCatalog` returns `hiddenModels` next to `options`, so the composer reads one result.
   The composer reads it when the agent's mode area mounts; a change in Settings applies to the next
   mount (no live push).
-- Host scope: like the rest of the ACP Settings group (detection, enable, launch config, Test,
-  catalog), the Models section reads and writes the **Local Host** that Settings is bound to (the
-  Model Providers pane runs on `localHostServices`). ACP launch config is host-local and not synced
-  (see "Storage and upstream compatibility"), so the hidden set is too: in a remote workspace the composer reads
-  the remote host's own `fork_acp_agent_model_visibility.json`, which this pane does not edit.
-  Configuring a remote host's ACP agents from Settings is a separate change that moves the whole
-  group to the workspace host, not just this section.
+- Host scope: like the rest of the ACP Settings group, the Models section reads and writes the
+  **workspace host** (see "Settings: workspace host"), the same host whose
+  `fork_acp_agent_model_visibility.json` the composer reads.
 - Hiding is presentation only: it never sends `set_config_option` and never changes a session's
   chosen value; the worker's validation of a choice is unchanged.
 
@@ -313,6 +310,96 @@ Tests: `packages/ui/test/acpAgentDetail.test.ts` (SM1, SM2, SM4–SM8), `externa
 (SM2, SM3), `packages/provider-node/test/fork-acp-agent-model-visibility-store.test.ts`, and desktop
 E2E `ACP-E2E-06` (Test loads the mock agent's models; an unchecked one lands in
 `fork_acp_agent_model_visibility.json`; the last visible one is disabled).
+
+## Settings: workspace host
+
+Reason: the composer reads an ACP agent's catalog and hidden models from the services of the
+workspace it runs in, and a remote workspace's ACP sessions run on the remote host with the remote
+sidecars. Settings used to configure the Local Host only, so in a remote workspace it edited the
+desktop's files while the composer read the remote host's files.
+
+Product rules:
+
+- The ACP group in Model Providers configures the **host that owns the active workspace**: the
+  Local Host for a local workspace (or no workspace), the remote host for a remote one. The whole
+  group moves together, never one control: detection and Rescan, enable/disable and Save
+  (`saveAcpAgent`, `setAcpAgentEnabled`), the enabled state, saved launch config and conflict
+  shown in the group (read from that host's provider settings view), status, login, Test, the
+  catalog and model visibility.
+- Generic provider configuration (presets, custom providers, display order, Ollama's provider
+  mutations) stays on the Local Host. Only the Ollama probe and the ACP group follow the workspace.
+- A remote workspace never shows the desktop's ACP agents; it shows the remote host's. The ACP
+  detail and the catalog say so with one line ("These agents run on the remote host of the active
+  workspace").
+- Remote states:
+  - No remote attachment (`rpcReady` false, `connectionKind === "remote-waiting"`): the resolver
+    cannot tell a pending reconnect from a host that is down, so the group shows the "Detect
+    agents" entry with "The remote host is not connected. Its ACP agents load when it connects."
+    No detection call is sent (Retry does nothing until then). When the attachment is ready,
+    detection runs once by itself.
+  - Disconnected or unreachable after attaching (the disconnected-services proxy or a failed RPC):
+    the "Detect agents" entry with the error and Retry. The disconnected code is shown with the
+    message above, never as the raw code. A remote build without the ACP methods fails the same
+    way, with its own error.
+  - Unsupported remote host (detection `supported: false`, e.g. a Linux host): no ACP group, as on
+    any unsupported host (see "Availability (platform rule)").
+- Switching the workspace host (another workspace, or the remote attachment is replaced) drops the
+  previous host's agents: detection returns to loading, and a response from the previous host is
+  never written. An open agent detail remounts, so a launch form seeded from one host's saved
+  config can never be saved to another host.
+
+Owner and event order:
+
+| Fact                                 | Owner                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| Which host the ACP group configures  | `useAcpSettingsHost(workspacePath, workspaceIdentity)` (one call per page) |
+| ACP agents' enabled/saved/conflict   | that host's provider settings view (`useProviderSettingsServiceView`)      |
+| Detection, catalog, hidden set, Test | that host's `providerSettingsService` (each host owns its own sidecars)    |
+
+- `useAcpSettingsHost` resolves the workspace's services once with
+  `useWorkspaceServicesResolution(workspacePath, null, workspaceIdentity)` (the identity is the
+  third argument; the second is the preferred remote session id), the same resolution the composer
+  uses. `ModelProviderSection` calls it once and passes its `providerSettingsService` to every ACP
+  hook and component; none of them calls `useServices()` for ACP.
+- `useAcpAgentCatalog(providerSettingsService, agentId)` takes the service as an argument; the
+  composer passes its own context's service, so its behavior is unchanged.
+- The view returned by an ACP write is committed to the ACP host's view only, never to the Local
+  Host's provider view.
+- The detail key is `<host key>:acp-agent:<agentId>`, the host key being
+  `workspaceIdentity?.trim() || workspacePath` (empty for no workspace).
+
+```
+ SettingsPage ──ServiceProvider(localHostServices)──▶ ModelProviderSection
+                                                       │ useModelProviders ──▶ Local Host (generic providers)
+                                                       │ useAcpSettingsHost(path, identity)
+                                                       ▼
+                         useWorkspaceServicesResolution ──▶ workspace host services
+                                                       │   (local base | remote session | disconnected proxy)
+               ┌───────────────────────────────────────┼─────────────────────────────────┐
+               ▼                                       ▼                                 ▼
+  detectAcpAgents (once rpcReady)       getView/onDidChange (ACP view)   saveAcpAgent / setAcpAgentEnabled /
+                                                                          test / status / login /
+                                                                          getAcpAgentCatalog / setAcpAgentHiddenModels
+```
+
+Acceptance:
+
+| #   | Given                                                                       | When                          | Then                                                                                                                                                           |
+| --- | --------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WH1 | Remote workspace, remote host supports ACP                                  | Settings opens Model Settings | Detection, enable, Save, disable, Test, status, catalog and hidden-model writes reach the remote host's service; the Local Host's service receives no ACP call |
+| WH2 | Local workspace (or none)                                                   | Settings opens Model Settings | The ACP group uses the Local Host's service (behavior unchanged)                                                                                               |
+| WH3 | Remote workspace without an attachment                                      | Settings renders              | "Detect agents" shows the not-connected message and no detection call is sent; detection runs once the attachment is ready                                     |
+| WH4 | Remote attachment's call fails with the disconnected code                   | Settings renders              | "Detect agents" shows the not-connected message (not the raw code) with Retry                                                                                  |
+| WH5 | Detection of host A in flight                                               | The workspace host becomes B  | The group returns to loading, A's late answer is dropped, B's agents are shown                                                                                 |
+| WH6 | Remote workspace, the remote host has agent X enabled, the desktop does not | Settings renders              | X is shown enabled with the remote host's saved launch config                                                                                                  |
+
+Tests: `packages/ui/test/acpSettingsWorkspaceHost.test.ts` (WH1, WH2, WH6, jsdom: the real
+`ModelProviderSection` ACP path with a workspace host service distinct from the Local Host's, which
+must receive no ACP call), `packages/ui/test/acpAgentDetection.test.ts` (WH3–WH5) and
+`packages/ui/test/v4ExternalAgentConfigControls.test.ts` (the composer passes its context's
+service to the catalog read). No desktop E2E covers a remote workspace: the
+SSH remote E2E needs a real host from secret env (`ZCODE_E2E_SSH_*`), and its Linux host answers
+`supported: false`, so it cannot exercise an enabled remote ACP group.
 
 ## Storage and upstream compatibility
 

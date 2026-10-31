@@ -1129,6 +1129,11 @@ exceptions:
       - packages/ui/src/hooks/useAcpAgentHiddenModels.ts
       - packages/ui/src/hooks/useOllamaDetection.ts
     reason: Review fixes extract the ACP hidden-models write queue and the workspace-routed Ollama detection probe into hooks under packages/ui/src/hooks, so the settings components access services through hooks per packages/ui/AGENTS.md and the probe resolves the workspace's host per specs/ollama-local-provider.md while provider mutations keep the Local Host. Same unmanaged packages/ui tree as acp-agent-brand-mark-unmanaged-files; adopting it needs a separate module boundary refactor.
+  - id: acp-settings-workspace-host-unmanaged-file
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/hooks/useAcpSettingsHost.ts
+    reason: The single owner of the host the ACP group of Model Settings configures (specs/acp-agent-runtime.md, section "Settings - workspace host") resolves the workspace's services through the existing useWorkspaceServicesResolution and reads that host's provider settings view through the existing useProviderSettingsServiceView, so every ACP settings hook receives one service. Same unmanaged packages/ui hooks tree as model-settings-review-hooks-unmanaged-files; adopting it needs a separate module boundary refactor.
   - id: legacy-snapshot-async-read-unmanaged-files
     rule: unmanaged-new-file
     paths:

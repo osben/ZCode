@@ -42,6 +42,7 @@ import { useToolbarShortcutBindings } from "@/v4/composer/toolbarShortcuts.js";
 // Same entry ConversationComposer used before the S6 branch, so existing composer test doubles still apply.
 import { V4ComposerModeSwitch } from "@/v4/composer/V4ComposerToolbar.js";
 import { useAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
+import { useServices } from "@/hooks/useServices.js";
 import {
   EXTERNAL_AGENT_CONFIG_SEARCH_THRESHOLD,
   EXTERNAL_AGENT_CONTROL_KINDS,
@@ -376,7 +377,9 @@ function V4ExternalAgentModeAreaImpl({
   ) => void;
   modeSwitchProps: ModeSwitchProps;
 }) {
-  const catalog = useAcpAgentCatalog(agentId);
+  // The workspace context's host: the same host whose catalog and hidden set Settings edits.
+  const { providerSettingsService } = useServices();
+  const catalog = useAcpAgentCatalog(providerSettingsService, agentId);
   // A draft choice needs the draft session it belongs to; without one the selects show the catalog only.
   const draftChoices = draftExternalAgentKey
     ? draftExternalAgentChoicesOf(draftExternalAgentChoices ?? {}, draftExternalAgentKey, agentId)

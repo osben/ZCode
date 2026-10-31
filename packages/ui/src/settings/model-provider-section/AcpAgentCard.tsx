@@ -10,6 +10,7 @@ import type {
   AcpAgentStatusReport,
   AcpAgentSummary,
   AcpAgentTestResult,
+  IProviderSettingsService,
 } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
@@ -17,10 +18,14 @@ import { Spinner } from "@/components/ui/spinner.js";
 import { Switch } from "@/components/ui/switch.js";
 import { Textarea } from "@/components/ui/textarea.js";
 import { useAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
-import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import { AcpAgentAdvanced, AcpAgentModelsList, DetailSection } from "./AcpAgentDetailSections.js";
+import {
+  AcpAgentAdvanced,
+  AcpAgentModelsList,
+  AcpRemoteHostNote,
+  DetailSection,
+} from "./AcpAgentDetailSections.js";
 import { AcpAgentFrames } from "./AcpAgentFrames.js";
 import { AcpAgentMark } from "./AcpAgentMark.js";
 import { ProviderStatusIndicator, type ProviderStatusKind } from "./ProviderStatusIndicator.js";
@@ -45,6 +50,8 @@ interface AcpAgentStatusState {
 }
 
 export function AcpAgentDetail({
+  providerSettingsService,
+  remoteHost = false,
   agent,
   enabled,
   conflict,
@@ -69,9 +76,11 @@ export function AcpAgentDetail({
   onEnable: (form: AcpAgentFormValues) => Promise<void>;
   onUpdate: (form: AcpAgentFormValues) => Promise<void>;
   onDisable: () => Promise<void>;
+  /** The workspace host's service (`useAcpSettingsHost`). */
+  providerSettingsService: IProviderSettingsService;
+  remoteHost?: boolean;
 }) {
   const { intl } = useZCodeIntl();
-  const { providerSettingsService } = useServices();
   const t = useCallback(
     (id: string, values?: Record<string, string | number>) =>
       intl.formatMessage({ id: `settings.modelProvider.acp.${id}` }, values),
@@ -118,7 +127,7 @@ export function AcpAgentDetail({
   const [loginResult, setLoginResult] = useState<AcpAgentLoginResult | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const catalog = useAcpAgentCatalog(agent.agentId);
+  const catalog = useAcpAgentCatalog(providerSettingsService, agent.agentId);
   const reloadCatalog = catalog.reload;
 
   const envParse = parseAcpEnvLines(envText);
@@ -292,6 +301,8 @@ export function AcpAgentDetail({
         </div>
       </div>
 
+      {remoteHost ? <AcpRemoteHostNote className="mt-2" text={t("remoteHostNote")} /> : null}
+
       {conflict ? (
         <p role="alert" className="mt-3 text-ui-sm text-destructive">
           {t("conflict", { providerId: acpProviderId(agent.agentId) })}
@@ -344,7 +355,13 @@ export function AcpAgentDetail({
                 })}
           </p>
         ) : null}
-        <AcpAgentModelsList key={agent.agentId} agentId={agent.agentId} catalog={catalog} t={t} />
+        <AcpAgentModelsList
+          key={agent.agentId}
+          providerSettingsService={providerSettingsService}
+          agentId={agent.agentId}
+          catalog={catalog}
+          t={t}
+        />
       </DetailSection>
       <DetailSection title={t("sectionLogin")}>
         <p className="flex min-w-0 flex-wrap items-center gap-2 text-ui-sm text-foreground-subtle">

@@ -3074,6 +3074,10 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.acp.notInstalled": "Не встановлено",
   "settings.modelProvider.acp.docs": "Документація",
   "settings.modelProvider.acp.unsupported": "Агенти ACP не підтримуються в цьому середовищі.",
+  "settings.modelProvider.acp.remoteHostNote":
+    "Ці агенти працюють на віддаленому хості активного робочого простору.",
+  "settings.modelProvider.acp.remoteDisconnected":
+    "Віддалений хост не під'єднано. Його агенти ACP завантажаться після під'єднання.",
   "settings.modelProvider.acp.sectionLaunch": "Конфігурація запуску",
   "settings.modelProvider.acp.sectionLogin": "Вхід",
   "settings.modelProvider.ollama.groupTitle": "Локальні моделі",

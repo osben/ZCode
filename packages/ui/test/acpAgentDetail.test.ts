@@ -2,7 +2,7 @@
 
 import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AcpAgentSummary } from "@zcode/services";
+import type { AcpAgentSummary, IProviderSettingsService } from "@zcode/services";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { AcpAgentDetail } from "@/settings/model-provider-section/AcpAgentCard.js";
@@ -17,8 +17,12 @@ const { providerSettingsService } = vi.hoisted(() => ({
   },
 }));
 
+// The detail runs on the workspace host's service it is given, never the context's
+// (specs/acp-agent-runtime.md "Settings: workspace host").
 vi.mock("@/hooks/useServices.js", () => ({
-  useServices: () => ({ providerSettingsService }),
+  useServices: () => {
+    throw new Error("the ACP detail must not read the services context");
+  },
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -50,6 +54,7 @@ function detail(props: Partial<Parameters<typeof AcpAgentDetail>[0]> & { agent: 
     TooltipProvider,
     null,
     createElement(AcpAgentDetail, {
+      providerSettingsService: providerSettingsService as unknown as IProviderSettingsService,
       enabled: false,
       conflict: false,
       onRescan: vi.fn(),

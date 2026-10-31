@@ -242,6 +242,8 @@ export interface AcpDetectionState {
   /** A rescan is in flight; the previous agents stay visible. */
   readonly refreshing: boolean;
   readonly error?: string;
+  /** The error is the workspace's remote host not being connected (specs/acp-agent-runtime.md "Settings: workspace host"). */
+  readonly disconnected?: boolean;
 }
 
 export interface AcpNavigationGroupInput {
