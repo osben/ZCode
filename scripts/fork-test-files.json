@@ -375,6 +375,7 @@
   "packages/ui/test/useVoiceModelWarmUp.test.ts",
   "packages/ui/test/useWebSpeechDictation.test.ts",
   "packages/ui/test/v4ComposerIncognitoControl.test.ts",
+  "packages/ui/test/v4ConversationComposerBlockedSlashMenu.test.ts",
   "packages/ui/test/v4ConversationComposerDraftScopeLeak.test.ts",
   "packages/ui/test/v4ConversationComposerWorktreeLateAck.test.ts",
   "packages/ui/test/v4ConversationComposerWorktreeLateAckDispatch.test.ts",
