@@ -12,6 +12,8 @@ export {
 export type {
   AcpAgentDetectionResult,
   AcpAgentEnabledInput,
+  AcpAgentHiddenModelsInput,
+  AcpAgentHiddenModelsResult,
   AcpAgentSaveInput,
   AcpAgentLoginResult,
   AcpAgentStatusReport,
@@ -20,6 +22,13 @@ export type {
   AcpAgentTestResult,
   AcpFrameEvent,
 } from "./model-provider/acpAgentsContract.js";
+export {
+  OLLAMA_DEFAULT_BASE_URL,
+  normalizeOllamaBaseUrl,
+  type OllamaDetectInput,
+  type OllamaDetectionResult,
+  type OllamaModelSummary,
+} from "./model-provider/ollamaDetection.js";
 export {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,

@@ -45,6 +45,12 @@ export const PROVIDER_BUSINESS_ERROR_CODES = [
   "3106",
   "2007",
   "429",
+  // ChatGPT plan (OpenAI SIWC) codes; specs/chatgpt-plan-signin.md "Limits and recovery in Desktop".
+  "subscription_sharing_usage_limit_exceeded",
+  "subscription_sharing_invalid_user",
+  "subscription_sharing_user_not_eligible",
+  "chatpass_v2_scope_not_authorized",
+  "chatpass_v2_invalid_authorization_context",
 ] as const;
 
 export type ProviderBusinessErrorCode = (typeof PROVIDER_BUSINESS_ERROR_CODES)[number];
@@ -71,6 +77,11 @@ export const PROVIDER_BUSINESS_ERROR_MESSAGE_IDS: Record<ProviderBusinessErrorCo
   "3106": "zcode.error.providerBusiness.3106",
   "2007": "zcode.error.providerBusiness.2007",
   "429": "zcode.error.providerBusiness.429",
+  subscription_sharing_usage_limit_exceeded: "chat.quota.chatgptPlanLimited",
+  subscription_sharing_invalid_user: "zcode.error.chatgptPlan.signInAgain",
+  subscription_sharing_user_not_eligible: "zcode.error.chatgptPlan.notEligible",
+  chatpass_v2_scope_not_authorized: "zcode.error.chatgptPlan.signInAgain",
+  chatpass_v2_invalid_authorization_context: "zcode.error.chatgptPlan.signInAgain",
 };
 
 export const PROVIDER_BUSINESS_ERROR_ACTION_MESSAGE_IDS: Record<
@@ -104,7 +115,25 @@ const PROVIDER_BUSINESS_ERROR_UI_ACTIONS: Record<
   "3106": null,
   "2007": "retry-later",
   "429": "retry-later",
+  // The ChatGPT plan banner and the Model settings action cover these; no relogin of the Z.ai account.
+  subscription_sharing_usage_limit_exceeded: null,
+  subscription_sharing_invalid_user: null,
+  subscription_sharing_user_not_eligible: null,
+  chatpass_v2_scope_not_authorized: null,
+  chatpass_v2_invalid_authorization_context: null,
 };
+
+/** ChatGPT plan codes whose recovery is in Model settings → ChatGPT Plan. */
+const CHATGPT_PLAN_SETTINGS_CODES: ReadonlySet<string> = new Set([
+  "subscription_sharing_invalid_user",
+  "subscription_sharing_user_not_eligible",
+  "chatpass_v2_scope_not_authorized",
+  "chatpass_v2_invalid_authorization_context",
+]);
+
+export function isChatGptPlanSettingsRecoveryCode(code: string | undefined): boolean {
+  return code !== undefined && CHATGPT_PLAN_SETTINGS_CODES.has(code);
+}
 
 export function isProviderBusinessErrorCode(
   code: string | undefined,

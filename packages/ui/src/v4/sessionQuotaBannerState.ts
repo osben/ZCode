@@ -24,6 +24,7 @@ export type SessionQuotaBannerKind =
   | "daily-exhausted"
   | "concurrent-limit"
   | "provider-limited"
+  | "chatgpt-plan-limited"
   | "mcp-quota-exhausted"
   | "mcp-plan-required";
 
@@ -105,6 +106,8 @@ export function buildSessionQuotaBannerState(params: {
   serverConcurrentLimitReason?: StartPlanConcurrentLimitBannerReason;
   serverProviderLimitedBusinessCode?: GlmQuotaBannerBusinessCode;
   serverProviderLimitedMessage?: string | null;
+  /** The ChatGPT plan usage limit was reached (specs/chatgpt-plan-signin.md "Limits and recovery in Desktop"). */
+  serverChatGptPlanLimited?: boolean;
   /** Fact that an official Server MCP was determined unavailable during this session (from the tool row's structured marker). */
   mcpUnavailableNotice?: McpUnavailableNotice | null;
 }): SessionQuotaBannerState {
@@ -153,6 +156,27 @@ export function buildSessionQuotaBannerState(params: {
       dismissible: false,
       blocksSubmit: false,
       priority: 50,
+    };
+  }
+
+  if (params.serverChatGptPlanLimited === true) {
+    return {
+      visible: true,
+      kind: "chatgpt-plan-limited",
+      concurrentLimitBusinessCode: null,
+      concurrentLimitReason: null,
+      providerLimitedBusinessCode: null,
+      providerLimitedMessage: null,
+      // No reset time: the error carries none and there is no official usage source.
+      providerLimitedResetAt: null,
+      modelName: params.modelId,
+      mcpServerName: null,
+      mcpNoticeRowId: null,
+      remainingTokens: null,
+      remainingPercent: null,
+      dismissible: true,
+      blocksSubmit: false,
+      priority: 45,
     };
   }
 
@@ -315,5 +339,6 @@ export function resolveQuotaBannerUpgradeProviderId(providerId: string | null): 
  * that paying lets them continue immediately, which is misleading. Missing entitlement (`mcp-plan-required`) is what an upgrade can resolve.
  */
 export function shouldOfferQuotaBannerUpgrade(kind: SessionQuotaBannerKind | null): boolean {
-  return kind !== "mcp-quota-exhausted";
+  // The ChatGPT plan is managed on chatgpt.com; the banner offers "Manage usage" instead of a ZCode upgrade.
+  return kind !== "mcp-quota-exhausted" && kind !== "chatgpt-plan-limited";
 }

@@ -32,7 +32,11 @@ import {
 import { cn } from "./components/lib/utils.js";
 import { toast } from "./components/ui/toast.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
-import { getProviderBusinessErrorMessageId } from "@/lib/providerBusinessError.js";
+import {
+  getProviderBusinessErrorMessageId,
+  isChatGptPlanSettingsRecoveryCode,
+  isProviderBusinessErrorCode,
+} from "@/lib/providerBusinessError.js";
 import { buildErrorFeedbackDescription } from "@/lib/errorFeedbackDraft.js";
 import {
   isSuspiciousEmptyModelResultMessage,
@@ -81,6 +85,16 @@ function parseClaudeUnknownCommandMessage(message: string): {
  * Registry, but local config, once saved, is auto-pushed to the remote by Provisioning, so only the
  * wording differs; the config/upgrade action always targets the local machine.
  */
+/**
+ * The provider business code of an error: `code` when it is a known one, else the attributed provider code (a
+ * cold-hydrated error carries the adapter class name in `code`).
+ */
+function resolveAttributedProviderBusinessCode(error: ZCodeUiError): string | undefined {
+  if (isProviderBusinessErrorCode(error.code)) return error.code;
+  const attributed = error.attribution?.providerErrorCode;
+  return isProviderBusinessErrorCode(attributed) ? attributed : error.code;
+}
+
 export type ChatErrorBannerModelConfigTarget = "local" | "remote";
 
 export function resolveChatErrorBannerDisplayMessage(
@@ -129,7 +143,7 @@ export function resolveChatErrorBannerDisplayMessage(
   const providerBusinessCode =
     resolveRequestVerificationBusinessCode(error.code, error.message) ??
     resolveOffPeakTicketExpiredBusinessCode(error.code, error.message) ??
-    error.code;
+    resolveAttributedProviderBusinessCode(error);
   const providerBusinessMessageId = getProviderBusinessErrorMessageId(providerBusinessCode);
   if (providerBusinessMessageId) {
     return intl.formatMessage({ id: providerBusinessMessageId });
@@ -193,6 +207,10 @@ export function ChatErrorBanner({
   );
   const remoteConnectionFailure = Boolean(getRemoteConnectionFailureCode(error));
   const modelConfigMissing = isModelConfigMissingError(error);
+  // A ChatGPT plan sign-in error recovers in Model settings → ChatGPT Plan, not through a CLI command.
+  const chatGptPlanSettingsRecovery = isChatGptPlanSettingsRecoveryCode(
+    resolveAttributedProviderBusinessCode(error),
+  );
   const hookBlocked = error.code === "fault.runtime.hookBlocked";
   if (shouldSuppressChatErrorBanner(error)) {
     return null;
@@ -323,6 +341,20 @@ export function ChatErrorBanner({
               {intl.formatMessage({ id: "chat.error.setModels" })}
             </Button>
           </>
+        ) : null}
+
+        {chatGptPlanSettingsRecovery && onOpenModelSettings ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="chat-error-chatgpt-plan-settings"
+            onClick={onOpenModelSettings}
+            className={cn(actionButtonClassName, "gap-1.5")}
+          >
+            <SettingsIcon className="size-3.5" />
+            {intl.formatMessage({ id: "chat.error.modelSettings" })}
+          </Button>
         ) : null}
 
         {!modelConfigMissing && error.detail ? (

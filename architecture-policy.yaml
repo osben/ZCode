@@ -1631,6 +1631,18 @@ exceptions:
       - packages/services/src/model-provider/acpAgentLogin.ts
       - packages/services/src/model-provider/acpAgentCommand.ts
     reason: Cohesive pieces split out of the existing ACP runtime and settings bridge to keep each file under the staged-size limit (handshake wiring, process-tree teardown, login helpers); the runtime keeps the single lifecycle state owner. Adopting packages/acp-agent-runtime and the services model-provider directory needs a separate module boundary refactor.
+  - id: chatgpt-plan-codex-grant-purge-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/services/src/oauth/siwc/siwcCodexGrantPurge.ts
+    reason: Replaces the removed codex-flavor usage probe modules in the unmanaged services oauth/siwc directory with a single revoke-and-delete of grants stored by older builds (specs/chatgpt-plan-signin.md "Usage limits → Leftover grant purge"); SiwcAuthService stays its only caller. Adopting packages/services/src/oauth needs a separate module boundary refactor.
+  - id: ollama-local-provider-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/services/src/model-provider/ollamaDetection.ts
+      - packages/ui/src/settings/model-provider-section/OllamaDetail.tsx
+      - packages/ui/src/settings/model-provider-section/ollamaSync.ts
+    reason: The read-only Ollama probe (specs/ollama-local-provider.md) sits next to the ACP settings bridge in the unmanaged services model-provider directory and is exposed through the existing provider settings service; its Settings entry and pure sync plan sit next to their neighbours in the unmanaged packages/ui settings model-provider-section tree and write only through the existing provider mutations. Adopting those directories needs a separate module boundary refactor.
   - id: acp-agent-fork-sidecar-unmanaged-files
     rule: unmanaged-new-file
     paths:
@@ -1643,7 +1655,14 @@ exceptions:
     paths:
       - packages/ui/src/settings/model-provider-section/AcpAgentMark.tsx
       - packages/ui/src/settings/model-provider-section/acpAgentLogo.ts
-    reason: The ACP agent brand mark (specs/acp-agent-runtime.md "Agent registry") sits next to its neighbours in the unmanaged packages/ui settings model-provider-section tree (AcpAgentCard, AcpAgentsPanel). Keeping it there avoids a boundary refactor of the settings tree; adopting packages/ui/src/settings needs a separate module boundary refactor.
+      - packages/ui/src/settings/model-provider-section/AcpAgentDetailSections.tsx
+    reason: The ACP agent brand mark (specs/acp-agent-runtime.md "Agent registry") and the detail pane's Models and Advanced sections sit next to their neighbours in the unmanaged packages/ui settings model-provider-section tree (AcpAgentCard, AcpAgentsPanel). Keeping it there avoids a boundary refactor of the settings tree; adopting packages/ui/src/settings needs a separate module boundary refactor.
+  - id: model-settings-review-hooks-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/hooks/useAcpAgentHiddenModels.ts
+      - packages/ui/src/hooks/useOllamaDetection.ts
+    reason: Review fixes extract the ACP hidden-models write queue and the workspace-routed Ollama detection probe into hooks under packages/ui/src/hooks, so the settings components access services through hooks per packages/ui/AGENTS.md and the probe resolves the workspace's host per specs/ollama-local-provider.md while provider mutations keep the Local Host. Same unmanaged packages/ui tree as acp-agent-brand-mark-unmanaged-files; adopting it needs a separate module boundary refactor.
   - id: legacy-snapshot-async-read-unmanaged-files
     rule: unmanaged-new-file
     paths:

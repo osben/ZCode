@@ -41,9 +41,7 @@ packages/ui/src/GitPane.tsx
 packages/ui/src/LexicalChatInput.tsx
 packages/ui/src/app-shell/AnimatedSidePanePanel.tsx
 packages/ui/src/hooks/useVoiceDictation.ts
-packages/ui/src/lib/messageTelemetry.ts
 packages/ui/src/settings/VoiceDictationSection.tsx
-packages/ui/src/v4/telemetry/conversationTelemetrySupervisor.ts
 packages/client/src/globals.d.ts
 packages/desktop/src/main/desktopOAuthDeepLink.ts
 packages/desktop/src/main/index.ts
@@ -173,8 +171,6 @@ packages/ui/src/lib/zcodeSessionProjection.ts
 packages/ui/src/remote-connection/RemoteConnectionConnectingStep.tsx
 packages/ui/src/settings/ComputerUseSection.tsx
 packages/ui/src/settings/ExternalAgentImportDialog.tsx
-packages/ui/src/settings/RemoteMcpSyncDialog.tsx
-packages/ui/src/settings/RemotePluginSyncDialog.tsx
 packages/ui/src/settings/model-provider-section/Detail.tsx
 packages/ui/src/settings/model-provider-section/InlineEditableProviderCard.tsx
 packages/ui/src/settings/model-provider-section/ProviderCardSections.tsx
@@ -276,7 +272,6 @@ packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
 apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
 packages/provider/src/config/model-config.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-event-merge.ts
-packages/services/src/conversation-share/conversationSharePublicProjection.ts
 
 # ISSUE-042: pre-existing 23 KB upstream file; the empty-untracked fix touches it and a new sibling file is blocked by unmanaged-new-file.
 packages/services/src/git/repo/gitCliHelpers.ts
@@ -301,6 +296,8 @@ packages/ui/src/root/useRootWorkspaceActions.ts
 # Existing remote connection flow owner, already above the staged cap on integration (3.16.3 workspace step adds two lines).
 packages/ui/src/remote-connection-flow/index.ts
 
+# SIWC account owner (41.6 KB before the usage-display change); split it before growing it further.
+packages/services/src/oauth/siwc/siwcAuthService.ts
 # Already over the cap at base 3.16.2 (20914 bytes); the 3.17.1 stability port only adds the structured-code rethrow to ensureDaemon.
 packages/server/src/source-server/transportAdapter.ts
 # Already over the cap at base 3.16.2 (25315 bytes); the 3.17.1 stability port only adds the coreFatalMessage capture and compose.

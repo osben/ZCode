@@ -9,8 +9,6 @@ const mocks = vi.hoisted(() => ({
     startChatGptPlanLogin: vi.fn(),
     pollChatGptPlanLogin: vi.fn(),
     logoutChatGptPlan: vi.fn(),
-    startChatGptUsageLink: vi.fn(),
-    pollChatGptUsageLink: vi.fn(),
   },
   platform: { openExternal: vi.fn() },
 }));
@@ -37,7 +35,6 @@ beforeEach(() => {
   mocks.oauthService.startChatGptPlanLogin.mockResolvedValue({ authorizeUrl: "https://auth.test" });
   mocks.oauthService.pollChatGptPlanLogin.mockReset();
   mocks.oauthService.logoutChatGptPlan.mockResolvedValue(undefined);
-  mocks.oauthService.pollChatGptUsageLink.mockReset();
   mocks.platform.openExternal.mockResolvedValue(undefined);
 });
 
@@ -156,7 +153,15 @@ describe("ChatGptPlanDetail", () => {
     expect(mocks.oauthService.logoutChatGptPlan).toHaveBeenCalledWith("a1b2c3d4e5f60718");
   });
 
-  it("renders the passively captured usage line only for accounts that reported one", async () => {
+  const flush = async () => {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+
+  // specs/chatgpt-plan-signin.md "Usage limits" and L3: official surface only, no usage UI.
+  it("shows no usage block, plan badge or Link usage for a signed-in account", async () => {
     mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
       accounts: [
         {
@@ -164,61 +169,45 @@ describe("ChatGptPlanDetail", () => {
           signedIn: true,
           planUsageEntitled: true,
           user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-          usage: {
-            primary: {
-              usedPercent: 42.5,
-              windowMinutes: 300,
-              resetsAt: "2026-10-15T18:00:00Z",
-            },
-            secondary: { usedPercent: 7 },
-          },
-        },
-        {
-          accountKey: "b1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Personal", email: "home@example.com", subject: "sub-home" },
         },
       ],
     });
     render(createElement(ChatGptPlanDetail));
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flush();
 
-    const usageLines = screen.getAllByTestId("chatgpt-plan-usage");
-    expect(usageLines).toHaveLength(1);
-    // The intl mock returns raw ids, so the segments prove which parts rendered: primary,
-    // the reset time, and the weekly window — in that order.
-    expect(usageLines[0]?.textContent).toBe(
-      [
-        "settings.modelProvider.chatgpt.usage.primary",
-        "settings.modelProvider.chatgpt.usage.primaryReset",
-        "settings.modelProvider.chatgpt.usage.weekly",
-      ].join(" · "),
-    );
+    expect(screen.getByText("settings.modelProvider.chatgpt.signedInAs")).toBeTruthy();
+    expect(screen.queryByTestId("chatgpt-plan-usage")).toBeNull();
+    expect(screen.queryByTestId("chatgpt-plan-type")).toBeNull();
+    expect(screen.queryByTestId("chatgpt-plan-link-usage")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "settings.modelProvider.chatgpt.manageUsage" }),
+    ).toBeTruthy();
   });
 
-  it("omits the reset segment when resetsAt is absent or unparseable", async () => {
+  it("shows a reconnect row for an account whose sign-in expired", async () => {
     mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
-      accounts: [
+      accounts: [],
+      reconnectRequired: [
         {
           accountKey: "a1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
           user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-          usage: { primary: { usedPercent: 13 } },
         },
       ],
     });
     render(createElement(ChatGptPlanDetail));
+    await flush();
+
+    expect(screen.getByTestId("chatgpt-plan-reconnect-row")).toBeTruthy();
+    expect(screen.queryByText("settings.modelProvider.chatgpt.notSignedIn")).toBeNull();
     await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.modelProvider.chatgpt.signInAgain" }),
+      );
       await Promise.resolve();
     });
-
-    expect(screen.getByTestId("chatgpt-plan-usage")?.textContent).toBe(
-      "settings.modelProvider.chatgpt.usage.primary",
-    );
+    expect(mocks.oauthService.startChatGptPlanLogin).toHaveBeenCalledWith({
+      reauthAccountKey: "a1b2c3d4e5f60718",
+    });
   });
 
   it("gives the first-run dialog an accessible name", async () => {
@@ -242,237 +231,16 @@ describe("ChatGptPlanDetail", () => {
       await vi.advanceTimersByTimeAsync(1_500);
     });
 
-    expect(
-      screen.getByRole("dialog", { name: "settings.modelProvider.chatgpt.firstRun.title" }),
-    ).toBeTruthy();
-  });
+    const dialog = screen.getByRole("dialog", {
+      name: "settings.modelProvider.chatgpt.firstRun.title",
+    });
+    expect(dialog).toBeTruthy();
 
-  it("links usage for an entitled account without a linked grant and refreshes status", async () => {
-    mocks.oauthService.getChatGptPlanStatus
-      .mockResolvedValueOnce({
-        accounts: [
-          {
-            accountKey: "a1b2c3d4e5f60718",
-            signedIn: true,
-            planUsageEntitled: true,
-            user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-          },
-        ],
-      })
-      .mockResolvedValue({
-        accounts: [
-          {
-            accountKey: "a1b2c3d4e5f60718",
-            signedIn: true,
-            planUsageEntitled: true,
-            user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-            usageLinked: true,
-            usage: {
-              primary: { usedPercent: 17, windowMinutes: 300, resetsAt: "2026-10-17T10:00:00Z" },
-            },
-          },
-        ],
-      });
-    mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
-      authorizeUrl: "https://auth.test/oauth/authorize",
-      displayAuthorizeUrl: "https://auth.test/oauth/authorize",
-      state: "s",
-    });
-    let resolvePoll!: (value: { accountKey: string }) => void;
-    mocks.oauthService.pollChatGptUsageLink.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvePoll = resolve;
-        }),
-    );
-    render(createElement(ChatGptPlanDetail));
+    // The shared Dialog closes on Escape (the old overlay could only be closed with "Got it").
     await act(async () => {
-      await Promise.resolve();
+      fireEvent.keyDown(dialog, { key: "Escape" });
     });
-
-    expect(screen.getByTestId("chatgpt-plan-link-usage")).toBeTruthy();
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("chatgpt-plan-link-usage"));
-      await Promise.resolve();
-    });
-    expect(mocks.oauthService.startChatGptUsageLink).toHaveBeenCalledWith("a1b2c3d4e5f60718");
-    expect(mocks.platform.openExternal).toHaveBeenCalledWith("https://auth.test/oauth/authorize");
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_500);
-    });
-    await act(async () => {
-      resolvePoll({ accountKey: "a1b2c3d4e5f60718" });
-      await Promise.resolve();
-    });
-    expect(screen.queryByTestId("chatgpt-plan-link-usage")).toBeNull();
-    expect(screen.getByTestId("chatgpt-plan-usage")).toBeTruthy();
-  });
-
-  it("releases the usage-link pending spinner when a login flow supersedes it", async () => {
-    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
-      accounts: [
-        {
-          accountKey: "a1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-        },
-      ],
-    });
-    mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
-      authorizeUrl: "https://auth.test/codex",
-      displayAuthorizeUrl: "https://auth.test/codex",
-      state: "u",
-    });
-    // Never settles: the superseding login flow must release the pending UI on its own.
-    mocks.oauthService.pollChatGptUsageLink.mockImplementation(() => new Promise(() => {}));
-    render(createElement(ChatGptPlanDetail));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("chatgpt-plan-link-usage"));
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_500);
-    });
-    expect(screen.getByTestId("chatgpt-plan-link-usage").querySelector("svg")).toBeTruthy();
-
-    // "Add account" stays clickable while a usage link is pending; starting it cancels the
-    // usage poll timer, so the new flow must also clear the old flow's spinner. Call history
-    // is cleared here because beforeEach only resets the poll mocks, not this starter.
-    mocks.oauthService.startChatGptPlanLogin.mockClear();
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "settings.modelProvider.chatgpt.addAccount" }),
-      );
-      await Promise.resolve();
-    });
-    expect(mocks.oauthService.startChatGptPlanLogin).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("chatgpt-plan-link-usage").querySelector("svg")).toBeNull();
-  });
-
-  it("a superseded grant flow cannot cancel the newer flow's poll", async () => {
-    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
-      accounts: [
-        {
-          accountKey: "a1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-        },
-      ],
-    });
-    mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
-      authorizeUrl: "https://auth.test/codex",
-      displayAuthorizeUrl: "https://auth.test/codex",
-      state: "u",
-    });
-    // Flow A (usage link) stalls inside openExternal; the login flow must supersede it entirely.
-    let releaseUsageOpen!: () => void;
-    mocks.platform.openExternal.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseUsageOpen = resolve;
-        }),
-    );
-    render(createElement(ChatGptPlanDetail));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("chatgpt-plan-link-usage"));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(mocks.platform.openExternal).toHaveBeenCalledWith("https://auth.test/codex");
-
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "settings.modelProvider.chatgpt.addAccount" }),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(mocks.platform.openExternal).toHaveBeenCalledWith("https://auth.test");
-
-    // Flow A's browser window finally opens after the login flow took over: it must stop at the
-    // generation check instead of cancelling the login poll timer and scheduling its own.
-    await act(async () => {
-      releaseUsageOpen();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_500);
-    });
-    expect(mocks.oauthService.pollChatGptPlanLogin).toHaveBeenCalled();
-    expect(mocks.oauthService.pollChatGptUsageLink).not.toHaveBeenCalled();
-  });
-
-  it("a superseded grant flow cannot surface a late rejection as the newer flow's error", async () => {
-    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
-      accounts: [
-        {
-          accountKey: "a1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-        },
-      ],
-    });
-    mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
-      authorizeUrl: "https://auth.test/codex",
-      displayAuthorizeUrl: "https://auth.test/codex",
-      state: "u",
-    });
-    // Flow A (usage link) stalls inside openExternal and later REJECTS; the rejection must die
-    // with the superseded flow instead of rendering an error banner over the running login flow.
-    let rejectUsageOpen!: (error: Error) => void;
-    mocks.platform.openExternal.mockImplementationOnce(
-      () =>
-        new Promise<void>((_, reject) => {
-          rejectUsageOpen = reject;
-        }),
-    );
-    render(createElement(ChatGptPlanDetail));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("chatgpt-plan-link-usage"));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "settings.modelProvider.chatgpt.addAccount" }),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_500);
-    });
-    expect(mocks.oauthService.pollChatGptPlanLogin).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      rejectUsageOpen(new Error("stale browser window"));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(screen.queryByRole("alert")).toBeNull();
-
-    // The login flow's poll timer must survive the superseded flow's rejection.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_500);
-    });
-    expect(mocks.oauthService.pollChatGptPlanLogin).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("re-authorizes the targeted account from its row's Re-connect button", async () => {

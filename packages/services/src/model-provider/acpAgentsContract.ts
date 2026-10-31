@@ -91,6 +91,22 @@ export interface AcpAgentCatalogResult {
   readonly supported: boolean;
   /** Undefined when the agent was never run or tested. */
   readonly options?: readonly AcpAgentCatalogOption[];
+  /**
+   * Model values the user hid from the composer's agent Model select; absent when nothing is hidden
+   * (specs/acp-agent-runtime.md "Settings: models and Advanced").
+   */
+  readonly hiddenModels?: readonly string[];
+}
+
+export interface AcpAgentHiddenModelsInput {
+  readonly agentId: string;
+  /** The agent's whole hidden set; an empty list shows every model. */
+  readonly hiddenModels: readonly string[];
+}
+
+export interface AcpAgentHiddenModelsResult {
+  /** False when this environment does not offer ACP agents; nothing was written. */
+  readonly supported: boolean;
 }
 
 /** Settings-facing surface, threaded through the provider settings service. */
@@ -98,6 +114,8 @@ export interface ProviderSettingsAcpAgentsBridge {
   detect(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
   /** The last options the agent offered, for the composer before a session exists (S6 readiness). */
   catalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult>;
+  /** Replaces the agent's hidden model values (the only writer of the visibility sidecar). */
+  setHiddenModels(input: AcpAgentHiddenModelsInput): Promise<AcpAgentHiddenModelsResult>;
   test(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
   status(input: AcpAgentStatusInput): Promise<AcpAgentStatusReport>;
   startLogin(input: AcpAgentLoginInput): Promise<AcpAgentLoginResult>;

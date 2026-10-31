@@ -139,4 +139,8 @@ test("canonical built-in account provider IDs resolve to their brand icons", () 
     expect(providerBrandIconSrc(providerId)).toBe(bigModelIcon);
   }
   expect(providerBrandIconSrc(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan)).toBe(openAiIcon);
+  // Runtime entries are per account; the icon must not depend on an exact base-id match.
+  expect(providerBrandIconSrc(`${BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan}:0123456789abcdef`)).toBe(
+    openAiIcon,
+  );
 });

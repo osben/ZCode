@@ -5,10 +5,9 @@ token-sharing program and run agent LLM calls under that user's ChatGPT plan aga
 OpenAI Responses API.
 
 This is an official OpenAI program (preview, launched ~2026-09-28). Inference NEVER touches
-`chatgpt.com/backend-api` or Codex's client id. The ONE deliberate exception is the read-only
-**usage probe** (see "Usage limits → Usage probe"): plan usage windows are only exposed on ChatGPT's
-own backend and require a separate codex-flavor OAuth grant per account; that grant's tokens are
-never used for model calls.
+`chatgpt.com/backend-api` or Codex's client id, and neither does anything else: the former
+codex-flavor usage probe was removed (see "Usage limits"); the only Codex client request left is the
+one-time revoke of grants stored by older builds.
 
 ## Existing plumbing
 
@@ -297,109 +296,79 @@ false`); native `/responses/compact` is unavailable — summary-style compaction
 - Plus plans have a 5-hour usage window shared across ALL apps using the plan (including ChatGPT
   itself). On plan-limit errors the UI shows "Manage usage" linking
   `https://chatgpt.com/settings/usage`.
-- **Passive usage-window capture** (DORMANT, verified): the capture of model RESPONSE headers
-  (`x-codex-primary-*` / `x-codex-secondary-*`) on `chatgpt-account` providers stays in place as a
-  zero-cost observer, but live verification (2026-10-17, real Plus account, `POST /v1/responses` 200
-  with gpt-6-luna, full header dump) proved the SIWC surface does NOT send them — and the official
-  SIWC docs document no usage headers or usage endpoints (re-verified 2026-10-17). The only official
-  usage signal remains the `subscription_sharing_usage_limit_exceeded` (429) error. The capture is
-  dormant code: harmless to keep (OpenAI may enable headers later), never the primary source.
-- **Usage probe (codex-flavor grant, per account)** — the primary source. Plan usage windows are
-  only exposed on ChatGPT's own backend: `GET https://chatgpt.com/backend-api/wham/usage` answers
-  200 with `{plan_type, rate_limit: {allowed, limit_reached, primary_window: {used_percent,
-limit_window_seconds, reset_at, reset_after_seconds}, secondary_window: {...}}, model_usage:
-{...}}` — but ONLY for codex-flavor tokens (client `app_EMoamEEZ73f0CkXaXp7hrann`). SIWC access
-  tokens get `401 rejected_by_access_enforcement / no_matching_rule` (verified live 2026-10-17).
-  Rules:
-  - **Inference isolation**: the codex-flavor grant is a SEPARATE OAuth grant used ONLY for the
-    usage probe. Its tokens never reach the model fetch chain, `applyModelRequestAuth`, provider
-    runtime headers, or the resolver. SIWC remains the only inference credential.
-  - **Wire** (pinned from the public Codex CLI client; verified against OmniRoute and codex-rs
-    source — the Codex client constructs exactly this route): authorize
-    `https://auth.openai.com/oauth/authorize` with `response_type=code`,
-    `client_id=app_EMoamEEZ73f0CkXaXp7hrann` (public client, no registration step, no secret),
-    `redirect_uri=http://localhost:1455/auth/callback` (byte-identical to codex CLI — the redirect
-    shape is registered for this client; deviations are unverified, the listener must accept this
-    exact URI), `scope=openid profile email offline_access`, PKCE `S256` (fresh verifier/state per
-    attempt), `id_token_add_organizations=true`, `codex_cli_simplified_flow=true`,
-    `originator=codex_cli_rs`, and **`prompt=login`**. The Auth0 backend keys sessions per browser
-    login: without `prompt=login` a second grant can invalidate the previous account's
-    refresh-token family ("session takeover"), so per-account grants MUST force a fresh login.
-  - **Probe request headers**: `Authorization: Bearer <codex access token>`, the codex `user-agent:
-codex_cli_rs` (the route sits behind Cloudflare — bare clients were challenged on adjacent
-    backend paths during live probing), and `chatgpt-account-id: <stored account id>` when the codex
-    id token carried `chatgpt_account_id` (account/workspace routing; personal Plus answers 200
-    without it).
-  - **Stability**: `/wham/usage` is a first-party internal surface — actively used by codex-rs but
-    undocumented in the public API reference and NOT covered by OpenAI's API compatibility promise.
-    Treat path, fields, and auth as versioned: strict-tolerant parsing (unknown fields ignored,
-    malformed windows skipped), failures degrade to "no usage line", never to errors. Rejected
-    alternative: spawning `codex app-server` + `account/rateLimits/read` (the documented surface) —
-    it depends on an installed, single-login Codex CLI and cannot serve our per-account model.
-  - **Token exchange/refresh**: form-encoded POST to `https://auth.openai.com/oauth/token`,
-    `grant_type=authorization_code` / `refresh_token`, `client_id`, code/code_verifier or
-    refresh_token, the same redirect_uri on exchange. No client secret. Codex access tokens live
-    ~10 days (`exp` observed 231 h) and refreshes rotate the refresh token — store the replacement
-    atomically before dropping the old one. The token response may not carry `earliest_refresh_at`;
-    store it only when present.
-  - **Account binding by email**: codex `sub` (real auth.openai.com subject) is NOT comparable with
-    the SIWC slot sub (per-registration pseudonymous). The grant is bound to a slot by email: the
-    codex id_token's `https://api.openai.com/profile.email` must equal the slot's stored account
-    email; on mismatch the just-exchanged grant is revoked best-effort (nothing was persisted, so any
-    existing link in the slot survives) and the UI surfaces "wrong account signed in". Send
-    `login_hint=<slot email>` to prefill the right account.
-  - **Storage** (same credential store, per accountKey `<K>`): `oauth:chatgpt-codex:<K>:access_token`,
-    `:refresh_token`, `:id_token`, `:account_id`, `:access_expires_at`, optional
-    `:earliest_refresh_at`. No client_id key (fixed public id). Refresh single-flight per account via
-    file lock `siwc-chatgpt-codex.<K>.refresh`. Unknown to upstream builds and never stripped (the
-    credential store is a generic encrypted KV). Logging out of the SIWC account clears its codex
-    slot; best-effort revoke first (`POST https://auth.openai.com/oauth/revoke`, `client_id`,
-    `token`, `token_type_hint=refresh_token`); revocation failure still clears locally.
-  - **Probe execution**: fired host-side when Settings reads `getChatGptPlanStatus` for accounts that
-    have a codex slot (throttled to at most one probe per account per 60 s), and lazily refreshed
-    when the access token is inside 24 h of `exp` (or on probe 401, once). A terminal refresh
-    failure — the token endpoint's OAuth `error` code is in `SIWC_TERMINAL_REFRESH_ERROR_CODES`
-    (revoked, expired, or reused refresh token; the same set the SIWC refresh path uses) — clears
-    that account's codex slot under the held refresh lock, so `usageLinked` returns false and the
-    user can link usage again; non-terminal codes (for example `invalid_request`, `invalid_client`)
-    and transport errors leave the slot untouched. The mapped snapshot replaces the in-memory
-    `usageByAccount` entry for that account.
-  - **Mapping** → `SiwcPlanUsageSnapshot`: `used_percent` → `usedPercent` (finite 0–100 required per
-    window), `limit_window_seconds / 60` → `windowMinutes`, `reset_at` (unix seconds) → `resetsAt`
-    (ISO string). Malformed members skip that window; a snapshot still requires the primary window —
-    same tolerance rules as the header capture. Response body is never logged (it carries the
-    account email).
-  - **Linking UX**: explicit per-account action in Settings ("Link usage"), NOT an automatic second
-    auth popup after SIWC login. Without a codex slot (or on any probe failure) the account row
-    simply shows no usage line. Login cancellation or a loopback-port conflict (1455 busy — another
-    codex/CLI flow) keeps the account usable for inference and only reports the link failure.
-  - **Scope**: Desktop host only (`SiwcAuthService`). The CLI login flow and remote/web environments
-    do not gain the probe in this phase; usage is display-only host state, exactly like the captured
-    snapshots.
-- **Capture rules**: `used-percent` is required per window (tolerant numeric parse; missing,
-  whitespace-only, or garbage skips that window; the explicit string `0` remains valid);
-  `window-minutes` and `reset-at` are optional (`reset-at` is an RFC3339 string kept verbatim, never
-  parsed into local clock math on the agent side). A snapshot requires the primary (5h) window; a
-  secondary-only reading is ignored. The SIWC surface does not send these headers in practice, so
-  the UI shows nothing from this path.
-- **Transport** (additive; old payloads must keep validating): the adapter fetch chain stores the
-  latest snapshot and the bound provider id in a per-bound-model mutable capture (same threading
-  pattern as `RawRequestBodyCapture`); the runner attaches them to the turn-completion usage payload
-  as `providerRateLimits` and `providerRateLimitProviderId` (shape: `{primary: {usedPercent,
-windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notification from the durable
-  completion event, independent of legacy `session/event` delivery subscriptions, so V4-only
-  conversations also record usage. The host attributes the snapshot only from the carried provider
-  id, never by reading the session's current model after completion. The `workspace/generateText`
-  result usage schema gained the same strict optional fields.
-- **Host state**: the host `SiwcAuthService` keeps the LATEST snapshot per accountKey in an in-memory
-  Map (never persisted, never logged; snapshots contain no tokens and no PII). OAuth status/logout
-  and usage recording share the same service instance, so Settings reads recorded usage and logout
-  clears that account's cached snapshot.
-- **Display**: the Settings → ChatGPT Plan account row shows, when a snapshot exists, `5h window:
-{percent}%` (+ ` · resets {time}` when `resetsAt` is present and parseable) and `Weekly:
-{percent}%` for the secondary window. The model picker badge deliberately does NOT show usage: the
-  in-memory host state has no change-notification channel to the renderer, so a picker badge would
-  render stale percentages in a high-visibility surface. Revisit only with a usage-updated event.
+- The ONLY usage signal is the official `subscription_sharing_usage_limit_exceeded` (429) error. The
+  SIWC docs document no usage headers or usage endpoints (re-verified 2026-10-17), so the app shows
+  no usage percentages, reset countdowns, plan badge, pace forecast, composer chip, or picker hint.
+- **Removed 2026-10-26: codex-flavor usage probe and "Link usage".** Plan windows are only exposed on
+  `chatgpt.com/backend-api/wham/usage`, which accepts only tokens of the Codex CLI client
+  (`app_EMoamEEZ73f0CkXaXp7hrann`); SIWC tokens get 401. Reading it meant a second OAuth grant under
+  the Codex client id with the `codex_cli_rs` user agent, i.e. presenting ZCode as the Codex CLI to
+  an undocumented backend outside the official program. Product decision: official surface only.
+  Rejected alternative: signing in through the Codex client for everything (cindy's approach) — same
+  impersonation, now on the inference path.
+- **Leftover grant purge**: builds that shipped "Link usage" stored `oauth:chatgpt-codex:<K>:*` tokens
+  and `fork:oauth:chatgpt:<K>:usage-epoch`. The host purges them once per start for every indexed
+  account: under the per-account lock file `siwc-chatgpt-codex.<K>.refresh`, best-effort revoke of
+  the stored refresh token (`POST https://auth.openai.com/oauth/revoke`, `client_id`, `token`,
+  `token_type_hint=refresh_token`), then delete every key; a revoke failure still deletes locally.
+  Sign-out of an account runs the same purge for that account. No other request uses the Codex
+  client id. Never logs tokens or emails.
+- **Passive header capture (CLI, dormant)**: the CLI keeps its zero-cost observer of
+  `x-codex-primary-*` / `x-codex-secondary-*` response headers on official `POST /v1/responses`
+  calls and its `chatGptPlanUsageUpdated` notification (protocol unchanged). Live verification
+  (2026-10-17) showed the SIWC surface does not send these headers. The Desktop host ignores the
+  notification; if OpenAI ever sends official usage, display is a new spec.
+
+### Limits and recovery in Desktop
+
+Reason: the plan-limit error and the sign-in errors reached the chat as CLI text ("Sign in again
+with zcode login chatgpt"), a revoked account vanished from Settings, and the first-run overlay
+could only be closed with "Got it".
+
+Facts used (traced): a live failure's session error has `code` and
+`attribution.providerErrorCode` equal to the OpenAI code (`subscription_sharing_usage_limit_exceeded`,
+`subscription_sharing_invalid_user`, `chatpass_v2_scope_not_authorized`,
+`chatpass_v2_invalid_authorization_context`) and `attribution.providerId` =
+`account:chatgpt-plan:<accountKey>`; after cold hydration `code` is the adapter class name, so the UI
+reads `attribution.providerErrorCode` first. The error carries no reset time.
+
+Plan limit reached (conversation quota banner, kind `chatgpt-plan-limited`):
+
+- Shown when the session error's provider code is `subscription_sharing_usage_limit_exceeded` and
+  the session provider is a ChatGPT plan account; it takes over the generic error banner, like the
+  Coding Plan provider-limited banner, and is dismissible.
+- Text: "ChatGPT plan usage limit reached." The error carries no reset time and there is no usage
+  source, so no reset time, countdown, or "Continue automatically" switch is shown.
+- Action: "Manage usage" (opens `https://chatgpt.com/settings/usage` through the platform service).
+  It never upgrades or switches plans.
+
+Sign-in errors (`subscription_sharing_invalid_user`, `chatpass_v2_*`): the chat error banner shows a
+localized "Your ChatGPT sign-in is no longer valid. Sign in again in Model settings → ChatGPT
+Plan." and the "Model settings" action. The CLI's own text stays for the CLI.
+`subscription_sharing_user_not_eligible` gets a localized eligibility text with the same action.
+The provider-code lookup of the chat error banner falls back to
+`attribution.providerErrorCode` when `code` is not a known code.
+
+Reconnect required (Settings): an account that is still in the index but has no tokens (terminal
+refresh failure) is listed in `SiwcPlanAccountsStatus.reconnectRequired`, never in `accounts`, so
+the registry derivation and entitlement keep ignoring it. Its row says the sign-in expired or was
+revoked and offers "Sign in again" (re-authorization of that account) and "Remove" (the existing
+per-account sign-out, which drops the index record).
+
+First-run modal: rendered with the shared `Dialog` (Escape, backdrop click, focus trap); still
+shown once.
+
+Acceptance:
+
+| #   | Given                                                  | When           | Then                                                           |
+| --- | ------------------------------------------------------ | -------------- | -------------------------------------------------------------- |
+| L1  | Session on account K fails with the usage-limit code   | Banner renders | ChatGPT limit banner instead of the error banner; Manage usage |
+| L2  | L1                                                     | Banner renders | No reset time, no "Continue automatically"                     |
+| L3  | Settings → ChatGPT Plan, signed-in account             | Opens          | No usage block, no plan badge, no "Link usage"                 |
+| L4  | Cold-hydrated error (`code` = adapter class name)      | Banner renders | Same as L1 (provider code read from attribution)               |
+| L5  | Session fails with `subscription_sharing_invalid_user` | Error banner   | Localized sign-in text and "Model settings", no CLI command    |
+| L6  | Indexed account without tokens                         | Settings opens | Reconnect row with Sign in again / Remove; not in `accounts`   |
+| L7  | First-run dialog open                                  | Escape         | Dialog closes                                                  |
 
 ### Branding (Phase 2, Desktop UI)
 
@@ -410,7 +379,7 @@ windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notificati
   plan and usage is managed in ChatGPT settings; dismissible; shown ONCE.
 - Login status polling is serialized: schedule the next poll only after the current poll settles,
   and ignore completions after the settings view unmounts.
-- Starting a new grant flow (login or per-account usage link) supersedes any in-flight one. A
+- Starting a new login flow supersedes any in-flight one. A
   superseded flow must never touch the shared poll timer, pending flag, or error banner again — on
   BOTH its resolve and reject paths: a late `openExternal`/`start`/`poll` settlement (success or
   failure) is dropped at a generation check instead of cancelling the newer flow's timer or surfacing
@@ -419,7 +388,18 @@ windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notificati
 - Usage-limit state: **"Manage usage"** primary (no "Buy app credits" — we do not sell credits).
 - Copy distinguishes ChatGPT plan usage from app-level subscriptions.
 - Provider icon: reuse the OpenAI entries in
-  `packages/ui/src/assets/provider-icons/model-provider-logo-sources.json`.
+  `packages/ui/src/assets/provider-icons/model-provider-logo-sources.json`. The one logo reference
+  is `CHATGPT_PLAN_PROVIDER_LOGO` (`{ type: "builtin", key: "openai" }`,
+  `packages/ui/src/lib/chatgptPlanProvider.ts`), matching the catalog template's `config.logo`.
+  Every surface that shows the ChatGPT plan shows this icon, never the generic fallback glyph:
+  - Settings → Model providers navigation entry, including with zero signed-in accounts (no
+    runtime provider exists yet, so the entry falls back to the constant), and the plan detail.
+  - Model pickers (composer menu, Subagents, automations, workflow settings): config-driven; the
+    per-account derivation copies the template `config`, so `logo` survives on
+    `account:chatgpt-plan:<accountKey>` entries.
+  - Task sidebar hover card (`providerBrandIconSrc`): resolves both the base id and per-account
+    ids through `isChatGptPlanProviderId`, never by exact id.
+  - OAuth icon slots (`renderOAuthProviderIcon("chatgpt")`): the OpenAI mark, not the log-in glyph.
 
 ### Host-side (Desktop) decisions (Phase 2)
 
@@ -503,6 +483,11 @@ sequenceDiagram
   resolution without legacy trigger keys; account entitlement map; prefix predicates
   (`isChatGptPlanAccountProviderId`) at all former exact-equality sites; picker renders per-account
   groups (email label).
+- Leftover grant purge units (no network): revoke then delete every `oauth:chatgpt-codex:<K>:*` key
+  and the usage epoch; revoke failure still deletes; accounts without codex keys make no request;
+  sign-out purges that account.
+- Commands (repo root): `pnpm --dir apps/zcode-cli/packages/adapters exec vitest run tests/<file>`
+  (per-package vitest), `pnpm --filter zcode-cli check`, `pnpm typecheck`, `pnpm lint`,
 - Usage-probe units (no network, fixture responses): codex authorize-URL shaping (exact params incl.
   `prompt=login` and the pinned redirect URI); token exchange/refresh form bodies (public client,
   rotated refresh stored before the old one is dropped); wham/usage JSON → `SiwcPlanUsageSnapshot`
@@ -512,7 +497,9 @@ sequenceDiagram
   silent absence; codex tokens never returned to the model-request resolver.
 - Commands (repo root): `pnpm --filter @zcode/adapters exec vitest run tests/<file>`
   (per-package vitest), `pnpm --filter zcode-cli check`, `pnpm typecheck`, `pnpm lint`,
+
   `pnpm architecture:check --changed`.
+
 - Manual/live verification (user-assisted): `zcode login chatgpt` with a real Plus/Pro account, a
   `GET /v1/models` dump, and a real agent turn. No real tokens in code, logs, or reports.
 

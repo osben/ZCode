@@ -7297,6 +7297,10 @@ const enUS: Record<string, string> = {
     "This idle-time task can no longer continue. Create a new idle-time task.",
   "zcode.error.providerBusiness.2007":
     "The upstream service is temporarily unavailable. Please try again later.",
+  "zcode.error.chatgptPlan.signInAgain":
+    "Your ChatGPT sign-in is no longer valid. Sign in again in Model settings → ChatGPT Plan.",
+  "zcode.error.chatgptPlan.notEligible":
+    "This ChatGPT account's plan can't be used here. Sign in with an eligible ChatGPT Plus or Pro account in Model settings → ChatGPT Plan.",
   "zcode.error.providerBusiness.429":
     "You're sending requests too quickly. Please try again later.",
 
@@ -8390,7 +8394,41 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.acp.unsupported": "ACP agents are not supported in this environment.",
   "settings.modelProvider.acp.sectionLaunch": "Launch configuration",
   "settings.modelProvider.acp.sectionLogin": "Login",
-  "settings.modelProvider.acp.sectionTest": "Test",
+  "settings.modelProvider.ollama.groupTitle": "Local models",
+  "settings.modelProvider.ollama.subtitle": "Local models served by Ollama",
+  "settings.modelProvider.ollama.openProvider": "Open provider settings",
+  "settings.modelProvider.ollama.sectionServer": "Server",
+  "settings.modelProvider.ollama.address": "Server address",
+  "settings.modelProvider.ollama.detect": "Detect",
+  "settings.modelProvider.ollama.rescan": "Rescan",
+  "settings.modelProvider.ollama.addressFromProvider":
+    "The address comes from the Ollama provider; change it in its provider settings.",
+  "settings.modelProvider.ollama.connected": "Connected · Ollama {version} · {count} models",
+  "settings.modelProvider.ollama.unreachable": "Not reachable: {reason}",
+  "settings.modelProvider.ollama.unreachableHint":
+    "Start Ollama (ollama serve) or check the address. With an HTTP proxy, add 127.0.0.1 to NO_PROXY.",
+  "settings.modelProvider.ollama.sectionModels": "Models",
+  "settings.modelProvider.ollama.updateModels": "Update models",
+  "settings.modelProvider.ollama.addToZCode": "Add to ZCode",
+  "settings.modelProvider.ollama.noModels": "No models on this server. Pull one with ollama pull.",
+  "settings.modelProvider.ollama.context": "{size} context",
+  "settings.modelProvider.ollama.eligibility.unknown": "Capabilities unknown",
+  "settings.modelProvider.ollama.eligibility.noTools": "No tool support",
+  "settings.modelProvider.ollama.eligibility.notChat": "Not a chat model",
+  "settings.modelProvider.ollama.contextHint":
+    "Ollama serves the server's context length (OLLAMA_CONTEXT_LENGTH), which can be smaller than the model's maximum shown here.",
+  "settings.modelProvider.ollama.syncFailed":
+    "Could not update the Ollama provider: {message}. Save again to finish.",
+  "settings.modelProvider.acp.sectionModels": "Models",
+  "settings.modelProvider.acp.sectionDiagnostics": "Last test diagnostics",
+  "settings.modelProvider.acp.detectedPath": "Detected at {path}",
+  "settings.modelProvider.acp.modelsNotOffered": "This agent does not offer a model choice.",
+  "settings.modelProvider.acp.modelsEmpty": "Run Test to load this agent's models.",
+  "settings.modelProvider.acp.modelsHint":
+    "Checked models appear in the composer's agent model menu ({visible} of {total}).",
+  "settings.modelProvider.acp.modelsSearch": "Filter models",
+  "settings.modelProvider.acp.modelsCurrent": "Current",
+  "settings.modelProvider.acp.modelsSaveFailed": "Could not save the model choice: {message}",
   "settings.modelProvider.acp.enableAgentLabel": "Enable {name} in ZCode",
   "settings.modelProvider.acp.disableAgentLabel": "Disable {name} in ZCode",
   "settings.modelProvider.acp.title": "ACP agents",
@@ -8421,15 +8459,15 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.chatgpt.signOut": "Sign out",
   "settings.modelProvider.chatgpt.addAccount": "Add another account",
   "settings.modelProvider.chatgpt.reconnect": "Re-connect",
-  "settings.modelProvider.chatgpt.linkUsage": "Link usage",
   "settings.modelProvider.chatgpt.manageUsage": "Manage usage",
   "settings.modelProvider.chatgpt.firstRun.title": "You're using your ChatGPT plan",
   "settings.modelProvider.chatgpt.firstRun.body":
     "Eligible AI requests in this app use your ChatGPT plan. Usage is shared across all apps on the plan and managed in ChatGPT settings.",
   "settings.modelProvider.chatgpt.firstRun.gotIt": "Got it",
-  "settings.modelProvider.chatgpt.usage.primary": "5h window: {percent}%",
-  "settings.modelProvider.chatgpt.usage.primaryReset": "resets {time}",
-  "settings.modelProvider.chatgpt.usage.weekly": "Weekly: {percent}%",
+  "settings.modelProvider.chatgpt.reconnectRequired":
+    "Your ChatGPT sign-in expired or was revoked. Sign in again to keep using this plan.",
+  "settings.modelProvider.chatgpt.signInAgain": "Sign in again",
+  "settings.modelProvider.chatgpt.removeAccount": "Remove",
   "settings.usage.customRange.from": "From",
   "settings.usage.customRange.to": "To",
   "settings.usage.compare.label": "Compare with previous period",
@@ -8528,6 +8566,7 @@ const enUS: Record<string, string> = {
   "chat.contextUsage.tone.critical": "Critical: auto-compact threshold reached.",
   "chat.statusPanel.dream": "Dream",
   "chat.error.resume": "Resume",
+  "chat.quota.chatgptPlanLimited": "ChatGPT plan usage limit reached.",
   "chat.quota.providerLimited.resetAt": "The 5-hour usage limit resets at {time}.",
   "chat.quota.providerLimited.autoContinue": "Continue automatically",
   "taskList.worktreeTaskLabel": "Worktree session · {branch} · {directory}",

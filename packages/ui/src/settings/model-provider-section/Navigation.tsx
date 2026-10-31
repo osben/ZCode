@@ -75,8 +75,8 @@ export function shouldShowModelProviderGroupLoadingIndicator(params: {
   if (params.groupId === "preset" || params.groupId === "chatgpt") {
     return params.presetLoading;
   }
-  // The ACP group shows its own loading row; it is not driven by provider list loading.
-  if (params.groupId === "acp") {
+  // The ACP group shows its own loading row, and the Ollama entry probes on open; neither follows provider loading.
+  if (params.groupId === "acp" || params.groupId === "local") {
     return false;
   }
   return params.customLoading;
@@ -415,7 +415,10 @@ export function ModelProviderSectionNavigation({
                 ) : null}
               </div>
 
-              {group.id === "preset" || group.id === "chatgpt" || group.id === "acp" ? (
+              {group.id === "preset" ||
+              group.id === "chatgpt" ||
+              group.id === "local" ||
+              group.id === "acp" ? (
                 <PresetProviderCardNavigation
                   group={group}
                   selectedNodeKey={selectedNodeKey}

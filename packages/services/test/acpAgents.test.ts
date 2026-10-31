@@ -343,6 +343,37 @@ describe("ACP agents bridge platform scope and catalog", () => {
     expect(readCatalog).toHaveBeenCalledTimes(2);
   });
 
+  // specs/acp-agent-runtime.md "Settings: models and Advanced": the catalog read carries the hidden set.
+  it("returns the hidden models with the catalog and writes them only where ACP is supported", async () => {
+    const hidden = new Map<string, readonly string[]>([["opencode", ["b"]]]);
+    const writeHiddenModels = vi.fn(async (agentId: string, values: readonly string[]) => {
+      hidden.set(agentId, values);
+    });
+    const dependencies = {
+      detectAgents: vi.fn(async () => []),
+      readCatalog: vi.fn(async () => undefined),
+      readHiddenModels: vi.fn(async (agentId: string) => hidden.get(agentId) ?? []),
+      writeHiddenModels,
+    };
+    const mac = createAcpAgentsBridge({ ...dependencies, platform: "darwin" });
+
+    expect(await mac.catalog({ agentId: "opencode" })).toEqual({
+      supported: true,
+      hiddenModels: ["b"],
+    });
+    expect(await mac.catalog({ agentId: "cursor" })).toEqual({ supported: true });
+    expect(await mac.setHiddenModels({ agentId: "cursor", hiddenModels: ["x"] })).toEqual({
+      supported: true,
+    });
+    expect(writeHiddenModels).toHaveBeenCalledWith("cursor", ["x"]);
+
+    const linux = createAcpAgentsBridge({ ...dependencies, platform: "linux" });
+    expect(await linux.setHiddenModels({ agentId: "cursor", hiddenModels: [] })).toEqual({
+      supported: false,
+    });
+    expect(writeHiddenModels).toHaveBeenCalledTimes(1);
+  });
+
   it("does not record a catalog for a custom command, and a failing store never fails the test", async () => {
     const recordCatalog = vi.fn(async () => {
       throw new Error("disk full");

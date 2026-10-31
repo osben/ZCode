@@ -4,10 +4,13 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   encodeForkAcpAgentCatalogFile,
+  encodeForkAcpAgentModelVisibilityFile,
   encodeForkAcpAgentsFile,
   extractInlineAcpAgentRecords,
+  normalizeAcpAgentHiddenModels,
   normalizeForkAcpAgentCatalogOptions,
   parseForkAcpAgentCatalogFile,
+  parseForkAcpAgentModelVisibilityFile,
   forkAcpAgentsFileSchema,
   hasInlineAcpProviders,
   stripInlineAcpProviders,
@@ -19,6 +22,7 @@ import {
   type ForkAcpAgentCatalogOption,
   type ForkAcpAgentCatalogOptionInput,
   type ForkAcpAgentCatalogSnapshot,
+  type ForkAcpAgentModelVisibilitySnapshot,
   type ForkAcpAgentStore,
 } from "@zcode/provider";
 import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
@@ -404,4 +408,108 @@ function isCatalogFileNotFound(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
   );
+}
+
+/** Fork-owned model visibility next to `provider_config.json` (specs/acp-agent-runtime.md "Settings: models and Advanced"). */
+export const FORK_ACP_AGENT_MODEL_VISIBILITY_FILE_NAME = "fork_acp_agent_model_visibility.json";
+
+export function resolveForkAcpAgentModelVisibilityFilePath(
+  personalProviderConfigFilePath: string,
+): string {
+  return join(dirname(personalProviderConfigFilePath), FORK_ACP_AGENT_MODEL_VISIBILITY_FILE_NAME);
+}
+
+export interface NodeForkAcpAgentModelVisibilityStoreOptions {
+  readonly filePath: string;
+  /** Receives an invalid visibility file once per file content; it then reads as empty. */
+  readonly onRecovery?: (error: unknown) => void;
+}
+
+/**
+ * Single owner of the model values hidden per agent. Only the host's settings service writes; every write takes
+ * the file lock and rereads under it, and reads are lock-free and tolerant (an invalid file reads as empty and
+ * the next write replaces it).
+ */
+export class NodeForkAcpAgentModelVisibilityStore {
+  readonly #filePath: string;
+  readonly #onRecovery?: (error: unknown) => void;
+  #recoveryReportedFor: string | null = null;
+
+  constructor(options: NodeForkAcpAgentModelVisibilityStoreOptions) {
+    if (!options.filePath.trim()) {
+      throw new Error("Fork ACP agent model visibility filePath must not be empty");
+    }
+    this.#filePath = options.filePath;
+    this.#onRecovery = options.onRecovery;
+  }
+
+  async read(): Promise<ForkAcpAgentModelVisibilitySnapshot> {
+    try {
+      return await this.#readFile();
+    } catch (error) {
+      await this.#reportRecoveryOnce(error);
+      return Object.freeze({ agents: Object.freeze([]) });
+    }
+  }
+
+  /** The hidden model values of one agent; empty when nothing is hidden. */
+  async readAgent(agentId: string): Promise<readonly string[]> {
+    const entry = (await this.read()).agents.find((agent) => agent.agentId === agentId);
+    return entry?.hiddenModels ?? [];
+  }
+
+  /**
+   * Replaces the hidden set of one agent; an empty set removes its entry. Returns false (and writes nothing)
+   * when the stored set is already equal.
+   */
+  async write(agentId: string, hiddenModels: readonly string[]): Promise<boolean> {
+    const next = normalizeAcpAgentHiddenModels(hiddenModels);
+    return withFileLock(this.#filePath, async () => {
+      let current: ForkAcpAgentModelVisibilitySnapshot["agents"];
+      try {
+        current = (await this.#readFile()).agents;
+      } catch (error) {
+        await this.#reportRecoveryOnce(error);
+        current = [];
+      }
+      const existing = current.find((agent) => agent.agentId === agentId)?.hiddenModels ?? [];
+      if (isDeepStrictEqual(existing, next)) return false;
+      const agents = [
+        ...current.filter((agent) => agent.agentId !== agentId),
+        ...(next.length > 0 ? [{ agentId, hiddenModels: next }] : []),
+      ];
+      const encoded = encodeForkAcpAgentModelVisibilityFile(agents);
+      await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
+      return true;
+    });
+  }
+
+  async #readFile(): Promise<ForkAcpAgentModelVisibilitySnapshot> {
+    let text: string;
+    try {
+      text = await readFile(this.#filePath, "utf8");
+    } catch (error) {
+      if (isCatalogFileNotFound(error)) return Object.freeze({ agents: Object.freeze([]) });
+      throw error;
+    }
+    return parseForkAcpAgentModelVisibilityFile(JSON.parse(text) as unknown);
+  }
+
+  async #reportRecoveryOnce(error: unknown): Promise<void> {
+    let revision: string;
+    try {
+      revision = createHash("sha256")
+        .update(await readFile(this.#filePath))
+        .digest("hex");
+    } catch {
+      revision = `unreadable:${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (revision === this.#recoveryReportedFor) return;
+    this.#recoveryReportedFor = revision;
+    try {
+      this.#onRecovery?.(error);
+    } catch {
+      // Observation callbacks must not block recovery.
+    }
+  }
 }

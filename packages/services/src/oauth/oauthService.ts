@@ -75,7 +75,7 @@ interface OAuthFlowEnvelope {
 interface OAuthServiceDependencies {
   adapters?: OAuthProviderAdapter[];
   apiClient?: ApiClient;
-  /** Shared with the Host's request-auth and usage-recording paths when composed by createLocalServices. */
+  /** Shared with the Host's request-auth path when composed by createLocalServices. */
   siwcAuthService?: SiwcAuthService;
   now?: () => number;
   env?: NodeJS.ProcessEnv;
@@ -1175,14 +1175,6 @@ export class OAuthService implements IOAuthService {
       });
     }
     return result;
-  }
-
-  async startChatGptUsageLink(accountKey: string): Promise<SiwcLoginStart> {
-    return this.siwcAuth.startUsageLink(accountKey);
-  }
-
-  async pollChatGptUsageLink(): Promise<{ accountKey: string } | null> {
-    return this.siwcAuth.pollUsageLink();
   }
 
   private clearPendingState(): void {

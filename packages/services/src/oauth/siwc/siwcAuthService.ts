@@ -14,7 +14,7 @@ import {
 import type { ICredentialService } from "../../credential/credential.js";
 import { createServiceLogger } from "../../logger/serviceLogger.js";
 import { getAppConfigDir } from "../../paths.js";
-import { SiwcCodexUsageService } from "./siwcCodexUsage.js";
+import { SiwcCodexGrantPurge } from "./siwcCodexGrantPurge.js";
 import {
   buildChatGptPlanAccountProviderId,
   buildSiwcAccountCredentialKeys,
@@ -27,7 +27,7 @@ import {
   SIWC_LEGACY_CREDENTIAL_KEYS,
   type SiwcPlanAccountStatus,
   type SiwcPlanAccountsStatus,
-  type SiwcPlanUsageSnapshot,
+  type SiwcPlanReconnectAccount,
   type SiwcPlanUserSummary,
   type SiwcStoredAccountRecord,
 } from "@zcode/shared";
@@ -64,6 +64,14 @@ export function createSiwcAccountKey(sub: string): string {
     .update(normalized, "utf-8")
     .digest("hex")
     .slice(0, 16);
+}
+
+function accountUser(record: SiwcStoredAccountRecord): SiwcPlanUserSummary {
+  return {
+    displayName: record.name ?? record.email ?? record.sub,
+    email: record.email,
+    subject: record.sub,
+  };
 }
 
 /** Stable per-host agent id (shared with the CLI: same file, plain text, not a secret). */
@@ -106,8 +114,6 @@ export interface SiwcAuthServiceDependencies {
   env?: NodeJS.ProcessEnv;
   fetchFn?: typeof globalThis.fetch;
   now?: () => number;
-  /** Overrides the codex usage-link callback port (tests use an ephemeral port). */
-  codexUsageCallbackPort?: number;
 }
 
 /**
@@ -124,8 +130,6 @@ export class SiwcAuthService {
   private readonly now: () => number;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly inFlightToken = new RefreshSingleflight<{ accessToken: string }>();
-  /** Latest passively captured plan usage per account; in-memory only, never persisted. */
-  private readonly usageByAccount = new Map<string, SiwcPlanUsageSnapshot>();
 
   constructor(
     private readonly credentialService: ICredentialService,
@@ -134,20 +138,13 @@ export class SiwcAuthService {
     this.now = dependencies.now ?? Date.now;
     this.fetchFn = dependencies.fetchFn ?? globalThis.fetch.bind(globalThis);
     this.configDir = dependencies.configDir ?? getAppConfigDir();
-    this.codexUsage = new SiwcCodexUsageService(credentialService, {
-      configDir: this.configDir,
-      ...(dependencies.codexUsageCallbackPort !== undefined
-        ? { callbackPort: dependencies.codexUsageCallbackPort }
-        : {}),
-      ...(dependencies.fetchFn ? { fetchFn: dependencies.fetchFn } : {}),
-      ...(dependencies.now ? { now: dependencies.now } : {}),
-      onSnapshot: (accountKey, snapshot) => this.usageByAccount.set(accountKey, snapshot),
-    });
+    this.codexGrantPurge = new SiwcCodexGrantPurge(credentialService, this.configDir, this.fetchFn);
   }
 
   private readonly configDir: string;
-  /** Codex-flavor usage grants: link flow, token rotation, and the wham/usage probe. */
-  private readonly codexUsage: SiwcCodexUsageService;
+  /** Removes usage grants left by builds that shipped "Link usage"; runs once per service instance. */
+  private readonly codexGrantPurge: SiwcCodexGrantPurge;
+  private leftoverGrantsPurged = false;
 
   /**
    * Start a login: loopback listener + PKCE + authorize URL. Default mode adds an account
@@ -300,44 +297,33 @@ export class SiwcAuthService {
     await closeServer(pending.server);
   }
 
-  /**
-   * Start the per-account "Link usage" codex-flavor grant (usage probe only — the tokens
-   * never reach the inference path). The UI opens authorizeUrl and polls `pollUsageLink`.
-   */
-  startUsageLink(accountKey: string) {
-    return this.codexUsage.startLink(accountKey);
-  }
-
-  /** null while the browser has not returned; the linked account key once the grant settled. */
-  pollUsageLink() {
-    return this.codexUsage.pollLink();
-  }
-
   async getStatus(): Promise<SiwcPlanAccountsStatus> {
     await this.migrateLegacyCredentials();
     const records = await this.readAccountIndex();
-    // Probe linked accounts before assembling statuses so the payload carries fresh usage
-    // (throttled per account; failures silent — usage is best-effort display state).
-    await this.codexUsage.probeAccounts(records.map((record) => record.accountKey));
+    this.purgeLeftoverGrants(records);
     const accounts: SiwcPlanAccountStatus[] = [];
+    const reconnectRequired: SiwcPlanReconnectAccount[] = [];
     for (const record of records) {
       const status = await this.readAccountStatus(record);
       if (status) accounts.push(status);
+      else reconnectRequired.push({ accountKey: record.accountKey, user: accountUser(record) });
     }
-    return { accounts };
+    return { accounts, ...(reconnectRequired.length > 0 ? { reconnectRequired } : {}) };
   }
 
-  /**
-   * Record the latest passively captured plan-usage snapshot of one account (transported by
-   * turn-completion usage). In-memory host state only: no persistence, no logging — snapshots
-   * hold percentages and reset timestamps, never tokens. Malformed account keys are ignored;
-   * entries of signed-out accounts are dropped by logout and never surfaced while the account
-   * is absent from the index.
-   */
-  recordUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void {
-    const normalized = accountKey.trim();
-    if (!isChatGptPlanAccountKey(normalized) || !snapshot?.primary) return;
-    this.usageByAccount.set(normalized, snapshot);
+  /** Fire-and-forget: the account list must not wait for revoke requests. */
+  private purgeLeftoverGrants(records: readonly SiwcStoredAccountRecord[]): void {
+    if (this.leftoverGrantsPurged) return;
+    this.leftoverGrantsPurged = true;
+    void (async () => {
+      for (const record of records) {
+        try {
+          await this.codexGrantPurge.purgeAccount(record.accountKey);
+        } catch (error) {
+          log.warn("ChatGPT plan leftover usage grant purge failed", { error });
+        }
+      }
+    })();
   }
 
   /**
@@ -379,8 +365,7 @@ export class SiwcAuthService {
             allRevoked = false;
             await this.clearTokenCredentials(record.accountKey);
             await this.removeAccountRecord(record.accountKey);
-            this.usageByAccount.delete(record.accountKey);
-            await this.codexUsage.clearAccount(record.accountKey);
+            await this.codexGrantPurge.purgeAccount(record.accountKey);
             return;
           }
           let revoked = false;
@@ -404,8 +389,7 @@ export class SiwcAuthService {
           if (!revoked) allRevoked = false;
           await this.clearTokenCredentials(record.accountKey);
           await this.removeAccountRecord(record.accountKey);
-          this.usageByAccount.delete(record.accountKey);
-          await this.codexUsage.clearAccount(record.accountKey);
+          await this.codexGrantPurge.purgeAccount(record.accountKey);
         },
         { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
       );
@@ -684,19 +668,11 @@ export class SiwcAuthService {
       keys.scopes,
     );
     if (!stored[keys.accessToken] && !stored[keys.refreshToken]) return null;
-    const usage = this.usageByAccount.get(record.accountKey);
-    const usageLinked = await this.codexUsage.hasLinkedAccount(record.accountKey);
     return {
       accountKey: record.accountKey,
       signedIn: true,
       planUsageEntitled: isSiwcPlanUsageEntitled(parseSiwcScopes(stored[keys.scopes])),
-      user: {
-        displayName: record.name ?? record.email ?? record.sub,
-        email: record.email,
-        subject: record.sub,
-      },
-      ...(usage ? { usage } : {}),
-      ...(usageLinked ? { usageLinked: true } : {}),
+      user: accountUser(record),
     };
   }
 

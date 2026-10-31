@@ -87,7 +87,9 @@ async function run(
       stderr += String(chunk);
     });
     child.once("error", rejectPromise);
-    child.once("exit", (code) => {
+    // "exit" can fire before the stdout pipe is drained; under load the tar listing then came back
+    // empty and the link and path checks passed an archive they must reject. "close" waits for stdio.
+    child.once("close", (code) => {
       if (code === 0) resolvePromise(captureOutput ? stdout : "");
       else rejectPromise(new Error(`${command} failed (${code}): ${stderr}`));
     });

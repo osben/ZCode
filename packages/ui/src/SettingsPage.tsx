@@ -2329,6 +2329,7 @@ export function SettingsPage({
                               {/* 模型配置属于本机全局事实源；激活远端 workspace 时也不能注入远端 Host。 */}
                               <ModelProviderSection
                                 workspacePath={activeWorkspacePath ?? captionWorkspacePath ?? ""}
+                                workspaceIdentity={activeWorkspaceIdentity}
                                 connectivityWorkspacePath={
                                   localModelProviderConnectivityWorkspacePath
                                 }

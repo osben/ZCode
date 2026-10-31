@@ -22,6 +22,8 @@ import { createServiceLogger } from "../logger/serviceLogger.js";
 import type {
   AcpAgentCatalogInput,
   AcpAgentCatalogResult,
+  AcpAgentHiddenModelsInput,
+  AcpAgentHiddenModelsResult,
   AcpAgentDetectionResult,
   AcpAgentEnabledInput,
   AcpAgentSaveInput,
@@ -32,6 +34,11 @@ import type {
   AcpAgentTestResult,
   ProviderSettingsAcpAgentsBridge,
 } from "./acpAgentsContract.js";
+import {
+  detectOllama,
+  type OllamaDetectInput,
+  type OllamaDetectionResult,
+} from "./ollamaDetection.js";
 
 export type {
   ProviderSettingsProviderView,
@@ -85,6 +92,10 @@ export interface IProviderSettingsService {
   detectAcpAgents(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
   /** The options an ACP agent offered in its last handshake; read by the composer before a session exists. */
   getAcpAgentCatalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult>;
+  /** Probe an Ollama server on this host (read-only; specs/ollama-local-provider.md). */
+  detectOllama(input?: OllamaDetectInput): Promise<OllamaDetectionResult>;
+  /** Replace the model values an ACP agent hides from the composer's agent Model select. */
+  setAcpAgentHiddenModels(input: AcpAgentHiddenModelsInput): Promise<AcpAgentHiddenModelsResult>;
   /** Run a full ACP roundtrip (spawn → initialize → session/new → prompt) and return the raw frames. */
   testAcpAgent(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
   /** Best-effort login status for an agent CLI; `supported: false` when unknown. */
@@ -249,6 +260,9 @@ export function createProviderSettingsService(
         : { supported: false, agents: [], detectedAt: Date.now() },
     getAcpAgentCatalog: async (input) =>
       acpAgents ? acpAgents.catalog(input) : { supported: false },
+    detectOllama: async (input) => detectOllama(input),
+    setAcpAgentHiddenModels: async (input) =>
+      acpAgents ? acpAgents.setHiddenModels(input) : { supported: false },
     testAcpAgent: async (input) =>
       acpAgents
         ? acpAgents.test(input)
