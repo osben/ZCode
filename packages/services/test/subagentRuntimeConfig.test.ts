@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
@@ -239,9 +239,13 @@ describe("Host incremental subagent snapshots", () => {
     const obsolete = initialWatcherFor(f.userRoot);
     // CI scheduling may start the parent directory fs.watch later than chokidar readiness; wait for the subscription first to avoid losing synthetic events when replacing the directory.
     await until(() => expect(parentEvents.get(dirname(f.userRoot))?.size).toBeGreaterThan(0));
+    // ext4 hands a freed inode straight back to the next mkdir, so rm + mkdir can recreate the same dev/ino and the
+    // replacement looks unchanged. Build the replacement while the old directory still exists to guarantee a new inode.
+    const replacement = join(f.root, "user-next");
+    await mkdir(replacement);
+    await writeFile(join(replacement, "a.md"), markdown("aaa", "replacement"));
     await rm(f.userRoot, { recursive: true });
-    await mkdir(f.userRoot);
-    await writeFile(path, markdown("aaa", "replacement"));
+    await rename(replacement, f.userRoot);
     // With a fast replacement only native events may arrive; the path still exists, and the old directory object's watcher must still be closed.
     for (const events of parentEvents.get(dirname(f.userRoot)) ?? [])
       events.emit("change", { eventType: "rename", filename: "user" });
