@@ -422,6 +422,8 @@ export function ToastMessageView({
             />
           ) : item.variant === "warning" ? (
             <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
+          ) : item.variant === "success" ? (
+            <CircleCheck className="size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
           ) : (
             <Info className="size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
           )}
