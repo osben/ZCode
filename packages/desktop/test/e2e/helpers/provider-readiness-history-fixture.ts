@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 
 export const PROVIDER_READINESS_HISTORY_SESSION_ID = "sess_e2e_provider_readiness_history";
@@ -56,26 +57,11 @@ const DEFAULT_PROVIDER_READINESS_HISTORY_FIXTURE: ProviderReadinessHistoryFixtur
  * 不存在的 CLI-only 历史，并错误依赖 sessions-index 反向补齐 tasks-index。这里让两个事实源
  * 保持同一 task：tasks-index 提供侧栏 membership，真实只读订阅负责读取 CLI 历史正文。
  */
-export function seedProviderReadinessHistoryFixture(
+export async function seedProviderReadinessHistoryFixture(
   options: SeedProviderReadinessHistoryFixtureOptions,
-): void {
+): Promise<void> {
   const history = options.history ?? DEFAULT_PROVIDER_READINESS_HISTORY_FIXTURE;
-  execFileSync(
-    process.execPath,
-    [options.cliEntryPoint, "--cwd", options.workspacePath, "app-server", "--stdio"],
-    {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: options.e2eHomeDir,
-        USERPROFILE: options.e2eHomeDir,
-        ZCODE_DATA_BASE_DIR: options.e2eHomeDir,
-      },
-      input: "",
-      timeout: 30_000,
-      windowsHide: true,
-    },
-  );
+  await initializeCliSessionDatabase(options);
 
   const databasePath = join(options.e2eHomeDir, ".zcode", "cli", "db", "db.sqlite");
   if (!existsSync(databasePath)) {
@@ -90,6 +76,61 @@ export function seedProviderReadinessHistoryFixture(
     database.close();
   }
   writeTaskIndex(options, timestamps, history);
+}
+
+/**
+ * Runs the CLI app-server until the session DB reports `startup/storageState` phase "ready", then
+ * closes stdin so the server exits. Closing stdin up front raced storage initialization: the
+ * server exits on "Protocol input closed" and, on a slow start, before the DB file exists.
+ */
+function initializeCliSessionDatabase(
+  options: SeedProviderReadinessHistoryFixtureOptions,
+): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      process.execPath,
+      [options.cliEntryPoint, "--cwd", options.workspacePath, "app-server", "--stdio"],
+      {
+        env: {
+          ...process.env,
+          HOME: options.e2eHomeDir,
+          USERPROFILE: options.e2eHomeDir,
+          ZCODE_DATA_BASE_DIR: options.e2eHomeDir,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    let ready = false;
+    let stderr = "";
+    const guard = setTimeout(() => child.kill(), 30_000);
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      if (ready) return;
+      let frame: { method?: string; params?: { databaseKind?: string; phase?: string } };
+      try {
+        frame = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (
+        frame.method === "startup/storageState" &&
+        frame.params?.databaseKind === "session" &&
+        frame.params.phase === "ready"
+      ) {
+        ready = true;
+        child.stdin.end();
+      }
+    });
+    child.on("error", reject);
+    child.on("close", () => {
+      clearTimeout(guard);
+      if (ready) resolvePromise();
+      else reject(new Error(`CLI exited before the session DB was ready: ${stderr.slice(-2000)}`));
+    });
+  });
 }
 
 interface ProviderReadinessHistoryTimestamps {

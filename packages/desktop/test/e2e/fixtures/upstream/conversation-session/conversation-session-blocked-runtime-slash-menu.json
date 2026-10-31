@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-blocked-runtime-slash-menu",
+  "spec": "./test/e2e/conversation-session/conversation-session-blocked-runtime-slash-menu.test.ts",
+  "fixtures": []
+}

@@ -3308,7 +3308,13 @@ async function resetE2EHome(specs: string[] = []) {
   await seedE2EGitReviewEntryWorkspace(specs);
   seedE2EGitCommitDialogWorkspace(specs);
   seedE2EWorktreeChatFirstWorkspace(specs);
-  if (specs.some((spec) => spec.includes("conversation-session-history-first.test.ts"))) {
+  if (
+    specs.some(
+      (spec) =>
+        spec.includes("conversation-session-history-first.test.ts") ||
+        spec.includes("conversation-session-blocked-runtime-slash-menu.test.ts"),
+    )
+  ) {
     await seedSessionHistoryFirstFixture({
       cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
       e2eHomeDir: E2E_HOME_DIR,
