@@ -236,9 +236,9 @@ L-уровень (поштучно не портировать — зависи�
 3. Electron 44: принимать в том же PR или отдельным шагом (форк имеет свои нативные зависимости).
 4. pending-баги апстрима (38 шт., в т.ч. 19 e2e-promotion): фиксить форку самостоятельно или ждать апстрим.
 
-## 7. Аудит после merge (PR #373)
+## 7. Аудит после merge (#373)
 
-Сверка HEAD с `a60ba6a7` по всем hunk-ам апстрима. Потерянное при разрешении конфликтов восстановлено в том же PR:
+Сверка HEAD с `a60ba6a7` по всем hunk-ам апстрима. Потерянное при разрешении конфликтов восстановлено отдельным PR после squash-merge #373:
 
 - Toast: у `variant: "success"` снова иконка `CircleCheck` (`packages/ui/src/components/ui/toast.tsx`); тест `packages/ui/test/toastHost.test.ts`.
 - Слэш-меню композера: при заблокированном runtime команда с `recovery` (например `/reload`) остаётся в списке, если восстановление доступно; обычные команды скрыты. Правило вынесено в `packages/ui/src/v4/composer/composerAppSlashCommands.ts`; тест `packages/ui/test/composerAppSlashCommands.test.ts`.
