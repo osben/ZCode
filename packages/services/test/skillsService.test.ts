@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -1510,5 +1511,74 @@ cyclic-body`,
 
     // 不应卡死、不应重复列出同一技能。
     expect(result.skills.map((skill) => skill.name)).toEqual(["cyclic-skill"]);
+  });
+
+  it("rejects skill toggles and keeps bytes untouched when config.json is corrupt", async () => {
+    const home = makeTempHome();
+    const workspacePath = join(home, "workspace");
+    writeSkill(
+      workspaceSkillRoot(workspacePath),
+      "code-review",
+      `---
+name: code-review
+description: Review code
+---
+review-body`,
+    );
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    const corrupt = "{ not json";
+    writeFileSync(configPath, corrupt, "utf-8");
+
+    const service = await createSkillsServiceInEnv(home, { isDesktopRuntime: true });
+    const list = await service.list({ workspacePath, provider: "glm" });
+
+    await expect(
+      service.setEnabled({
+        workspacePath,
+        provider: "glm",
+        scope: list.skills[0]!.scope,
+        skillId: list.skills[0]!.id,
+        enabled: false,
+      }),
+    ).rejects.toMatchObject({ name: "JsonObjectFileUnreadableError" });
+
+    expect(readFileSync(configPath, "utf-8")).toBe(corrupt);
+  });
+
+  it("disabling a skill preserves unrelated config.json fields and writes 0600", async () => {
+    const home = makeTempHome();
+    const workspacePath = join(home, "workspace");
+    writeSkill(
+      workspaceSkillRoot(workspacePath),
+      "code-review",
+      `---
+name: code-review
+description: Review code
+---
+review-body`,
+    );
+    writeCliConfig(home, {
+      mcp: { servers: { fetch: { command: "node" } } },
+      plugins: { dirs: ["/opt/plugins"] },
+    });
+
+    const service = await createSkillsServiceInEnv(home, { isDesktopRuntime: true });
+    const list = await service.list({ workspacePath, provider: "glm" });
+    await service.setEnabled({
+      workspacePath,
+      provider: "glm",
+      scope: list.skills[0]!.scope,
+      skillId: list.skills[0]!.id,
+      enabled: false,
+    });
+
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    const saved = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(saved.mcp).toEqual({ servers: { fetch: { command: "node" } } });
+    expect(saved.plugins).toEqual({ dirs: ["/opt/plugins"] });
+    // The override key is the realpath-resolved SKILL.md path reported by discovery.
+    expect(saved.skills).toEqual({ [list.skills[0]!.path]: { enable: false } });
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
   });
 });

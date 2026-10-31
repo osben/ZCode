@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -24,23 +25,18 @@ const fsMockState = vi.hoisted(() => ({
 }));
 
 vi.mock("node:fs/promises", async () => {
-  const actual =
-    await vi.importActual<typeof import("node:fs/promises")>(
-      "node:fs/promises",
-    );
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   return {
     ...actual,
-    mkdir: vi.fn(
-      async (...args: Parameters<typeof actual.mkdir>) => {
-        const gate = fsMockState.lockMkdirGate;
-        if (gate && String(args[0]).endsWith(".lock")) {
-          fsMockState.lockMkdirEntered?.();
-          fsMockState.lockMkdirEntered = null;
-          await gate;
-        }
-        return actual.mkdir(...args);
-      },
-    ),
+    mkdir: vi.fn(async (...args: Parameters<typeof actual.mkdir>) => {
+      const gate = fsMockState.lockMkdirGate;
+      if (gate && String(args[0]).endsWith(".lock")) {
+        fsMockState.lockMkdirEntered?.();
+        fsMockState.lockMkdirEntered = null;
+        await gate;
+      }
+      return actual.mkdir(...args);
+    }),
     rename: vi.fn(
       async (
         oldPath: Parameters<typeof actual.rename>[0],
@@ -57,9 +53,7 @@ vi.mock("node:fs/promises", async () => {
         );
         try {
           if (fsMockState.renameDelayMs > 0) {
-            await new Promise((resolve) =>
-              setTimeout(resolve, fsMockState.renameDelayMs),
-            );
+            await new Promise((resolve) => setTimeout(resolve, fsMockState.renameDelayMs));
           }
           await actual.rename(oldPath, newPath);
         } finally {
@@ -68,10 +62,7 @@ vi.mock("node:fs/promises", async () => {
       },
     ),
     rm: vi.fn(
-      async (
-        path: Parameters<typeof actual.rm>[0],
-        options?: Parameters<typeof actual.rm>[1],
-      ) => {
+      async (path: Parameters<typeof actual.rm>[0], options?: Parameters<typeof actual.rm>[1]) => {
         if (String(path).includes(".lock") && fsMockState.lockRemoveFailure) {
           throw fsMockState.lockRemoveFailure;
         }
@@ -81,7 +72,11 @@ vi.mock("node:fs/promises", async () => {
   };
 });
 
-import { atomicWriteText } from "../src/fs/atomicFileUtils.js";
+import {
+  atomicWriteText,
+  JsonObjectFileUnreadableError,
+  updateJsonObjectFile,
+} from "../src/fs/atomicFileUtils.js";
 import {
   createFsFaultInjector,
   resetProcessFsFaultInjectorForTests,
@@ -150,10 +145,7 @@ describe("atomicWriteText", () => {
 
   it("retries transient Windows rename locks and keeps the atomic temp file clean", async () => {
     const filePath = join(tempDir, "session.json");
-    fsMockState.renameFailures.push(
-      createFsError("EPERM"),
-      createFsError("EBUSY"),
-    );
+    fsMockState.renameFailures.push(createFsError("EPERM"), createFsError("EBUSY"));
 
     await atomicWriteText(filePath, "saved\n", {
       renameRetryDelaysMs: [1, 1],
@@ -161,9 +153,7 @@ describe("atomicWriteText", () => {
 
     expect(readFileSync(filePath, "utf-8")).toBe("saved\n");
     expect(vi.mocked(rename)).toHaveBeenCalledTimes(3);
-    expect(
-      readdirSync(tempDir).filter((name) => name.endsWith(".tmp")),
-    ).toEqual([]);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("does not retry non-transient rename failures and removes the temp file", async () => {
@@ -177,9 +167,7 @@ describe("atomicWriteText", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
 
     expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
-    expect(
-      readdirSync(tempDir).filter((name) => name.endsWith(".tmp")),
-    ).toEqual([]);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("fails immediately on injected fs faults before atomic rename", async () => {
@@ -207,9 +195,7 @@ describe("atomicWriteText", () => {
 
     expect(vi.mocked(rename)).toHaveBeenCalledTimes(0);
     expect(existsSync(filePath)).toBe(false);
-    expect(
-      readdirSync(tempDir).filter((name) => name.endsWith(".tmp")),
-    ).toEqual([]);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     expect(injector.getHits()).toMatchObject([
       {
         code: "EACCES",
@@ -236,12 +222,8 @@ describe("atomicWriteText", () => {
 
     expect(["first\n", "second\n"]).toContain(readFileSync(filePath, "utf-8"));
     expect(fsMockState.maxActiveRenames).toBe(1);
-    expect(
-      readdirSync(tempDir).filter((name) => name.endsWith(".tmp")),
-    ).toEqual([]);
-    expect(
-      readdirSync(tempDir).filter((name) => name.endsWith(".lock")),
-    ).toEqual([]);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".lock"))).toEqual([]);
   });
 
   it("reclaims a fresh lock when its owner process has already exited", async () => {
@@ -375,16 +357,9 @@ describe("atomicWriteText", () => {
   it.each(["0", "-1", "1.5", "1e999"])(
     "reclaims a stale lock with invalid pid %s as ownerless",
     async (rawPid) => {
-      const filePath = join(
-        tempDir,
-        `config-${rawPid.replace(/\W/g, "_")}.json`,
-      );
+      const filePath = join(tempDir, `config-${rawPid.replace(/\W/g, "_")}.json`);
       const createdAt = Date.now();
-      writeFileSync(
-        `${filePath}.lock`,
-        `{"pid":${rawPid},"createdAt":${createdAt}}\n`,
-        "utf-8",
-      );
+      writeFileSync(`${filePath}.lock`, `{"pid":${rawPid},"createdAt":${createdAt}}\n`, "utf-8");
 
       await atomicWriteText(filePath, "saved\n", {
         lockRetryDelaysMs: [1],
@@ -406,11 +381,7 @@ describe("atomicWriteText", () => {
     async (label, rawCreatedAt) => {
       const filePath = join(tempDir, `config-created-at-${label}.json`);
       const lockFile = `${filePath}.lock`;
-      writeFileSync(
-        lockFile,
-        `{"pid":0,"createdAt":${rawCreatedAt}}\n`,
-        "utf-8",
-      );
+      writeFileSync(lockFile, `{"pid":0,"createdAt":${rawCreatedAt}}\n`, "utf-8");
       const oldTime = new Date(Date.now() - 60_000);
       utimesSync(lockFile, oldTime, oldTime);
 
@@ -489,9 +460,7 @@ describe("atomicWriteText", () => {
     await expect(writePromise).rejects.toMatchObject({
       code: "ZCODE_FILE_LOCK_TIMEOUT",
     });
-    expect(readFileSync(freshOwnerFile, "utf-8")).toContain(
-      '"token":"fresh-owner"',
-    );
+    expect(readFileSync(freshOwnerFile, "utf-8")).toContain('"token":"fresh-owner"');
     expect(existsSync(filePath)).toBe(false);
   });
 
@@ -552,5 +521,112 @@ describe("atomicWriteText", () => {
     const files = readdirSync(tempDir);
     expect(files).not.toContain("config.json.123.1000.stale.tmp");
     expect(files).toContain("config.json.123.1000.fresh.tmp");
+  });
+});
+
+describe("updateJsonObjectFile", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "zcode-update-json-object-"));
+    fsMockState.renameFailures.length = 0;
+    fsMockState.lockRemoveFailure = null;
+    fsMockState.renameDelayMs = 0;
+    fsMockState.lockMkdirGate = null;
+    fsMockState.lockMkdirEntered = null;
+    vi.mocked(rename).mockClear();
+  });
+
+  afterEach(() => {
+    resetProcessFsFaultInjectorForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("rejects the write and keeps file bytes untouched when the config is not valid JSON", async () => {
+    const filePath = join(tempDir, "config.json");
+    const corrupt = "{ not json";
+    writeFileSync(filePath, corrupt, "utf-8");
+
+    await expect(
+      updateJsonObjectFile(filePath, (current) => ({ ...current, command: {} })),
+    ).rejects.toBeInstanceOf(JsonObjectFileUnreadableError);
+
+    expect(readFileSync(filePath, "utf-8")).toBe(corrupt);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it.each([
+    ["an array", "[]"],
+    ["a string", '"text"'],
+    ["null", "null"],
+    ["a number", "42"],
+  ])("rejects the write and keeps bytes when the config root is %s", async (_label, raw) => {
+    const filePath = join(tempDir, "config.json");
+    writeFileSync(filePath, raw, "utf-8");
+
+    await expect(
+      updateJsonObjectFile(filePath, (current) => ({ ...current, command: {} })),
+    ).rejects.toMatchObject({ name: "JsonObjectFileUnreadableError" });
+
+    expect(readFileSync(filePath, "utf-8")).toBe(raw);
+  });
+
+  it("rejects the write when the config path itself cannot be read", async () => {
+    const configPath = join(tempDir, "config.json");
+    mkdirSync(configPath);
+
+    await expect(updateJsonObjectFile(configPath, (current) => current)).rejects.toBeInstanceOf(
+      JsonObjectFileUnreadableError,
+    );
+  });
+
+  it("creates the missing config file atomically with a trailing newline and 0600 mode", async () => {
+    const filePath = join(tempDir, "config.json");
+    const next = { command: { "/tmp/cmd.md": { enable: false } } };
+
+    await updateJsonObjectFile(filePath, (current) => {
+      // A missing file must be presented to the updater as an empty config.
+      expect(current).toEqual({});
+      return next;
+    });
+
+    expect(readFileSync(filePath, "utf-8")).toBe(`${JSON.stringify(next, null, 2)}\n`);
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("re-reads the latest content and preserves fields owned by other writers", async () => {
+    const filePath = join(tempDir, "config.json");
+    const otherFields = { mcp: { servers: { fetch: {} } }, plugins: { dirs: ["/opt/plugins"] } };
+    writeFileSync(filePath, `${JSON.stringify(otherFields, null, 2)}\n`, "utf-8");
+
+    await updateJsonObjectFile(filePath, (current) => ({
+      ...current,
+      command: { "/tmp/cmd.md": { enable: false } },
+    }));
+
+    const saved = JSON.parse(readFileSync(filePath, "utf-8"));
+    expect(saved).toEqual({
+      command: { "/tmp/cmd.md": { enable: false } },
+      mcp: otherFields.mcp,
+      plugins: otherFields.plugins,
+    });
+    expect(readFileSync(filePath, "utf-8").endsWith("\n")).toBe(true);
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps the original bytes when the atomic rename fails", async () => {
+    const filePath = join(tempDir, "config.json");
+    const original = `${JSON.stringify({ mcp: { servers: {} } }, null, 2)}\n`;
+    writeFileSync(filePath, original, "utf-8");
+    fsMockState.renameFailures.push(createFsError("EPERM"));
+
+    await expect(
+      updateJsonObjectFile(filePath, (current) => ({ ...current, command: {} })),
+    ).rejects.toMatchObject({ code: "EPERM" });
+
+    expect(readFileSync(filePath, "utf-8")).toBe(original);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 });

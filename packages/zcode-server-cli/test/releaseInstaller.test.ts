@@ -300,7 +300,7 @@ describe("release installer", () => {
     ).toEqual([]);
   });
 
-  it("rejects an existing release whose immutable archive identity is missing", async () => {
+  it("replaces a damaged copy of the same archive instead of failing the install", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-release-installer-conflict-"));
     const layout = resolveServerLayout(join(root, "server"));
     const archiveRoot = join(root, "zcode-server-linux-x64");
@@ -338,10 +338,22 @@ describe("release installer", () => {
       target: "linux-x64",
       version: "2.1.0",
     });
+    // The integrity record still names this archive, but the on-disk content drifted from it: this
+    // is a damaged copy of the same release, so reinstalling must repair it, not report a conflict.
     await writeFile(join(first.releaseDir, "runtime", "server-core.js"), "tampered", "utf8");
 
+    const second = await installer.installArchive({
+      archivePath,
+      target: "linux-x64",
+      version: "2.1.0",
+    });
+
+    expect(second.releaseDir).toBe(first.releaseDir);
     await expect(
-      installer.installArchive({ archivePath, target: "linux-x64", version: "2.1.0" }),
-    ).rejects.toThrow(/immutable release conflict/);
+      readFile(join(second.releaseDir, "runtime", "server-core.js"), "utf8"),
+    ).resolves.toBe("");
+    expect(
+      (await readdir(layout.releasesDir)).filter((entry) => entry.startsWith(".damaged-")),
+    ).toEqual([]);
   });
 });

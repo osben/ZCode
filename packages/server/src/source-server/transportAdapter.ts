@@ -22,6 +22,7 @@ import {
   duplexFromStdio,
   quoteShellArg,
   readLastJsonLine,
+  readStructuredCommandCode,
   readStructuredCommandError,
   throwIfAborted,
   type RemoteExecResult,
@@ -331,7 +332,10 @@ class BackendSourceServerTransportAdapter implements SourceServerTransportAdapte
       }
       const event = sourceServerInstallProgressSchema.safeParse(value);
       if (event.success) {
-        context.onLog?.({ phase: event.data.phase, message: INSTALL_PROGRESS_MESSAGES[event.data.phase] });
+        context.onLog?.({
+          phase: event.data.phase,
+          message: INSTALL_PROGRESS_MESSAGES[event.data.phase],
+        });
       }
     });
     if (result.exitCode !== 0) {
@@ -379,12 +383,17 @@ class BackendSourceServerTransportAdapter implements SourceServerTransportAdapte
       context.onLog?.({ phase: "daemon", message: "Starting Source Server" });
       const result = await this.exec(target, ["serve", "--daemon", "--json"], context);
       if (result.exitCode !== 0) {
-        // Bug 原因：Server CLI 的 --json 错误写在 stdout，Node 运行时 warning 写在 stderr。
-        // 旧逻辑只取 stderr，最终把 SQLite warning 当成连接根因展示给用户。
-        throw new Error(
+        // Bug cause: the Server CLI's --json errors are written to stdout while Node runtime
+        // warnings go to stderr. The old logic read only stderr and ended up presenting a SQLite
+        // warning as the root cause of the connection failure.
+        const message =
           (readStructuredCommandError(result.stdout) ?? result.stderr.trim()) ||
-            "Source Server daemon failed to start",
-        );
+          "Source Server daemon failed to start";
+        // The CLI failure text appends the Core's failure reason; when the CLI already carried a
+        // code for its original first sentence, use that code so the appended detail cannot
+        // re-classify the category by text.
+        const code = readStructuredCommandCode(result.stdout);
+        throw code ? new SourceServerTransportOperationError(message, code) : new Error(message);
       }
       status = readLastJsonLine(result.stdout) as SourceServerProbeResult["daemonStatus"];
     }

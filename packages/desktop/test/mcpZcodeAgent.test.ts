@@ -1,13 +1,18 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CliMcpSource } from "../src/mcp.js";
 import { MCP_SOURCE_DESCRIPTORS, getSourceDescriptor } from "../src/main/mcpUserDirectory/types.js";
 import {
   loadCliMcpFromUserDirectory,
   saveCliMcpToUserDirectory,
 } from "../src/main/mcpUserDirectory/index.js";
+
+// The module under test logs through the main logger, which creates log directories at import time.
+vi.mock("../src/main/logger.js", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 const originalHome = process.env.HOME;
 const tempRoots: string[] = [];
@@ -76,6 +81,116 @@ describe("MCP enabled state", () => {
     writeFileSync(join(home, ".zcode", "cli", "config.json"), "{ invalid json", "utf-8");
 
     await expect(loadCliMcpFromUserDirectory()).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  it("rejects MCP writes and keeps bytes untouched when config.json is corrupt", async () => {
+    const home = makeTempRoot();
+    process.env.HOME = home;
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    const corrupt = "{ not json";
+    writeFileSync(configPath, corrupt, "utf-8");
+
+    // A loose read would treat the corrupt file as empty and rewrite it, destroying the user's config.
+    await expect(
+      saveCliMcpToUserDirectory({
+        action: "upsert",
+        source: "zcodeagentmcp",
+        name: "browser",
+        config: { command: "npx", args: ["-y", "browser-mcp"] },
+      }),
+    ).rejects.toMatchObject({ name: "JsonObjectFileUnreadableError" });
+    expect(readFileSync(configPath, "utf-8")).toBe(corrupt);
+
+    await expect(
+      saveCliMcpToUserDirectory({
+        action: "set-enabled",
+        source: "zcodeagentmcp",
+        name: "browser",
+        enabled: false,
+      }),
+    ).rejects.toMatchObject({ name: "JsonObjectFileUnreadableError" });
+    expect(readFileSync(configPath, "utf-8")).toBe(corrupt);
+  });
+
+  it("preserves foreign config fields and writes 0600 when toggling a server", async () => {
+    const home = makeTempRoot();
+    process.env.HOME = home;
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          theme: "dark",
+          mcp: {
+            servers: {
+              browser: { command: "npx", args: ["-y", "browser-mcp"] },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const initial = await loadCliMcpFromUserDirectory();
+    const server = initial.servers.find((item) => item.name === "browser");
+
+    await saveCliMcpToUserDirectory({
+      action: "set-enabled",
+      source: "zcodeagentmcp",
+      name: "browser",
+      enabled: false,
+      location: server?.location,
+    });
+
+    const saved = JSON.parse(readFileSync(configPath, "utf-8"));
+    // The write must touch only the MCP server entry, not collapse config.json to MCP fields.
+    expect(saved.theme).toBe("dark");
+    expect(saved.mcp.servers.browser).toEqual({
+      command: "npx",
+      args: ["-y", "browser-mcp"],
+      enabled: false,
+    });
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves other servers and root fields when upserting a server", async () => {
+    const home = makeTempRoot();
+    process.env.HOME = home;
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          theme: "dark",
+          mcp: {
+            servers: {
+              browser: { command: "npx", args: ["-y", "browser-mcp"] },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    await saveCliMcpToUserDirectory({
+      action: "upsert",
+      source: "zcodeagentmcp",
+      name: "search",
+      config: { command: "zcode-search" },
+    });
+
+    const saved = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(saved.theme).toBe("dark");
+    expect(saved.mcp.servers.browser).toEqual({ command: "npx", args: ["-y", "browser-mcp"] });
+    expect(saved.mcp.servers.search).toEqual({ command: "zcode-search" });
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
   });
 
   it("prefers zcode MCP config and skips agents/claude configs when zcode has servers", async () => {

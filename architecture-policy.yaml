@@ -887,6 +887,20 @@ modules:
     layers:
       ui: .
     owner: conversation
+  # dream-journal：由 architecture:adopt 登记
+  - id: dream-journal
+    roots:
+      - apps/zcode-cli/packages/core/src/memory/dream-journal
+    managed: true
+    requires:
+      - shared
+      - zcode-cli
+    publicEntrypoints:
+      - apps/zcode-cli/packages/core/src/memory/dream-journal/index.ts
+      - apps/zcode-cli/packages/core/src/memory/dream-journal/contract.ts
+    layers:
+      adapters: .
+    owner: agent
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。

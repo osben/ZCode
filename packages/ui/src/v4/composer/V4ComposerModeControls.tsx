@@ -29,6 +29,8 @@ import {
   resolveModeOptionIcon,
 } from "@/chat-input-toolbar/display.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useYoloModeConfirmation } from "@/hooks/useConfirmDialog.js";
+import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -60,6 +62,14 @@ function V4ComposerModeSwitchImpl({
   | "onSwitchMode"
 >) {
   const { intl } = useZCodeIntl();
+  // The draft callback rotates with the scope; a stale confirmation must not write permissions into a task selected afterwards.
+  const confirmMode = useYoloModeConfirmation(disabled ? null : onSwitchMode, draftConfig?.mode);
+  const requestSwitchMode = useCallback(
+    (mode: string) => {
+      confirmMode(mode, () => onSwitchMode(mode));
+    },
+    [confirmMode, onSwitchMode],
+  );
   const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const modeShortcutLabel = useShortcutCommandLabel("cycleSessionMode");
@@ -90,8 +100,8 @@ function V4ComposerModeSwitchImpl({
   );
   const cycle = useCallback(() => {
     const next = getNextConfigSelectValue(modeOption);
-    if (next) onSwitchMode(next);
-  }, [modeOption, onSwitchMode]);
+    if (next) requestSwitchMode(next);
+  }, [modeOption, requestSwitchMode]);
   useToolbarShortcutBindings({
     hasAnyOption: Boolean(selected),
     toolbarDisabled: disabled,
@@ -145,6 +155,9 @@ function V4ComposerModeSwitchImpl({
           className="w-64"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
+            // A pending confirm dialog (for example the YOLO confirmation just opened from this
+            // menu) owns the initial focus; do not steal it back to the composer input.
+            if (useConfirmDialogStore.getState().pendingRequest) return;
             restoreComposerInputFocusAfterPickerClose({
               anchor: modeTriggerRef.current,
               fallbackSelector: `[data-testid="${TID_V4_COMPOSER_INPUT}"]`,
@@ -168,7 +181,7 @@ function V4ComposerModeSwitchImpl({
             </span>
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
-          <DropdownMenuRadioGroup value={selected.id} onValueChange={onSwitchMode}>
+          <DropdownMenuRadioGroup value={selected.id} onValueChange={requestSwitchMode}>
             {permissions.map((mode) => {
               const ModeIcon = resolveModeOptionIcon(mode.id);
               const descriptionId = getModeOptionDescriptionMessageId(displayProvider, {

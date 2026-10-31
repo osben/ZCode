@@ -15,9 +15,11 @@ import type {
   NativeMcpServerRecord,
   SaveCliMcpToUserDirectoryRequest,
 } from "@zcode/shared";
+import { readJsonObjectFileForUpdate, updateJsonObjectFile } from "@zcode/services/node";
 import type { McpConfigKeyName } from "./types.js";
-import { isRecord, readJsonObject, writeTextAtomic } from "./utils.js";
+import { isRecord } from "./utils.js";
 import { migrateLegacyCommonMcp } from "./legacy.js";
+import { logger } from "../logger.js";
 
 // Re-export types and functions.
 export type { McpConfigKeyName, OpenCodeMcpServerConfig, McpSourceDescriptor } from "./types.js";
@@ -150,14 +152,6 @@ function writeServerMapToJson(
   };
 }
 
-async function readUserCliConfig(): Promise<Record<string, unknown>> {
-  return (await readJsonObject(getUserCliConfigPath())) ?? {};
-}
-
-async function writeUserCliConfig(config: Record<string, unknown>): Promise<void> {
-  await writeTextAtomic(getUserCliConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
-}
-
 function readServerEnabled(config: Record<string, unknown>): boolean {
   return config[ENABLED_KEY] !== false;
 }
@@ -241,15 +235,28 @@ function findDescriptorByLocation(location: SettingsDirectoryLocation): Director
   return descriptor;
 }
 
+// Fix: the settings-page writers used loose reads (a read failure, corrupt JSON, or a non-object
+// root were all treated as an empty object) followed by an atomic write that set no permissions,
+// which could collapse the whole config.json (provider keys, MCP secrets) down to the MCP fields and
+// leave file permissions to the umask. All writers now go through updateJsonObjectFile: a strict
+// read (rejects on corruption, bytes untouched), a re-read before writing, and an atomic
+// replacement with 0600. When nothing would change, a strict read decides and returns directly
+// without creating or rewriting the file.
 async function cleanupLegacyMcpEnabledOverride(
   location: SettingsDirectoryLocation,
   name: string,
 ): Promise<void> {
-  const userConfig = await readUserCliConfig();
-  const result = removeLegacyMcpEnabledOverride(userConfig, location, name);
-  if (result.changed) {
-    await writeUserCliConfig(result.config);
+  const filePath = getUserCliConfigPath();
+  if (
+    !removeLegacyMcpEnabledOverride(await readJsonObjectFileForUpdate(filePath), location, name)
+      .changed
+  ) {
+    return;
   }
+  await updateJsonObjectFile(
+    filePath,
+    (current) => removeLegacyMcpEnabledOverride(current, location, name).config,
+  );
 }
 
 async function writeServerEnabledToFile(
@@ -261,25 +268,26 @@ async function writeServerEnabledToFile(
   const scope: Exclude<McpScope, "common"> = location.scope === "project" ? "workspace" : "user";
   const workspacePath = scope === "workspace" ? location.projectPath : undefined;
   const filePath = buildDirectoryConfigPath(descriptor, scope, workspacePath);
-  const current = (await readJsonObject(filePath)) ?? {};
-  const serverMap = readServerMapFromJson(current, descriptor.configKeyName);
-  const currentServer = serverMap[name];
-  if (!isRecord(currentServer)) {
+  const hasServer = (current: Record<string, unknown>) =>
+    isRecord(readServerMapFromJson(current, descriptor.configKeyName)[name]);
+  if (!hasServer(await readJsonObjectFileForUpdate(filePath))) {
     return;
   }
 
-  // MCP already has an mcp.servers/mcpServers structure. Store disabled state in each server's
-  // configuration object so directory paths do not mix with actual MCP configuration at the mcp root.
-  const nextServerMap = {
-    ...serverMap,
-    [name]: setServerEnabled(currentServer, enabled),
-  };
-  let next = writeServerMapToJson(current, descriptor.configKeyName, nextServerMap);
-  const legacyCleanup = removeLegacyMcpEnabledOverride(next, location, name);
-  if (legacyCleanup.changed) {
-    next = legacyCleanup.config;
-  }
-  await writeTextAtomic(filePath, `${JSON.stringify(next, null, 2)}\n`);
+  await updateJsonObjectFile(filePath, (current) => {
+    if (!hasServer(current)) {
+      return current;
+    }
+    const serverMap = readServerMapFromJson(current, descriptor.configKeyName);
+    // MCP already has an mcp.servers/mcpServers structure. Store disabled state in each server's
+    // configuration object so directory paths do not mix with actual MCP configuration at the mcp root.
+    const nextServerMap = {
+      ...serverMap,
+      [name]: setServerEnabled(serverMap[name]!, enabled),
+    };
+    const next = writeServerMapToJson(current, descriptor.configKeyName, nextServerMap);
+    return removeLegacyMcpEnabledOverride(next, location, name).config;
+  });
 }
 
 async function readDirectoryServersFromFile(
@@ -303,10 +311,16 @@ async function readDirectoryServersFromFile(
       // directory, insufficient permissions, etc.) must not block loading: the in-memory result is
       // already correct, and the next load will retry.
       try {
-        const next = writeServerMapToJson(parsed, descriptor.configKeyName, serverMap);
-        await writeTextAtomic(filePath, `${JSON.stringify(next, null, 2)}\n`);
+        await updateJsonObjectFile(filePath, (current) =>
+          writeServerMapToJson(
+            current,
+            descriptor.configKeyName,
+            migrateLegacyEnableFlag(readServerMapFromJson(current, descriptor.configKeyName))
+              .servers,
+          ),
+        );
       } catch (error) {
-        console.warn("[mcp-user-directory] legacy enable migration failed:", filePath, error);
+        logger.warn("[mcp-user-directory] legacy enable migration failed:", filePath, error);
       }
     }
 
@@ -351,15 +365,19 @@ async function readDirectoryServersFromPreferredSources(
   return readDirectoryServersFromFile(AGENTS_MCP_DESCRIPTOR, scope, workspacePath);
 }
 
-async function writeZCodeServersToFile(
+/** Re-read the `.zcode` server map before writing and touch only the servers the update involves; other fields are preserved. */
+async function updateZCodeServersInFile(
   scope: Exclude<McpScope, "common">,
-  servers: Record<string, Record<string, unknown>>,
-  workspacePath?: string,
+  workspacePath: string | undefined,
+  update: (servers: Record<string, Record<string, unknown>>) => void,
 ): Promise<void> {
   const filePath = buildDirectoryConfigPath(ZCODE_MCP_DESCRIPTOR, scope, workspacePath);
-  const current = (await readJsonObject(filePath)) ?? {};
-  const next = writeServerMapToJson(current, ZCODE_MCP_DESCRIPTOR.configKeyName, servers);
-  await writeTextAtomic(filePath, `${JSON.stringify(next, null, 2)}\n`);
+  const key = ZCODE_MCP_DESCRIPTOR.configKeyName;
+  await updateJsonObjectFile(filePath, (current) => {
+    const servers = { ...migrateLegacyEnableFlag(readServerMapFromJson(current, key)).servers };
+    update(servers);
+    return writeServerMapToJson(current, key, servers);
+  });
 }
 
 export async function loadCliMcpFromUserDirectory(
@@ -401,23 +419,15 @@ export async function saveCliMcpToUserDirectory(
   }
 
   const scope: Exclude<McpScope, "common"> = payload.projectPath ? "workspace" : "user";
-  const existingServers = await readDirectoryServersFromFile(
-    ZCODE_MCP_DESCRIPTOR,
-    scope,
-    payload.projectPath,
-  );
-  const nextServers = Object.fromEntries(
-    existingServers.map((server) => [server.name, server.config]),
-  );
-
-  if (payload.action === "upsert") {
-    if (!payload.config) {
-      throw new Error("Missing MCP config for upsert action");
-    }
-    nextServers[payload.name] = payload.config;
-  } else {
-    delete nextServers[payload.name];
+  const config = payload.action === "upsert" ? payload.config : undefined;
+  if (payload.action === "upsert" && !config) {
+    throw new Error("Missing MCP config for upsert action");
   }
-
-  await writeZCodeServersToFile(scope, nextServers, payload.projectPath);
+  await updateZCodeServersInFile(scope, payload.projectPath, (servers) => {
+    if (config) {
+      servers[payload.name] = config as Record<string, unknown>;
+    } else {
+      delete servers[payload.name];
+    }
+  });
 }

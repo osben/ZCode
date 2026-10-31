@@ -303,3 +303,15 @@ packages/ui/src/remote-connection-flow/index.ts
 
 # SIWC account owner (41.6 KB before the usage-display change); split it before growing it further.
 packages/services/src/oauth/siwc/siwcAuthService.ts
+# Already over the cap at base 3.16.2 (20914 bytes); the 3.17.1 stability port only adds the structured-code rethrow to ensureDaemon.
+packages/server/src/source-server/transportAdapter.ts
+# Already over the cap at base 3.16.2 (25315 bytes); the 3.17.1 stability port only adds the coreFatalMessage capture and compose.
+packages/zcode-server-cli/src/supervisor/supervisor.ts
+# Already over the cap at base 3.16.2 (44044 bytes); the 3.17.1 writer-hardening port only switches writeSkillEnabledMap to updateJsonObjectFile.
+packages/services/src/skills/skillsService.ts
+# Already over the cap at base 3.16.2 (32545 bytes); the 3.17.1 writer-hardening port only switches writeUserCliConfig to updateUserCliConfig.
+packages/services/src/commands/commandsService.ts
+# Already over the cap at base 3.16.2 (76830 bytes); the 3.17.1 writer-hardening port only switches the two config writers and migration catches.
+packages/services/src/settings-sync/settingsSyncService.ts
+# Already over the cap at base 3.16.2 (79000+ bytes); the 3.17.1 reinstall port adds the menu item, availability and callback to the device card.
+packages/ui/src/settings/SourceServerManagementPanel.tsx

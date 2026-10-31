@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { serverRuntimeManifestSchema, type ServerTarget } from "./manifest.js";
 
 export interface ReleaseIdentity {
@@ -40,34 +40,96 @@ async function hashReleaseTree(root: string, relativeRoot = ""): Promise<string>
   return hash.digest("hex");
 }
 
+function immutableReleaseConflict(releaseDir: string, error: unknown): Error {
+  return new Error(
+    `Existing immutable release conflict at ${releaseDir}: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
+/**
+ * An existing same-id release has exactly two legal outcomes: it matches this archive and can be
+ * reused, or it is a damaged copy of this archive. The old implementation also reported a conflict
+ * when the integrity record matched this archive but the on-disk content had drifted from the
+ * record, so force-reinstalling the same archive failed forever and the only way out was manually
+ * deleting releases/<id>. A missing record, or one pointing at a different identity, still cannot
+ * be proven to be a copy of this release and fails as a conflict.
+ */
+async function inspectExistingRelease(
+  releaseDir: string,
+  expected: ReleaseIntegrity,
+): Promise<"match" | "damaged"> {
+  let integrity: Partial<ReleaseIntegrity>;
+  try {
+    integrity = JSON.parse(
+      await readFile(join(releaseDir, RELEASE_INTEGRITY_FILE), "utf8"),
+    ) as Partial<ReleaseIntegrity>;
+  } catch (error) {
+    throw immutableReleaseConflict(releaseDir, error);
+  }
+  if (
+    integrity.archiveSha256 !== expected.archiveSha256 ||
+    integrity.contentSha256 !== expected.contentSha256 ||
+    integrity.target !== expected.target ||
+    integrity.version !== expected.version
+  ) {
+    throw immutableReleaseConflict(releaseDir, "identity mismatch");
+  }
+  try {
+    const runtimeManifest = serverRuntimeManifestSchema.parse(
+      JSON.parse(await readFile(join(releaseDir, "manifest.json"), "utf8")),
+    );
+    if (
+      runtimeManifest.target !== expected.target ||
+      runtimeManifest.appVersion !== expected.version
+    ) {
+      return "damaged";
+    }
+    return (await hashReleaseTree(releaseDir)) === expected.contentSha256 ? "match" : "damaged";
+  } catch {
+    return "damaged";
+  }
+}
+
 async function assertExistingReleaseMatches(
   releaseDir: string,
   expected: ReleaseIntegrity,
 ): Promise<void> {
-  try {
-    const integrity = JSON.parse(
-      await readFile(join(releaseDir, RELEASE_INTEGRITY_FILE), "utf8"),
-    ) as Partial<ReleaseIntegrity>;
-    const runtimeManifest = serverRuntimeManifestSchema.parse(
-      JSON.parse(await readFile(join(releaseDir, "manifest.json"), "utf8")),
-    );
-    const actualContentSha256 = await hashReleaseTree(releaseDir);
-    if (
-      integrity.archiveSha256 !== expected.archiveSha256 ||
-      integrity.contentSha256 !== expected.contentSha256 ||
-      integrity.contentSha256 !== actualContentSha256 ||
-      integrity.target !== expected.target ||
-      integrity.version !== expected.version ||
-      runtimeManifest.target !== expected.target ||
-      runtimeManifest.appVersion !== expected.version
-    ) {
-      throw new Error("identity mismatch");
-    }
-  } catch (error) {
-    throw new Error(
-      `Existing immutable release conflict at ${releaseDir}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  if ((await inspectExistingRelease(releaseDir, expected)) !== "match") {
+    throw immutableReleaseConflict(releaseDir, "content does not match its integrity record");
   }
+}
+
+async function replaceDamagedRelease(incomingDir: string, targetDir: string): Promise<void> {
+  // The caller holds the update lock. Move the damaged copy aside to a hidden sibling name first,
+  // then rename the verified incoming directory into place; both steps are same-filesystem
+  // renames. If the second step fails, move the damaged copy back to preserve the pre-repair
+  // on-disk state.
+  const damagedDir = join(
+    dirname(targetDir),
+    `.damaged-${basename(targetDir)}-${process.pid}-${randomUUID()}`,
+  );
+  await rename(targetDir, damagedDir);
+  try {
+    await rename(incomingDir, targetDir);
+  } catch (error) {
+    try {
+      await rename(damagedDir, targetDir);
+    } catch (rollbackError) {
+      // A failed rollback used to be swallowed, reporting only the second error while releases/<id>
+      // was already missing and current.json still pointed at it: the user saw neither the missing
+      // directory nor where the damaged copy ended up. There is no atomic exchange between the two
+      // steps, so the old directory is not guaranteed to return to its place — report honestly. A
+      // later reinstall finds no target and recovers through the normal promote path.
+      throw new AggregateError(
+        [error, rollbackError],
+        `Failed to replace damaged release ${targetDir}: ${error instanceof Error ? error.message : String(error)}; ` +
+          `restoring it also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}. ` +
+          `The damaged copy is kept at ${damagedDir}; reinstall to recover.`,
+      );
+    }
+    throw error;
+  }
+  await rm(damagedDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
 async function existingPathKind(path: string): Promise<"directory" | "other" | null> {
@@ -106,7 +168,9 @@ export async function promoteImmutableReleaseDirectory(options: {
           `Existing immutable release conflict at ${options.targetDir}: target is not a directory`,
         );
       }
-      await assertExistingReleaseMatches(options.targetDir, integrity);
+      if ((await inspectExistingRelease(options.targetDir, integrity)) === "match") return;
+      await replaceDamagedRelease(options.incomingDir, options.targetDir);
+      promoted = true;
       return;
     }
     try {

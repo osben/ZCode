@@ -27,6 +27,7 @@ import {
 
 import type { AgentRuntimeInternal } from "../src/runtime/internal.js";
 import { resolveProjectMemoryRoot } from "../src/memory/project-root.js";
+import { listDreamJournalRuns } from "../src/memory/dream-journal/index.js";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import {
   runProjectMemoryDream,
@@ -996,8 +997,273 @@ describe("background Dream lifecycle", () => {
   });
 });
 
+describe("Dream run journal and lifecycle logs", () => {
+  type LoggerSpy = { debug: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
+
+  function createLoggerSpy(): LoggerSpy {
+    return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+  }
+
+  function loggedFields(logger: LoggerSpy, level: "info" | "warn", event: string) {
+    return logger[level].mock.calls
+      .map(([, fields]) => fields as Record<string, unknown>)
+      .filter((fields) => fields.event === event);
+  }
+
+  async function setup(
+    options: {
+      transcriptMtime?: number;
+      failSecondRequest?: boolean;
+      blockJournal?: boolean;
+      breakCommit?: boolean;
+      failFinalize?: boolean;
+      seedLock?: { pid: number; mtimeMs: number; status: "running" | "succeeded" };
+    } = {},
+  ) {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({ cliStorageRoot, workspacePath: WORKSPACE_PATH });
+    const factPath = join(memoryRoot, "fact.md");
+    const transcript = join(modelIoDir, `model-io-${createSessionId("history")}.jsonl`);
+    const fileSystemPort = new MemoryFileSystem(
+      { [transcript]: "{}\n" },
+      { [transcript]: options.transcriptMtime ?? NOW },
+    );
+    let dreamRequests = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("journal-dream"),
+      {
+        memory: { cliStorageRoot, enabled: true, use: true, extractionEnabled: false },
+        mode: "yolo",
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            if (!providerMessagesToText(request.messages).includes("# Dream: Memory Consolidation")) {
+              return textResult(observation.model, "foreground answer");
+            }
+            dreamRequests += 1;
+            if (dreamRequests === 1) {
+              return {
+                ...textResult(observation.model, ""),
+                finishReason: "tool_calls",
+                toolCalls: [
+                  { id: "write-fact", name: "Write", input: { file_path: factPath, content: "fact" } },
+                ],
+              };
+            }
+            if (options.breakCommit) {
+              // Another owner takes the lock before the commit, so writeDreamConsolidatedAt throws.
+              await writeRealFile(
+                join(memoryRoot, ".consolidate-lock"),
+                JSON.stringify({ pid: process.pid, token: "foreign", status: "running" }),
+                "utf8",
+              );
+            }
+            if (options.failSecondRequest) throw new Error("later request failed");
+            return textResult(observation.model, "Dream summary");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore([session("history", NOW)]),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+    const logger = createLoggerSpy();
+    (runtime as unknown as AgentRuntimeInternal).logger = logger as never;
+    if (options.seedLock) {
+      await mkdir(memoryRoot, { recursive: true });
+      const lockPath = join(memoryRoot, ".consolidate-lock");
+      await writeRealFile(
+        lockPath,
+        JSON.stringify({ pid: options.seedLock.pid, status: options.seedLock.status }),
+        "utf8",
+      );
+      await utimes(lockPath, options.seedLock.mtimeMs / 1000, options.seedLock.mtimeMs / 1000);
+    }
+    if (options.failFinalize) {
+      // Reading the applied file fails only after the write, so the snapshot still succeeds.
+      const readTextFile = fileSystemPort.readTextFile.bind(fileSystemPort);
+      vi.spyOn(fileSystemPort, "readTextFile").mockImplementation(async (request) => {
+        if (request.path === factPath && fileSystemPort.files[factPath] !== undefined) {
+          throw new Error("port read failed");
+        }
+        return readTextFile(request);
+      });
+    }
+    if (options.blockJournal) {
+      // A plain file where the journal directory must go makes every journal write fail, while
+      // the Dream tools keep using the in-memory port.
+      await mkdir(memoryRoot, { recursive: true });
+      await writeRealFile(join(memoryRoot, ".fork_dream-journal"), "not a directory", "utf8");
+    }
+    return { dreamRequests: () => dreamRequests, fileSystemPort, factPath, logger, memoryRoot, runtime };
+  }
+
+  it("journals a skip with its reason code and logs it without calling the model", async () => {
+    const { dreamRequests, logger, memoryRoot, runtime } = await setup({ transcriptMtime: 0 });
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(result.response).toContain("no new session activity");
+    expect(dreamRequests()).toBe(0);
+    const runs = await listDreamJournalRuns({ memoryRoot });
+    expect(runs).toEqual([
+      expect.objectContaining({
+        items: [],
+        outcome: "skipped",
+        reasonCode: "no_new_turns",
+        trigger: "manual",
+      }),
+    ]);
+    expect(loggedFields(logger, "info", "memory.dream.run.skipped")).toEqual([
+      expect.objectContaining({ module: "core.runtime", reasonCode: "no_new_turns", trigger: "manual" }),
+    ]);
+  });
+
+  it("journals a learned run with before and after bodies and logs start and completion", async () => {
+    const { logger, memoryRoot, runtime } = await setup();
+
+    await runtime.executeTurn("/dream");
+    await waitFor(() => loggedFields(logger, "info", "memory.dream.run.completed").length === 1);
+
+    const [run] = await listDreamJournalRuns({ memoryRoot });
+    expect(run).toMatchObject({
+      outcome: "learned",
+      trigger: "manual",
+      items: [
+        expect.objectContaining({
+          action: "created",
+          after: { content: "fact" },
+          before: null,
+          file: "fact.md",
+        }),
+      ],
+    });
+    expect(loggedFields(logger, "info", "memory.dream.run.started")).toEqual([
+      expect.objectContaining({ runId: run!.id, sessionCount: 1, trigger: "manual" }),
+    ]);
+    expect(loggedFields(logger, "info", "memory.dream.run.completed")).toEqual([
+      expect.objectContaining({
+        created: 1,
+        deleted: 0,
+        outcome: "learned",
+        runId: run!.id,
+        updated: 0,
+      }),
+    ]);
+  });
+
+  it("keeps the applied change recorded when the run fails after an earlier write", async () => {
+    const { logger, memoryRoot, runtime } = await setup({ failSecondRequest: true });
+
+    await runtime.executeTurn("/dream");
+    await waitFor(() => loggedFields(logger, "warn", "memory.dream.failed").length === 1);
+
+    const [run] = await listDreamJournalRuns({ memoryRoot });
+    expect(run).toMatchObject({
+      outcome: "failed",
+      reasonCode: "error",
+      items: [expect.objectContaining({ action: "created", file: "fact.md", after: { content: "fact" } })],
+    });
+    expect(loggedFields(logger, "warn", "memory.dream.failed")).toEqual([
+      expect.objectContaining({ phase: "agent_loop", runId: run!.id }),
+    ]);
+  });
+
+  it("does not fail the Dream run when the journal cannot be written", async () => {
+    const { factPath, fileSystemPort, logger, runtime } = await setup({ blockJournal: true });
+
+    await runtime.executeTurn("/dream");
+    await waitFor(() => loggedFields(logger, "info", "memory.dream.run.completed").length === 1);
+
+    expect(loggedFields(logger, "warn", "memory.dream.journal.failed")).toEqual([
+      expect.objectContaining({ module: "core.runtime", operation: "begin" }),
+    ]);
+    expect(loggedFields(logger, "warn", "memory.dream.failed")).toEqual([]);
+    expect(fileSystemPort.files[factPath]).toBe("fact");
+  });
+  it("journals a lock_held skip for a manual run while another run holds the lock", async () => {
+    const { dreamRequests, logger, memoryRoot, runtime } = await setup({
+      seedLock: { pid: process.pid, mtimeMs: NOW, status: "running" },
+      transcriptMtime: NOW + 1000,
+    });
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(result.response).toContain("another dream is already running");
+    expect(dreamRequests()).toBe(0);
+    expect(await listDreamJournalRuns({ memoryRoot })).toEqual([
+      expect.objectContaining({ outcome: "skipped", reasonCode: "lock_held", trigger: "manual" }),
+    ]);
+    expect(loggedFields(logger, "info", "memory.dream.run.skipped")).toEqual([
+      expect.objectContaining({ reasonCode: "lock_held", trigger: "manual" }),
+    ]);
+  });
+
+  it("journals a min_interval skip for an automatic run inside the 24 hour window", async () => {
+    const { dreamRequests, logger, memoryRoot, runtime } = await setup({
+      seedLock: { pid: 99999999, mtimeMs: NOW - 1000, status: "succeeded" },
+      transcriptMtime: NOW + 1000,
+    });
+
+    await runProjectMemoryDream(runtime as never, {
+      traceContext: createRootTraceContext({
+        sessionId: createSessionId("journal-dream"),
+        turnId: createTurnId("auto-min-interval"),
+      }),
+    });
+
+    expect(dreamRequests()).toBe(0);
+    expect(await listDreamJournalRuns({ memoryRoot })).toEqual([
+      expect.objectContaining({ outcome: "skipped", reasonCode: "min_interval", trigger: "scheduled" }),
+    ]);
+    expect(loggedFields(logger, "info", "memory.dream.run.skipped")).toEqual([
+      expect.objectContaining({ reasonCode: "min_interval", trigger: "scheduled" }),
+    ]);
+  });
+
+  it("does not fail the Dream run when finalize cannot read the applied file", async () => {
+    const { logger, memoryRoot, runtime } = await setup({ failFinalize: true });
+
+    await runtime.executeTurn("/dream");
+    await waitFor(() => loggedFields(logger, "info", "memory.dream.run.completed").length === 1);
+
+    expect(loggedFields(logger, "warn", "memory.dream.journal.failed")).toEqual([
+      expect.objectContaining({ operation: "finalize" }),
+    ]);
+    expect(loggedFields(logger, "warn", "memory.dream.failed")).toEqual([]);
+    expect(JSON.parse(readFileSync(join(memoryRoot, ".consolidate-lock"), "utf8"))).toMatchObject({
+      status: "succeeded",
+    });
+  });
+
+  it("records commit_failed in the journal and the failure log when the lock changes before commit", async () => {
+    const { logger, memoryRoot, runtime } = await setup({ breakCommit: true });
+
+    await runtime.executeTurn("/dream");
+    await waitFor(() => loggedFields(logger, "warn", "memory.dream.failed").length === 1);
+
+    const [run] = await listDreamJournalRuns({ memoryRoot });
+    expect(run).toMatchObject({
+      outcome: "failed",
+      reasonCode: "commit_failed",
+      items: [expect.objectContaining({ action: "created", file: "fact.md", after: { content: "fact" } })],
+    });
+    expect(loggedFields(logger, "warn", "memory.dream.failed")).toEqual([
+      expect.objectContaining({ phase: "commit", runId: run!.id }),
+    ]);
+    expect(loggedFields(logger, "info", "memory.dream.run.completed")).toEqual([]);
+  });
+});
+
 function session(
   id: string,
+
   updated: number,
   options: Partial<Pick<SessionInfo, "directory" | "incognito" | "taskType" | "workspaceID">> = {},
 ): SessionInfo {

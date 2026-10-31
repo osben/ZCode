@@ -6,48 +6,67 @@ import { ModelConfig, ModelConfigRules, parseZCodeBuiltinModelConfigRules } from
 const url = "https://opencode.ai/zen/go/v1";
 const members = {
   "opencode-go-chat": [
+    "minimax-m3.1-flash",
+    "kimi-k3.1-pro",
     "glm-5.3-flash",
     "glm-5.3",
-    "glm-5.2",
-    "glm-5.1",
     "kimi-k3",
     "kimi-k2.7-code",
-    "kimi-k2.6",
     "deepseek-v4.1-flash",
     "deepseek-v4-pro",
-    "deepseek-v4-flash",
-    "deepseek-v4-flash-vision-exp",
+    "mimo-v2.6-pro",
+    "mimo-v2.6-flash",
     "mimo-v2.5",
     "mimo-v2.5-pro",
+    "glm-5.2",
+    "glm-5.1",
+    "kimi-k2.6",
+    "deepseek-v4-flash",
+    "deepseek-v4-flash-vision-exp",
     "hy4-preview",
     "hy3",
   ],
   "opencode-go-messages": [
     "minimax-m3",
-    "minimax-m2.7",
-    "minimax-m2.5",
     "qwen3.8-max",
     "qwen3.8-flash",
+    "claude-haiku-5-5",
+    "minimax-m2.7",
+    "minimax-m2.5",
     "qwen3.7-max",
     "qwen3.7-plus",
     "qwen3.6-plus",
   ],
-  "opencode-go-responses": ["gpt-5.6-luna", "grok-4.6"],
+  "opencode-go-responses": ["gpt-6-luna", "grok-4.7", "gpt-5.6-luna", "grok-4.6"],
 };
 const enabled = new Set([
+  "minimax-m3.1-flash",
+  "kimi-k3.1-pro",
   "glm-5.3-flash",
   "glm-5.3",
   "kimi-k3",
   "kimi-k2.7-code",
   "deepseek-v4.1-flash",
   "deepseek-v4-pro",
-  "mimo-v2.5",
-  "mimo-v2.5-pro",
+  "mimo-v2.6-pro",
+  "mimo-v2.6-flash",
   "minimax-m3",
   "qwen3.8-max",
   "qwen3.8-flash",
-  "gpt-5.6-luna",
-  "grok-4.6",
+  "claude-haiku-5-5",
+  "gpt-6-luna",
+  "grok-4.7",
+]);
+// Members whose Go capability facts are declared by exact templateId/modelId rules instead of the
+// shared site rules (see docs/builtin-provider-maintenance/kimi-k3-1-pro.md, minimax-m31-flash.md).
+const goTemplateDeclaredFacts = new Set([
+  "minimax-m3.1-flash",
+  "kimi-k3.1-pro",
+  "mimo-v2.6-pro",
+  "mimo-v2.6-flash",
+  "claude-haiku-5-5",
+  "gpt-6-luna",
+  "grok-4.7",
 ]);
 let rules: ModelConfigRules;
 let templates: {
@@ -104,8 +123,14 @@ describe("Todo149 Go 模板与自建供应商共用站点规则", () => {
       const manual = rules.resolve(i);
       expect(fromTemplate.validateComplete(), modelId).toEqual([]);
       expect(fromTemplate.enabled, modelId).toBe(enabled.has(modelId));
-      expect(fromTemplate.properties?.toJSON()).toEqual(manual.properties?.toJSON());
-      expect(fromTemplate.optionSpecs?.toJSON()).toEqual(manual.optionSpecs?.toJSON());
+      // Members added by the 3.17.1 catalog declare their Go facts as exact templateId/modelId
+      // rules (evidence-bounded levels per the maintenance specs), so the shared site rules no
+      // longer describe them; only the remaining members must stay identical to a self-built
+      // provider at the same site.
+      if (!goTemplateDeclaredFacts.has(modelId)) {
+        expect(fromTemplate.properties?.toJSON()).toEqual(manual.properties?.toJSON());
+        expect(fromTemplate.optionSpecs?.toJSON()).toEqual(manual.optionSpecs?.toJSON());
+      }
       expect(manual.properties?.supportsNativeWebSearch, modelId).toBe(false);
       for (const level of fromTemplate.optionSpecs!.reasoningLevel!.values!)
         expect(() => patch(fromTemplate, level), `${modelId}/${level}`).not.toThrow();

@@ -500,8 +500,39 @@ describe("evaluateMemoryAgentToolPolicy", () => {
     ["glob removal", "Bash", { command: `rm ${memoryRoot}/*.md` }],
     ["write redirect", "Bash", { command: "head /workspace/file > /workspace/copy" }],
     ["unsafe environment prefix", "Bash", { command: "PATH=/tmp head /workspace/file" }],
+    [
+      "Write into the Dream journal directory",
+      "Write",
+      { file_path: `${memoryRoot}/.fork_dream-journal/run.md`, content: "x" },
+    ],
+    [
+      "Write into the Dream journal directory in upper case",
+      "Write",
+      { file_path: `${memoryRoot}/.FORK_DREAM-JOURNAL/run.md`, content: "x" },
+    ],
+    [
+      "Edit inside the Dream journal directory",
+      "Edit",
+      { file_path: `${memoryRoot}/.fork_dream-journal/run.md`, old_string: "a", new_string: "b" },
+    ],
+    [
+      "rm inside the Dream journal directory",
+      "Bash",
+      { command: `rm ${memoryRoot}/.fork_dream-journal/run.md` },
+    ],
+    [
+      "rm inside the Dream journal directory in upper case",
+      "Bash",
+      { command: `rm ${memoryRoot}/.FORK_DREAM-JOURNAL/run.md` },
+    ],
   ])("denies %s", (_label, name, input) => {
     expect(decide(name, input, registeredTools)).toMatchObject({ allowed: false });
+  });
+
+  it("still allows removing ordinary memory Markdown", () => {
+    expect(
+      decide("Bash", { command: `rm ${memoryRoot}/release-notes.md` }, registeredTools),
+    ).toMatchObject({ allowed: true });
   });
 });
 

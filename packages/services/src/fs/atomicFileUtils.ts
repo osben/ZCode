@@ -1,7 +1,7 @@
-import { mkdir, writeFile, rename, rm, readdir, stat } from "node:fs/promises";
+import { mkdir, writeFile, rename, rm, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { acquireFileLock } from "@zcode/shared/node";
+import { acquireFileLock, atomicWritePrivateTextFile } from "@zcode/shared/node";
 import { isInjectedFsFaultError, maybeThrowInjectedFsFault } from "./fsFaultInjection.js";
 
 const DEFAULT_RENAME_RETRY_DELAYS_MS = [50, 100, 200, 400, 800, 1600, 3200] as const;
@@ -184,4 +184,78 @@ export async function atomicWriteJson(
   options?: AtomicWriteTextOptions,
 ): Promise<void> {
   await atomicWriteText(filePath, JSON.stringify(data, null, 2), options);
+}
+
+/**
+ * Thrown when a config file exists but cannot be read, is not valid JSON, or its root node is not an object.
+ * Callers must abort the write and surface the error through the existing failure feedback in the UI.
+ */
+export class JsonObjectFileUnreadableError extends Error {
+  constructor(
+    readonly filePath: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "JsonObjectFileUnreadableError";
+  }
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reads a JSON object file before writing: a missing file is treated as an empty object; read failures,
+ * invalid JSON, or a non-object root node throw. Read-only display paths may treat a corrupt file as an
+ * empty config; write paths must not, otherwise the whole file would be written back with only the
+ * writer's own fields left in it.
+ */
+export async function readJsonObjectFileForUpdate(
+  filePath: string,
+): Promise<Record<string, unknown>> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") return {};
+    throw new JsonObjectFileUnreadableError(filePath, `Failed to read config file ${filePath}`, {
+      cause: error,
+    });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new JsonObjectFileUnreadableError(filePath, `Config file ${filePath} is not valid JSON`, {
+      cause: error,
+    });
+  }
+  if (!isJsonObject(parsed)) {
+    throw new JsonObjectFileUnreadableError(
+      filePath,
+      `Config file ${filePath} must contain a JSON object`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `~/.zcode/cli/config.json` has multiple writers (commands, hooks, skills, MCP, plugins, sync import, and
+ * the CLI itself) that do not lock against each other. Every writer follows "re-read before write → change
+ * only its own fields → atomic replace":
+ * - update receives the on-disk content as of the moment of the read and must only change its own fields;
+ * - the temp file + rename replaces the target, so a mid-write failure never leaves a truncated file behind;
+ * - no rename retries; failures propagate directly to the caller.
+ * Known limitation: there is no lock between the read and the replace. When two writers run concurrently,
+ * the one that renames later overwrites the fields the other just wrote (the same applies to in-process
+ * concurrency).
+ */
+export async function updateJsonObjectFile(
+  filePath: string,
+  update: (current: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  const next = update(await readJsonObjectFileForUpdate(filePath));
+  await atomicWritePrivateTextFile(filePath, `${JSON.stringify(next, null, 2)}\n`, []);
 }

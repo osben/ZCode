@@ -1,4 +1,3 @@
-import { requestSecurityMessagesEnUS } from "@/request-security-edition/messages.js";
 /** English translations */
 const enUS: Record<string, string> = {
   "preview.image.copy": "Copy image",
@@ -2609,6 +2608,13 @@ const enUS: Record<string, string> = {
     "Connection changes take effect the next time you connect. Existing projects and tasks are unchanged.",
   "settings.source.deviceName": "Device name",
   "settings.source.removeSourceServer": "Remove device",
+  "settings.source.reinstallRemoteService": "Reinstall remote service",
+  "settings.source.reinstallRemoteServiceHint":
+    "Uses this computer's version. Projects and tasks are kept.",
+  "settings.source.reinstallRemoteServiceTitle": "Reinstall the remote service?",
+  "settings.source.reinstallRemoteServiceDescription":
+    "ZCode Server {version} will be reinstalled on {source}. Damaged program files are replaced. Projects, tasks, settings, and sign-in information are kept.",
+  "settings.source.reinstallRemoteServiceConfirm": "Reinstall",
   "settings.source.removeOpenProjects": "These open projects will be disconnected:\n{projects}",
   "settings.source.noOpenProjects": "This device has no open projects.",
   "settings.source.disconnectHint": "Remote tasks will continue running after you disconnect.",
@@ -2708,6 +2714,9 @@ const enUS: Record<string, string> = {
   "sourceServer.updateCompletedToast": "{source} was updated and reconnected.",
   "sourceServer.updateFailedToast":
     "{source} could not be updated. Review the log under Remote devices and try again.",
+  "sourceServer.reinstallCompletedToast": "{source} was reinstalled and reconnected.",
+  "sourceServer.reinstallFailedToast":
+    "{source} could not be reinstalled. Review the log under Remote devices and try again.",
   "sourceServer.controllerUpdateAvailableToast":
     "ZCode has an update for {source}\nDesktop {current} → {available}; update ZCode to match this Source.",
   "settings.source.forceUpdate": "Force update",
@@ -2957,6 +2966,7 @@ const enUS: Record<string, string> = {
   "chat.previewCards.video": "Video",
   "chat.previewCards.audio": "Audio",
   "chat.previewCards.openExternal": "Open in browser",
+  "chat.message.link.openInZCode": "Open in ZCode",
   "chat.previewCards.previewInSidePane": "Preview",
   "chat.previewCards.openDefaultApp": "Open",
   "chat.previewCards.openWith": "Open with",
@@ -7019,6 +7029,22 @@ const enUS: Record<string, string> = {
   "mode.label.glm.plan": "Plan mode",
   "mode.label.glm.guarded": "Autonomous mode",
   "mode.description.glm.guarded": "Ask when there’s risk",
+  "mode.yoloConfirmation.title": "Enable full access?",
+  "mode.yoloConfirmation.description":
+    "Tasks can perform the following actions without asking for your approval each time.",
+  "mode.yoloConfirmation.files": "Files and folders",
+  "mode.yoloConfirmation.files.description": "Read, create, change, and delete accessible files.",
+  "mode.yoloConfirmation.commands": "Terminal commands",
+  "mode.yoloConfirmation.commands.description":
+    "Run commands, install software, or change system settings.",
+  "mode.yoloConfirmation.network": "Network and apps",
+  "mode.yoloConfirmation.network.description":
+    "Access the network, send data, and use connected apps.",
+  "mode.yoloConfirmation.risk":
+    "These actions may cause data loss or disclosure. Enable only for tasks you trust. You can switch to another permission mode at any time.",
+  "mode.yoloConfirmation.acknowledgement":
+    "I understand the risks and take responsibility for my data security.",
+  "mode.yoloConfirmation.confirm": "Confirm",
   "mode.label.glm.yolo": "Full access",
   "mode.description.glm.default": "Use default confirmations.",
   "mode.description.glm.build": "Ask before file changes.",
@@ -7864,7 +7890,6 @@ const enUS: Record<string, string> = {
     "I used the ZCode Highspeed card and saved {duration}s. Give it a try. Download ZCode https://zcode.z.ai",
   "globalNotice.highspeed.imageSummary": "{tokens} tokens · {duration}s saved",
   "globalNotice.highspeed.close": "Close Highspeed share card",
-  ...requestSecurityMessagesEnUS,
   "worktreeFailure.title": "Could not create the worktree",
   "worktreeFailure.savedNotRestored":
     'Your message was saved below in the "Unsent message saved" card because the current draft is not empty.',

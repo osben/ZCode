@@ -39,6 +39,8 @@ export function createStatusPersister<T>(
   statusFile: string,
   getStatus: () => T,
   onError: (error: unknown) => void,
+  /** status.json may only be written by the Supervisor holding the data-root lock; a false return skips this write. */
+  canWrite: () => Promise<boolean>,
 ): () => Promise<void> {
   let inFlight: Promise<void> = Promise.resolve();
   return async () => {
@@ -46,6 +48,7 @@ export function createStatusPersister<T>(
     // to be lost; status.json is only an observation snapshot, so log a warning and continue the service lifecycle on failure.
     inFlight = inFlight
       .then(async () => {
+        if (!(await canWrite())) return;
         const temporary = `${statusFile}.${process.pid}.tmp`;
         await writeFile(temporary, `${JSON.stringify(getStatus(), null, 2)}\n`, {
           encoding: "utf8",

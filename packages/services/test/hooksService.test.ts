@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -401,5 +409,76 @@ describe("hooksService", () => {
     } finally {
       consoleWarn.mockRestore();
     }
+  });
+
+  it("rejects hook saves and keeps bytes untouched when the user config is corrupt", async () => {
+    const home = makeTempRoot();
+    const workspacePath = join(makeTempRoot(), "workspace");
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    const corrupt = "{ not json";
+    writeFileSync(configPath, corrupt, "utf-8");
+
+    const service = await createHooksServiceInEnv(home);
+    await expect(
+      service.saveHooks({
+        workspacePath,
+        hooks: [
+          {
+            id: "user-stop",
+            event: "Stop",
+            type: "command",
+            command: "echo stop",
+            enabled: true,
+            location: {
+              source: "zcode",
+              scope: "user",
+              directoryPath: join(home, ".zcode", "cli"),
+            },
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ name: "JsonObjectFileUnreadableError" });
+
+    expect(readFileSync(configPath, "utf-8")).toBe(corrupt);
+  });
+
+  it("preserves unrelated config.json fields and writes 0600 when saving hooks", async () => {
+    const home = makeTempRoot();
+    const workspacePath = join(makeTempRoot(), "workspace");
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    writeFileSync(
+      join(home, ".zcode", "cli", "config.json"),
+      JSON.stringify({ mcp: { servers: { fetch: { command: "node" } } } }),
+      "utf-8",
+    );
+
+    const service = await createHooksServiceInEnv(home);
+    await service.saveHooks({
+      workspacePath,
+      scope: "user",
+      hooks: [
+        {
+          id: "user-stop",
+          event: "Stop",
+          type: "command",
+          command: "echo stop",
+          enabled: true,
+          location: {
+            source: "zcode",
+            scope: "user",
+            directoryPath: join(home, ".zcode", "cli"),
+          },
+        },
+      ],
+    });
+
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    const saved = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(saved.mcp).toEqual({ servers: { fetch: { command: "node" } } });
+    expect(saved.hooks.events.Stop).toEqual([
+      { hooks: [{ type: "command", command: "echo stop", enabled: true }] },
+    ]);
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
   });
 });

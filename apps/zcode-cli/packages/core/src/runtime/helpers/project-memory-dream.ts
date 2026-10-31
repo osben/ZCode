@@ -4,7 +4,7 @@ import { incognitoExcludes } from "@zcode/shared";
 
 import type { BackgroundTaskPayloadBase, ModelTextContentBlock } from "@zcode/contracts";
 import type { Model, ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
-import { SessionEventType } from "../deps.js";
+import { SessionEventType, traceContextToLogContext } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeAttachmentEntry,
@@ -19,6 +19,16 @@ import {
   restoreDreamLockAfterFailure,
   writeDreamConsolidatedAt,
 } from "../../memory/dream.js";
+import type { DreamJournalTrigger } from "../../memory/dream-journal/index.js";
+import {
+  beginDreamJournalRunSafely,
+  countDreamJournalActions,
+  finalizeDreamJournalSafely,
+  logDreamSkip,
+  recordDreamSkip,
+  snapshotBeforeTouchSafely,
+  type DreamSkipReasonCode,
+} from "../../memory/dream-journal/index.js";
 import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
 import { findLatestReadFileState } from "../../tool/read-file-state.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -115,13 +125,25 @@ export async function launchManualProjectMemoryDream(
   if (runtime.shuttingDown) throw new Error("Runtime is shutting down");
   const memoryRoot = resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot);
   if (!memoryRoot || !runtime.sessionStore || !runtime.fileSystemPort || !runtime.modelIoDir) {
+    // No memory root exists to hold a journal row, so this skip is logged only.
+    logDreamSkip(runtime, input.traceContext, "manual", "disabled");
     return { status: "skipped", reason: "memory-disabled" };
   }
+  // Remote workspaces own no local memory root, so their skip is logged but not journaled here.
   if (runtime.isRemoteWorkspace()) {
+    logDreamSkip(runtime, input.traceContext, "manual", "remote");
     return { status: "skipped", reason: "remote-workspace" };
   }
 
-  if (runtime.backgroundDreamRuns.size > 0) return { status: "skipped", reason: "lock-held" };
+  if (runtime.backgroundDreamRuns.size > 0) {
+    await recordDreamSkip(runtime, {
+      memoryRoot,
+      traceContext: input.traceContext,
+      trigger: "manual",
+      reasonCode: "lock_held",
+    });
+    return { status: "skipped", reason: "lock-held" };
+  }
   const context = captureProjectMemoryAgentContext(runtime, {
     memoryRoot,
     model: input.model,
@@ -222,6 +244,7 @@ export async function launchManualProjectMemoryDream(
       outcome = await telemetry.run(() =>
         runDreamConsolidation(runtime, context, {
           abortSignal: controller.signal,
+          trigger: "manual",
           onActivity: (activity) => {
             if (terminal || controller.signal.aborted || activity === lastProgress) return;
             lastProgress = activity;
@@ -352,10 +375,18 @@ async function restoreDreamSlot(
   }
 }
 
-function logDreamFailure(runtime: AgentRuntimeInternal, message: string, error: unknown): void {
+function logDreamFailure(
+  runtime: AgentRuntimeInternal,
+  message: string,
+  error: unknown,
+  fields: { phase?: DreamFailurePhase; runId?: string } = {},
+): void {
   runtime.logger?.warn(message, {
     event: "memory.dream.failed",
     errorMessage: error instanceof Error ? error.message : String(error),
+    module: "core.runtime",
+    status: "failed",
+    ...fields,
   });
 }
 
@@ -379,6 +410,7 @@ async function acquireDreamRunSlot(
   options: { mode: "auto" | "manual" },
 ): Promise<DreamRunSlot> {
   const nowMs = runtime.now().getTime();
+  const trigger = dreamJournalTrigger(options.mode);
   const lastConsolidatedAtMs = await readDreamLastConsolidatedAt(context.memoryRoot);
   if (options.mode === "auto") {
     const timing = evaluateAutoDreamTiming({
@@ -387,7 +419,11 @@ async function acquireDreamRunSlot(
       nowMs,
     });
     if (timing.decision === "skip") {
-      return { kind: "skip", reason: "auto-timing" };
+      return skipDreamRun(runtime, context, {
+        trigger,
+        reason: "auto-timing",
+        reasonCode: timing.reason === "minimum-interval" ? "min_interval" : "scan_throttled",
+      });
     }
     runtime.memoryDreamLastScanAtMs = nowMs;
   }
@@ -408,14 +444,40 @@ async function acquireDreamRunSlot(
       ? MANUAL_DREAM_MINIMUM_TRANSCRIPT_SESSIONS
       : AUTO_DREAM_MINIMUM_TRANSCRIPT_SESSIONS;
   if (transcriptSessionIds.length < minimumTranscriptSessions) {
-    return { kind: "skip", reason: "no-fresh-transcripts" };
+    return skipDreamRun(runtime, context, {
+      trigger,
+      reason: "no-fresh-transcripts",
+      reasonCode: transcriptSessionIds.length === 0 ? "no_new_turns" : "too_few_sessions",
+    });
   }
 
   const lease = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
   if (lease === null) {
-    return { kind: "skip", reason: "lock-held" };
+    return skipDreamRun(runtime, context, { trigger, reason: "lock-held", reasonCode: "lock_held" });
   }
   return { kind: "ready", transcriptSessionIds, lease };
+}
+
+function dreamJournalTrigger(mode: "auto" | "manual"): DreamJournalTrigger {
+  return mode === "auto" ? "scheduled" : "manual";
+}
+
+async function skipDreamRun(
+  runtime: AgentRuntimeInternal,
+  context: ProjectMemoryAgentContext,
+  input: {
+    trigger: DreamJournalTrigger;
+    reason: ProjectMemoryDreamSkipReason;
+    reasonCode: DreamSkipReasonCode;
+  },
+): Promise<DreamRunSlot> {
+  await recordDreamSkip(runtime, {
+    memoryRoot: context.memoryRoot,
+    traceContext: context.traceContext,
+    trigger: input.trigger,
+    reasonCode: input.reasonCode,
+  });
+  return { kind: "skip", reason: input.reason };
 }
 
 /** Shared run phase: prompt → Memory agent loop → usage facts → pending update → marker. */
@@ -427,8 +489,24 @@ async function runDreamConsolidation(
     onActivity?: (activity: string) => void;
     lease: DreamLockLease;
     transcriptSessionIds: string[];
+    trigger: DreamJournalTrigger;
   },
 ): Promise<Exclude<ProjectMemoryDreamOutcome, { status: "skipped" }>> {
+  // The lock is already held here, so the journal run starts only after the single-writer gate.
+  const startedAtMs = Date.now();
+  const journal = await beginDreamJournalRunSafely(runtime, context, input.trigger);
+  const runId = journal?.id;
+  runtime.logger?.info("Dream run started", {
+    ...traceContextToLogContext(context.traceContext),
+    event: "memory.dream.run.started",
+    module: "core.runtime",
+    runId,
+    sessionCount: input.transcriptSessionIds.length,
+    status: "started",
+    trigger: input.trigger,
+  });
+
+  let phase: DreamFailurePhase = "prepare";
   try {
     const prompt = buildMemoryDreamPrompt({
       memoryRoot: context.memoryRoot,
@@ -440,15 +518,23 @@ async function runDreamConsolidation(
     const executor = createProjectMemoryAgentToolExecutor(runtime, context);
     const touchedPaths = new Set<string>();
 
+    phase = "agent_loop";
     const loopResult = await runMemoryAgentLoop({
       abortSignal: input.abortSignal,
-      executeTool: (toolCall, loopOptions) => {
-        collectDreamTouchedPaths(touchedPaths, {
+      executeTool: async (toolCall, loopOptions) => {
+        const callPaths = new Set<string>();
+        collectDreamTouchedPaths(callPaths, {
           rootDir: context.memoryRoot,
           toolCall,
           workingDirectory: context.workingDirectory,
           workspaceRoot: context.workspaceRoot,
         });
+        // The snapshot must be durable before the tool runs, so a crash mid-tool still leaves
+        // the pre-change state on record.
+        for (const filePath of callPaths) {
+          touchedPaths.add(filePath);
+          await snapshotBeforeTouchSafely(runtime, context, journal, filePath);
+        }
         input.onActivity?.(describeDreamToolActivity(toolCall));
         return executor.execute(toolCall, {
           signal: loopOptions.abortSignal,
@@ -468,23 +554,51 @@ async function runDreamConsolidation(
     // Cancellation before this commit boundary must not stamp a successful consolidation.
     input.abortSignal?.throwIfAborted();
 
+    // The journal is finalized before the lock marker is stamped, so the run record is on disk
+    // before the run reads as consolidated. A failed finalize is logged by the adapter as
+    // memory.dream.journal.failed and returns undefined; the run still stamps the lock, because
+    // the journal must never fail the Dream run.
+    phase = "commit";
+    const run = await finalizeDreamJournalSafely(runtime, context, journal, {
+      status: "succeeded",
+    });
     const paths = [...touchedPaths];
     if (paths.length > 0) {
       runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
       invalidateProjectMemoryRecallPaths(runtime, paths);
     }
     await writeDreamConsolidatedAt(context.memoryRoot, input.lease);
+    runtime.logger?.info("Dream run completed", {
+      ...traceContextToLogContext(context.traceContext),
+      durationMs: Date.now() - startedAtMs,
+      event: "memory.dream.run.completed",
+      module: "core.runtime",
+      outcome: run?.outcome,
+      runId,
+      status: "completed",
+      ...(run ? countDreamJournalActions(run) : {}),
+    });
     return {
       status: "consolidated",
       summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),
       touchedPaths: paths,
     };
   } catch (error) {
-    logDreamFailure(runtime, "Dream consolidation failed", error);
+    logDreamFailure(runtime, "Dream consolidation failed", error, { phase, runId });
+    await finalizeDreamJournalSafely(runtime, context, journal, {
+      status: "failed",
+      reasonCode: input.abortSignal?.aborted
+        ? "aborted"
+        : phase === "commit"
+          ? "commit_failed"
+          : "error",
+    });
     await restoreDreamSlot(runtime, context.memoryRoot, input.lease);
     return { status: "failed", error };
   }
 }
+
+type DreamFailurePhase = "prepare" | "agent_loop" | "commit";
 
 async function executeProjectMemoryDream(
   runtime: AgentRuntimeInternal,
@@ -510,6 +624,7 @@ async function executeProjectMemoryDream(
     const outcome = await runDreamConsolidation(runtime, context, {
       abortSignal: options.abortSignal,
       lease: slot.lease,
+      trigger: dreamJournalTrigger(options.mode),
       transcriptSessionIds: slot.transcriptSessionIds,
     });
     if (outcome.status === "failed") {

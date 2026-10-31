@@ -2,6 +2,33 @@
 
 Full history: `git show 37b98ff8:apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md`.
 
+## Memory Agent Dream Journal Path Protection (2026-10-30)
+
+The Night Learning Dream run journal (`.fork_dream-journal/` under the memory root) is runtime-owned: the
+Memory agent must not create, modify or delete anything inside it, or a journaled run would point at
+snapshots the runtime no longer controls. Two permission surfaces changed together:
+
+- Write/Edit: `packages/core/src/memory/memory-file-path.ts` adds the journal directory to
+  `SENSITIVE_MEMORY_PATH_SEGMENTS` (segments compare case-insensitively, so upper-case variants are
+  covered), so `resolveSafeMemoryFilePath` refuses every path inside it and the contained-markdown
+  auto-authorization no longer applies.
+- Bash: `packages/core/src/memory/memory-agent-loop.ts` auto-allows exactly one Bash shape, a single plain
+  `rm` of absolute contained `.md` paths (`isContainedMarkdownBashRemoval`). That allowlist now rejects
+  journal-relative paths, so removing a snapshot falls back to the standard Memory agent Bash denial
+  (`denyMemoryAgentBash`); read-only Bash and ordinary memory `.md` removal are unchanged.
+
+The directory's public name stays owned by the journal module (`DREAM_JOURNAL_DIRECTORY_NAME` in
+`packages/core/src/memory/dream-journal/journal.ts`); the policy file keeps a pinned literal so a renamed
+directory cannot silently drop the protection. The runtime writes journal rows and snapshots itself
+(atomic temp-file + rename, serialized per project) and never goes through the agent tool policy, so this
+change must not be read as granting Write/Edit anywhere. Read is unchanged: journal listing is exposed by
+the runtime adapter, not by a Memory-agent Read exception.
+
+Spec: `specs/night-learning.md` (journal ownership and event order). Regression:
+`packages/core/tests/memory-agent-loop.test.ts` (Write/Edit/`rm` denied inside the journal directory,
+including an upper-case variant, while ordinary memory `.md` removal stays allowed),
+`packages/core/tests/memory-dream-journal.test.ts`, `packages/core/tests/runtime-memory-dream.test.ts`.
+
 ## Failed Tool Results Carry Provider Terminal Facts (2026-10-24)
 
 When a foreground Agent's child hits a terminal provider failure (such as `405` / provider code `3012`), the
@@ -846,7 +873,10 @@ thin handler changes. Any behavior change affecting one of the three must check 
   custom-agent Memory auto-authorize only strictly lowercase `.md` Write/Edit inside their own root that
   contains no existing sensitive path segment, and keep the existing explicit tool/path deny, project ask
   and hook ask. This must not add Read, change ordinary Bash permission, or let a child runtime inherit
-  Main's Recall/Extraction/Dream state.
+  Main's Recall/Extraction/Dream state. The Dream run journal directory (`.fork_dream-journal`,
+  compared case-insensitively) is part of that sensitive-segment rule, and the Memory agent's single Bash
+  `rm` auto-allow refuses journal-relative paths the same way
+  (see [Memory Agent Dream Journal Path Protection (2026-10-30)](#memory-agent-dream-journal-path-protection-2026-10-30)).
 - UI/ZCode app-server/Debug projection: diff preview, permission request, tool result, trace and logs
   consume structured output and do not reverse-parse model-visible text.
 - The TUI `Edit` file-diff projection keeps audit information compact: the lifecycle title is action name
