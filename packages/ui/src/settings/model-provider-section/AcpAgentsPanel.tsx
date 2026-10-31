@@ -1,65 +1,106 @@
 /**
  * ACP agents detection and the catalog detail shown from the "ACP agents"
  * navigation group. Detection has one owner: `useAcpAgentDetection`, called
- * once by ModelProviderSection; navigation and detail read its state.
+ * once by ModelProviderSection on the workspace host; navigation and detail read its state.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { IProviderSettingsService } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
-import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import { isRemoteWorkspaceDisconnectedError } from "@/lib/remoteWorkspaceServiceError.js";
 import { ACP_AGENT_CATALOG, type AcpDetectionState } from "./acpAgentConfig.js";
 import { AcpAgentMark } from "./AcpAgentMark.js";
+import { AcpRemoteHostNote } from "./AcpAgentDetailSections.js";
 import { ModelProviderLoadingCard } from "./StatusCards.js";
 
 export interface AcpAgentDetection extends AcpDetectionState {
   readonly rescan: () => void;
 }
 
+const INITIAL_DETECTION: AcpDetectionState = {
+  status: "loading",
+  agents: [],
+  supported: true,
+  refreshing: false,
+};
+
+// Without a remote attachment no call is sent; the group says the host is not connected
+// (specs/acp-agent-runtime.md "Settings: workspace host").
+const NOT_ATTACHED_DETECTION: AcpDetectionState = {
+  status: "error",
+  agents: [],
+  supported: true,
+  refreshing: false,
+  disconnected: true,
+  awaitingHost: true,
+};
+
+interface OwnedDetectionState {
+  readonly service: IProviderSettingsService;
+  readonly state: AcpDetectionState;
+}
+
 /**
- * Owns the one detection scan of the settings page. The scan runs once per mount on every platform:
- * the host answers `supported` from the one availability predicate, and an unsupported host spawns
- * nothing. A rescan keeps the previous agents visible (`refreshing`), so mounted detail forms are not discarded.
+ * Owns the one detection scan of the settings page, on the workspace host's service (`useAcpSettingsHost`).
+ * The scan runs once per mount and once per host on every platform: the host answers `supported` from the one
+ * availability predicate, and an unsupported host spawns nothing. A rescan keeps the previous agents visible
+ * (`refreshing`), so mounted detail forms are not discarded; a new host starts from loading, never with the
+ * previous host's agents.
  */
-export function useAcpAgentDetection(): AcpAgentDetection {
-  const { providerSettingsService } = useServices();
-  const [state, setState] = useState<AcpDetectionState>({
-    status: "loading",
-    agents: [],
-    supported: true,
-    refreshing: false,
-  });
+export function useAcpAgentDetection(
+  providerSettingsService: IProviderSettingsService,
+  rpcReady: boolean,
+): AcpAgentDetection {
+  const [owned, setOwned] = useState<OwnedDetectionState>(() => ({
+    service: providerSettingsService,
+    state: INITIAL_DETECTION,
+  }));
+  const ownedState = owned.service === providerSettingsService ? owned.state : INITIAL_DETECTION;
+  const state = rpcReady ? ownedState : NOT_ATTACHED_DETECTION;
 
   // Each request takes a sequence number; only the newest request may write
-  // state, so an older response that arrives late cannot overwrite a rescan.
+  // state, so an older response that arrives late cannot overwrite a rescan
+  // or a scan of the next host.
   const latestRequest = useRef(0);
   const load = useCallback(
     async (refresh: boolean) => {
       const request = ++latestRequest.current;
-      setState((previous) => ({ ...previous, refreshing: true }));
+      const update = (next: (previous: AcpDetectionState) => AcpDetectionState) =>
+        setOwned((current) => ({
+          service: providerSettingsService,
+          state: next(
+            current.service === providerSettingsService ? current.state : INITIAL_DETECTION,
+          ),
+        }));
+      update((previous) => ({ ...previous, refreshing: true }));
       try {
         const result = await providerSettingsService.detectAcpAgents(
           refresh ? { refresh: true } : undefined,
         );
         if (request !== latestRequest.current) return;
-        setState({
+        update(() => ({
           status: "ready",
           agents: result.agents,
           supported: result.supported,
           refreshing: false,
-        });
+        }));
       } catch (error) {
         if (request !== latestRequest.current) return;
         logger.warn("[AcpAgentsPanel] ACP agent detection failed", error);
-        setState((previous) => ({
+        const disconnected = isRemoteWorkspaceDisconnectedError(error);
+        update((previous) => ({
           ...previous,
           // Keep agents from an earlier successful scan; only an empty result becomes an error.
-          status: previous.agents.length === 0 ? "error" : "ready",
+          // A disconnected host's earlier agents are gone with it: show the error and Retry instead.
+          agents: disconnected ? [] : previous.agents,
+          status: disconnected || previous.agents.length === 0 ? "error" : "ready",
           refreshing: false,
           error: error instanceof Error ? error.message : String(error),
+          disconnected,
         }));
       }
     },
@@ -67,14 +108,25 @@ export function useAcpAgentDetection(): AcpAgentDetection {
   );
 
   useEffect(() => {
-    void load(false);
-  }, [load]);
+    // A host change (or losing the attachment) invalidates every in-flight scan of the previous host.
+    latestRequest.current += 1;
+    if (rpcReady) void load(false);
+  }, [load, rpcReady]);
 
   const rescan = useCallback(() => {
-    void load(true);
-  }, [load]);
+    if (rpcReady) void load(true);
+  }, [load, rpcReady]);
   // Stable identity per state change: the navigation group memo depends on this object.
   return useMemo(() => ({ ...state, rescan }), [state, rescan]);
+}
+
+/** The scan error as shown to the user; a missing remote host is never shown as its raw code. */
+export function formatAcpScanError(
+  detection: Pick<AcpDetectionState, "error" | "disconnected">,
+  formatMessage: (id: string) => string,
+): string | undefined {
+  if (detection.disconnected) return formatMessage("settings.modelProvider.acp.remoteDisconnected");
+  return detection.error;
 }
 
 /**
@@ -84,14 +136,18 @@ export function useAcpAgentDetection(): AcpAgentDetection {
 export function AcpAgentCatalogDetail({
   detection,
   status,
+  remoteHost = false,
 }: {
   detection: AcpAgentDetection;
   status: "empty" | "error" | "loading";
+  /** The workspace host is remote: the agents listed are that host's. */
+  remoteHost?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
   const t = (id: string, values?: Record<string, string | number>) =>
     intl.formatMessage({ id: `settings.modelProvider.acp.${id}` }, values);
+  const scanError = formatAcpScanError(detection, (id) => intl.formatMessage({ id }));
 
   return (
     <div className="flex min-w-0 flex-col" data-acp-agent-catalog="true">
@@ -99,12 +155,13 @@ export function AcpAgentCatalogDetail({
         <div className="min-w-0 flex-1">
           <h2 className="text-ui-lg font-semibold text-foreground">{t("title")}</h2>
           <p className="mt-1 text-ui-sm text-foreground-subtle">{t("description")}</p>
+          {remoteHost ? <AcpRemoteHostNote className="mt-1" text={t("remoteHostNote")} /> : null}
         </div>
         <Button
           type="button"
           size="sm"
           variant="outline"
-          disabled={detection.refreshing}
+          disabled={detection.refreshing || detection.awaitingHost === true}
           onClick={detection.rescan}
         >
           {detection.refreshing ? <Spinner className="me-1 size-3" /> : null}
@@ -115,12 +172,20 @@ export function AcpAgentCatalogDetail({
       <div className="mt-4 flex min-w-0 flex-col gap-3 border-t border-border pt-4">
         {status === "loading" ? <ModelProviderLoadingCard loadingLabel={t("detecting")} /> : null}
 
-        {status === "error" && detection.error ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm text-destructive">
-            <span>{t("scanFailed", { message: detection.error })}</span>
-            <Button type="button" size="sm" variant="outline" onClick={detection.rescan}>
-              {intl.formatMessage({ id: "common.retry" })}
-            </Button>
+        {status === "error" && scanError ? (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm text-destructive"
+          >
+            {/* The not-connected message stands alone; it is not a scan failure. */}
+            <span>
+              {detection.disconnected ? scanError : t("scanFailed", { message: scanError })}
+            </span>
+            {detection.awaitingHost ? null : (
+              <Button type="button" size="sm" variant="outline" onClick={detection.rescan}>
+                {intl.formatMessage({ id: "common.retry" })}
+              </Button>
+            )}
           </div>
         ) : null}
 
@@ -180,6 +245,52 @@ export function AcpAgentCatalogDetail({
       <p className="mt-4 border-t border-border pt-4 text-ui-sm text-foreground-subtle">
         {t("chatPending")}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Shown in place of an agent's detail until the workspace host's provider settings view is ready
+ * (specs/acp-agent-runtime.md "Settings: workspace host", WH7, WH8): the detail would otherwise seed
+ * its form, probe the login status and enable on an unknown saved config.
+ */
+export function AcpHostViewPending({
+  error,
+  onRetry,
+}: {
+  /** Null while the read is pending. */
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  const { intl } = useZCodeIntl();
+  if (!error) {
+    return (
+      <div data-testid="acp-settings-view-loading">
+        <ModelProviderLoadingCard loadingLabel={intl.formatMessage({ id: "common.loading" })} />
+      </div>
+    );
+  }
+  const message = isRemoteWorkspaceDisconnectedError(error)
+    ? intl.formatMessage({ id: "settings.modelProvider.acp.remoteDisconnected" })
+    : intl.formatMessage(
+        { id: "settings.modelProvider.acp.settingsLoadFailed" },
+        { message: error.message },
+      );
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm text-destructive"
+    >
+      <span>{message}</span>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        data-testid="acp-settings-view-retry"
+        onClick={onRetry}
+      >
+        {intl.formatMessage({ id: "common.retry" })}
+      </Button>
     </div>
   );
 }

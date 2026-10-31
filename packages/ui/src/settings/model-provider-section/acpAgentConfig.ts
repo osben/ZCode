@@ -242,6 +242,10 @@ export interface AcpDetectionState {
   /** A rescan is in flight; the previous agents stay visible. */
   readonly refreshing: boolean;
   readonly error?: string;
+  /** The error is the workspace's remote host not being connected (specs/acp-agent-runtime.md "Settings: workspace host"). */
+  readonly disconnected?: boolean;
+  /** No remote attachment yet: nothing can be scanned until it exists, so Rescan/Retry are unavailable. */
+  readonly awaitingHost?: boolean;
 }
 
 export interface AcpNavigationGroupInput {

@@ -5,6 +5,7 @@
  */
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { ChevronRightIcon } from "lucide-react";
+import type { IProviderSettingsService } from "@zcode/services";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import type { AcpAgentCatalogHandle } from "@/hooks/useAcpAgentCatalog.js";
@@ -15,6 +16,15 @@ import {
   selectExternalAgentComposerOptions,
 } from "@/v4/composer/externalAgentConfig.js";
 import { groupAcpModelValues, toggleAcpHiddenModel } from "./acpAgentConfig.js";
+
+/** Says the ACP agents shown are the remote workspace host's (specs/acp-agent-runtime.md "Settings: workspace host"). */
+export function AcpRemoteHostNote({ className, text }: { className: string; text: string }) {
+  return (
+    <p className={`${className} text-ui-sm text-foreground-subtle`} data-acp-remote-host="true">
+      {text}
+    </p>
+  );
+}
 
 /** Same rhythm as the Model settings detail: a separator, then a text-ui-base section title. */
 export function DetailSection({
@@ -91,10 +101,13 @@ export function AcpAgentAdvanced({
  * next set from the offered values.
  */
 export function AcpAgentModelsList({
+  providerSettingsService,
   agentId,
   catalog,
   t,
 }: {
+  /** The workspace host's service, the same one the catalog was read from. */
+  providerSettingsService: IProviderSettingsService;
   agentId: string;
   catalog: AcpAgentCatalogHandle;
   t: (id: string, values?: Record<string, string | number>) => string;
@@ -104,6 +117,7 @@ export function AcpAgentModelsList({
     [catalog.options],
   );
   const { hidden, writeError, setHiddenModels } = useAcpAgentHiddenModels({
+    providerSettingsService,
     agentId,
     storedHidden: catalog.hiddenModels,
   });

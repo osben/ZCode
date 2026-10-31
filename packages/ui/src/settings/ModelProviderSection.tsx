@@ -27,6 +27,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Button } from "@/components/ui/button.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useModelProviders } from "@/hooks/useModelProviders.js";
+import { useAcpSettingsHost } from "@/hooks/useAcpSettingsHost.js";
 import { resolveEntitledAccountProviderAccess } from "@/lib/accountProviderAccess.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
@@ -43,6 +44,8 @@ import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
 import {
   AcpAgentCatalogDetail,
+  AcpHostViewPending,
+  formatAcpScanError,
   useAcpAgentDetection,
 } from "./model-provider-section/AcpAgentsPanel.js";
 import { AcpAgentDetail } from "./model-provider-section/AcpAgentCard.js";
@@ -247,23 +250,28 @@ export function resolveModelProviderSideSelectionKey(
 }
 
 /**
- * Model Provider settings receive the Local Host only from SettingsPage; provider settings reads and
- * writes never route to a remote workspace's Environment. The one exception is the Ollama detection
- * probe, which per specs/ollama-local-provider.md runs on the host that owns the workspace:
- * `workspaceIdentity` exists only so the probe resolves the workspace's services, never for
- * provider configuration.
+ * Model Provider settings receive the Local Host only from SettingsPage; generic provider settings
+ * reads and writes never route to a remote workspace's Environment. Two parts follow the host that
+ * owns the workspace instead: the Ollama detection probe (specs/ollama-local-provider.md) and the
+ * whole ACP agents group (specs/acp-agent-runtime.md "Settings: workspace host"). `workspaceIdentity`
+ * exists only to resolve that host, never for generic provider configuration.
  */
 export function ModelProviderSection({
   workspacePath = "",
   workspaceIdentity,
+  remoteSessionId,
+  remoteTarget,
   connectivityWorkspacePath,
   connectivityWorkspaceRequired = false,
   pendingModelProviderTarget,
   onConsumePendingModelProviderTarget,
 }: {
   workspacePath?: string;
-  /** Only routes the Ollama detection probe to the workspace's host; see the component comment. */
+  /** Only routes the Ollama probe and the ACP group to the workspace's host; see the component comment. */
   workspaceIdentity?: string;
+  /** The covered workspace tab's session and target; resolve the ACP group's host like the composer does. */
+  remoteSessionId?: string;
+  remoteTarget?: unknown;
   connectivityWorkspacePath?: string;
   connectivityWorkspaceRequired?: boolean;
   pendingModelProviderTarget?: SettingsModelProviderTarget;
@@ -272,8 +280,7 @@ export function ModelProviderSection({
   const { intl, locale } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
   const platform = usePlatform();
-  const { modelSelectionService, oauthService, credentialService, providerSettingsService } =
-    useServices();
+  const { modelSelectionService, oauthService, credentialService } = useServices();
   const {
     modelProviders,
     providerTemplates,
@@ -705,13 +712,25 @@ export function ModelProviderSection({
     };
   }, [presetSubscriptionProviderId]);
 
+  // The ACP group configures the workspace's host as one unit (specs/acp-agent-runtime.md "Settings: workspace
+  // host"): detection, the ACP providers' saved state and every ACP write use this one resolution.
+  const acpHost = useAcpSettingsHost({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    remoteTarget,
+  });
+  const acpView = acpHost.view;
+  const acpService = acpHost.providerSettingsService;
+  const commitAcpView = acpHost.commitView;
   // Availability comes from the host's detection `supported` (specs/acp-agent-runtime.md "Availability (platform rule)").
-  const acpDetection = useAcpAgentDetection();
+  const acpDetection = useAcpAgentDetection(acpService, acpHost.rpcReady);
+  const acpScanError = formatAcpScanError(acpDetection, (id) => intl.formatMessage({ id }));
   const acpProviderInfo = useMemo(() => {
     const accessByAgentId = new Map<string, AcpSavedAccess>();
     const conflictAgentIds = new Set<string>();
     const enabledProviderIds = new Set<string>();
-    for (const provider of providerSettingsView?.providers ?? []) {
+    for (const provider of acpView?.providers ?? []) {
       if (!provider.providerId.startsWith("acp:")) continue;
       const agentId = provider.providerId.slice("acp:".length);
       const access = provider.effectiveConfig.access;
@@ -729,7 +748,7 @@ export function ModelProviderSection({
       if (provider.enabled) enabledProviderIds.add(provider.providerId);
     }
     return { accessByAgentId, conflictAgentIds, enabledProviderIds };
-  }, [providerSettingsView]);
+  }, [acpView]);
   const acpEnabledProviderIds = acpProviderInfo.enabledProviderIds;
   const acpManagedAgentIds = useMemo(
     () => new Set(acpProviderInfo.accessByAgentId.keys()),
@@ -1167,9 +1186,7 @@ export function ModelProviderSection({
   const findAcpProvider = useCallback(
     (agent: AcpAgentSummary) => {
       const providerId = acpProviderId(agent.agentId);
-      const existing = providerSettingsView?.providers.find(
-        (provider) => provider.providerId === providerId,
-      );
+      const existing = acpView?.providers.find((provider) => provider.providerId === providerId);
       if (existing && existing.effectiveConfig.access?.type !== "acp-agent") {
         throw new Error(
           intl.formatMessage({ id: "settings.modelProvider.acp.conflict" }, { providerId }),
@@ -1177,20 +1194,22 @@ export function ModelProviderSection({
       }
       return existing;
     },
-    [providerSettingsView, intl],
+    [acpView, intl],
   );
 
   const handleAcpEnableAgent = useCallback(
     async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
       const existing = findAcpProvider(agent);
-      await providerSettingsService.saveAcpAgent(
-        buildAcpAgentSaveInput(agent, form, {
-          enabled: true,
-          providerName: existing?.providerName,
-        }),
+      commitAcpView(
+        await acpService.saveAcpAgent(
+          buildAcpAgentSaveInput(agent, form, {
+            enabled: true,
+            providerName: existing?.providerName,
+          }),
+        ),
       );
     },
-    [findAcpProvider, providerSettingsService],
+    [acpService, commitAcpView, findAcpProvider],
   );
 
   const handleAcpUpdateAgent = useCallback(
@@ -1204,27 +1223,29 @@ export function ModelProviderSection({
           ),
         );
       }
-      await providerSettingsService.saveAcpAgent(
-        buildAcpAgentSaveInput(agent, form, {
-          enabled: existing.enabled,
-          providerName: existing.providerName,
-        }),
+      commitAcpView(
+        await acpService.saveAcpAgent(
+          buildAcpAgentSaveInput(agent, form, {
+            enabled: existing.enabled,
+            providerName: existing.providerName,
+          }),
+        ),
       );
     },
-    [findAcpProvider, intl, providerSettingsService],
+    [acpService, commitAcpView, findAcpProvider, intl],
   );
 
   const handleAcpDisableAgent = useCallback(
     async (agent: AcpAgentSummary) => {
       const providerId = acpProviderId(agent.agentId);
-      const existing = providerSettingsView?.providers.find(
-        (provider) => provider.providerId === providerId,
-      );
+      const existing = acpView?.providers.find((provider) => provider.providerId === providerId);
       // Only an ACP-managed provider is switched off; the sidecar keeps its launch config.
       if (existing?.effectiveConfig.access?.type !== "acp-agent") return;
-      await providerSettingsService.setAcpAgentEnabled({ agentId: agent.agentId, enabled: false });
+      commitAcpView(
+        await acpService.setAcpAgentEnabled({ agentId: agent.agentId, enabled: false }),
+      );
     },
-    [providerSettingsView, providerSettingsService],
+    [acpService, acpView, commitAcpView],
   );
 
   // On a slow first load, returning null left the entire model provider page blank,
@@ -1292,14 +1313,19 @@ export function ModelProviderSection({
               return handleCreateProvider({ providerName: label });
             }}
           />
+        ) : selectedNavItem?.type === "acpAgent" && acpHost.viewStatus !== "ready" ? (
+          <AcpHostViewPending error={acpHost.viewError} onRetry={acpHost.reloadView} />
         ) : selectedNavItem?.type === "acpAgent" ? (
           <AcpAgentDetail
-            key={selectedNavItem.key}
+            // The host is part of the key: a launch form seeded from one host's config is never saved to another.
+            key={`${acpHost.hostKey}:${selectedNavItem.key}`}
+            providerSettingsService={acpService}
+            remoteHost={acpHost.isRemote}
             agent={selectedNavItem.agent}
             enabled={selectedNavItem.enabled}
             conflict={selectedNavItem.conflict}
             savedAccess={acpProviderInfo.accessByAgentId.get(selectedNavItem.agentId)}
-            scanError={acpDetection.error}
+            scanError={acpScanError}
             rescanning={acpDetection.refreshing}
             onRescan={acpDetection.rescan}
             onEnable={(form) => handleAcpEnableAgent(selectedNavItem.agent, form)}
@@ -1321,8 +1347,9 @@ export function ModelProviderSection({
           />
         ) : selectedNavItem?.type === "acpDetect" ? (
           <AcpAgentCatalogDetail
-            key={selectedNavItem.key}
+            key={`${acpHost.hostKey}:${selectedNavItem.key}`}
             detection={acpDetection}
+            remoteHost={acpHost.isRemote}
             status={selectedNavItem.detection}
           />
         ) : (

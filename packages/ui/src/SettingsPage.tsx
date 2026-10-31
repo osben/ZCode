@@ -2330,6 +2330,8 @@ export function SettingsPage({
                               <ModelProviderSection
                                 workspacePath={activeWorkspacePath ?? captionWorkspacePath ?? ""}
                                 workspaceIdentity={activeWorkspaceIdentity}
+                                remoteSessionId={activeWorkspaceTab?.remoteSessionId}
+                                remoteTarget={activeWorkspaceTab?.remoteTarget}
                                 connectivityWorkspacePath={
                                   localModelProviderConnectivityWorkspacePath
                                 }

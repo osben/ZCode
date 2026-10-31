@@ -11,11 +11,25 @@ const captured = vi.hoisted(() => ({
   modeSwitchProps: null as Record<string, unknown> | null,
   shortcutParams: null as Record<string, unknown> | null,
   catalogOptions: null as unknown,
+  catalogAgentId: undefined as unknown,
 }));
 
 // The host catalog read (S6 readiness) is stubbed; the composer shows it when no live projection exists.
+// The composer reads it through the context hook, which owns the workspace context's service
+// (specs/acp-agent-runtime.md "Settings: workspace host"); the component reaches no service itself.
 vi.mock("@/hooks/useAcpAgentCatalog.js", () => ({
-  useAcpAgentCatalog: () => ({ options: captured.catalogOptions }),
+  useAcpAgentCatalog: () => {
+    throw new Error("the composer must read the catalog through useContextAcpAgentCatalog");
+  },
+  useContextAcpAgentCatalog: (agentId: unknown) => {
+    captured.catalogAgentId = agentId;
+    return { options: captured.catalogOptions };
+  },
+}));
+vi.mock("@/hooks/useServices.js", () => ({
+  useServices: () => {
+    throw new Error("the composer component must not read the services context");
+  },
 }));
 
 vi.mock("@/ControlHintTooltip.js", () => ({
@@ -231,6 +245,7 @@ describe("V4ComposerModeArea (S6 agent configuration options)", () => {
     expect(html.match(/data-external-agent-config-available="true"/g)).toHaveLength(2);
     expect(html).not.toContain('aria-disabled="true"');
     expect(captured.shortcutParams).toMatchObject({ hasAnyOption: true });
+    expect(captured.catalogAgentId).toBe("mock");
   });
 
   it("in a draft, shows the catalog and a choice only updates the draft state", () => {

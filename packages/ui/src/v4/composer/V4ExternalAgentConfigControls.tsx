@@ -41,7 +41,7 @@ import type { V4ComposerConfigPicker } from "@/v4/composer/configPickerState.js"
 import { useToolbarShortcutBindings } from "@/v4/composer/toolbarShortcuts.js";
 // Same entry ConversationComposer used before the S6 branch, so existing composer test doubles still apply.
 import { V4ComposerModeSwitch } from "@/v4/composer/V4ComposerToolbar.js";
-import { useAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
+import { useContextAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
 import {
   EXTERNAL_AGENT_CONFIG_SEARCH_THRESHOLD,
   EXTERNAL_AGENT_CONTROL_KINDS,
@@ -345,7 +345,7 @@ export interface V4ComposerModeAreaProps extends ModeSwitchProps {
 }
 
 /**
- * The ACP agent's selects for an ACP draft. The catalog read (`useAcpAgentCatalog`) needs the services context, so
+ * The ACP agent's selects for an ACP draft. The catalog read (`useContextAcpAgentCatalog`) needs the services context, so
  * only an ACP draft mounts this component; every other model never calls it.
  */
 function V4ExternalAgentModeAreaImpl({
@@ -376,7 +376,7 @@ function V4ExternalAgentModeAreaImpl({
   ) => void;
   modeSwitchProps: ModeSwitchProps;
 }) {
-  const catalog = useAcpAgentCatalog(agentId);
+  const catalog = useContextAcpAgentCatalog(agentId);
   // A draft choice needs the draft session it belongs to; without one the selects show the catalog only.
   const draftChoices = draftExternalAgentKey
     ? draftExternalAgentChoicesOf(draftExternalAgentChoices ?? {}, draftExternalAgentKey, agentId)
