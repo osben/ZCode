@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// specs/acp-agent-runtime.md "Settings: workspace host" (WH1, WH2, WH6): the ACP group of Model
+// specs/acp-agent-runtime.md "Settings: workspace host" (WH1, WH2, WH6–WH10): the ACP group of Model
 // Settings runs on the host that owns the workspace. ModelProviderSection, useAcpSettingsHost, the
 // detection hook and the agent detail are real; the workspace resolution returns a host service
 // that is distinct from the Local Host's, and every ACP call is asserted against both.
@@ -8,6 +8,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AcpAgentSummary, ProviderSettingsView } from "@zcode/services";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { createRemoteWorkspaceDisconnectedError } from "@/lib/remoteWorkspaceServiceError.js";
 
 const REMOTE_PATH = "/srv/app";
 const REMOTE_IDENTITY = "ssh:dev-box:/srv/app";
@@ -209,10 +210,29 @@ function useHost(service: HostService, input: { remote: boolean }) {
   };
 }
 
-async function renderSection(props: { workspacePath: string; workspaceIdentity?: string }) {
+interface SectionProps {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  remoteTarget?: unknown;
+}
+
+async function renderSection(props: SectionProps, options: { waitForDetail?: boolean } = {}) {
   const { ModelProviderSection } = await import("@/settings/ModelProviderSection.js");
-  render(createElement(TooltipProvider, null, createElement(ModelProviderSection, props)));
-  await waitFor(() => expect(screen.getByTestId("acp-agent-enabled-switch")).toBeTruthy());
+  const element = () =>
+    createElement(TooltipProvider, null, createElement(ModelProviderSection, props));
+  const view = render(element());
+  if (options.waitForDetail !== false) {
+    await waitFor(() => expect(screen.getByTestId("acp-agent-enabled-switch")).toBeTruthy());
+  }
+  return { rerender: () => view.rerender(element()) };
+}
+
+// The launch command sits in the collapsed Advanced section.
+function commandInput(): HTMLInputElement {
+  const trigger = screen.getByTestId("acp-agent-advanced-trigger");
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return screen.getByLabelText("settings.modelProvider.acp.command") as HTMLInputElement;
 }
 
 function modelCheckbox(value: string): HTMLElement {
@@ -247,7 +267,12 @@ describe("ACP Settings on the workspace host", () => {
     await renderSection({ workspacePath: REMOTE_PATH, workspaceIdentity: REMOTE_IDENTITY });
 
     // The identity is the third argument; the second is the preferred remote session id.
-    expect(harness.resolutionCalls[0]).toEqual([REMOTE_PATH, null, REMOTE_IDENTITY]);
+    expect(harness.resolutionCalls[0]).toEqual([
+      REMOTE_PATH,
+      undefined,
+      REMOTE_IDENTITY,
+      undefined,
+    ]);
     // WH6: enabled comes from the remote host's provider view, not the desktop's.
     expect(screen.getByTestId("acp-agent-enabled-switch").getAttribute("aria-checked")).toBe(
       "true",
@@ -316,11 +341,137 @@ describe("ACP Settings on the workspace host", () => {
 
     await renderSection({ workspacePath: "/Users/dev/app" });
 
-    expect(harness.resolutionCalls[0]).toEqual(["/Users/dev/app", null, undefined]);
+    expect(harness.resolutionCalls[0]).toEqual(["/Users/dev/app", undefined, undefined, undefined]);
     expect(local.detectAcpAgents).toHaveBeenCalledTimes(1);
     await waitFor(() =>
       expect(local.getAcpAgentCatalog).toHaveBeenCalledWith({ agentId: "codex" }),
     );
     expect(document.querySelector('[data-acp-remote-host="true"]')).toBeNull();
+  });
+
+  it("WH7: the detail waits for the host's view, then probes with the saved command", async () => {
+    const remote = createHostService(acpView(true, "/remote/bin/codex-acp"));
+    let resolveView!: (view: ProviderSettingsView) => void;
+    remote.getView.mockImplementationOnce(
+      () =>
+        new Promise<ProviderSettingsView>((resolve) => {
+          resolveView = resolve;
+        }),
+    );
+    useHost(remote, { remote: true });
+
+    await renderSection(
+      { workspacePath: REMOTE_PATH, workspaceIdentity: REMOTE_IDENTITY },
+      { waitForDetail: false },
+    );
+    await waitFor(() => expect(screen.getByTestId("acp-settings-view-loading")).toBeTruthy());
+    expect(remote.detectAcpAgents).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("acp-agent-enabled-switch")).toBeNull();
+    expect(remote.getAcpAgentStatus).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveView(acpView(true, "/remote/bin/codex-acp"));
+    });
+
+    await waitFor(() => expect(screen.getByTestId("acp-agent-enabled-switch")).toBeTruthy());
+    expect(commandInput().value).toBe("/remote/bin/codex-acp");
+    await waitFor(() => expect(remote.getAcpAgentStatus).toHaveBeenCalledTimes(1));
+    expect(remote.getAcpAgentStatus).toHaveBeenCalledWith({
+      agentId: "codex",
+      command: "/remote/bin/codex-acp",
+    });
+    expect(remote.saveAcpAgent).not.toHaveBeenCalled();
+    expect(remote.setAcpAgentEnabled).not.toHaveBeenCalled();
+  });
+
+  it("WH8: a failed view read shows the error with Retry and no detail", async () => {
+    const remote = createHostService(acpView(true, "/remote/bin/codex-acp"));
+    remote.getView.mockRejectedValueOnce(new Error("view read failed"));
+    useHost(remote, { remote: true });
+
+    await renderSection(
+      { workspacePath: REMOTE_PATH, workspaceIdentity: REMOTE_IDENTITY },
+      { waitForDetail: false },
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("view read failed"),
+    );
+    expect(screen.queryByTestId("acp-agent-enabled-switch")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("acp-settings-view-retry"));
+    });
+
+    await waitFor(() => expect(screen.getByTestId("acp-agent-enabled-switch")).toBeTruthy());
+    expect(remote.getView).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("acp-agent-enabled-switch").getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(remote.saveAcpAgent).not.toHaveBeenCalled();
+    expect(acpCallCount(local)).toBe(0);
+  });
+
+  it("WH8: a disconnected view read shows the not-connected message, not the raw code", async () => {
+    const remote = createHostService(acpView(true, "/remote/bin/codex-acp"));
+    remote.getView.mockRejectedValueOnce(createRemoteWorkspaceDisconnectedError());
+    useHost(remote, { remote: true });
+
+    await renderSection(
+      { workspacePath: REMOTE_PATH, workspaceIdentity: REMOTE_IDENTITY },
+      { waitForDetail: false },
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        "settings.modelProvider.acp.remoteDisconnected",
+      ),
+    );
+    expect(screen.getByRole("alert").textContent).not.toContain(
+      "ZCODE_REMOTE_WORKSPACE_DISCONNECTED",
+    );
+  });
+
+  it("WH9: a replaced attachment with the same identity remounts the detail on its view", async () => {
+    const hostA = createHostService(acpView(true, "/a/bin/codex-acp"));
+    useHost(hostA, { remote: true });
+    const { rerender } = await renderSection({
+      workspacePath: REMOTE_PATH,
+      workspaceIdentity: REMOTE_IDENTITY,
+    });
+    expect(commandInput().value).toBe("/a/bin/codex-acp");
+    fireEvent.change(commandInput(), { target: { value: "/edited/on/a" } });
+
+    const hostB = createHostService(acpView(true, "/b/bin/codex-acp"));
+    useHost(hostB, { remote: true });
+    await act(async () => {
+      rerender();
+    });
+
+    await waitFor(() => expect(commandInput().value).toBe("/b/bin/codex-acp"));
+    await waitFor(() =>
+      expect(hostB.getAcpAgentStatus).toHaveBeenCalledWith({
+        agentId: "codex",
+        command: "/b/bin/codex-acp",
+      }),
+    );
+  });
+
+  it("WH10: a legacy remote tab resolves with its session id and remote target", async () => {
+    const remote = createHostService(acpView(true, "/remote/bin/codex-acp"));
+    useHost(remote, { remote: true });
+    const remoteTarget = { kind: "ssh", host: "dev-box" };
+
+    await renderSection({
+      workspacePath: REMOTE_PATH,
+      remoteSessionId: "legacy-session",
+      remoteTarget,
+    });
+
+    expect(harness.resolutionCalls[0]).toEqual([
+      REMOTE_PATH,
+      "legacy-session",
+      undefined,
+      remoteTarget,
+    ]);
+    expect(remote.detectAcpAgents).toHaveBeenCalledTimes(1);
   });
 });

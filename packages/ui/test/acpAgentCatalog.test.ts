@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { AcpAgentSummary } from "@zcode/services";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AcpAgentCatalogDetail } from "@/settings/model-provider-section/AcpAgentsPanel.js";
 import { ACP_AGENT_CATALOG } from "@/settings/model-provider-section/acpAgentConfig.js";
+import { useContextAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
 
+// One stable context service, as the real ServiceProvider provides.
+const contextService = vi.hoisted(() => ({
+  detectAcpAgents: vi.fn(),
+  getAcpAgentCatalog: vi.fn(async () => ({ supported: true, options: [] })),
+}));
 vi.mock("@/hooks/useServices.js", () => ({
-  useServices: () => ({ providerSettingsService: { detectAcpAgents: vi.fn() } }),
+  useServices: () => ({ providerSettingsService: contextService }),
 }));
 vi.mock("@/hooks/usePlatform.js", () => ({
   usePlatform: () => ({ openExternal: vi.fn() }),
@@ -48,6 +54,14 @@ const REGISTRY_AGENTS: Record<string, string> = {
   claude: "claude-agent-acp",
   gemini: "gemini",
 };
+
+describe("useContextAcpAgentCatalog", () => {
+  it("reads the catalog from the services context's host (the composer's workspace)", async () => {
+    const { result } = renderHook(() => useContextAcpAgentCatalog("codex"));
+    await waitFor(() => expect(result.current.options).toEqual([]));
+    expect(contextService.getAcpAgentCatalog).toHaveBeenCalledWith({ agentId: "codex" });
+  });
+});
 
 describe("ACP_AGENT_CATALOG", () => {
   it("matches the registry: same agents, same binaries, a documented install and docs link", () => {

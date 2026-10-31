@@ -8,32 +8,68 @@ import type { IProviderSettingsService, ProviderSettingsView } from "@zcode/serv
 import { useProviderSettingsServiceView } from "@/hooks/useProviderSettingsView.js";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 
+export interface AcpSettingsHostTarget {
+  readonly workspacePath: string;
+  readonly workspaceIdentity?: string;
+  /** The covered workspace tab's session and target, so a legacy remote tab without an identity resolves. */
+  readonly remoteSessionId?: string;
+  readonly remoteTarget?: unknown;
+}
+
 export interface AcpSettingsHost {
   readonly providerSettingsService: IProviderSettingsService;
-  /** That host's provider settings view (ACP providers' enabled state, launch config, conflicts); null until read. */
+  /** That host's provider settings view (ACP providers' enabled state, launch config, conflicts); null unless ready. */
   readonly view: ProviderSettingsView | null;
+  /** No ACP write, form seed or status probe may run until the view is ready (WH7, WH8). */
+  readonly viewStatus: "loading" | "ready" | "error";
+  readonly viewError: Error | null;
+  /** Rereads that host's view after a failed read. */
+  readonly reloadView: () => void;
   /** Commits the view an ACP write returned; never the Local Host's view. */
   readonly commitView: (view: ProviderSettingsView) => void;
   /** False while a remote attachment is pending: no ACP call may be sent yet. */
   readonly rpcReady: boolean;
   readonly isRemote: boolean;
-  /** `workspaceIdentity?.trim() || workspacePath`; keys per-host UI state such as the agent detail form. */
+  /**
+   * `workspaceIdentity?.trim() || workspacePath` plus the service instance's serial; keys per-host UI state
+   * such as the agent detail form, so a replaced attachment with the same identity and path remounts it.
+   */
   readonly hostKey: string;
 }
 
-export function useAcpSettingsHost(
-  workspacePath: string,
-  workspaceIdentity?: string,
-): AcpSettingsHost {
-  const resolution = useWorkspaceServicesResolution(workspacePath, null, workspaceIdentity);
+const serviceSerials = new WeakMap<IProviderSettingsService, number>();
+let nextServiceSerial = 0;
+
+function serviceSerial(service: IProviderSettingsService): number {
+  let serial = serviceSerials.get(service);
+  if (serial === undefined) {
+    serial = ++nextServiceSerial;
+    serviceSerials.set(service, serial);
+  }
+  return serial;
+}
+
+export function useAcpSettingsHost(target: AcpSettingsHostTarget): AcpSettingsHost {
+  const { workspacePath, workspaceIdentity, remoteSessionId, remoteTarget } = target;
+  const resolution = useWorkspaceServicesResolution(
+    workspacePath,
+    remoteSessionId,
+    workspaceIdentity,
+    remoteTarget,
+  );
   const providerSettingsService = resolution.services.providerSettingsService;
   const viewRead = useProviderSettingsServiceView(providerSettingsService);
-  const view = viewRead.state.status === "ready" ? viewRead.state.view : null;
-  const hostKey = workspaceIdentity?.trim() || workspacePath;
+  const viewState = viewRead.state;
+  const view = viewState.status === "ready" ? viewState.view : null;
+  const viewError = viewState.status === "error" ? viewState.error : null;
+  const hostKey = `${workspaceIdentity?.trim() || workspacePath}#${serviceSerial(providerSettingsService)}`;
   return useMemo(
     () => ({
       providerSettingsService,
       view,
+      viewStatus: viewState.status,
+      viewError,
+      reloadView: viewRead.reload,
       commitView: viewRead.commit,
       rpcReady: resolution.rpcReady,
       isRemote: resolution.isRemoteTarget,
@@ -45,7 +81,10 @@ export function useAcpSettingsHost(
       resolution.isRemoteTarget,
       resolution.rpcReady,
       view,
+      viewError,
       viewRead.commit,
+      viewRead.reload,
+      viewState.status,
     ],
   );
 }

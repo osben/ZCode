@@ -44,6 +44,7 @@ import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
 import {
   AcpAgentCatalogDetail,
+  AcpHostViewPending,
   formatAcpScanError,
   useAcpAgentDetection,
 } from "./model-provider-section/AcpAgentsPanel.js";
@@ -258,6 +259,8 @@ export function resolveModelProviderSideSelectionKey(
 export function ModelProviderSection({
   workspacePath = "",
   workspaceIdentity,
+  remoteSessionId,
+  remoteTarget,
   connectivityWorkspacePath,
   connectivityWorkspaceRequired = false,
   pendingModelProviderTarget,
@@ -266,6 +269,9 @@ export function ModelProviderSection({
   workspacePath?: string;
   /** Only routes the Ollama probe and the ACP group to the workspace's host; see the component comment. */
   workspaceIdentity?: string;
+  /** The covered workspace tab's session and target; resolve the ACP group's host like the composer does. */
+  remoteSessionId?: string;
+  remoteTarget?: unknown;
   connectivityWorkspacePath?: string;
   connectivityWorkspaceRequired?: boolean;
   pendingModelProviderTarget?: SettingsModelProviderTarget;
@@ -708,7 +714,12 @@ export function ModelProviderSection({
 
   // The ACP group configures the workspace's host as one unit (specs/acp-agent-runtime.md "Settings: workspace
   // host"): detection, the ACP providers' saved state and every ACP write use this one resolution.
-  const acpHost = useAcpSettingsHost(workspacePath, workspaceIdentity);
+  const acpHost = useAcpSettingsHost({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    remoteTarget,
+  });
   const acpView = acpHost.view;
   const acpService = acpHost.providerSettingsService;
   const commitAcpView = acpHost.commitView;
@@ -1302,6 +1313,8 @@ export function ModelProviderSection({
               return handleCreateProvider({ providerName: label });
             }}
           />
+        ) : selectedNavItem?.type === "acpAgent" && acpHost.viewStatus !== "ready" ? (
+          <AcpHostViewPending error={acpHost.viewError} onRetry={acpHost.reloadView} />
         ) : selectedNavItem?.type === "acpAgent" ? (
           <AcpAgentDetail
             // The host is part of the key: a launch form seeded from one host's config is never saved to another.

@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { AcpAgentSummary, IProviderSettingsService } from "@zcode/services";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { AcpAgentDetail } from "@/settings/model-provider-section/AcpAgentCard.js";
+import { useAcpAgentHiddenModels } from "@/hooks/useAcpAgentHiddenModels.js";
 
 const { providerSettingsService } = vi.hoisted(() => ({
   providerSettingsService: {
@@ -245,5 +254,49 @@ describe("AcpAgentDetail", () => {
     expect(screen.getByTestId("acp-agent-advanced-trigger").getAttribute("aria-expanded")).toBe(
       "true",
     );
+  });
+});
+
+// specs/acp-agent-runtime.md "Settings: workspace host" (WH9): the write queue belongs to one host.
+describe("useAcpAgentHiddenModels", () => {
+  it("drops a set queued for the previous host and starts a new queue on the new host", async () => {
+    let finishFirst!: () => void;
+    const hostA = {
+      setAcpAgentHiddenModels: vi.fn(
+        () =>
+          new Promise<{ supported: boolean }>((resolve) => {
+            finishFirst = () => resolve({ supported: true });
+          }),
+      ),
+    };
+    const hostB = { setAcpAgentHiddenModels: vi.fn(async () => ({ supported: true })) };
+    const { result, rerender } = renderHook(
+      ({ service }: { service: IProviderSettingsService }) =>
+        useAcpAgentHiddenModels({
+          providerSettingsService: service,
+          agentId: "opencode",
+          storedHidden: undefined,
+        }),
+      { initialProps: { service: hostA as unknown as IProviderSettingsService } },
+    );
+    act(() => result.current.setHiddenModels(["b"]));
+    // Queued behind host A's in-flight write.
+    act(() => result.current.setHiddenModels(["b", "c"]));
+
+    rerender({ service: hostB as unknown as IProviderSettingsService });
+    // Host A's in-flight write does not block the new host's queue.
+    act(() => result.current.setHiddenModels(["a"]));
+    await waitFor(() =>
+      expect(hostB.setAcpAgentHiddenModels).toHaveBeenCalledWith({
+        agentId: "opencode",
+        hiddenModels: ["a"],
+      }),
+    );
+    await act(async () => {
+      finishFirst();
+    });
+
+    expect(hostA.setAcpAgentHiddenModels).toHaveBeenCalledTimes(1);
+    expect(hostB.setAcpAgentHiddenModels).toHaveBeenCalledTimes(1);
   });
 });

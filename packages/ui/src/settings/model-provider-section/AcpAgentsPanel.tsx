@@ -91,13 +91,16 @@ export function useAcpAgentDetection(
       } catch (error) {
         if (request !== latestRequest.current) return;
         logger.warn("[AcpAgentsPanel] ACP agent detection failed", error);
+        const disconnected = isRemoteWorkspaceDisconnectedError(error);
         update((previous) => ({
           ...previous,
           // Keep agents from an earlier successful scan; only an empty result becomes an error.
-          status: previous.agents.length === 0 ? "error" : "ready",
+          // A disconnected host's earlier agents are gone with it: show the error and Retry instead.
+          agents: disconnected ? [] : previous.agents,
+          status: disconnected || previous.agents.length === 0 ? "error" : "ready",
           refreshing: false,
           error: error instanceof Error ? error.message : String(error),
-          disconnected: isRemoteWorkspaceDisconnectedError(error),
+          disconnected,
         }));
       }
     },
@@ -242,6 +245,52 @@ export function AcpAgentCatalogDetail({
       <p className="mt-4 border-t border-border pt-4 text-ui-sm text-foreground-subtle">
         {t("chatPending")}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Shown in place of an agent's detail until the workspace host's provider settings view is ready
+ * (specs/acp-agent-runtime.md "Settings: workspace host", WH7, WH8): the detail would otherwise seed
+ * its form, probe the login status and enable on an unknown saved config.
+ */
+export function AcpHostViewPending({
+  error,
+  onRetry,
+}: {
+  /** Null while the read is pending. */
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  const { intl } = useZCodeIntl();
+  if (!error) {
+    return (
+      <div data-testid="acp-settings-view-loading">
+        <ModelProviderLoadingCard loadingLabel={intl.formatMessage({ id: "common.loading" })} />
+      </div>
+    );
+  }
+  const message = isRemoteWorkspaceDisconnectedError(error)
+    ? intl.formatMessage({ id: "settings.modelProvider.acp.remoteDisconnected" })
+    : intl.formatMessage(
+        { id: "settings.modelProvider.acp.settingsLoadFailed" },
+        { message: error.message },
+      );
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm text-destructive"
+    >
+      <span>{message}</span>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        data-testid="acp-settings-view-retry"
+        onClick={onRetry}
+      >
+        {intl.formatMessage({ id: "common.retry" })}
+      </Button>
     </div>
   );
 }

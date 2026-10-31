@@ -340,38 +340,56 @@ Product rules:
   - Disconnected or unreachable after attaching (the disconnected-services proxy or a failed RPC):
     the "Detect agents" entry with the error and Retry. The disconnected code is shown with the
     message above, never as the raw code. A remote build without the ACP methods fails the same
-    way, with its own error.
+    way, with its own error. A disconnected failure replaces agents from an earlier successful
+    scan (the navigation shows the "Detect agents" entry, not the previous host's agents); any
+    other failed rescan keeps them, with the error.
   - Unsupported remote host (detection `supported: false`, e.g. a Linux host): no ACP group, as on
     any unsupported host (see "Availability (platform rule)").
 - Switching the workspace host (another workspace, or the remote attachment is replaced) drops the
   previous host's agents: detection returns to loading, and a response from the previous host is
   never written. An open agent detail remounts, so a launch form seeded from one host's saved
-  config can never be saved to another host.
+  config can never be saved to another host. A hidden-models write queued for the previous host
+  is dropped, never sent to either host.
+- The host's provider settings view is a separate read from detection. Until it is ready the
+  agent detail is not shown (a loading card instead), so no write, form seed or login status probe
+  can run on an unknown saved config: enabling while the view is unknown would save detection
+  defaults over the host's saved command, args and env, and the status probe would check the
+  default executable instead of the saved one. A failed view read shows the error (the
+  not-connected message for the disconnected code) with Retry, which rereads that host's view.
+- The host is resolved from the covered workspace tab's metadata as the composer does: its
+  identity, remote session id and remote target. A legacy remote tab without a
+  `workspaceIdentity` still resolves its attached session.
 
 Owner and event order:
 
-| Fact                                 | Owner                                                                      |
-| ------------------------------------ | -------------------------------------------------------------------------- |
-| Which host the ACP group configures  | `useAcpSettingsHost(workspacePath, workspaceIdentity)` (one call per page) |
-| ACP agents' enabled/saved/conflict   | that host's provider settings view (`useProviderSettingsServiceView`)      |
-| Detection, catalog, hidden set, Test | that host's `providerSettingsService` (each host owns its own sidecars)    |
+| Fact                                 | Owner                                                                   |
+| ------------------------------------ | ----------------------------------------------------------------------- |
+| Which host the ACP group configures  | `useAcpSettingsHost(target)` (one call per page)                        |
+| ACP agents' enabled/saved/conflict   | that host's provider settings view (`useProviderSettingsServiceView`)   |
+| Detection, catalog, hidden set, Test | that host's `providerSettingsService` (each host owns its own sidecars) |
 
-- `useAcpSettingsHost` resolves the workspace's services once with
-  `useWorkspaceServicesResolution(workspacePath, null, workspaceIdentity)` (the identity is the
-  third argument; the second is the preferred remote session id), the same resolution the composer
-  uses. `ModelProviderSection` calls it once and passes its `providerSettingsService` to every ACP
-  hook and component; none of them calls `useServices()` for ACP.
-- `useAcpAgentCatalog(providerSettingsService, agentId)` takes the service as an argument; the
-  composer passes its own context's service, so its behavior is unchanged.
+- `useAcpSettingsHost({ workspacePath, workspaceIdentity, remoteSessionId, remoteTarget })`
+  resolves the workspace's services once with `useWorkspaceServicesResolution(workspacePath,
+remoteSessionId, workspaceIdentity, remoteTarget)`, the same resolution the composer uses.
+  `SettingsPage` passes the covered workspace tab's `remoteSessionId` and `remoteTarget` (the tab
+  it already resolves for global instructions). `ModelProviderSection` calls it once and passes its
+  `providerSettingsService` to every ACP hook and component; none of them calls `useServices()` for
+  ACP. It exposes the view's status (`loading | ready | error`), its error and `reloadView`.
+- `useAcpAgentCatalog(providerSettingsService, agentId)` takes the service as an argument for
+  Settings; the composer calls `useContextAcpAgentCatalog(agentId)`, which reads its context's
+  service, so its behavior is unchanged and the component reaches no service itself.
+- `useAcpAgentHiddenModels` keeps its write queue per service and agent: a service change starts
+  a new queue, and the previous queue sends nothing after its in-flight write.
 - The view returned by an ACP write is committed to the ACP host's view only, never to the Local
   Host's provider view.
 - The detail key is `<host key>:acp-agent:<agentId>`, the host key being
-  `workspaceIdentity?.trim() || workspacePath` (empty for no workspace).
+  `workspaceIdentity?.trim() || workspacePath` (empty for no workspace) plus a serial of the
+  service instance, so a replaced attachment with the same identity and path remounts the detail.
 
 ```
  SettingsPage ──ServiceProvider(localHostServices)──▶ ModelProviderSection
                                                        │ useModelProviders ──▶ Local Host (generic providers)
-                                                       │ useAcpSettingsHost(path, identity)
+                                                       │ useAcpSettingsHost(target)
                                                        ▼
                          useWorkspaceServicesResolution ──▶ workspace host services
                                                        │   (local base | remote session | disconnected proxy)
@@ -384,20 +402,26 @@ Owner and event order:
 
 Acceptance:
 
-| #   | Given                                                                       | When                          | Then                                                                                                                                                           |
-| --- | --------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WH1 | Remote workspace, remote host supports ACP                                  | Settings opens Model Settings | Detection, enable, Save, disable, Test, status, catalog and hidden-model writes reach the remote host's service; the Local Host's service receives no ACP call |
-| WH2 | Local workspace (or none)                                                   | Settings opens Model Settings | The ACP group uses the Local Host's service (behavior unchanged)                                                                                               |
-| WH3 | Remote workspace without an attachment                                      | Settings renders              | "Detect agents" shows the not-connected message and no detection call is sent; detection runs once the attachment is ready                                     |
-| WH4 | Remote attachment's call fails with the disconnected code                   | Settings renders              | "Detect agents" shows the not-connected message (not the raw code) with Retry                                                                                  |
-| WH5 | Detection of host A in flight                                               | The workspace host becomes B  | The group returns to loading, A's late answer is dropped, B's agents are shown                                                                                 |
-| WH6 | Remote workspace, the remote host has agent X enabled, the desktop does not | Settings renders              | X is shown enabled with the remote host's saved launch config                                                                                                  |
+| #    | Given                                                                                | When                                              | Then                                                                                                                                                                |
+| ---- | ------------------------------------------------------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WH1  | Remote workspace, remote host supports ACP                                           | Settings opens Model Settings                     | Detection, enable, Save, disable, Test, status, catalog and hidden-model writes reach the remote host's service; the Local Host's service receives no ACP call      |
+| WH2  | Local workspace (or none)                                                            | Settings opens Model Settings                     | The ACP group uses the Local Host's service (behavior unchanged)                                                                                                    |
+| WH3  | Remote workspace without an attachment                                               | Settings renders                                  | "Detect agents" shows the not-connected message and no detection call is sent; detection runs once the attachment is ready                                          |
+| WH4  | Remote attachment's call fails with the disconnected code                            | Settings renders                                  | "Detect agents" shows the not-connected message (not the raw code) with Retry                                                                                       |
+| WH5  | Detection of host A in flight                                                        | The workspace host becomes B                      | The group returns to loading, A's late answer is dropped, B's agents are shown                                                                                      |
+| WH6  | Remote workspace, the remote host has agent X enabled, the desktop does not          | Settings renders                                  | X is shown enabled with the remote host's saved launch config                                                                                                       |
+| WH7  | Agent X detected, the host's view read pending                                       | Settings selects X                                | A loading card shows, not the detail; no save, enable or status call is sent. When the view arrives, the detail shows its saved config and probes with that command |
+| WH8  | The host's view read failed                                                          | Settings selects X                                | The error shows with Retry (not-connected message for the disconnected code); no detail, no write; Retry rereads the view and then shows the detail                 |
+| WH9  | Detail of X open on attachment A                                                     | The attachment becomes B (same identity and path) | The detail remounts on B's view; a hidden-models set queued while A's write was in flight is never sent to A                                                        |
+| WH10 | Settings covers a legacy remote tab with a session id and remote target, no identity | Settings renders                                  | The host resolves with the tab's session id and remote target, so detection runs on that attached host                                                              |
+| WH11 | Host A returned agents                                                               | A rescan fails disconnected                       | The navigation shows "Detect agents" with the not-connected message and Retry, not A's agents                                                                       |
 
-Tests: `packages/ui/test/acpSettingsWorkspaceHost.test.ts` (WH1, WH2, WH6, jsdom: the real
+Tests: `packages/ui/test/acpSettingsWorkspaceHost.test.ts` (WH1, WH2, WH6–WH10, jsdom: the real
 `ModelProviderSection` ACP path with a workspace host service distinct from the Local Host's, which
-must receive no ACP call), `packages/ui/test/acpAgentDetection.test.ts` (WH3–WH5) and
-`packages/ui/test/v4ExternalAgentConfigControls.test.ts` (the composer passes its context's
-service to the catalog read). No desktop E2E covers a remote workspace: the
+must receive no ACP call), `packages/ui/test/acpAgentDetection.test.ts` (WH3–WH5, WH11),
+`packages/ui/test/acpAgentDetail.test.ts` (WH9's dropped queue) and
+`packages/ui/test/v4ExternalAgentConfigControls.test.ts` (the composer reads its context's
+service through `useContextAcpAgentCatalog`). No desktop E2E covers a remote workspace: the
 SSH remote E2E needs a real host from secret env (`ZCODE_E2E_SSH_*`), and its Linux host answers
 `supported: false`, so it cannot exercise an enabled remote ACP group.
 

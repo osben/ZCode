@@ -17,6 +17,14 @@ export interface AcpAgentHiddenModelsHandle {
   readonly setHiddenModels: (next: readonly string[]) => void;
 }
 
+interface HiddenModelsQueue {
+  readonly service: IProviderSettingsService;
+  readonly agentId: string;
+  confirmed: readonly string[];
+  wanted: readonly string[] | null;
+  writing: boolean;
+}
+
 export function useAcpAgentHiddenModels(input: {
   /** The workspace host's service (`useAcpSettingsHost`). */
   providerSettingsService: IProviderSettingsService;
@@ -28,51 +36,79 @@ export function useAcpAgentHiddenModels(input: {
   const storedHidden = input.storedHidden;
   const [hidden, setHidden] = useState<readonly string[]>(() => storedHidden ?? []);
   const [writeError, setWriteError] = useState<string | null>(null);
-  // Write queue state: the set the host last confirmed, the latest wanted set, and whether a write is running.
-  const confirmedRef = useRef<readonly string[]>(storedHidden ?? []);
-  const wantedRef = useRef<readonly string[] | null>(null);
-  const writingRef = useRef(false);
+  // Write queue of one host and agent: the set the host last confirmed, the latest wanted set, and whether a
+  // write is running. A new host or agent starts a new queue and the previous one's wanted set is dropped
+  // ("Settings: workspace host", WH9): a set queued for a replaced attachment is never sent to either host.
+  const queueRef = useRef<HiddenModelsQueue | null>(null);
+  const queueFor = useCallback((): HiddenModelsQueue => {
+    const existing = queueRef.current;
+    if (existing?.service === providerSettingsService && existing.agentId === agentId) {
+      return existing;
+    }
+    const queue: HiddenModelsQueue = {
+      service: providerSettingsService,
+      agentId,
+      confirmed: storedHidden ?? [],
+      wanted: null,
+      writing: false,
+    };
+    queueRef.current = queue;
+    return queue;
+  }, [agentId, providerSettingsService, storedHidden]);
+  useEffect(
+    () => () => {
+      const queue = queueRef.current;
+      if (queue?.service === providerSettingsService && queue.agentId === agentId) {
+        queue.wanted = null;
+      }
+    },
+    [agentId, providerSettingsService],
+  );
 
   // A catalog read (mount or reload) is the stored fact; it replaces the shown set unless a write is queued.
   useEffect(() => {
-    confirmedRef.current = storedHidden ?? [];
-    if (!writingRef.current) setHidden(storedHidden ?? []);
-  }, [storedHidden]);
+    const queue = queueFor();
+    queue.confirmed = storedHidden ?? [];
+    if (!queue.writing) setHidden(storedHidden ?? []);
+  }, [queueFor, storedHidden]);
 
-  const flush = useCallback(async () => {
-    if (writingRef.current) return;
-    writingRef.current = true;
+  const flush = useCallback(async (queue: HiddenModelsQueue) => {
+    if (queue.writing) return;
+    queue.writing = true;
     try {
-      while (wantedRef.current !== null) {
-        const next = wantedRef.current;
-        wantedRef.current = null;
+      while (queue.wanted !== null) {
+        const next = queue.wanted;
+        queue.wanted = null;
         try {
-          await providerSettingsService.setAcpAgentHiddenModels({
-            agentId,
+          await queue.service.setAcpAgentHiddenModels({
+            agentId: queue.agentId,
             hiddenModels: next,
           });
-          confirmedRef.current = next;
+          queue.confirmed = next;
         } catch (error) {
           logger.warn("[AcpAgentCard] hidden models write failed", error);
-          wantedRef.current = null;
-          setHidden(confirmedRef.current);
+          queue.wanted = null;
+          // A replaced host's failure is not this host's: the shown set is the new host's.
+          if (queueRef.current !== queue) return;
+          setHidden(queue.confirmed);
           setWriteError(error instanceof Error ? error.message : String(error));
           return;
         }
       }
     } finally {
-      writingRef.current = false;
+      queue.writing = false;
     }
-  }, [agentId, providerSettingsService]);
+  }, []);
 
   const setHiddenModels = useCallback(
     (next: readonly string[]) => {
       setHidden(next);
       setWriteError(null);
-      wantedRef.current = next;
-      void flush();
+      const queue = queueFor();
+      queue.wanted = next;
+      void flush(queue);
     },
-    [flush],
+    [flush, queueFor],
   );
 
   return { hidden, writeError, setHiddenModels };

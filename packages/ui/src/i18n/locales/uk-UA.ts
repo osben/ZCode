@@ -3078,6 +3078,8 @@ const ukUA: Record<string, string> = {
     "Ці агенти працюють на віддаленому хості активного робочого простору.",
   "settings.modelProvider.acp.remoteDisconnected":
     "Віддалений хост не під'єднано. Його агенти ACP завантажаться після під'єднання.",
+  "settings.modelProvider.acp.settingsLoadFailed":
+    "Не вдалося прочитати налаштування ACP цього хоста: {message}",
   "settings.modelProvider.acp.sectionLaunch": "Конфігурація запуску",
   "settings.modelProvider.acp.sectionLogin": "Вхід",
   "settings.modelProvider.ollama.groupTitle": "Локальні моделі",

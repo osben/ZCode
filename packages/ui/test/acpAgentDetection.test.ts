@@ -127,6 +127,40 @@ describe("useAcpAgentDetection on the workspace host", () => {
     );
   });
 
+  it("WH11: a disconnected rescan replaces the host's earlier agents with the error", async () => {
+    const host = hostService();
+    host.detect.mockResolvedValueOnce(result([agent("opencode", true)]));
+    const { result: hook } = renderHook(() => useAcpAgentDetection(host.service, true));
+    await waitFor(() => expect(hook.current.status).toBe("ready"));
+
+    host.detect.mockRejectedValueOnce(createRemoteWorkspaceDisconnectedError());
+    await act(async () => {
+      hook.current.rescan();
+    });
+
+    await waitFor(() => expect(hook.current.status).toBe("error"));
+    expect(hook.current.agents).toEqual([]);
+    expect(hook.current.disconnected).toBe(true);
+    // Retry stays available: the attachment exists, so the next scan can run.
+    expect(hook.current.awaitingHost).toBeUndefined();
+  });
+
+  it("keeps the earlier agents when a rescan fails for another reason", async () => {
+    const host = hostService();
+    host.detect.mockResolvedValueOnce(result([agent("opencode", true)]));
+    const { result: hook } = renderHook(() => useAcpAgentDetection(host.service, true));
+    await waitFor(() => expect(hook.current.status).toBe("ready"));
+
+    host.detect.mockRejectedValueOnce(new Error("spawn failed"));
+    await act(async () => {
+      hook.current.rescan();
+    });
+
+    await waitFor(() => expect(hook.current.error).toBe("spawn failed"));
+    expect(hook.current.status).toBe("ready");
+    expect(hook.current.agents.map((item) => item.agentId)).toEqual(["opencode"]);
+  });
+
   it("WH5: a host change drops the previous host's agents and its late answer", async () => {
     const hostA = hostService();
     const hostB = hostService();

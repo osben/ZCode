@@ -8209,6 +8209,8 @@ const enUS: Record<string, string> = {
     "These agents run on the remote host of the active workspace.",
   "settings.modelProvider.acp.remoteDisconnected":
     "The remote host is not connected. Its ACP agents load when it connects.",
+  "settings.modelProvider.acp.settingsLoadFailed":
+    "Could not read this host's ACP settings: {message}",
   "settings.modelProvider.acp.sectionLaunch": "Launch configuration",
   "settings.modelProvider.acp.sectionLogin": "Login",
   "settings.modelProvider.ollama.groupTitle": "Local models",

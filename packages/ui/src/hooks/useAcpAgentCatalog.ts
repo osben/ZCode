@@ -1,10 +1,11 @@
 // The options an ACP agent offered in its last handshake (specs/acp-agent-runtime.md "S6 readiness"). The composer
 // shows them before a session exists; the host reads the fork-owned catalog file, never a session projection.
 // The same read carries the model values hidden in Settings ("Settings: models and Advanced").
-// The caller passes the host's service: the composer its workspace context's, Settings the workspace host's
-// (`useAcpSettingsHost`, "Settings: workspace host"), so both read the same host's files.
+// Settings passes the workspace host's service (`useAcpSettingsHost`, "Settings: workspace host"); the composer
+// uses `useContextAcpAgentCatalog`, which reads its workspace context's service, so both read the same host's files.
 import { useCallback, useEffect, useState } from "react";
 import type { IProviderSettingsService } from "@zcode/services";
+import { useServices } from "@/hooks/useServices.js";
 import type { ExternalAgentConfigOption } from "@zcode/shared/zcode-protocol-v4";
 
 export interface AcpAgentCatalogState {
@@ -68,4 +69,10 @@ export function useAcpAgentCatalog(
   }, [agentId, providerSettingsService, revision]);
 
   return { ...state, reload };
+}
+
+/** The catalog on the services context's host: the composer's workspace. */
+export function useContextAcpAgentCatalog(agentId: string | null): AcpAgentCatalogHandle {
+  const { providerSettingsService } = useServices();
+  return useAcpAgentCatalog(providerSettingsService, agentId);
 }
