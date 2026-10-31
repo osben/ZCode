@@ -83,4 +83,34 @@ describe("AcpAgentCatalogDetail", () => {
     expect(screen.getByText(ACP_AGENT_CATALOG.opencode.installCommand)).toBeTruthy();
     expect(screen.queryByText(ACP_AGENT_CATALOG.cursor.installCommand)).toBeNull();
   });
+
+  // specs/acp-agent-runtime.md "Settings: workspace host" (WH3): without a remote attachment the
+  // entry says the host is not connected, on its own, and offers no action that cannot run.
+  it("shows the not-connected message alone, without Retry, while the remote host is not attached", () => {
+    render(
+      createElement(AcpAgentCatalogDetail, {
+        status: "error",
+        remoteHost: true,
+        detection: {
+          status: "error",
+          supported: true,
+          refreshing: false,
+          agents: [],
+          disconnected: true,
+          awaitingHost: true,
+          rescan: vi.fn(),
+        },
+      }),
+    );
+
+    expect(screen.getByRole("alert").textContent).toBe(
+      "settings.modelProvider.acp.remoteDisconnected",
+    );
+    expect(screen.queryByText("common.retry")).toBeNull();
+    expect(
+      (screen.getByText("settings.modelProvider.acp.rescan").closest("button") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByText("settings.modelProvider.acp.remoteHostNote")).toBeTruthy();
+  });
 });

@@ -36,6 +36,7 @@ const NOT_ATTACHED_DETECTION: AcpDetectionState = {
   supported: true,
   refreshing: false,
   disconnected: true,
+  awaitingHost: true,
 };
 
 interface OwnedDetectionState {
@@ -157,7 +158,7 @@ export function AcpAgentCatalogDetail({
           type="button"
           size="sm"
           variant="outline"
-          disabled={detection.refreshing}
+          disabled={detection.refreshing || detection.awaitingHost === true}
           onClick={detection.rescan}
         >
           {detection.refreshing ? <Spinner className="me-1 size-3" /> : null}
@@ -173,10 +174,15 @@ export function AcpAgentCatalogDetail({
             role="alert"
             className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm text-destructive"
           >
-            <span>{t("scanFailed", { message: scanError })}</span>
-            <Button type="button" size="sm" variant="outline" onClick={detection.rescan}>
-              {intl.formatMessage({ id: "common.retry" })}
-            </Button>
+            {/* The not-connected message stands alone; it is not a scan failure. */}
+            <span>
+              {detection.disconnected ? scanError : t("scanFailed", { message: scanError })}
+            </span>
+            {detection.awaitingHost ? null : (
+              <Button type="button" size="sm" variant="outline" onClick={detection.rescan}>
+                {intl.formatMessage({ id: "common.retry" })}
+              </Button>
+            )}
           </div>
         ) : null}
 

@@ -335,7 +335,7 @@ Product rules:
   - No remote attachment (`rpcReady` false, `connectionKind === "remote-waiting"`): the resolver
     cannot tell a pending reconnect from a host that is down, so the group shows the "Detect
     agents" entry with "The remote host is not connected. Its ACP agents load when it connects."
-    No detection call is sent (Retry does nothing until then). When the attachment is ready,
+    The message stands alone (it is not a scan failure); Rescan is disabled and there is no Retry, because no call could run. When the attachment is ready,
     detection runs once by itself.
   - Disconnected or unreachable after attaching (the disconnected-services proxy or a failed RPC):
     the "Detect agents" entry with the error and Retry. The disconnected code is shown with the
