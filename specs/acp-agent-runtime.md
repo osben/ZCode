@@ -356,8 +356,8 @@ Product rules:
   defaults over the host's saved command, args and env, and the status probe would check the
   default executable instead of the saved one. A failed view read shows the error (the
   not-connected message for the disconnected code) with Retry, which rereads that host's view.
-- The host is resolved from the covered workspace tab's metadata as the composer does: its
-  identity, remote session id and remote target. A legacy remote tab without a
+- The host is resolved from the covered workspace tab's metadata: its identity and remote session
+  id (as the composer's shell target does) and its remote target (the resolver's legacy fallback). A legacy remote tab without a
   `workspaceIdentity` still resolves its attached session.
 
 Owner and event order:
