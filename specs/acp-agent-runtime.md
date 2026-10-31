@@ -348,8 +348,10 @@ Product rules:
 - Switching the workspace host (another workspace, or the remote attachment is replaced) drops the
   previous host's agents: detection returns to loading, and a response from the previous host is
   never written. An open agent detail remounts, so a launch form seeded from one host's saved
-  config can never be saved to another host. A hidden-models write queued for the previous host
-  is dropped, never sent to either host.
+  config can never be saved to another host. Hidden-model writes finish on the service they were
+  queued for: a host change while the Models list stays mounted drops the previous host's queued
+  set (never sent to the new host); unmounting the detail (another agent, leaving Settings, or the
+  remount above) drops nothing, so the latest set the user chose is still written to that service.
 - The host's provider settings view is a separate read from detection. Until it is ready the
   agent detail is not shown (a loading card instead), so no write, form seed or login status probe
   can run on an unknown saved config: enabling while the view is unknown would save detection
@@ -378,8 +380,9 @@ remoteSessionId, workspaceIdentity, remoteTarget)`, the same resolution the comp
 - `useAcpAgentCatalog(providerSettingsService, agentId)` takes the service as an argument for
   Settings; the composer calls `useContextAcpAgentCatalog(agentId)`, which reads its context's
   service, so its behavior is unchanged and the component reaches no service itself.
-- `useAcpAgentHiddenModels` keeps its write queue per service and agent: a service change starts
-  a new queue, and the previous queue sends nothing after its in-flight write.
+- `useAcpAgentHiddenModels` keeps its write queue per service and agent: a service change under
+  the mounted hook starts a new queue and the previous queue sends nothing after its in-flight
+  write; another agent or an unmount lets the queue finish its latest set on its own service.
 - The view returned by an ACP write is committed to the ACP host's view only, never to the Local
   Host's provider view.
 - The detail key is `<host key>:acp-agent:<agentId>`, the host key being
@@ -412,14 +415,14 @@ Acceptance:
 | WH6  | Remote workspace, the remote host has agent X enabled, the desktop does not          | Settings renders                                  | X is shown enabled with the remote host's saved launch config                                                                                                       |
 | WH7  | Agent X detected, the host's view read pending                                       | Settings selects X                                | A loading card shows, not the detail; no save, enable or status call is sent. When the view arrives, the detail shows its saved config and probes with that command |
 | WH8  | The host's view read failed                                                          | Settings selects X                                | The error shows with Retry (not-connected message for the disconnected code); no detail, no write; Retry rereads the view and then shows the detail                 |
-| WH9  | Detail of X open on attachment A                                                     | The attachment becomes B (same identity and path) | The detail remounts on B's view; a hidden-models set queued while A's write was in flight is never sent to A                                                        |
+| WH9  | Detail of X open on attachment A                                                     | The attachment becomes B (same identity and path) | The detail remounts on B's view; a set queued for A is never sent to B, and a set queued while a mounted Models list's service changes is dropped                   |
 | WH10 | Settings covers a legacy remote tab with a session id and remote target, no identity | Settings renders                                  | The host resolves with the tab's session id and remote target, so detection runs on that attached host                                                              |
 | WH11 | Host A returned agents                                                               | A rescan fails disconnected                       | The navigation shows "Detect agents" with the not-connected message and Retry, not A's agents                                                                       |
 
 Tests: `packages/ui/test/acpSettingsWorkspaceHost.test.ts` (WH1, WH2, WH6–WH10, jsdom: the real
 `ModelProviderSection` ACP path with a workspace host service distinct from the Local Host's, which
 must receive no ACP call), `packages/ui/test/acpAgentDetection.test.ts` (WH3–WH5, WH11),
-`packages/ui/test/acpAgentDetail.test.ts` (WH9's dropped queue) and
+`packages/ui/test/acpAgentDetail.test.ts` (WH9's dropped queue, and the latest set finishing after an unmount) and
 `packages/ui/test/v4ExternalAgentConfigControls.test.ts` (the composer reads its context's
 service through `useContextAcpAgentCatalog`). No desktop E2E covers a remote workspace: the
 SSH remote E2E needs a real host from secret env (`ZCODE_E2E_SSH_*`), and its Linux host answers

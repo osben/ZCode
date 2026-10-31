@@ -299,4 +299,40 @@ describe("useAcpAgentHiddenModels", () => {
     expect(hostA.setAcpAgentHiddenModels).toHaveBeenCalledTimes(1);
     expect(hostB.setAcpAgentHiddenModels).toHaveBeenCalledTimes(1);
   });
+
+  it("finishes the latest set on the same host when the detail unmounts", async () => {
+    let finishFirst!: () => void;
+    const host = {
+      setAcpAgentHiddenModels: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<{ supported: boolean }>((resolve) => {
+              finishFirst = () => resolve({ supported: true });
+            }),
+        )
+        .mockResolvedValue({ supported: true }),
+    };
+    const { result, unmount } = renderHook(() =>
+      useAcpAgentHiddenModels({
+        providerSettingsService: host as unknown as IProviderSettingsService,
+        agentId: "opencode",
+        storedHidden: undefined,
+      }),
+    );
+    act(() => result.current.setHiddenModels(["b"]));
+    // Queued behind the in-flight write; switching agents or leaving Settings must not lose it.
+    act(() => result.current.setHiddenModels(["b", "c"]));
+
+    unmount();
+    await act(async () => {
+      finishFirst();
+    });
+
+    await waitFor(() => expect(host.setAcpAgentHiddenModels).toHaveBeenCalledTimes(2));
+    expect(host.setAcpAgentHiddenModels).toHaveBeenLastCalledWith({
+      agentId: "opencode",
+      hiddenModels: ["b", "c"],
+    });
+  });
 });

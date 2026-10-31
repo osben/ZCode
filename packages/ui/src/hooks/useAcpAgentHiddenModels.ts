@@ -37,14 +37,16 @@ export function useAcpAgentHiddenModels(input: {
   const [hidden, setHidden] = useState<readonly string[]>(() => storedHidden ?? []);
   const [writeError, setWriteError] = useState<string | null>(null);
   // Write queue of one host and agent: the set the host last confirmed, the latest wanted set, and whether a
-  // write is running. A new host or agent starts a new queue and the previous one's wanted set is dropped
-  // ("Settings: workspace host", WH9): a set queued for a replaced attachment is never sent to either host.
+  // write is running. A host change under this hook drops the previous queue's wanted set ("Settings: workspace
+  // host", WH9). Unmounting (another agent, leaving Settings) drops nothing: the queue finishes its latest set on
+  // the service it was queued for, so ordinary navigation never loses the user's last selection.
   const queueRef = useRef<HiddenModelsQueue | null>(null);
   const queueFor = useCallback((): HiddenModelsQueue => {
     const existing = queueRef.current;
     if (existing?.service === providerSettingsService && existing.agentId === agentId) {
       return existing;
     }
+    if (existing && existing.service !== providerSettingsService) existing.wanted = null;
     const queue: HiddenModelsQueue = {
       service: providerSettingsService,
       agentId,
@@ -55,15 +57,6 @@ export function useAcpAgentHiddenModels(input: {
     queueRef.current = queue;
     return queue;
   }, [agentId, providerSettingsService, storedHidden]);
-  useEffect(
-    () => () => {
-      const queue = queueRef.current;
-      if (queue?.service === providerSettingsService && queue.agentId === agentId) {
-        queue.wanted = null;
-      }
-    },
-    [agentId, providerSettingsService],
-  );
 
   // A catalog read (mount or reload) is the stored fact; it replaces the shown set unless a write is queued.
   useEffect(() => {
