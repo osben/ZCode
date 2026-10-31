@@ -6295,7 +6295,7 @@ const ukUA: Record<string, string> = {
   "chat.quota.startPlan.concurrentLimit":
     "Система зайнята. Змініть модель, оновіть обліковий запис або спробуйте пізніше.",
   "chat.quota.startPlan.concurrentLimit.retryExhausted":
-    "Система зайнята, і досягнуто максимальної кількості автоматичних повторів. Спробуйте пізніше або оновіть обліковий запис.",
+    "Система зайнята, і досягнуто максимальної кількості автоматичних повторів. Спробуйте пізніше або перейдіть на підписку Coding Plan.",
   "chat.quota.mcp.quotaExhausted":
     "ZCode MCP «{server}» вичерпав сьогоднішню квоту. Її буде скинуто завтра.",
   "chat.quota.mcp.codingPlanRequired":

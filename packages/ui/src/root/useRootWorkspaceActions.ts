@@ -717,8 +717,6 @@ export function useRootWorkspaceActions({
       platform,
       requestConfirmation,
       services.projectService,
-      services.settingService,
-      isDesktop,
       startDraftInWorkspace,
       tabStoreApi,
     ],

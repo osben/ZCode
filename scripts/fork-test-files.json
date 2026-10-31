@@ -197,6 +197,7 @@
   "packages/ui/test/commandCenterTaskSearchScope.test.ts",
   "packages/ui/test/commandCenterWorktreeDialog.test.ts",
   "packages/ui/test/commandCenterWorktreeFlow.test.ts",
+  "packages/ui/test/composerAppSlashCommands.test.ts",
   "packages/ui/test/composerDestinationControl.test.ts",
   "packages/ui/test/composerDestinationTaskBranchRow.test.ts",
   "packages/ui/test/composerExistingSessionModelPick.test.ts",
