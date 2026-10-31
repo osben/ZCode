@@ -56,6 +56,12 @@ async function fullSelectionFixture(t) {
   await git("config", "user.email", "affected@example.invalid");
   await git("config", "commit.gpgsign", "false");
   await symlink(repoNodeModules, join(root, "node_modules"), "junction");
+  // The runner selects the named projects of the repository config (specs/fork-test-pipeline.md),
+  // so the fixture declares the engineering project that owns its specs.
+  await writeFile(
+    join(root, "vitest.config.mjs"),
+    'export default { test: { projects: [{ test: { name: "engineering", include: ["*.test.mjs"] } }] } };\n',
+  );
   await writeFile(join(root, "README.md"), "baseline\n");
   await git("add", ".");
   await git("commit", "-m", "baseline");
@@ -87,7 +93,7 @@ test("full selection with --on-full run executes the suite instead of skipping",
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /选中 1\/1/u);
   assert.match(result.stderr, /--on-full run：执行全量/u);
-  assert.doesNotMatch(result.stderr, /已跳过 UT/u);
+  assert.doesNotMatch(result.stderr, /已跳过工程测试/u);
   // CI forces ANSI colors into the captured non-TTY output; strip them before asserting the summary.
   assert.match(result.stdout.replaceAll(/\x1B\[\d+m/gu, ""), /Test Files\s+1 passed/u);
 });
@@ -107,7 +113,7 @@ test("full selection without --on-full still skips and exits zero", async (t) =>
   await f.put("demo.test.mjs", 'import { test } from "vitest";\ntest("demo", () => {});\n');
   const result = await f.run(["--files", "demo.test.mjs"]);
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stderr, /已跳过 UT（未执行测试）/u);
+  assert.match(result.stderr, /已跳过工程测试（未执行测试）/u);
   assert.doesNotMatch(result.stderr, /执行全量/u);
 });
 
