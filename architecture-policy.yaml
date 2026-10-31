@@ -1764,3 +1764,8 @@ exceptions:
     paths:
       - packages/zcode-cua/src/**
     reason: The whole zcode-cua producer package (broker, native adapters, tools) entered the repo after the gate timestamp as pre-existing code moved from a separate repository; adopting its internal layers needs a dedicated CONTRACT pass (it has known internal cycles by design), not a mechanical split in this branch.
+  - id: composer-app-slash-commands-unmanaged-file
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/v4/composer/composerAppSlashCommands.ts
+    reason: Restores the upstream 3.17.1 rule that a recovery slash command stays listed while the runtime is blocked, lost in the 3.17.1 merge. The selector is split out of the upstream-owned ConversationComposer.tsx so it is unit-testable and limits sync conflicts; adopting packages/ui/src/v4 needs a separate module boundary refactor.

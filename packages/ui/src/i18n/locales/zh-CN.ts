@@ -6701,7 +6701,7 @@ const zhCN: Record<string, string> = {
   "chat.quota.startPlan.concurrentLimit":
     "当前系统繁忙，请更换模型、切换到 Coding Plan 订阅，或稍后再试。",
   "chat.quota.startPlan.concurrentLimit.retryExhausted":
-    "当前系统繁忙，当前自动重试已达到最大次数，请稍后再试或升级账户。",
+    "当前系统繁忙，当前自动重试已达到最大次数，请稍后再试或切换到 Coding Plan 订阅。",
   "chat.quota.startPlan.concurrentLimit.switchModel":
     "当前模型请求已达到并发上限，请切换模型继续当前任务",
   "chat.quota.mcp.quotaExhausted": "ZCode MCP「{server}」今日额度已用完，明天自动恢复。",
