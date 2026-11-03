@@ -1280,6 +1280,24 @@ function ScopedMessageFileLink({ className, fileIconSrc, fileLink, onOpen }: Mes
       });
   };
 
+  const handleRevealInFileManager = () => {
+    void (async () => {
+      // WSL reveal needs the entry kind (file → containing folder, directory → the folder itself),
+      // but pathKind is only populated by the menu-open stat; resolve it at dispatch time when that
+      // race is lost. A failed stat keeps kind unknown, and the hook then falls back to the
+      // containing directory — same location a local missing-entry reveal opens.
+      let kind = pathKind;
+      if (kind === null) {
+        try {
+          kind = (await services.fileService.stat({ path: fileLink.path })).type;
+        } catch {
+          kind = null;
+        }
+      }
+      await fileActions.revealInFileManager({ path: fileLink.path, kind: kind ?? undefined });
+    })();
+  };
+
   return (
     <ContextMenu onOpenChange={(open) => open && void loadEditors()}>
       <ContextMenuTrigger asChild>
@@ -1323,12 +1341,7 @@ function ScopedMessageFileLink({ className, fileIconSrc, fileLink, onOpen }: Mes
             file tree convention: the location action stays discoverable on every file chip. */}
         <ContextMenuItem
           disabled={!fileActions.canRevealInFileManager({ path: fileLink.path })}
-          onSelect={() =>
-            void fileActions.revealInFileManager({
-              path: fileLink.path,
-              kind: pathKind ?? undefined,
-            })
-          }
+          onSelect={handleRevealInFileManager}
         >
           <FolderOpenIcon aria-hidden="true" className="size-4" />
           {intl.formatMessage({ id: "fileActions.revealInFileManager" })}

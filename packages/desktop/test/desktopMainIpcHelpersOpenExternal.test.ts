@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -78,16 +78,53 @@ describe("openPathInFileManager", () => {
     const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");
     const file = join(root, "book.epub");
     await writeFile(file, "content");
-    const realFile = await realpath(file);
 
     const result = await openPathInFileManager(file, { warn: vi.fn() });
 
+    // The lexical path is revealed, not realpath's resolution of symlinked temp directories.
     expect(result).toEqual({ success: true });
     expect(h.shellShowItemInFolder).toHaveBeenCalledTimes(1);
-    expect(h.shellShowItemInFolder).toHaveBeenCalledWith(realFile);
+    expect(h.shellShowItemInFolder).toHaveBeenCalledWith(file);
     expect(h.shellOpenPath).not.toHaveBeenCalled();
     expect(h.execFile).not.toHaveBeenCalled();
   });
+
+  it("reveals a symlink itself, not its destination outside the folder", async () => {
+    const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");
+    const outside = await mkdtemp(join(tmpdir(), "zcode-file-manager-out-"));
+    try {
+      const destination = join(outside, "report.pdf");
+      await writeFile(destination, "content");
+      const link = join(root, "report.link.pdf");
+      await symlink(destination, link);
+
+      const result = await openPathInFileManager(link, { warn: vi.fn() });
+
+      expect(result).toEqual({ success: true });
+      expect(h.shellShowItemInFolder).toHaveBeenCalledTimes(1);
+      expect(h.shellShowItemInFolder).toHaveBeenCalledWith(link);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reveals an application bundle instead of launching it",
+    async () => {
+      const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");
+      const bundle = join(root, "Evil.app");
+      await mkdir(bundle);
+
+      const result = await openPathInFileManager(bundle, { warn: vi.fn() });
+
+      // Directories keep the pre-existing realpath resolution; only files reveal lexically.
+      expect(result).toEqual({ success: true });
+      expect(h.shellShowItemInFolder).toHaveBeenCalledTimes(1);
+      expect(h.shellShowItemInFolder).toHaveBeenCalledWith(await realpath(bundle));
+      expect(h.shellOpenPath).not.toHaveBeenCalled();
+      expect(h.execFile).not.toHaveBeenCalled();
+    },
+  );
 
   it("opens a directory as a folder without item selection", async () => {
     const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");

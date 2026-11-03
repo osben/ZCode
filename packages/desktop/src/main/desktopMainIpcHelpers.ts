@@ -162,15 +162,23 @@ export async function openPathInFileManager(
 
   let openTarget = target;
   try {
-    if ((await stat(target)).isFile()) {
+    // Classify via the lexical path (stat follows symlinks), but reveal the path the caller
+    // named: realpath would replace a workspace symlink with its destination's folder.
+    if ((await stat(normalized)).isFile()) {
       // A file means "reveal": open the containing folder with the file selected. Falling through
       // to shell.openPath would launch the file's default application instead of the file manager.
-      shell.showItemInFolder(target);
+      shell.showItemInFolder(normalized);
       return { success: true };
     }
-  } catch {
-    // The entry is gone (the agent may have deleted or moved it after the message was sent):
-    // open its parent directory so the location stays reachable instead of surfacing an OS error.
+  } catch (error) {
+    // Only a missing entry (the agent may have deleted or moved the file after the message was
+    // sent) falls back to its parent directory. Permission or transient I/O errors propagate, so
+    // the caller reports a failure instead of silently opening the wrong folder.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn("[open-in-file-manager] 无法确认条目类型", { path: target, error: message });
+      return { success: false, error: message };
+    }
     const parent = dirname(target);
     if (parent && parent !== target) {
       openTarget = await stat(parent).then(
@@ -178,6 +186,14 @@ export async function openPathInFileManager(
         () => target,
       );
     }
+  }
+
+  // Application bundles (.app) are directories that `open`/`shell.openPath` would execute; a
+  // location-only action must reveal them instead. Files never reach this point (revealed above),
+  // and isExecutableOpenTarget's other rules classify file targets, not plain directories.
+  if (await isBlockedExecutableTarget(target)) {
+    shell.showItemInFolder(target);
+    return { success: true };
   }
 
   if (process.platform === "darwin") {
