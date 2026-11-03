@@ -2053,6 +2053,7 @@ const zhCN: Record<string, string> = {
   "fileActions.defaultApp": "默认",
   "fileActions.copyAbsolutePath": "复制绝对路径",
   "fileActions.copyRelativePath": "复制相对路径",
+  "fileActions.revealInFileManager": "在文件管理器中打开",
   "appHeader.copyTaskPath": "复制任务路径",
   "appHeader.reloadSession": "重载会话",
   "appHeader.reloadSessionSuccess": "会话已重载",

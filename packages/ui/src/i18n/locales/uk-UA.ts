@@ -1735,6 +1735,7 @@ const ukUA: Record<string, string> = {
   "appHeader.copyPath": "Копіювати шлях",
   "fileActions.copyAbsolutePath": "Копіювати абсолютний шлях",
   "fileActions.copyRelativePath": "Копіювати відносний шлях",
+  "fileActions.revealInFileManager": "Відкрити у файловому менеджері",
   "appHeader.copyTaskPath": "Копіювати шлях завдання",
   "appHeader.copySessionId": "Копіювати ID сеансу",
   "appHeader.reloadSession": "Перезавантажити сеанс",

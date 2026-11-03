@@ -20,6 +20,7 @@ import {
   ChevronRightIcon,
   CopyIcon,
   ExternalLinkIcon,
+  FolderOpenIcon,
   PanelRightIcon,
 } from "lucide-react";
 import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
@@ -1150,7 +1151,6 @@ function ScopedMessageFileLink({ className, fileIconSrc, fileLink, onOpen }: Mes
     fileLink.workspaceIdentity,
   );
   const [pathKind, setPathKind] = useState<"file" | "directory" | null>(null);
-  const fileActions = useFileContextActions();
   const openInEditorContext = useWorkspaceOpenInEditorTarget({
     workspacePath: fileLink.workspacePath,
     workspaceIdentity: fileLink.workspaceIdentity,
@@ -1161,6 +1161,12 @@ function ScopedMessageFileLink({ className, fileIconSrc, fileLink, onOpen }: Mes
     fileLink.workspaceRemoteSessionId ||
     openInEditorContext.isRemoteWorkspace,
   );
+  const fileActions = useFileContextActions({
+    canOpenLocalFileManager: Boolean(platform.canOpenLocalFiles && platform.openInFileManager),
+    isRemoteWorkspace: isRemote,
+    remoteTarget: openInEditorContext.remoteTarget,
+    workspaceIdentity: fileLink.workspaceIdentity,
+  });
   const fileApplications = useFileApplications(
     { path: fileLink.path, pathKind: "file", workspaceIdentity: fileLink.workspaceIdentity },
     isRemote,
@@ -1313,6 +1319,20 @@ function ScopedMessageFileLink({ className, fileIconSrc, fileLink, onOpen }: Mes
           />
         )}
         <ContextMenuSeparator />
+        {/* Visible-but-disabled when the host cannot reveal (web, non-WSL remote), matching the
+            file tree convention: the location action stays discoverable on every file chip. */}
+        <ContextMenuItem
+          disabled={!fileActions.canRevealInFileManager({ path: fileLink.path })}
+          onSelect={() =>
+            void fileActions.revealInFileManager({
+              path: fileLink.path,
+              kind: pathKind ?? undefined,
+            })
+          }
+        >
+          <FolderOpenIcon aria-hidden="true" className="size-4" />
+          {intl.formatMessage({ id: "fileActions.revealInFileManager" })}
+        </ContextMenuItem>
         <ContextMenuItem
           onSelect={() => void fileActions.copyAbsolutePath({ path: fileLink.path })}
         >

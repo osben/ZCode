@@ -21,16 +21,6 @@ interface FileContextActionTarget {
   kind?: "file" | "directory";
 }
 
-function resolveFileManagerOpenPath(target: FileContextActionTarget): string {
-  if (target.kind === "directory") {
-    return target.path;
-  }
-
-  // Interaction semantics: "Open in file manager" in the review panel returns to the file's directory.
-  // Do not pass the file path directly to the OS, or some platforms will open the default app instead of the folder.
-  return getContainingDirectoryPath(target.path) ?? target.path;
-}
-
 export function useFileContextActions(options: FileContextActionOptions = {}) {
   const platform = usePlatform();
   const { intl } = useZCodeIntl();
@@ -83,10 +73,15 @@ export function useFileContextActions(options: FileContextActionOptions = {}) {
         return;
       }
 
-      const openPath = resolveFileManagerOpenPath(target);
-      // The review area previously disabled this for all remote workspaces. Simply enabling it would pass WSL Linux paths
-      // to the local file manager. Use Explorer only when the target resolves exactly to WSL, preserving the existing
-      // "open containing folder" behavior; main converts the path to UNC at the platform boundary.
+      // Local reveal passes the file itself: main's openPathInFileManager opens the containing
+      // folder with the file selected (shell.showItemInFolder), which the old caller-side
+      // "send the directory only" rule could not express without losing the selection.
+      // WSL is the exception — Explorer needs a folder, and main converts the Linux directory
+      // to a UNC path at the platform boundary.
+      const openPath =
+        remoteTarget?.kind === "wsl" && target.kind !== "directory"
+          ? (getContainingDirectoryPath(target.path) ?? target.path)
+          : target.path;
       const result =
         remoteTarget?.kind === "wsl"
           ? await platform.openInEditor("explorer", openPath, {

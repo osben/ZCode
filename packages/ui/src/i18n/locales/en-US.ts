@@ -2214,6 +2214,7 @@ const enUS: Record<string, string> = {
   "fileActions.defaultApp": "Default",
   "fileActions.copyAbsolutePath": "Copy absolute path",
   "fileActions.copyRelativePath": "Copy relative path",
+  "fileActions.revealInFileManager": "Open in file manager",
   "appHeader.copyTaskPath": "Copy task path",
   "appHeader.copyClaudeJsonlPath": "Copy JSONL path",
   "appHeader.copySessionId": "Copy session ID",

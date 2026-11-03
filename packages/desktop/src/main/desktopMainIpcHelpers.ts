@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
-import { normalize, posix, win32 } from "node:path";
+import { dirname, normalize, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserWindow } from "electron";
 import { shell } from "electron";
@@ -160,11 +160,31 @@ export async function openPathInFileManager(
     // If the path is missing or cannot be resolved, still try opening the normalized original path to help diagnose permission issues.
   }
 
-  if (process.platform === "darwin") {
-    return openDarwinPathInFileManager(target, logger);
+  let openTarget = target;
+  try {
+    if ((await stat(target)).isFile()) {
+      // A file means "reveal": open the containing folder with the file selected. Falling through
+      // to shell.openPath would launch the file's default application instead of the file manager.
+      shell.showItemInFolder(target);
+      return { success: true };
+    }
+  } catch {
+    // The entry is gone (the agent may have deleted or moved it after the message was sent):
+    // open its parent directory so the location stays reachable instead of surfacing an OS error.
+    const parent = dirname(target);
+    if (parent && parent !== target) {
+      openTarget = await stat(parent).then(
+        (entry) => (entry.isDirectory() ? parent : target),
+        () => target,
+      );
+    }
   }
 
-  const error = await shell.openPath(target);
+  if (process.platform === "darwin") {
+    return openDarwinPathInFileManager(openTarget, logger);
+  }
+
+  const error = await shell.openPath(openTarget);
   if (error) {
     logger.warn("[open-in-file-manager] shell.openPath 失败", {
       path: target,

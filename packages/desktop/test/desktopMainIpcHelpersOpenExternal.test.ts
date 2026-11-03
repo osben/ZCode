@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   shellOpenPath: vi.fn(),
   shellShowItemInFolder: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -13,6 +14,10 @@ vi.mock("electron", () => ({
     openPath: h.shellOpenPath,
     showItemInFolder: h.shellShowItemInFolder,
   },
+}));
+
+vi.mock("node:child_process", () => ({
+  execFile: h.execFile,
 }));
 
 describe("openPathInDefaultApp", () => {
@@ -50,6 +55,72 @@ describe("openPathInDefaultApp", () => {
       path: "E:\\preview.html",
       error: "No application is associated with the specified file",
     });
+  });
+});
+
+describe("openPathInFileManager", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    h.shellOpenPath.mockReset().mockResolvedValue("");
+    h.shellShowItemInFolder.mockReset();
+    h.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      (args[args.length - 1] as (error: Error | null) => void)(null);
+    });
+    root = await mkdtemp(join(tmpdir(), "zcode-file-manager-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("reveals a file with selection instead of opening its default application", async () => {
+    const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");
+    const file = join(root, "book.epub");
+    await writeFile(file, "content");
+    const realFile = await realpath(file);
+
+    const result = await openPathInFileManager(file, { warn: vi.fn() });
+
+    expect(result).toEqual({ success: true });
+    expect(h.shellShowItemInFolder).toHaveBeenCalledTimes(1);
+    expect(h.shellShowItemInFolder).toHaveBeenCalledWith(realFile);
+    expect(h.shellOpenPath).not.toHaveBeenCalled();
+    expect(h.execFile).not.toHaveBeenCalled();
+  });
+
+  it("opens a directory as a folder without item selection", async () => {
+    const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");
+    const realRoot = await realpath(root);
+
+    const result = await openPathInFileManager(root, { warn: vi.fn() });
+
+    expect(result).toEqual({ success: true });
+    expect(h.shellShowItemInFolder).not.toHaveBeenCalled();
+    if (process.platform === "darwin") {
+      expect(h.execFile).toHaveBeenCalledTimes(1);
+      expect(h.execFile.mock.calls[0]?.[0]).toBe("open");
+      expect(h.execFile.mock.calls[0]?.[1]).toEqual([realRoot]);
+    } else {
+      expect(h.shellOpenPath).toHaveBeenCalledWith(realRoot);
+    }
+  });
+
+  it("falls back to the parent directory when the entry no longer exists", async () => {
+    const { openPathInFileManager } = await import("../src/main/desktopMainIpcHelpers.js");
+
+    const result = await openPathInFileManager(join(root, "deleted.epub"), { warn: vi.fn() });
+
+    // realpath cannot resolve the missing entry, so the parent keeps its normalized form.
+    expect(result).toEqual({ success: true });
+    expect(h.shellShowItemInFolder).not.toHaveBeenCalled();
+    if (process.platform === "darwin") {
+      expect(h.execFile).toHaveBeenCalledTimes(1);
+      expect(h.execFile.mock.calls[0]?.[0]).toBe("open");
+      expect(h.execFile.mock.calls[0]?.[1]).toEqual([root]);
+    } else {
+      expect(h.shellOpenPath).toHaveBeenCalledWith(root);
+    }
   });
 });
 
