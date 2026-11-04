@@ -114,6 +114,8 @@ import { seedRemoteOnboardingFixture } from "./test/e2e/helpers/remote-startup-p
 import { getE2EProviderEndpointEnv } from "#e2e/helpers/e2e-provider-endpoint";
 import { prepareOAuthCompletionRaceFixture } from "./test/e2e/helpers/oauth-completion-race-fixture.js";
 import { prepareAccessToken401Fixture } from "./test/e2e/helpers/access-token-401-fixture.js";
+import { prepareOfficialMcpAuthRoutingFixture } from "#e2e/helpers/mcp-official-auth-routing-fixture";
+import { prepareMcpFailureGuidanceFixture } from "#e2e/helpers/mcp-failure-guidance-fixture";
 import { createE2EReplayFixtureVariables } from "./test/e2e/helpers/e2e-runtime-paths.js";
 import { stageE2EAppOutput } from "./test/e2e/helpers/e2e-app-output-stage.js";
 import { withE2EDesktopBuildLock } from "./scripts/ensure-e2e-desktop-build.mjs";
@@ -651,6 +653,8 @@ let clientScenesMockServer: ClientScenesMockServer | null = null;
 let stopOAuthCompletionRaceFixture: (() => Promise<void>) | null = null;
 let stopTtftOtlpFixture: (() => Promise<void>) | null = null;
 let stopAccessToken401Fixture: (() => Promise<void>) | null = null;
+let stopOfficialMcpAuthRoutingFixture: (() => Promise<void>) | null = null;
+let stopMcpFailureGuidanceFixture: (() => Promise<void>) | null = null;
 let pluginCdnZipFixtureServer: PluginCdnZipFixtureServer | null = null;
 let upstreamE2EBaseUrl: string = e2eProviderPreset.baseUrl;
 let e2eRunnerExitWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -4992,6 +4996,18 @@ export const config: WebdriverIO.Config = {
           credentialsFile: E2E_APP_CREDENTIALS_FILE,
           settingsFile: E2E_APP_SETTINGS_FILE,
         });
+        stopOfficialMcpAuthRoutingFixture = await prepareOfficialMcpAuthRoutingFixture({
+          specs,
+          credentialsFile: E2E_APP_CREDENTIALS_FILE,
+          settingsFile: E2E_APP_SETTINGS_FILE,
+          workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+        });
+        stopMcpFailureGuidanceFixture = await prepareMcpFailureGuidanceFixture({
+          specs,
+          credentialsFile: E2E_APP_CREDENTIALS_FILE,
+          settingsFile: E2E_APP_SETTINGS_FILE,
+          workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+        });
         // Install after resetHome and before Electron starts, so Main -> Host -> Agent all inherit
         // the case-owned PATH; other specs are kept as a no-op by the helper.
         await installBashPrefixPermissionPnpmShim({
@@ -5104,6 +5120,10 @@ export const config: WebdriverIO.Config = {
           stopTtftOtlpFixture = null;
           await stopAccessToken401Fixture?.();
           stopAccessToken401Fixture = null;
+          await stopOfficialMcpAuthRoutingFixture?.();
+          stopOfficialMcpAuthRoutingFixture = null;
+          await stopMcpFailureGuidanceFixture?.();
+          stopMcpFailureGuidanceFixture = null;
           currentE2EBeforeSessionError = null;
           e2eFailureArtifacts = null;
           currentE2EWorkerSessionSpecs = [];
@@ -5184,6 +5204,10 @@ export const config: WebdriverIO.Config = {
           stopOAuthCompletionRaceFixture = null;
           await stopAccessToken401Fixture?.();
           stopAccessToken401Fixture = null;
+          await stopOfficialMcpAuthRoutingFixture?.();
+          stopOfficialMcpAuthRoutingFixture = null;
+          await stopMcpFailureGuidanceFixture?.();
+          stopMcpFailureGuidanceFixture = null;
           await stopPluginCdnZipFixture();
         } finally {
           await cleanupE2EElectronProcesses("onComplete");

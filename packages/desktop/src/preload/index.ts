@@ -856,6 +856,8 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Capture the current window, so error feedback can carry the on-screen view */
   captureWindowScreenshot: () => ipcRenderer.invoke(PlatformChannels.CaptureWindowScreenshot),
   // CDP-on-guest pivot: after the `<webview>` guest dom-ready, report webContentsId to main to attach.
+  browserViewLoadUrl: (payload: { webContentsId: number; url: string }): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.BrowserViewLoadUrl, payload),
   browserViewAttachGuest: (payload: {
     key: string;
     webContentsId: number;

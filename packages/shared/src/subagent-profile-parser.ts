@@ -60,8 +60,10 @@ export function parseAgentProfileFromMarkdown(input: {
   const color = normalizeColor(scalarString(frontmatter.color));
   const parsedPermissionMode = normalizePermissionMode(scalarString(frontmatter.permissionMode));
   // Fix rationale: project-level subagent markdown is repository input and must not escalate the
-  // child runtime to bypass/yolo via frontmatter; permission modes are accepted only from
-  // user-level or trusted plugin config.
+  // child runtime to bypass/yolo via frontmatter; project-level declarations are stripped here.
+  // Plugin profiles also parse with source: "user" and are not stripped here; the plugin loader
+  // marks them permissionModeRestrictOnly, and when deriving child sessions core takes only a
+  // mode stricter than the parent's.
   const permissionMode = input.source === "project" ? undefined : parsedPermissionMode;
   const maxTurns = normalizePositiveInteger(frontmatter.maxTurns);
   const memory = parseAgentMemoryScope(frontmatter.memory);

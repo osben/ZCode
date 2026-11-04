@@ -51,7 +51,7 @@ import {
   readApprovedPlanFileReferenceEntry,
   replaceReadFileStateAfterCompact,
   restorePostCompactFiles,
-  buildRuntimeModeReminderBody,
+  buildRuntimeModeReminderBodyForTask,
   hasFullRuntimeModeReminder,
 } from "../helpers/index.js";
 import {
@@ -607,9 +607,15 @@ async function compactActiveConversationImpl(
       // reminder, and resending unconditionally produced two full reminders and double-counted the
       // cycle. When the kept tail has only the short reminder, the full wording was summarized
       // away and must still be resent.
+      // Fix reason: this used to ignore subagents, so a subagent received the main session's five-phase reminder after compaction; it now shares the in-turn selection logic.
       const planModeReminderBody = hasFullRuntimeModeReminder(preservedEntries)
         ? null
-        : buildRuntimeModeReminderBody([], this.getMode(), this.getPlanEnabled());
+        : buildRuntimeModeReminderBodyForTask([], {
+            mode: this.getMode(),
+            planEnabled: this.getPlanEnabled(),
+            taskType: this.config.taskType,
+            tools: compactCandidates,
+          });
       // Compaction attachment order: file restore → plan file → plan reminder → ToolSearch
       // announcement → agent listing → skill list → environment → model → output style.
       // Fix reason: agent listing used to come before file restore — wrong order.

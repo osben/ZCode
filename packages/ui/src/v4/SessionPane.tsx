@@ -1,3 +1,4 @@
+import { V4_PRIMARY_PANE_ID } from "@/v4/paneLayoutStore.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useSessionRuntimeRestart } from "@/app-shell/useWorkspaceSessionReload.js";
 import { isRequestVerificationConfigNetworkError } from "@/request-security-edition/errors.js";
@@ -90,7 +91,11 @@ import type {
   V4ConversationFileChangesResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
-import { PluginUiSessionProvider } from "@/plugin-ui/index.js";
+import {
+  PluginUiSessionProvider,
+  registerPluginUiPaneSession,
+  useOpenPluginUi,
+} from "@/plugin-ui/index.js";
 import {
   getConversationShareErrorDetails,
   resolveConversationShareFallbackIssueCode,
@@ -1860,7 +1865,14 @@ export function SessionPane({
     modelSelectionService,
   });
 
-  const draftAgentStartupAllowed = providerAgentStartupAllowed && remoteAvailable;
+  // 冷恢复可能先连上远端、后恢复项目归属；此时预热会发出缺 projectId 的创建并反复失败。
+  // 直接使用草稿 owner 的归属作为创建前置，选择项目后自然恢复；正式会话和本地未归类不受限。
+  const draftProjectReady =
+    sessionId !== null ||
+    !isRemoteWorkspaceIdentity(workspaceIdentity ?? "") ||
+    Boolean(composerProjectId);
+  const draftAgentStartupAllowed =
+    providerAgentStartupAllowed && remoteAvailable && draftProjectReady;
 
   // Composer 保存下一次 Submission 的 renderer intent；prewarm session 仅承载草稿预热。
   const {
@@ -1873,6 +1885,7 @@ export function SessionPane({
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
+    observeDraftPermissionGrant,
     promoteComposerDraft,
     captureAcceptedModelSelection,
     replaceComposerDraft,
@@ -3725,6 +3738,97 @@ export function SessionPane({
   >(async () => undefined);
 
   const effectiveSessionId = sessionId ?? recoveringDraft?.sessionId ?? prewarmSessionId;
+  const pluginUiRuntimeReady = Boolean(
+    effectiveSessionId &&
+    lease?.sessionId === effectiveSessionId &&
+    snapshot?.sessionId === effectiveSessionId &&
+    (!snapshot.runtimeInitialization || snapshot.runtimeInitialization.status === "ready"),
+  );
+  useEffect(() => {
+    if (sessionId === null && effectiveSessionId && pluginUiRuntimeReady && snapshot) {
+      observeDraftPermissionGrant(effectiveSessionId, snapshot.config);
+    }
+  }, [
+    sessionId,
+    effectiveSessionId,
+    pluginUiRuntimeReady,
+    snapshot?.config,
+    observeDraftPermissionGrant,
+  ]);
+  useLayoutEffect(() => {
+    if (!effectiveSessionId || !pluginUiRuntimeReady || readOnly) return;
+    return registerPluginUiPaneSession(
+      paneId,
+      sessionId,
+      {
+        workspacePath,
+        workspaceIdentity,
+        remoteSessionId: remoteSessionId ?? undefined,
+        sessionId: effectiveSessionId,
+      },
+      sessionId === null ? prewarmBinding?.retain : undefined,
+    );
+  }, [
+    paneId,
+    sessionId,
+    effectiveSessionId,
+    pluginUiRuntimeReady,
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    readOnly,
+    prewarmBinding,
+  ]);
+  const openPluginUi = useOpenPluginUi();
+  const pluginUiOpenRequest = useZCodeSessionStore(
+    (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).pluginUiOpenRequest,
+  );
+  useEffect(() => {
+    if (
+      !pluginUiOpenRequest ||
+      paneId !== V4_PRIMARY_PANE_ID ||
+      !focused ||
+      sessionId !== null ||
+      readOnly
+    )
+      return;
+    const store = useZCodeSessionStore.getState();
+    // 请求归属原草稿代际；StrictMode 重放与配置变化不能让旧请求打开新会话。
+    if (
+      store.getWorkspaceState(workspacePath, workspaceIdentity).pluginUiOpenRequest !==
+      pluginUiOpenRequest
+    )
+      return;
+    if (pluginUiOpenRequest.invalidationVersion !== draftRuntimeInvalidationVersion) {
+      store.clearPluginUiOpenRequest(
+        workspacePath,
+        pluginUiOpenRequest.requestId,
+        workspaceIdentity,
+      );
+      return;
+    }
+    if (!pluginUiRuntimeReady || !effectiveSessionId || !openPluginUi) return;
+    store.clearPluginUiOpenRequest(workspacePath, pluginUiOpenRequest.requestId, workspaceIdentity);
+    const {
+      requestId: _requestId,
+      invalidationVersion: _version,
+      ...request
+    } = pluginUiOpenRequest;
+    openPluginUi({ ...request, parentSessionId: effectiveSessionId });
+  }, [
+    pluginUiOpenRequest,
+    paneId,
+    focused,
+    sessionId,
+    readOnly,
+    workspacePath,
+    workspaceIdentity,
+    draftRuntimeInvalidationVersion,
+    pluginUiRuntimeReady,
+    effectiveSessionId,
+    openPluginUi,
+  ]);
+
   useEffect(() => {
     if (!recoveringDraft?.commandId || !remoteAvailable) return;
     let current = true;
@@ -4198,7 +4302,7 @@ export function SessionPane({
         contextAttachmentCount: contextAttachmentCount + (deferredIncognitoAttachments ? 1 : 0),
       });
 
-      if (!(await ensureDraftModelReadyForSend())) {
+      if (!draftProjectReady || !(await ensureDraftModelReadyForSend())) {
         return "blocked" as const;
       }
 
@@ -4571,6 +4675,7 @@ export function SessionPane({
       baseWorkspaceServices,
       captureAcceptedModelSelection,
       dispatchSlashCommand,
+      draftProjectReady,
       ensureDraftModelReadyForSend,
       availableSelectionSideSlashCommandNames,
       appSlashCommands,
@@ -6621,6 +6726,8 @@ export function SessionPane({
       // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
       // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
       skillCatalogSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
+      // Incognito drafts never bind plugin UI context to a prewarm session, same as the skill catalog.
+      pluginUiSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}
@@ -6630,7 +6737,7 @@ export function SessionPane({
       submissionReady={
         // An active first submission no longer locks the composer (IUX01/IUX03, FSL rule 7):
         // typing is always free and the next Send follows ordinary session readiness only.
-        composerSubmissionReady && runtimeReady && !recoveringDraft
+        draftProjectReady && composerSubmissionReady && runtimeReady && !recoveringDraft
       }
       stageComposerContent={stageComposerContent}
       captureComposerContentLifecycleCommit={captureComposerContentLifecycleCommit}
@@ -6858,10 +6965,10 @@ export function SessionPane({
       ) : null}
       {/* Bugfix: v4 权限/问答等待态只是 runtime 的阻塞交互，必须和 composer
           共享 timeline bottom dock；渲染在 SessionPane 外层会脱离主列宽度并挤占下半屏。 */}
-      {sessionId && snapshot ? (
+      {effectiveSessionId && snapshot?.sessionId === effectiveSessionId ? (
         <V4InteractionDialogs
           key="conversation-interactions"
-          sessionId={sessionId}
+          sessionId={effectiveSessionId}
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           remoteSessionId={remoteSessionId ?? undefined}
@@ -6897,11 +7004,11 @@ export function SessionPane({
       ) : null}
     </>
   );
-  // 插件 ui/message 的图片走与粘贴截图相同的 v4 attachmentPut；草稿（无 sessionId）没有插件 UI。
+  // 插件图片与草稿附件共用有效 session，首发提升不迁移附件。
   const pluginUiUploadAttachment = useCallback(
     async (input: { fileName: string; mime: string; dataBase64: string }) => {
-      if (!sessionId) throw new Error("Plugin UI attachments need an open session");
-      const { ref } = await attachmentPut({ sessionId, ...input });
+      if (!effectiveSessionId) throw new Error("Plugin UI attachments need an open session");
+      const { ref } = await attachmentPut({ sessionId: effectiveSessionId, ...input });
       const padding = input.dataBase64.endsWith("==") ? 2 : input.dataBase64.endsWith("=") ? 1 : 0;
       return {
         ref,
@@ -6910,7 +7017,7 @@ export function SessionPane({
         bytes: Math.floor((input.dataBase64.length * 3) / 4) - padding,
       };
     },
-    [attachmentPut, sessionId],
+    [attachmentPut, effectiveSessionId],
   );
   // 分享浮窗不再替换输入区，保持 Composer 与对话滚动位置稳定。
   const conversationBottomDock = conversationBottomDockContent ? (
@@ -6924,11 +7031,11 @@ export function SessionPane({
       workspacePath={workspacePath}
       workspaceIdentity={workspaceIdentity}
       remoteSessionId={remoteSessionId}
-      sessionId={runtimeReady ? sessionId : null}
-      readOnly={readOnly || !runtimeReady}
+      sessionId={pluginUiRuntimeReady ? effectiveSessionId : null}
+      readOnly={readOnly || !pluginUiRuntimeReady || (sessionId === null && !focused)}
       sendText={dispatchSendText}
       uploadAttachment={pluginUiUploadAttachment}
-      projectionStore={sessionLeaseReady ? lease?.store : null}
+      projectionStore={pluginUiRuntimeReady ? lease?.store : null}
     >
       {sessionExecutionWorktree ? (
         <ExecutionWorktreeGitAutoRefresh

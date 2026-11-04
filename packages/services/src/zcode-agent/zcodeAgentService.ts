@@ -1182,6 +1182,10 @@ interface CreateZCodeAgentServiceBaseOptions extends Omit<
     parentSessionId: string;
     sessionId: string;
   }) => Promise<unknown>;
+  /** Upstream 3.17.2 hook for the fork ownership handoff. This service does not invoke it; the fork ACK path claims ownership through prepareForkedSession. */
+  prepareForkCreation?: (
+    target: ZCodeAgentSessionTarget & { parentSessionId: string },
+  ) => Promise<void>;
   resolveSessionDirectories?: (target: ZCodeAgentSessionTarget) => Promise<string[]>;
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
@@ -2822,7 +2826,18 @@ export function createZCodeAgentService(
         }
       }),
       client.onRequest((request) => {
-        const routed = routeClientMessage(client, request.params);
+        const mcpStatusAuth =
+          lane === "mcp-status" &&
+          request.method === zcodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders
+            ? zcodeOfficialMcpAuthHeadersRequestParamsSchema.safeParse(request.params)
+            : undefined;
+        // Settings probes run on their own CLI and are not the project's chat owner; only a valid MCP authorization callback may use this path.
+        // Host-registered targets recorded before outbound: do not reject just because a chat runtime exists, and never let the callback create ownership itself.
+        const routed = mcpStatusAuth
+          ? mcpStatusAuth.success && (mcpStatusAuth.data.consumer ?? "mcp-server") === "mcp-server"
+            ? clientWorkspaces.get(client)?.get(resolveWorkspaceKey(mcpStatusAuth.data.workspace))
+            : undefined
+          : routeClientMessage(client, request.params);
         const data = request.params as {
           sessionId?: unknown;
           taskId?: unknown;
@@ -2830,11 +2845,21 @@ export function createZCodeAgentService(
         } | null;
         if (
           !routed &&
-          ((clientWorkspaces.get(client)?.size ?? 0) > 1 ||
+          (mcpStatusAuth ||
+            (clientWorkspaces.get(client)?.size ?? 0) > 1 ||
             data?.sessionId ||
             data?.taskId ||
             data?.workspace)
         ) {
+          if (request.method === zcodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders) {
+            logger.warn(request.trace?.traceId, "官方 MCP 身份头请求未通过工作区路由", {
+              lane,
+              stage: "workspace-routing",
+              code: -32602,
+              protocolRequestId: request.id,
+              registeredWorkspaceCount: clientWorkspaces.get(client)?.size ?? 0,
+            });
+          }
           void client.respondError(request.id, {
             code: -32602,
             message: "Request workspace is not owned by this CLI",
@@ -3117,7 +3142,9 @@ export function createZCodeAgentService(
         // Official Server MCP identity headers: pure RPC relay; the host resolves and responds automatically.
         // Do not emitSessionEvent or add to the pending map—this request has no UI semantics and the renderer is not involved.
         if (request.method === zcodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders) {
-          const parsed = zcodeOfficialMcpAuthHeadersRequestParamsSchema.safeParse(request.params);
+          const parsed =
+            mcpStatusAuth ??
+            zcodeOfficialMcpAuthHeadersRequestParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3126,6 +3153,9 @@ export function createZCodeAgentService(
             });
             return;
           }
+          const authWorkspace = mcpStatusAuth
+            ? buildWorkspaceRef(workspace)
+            : parsed.data.workspace;
           // Command processes (plugin-command) have no MCP: mcpKey stays empty and only pluginId identifies ownership;
           // trust checks do not look at these two fields, only at targetOrigin.
           const consumer = parsed.data.consumer ?? "mcp-server";
@@ -3153,7 +3183,7 @@ export function createZCodeAgentService(
                 pluginId: parsed.data.pluginId,
                 requestId: parsed.data.requestId,
                 targetOrigin: parsed.data.targetOrigin,
-                workspaceKey: parsed.data.workspace.workspaceKey,
+                workspaceKey: authWorkspace.workspaceKey,
               });
               void client.respond(request.id, {
                 ok: false,
@@ -3176,7 +3206,7 @@ export function createZCodeAgentService(
                 consumer,
                 pluginId: parsed.data.pluginId,
                 targetOrigin: parsed.data.targetOrigin,
-                workspace: parsed.data.workspace,
+                workspace: authWorkspace,
               });
               // The host cannot log only failures; a silent success path would make it impossible to answer "which headers were sent?"
               // Log only header names and plan tier; never log credential values because log retention is not controlled here.
@@ -3184,10 +3214,11 @@ export function createZCodeAgentService(
                 const firstIssuance = officialMcpIssuanceAudit.markFirst(
                   parsed.data.pluginId,
                   mcpKey,
-                  parsed.data.workspace.workspaceKey,
+                  authWorkspace.workspaceKey,
                 );
                 const logIssuance = firstIssuance ? logger.info : logger.debug;
                 logIssuance(request.trace?.traceId, "官方 MCP 身份头已解析", {
+                  lane,
                   firstIssuance,
                   ...summarizeOfficialMcpIdentityHeaders(result.headers),
                   mcpKey,
@@ -5035,6 +5066,9 @@ export function createZCodeAgentService(
     async listMcpServerStatuses(params: ZCodeAgentListMcpServerStatusesParams) {
       const requestMcpList = async (options?: { omitMcpServers?: boolean; omitMode?: boolean }) => {
         const client = await getMcpStatusClient();
+        // The management directory is only the process carrier; register the actual probe target first so reverse authorization can verify ownership precisely.
+        // Keep this inside the retry closure so registration is not missed on retries or process rebuilds.
+        rememberClientTarget(client, params);
         return client.request(
           zcodeProtocolMethods.mcpList,
           {
@@ -7422,7 +7456,7 @@ export function createZCodeAgentService(
     },
     async ensureSessionReady(params) {
       const client = await getClient(params);
-      await client.sessionLifecycle.ensureReady(params.sessionId);
+      await client.sessionLifecycle.ensureReady(params.sessionId, buildWorkspaceRef(params));
     },
     async stopSessionRuntime(params) {
       const client = await getClient(params);
@@ -7431,7 +7465,7 @@ export function createZCodeAgentService(
     async restartSessionRuntime(params) {
       const client = await getClient(params);
       try {
-        await client.sessionLifecycle.restart(params.sessionId);
+        await client.sessionLifecycle.restart(params.sessionId, buildWorkspaceRef(params));
       } catch (error) {
         if (error instanceof Error && "code" in error && error.code === -32601)
           throw new Error("fault.sessionLifecycle.unsupported", { cause: error });

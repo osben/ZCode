@@ -1,4 +1,5 @@
 import type {
+  ExecutionState,
   IncognitoProfile,
   RequestVerificationReason,
   SystemPromptOverrides,
@@ -311,6 +312,11 @@ export interface ResumeSessionOptions {
    * no explicit mode, leave undefined so the historical mode applies.
    */
   modeOverride?: CollaborationMode;
+  /**
+   * Full execution state (mode and Plan) computed by the caller; overrides the historical mode and the persisted execution state.
+   * Subagent resume passes this: the child mode must be recomputed from the parent session's current state, not reused from when the child was persisted.
+   */
+  executionStateOverride?: ExecutionState;
 }
 
 export interface MainTurnCacheHitAggregate {

@@ -2,7 +2,6 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ExecutionPort, ExecutionResult } from "@zcode/contracts";
 import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "../src/app/official-plugin-definitions.js";
 import { resolveZCodeBuiltinPromptCommand } from "../src/builtin-prompt-command.js";
 import { resolveZCodeCustomCommandPrompt } from "../src/custom-command-prompt.js";
@@ -193,49 +192,62 @@ describe("protocol slash command surface", () => {
     }
   });
 
-  it("fails shell-expanded custom commands that request unavailable contexts", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-command-shell-missing-context-"));
+  it("hands plugin shell blocks to the model with the plugin root resolved", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-plugin-command-shell-"));
     const workspace = join(tempRoot, "workspace");
-    const home = join(tempRoot, "home");
-    const userCommands = join(home, ".zcode", "commands");
-    let executionCalled = false;
-    const executionPort: ExecutionPort = {
-      async run() {
-        executionCalled = true;
-        return createExecutionResult("should not run");
-      },
-    };
+    const pluginRoot = join(tempRoot, "ralph-loop");
+    const commandsRoot = join(pluginRoot, "commands");
+    const pluginDataRoot = join(tempRoot, "plugins");
+    const configPath = join(tempRoot, "config.json");
 
     try {
-      await mkdir(userCommands, { recursive: true });
-      await writeCommand(
-        userCommands,
-        "skill-context",
-        "Needs skill context",
-        ["```!", 'echo "${CLAUDE_SKILL_DIR}"', "```"].join("\n"),
+      await mkdir(commandsRoot, { recursive: true });
+      await mkdir(join(pluginRoot, ".claude-plugin"), { recursive: true });
+      await writeFile(
+        join(pluginRoot, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "ralph-loop", version: "1.0.0" }),
       );
       await writeCommand(
-        userCommands,
-        "session-context",
-        "Needs session context",
-        ["```!", 'echo "${CLAUDE_SESSION_ID}"', "```"].join("\n"),
+        commandsRoot,
+        "ralph-loop",
+        "Start Ralph",
+        [
+          "Before",
+          "```!",
+          'echo "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ralph-loop.sh" "$ARGUMENTS" "$CLAUDE_PROJECT_DIR"',
+          "```",
+          "After",
+        ].join("\n"),
+      );
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          plugins: {
+            dirs: [pluginRoot],
+            enabled: true,
+          },
+          storage: {
+            dir: pluginDataRoot,
+          },
+        }),
       );
 
-      const options = {
+      // Project config strips plugins.dirs (a workspace cannot introduce plugin roots), so the test plugin
+      // loads only through user config; homeDirectory points at the temp dir and does not read local user commands.
+      const prompt = await resolveZCodeCustomCommandPrompt("/ralph-loop build demo", {
         env: { ZCODE_ENV: "test" },
-        executionPort,
-        homeDirectory: home,
-        skipUserConfig: true,
+        homeDirectory: join(tempRoot, "home"),
+        userConfigPath: configPath,
         workingDirectory: workspace,
-      };
+      });
 
-      await expect(resolveZCodeCustomCommandPrompt("/skill-context", options)).rejects.toThrow(
-        "Custom command /skill-context variable requires a skill context: CLAUDE_SKILL_DIR",
+      expect(prompt).not.toContain("```!");
+      expect(prompt).toContain(`the /ralph-loop command file (user/plugin), not from ZCode.`);
+      // The command text already contains "/scripts/...", so the expected value must not use join() to add a platform separator; workspace variables come from the Bash environment and stay as written.
+      // On Windows the plugin path is rewritten with forward slashes, and the expected value follows the same rule; POSIX paths are unaffected.
+      expect(prompt).toContain(
+        `\`\`\`bash\necho "${pluginRoot.replaceAll("\\", "/")}/scripts/setup-ralph-loop.sh" "build demo" "$CLAUDE_PROJECT_DIR"\n\`\`\`\n`,
       );
-      await expect(resolveZCodeCustomCommandPrompt("/session-context", options)).rejects.toThrow(
-        "Custom command /session-context variable requires a runtime session context: CLAUDE_SESSION_ID",
-      );
-      expect(executionCalled).toBe(false);
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
     }
@@ -253,19 +265,4 @@ async function writeCommand(
     join(directory, `${name}.md`),
     ["---", `description: ${description}`, ...extraFrontmatter, "---", "", body].join("\n"),
   );
-}
-
-function createExecutionResult(stdout: string): ExecutionResult {
-  const now = new Date();
-  return {
-    status: "completed",
-    exitCode: 0,
-    stdout: { text: stdout, bytes: stdout.length, truncated: false },
-    stderr: { text: "", bytes: 0, truncated: false },
-    durationMs: 1,
-    timedOut: false,
-    cancelled: false,
-    startedAt: now,
-    completedAt: now,
-  };
 }

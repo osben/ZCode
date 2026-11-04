@@ -2281,24 +2281,28 @@ export function createConversationV4Gateway(
       try {
         // Register the lifecycle before reading startup info. Otherwise a restart waits for the old
         // opening while the late old read joins the restart, and both wait forever.
-        await getSessionLifecycle(context).initialize(sessionId, async () => {
-          const persisted = await context.deps.sessionStore?.getSession(sessionId as SessionId);
-          if (!persisted || persisted.time.deleted !== undefined) {
-            throw new SessionLifecycleError("sessionNotFound", `Session not found: ${sessionId}`);
-          }
-          activated = await activateSessionRuntime(
-            context,
-            {
-              sessionId,
-              // The attachment's workspace identity and additional directories still come from the
-              // original resume entry point.
-              ...(workspace ? { workspace } : {}),
-              ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
-              ...(resumeThoughtLevel ? { thoughtLevel: resumeThoughtLevel } : {}),
-            },
-            { reusePersistedMessages: true, persistedMessages },
-          );
-        });
+        await getSessionLifecycle(context).initialize(
+          sessionId,
+          async () => {
+            const persisted = await context.deps.sessionStore?.getSession(sessionId as SessionId);
+            if (!persisted || persisted.time.deleted !== undefined) {
+              throw new SessionLifecycleError("sessionNotFound", `Session not found: ${sessionId}`);
+            }
+            activated = await activateSessionRuntime(
+              context,
+              {
+                sessionId,
+                // The attachment's workspace identity and additional directories still come from the
+                // original resume entry point.
+                ...(workspace ? { workspace } : {}),
+                ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
+                ...(resumeThoughtLevel ? { thoughtLevel: resumeThoughtLevel } : {}),
+              },
+              { reusePersistedMessages: true, persistedMessages },
+            );
+          },
+          workspace,
+        );
       } catch (error) {
         if (!(error instanceof SessionLifecycleError) || error.code !== "sessionNotFound")
           throw error;

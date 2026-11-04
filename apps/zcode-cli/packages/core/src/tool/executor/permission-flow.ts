@@ -245,10 +245,15 @@ export async function resolveToolPermission(
     }
 
     // Tool previews can control ordinary approval only; they cannot override Guarded's one-time confirmation.
-    const approval =
+    const toolApproval =
       decision.approvalMode === "user-once"
         ? { gate: "ask" as const }
         : resolveToolApproval(deps, toolCall, entry, executionInput, traceContext);
+    // The decision's own option policy (Plan-mode MCP ask) overrides the tool's declared policy.
+    const approval =
+      decision.optionsPolicy && toolApproval.gate === "ask"
+        ? { ...toolApproval, optionsPolicy: decision.optionsPolicy }
+        : toolApproval;
     if (approval.gate === "proceed") {
       telemetry?.setPermissionDecision("not_required");
       return { allowed: true, executionInput, permissionWaitMs };

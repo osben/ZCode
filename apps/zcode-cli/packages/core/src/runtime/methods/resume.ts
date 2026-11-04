@@ -258,6 +258,9 @@ export async function resumeFromStore(
   if (savedExecution.success && options?.modeOverride === undefined) {
     Object.assign(this.config, savedExecution.data);
   }
+  // Fix reason: subagent resume used to reuse the persisted execution state, so after the parent changed from yolo to build, a resumed child still ran commands without approval.
+  // The full execution state supplied by the caller applies last, overriding the historical mode and persisted state above.
+  if (options?.executionStateOverride) Object.assign(this.config, options.executionStateOverride);
   // Restore the tool surface for onDemand sessions from persisted state (launch.md, “On demand: activation”): activate if an entry exists or history
   // contains `/workflow` / one of the ten tool calls. This must finish before the first turn, so do it during resume rather than waiting for the next turn.
   await restoreDynamicWorkflowActivationOnResume.call(this, messages);
