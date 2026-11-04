@@ -435,7 +435,73 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
     return transaction(this.db, () => resolveDirectories(this.db, task, this.ownerHostId), false);
   }
 
-  reserveCreatedTask<T extends ReserveCreatedTaskInput>(input: T): ReserveCreatedTaskResult<T> {
+  private reserveForkedTask(input: {
+    task: ProjectTaskRef;
+    parentTaskId: string;
+  }): ProjectDirectories {
+    return transaction(this.db, () => {
+      const parentRef = { ...input.task, taskId: input.parentTaskId };
+      const parent = readTask(this.db, parentRef);
+      if (
+        !parent ||
+        parent.deleted === 1 ||
+        parent.cli_deleted === 1 ||
+        input.task.taskId === input.parentTaskId
+      )
+        throw new Error("project.task-not-found");
+      const directories = resolveDirectories(this.db, parentRef, this.ownerHostId);
+      if (directories.workspacePath !== input.task.workspacePath)
+        throw new Error("project.cwd-not-in-roots");
+      const existing = readTask(this.db, input.task);
+      if (
+        existing &&
+        (existing.host_id !== parent.host_id ||
+          existing.root_path !== parent.root_path ||
+          (existing.forked_from_task_id && existing.forked_from_task_id !== input.parentTaskId))
+      )
+        throw new Error("project.host-mismatch");
+      if (!existing) {
+        // The CLI commits the fork body first; the Host persists the parent's ownership before the ACK is visible to the UI, so an immediate open never sees empty ownership.
+        this.db
+          .prepare(`INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,created_at,updated_at,
+          host_id,root_path,project_id,handoff_pending,execution_directories,forked_from_task_id)
+          VALUES(?,?,?,?,0,0,?,?,?,?,?,?)`)
+          .run(
+            resolveWorkspaceKey(input.task),
+            input.task.workspacePath,
+            input.task.workspaceIdentity ?? null,
+            input.task.taskId,
+            String(parent.host_id),
+            String(parent.root_path),
+            directories.projectId,
+            OWNERSHIP_DECIDED,
+            parent.execution_directories ?? null,
+            input.parentTaskId,
+          );
+      } else if (parent.host_id !== "local" && existing.project_id == null) {
+        // The sessions-index row may arrive before the ACK; only fill a missing remote owner on the same parent chain, and replays must not overwrite a user move.
+        this.db
+          .prepare(`UPDATE tasks SET project_id=?,handoff_pending=handoff_pending | ?
+          WHERE workspace_key=? AND task_id=? AND project_id IS NULL`)
+          .run(
+            directories.projectId,
+            OWNERSHIP_DECIDED,
+            resolveWorkspaceKey(input.task),
+            input.task.taskId,
+          );
+      }
+      return resolveDirectories(this.db, input.task, this.ownerHostId);
+    });
+  }
+
+  reserveCreatedTask<T extends ReserveCreatedTaskInput>(rawInput: T): ReserveCreatedTaskResult<T> {
+    // A const copy keeps the parentTaskId narrowing visible inside the transaction closure below.
+    const input: ReserveCreatedTaskInput = rawInput;
+    if ("parentTaskId" in input)
+      return {
+        ...this.reserveForkedTask(input),
+        taskId: input.task.taskId,
+      } as ReserveCreatedTaskResult<T>;
     return transaction(this.db, () => {
       const key = resolveWorkspaceKey(input.task);
       const host = ensureHost(this.db, key, this.ownerHostId);

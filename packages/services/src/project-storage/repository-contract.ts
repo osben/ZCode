@@ -97,10 +97,14 @@ export interface ProjectRepositoryContract extends ProjectReservationCleanupCont
 
 /** A plain create always resolves its directories; a fork resolves null while its parent has no owner yet. */
 export type ReserveCreatedTaskResult<T extends ReserveCreatedTaskInput> = T extends {
-  forkOf: ProjectTaskRef;
+  parentTaskId: string;
 }
-  ? ProjectDirectories | null
-  : ProjectDirectories & { taskId: string };
+  ? ProjectDirectories & { taskId: string }
+  : T extends {
+        forkOf: ProjectTaskRef;
+      }
+    ? ProjectDirectories | null
+    : ProjectDirectories & { taskId: string };
 
 /**
  * A plain create names its project and directories. A fork names only its parent: the child takes over the parent's
@@ -120,6 +124,15 @@ export type ReserveCreatedTaskInput =
   | {
       task: ProjectTaskRef;
       forkOf: ProjectTaskRef;
+      projectId?: undefined;
+      creationCommand?: undefined;
+      additionalDirectories?: undefined;
+    }
+  | {
+      /** Upstream 3.17.2 fork path: the child inherits the parent's project and directories when the ACK is handed over. */
+      task: ProjectTaskRef;
+      parentTaskId: string;
+      forkOf?: undefined;
       projectId?: undefined;
       creationCommand?: undefined;
       additionalDirectories?: undefined;

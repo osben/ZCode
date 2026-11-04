@@ -9,33 +9,50 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import process from "node:process";
 import { runCommand } from "./spawn-command.mjs";
 
-// Bug fix: Windows GNU tar (Git Bash) treats the drive-letter colon (C:) in absolute paths as a remote host,
-// and MSYS argument conversion can corrupt backslash paths. Convert tar arguments to forward slashes and prefer
-// archive paths relative to cwd to avoid the drive-letter colon; this does not affect bsdtar or Linux/macOS CI.
+// Bug fix: Windows GNU tar (Git Bash) treats the drive-letter colon (C:) in the -f archive path as a remote host,
+// and MSYS argument conversion can corrupt backslash paths. A cwd-relative archive path is not enough: across
+// drives path.win32.relative() returns the absolute target, colon included (fork release run 41171314864).
+// Run tar from the archive's directory and pass only its file name; -C is never parsed as a remote spec.
 function toTarPosixPath(pathValue) {
   return pathValue.replaceAll("\\", "/");
 }
 
-function resolveTarArchiveArg(archivePath, cwd) {
-  if (process.platform === "win32") {
-    try {
-      const relativeArchivePath = relative(cwd, archivePath);
-      if (relativeArchivePath && !relativeArchivePath.startsWith("..")) {
-        return toTarPosixPath(relativeArchivePath);
-      }
-    } catch {
-      // relative() throws across drives; fall back to a forward-slash absolute path (supported by bsdtar).
-    }
+export function resolveTarExtractInvocation({
+  archivePath,
+  extractDir,
+  cwd,
+  platform = process.platform,
+}) {
+  if (platform === "win32") {
+    const absoluteArchivePath = win32.resolve(cwd, archivePath);
+    return {
+      args: [
+        "-xzf",
+        win32.basename(absoluteArchivePath),
+        "-C",
+        toTarPosixPath(win32.resolve(cwd, extractDir)),
+      ],
+      cwd: win32.dirname(absoluteArchivePath),
+    };
   }
 
-  return toTarPosixPath(archivePath);
+  return { args: ["-xzf", archivePath, "-C", extractDir], cwd };
 }
 
-export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cwd }) {
+export function extractPrebuiltArchive({
+  archivePath: requestedArchivePath,
+  archiveExt,
+  extractDir: requestedExtractDir,
+  cwd = process.cwd(),
+}) {
+  // Resolve once against the caller's cwd: mkdirSync, PowerShell and tar must target the same directory,
+  // otherwise a relative extractDir is created under process.cwd() while tar -C looks under cwd.
+  const archivePath = resolve(cwd, requestedArchivePath);
+  const extractDir = resolve(cwd, requestedExtractDir);
   mkdirSync(extractDir, { recursive: true });
   if (archiveExt === "zip") {
     if (process.platform === "win32") {
@@ -54,12 +71,8 @@ export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cw
     return;
   }
 
-  const tarCwd = cwd ?? process.cwd();
-  runCommand(
-    "tar",
-    ["-xzf", resolveTarArchiveArg(archivePath, tarCwd), "-C", toTarPosixPath(extractDir)],
-    { cwd: tarCwd },
-  );
+  const tarInvocation = resolveTarExtractInvocation({ archivePath, extractDir, cwd });
+  runCommand("tar", tarInvocation.args, { cwd: tarInvocation.cwd });
 }
 
 export function findPrebuiltBinary(rootDir, binaryName) {

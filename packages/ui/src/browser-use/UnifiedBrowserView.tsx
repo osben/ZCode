@@ -4,6 +4,7 @@ import type {
   BrowserViewScreenshotSurfacePreparePayload,
   EmbeddedBrowserViewportPreference,
 } from "@zcode/shared";
+import { browserPreviewSourceUrl } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWebElementPicker } from "@/hooks/useWebElementPicker.js";
@@ -37,7 +38,20 @@ type PendingGuestNavigationCompletion = {
   url: string;
 };
 
-/** UnifiedBrowserView — unified browser view (`<webview>` + CDP-on-guest architecture). The renderer’s `<webview>` guest renders page pixels directly (composited in the DOM, so DOM overlays can cover it and menus are no longer hidden behind a native WebContentsView layer). Human navigation/back/forward/refresh/element-picking calls webview methods directly (low latency, no handshake required); webview events drive chrome state. On did-attach, also report the guest webContentsId to main via browserViewAttachGuest, allowing main to attach CDP (webContents.debugger) for the Agent to control the tab over the protocol. Chrome reuses EmbeddedBrowserPaneParts BrowserToolbar; URL normalization and the not-mounted fallback reuse embeddedBrowserHelpers. */
+/**
+ * UnifiedBrowserView — unified browser view (`<webview>` + CDP-on-guest architecture).
+ *
+ * The renderer's `<webview>` guest renders page pixels directly (composited in the DOM, so DOM
+ * overlays can cover it and menus are not hidden behind a native WebContentsView layer). Human
+ * navigation goes through main's local-file admission; back/forward/refresh/element-picking call
+ * webview methods directly, and chrome state is driven by webview events.
+ *
+ * On did-attach, the guest's webContentsId is reported to main (browserViewAttachGuest) so main can
+ * attach CDP (webContents.debugger) and let the Agent control the tab over the protocol.
+ *
+ * Chrome reuses EmbeddedBrowserPaneParts' BrowserToolbar; URL normalization and the not-mounted
+ * fallback reuse embeddedBrowserHelpers.
+ */
 export function UnifiedBrowserView({
   browserKey,
   onOpenPermissionSettings,
@@ -459,6 +473,16 @@ export function UnifiedBrowserView({
     return downloadNavigationRef.current.urls.has(url);
   }, []);
 
+  const loadBrowserUrl = useCallback(
+    async (target: ElectronWebviewTag, url: string) => {
+      // Extra read permission for file URLs must be enforced at the main/session boundary,
+      // not checked only against the first attach src.
+      if (!platform.browserViewLoadUrl) throw new Error("Browser navigation is unavailable");
+      await platform.browserViewLoadUrl({ webContentsId: target.getWebContentsId(), url });
+    },
+    [platform],
+  );
+
   // ---- Wire webview events + report guestId on did-attach ----
   useEffect(() => {
     if (!webview) return;
@@ -505,7 +529,7 @@ export function UnifiedBrowserView({
         setBrowserState((prev) => ({ ...prev, isReady: true }));
         void (async () => {
           try {
-            await webview.loadURL(pending);
+            await loadBrowserUrl(webview, pending);
           } catch (loadError: unknown) {
             const message = loadError instanceof Error ? loadError.message : String(loadError);
             if (
@@ -708,6 +732,7 @@ export function UnifiedBrowserView({
     setGuestZoomFactor,
     settleRestorableUrl,
     syncBrowserState,
+    loadBrowserUrl,
     webview,
   ]);
 
@@ -817,7 +842,7 @@ export function UnifiedBrowserView({
     [browserKey, cancelWebElementPicking, detachBrowserGuestBeforeReplacement],
   );
 
-  // ---- Navigation (human directly calls webview.loadURL; if not ready, queue until dom-ready) ----
+  // ---- Navigation (human goes through main admission; if not ready, queue until dom-ready) ----
   const openUrl = useCallback(
     async (input: string, source: "toolbar" | "restore" | "request" = "toolbar") => {
       const nextUrl = normalizeBrowserUrl(input);
@@ -873,7 +898,7 @@ export function UnifiedBrowserView({
       }
 
       try {
-        await webview.loadURL(nextUrl);
+        await loadBrowserUrl(webview, nextUrl);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("ERR_ABORTED") || isDownloadNavigationFailure(nextUrl, message))
@@ -898,6 +923,7 @@ export function UnifiedBrowserView({
       intl,
       isDownloadNavigationFailure,
       rebuildBrowserGuest,
+      loadBrowserUrl,
       settleRestorableUrl,
       waitForGuestNavigationTakeover,
       webview,
@@ -975,7 +1001,7 @@ export function UnifiedBrowserView({
   const handleOpenExternal = useCallback(() => {
     if (!webview || !browserState.isReady) return;
     runWebviewAction(() => {
-      const currentUrl = webview.getURL();
+      const currentUrl = browserPreviewSourceUrl(webview.getURL());
       // Security boundary: the system-default browser entry allows only Web URLs and file URLs; inline protocols such as about/data remain blocked.
       if (!isDefaultBrowserOpenableUrl(currentUrl)) return;
       platform.openExternal(currentUrl);

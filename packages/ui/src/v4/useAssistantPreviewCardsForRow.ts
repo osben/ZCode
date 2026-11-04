@@ -10,6 +10,7 @@ import {
   type AssistantPreviewCard,
 } from "@/lib/assistantPreviewCards.js";
 import { logger } from "@/logger.js";
+import { shouldResyncForStaleAuthority } from "@/v4/staleAuthorityRecovery.js";
 import type {
   ConversationFileChangesRequestOptions,
   ConversationFileChangesState,
@@ -35,7 +36,14 @@ interface LoadedChangedPaths {
   paths: readonly string[];
 }
 
+interface StaleRetryState {
+  key: string;
+  attempt: number;
+}
+
 const EMPTY_CHANGED_FILE_PATHS: readonly string[] = [];
+const STALE_FILE_CHANGES_MAX_RETRIES = 3;
+const STALE_FILE_CHANGES_RETRY_BASE_DELAY_MS = 150;
 
 function joinAssistantTurnText(rows: readonly AssistantTextRow[]): string {
   return rows
@@ -88,6 +96,8 @@ export function useAssistantPreviewCardsForAssistantTextRow({
     ? `${target.rowId}:${target.entityId}:${fileChangesState ?? "unknown"}`
     : "";
   const [loadedChangedPaths, setLoadedChangedPaths] = useState<LoadedChangedPaths | null>(null);
+  const [staleRetry, setStaleRetry] = useState<StaleRetryState | null>(null);
+  const staleRetryAttempt = staleRetry?.key === requestKey ? staleRetry.attempt : 0;
 
   useEffect(() => {
     if (!needsFileChanges || !fetchFileChanges || !target) return;
@@ -95,6 +105,7 @@ export function useAssistantPreviewCardsForAssistantTextRow({
     if (fileChangesState === "reverted") return;
 
     let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     // V4 fileChanges accepts only turnHeader; assistantText is used only for the body and card anchors.
     // Project Office/PDF synchronously with an empty gate first; read turn details only if md/html actually appears.
     void fetchFileChanges(target, {
@@ -110,6 +121,23 @@ export function useAssistantPreviewCardsForAssistantTextRow({
       },
       (error: unknown) => {
         if (disposed) return;
+        // Root cause: right after a turn completes, later events can still advance the projection
+        // revision, so the query's baseRevision is rejected by the Agent as proto.staleRevision.
+        // requestKey does not include the revision, so recording an empty list here would suppress
+        // this turn's md/html cards indefinitely. SessionPane drops the failed cache and triggers
+        // stale recovery; re-querying shortly after with the latest revision is enough.
+        if (
+          shouldResyncForStaleAuthority(error) &&
+          staleRetryAttempt < STALE_FILE_CHANGES_MAX_RETRIES
+        ) {
+          retryTimer = setTimeout(
+            () => {
+              setStaleRetry({ key: requestKey, attempt: staleRetryAttempt + 1 });
+            },
+            STALE_FILE_CHANGES_RETRY_BASE_DELAY_MS * (staleRetryAttempt + 1),
+          );
+          return;
+        }
         logger.warn("[AssistantPreviewCards] 读取本轮文件变更失败，已抑制 Markdown/HTML 卡片", {
           error: error instanceof Error ? error.message : String(error),
           rowId: target.rowId,
@@ -120,8 +148,9 @@ export function useAssistantPreviewCardsForAssistantTextRow({
 
     return () => {
       disposed = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
     };
-  }, [fetchFileChanges, fileChangesState, needsFileChanges, requestKey, target]);
+  }, [fetchFileChanges, fileChangesState, needsFileChanges, requestKey, staleRetryAttempt, target]);
 
   const changedFilePaths =
     needsFileChanges && loadedChangedPaths?.key === requestKey

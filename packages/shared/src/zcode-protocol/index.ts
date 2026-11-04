@@ -144,6 +144,7 @@ export const ZCODE_PROTOCOL_VERSION = 1 as const;
 export const ZCODE_PROTOCOL_V4_WIRE_VERSION = 3 as const;
 export const zcodeRuntimeCapabilitiesSchema = z.object({
   durableFirstSubmission: z.boolean().optional(),
+  sessionLifecycleWorkspace: z.boolean().optional(),
   sessionDirectorySource: z.boolean().optional(),
   sessionWorkspaceRouting: z.boolean().optional(),
   genUiContext: z.boolean().optional(),
@@ -4402,6 +4403,9 @@ export type ZCodeOffPeakListProtocolResult = z.infer<typeof zcodeOffPeakListResu
 
 // Session running-instance lifecycle; unlike session/stop (which stops generation).
 export const sessionLifecycleParamsSchema = z.object({ sessionId: z.string().min(1) }).strict();
+export const sessionLifecycleActivationParamsSchema = sessionLifecycleParamsSchema.extend({
+  workspace: zcodeWorkspaceRefSchema.optional(),
+});
 export const sessionLifecycleStateSchema = z.enum([
   "unloaded",
   "starting",

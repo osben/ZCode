@@ -17,7 +17,7 @@ import {
   TurnMachineImpl,
 } from "../deps.js";
 import {
-  buildRuntimeModeReminderBody,
+  buildRuntimeModeReminderBodyForTask,
   buildPlanModeExitReminderBody,
   buildRuntimeOutputStyleReminderBody,
   buildTodoReminderBody,
@@ -306,10 +306,14 @@ async function collectInputAttachments(
     );
     runtime.needsPlanModeExitReminder = false;
   }
-  const runtimeModeReminderBody = buildRuntimeModeReminderBody(
+  const runtimeModeReminderBody = buildRuntimeModeReminderBodyForTask(
     state.turnRequestState.entries,
-    runtime.getMode(),
-    runtime.getPlanEnabled(),
+    {
+      mode: runtime.getMode(),
+      planEnabled: runtime.getPlanEnabled(),
+      taskType: runtime.config.taskType,
+      tools,
+    },
   );
   if (runtimeModeReminderBody) {
     // Writing only to memory loses the reminder and its counting boundary on cold resume; reuse the persistence and

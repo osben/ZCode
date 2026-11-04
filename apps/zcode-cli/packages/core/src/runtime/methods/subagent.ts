@@ -5,12 +5,10 @@ import {
   SESSION_ENTRY_MODEL_SELECTION,
   parseModelSelectionValue,
 } from "@zcode/contracts";
-import type { SubagentRunOptions } from "@zcode/contracts";
-import { inheritPermissionMode } from "@zcode/contracts";
+import type { CollaborationMode, SubagentRunOptions, WorkspaceId } from "@zcode/contracts";
+import { inheritPermissionMode, restrictPermissionMode } from "@zcode/contracts";
 import {
   defaultScheduler,
-  PermissionService,
-  defaultPermissionConfig,
   buildExploreAllowedTools,
   buildExploreAgentPrompt,
   createExploreSubagentPort,
@@ -29,6 +27,7 @@ import type {
   SkillPort,
   SubagentPort,
 } from "../deps.js";
+import { resolveExecutionState } from "@zcode/shared";
 import { AgentRuntime } from "../agent-runtime.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { cloneModelSelection } from "../model-selection.js";
@@ -233,8 +232,13 @@ export function createDefaultSubagentPort(
         const childMode = resolveSubagentPermissionMode(
           this.getPlanEnabled() ? "plan" : this.config.mode,
           request.permissionMode,
-          builtInExplore,
+          request.profile.permissionModeRestrictOnly === true,
         );
+        // The old plan enum lacks base permissions; after the split, inherit the parent session's base mode. Creating and resuming the child share this one state.
+        const childExecutionState = resolveExecutionState({
+          mode: childMode === "plan" ? this.config.mode : childMode,
+          planEnabled: childMode === "plan",
+        });
         const childCuaPolicy = createOfficialCuaPolicy(
           officialCuaServerNames,
           childMcpAccess.parentSnapshot?.tools ?? childMcpAccess.snapshot?.tools ?? [],
@@ -332,9 +336,7 @@ export function createDefaultSubagentPort(
         const childRuntime = new AgentRuntime(
           request.sessionId,
           {
-            // The old plan enum lacks base permissions; after the split, inherit the full state so the constructor does not fall back to build.
-            mode: childMode === "plan" ? this.config.mode : childMode,
-            planEnabled: childMode === "plan",
+            ...childExecutionState,
             // Model selection affects more than the final request.model: MCS, built-in search, and
             // token/media budgets are pre-shaped inside the child runtime by the default model. A
             // synchronous child must therefore point its whole execution config at the parent-turn
@@ -344,6 +346,11 @@ export function createDefaultSubagentPort(
             modelSelection: cloneModelSelection(childSelection),
             modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
             workingDirectory: request.workingDirectory,
+            // Bash cd only changes the execution cwd; without the bound identity the child would land in another workspace and could not be reopened after restart.
+            workspacePath: this.config.workspacePath ?? request.workspaceRoot,
+            workspaceIdentity:
+              this.config.workspaceIdentity ??
+              (this.config.memory?.workspaceIdentity?.trim() as WorkspaceId | undefined),
             // The child runs in the same (possibly linked-worktree) cwd as the parent; carrying the
             // fact lets the subagent env block render the same isolation notice as the main agent.
             executionWorktree: this.config.executionWorktree,
@@ -437,10 +444,8 @@ export function createDefaultSubagentPort(
               parentToolCallId,
               enqueue: (input) => this.enqueueSubagentMessage(input),
             }),
-            // Explore uses its own read-only permission config; general-purpose and custom agents inherit the parent permission service.
-            permissionService: builtInExplore
-              ? new PermissionService(defaultPermissionConfig)
-              : this.permissionService,
+            // Fix reason: subagent permission service used to be built from a default config for Explore, so the parent's allowedTools, disallowedTools, and in-session grants did not apply. All child sessions (including Explore) now inherit the parent's permission service.
+            permissionService: this.permissionService,
             toolScheduler: deps.toolScheduler ?? defaultScheduler,
             executionPort: deps.executionPort,
             fileSystemPort: deps.fileSystemPort,
@@ -522,6 +527,8 @@ export function createDefaultSubagentPort(
             });
             previousSelection = parseModelSelectionValue(entries?.at(-1)?.data);
             await childRuntime.resumeFromStore({
+              // Fix reason: resume used to reuse the mode persisted with the child, so after the parent changed mode or was upgraded (Explore was once pinned to yolo) a resumed child kept running in the old mode; the mode computed here from the parent's current state overrides it.
+              executionStateOverride: childExecutionState,
               persistedMessages,
               traceContext: request.traceContext,
             });
@@ -662,21 +669,26 @@ function createSubagentOverrideModelFactory(
 function resolveSubagentPermissionMode(
   parentMode: AgentRuntimeInternal["config"]["mode"],
   permissionMode: ExploreSubagentRuntimeRequest["permissionMode"],
-  builtInExplore: boolean,
+  restrictOnly: boolean,
 ): AgentRuntimeInternal["config"]["mode"] {
+  // Fix reason: plugin profiles are resolved at user level; when a plugin declared bypassPermissions, a child of a build parent also became yolo, so every model-generated command ran without approval. Plugin declarations may only tighten: take the stricter of the parent mode and the declared mode.
+  // When the parent has no mode set, compare against build, matching the getMode default.
+  const applyDeclared = (mode: CollaborationMode): CollaborationMode =>
+    restrictOnly ? restrictPermissionMode(parentMode ?? "build", mode) : mode;
   switch (permissionMode) {
     case "bypassPermissions":
     case "dontAsk":
-      return inheritPermissionMode(parentMode, "yolo");
+      return applyDeclared(inheritPermissionMode(parentMode, "yolo"));
     case "acceptEdits":
-      return "edit";
+      return applyDeclared("edit");
     case "auto":
-      return "auto";
+      return applyDeclared("auto");
     case "plan":
-      return "plan";
+      return applyDeclared("plan");
     case "default":
     case undefined:
-      return inheritPermissionMode(parentMode, builtInExplore ? "yolo" : parentMode);
+      // Fix reason: the built-in Explore used to be pinned to yolo here and relied only on its prompt for read-only behavior; after a prompt injection the model could run arbitrary Bash without approval via Agent(Explore) under a build or Plan parent. It now inherits the parent mode and Plan state like other profiles, and the shell AST decides whether Bash is read-only.
+      return parentMode;
     default:
       return parentMode;
   }

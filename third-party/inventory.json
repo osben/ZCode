@@ -436,7 +436,7 @@
     "docs/knip/docs/src/styles/theme-light.css": "e2e85900fd43b5b563f56b9ce7e2a09f07d7420a78e80f0133efffeb8fce2aa0",
     "docs/knip/docs/src/util/post.ts": "6d7c45bd29035a73f1b67d24524760c7e317f367d32216de2c9a240dda7a40d1",
     "docs/knip/docs/tsconfig.json": "662b1f10a5e572b49a45669e4be9ee46c22f987dcf277c204948777b367df1cd",
-    "package.json": "d0e703e0d1a869dea9df9c251594e88307d9752954116ff8396d21b925df5c5e",
+    "package.json": "caa5c098c43de2ed3fe598fd8d600ee9ed9eef5a38eaa5c667d97ea774f41888",
     "packages/acp-agent-runtime/package.json": "91dc7df94ff32954b6728577a07535204080112ab468cffe374a1f2dedd96ec8",
     "packages/client/package.json": "e76f441549130dc3e5e68072a36b6cb9044e19a6625f1e813f19a4def2b1b689",
     "packages/desktop/package.json": "eb55afa66c3a37878d55dcb20461fe58e40a958710e8fabc337b02f88319b8de",
@@ -1652,7 +1652,7 @@
     "packages/ui/src/components/ai-elements/markdown-list.tsx": "97f241edff91efc12c5089e442ee342bca97ac7a387009db8fc05eb34a815bfd",
     "packages/ui/src/components/ai-elements/markdown-table.tsx": "26b4a5c6ee7cc0ba8b6ced914460cf30fb6564aa1776555a515624cfbb5f39df",
     "packages/ui/src/components/ai-elements/mermaid-block.tsx": "dc0540c45299cd3039942d1d41c9abc52867d2ab0297f92ac5877dec151b7465",
-    "packages/ui/src/components/ai-elements/message.tsx": "fc6a34283a58ae3bdcea9c709fd312dc90d0b488e6fb93475a587f3872a6fc2e",
+    "packages/ui/src/components/ai-elements/message.tsx": "bdd4e34161aaf87d60e2a6638b8763b1b6f1256e655d8b5187deb8c9a1b5ea28",
     "packages/ui/src/components/ai-elements/mic-selector.tsx": "e6249c6380a9aa768a411b7fc05e57388b7dc8a6e2afae687250d33ce9bb54db",
     "packages/ui/src/components/ai-elements/model-selector.tsx": "745414195be63160ab61efadc8352c2c6a28d3ba53107896c146a499c0847b99",
     "packages/ui/src/components/ai-elements/node.tsx": "d7b68c41717a509bd9063f0a9fc0c4525ceb2b23bae4028bcd49ec949fc6268f",
@@ -1731,7 +1731,7 @@
     "packages/ui/src/components/ui/switch.tsx": "1a6490eb3c47b3a86b76c8469e5702608ea57da7853df5de00fffa9a4a472adf",
     "packages/ui/src/components/ui/tabs.tsx": "adc59a0469c80118e9d60c08bf0222d55664ef95e6c522496b5c201011b347f0",
     "packages/ui/src/components/ui/textarea.tsx": "a839574ce1301fbaa9ba917fdb980900eb9118bffa7c6c4e469f3293b122ed30",
-    "packages/ui/src/components/ui/toast.tsx": "44ff42c1517f038199b5bc58746272fc073c7272ac2a8ede3bb51e191b7c37dc",
+    "packages/ui/src/components/ui/toast.tsx": "01322126422125f78498525366abff5e7b13fa9564c5946944377a27d8d4a9ef",
     "packages/ui/src/components/ui/tooltip.tsx": "b385da0f882ef4a44c101051107a670c42f7b347b86ef8ca0dba40369ed34d3b",
     "packages/ui/src/components/ui/usePdfZoomOverlay.ts": "86ecd37ff0d7d1f99fdc653196c276d23b6db5b0c4df96cf6c9170696fd2ad62",
     "packages/ui/src/components/ui/ZCodeAboutLogo.tsx": "1e5b7c2e8a9dc98a3c597cbe34122521319eaeb89825e4c41641e77715d1407a",
@@ -19257,7 +19257,7 @@
         },
         {
           "file": "packages/ui/src/components/ui/toast.tsx",
-          "sha256": "44ff42c1517f038199b5bc58746272fc073c7272ac2a8ede3bb51e191b7c37dc"
+          "sha256": "01322126422125f78498525366abff5e7b13fa9564c5946944377a27d8d4a9ef"
         },
         {
           "file": "packages/ui/src/components/ui/tooltip.tsx",
@@ -19547,7 +19547,7 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/message.tsx",
-          "sha256": "fc6a34283a58ae3bdcea9c709fd312dc90d0b488e6fb93475a587f3872a6fc2e"
+          "sha256": "bdd4e34161aaf87d60e2a6638b8763b1b6f1256e655d8b5187deb8c9a1b5ea28"
         },
         {
           "file": "packages/ui/src/components/ai-elements/mic-selector.tsx",

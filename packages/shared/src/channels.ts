@@ -454,6 +454,8 @@ export const PlatformChannels = {
    * main attaches the guest with BrowserGuestManager (fire-and-forget). CDP-on-guest pivot.
    */
   BrowserViewAttachGuest: "zcode:browser-view-attach-guest",
+  /** Trusted host navigation; main turns local HTML into a directory-bounded preview URL. */
+  BrowserViewLoadUrl: "zcode:browser-view-load-url",
   /** Renderer → Main: proactively disconnect the old guest's CDP before rebuilding the `<webview>`. */
   BrowserViewDownloadStarted: "zcode:browser-view-download-started",
   BrowserViewDetachGuest: "zcode:browser-view-detach-guest",
