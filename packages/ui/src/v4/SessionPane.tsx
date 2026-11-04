@@ -6727,7 +6727,7 @@ export function SessionPane({
       // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
       skillCatalogSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
       // Incognito drafts never bind plugin UI context to a prewarm session, same as the skill catalog.
-      pluginUiSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
+      pluginUiSessionId={effectiveSessionId}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}
