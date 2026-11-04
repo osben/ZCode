@@ -123,5 +123,5 @@ export async function seedSessionPrStatusFixture(options: {
       branchName: SESSION_PR_STATUS_BRANCH,
     },
   };
-  seedProviderReadinessHistoryFixture({ ...options, history });
+  await seedProviderReadinessHistoryFixture({ ...options, history });
 }
