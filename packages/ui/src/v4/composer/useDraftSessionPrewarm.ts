@@ -157,6 +157,8 @@ export interface DraftSessionPrewarm {
 export interface DraftPrewarmBinding {
   workspaceKey: string;
   sessionId: string;
+  /** Page keep-alive is independent of display subscriptions; a generation change notifies the page to revoke, while promotion does not. */
+  retain(onInvalidated: () => void): () => void;
   /** 首条 admission 命令发出前同步占住生命周期；false 表示 binding 已不是当前 owner。 */
   beginPromotion(): boolean;
   /** 首发成功后标记（阻止清理路径 deleteSession 已提升的会话）。 */
@@ -172,6 +174,7 @@ interface DraftPrewarmSubscriber {
 }
 
 interface DraftPrewarmCurrent {
+  retainers: Set<() => void>;
   invalidationVersion: number;
   controller: DraftPrewarmController;
   binding: DraftPrewarmBinding | null;
@@ -305,7 +308,7 @@ class DraftSessionPrewarmCoordinator {
       // 是否真的离开，避免“create → cleanup delete → create”的协议 churn。
       this.cleanupTimer = setTimeout(() => {
         this.cleanupTimer = null;
-        if (this.subscribers.size > 0) {
+        if (this.subscribers.size > 0 || this.current?.retainers.size) {
           return;
         }
         this.retireCurrent();
@@ -402,6 +405,24 @@ class DraftSessionPrewarmCoordinator {
         binding = {
           workspaceKey: this.workspaceKey,
           sessionId,
+          retain: (onInvalidated) => {
+            if (this.current !== current || current.retiring || current.binding !== binding)
+              throw new Error("Draft session is no longer valid");
+            const invalidate = () => onInvalidated();
+            current.retainers.add(invalidate);
+            return () => {
+              if (!current.retainers.delete(invalidate)) return;
+              if (
+                this.current === current &&
+                !current.retiring &&
+                !current.retainers.size &&
+                !this.subscribers.size
+              ) {
+                this.retireCurrent();
+                if (!this.current) this.onEmpty();
+              }
+            };
+          },
           beginPromotion: () => {
             if (this.current !== current || current.binding !== binding) {
               return false;
@@ -418,7 +439,11 @@ class DraftSessionPrewarmCoordinator {
             // event order"): keep exposing it and the next submission in this draft pane would
             // reserve the already-used session, which the CLI must reject. Detach so the next
             // reservation creates a fresh session by its own submission id.
+            // A page may still hold the original session, but the draft slot must detach
+            // immediately rather than wait for the page's reference to be released.
             current.binding = null;
+            current.retiring = true;
+            this.current = null;
             this.emitBindings();
           },
           discard: () => {
@@ -428,6 +453,9 @@ class DraftSessionPrewarmCoordinator {
             current.controller.markDiscarded();
             current.binding = null;
             this.blockedInvalidationVersion = current.invalidationVersion;
+            const retainers = [...current.retainers];
+            current.retainers.clear();
+            for (const invalidate of retainers) invalidate();
             this.emitBindings();
           },
         };
@@ -453,6 +481,7 @@ class DraftSessionPrewarmCoordinator {
       },
     });
     current = {
+      retainers: new Set(),
       invalidationVersion,
       controller,
       binding: null,
@@ -472,6 +501,8 @@ class DraftSessionPrewarmCoordinator {
     this.clearRetryTimer();
     current.retiring = true;
     current.binding = null;
+    for (const invalidate of [...current.retainers]) invalidate();
+    current.retainers.clear();
     current.controller.dispose();
     this.emitBindings();
     if (current.settled) {

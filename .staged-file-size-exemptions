@@ -311,8 +311,7 @@ packages/services/src/settings-sync/settingsSyncService.ts
 # Already over the cap at base 3.16.2 (79000+ bytes); the 3.17.1 reinstall port adds the menu item, availability and callback to the device card.
 packages/ui/src/settings/SourceServerManagementPanel.tsx
 
-# Upstream 3.17.1 sync merge: upstream sources over the cap that carry fork deltas (comment translation,
-# ported fixes), plus the fork test manifest and the vendored native-search source inventory.
+# Upstream 3.17.1 sync: over-cap upstream sources with fork deltas, the fork test manifest, native-search inventory.
 apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts
 apps/zcode-cli/packages/adapters/src/model/model-execution.ts
 apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-launch.ts
@@ -361,3 +360,7 @@ packages/ui/src/v4/telemetry/local-ttft/localTtftObserver.ts
 packages/ui/src/v4/useConversationTimelineFind.ts
 scripts/fork-test-files.json
 third-party/native-search/sources.json
+# Upstream 3.17.2 sync: grew past the cap through upstream additions only.
+apps/zcode-cli/packages/core/src/permission/service.ts
+packages/ui/src/OpenSplitButton.tsx
+packages/ui/src/plugin-ui/adapters/pluginUiManagedPage.ts

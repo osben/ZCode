@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import {
   isAuxiliarySessionKind,
   isReadonlyAgentSessionKind,
@@ -1327,9 +1328,14 @@ async function createSessionWithProjection<T>(
     if (!preparedSessionId && await context.deps.sessionStore?.getSession(sessionId))
       throw new ProtocolRequestError(-32602, "sessionId already exists");
     let result!: T;
-    await getSessionLifecycle(context).initialize(sessionId, async () => {
-      result = await materializeCreatedSession(context, { ...params, sessionId }, trace, project);
-    });
+    await getSessionLifecycle(context).initialize(
+      sessionId,
+      async () => {
+        result = await materializeCreatedSession(context, { ...params, sessionId }, trace, project);
+      },
+      params.workspace,
+      "create",
+    );
     return result;
   } finally {
     claims.delete(sessionId);
@@ -1509,9 +1515,13 @@ export async function activateSessionForResume(
   options: { reusePersistedMessages?: boolean; persistedMessages?: MessageWithParts[] } = {},
 ): Promise<ActivatedSessionForResume> {
   let activated: ActivatedSessionForResume | undefined;
-  await getSessionLifecycle(context).initialize(params.sessionId, async () => {
-    activated = await activateSessionRuntime(context, params, options);
-  });
+  await getSessionLifecycle(context).initialize(
+    params.sessionId,
+    async () => {
+      activated = await activateSessionRuntime(context, params, options);
+    },
+    params.workspace,
+  );
   const record = activated?.record ?? context.sessions.get(params.sessionId);
   if (!record) throw new Error("Session runtime unavailable after initialization");
   return activated ?? { record };
@@ -1650,13 +1660,10 @@ async function repairLegacyRemoteSessionWorkspaceForResume(
   context: ZCodeProtocolAgentServerContext,
   session: SessionInfo,
 ): Promise<SessionInfo> {
-  if (session.workspaceID || !context.deps.sessionStore?.repairLegacyRemoteSessionWorkspace) {
+  const legacyRemote = resolveLegacyRemoteSessionWorkspace(context, session);
+  if (!legacyRemote || !context.deps.sessionStore?.repairLegacyRemoteSessionWorkspace)
     return session;
-  }
   const legacyWorkspaceDirectory = session.path ?? session.directory;
-  if (session.directory !== legacyWorkspaceDirectory) return session;
-  const legacyRemote = resolveLegacyRemoteWorkspace(context, legacyWorkspaceDirectory);
-  if (!legacyRemote) return session;
 
   const repaired = await context.deps.sessionStore.repairLegacyRemoteSessionWorkspace({
     sessionID: session.id,
@@ -1713,6 +1720,17 @@ async function repairLegacyRemoteSessionWorkspaceForResume(
   return refreshed;
 }
 
+/** The pre-check and the atomic repair share the exact recognition rule; recognition is read-only and must not rewrite history early. */
+function resolveLegacyRemoteSessionWorkspace(
+  context: ZCodeProtocolAgentServerContext,
+  session: SessionInfo,
+) {
+  const directory = session.path ?? session.directory;
+  return !session.workspaceID && session.directory === directory
+    ? resolveLegacyRemoteWorkspace(context, directory)
+    : null;
+}
+
 function resolveLegacyRemoteWorkspace(
   context: ZCodeProtocolAgentServerContext,
   legacyWorkspaceDirectory: string,
@@ -1756,19 +1774,58 @@ async function resolvePersistedDirectorySession(
   let current: SessionInfo | null = session;
   while (current && current.time.deleted === undefined && !visited.has(current.id)) {
     visited.add(current.id);
-    const path = current.path || current.directory;
-    const key = current.workspaceID?.trim() || path;
-    if (path !== workspace.workspacePath) return null;
+    // Legacy WSL records must first be interpreted under the original repair rule, otherwise the new pre-check would block data that is still recoverable.
+    const legacy = resolveLegacyRemoteSessionWorkspace(context, current);
+    const identity = current.workspaceID?.trim() || legacy?.workspaceIdentity;
+    const path = legacy?.workspacePath ?? (current.path || current.directory);
+    const key = identity || path;
     const auxiliary = isAuxiliarySessionKind(current.taskType);
-    if (key === expectedKey && (!resolveOwner || !auxiliary)) return current;
-    // A historical child may lack identity, but ownership can only be proven by a persisted
-    // parent chain with the same cwd.
-    // An existing explicit external identity, a missing parent chain, or a cyclic one must
-    // not guess the project by directory, nor start the parent runtime.
-    if (!auxiliary || !current.parentID || (key !== expectedKey && key !== path)) return null;
+    // Legacy roots stored a normalized cwd; accept it only when the absolute paths are lexically equal on the target OS, and never rewrite the identity key.
+    const samePath =
+      path === workspace.workspacePath ||
+      (isAbsolute(path) &&
+        isAbsolute(workspace.workspacePath) &&
+        resolve(path) === resolve(workspace.workspacePath));
+    const sameIdentity =
+      key === expectedKey || (!identity && !workspace.workspaceIdentity?.trim() && samePath);
+    if (samePath && sameIdentity && (!resolveOwner || !auxiliary)) return current;
+    // A historical child's execution cwd must not invalidate the full parent chain; an explicit identity, a missing parent, a deletion, or a cycle still cannot cross ownership.
+    if (!auxiliary || !current.parentID || (identity && (!sameIdentity || !samePath))) return null;
     current = (await context.deps.sessionStore?.getSession(current.parentID)) ?? null;
   }
   return null;
+}
+
+/** Validates existing session ownership before activation; restart must call this before releasing the old instance. */
+export async function validateSessionActivationWorkspace(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+  workspace?: ZCodeWorkspaceRef,
+): Promise<void> {
+  if (!workspace) return; // Legacy protocol calls still get their context from the persisted record.
+  const active = context.sessions.get(sessionId);
+  if (active) {
+    // A matching key does not guarantee a matching explicit identity; validate field by field like in-flight operations so a wrong request cannot close the original instance.
+    if (
+      active.workspace.workspaceKey !== workspace.workspaceKey ||
+      active.workspace.workspacePath !== workspace.workspacePath ||
+      active.workspace.workspaceIdentity !== workspace.workspaceIdentity ||
+      active.workspace.remoteSessionId !== workspace.remoteSessionId
+    )
+      throw new Error("project.session-lineage-invalid");
+    return;
+  }
+  const session = await getPersistedSession(context, sessionId);
+  if (
+    !session ||
+    !(await resolvePersistedDirectorySession(
+      context,
+      session,
+      workspace,
+      context.sessionDirectorySourceEnabled === true,
+    ))
+  )
+    throw new Error("project.session-lineage-invalid");
 }
 
 export async function listSessions(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
@@ -2393,11 +2450,15 @@ export async function forkSession(context: ZCodeProtocolAgentServerContext, rawP
 export async function registerForkedSession(
   ...args: Parameters<typeof registerForkedSessionRuntime>
 ) {
-  const [context, , fork] = args;
+  const [context, record, fork] = args;
   let result: Awaited<ReturnType<typeof registerForkedSessionRuntime>> | undefined;
-  await getSessionLifecycle(context).initialize(fork.forkedSessionId, async () => {
-    result = await registerForkedSessionRuntime(...args);
-  });
+  await getSessionLifecycle(context).initialize(
+    fork.forkedSessionId,
+    async () => {
+      result = await registerForkedSessionRuntime(...args);
+    },
+    record.workspace,
+  );
   if (!result) throw new Error("Fork runtime already initialized");
   return result;
 }

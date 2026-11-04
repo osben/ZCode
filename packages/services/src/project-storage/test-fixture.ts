@@ -22,6 +22,7 @@ export async function fixture(savedWorkspaces: readonly string[] = []) {
     title TEXT DEFAULT '', provider TEXT DEFAULT 'glm', title_overridden INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0, pinned INTEGER DEFAULT 0, unread_at INTEGER,
     task_status TEXT DEFAULT 'completed', created_at INTEGER DEFAULT 1, updated_at INTEGER DEFAULT 2,
+    forked_from_task_id TEXT,
     PRIMARY KEY(workspace_key,task_id));
     CREATE TABLE task_groups(group_id TEXT PRIMARY KEY,title TEXT,color TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE task_group_members(group_id TEXT,workspace_key TEXT,workspace_path TEXT,workspace_identity TEXT,task_id TEXT,sort_order INTEGER);

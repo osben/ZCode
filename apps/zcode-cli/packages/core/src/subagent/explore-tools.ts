@@ -1,6 +1,9 @@
 // Keep the tool surface aligned with the file-search subagent. The direct branch exposes Glob/Grep;
 // the embedded search branch delegates search to Bash find/grep. The allowlist deliberately excludes
-// file-writing tools (Write/Edit/ApplyPatch), so Bash is the only side-effect entry point and the Explore prompt enforces read-only behavior.
+// file-writing tools (Write/Edit/ApplyPatch), so Bash is the only side-effect entry point.
+// Explore inherits the parent session's permission mode and Plan state; whether a Bash command is
+// read-only is decided by the shell AST (non-read-only commands ask or are denied per the parent
+// mode), and the Explore prompt also forbids modifications.
 export const EXPLORE_AGENT_ALLOWED_TOOLS = [
   "ToolSearch",
   "DeferredToolCall",

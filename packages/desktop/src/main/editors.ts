@@ -14,9 +14,10 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
+import { promisify } from "node:util";
 import { join, win32 as pathWin32 } from "node:path";
 import { app, nativeImage } from "electron";
 import type { EditorInfo } from "@zcode/shared";
@@ -29,6 +30,7 @@ import {
 } from "@desktop/main/fileApplications.js";
 
 const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
 const WINDOWS_EXPLORER_PATH = pathWin32.join(process.env.WINDIR ?? "C:/Windows", "explorer.exe");
 
 export interface EditorDef {
@@ -676,24 +678,41 @@ function loadNativeImageFromIcns(
   );
 }
 
+/** toBitmap returns BGRA; the last byte of every 4 is alpha. */
+function isFullyTransparent(icon: Electron.NativeImage): boolean {
+  const bitmap = icon.toBitmap();
+  for (let index = 3; index < bitmap.length; index += 4) if (bitmap[index] !== 0) return false;
+  return true;
+}
+
+const cachedDarwinAppIcons = new Map<string, Promise<string | null>>();
+
 /**
  * Read possible icon fields from an .app bundle's Info.plist, convert .icns to PNG, and create a
- * real icon for menus. If no real icon can be parsed, fall back to Electron's app.getFileIcon.
+ * real icon for menus. If parsing fails or only a transparent placeholder is found, read the icon
+ * via NSWorkspace (which includes Assets.car); app.getFileIcon is the last resort.
  */
 export function getAppIconDataUrl(editorId: string, appPath: string): Promise<string | null> {
-  if (process.platform !== "darwin") {
-    return app
-      .getFileIcon(appPath, { size: "normal" })
-      .then((icon) => `data:image/png;base64,${icon.toPNG().toString("base64")}`)
-      .catch((error) => {
-        logger.warn("[editors] 获取 file icon 失败", {
-          editorId,
-          appPath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      });
+  if (process.platform !== "darwin") return getFileIconDataUrl(editorId, appPath);
+  // The file-application menu requests an icon for every candidate app on each query, and the
+  // NSWorkspace fallback spawns an osascript subprocess. Cache the Promise per bundle path: concurrent
+  // queries share one resolution and successes are reused for the app lifetime; null or a thrown
+  // error evicts the entry so the next query retries.
+  let pending = cachedDarwinAppIcons.get(appPath);
+  if (!pending) {
+    pending = resolveDarwinAppIconDataUrl(editorId, appPath);
+    cachedDarwinAppIcons.set(appPath, pending);
+    const evict = () => {
+      if (cachedDarwinAppIcons.get(appPath) === pending) cachedDarwinAppIcons.delete(appPath);
+    };
+    void pending.then((iconDataUrl) => {
+      if (!iconDataUrl) evict();
+    }, evict);
   }
+  return pending;
+}
+
+function resolveDarwinAppIconDataUrl(editorId: string, appPath: string): Promise<string | null> {
   // Step 1: try loading the real app icon from the .icns file.
   const resolvedIcon = resolveAppIconPath(appPath);
   if (resolvedIcon.path) {
@@ -701,10 +720,20 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
     if (icon && !icon.isEmpty()) {
       // Scale to a suitable size (32x32 for menu display).
       const resized = icon.resize({ width: 32, height: 32 });
-      return Promise.resolve(`data:image/png;base64,${resized.toPNG().toString("base64")}`);
+      // System apps such as Books ship an AppIcon.icns that is only a fully transparent placeholder;
+      // the real icon lives in Assets.car. Checking isEmpty alone returned that transparent PNG as a
+      // success, so the menu <img> loaded blank and the generic fallback never showed. Treat a fully
+      // transparent icon as "no .icns" and defer to NSWorkspace below.
+      if (!isFullyTransparent(resized))
+        return Promise.resolve(`data:image/png;base64,${resized.toPNG().toString("base64")}`);
+      logger.info("[editors] .icns 图标全透明，图标将回退到 NSWorkspace", {
+        editorId,
+        appPath,
+        icnsPath: resolvedIcon.path,
+      });
     }
   } else {
-    logger.info("[editors] 未解析到真实 app 图标，图标将回退到 file icon", {
+    logger.info("[editors] 未解析到真实 app 图标，图标将回退到 NSWorkspace", {
       editorId,
       appPath,
       reason: resolvedIcon.reason,
@@ -712,7 +741,50 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
     });
   }
 
-  // Step 2: fall back to Electron's app.getFileIcon.
+  // Step 2: NSWorkspace can read Assets.car. Electron's app.getFileIcon returns only the generic
+  // placeholder (a book) for such bundles in practice, so use it only when NSWorkspace fails.
+  return getWorkspaceIconDataUrl(editorId, appPath).then(
+    (iconDataUrl) => iconDataUrl ?? getFileIconDataUrl(editorId, appPath),
+  );
+}
+
+/** Draws the NSWorkspace icon onto a 32x32 bitmap and outputs it as base64 PNG. */
+const MAC_WORKSPACE_ICON_SCRIPT = `
+ObjC.import('AppKit');
+function run(argv) {
+  var size = 32;
+  var icon = $.NSWorkspace.sharedWorkspace.iconForFile(argv[0]);
+  var rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, size, size, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+  $.NSGraphicsContext.saveGraphicsState;
+  $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+  icon.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, size, size), $.NSZeroRect, $.NSCompositingOperationCopy, 1);
+  $.NSGraphicsContext.restoreGraphicsState;
+  var png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
+  return ObjC.unwrap(png.base64EncodedStringWithOptions(0));
+}`;
+
+async function getWorkspaceIconDataUrl(editorId: string, appPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", MAC_WORKSPACE_ICON_SCRIPT, appPath],
+      { encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 },
+    );
+    const icon = nativeImage.createFromBuffer(Buffer.from(stdout.trim(), "base64"));
+    if (!icon.isEmpty() && !isFullyTransparent(icon))
+      return `data:image/png;base64,${icon.toPNG().toString("base64")}`;
+    logger.warn("[editors] NSWorkspace 图标为空，图标将回退到 file icon", { editorId, appPath });
+  } catch (error) {
+    logger.warn("[editors] NSWorkspace 获取图标失败，图标将回退到 file icon", {
+      editorId,
+      appPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return null;
+}
+
+function getFileIconDataUrl(editorId: string, appPath: string): Promise<string | null> {
   return app
     .getFileIcon(appPath, { size: "normal" })
     .then((icon) => `data:image/png;base64,${icon.toPNG().toString("base64")}`)

@@ -130,14 +130,26 @@ Recent; later sends record default config by the ownership at submit time. First
 prefill and explicit project switching keep the existing explicit hand-off actions; ordinary navigation does
 not move one project's body to another project nor overwrite the target's existing draft.
 
-Old text records are kept. A draft can be claimed only when its saved projectId matches the target; an old
-unclassified draft needs an explicit current context and must not be matched by scanning the latest
-directory. Old Recent has no project ownership; it is not bulk-copied to all same-directory projects nor
-merged with history. A new scope with no record uses normal default resolution. Migration reads do not write
-to disk; an explicit save/clear records the old data as claimed, preventing a directory-changed project or
-an emptied body from reading the old draft back. Data readable by old versions is kept and historical
-directories are not bulk-deleted. Navigation also remembers each workspace's last opened new-task scope only
-for the refresh-restore entry; body and Recent stay with the project/task scope as the only data source.
+### 远端草稿的创建前置（2026-10-30）
+
+远端连接可用不代表草稿项目归属已就绪。冷恢复缺少导航作用域记录时，Composer 可以编辑文字，但在当前草稿获得明确 projectId 前，不启动预热、不提交首发；按钮和键盘发送遵守同一个条件。用户通过已有项目入口选择项目后，现有预热流程继续。已有正式会话不依赖草稿 projectId，本地未归类草稿仍允许 projectId 为空。
+
+该条件直接从现有 workspace draftProjectId 派生，不新增归属缓存、定时等待或按 cwd 推断项目。Host 的远端项目校验继续作为最终边界。缺失记录是可重复的受控恢复夹具，不代表已证实用户记录因升级丢失。
+
+```mermaid
+flowchart LR
+    A[远端连接可用] --> B{当前草稿有 projectId}
+    B -->|无| C[保留编辑，等待选择项目]
+    C -->|已有项目入口| B
+    B -->|有| D[模型就绪后预热]
+    D --> E[首次发送接纳，保留项目归属]
+```
+
+2026-10-30 验证：基线 `7e348452fded4568f876c5c2c23198f304aae4ba` 在 `local-docker-20261030073004-aa5fa8` 冷恢复缺归属并按 Enter 后出现 6 次 `project.remote-project-required`。修复版 `packages/desktop/.e2e-artifacts/local-docker-20261030074146-15e10a` 的 PD13–PD16 完整通过：保留作用域冷启动预热 accepted；缺失作用域时无创建回执且输入保留、发送禁用；显式项目恢复后首发和正式会话续发成功；手机缺归属及恢复首发通过；本地未归类首发保持 projectId 为 NULL。成功发送均核对 Provider 请求，首发另查 Host 的实际项目归属；本轮运行日志无两个项目归属错误。
+
+桌面使用 macOS Electron 与独立 Linux arm64 SSH 容器；手机使用 Chrome 390px 触摸视口、真实配对与 shared Host，模型输出为 synthetic fast-text。手机缺归属通过现有 store 的 startDraft 构造，不声称手机自然恢复会丢失项目。原生 Windows/Linux、实体手机及用户缺失导航记录的成因未验证。测试保留 manual-review/pending，不自动转正或加入 CI。根类型、E2E 类型、lint、架构、schema 与受影响工程回归通过；工程夹具 11 项、架构工程检查 51 项通过。既有 lint 警告及 fixture 关闭时的 Vite 扫描警告不计为产品验证证据。
+
+## 功能影响简报
 
 ## Feature Impact Brief
 
@@ -175,20 +187,24 @@ cases; theme and language are checked on representative screens, not full combin
 
 ## Acceptance Cases and E2E Handoff
 
-| ID   | Precondition -> action                                                                | Must assert                                                                                                                | Evidence                                |
-| ---- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| PD01 | Task input text and model/permission -> switch session -> tap Tasks plus              | Directory, body, selection restored; no extra mkdir                                                                        | UT + Desktop/mobile E2E, files and logs |
-| PD02 | Task send admitted -> New again                                                       | New directory, empty body, complete Recent inherited                                                                       | E2E + CLI ACK/directory                 |
-| PD03 | Two same-directory projects with different bodies/selections -> switch back and forth | Draft and in-memory/warm-up ownership isolated, projectId not overwritten                                                  | UT + E2E                                |
-| PD04 | P/Q/task each send successfully with different configs -> New                         | Three Recents isolated; later sends of one project update it                                                               | UT + E2E                                |
-| PD05 | Change only options / empty the body -> switch away and back                          | No text draft produced; initialized from Recent; task directory reference remains                                          | UT + E2E                                |
-| PD06 | First send rejected, unknown, reconnect duplicate                                     | No input lost, directory not wrongly released; final hand-off exactly once                                                 | UT + fault E2E                          |
-| PD07 | Rapid New clicks, late preparation, fast project switch after send                    | No duplicate preparation; old callback does not write new scope; admission still completes the original ownership hand-off | UT + E2E                                |
-| PD08 | Type the next message during first send -> ACK/projection late                        | Next message stays in the formal session, does not resurrect the new Root                                                  | UT + E2E                                |
-| PD09 | Project rename / change primary directory / move session                              | Project draft and Recent kept; old session cwd unchanged                                                                   | UT + E2E                                |
-| PD10 | Refresh, restart, same path on different hosts, edit on desktop and mobile separately | Identity stable and each end independent; unknown sends recoverable by query                                               | UT + Desktop/mobile E2E                 |
-| PD11 | Valid old projectId draft, ambiguous old record, storage failure                      | Claim only when ownership is provable; keep old data; a write failure does not clear the source                            | UT                                      |
-| PD12 | File/screenshot attachment, share import, template, group, unavailable model          | Original flows usable; Recent not wrongly updated, ownership not crossed                                                   | affected UT + representative E2E        |
+| ID   | 前置 → 操作                                               | 必须断言                                                                      | 证据                              |
+| ---- | --------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------- |
+| PD01 | 任务输入文字及模型权限 → 切 session → 点任务加号          | 目录、正文、选择恢复；未额外 mkdir                                            | UT + Desktop/手机 E2E、文件与日志 |
+| PD02 | 任务发送接纳 → 再新建                                     | 新目录、空正文、继承完整 Recent                                               | E2E + CLI ACK/目录                |
+| PD03 | 双项目同目录各写不同正文选择 → 来回新建                   | 草稿及内存/预热归属隔离，不能覆写 projectId                                   | UT + E2E                          |
+| PD04 | P/Q/任务分别成功发送不同配置 → 新建                       | 三个 Recent 隔离；同一项目后续发送更新                                        | UT + E2E                          |
+| PD05 | 只改选项/正文删空 → 切走回来                              | 不生成文字草稿；按 Recent 初始化；任务目录引用仍在                            | UT + E2E                          |
+| PD06 | 首发拒绝、未知、重连 duplicate                            | 不丢输入、不误释放目录；最终交接恰好一次                                      | UT + 故障 E2E                     |
+| PD07 | 连点新建、准备晚回、发送后快速切项目                      | 准备不重复；旧回调不写新 scope；接纳仍完成原归属交接                          | UT + E2E                          |
+| PD08 | 首发过程中键入下一条 → ACK/投影晚到                       | 下一条保留在正式 session，不复活新建 Root                                     | UT + E2E                          |
+| PD09 | 项目改名/换主要目录/移动 session                          | 项目草稿与 Recent 保留；旧 session cwd 不变                                   | UT + E2E                          |
+| PD10 | 刷新、重启、同路径不同主机、桌面与手机分别编辑            | 身份稳定且各端独立；未知发送可查询恢复                                        | UT + Desktop/手机 E2E             |
+| PD11 | 合法旧 projectId 草稿、歧义旧记录、存储失败               | 仅可证明归属时认领；保留旧数据；写失败不清源                                  | UT                                |
+| PD12 | 文件/截图附件、分享导入、模板、分组、不可用模型           | 原流程可用；不误更新 Recent、不串归属                                         | 受影响 UT + 代表 E2E              |
+| PD13 | SSH 项目草稿保留作用域 → 断开 → 完整 App 冷启动           | 项目 ID 恢复；预热 accepted，无远端归属错误                                   | Desktop + SSH E2E                 |
+| PD14 | 只删除导航作用域 → 冷启动 → 输入并按 Enter → 显式项目新建 | 缺归属时零 createSession、输入保留、发送禁用；选项目后首发 accepted，归属正确 | Desktop + SSH E2E                 |
+| PD15 | 手机远控草稿缺项目归属 → 真实项目入口重开并发送           | 缺归属时零创建；项目恢复后首发与回执正确                                      | 手机视口 + shared Host + SSH E2E  |
+| PD16 | 本地未归类新建并首发                                      | 空 projectId 仍可预热和接纳，历史任务续发不受影响                             | Desktop E2E                       |
 
 All PD cases are accepted at product-semantics level. Automation is verified by the layered evidence below;
 one passing representative interaction is not widened to all combinations. E2E uses manual-review/pending

@@ -42,14 +42,16 @@ const localeAllowlist = new Set([
   "packages/ui/test/browser/manual-review/pending/workspace-hook-pending.test.mjs",
   "packages/ui/test/browser/manual-review/pending/yolo-confirmation.test.mjs",
 ]);
-// Upstream 3.17.1 manual-review suites kept byte-identical to upstream (zh-CN default-locale copy and
+// Upstream 3.17.1 and 3.17.2 manual-review suites kept byte-identical to upstream (zh-CN default-locale copy and
 // CJK locators). Both checks skip them; convert a suite to English copy and drop it here when the
 // fork edits it.
 const upstreamVerbatimSuites = new Set([
   "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-id-compatibility.test.ts",
   "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-new-task-missing-root-mobile.test.ts",
+  "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-remote-draft-prewarm.test.ts",
   "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-web-remote-terminal.test.ts",
   "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-workspace-mcp-trust.test.ts",
+  "packages/desktop/test/e2e/settings/manual-review/pending/mcp-failure-guidance.test.ts",
   "packages/desktop/test/e2e/ui-shell/manual-review/pending/command-center-history-search.test.ts",
   "packages/ui/test/browser/manual-review/pending/image-preview-edit.test.mjs",
   "packages/ui/test/browser/manual-review/pending/plugin-marketplace-risk.test.mjs",

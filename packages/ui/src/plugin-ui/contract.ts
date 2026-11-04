@@ -57,6 +57,15 @@ export type OpenPluginUiSideTabRequest = PluginUiOpenTarget & {
   remoteSessionId?: string | null;
 };
 
+/** 主导航先选定 surface，根草稿就绪后补入真实 session。 */
+export type DraftPluginUiOpenRequest = Omit<
+  OpenPluginUiSideTabRequest,
+  "parentSessionId" | "toolCallId" | "surfaceId" | "serverName"
+> & {
+  surfaceId: string;
+  serverName: string;
+};
+
 /**
  * Side pane tab; tool card id is `plugin-ui:<ws>:<session>:<pluginId>:<toolCallId>`, surface is
  * `plugin-ui:<ws>:<session>:<pluginId>:surface:<surfaceId>`; visibility is scoped by parentSessionId.

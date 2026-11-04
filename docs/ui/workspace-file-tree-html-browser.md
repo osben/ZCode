@@ -2,8 +2,7 @@
 
 ## Goal
 
-The file tree context menu offers an "open in built-in browser" action for local `.html` / `.htm` files. It
-builds a `file://` URL from the file's absolute path and hands it to the existing right Browser side pane.
+文件树右键菜单对本地 `.html` / `.htm` 文件提供“用内置浏览器打开”动作。动作使用文件的绝对路径生成 `file://` URL，并交给现有右侧 Browser side pane；浏览器在 main 将其转换为[受控 HTML 预览地址](../browser-use/local-html-preview.md)后加载。
 
 ## Boundary
 
@@ -18,6 +17,5 @@ builds a `file://` URL from the file's absolute path and hands it to the existin
 
 ## Verification
 
-`packages/ui/test/workspaceFileTree.test.ts` covers HTML extension recognition and `file://` URL
-generation. The change does not touch ZCode session/task realtime, snapshot, queue or
-replayable/continuous semantics.
+- 浏览器安全与资源加载由 `packages/desktop/test/e2e/manual-review/pending/browser-local-html-preview.test.ts` 验证；文件树入口保持现有 HTML 类型判断。
+- 该变更不修改 ZCode session/task realtime、snapshot、queue、replayable/continuous 语义。

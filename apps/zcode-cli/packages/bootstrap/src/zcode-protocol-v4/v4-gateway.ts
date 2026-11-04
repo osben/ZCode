@@ -3257,11 +3257,14 @@ export class ConversationV4Gateway {
    * must not wait for the projection's activation callback. The old implementation dropped the new
    * callback when reusing an opening, so ensureReady never saw activated.
    */
-  async prepareSessionHistory(sessionId: string): Promise<MessageWithParts[]> {
+  async prepareSessionHistory(
+    sessionId: string,
+    workspace?: ZCodeWorkspaceRef,
+  ): Promise<MessageWithParts[]> {
     const history = this.ensureHistoryReadyPublisher(
       sessionId,
       undefined,
-      undefined,
+      workspace,
       undefined,
       this.publishers.get(sessionId)?.getSnapshot().runtimeInitialization?.attemptId,
     );
