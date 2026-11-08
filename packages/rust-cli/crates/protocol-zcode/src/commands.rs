@@ -854,6 +854,7 @@ async fn send_text(
         content,
         delivery,
         execution,
+        behind_held: false,
     };
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(

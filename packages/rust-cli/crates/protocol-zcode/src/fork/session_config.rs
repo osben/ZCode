@@ -165,7 +165,9 @@ pub(super) async fn compact(
     phase: Phase,
     revision: u64,
 ) -> Ack {
-    let admitted = if phase == Phase::Running {
+    // Node `compact`: busy, or idle behind a held queue, the compaction joins the queue tail.
+    let behind_held = !live.sink.auto_drain() && live.sink.has_queue();
+    let admitted = if phase == Phase::Running || behind_held {
         "queue"
     } else {
         "startNow"
@@ -188,6 +190,7 @@ pub(super) async fn compact(
         content: Vec::new(),
         delivery: Delivery::Queue,
         execution: None,
+        behind_held: true,
     };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
     if let KernelAck::Rejected { reason } = &kernel

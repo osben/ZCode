@@ -162,6 +162,8 @@ pub enum Command {
     /// with `execution` frozen on it, and the session's state is left alone until the item drains.
     /// A compaction is refused with [`COMPACT_LOCKED`] while one runs or is queued. Non-empty
     /// `content` is the input's blocks (attachments); `text` is then its display text.
+    /// `behind_held`: idle with a held queue that has inputs, the input joins the queue tail instead of
+    /// starting (Node `compact` "held queue → append to the tail"; a queue promotion passes false).
     SubmitWith {
         kind: QueuedKind,
         text: String,
@@ -170,6 +172,8 @@ pub enum Command {
         delivery: Delivery,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         execution: Option<InputExecution>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        behind_held: bool,
     },
     /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
     /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are

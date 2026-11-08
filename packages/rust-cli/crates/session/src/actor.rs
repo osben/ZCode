@@ -349,7 +349,11 @@ impl Actor {
     /// Fork: `Command::SubmitWith` (the desktop App's inputs). A compaction is refused while one runs
     /// (a run-less turn) or is queued; busy, the input is queued with its execution state frozen on it
     /// (a compaction or goal never steers); idle, the state is applied first and the turn or compaction
-    /// starts.
+    /// starts. `behind_held` (idle behind a held queue with inputs) queues the input like busy does.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the fields of Command::SubmitWith"
+    )]
     async fn submit_with(
         &mut self,
         id: CommandId,
@@ -358,6 +362,7 @@ impl Actor {
         content: Vec<rust_cli_kernel_api::message::ContentBlock>,
         delivery: rust_cli_kernel_api::session_api::Delivery,
         execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
+        behind_held: bool,
     ) -> Ack {
         use rust_cli_kernel_api::session_api::{COMPACT_LOCKED, Delivery, QueuedKind};
         let compact = kind == QueuedKind::Compact;
@@ -370,7 +375,7 @@ impl Actor {
                 return rejected(COMPACT_LOCKED);
             }
         }
-        if self.busy() {
+        if self.busy() || behind_held {
             let (input_kind, delivery) = match kind {
                 QueuedKind::Compact => (crate::inbox::InputKind::Compact, Delivery::Queue),
                 QueuedKind::Goal => (crate::inbox::InputKind::Text, Delivery::Queue),
@@ -598,8 +603,10 @@ impl Actor {
                 content,
                 delivery,
                 execution,
+                behind_held,
             } => {
-                self.submit_with(id, kind, text, content, delivery, execution)
+                let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
+                self.submit_with(id, kind, text, content, delivery, execution, queue)
                     .await
             }
             Command::PauseGoal => self.pause_goal().await,

@@ -336,6 +336,7 @@ pub(super) async fn send_queued_now(
             content: Vec::new(),
             delivery: Delivery::Queue,
             execution,
+            behind_held: false,
         },
     )
     .await;

@@ -20,6 +20,7 @@ fn submit_with(id: &str, text: &str, mode: PermissionMode, plan: bool) -> Comman
                 state: ExecutionState { mode, plan },
                 selection: None,
             }),
+            behind_held: false,
         },
     }
 }
@@ -33,6 +34,7 @@ fn compact(id: &str) -> CommandEnvelope {
             content: Vec::new(),
             delivery: Delivery::Queue,
             execution: None,
+            behind_held: true,
         },
     }
 }
@@ -167,6 +169,44 @@ async fn a_second_compaction_is_locked_while_one_is_queued() {
         })
         .await;
     assert!(matches!(edit, Ack::Rejected { .. }), "{edit:?}");
+}
+
+#[tokio::test]
+async fn an_idle_compaction_joins_the_tail_of_a_held_queue() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session
+        .send(submit_with("c1", "ask me", PermissionMode::Default, false))
+        .await;
+    let interaction = asked(&mut events).await;
+    session
+        .send(submit_with("c2", "held", PermissionMode::Default, false))
+        .await;
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("c3"),
+            command: Command::HoldQueue { held: true },
+        })
+        .await;
+    session.send(answer("c4", interaction)).await;
+    until_finished(&mut events, 1).await;
+    let requests = model.requests().len();
+    // Node `compact`: idle behind a held queue, the compaction does not bypass the queued intent.
+    assert!(matches!(
+        session.send(compact("c5")).await,
+        Ack::Accepted { .. }
+    ));
+    let view = session.view().await.unwrap();
+    assert!(!view.running);
+    assert_eq!(
+        frozen(&view)
+            .into_iter()
+            .map(|(kind, _)| kind)
+            .collect::<Vec<_>>(),
+        [QueuedKind::Text, QueuedKind::Compact]
+    );
+    assert_eq!(model.requests().len(), requests);
 }
 
 #[test]
