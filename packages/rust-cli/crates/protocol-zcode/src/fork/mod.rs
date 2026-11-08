@@ -4,5 +4,7 @@
 
 pub(crate) mod commands;
 pub(crate) mod methods;
+mod queue;
 mod row_commands;
 mod session_config;
+mod session_delete;

@@ -5,7 +5,9 @@
 
 mod actions;
 mod cold;
+pub mod elicitation;
 mod kinds;
+mod markers;
 mod rows;
 pub mod state;
 
@@ -80,9 +82,15 @@ pub struct Projection {
     inputs: HashMap<String, InputMeta>,
     /// 用户拒绝了的工具调用：结果投成 cancelled。
     denied: std::collections::HashSet<String>,
+    /// Fork: the queue drains on its own (`setAutoDrain`); the kernel's hold is set by the same command.
+    auto_drain: bool,
     created_at: u64,
     /// Fork: a compaction is running (row actions are withheld, like Node's `compact` active work).
     compacting: bool,
+    /// Fork: compaction markers so far; the running one is `compact:<count>` (projection/markers.rs).
+    compactions: u64,
+    /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
+    catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -129,6 +137,8 @@ impl Projection {
             Self::from_view_at(view, self.followup, self.levels.clone(), self.next_row);
         projection.inputs.clone_from(&self.inputs);
         projection.denied.clone_from(&self.denied);
+        projection.catalog = self.catalog.clone();
+        projection.auto_drain = self.auto_drain;
         projection
     }
 
@@ -163,6 +173,9 @@ impl Projection {
             denied: std::collections::HashSet::new(),
             created_at: view.meta.created_at_ms,
             compacting: false,
+            compactions: 0,
+            catalog: std::sync::Arc::from(Vec::new()),
+            auto_drain: true,
         };
         cold::rows(&mut projection, view);
         for (interaction, request) in &view.pending {
@@ -233,6 +246,17 @@ impl Projection {
         }})
     }
 
+    /// Fork: whether the queue drains on its own (`queue.autoDrain`).
+    pub fn auto_drain(&self) -> bool {
+        self.auto_drain
+    }
+
+    /// Fork: `setAutoDrain` was accepted: returns the `state.updated` for the queue.
+    pub fn set_auto_drain(&mut self, auto_drain: bool) -> Value {
+        self.auto_drain = auto_drain;
+        json!({"op": "state.updated", "patch": {"queue": self.queue_state()}})
+    }
+
     /// Fork: the model, permission mode and plan switch the projection shows, so a switch command can
     /// answer `config.unchanged` the way Node does.
     pub fn current_config(&self) -> (ModelSelection, PermissionMode, bool) {
@@ -245,8 +269,30 @@ impl Projection {
             self.mode,
             self.plan,
             self.followup,
-            &self.levels,
+            &self.thought_levels(),
         )
+    }
+
+    /// Fork: uses the model directory for `thoughtLevels` from now on.
+    #[must_use]
+    pub fn with_catalog(
+        mut self,
+        catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
+    ) -> Self {
+        self.catalog = catalog;
+        self
+    }
+
+    /// Fork: the selected model's levels in the directory, like Node `listThoughtLevels`; a model the directory does
+    /// not list keeps the protocol's own levels.
+    fn thought_levels(&self) -> Vec<String> {
+        self.catalog
+            .iter()
+            .find(|entry| rust_cli_kernel_api::model_name::is_entry(&self.selection, entry))
+            .map_or_else(
+                || self.levels.clone(),
+                |entry| entry.reasoning_levels.clone(),
+            )
     }
 
     fn base(
@@ -467,9 +513,17 @@ impl Projection {
                 patch.insert("config".into(), self.config());
             }
             // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
-            KernelEvent::CompactStarted { .. } => self.compacting = true,
-            KernelEvent::CompactDone { .. } | KernelEvent::CompactFailed { .. } => {
+            KernelEvent::CompactStarted { trigger } => {
+                self.compacting = true;
+                self.compact_started(*trigger, now, seq, &mut out);
+            }
+            KernelEvent::CompactDone { .. } => {
                 self.compacting = false;
+                self.compact_settled("success", &mut out);
+            }
+            KernelEvent::CompactFailed { .. } => {
+                self.compacting = false;
+                self.compact_settled("failed", &mut out);
             }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
@@ -611,7 +665,8 @@ impl Projection {
                             row.insert("endedAt".into(), json!(now));
                         }
                     }
-                    Some(RowKind::TurnHeader | RowKind::UserInput) | None => {}
+                    Some(RowKind::TurnHeader | RowKind::UserInput | RowKind::TimelineMarker)
+                    | None => {}
                 },
                 out,
             );
@@ -678,7 +733,7 @@ impl Projection {
                 value
             })
             .collect();
-        json!({"items": items, "autoDrain": true})
+        json!({"items": items, "autoDrain": self.auto_drain})
     }
 
     /// 快照（`conversationSnapshotSchema`）：`seq` 是主题的序号，`epoch` 是主题的代际标识。

@@ -493,6 +493,12 @@ impl Actor {
             Command::BackgroundForeground { reason } => self.background_foreground(reason).await,
             Command::StoreResumeSentinel => self.store_resume_sentinel(id).await,
             Command::Dequeue { command } => self.dequeue(&command),
+            // Fork: in-place queue editing (Node queue.ts handlers, specs/fork-rust-agent-parity.md).
+            Command::EditQueued { command, text } => self.edit_queued(&command, text),
+            Command::ReorderQueued { command, before } => {
+                self.reorder_queued(&command, before.as_ref())
+            }
+            Command::HoldQueue { held } => self.hold_queue(held).await,
             // 在 `handle` 里处理（回执要等事务结束或名字）。
             Command::Rewind { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")

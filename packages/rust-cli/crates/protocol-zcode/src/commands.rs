@@ -133,6 +133,9 @@ struct ResolvePayload {
 struct AnswerPayload {
     option_id: Option<String>,
     free_text: Option<String>,
+    /// Fork: the elicitation dialog's answer to a question or plan approval (projection/elicitation.rs).
+    action: Option<String>,
+    content: Option<serde_json::Map<String, Value>>,
 }
 
 /// setFollowupMode 的 payload。
@@ -776,19 +779,25 @@ async fn resolve(
             .find(|(id, _)| id.as_str() == interaction)
             .map(|(_, request)| request)
     });
-    let Some(InteractionRequest::Permission {
-        suggestions,
-        tool_use: tool,
-        ..
-    }) = pending
-    else {
-        return Ack::refused(
-            &envelope.command_id,
-            Status::Noop,
-            "proto.alreadyResolved",
-            "the interaction is no longer pending",
-            revision,
-        );
+    let (suggestions, tool) = match pending {
+        Some(InteractionRequest::Permission {
+            suggestions,
+            tool_use,
+            ..
+        }) => (suggestions, tool_use),
+        Some(request) => {
+            return resolve_elicitation(handle, live, envelope, revision, &resolved, &request)
+                .await;
+        }
+        None => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Noop,
+                "proto.alreadyResolved",
+                "the interaction is no longer pending",
+                revision,
+            );
+        }
     };
     // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。
     if option == Some("fullAccess") {
@@ -826,6 +835,53 @@ async fn resolve(
         answer: answer.into(),
     };
     // 与 Node 相同：ACK 不带 result（答案已经进了会话，投影随事件更新）。
+    ack_of(
+        send(handle, &envelope.command_id, command).await,
+        Ack::accepted(&envelope.command_id, revision, None),
+        |reason| {
+            Ack::refused(
+                &envelope.command_id,
+                Status::Noop,
+                "proto.alreadyResolved",
+                reason,
+                revision,
+            )
+        },
+    )
+}
+
+/// Fork: answers a question or plan approval (Node's interaction broker mapping, projection/elicitation.rs).
+async fn resolve_elicitation(
+    handle: &dyn SessionHandle,
+    live: &crate::live::Live,
+    envelope: &Envelope,
+    revision: u64,
+    resolved: &ResolvePayload,
+    request: &InteractionRequest,
+) -> Ack {
+    use crate::projection::elicitation;
+    let action = resolved.answer.action.as_deref();
+    let content = resolved.answer.content.as_ref();
+    let answer: rust_cli_kernel_api::orchestration::Answer = match request {
+        // The caller answers permission asks itself; one reaching here is answered as a question would be.
+        InteractionRequest::Question { questions, .. } => {
+            elicitation::question_answer(questions, action, content).into()
+        }
+        InteractionRequest::Permission { .. } => {
+            elicitation::question_answer(&Value::Null, action, content).into()
+        }
+        InteractionRequest::PlanApproval { .. } => elicitation::plan_answer(
+            action,
+            content,
+            resolved.answer.free_text.as_deref(),
+            live.current_config().1,
+        )
+        .into(),
+    };
+    let command = Command::ResolveInteraction {
+        interaction: InteractionId::new(&resolved.interaction_id),
+        answer,
+    };
     ack_of(
         send(handle, &envelope.command_id, command).await,
         Ack::accepted(&envelope.command_id, revision, None),

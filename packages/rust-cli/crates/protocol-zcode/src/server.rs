@@ -114,10 +114,16 @@ impl Server {
             .unwrap_or(Followup::Queue);
         let (context, topics) = (self.context.clone(), self.topics.clone());
         let opening = self.bridge.get(session).is_none();
+        // Fork: the model directory is read only for a cold open.
+        let catalog = if opening {
+            self.context.catalog().await
+        } else {
+            std::sync::Arc::from(Vec::new())
+        };
         let live = self
             .bridge
             .open(session, move |handle, view| {
-                Live::new(context, topics, handle.clone(), view, followup)
+                Live::new(context, topics, handle.clone(), view, followup, catalog)
             })
             .await?;
         // Fork: a cold open restores a still-preparing first submission before any subscription starts.

@@ -198,6 +198,52 @@ impl Actor {
         crate::actor::accepted()
     }
 
+    /// Fork: `Command::EditQueued` (Node `editQueueItem`): replace the text of a still-queued input in
+    /// place — position, delivery and screening are kept. The same miss and rejection as
+    /// [`Self::dequeue`] when the input already went out.
+    pub(crate) fn edit_queued(
+        &mut self,
+        command: &CommandId,
+        text: String,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        if !self.inbox.edit_input(command, text) {
+            return crate::actor::rejected(ALREADY_SENT);
+        }
+        self.emit_queue();
+        crate::actor::accepted()
+    }
+
+    /// Fork: `Command::ReorderQueued` (Node `reorderQueueItem`): move a queued input before another
+    /// queued input, or to the end of the queue when `before` is `None`. Either no longer queued → the
+    /// same rejection as [`Self::dequeue`], with the queue unchanged.
+    pub(crate) fn reorder_queued(
+        &mut self,
+        command: &CommandId,
+        before: Option<&CommandId>,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        if !self.inbox.reorder_input(command, before) {
+            return crate::actor::rejected(ALREADY_SENT);
+        }
+        self.emit_queue();
+        crate::actor::accepted()
+    }
+
+    /// Fork: `Command::HoldQueue` (Node `setAutoDrain`, `held` is `!autoDrain`): while held, a finished
+    /// turn does not start the next queued input ([`Self::next_turn_input`] checks the flag). Releasing
+    /// while idle starts the head of the queue as a turn end would (`start_next` also looks at cron and
+    /// held local records); while busy it only clears the flag and the running turn's end resumes the
+    /// drain. Always `Accepted`.
+    pub(crate) async fn hold_queue(&mut self, held: bool) -> rust_cli_kernel_api::session_api::Ack {
+        let was = self.inbox.held();
+        if self.inbox.set_held(held) {
+            self.emit_queue();
+        }
+        if was && !held && !self.busy() {
+            self.start_next().await;
+        }
+        crate::actor::accepted()
+    }
+
     /// 回合结束后的下一项（query.md §5）：通道头是输入就是它；是通知就取走头部连续的通知，合成一个
     /// 回合（通知合并）；通道空时是 `Queue` 输入（优先级 `later`）。定时任务由调用方最后看。
     pub(crate) fn next_turn_input(&mut self) -> Option<TurnInput> {
@@ -211,6 +257,9 @@ impl Actor {
     /// 通道头不是只在工具边界并入的项时的下一项。
     fn next_active_input(&mut self) -> Option<TurnInput> {
         match self.inbox.lane_front() {
+            // Fork: the queue is held (`Command::HoldQueue`): queued inputs wait. A notice behind a held
+            // input waits too — the lane is the arrival order and the drain may not skip ahead of it.
+            Some(LaneItem::Input(_)) if self.inbox.held() => None,
             Some(LaneItem::Input(_)) => {
                 let Some(Item::Input(queued)) = self.inbox.pop_lane_front() else {
                     return None;
@@ -231,6 +280,10 @@ impl Actor {
                 Some(TurnInput::Notices(notices))
             }
             None => {
+                // Fork: held stops the `later` inputs as well — they are part of the same queue.
+                if self.inbox.held() {
+                    return None;
+                }
                 let next = self.inbox.pop_later()?;
                 self.emit_queue();
                 let command = next.input.command.clone();

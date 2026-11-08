@@ -65,8 +65,12 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             }
             Message::Assistant(_) => projection.message(message, at, 0, &mut out),
             Message::System(SystemMessage::Interrupted { .. }) => interrupted = true,
-            // 附件与别的 system 消息不投成行（P1）。
-            Message::Attachment(_) | Message::System(_) => {}
+            // Fork: a stored compaction shows as its timeline marker (projection/markers.rs).
+            Message::System(SystemMessage::CompactBoundary(boundary)) => {
+                projection.compacted(boundary.trigger, boundary.pre_tokens, at, &mut out);
+            }
+            // 附件不投成行（P1）。
+            Message::Attachment(_) => {}
         }
     }
     if projection.turn.is_some() {

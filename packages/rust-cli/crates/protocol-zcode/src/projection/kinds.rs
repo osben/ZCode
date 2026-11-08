@@ -11,6 +11,8 @@ pub(crate) enum RowKind {
     AssistantText,
     Reasoning,
     ToolCall,
+    /// Fork: timeline markers (compaction).
+    TimelineMarker,
 }
 
 impl RowKind {
@@ -21,6 +23,7 @@ impl RowKind {
             Self::AssistantText => "assistantText",
             Self::Reasoning => "reasoning",
             Self::ToolCall => "toolCall",
+            Self::TimelineMarker => "timelineMarker",
         }
     }
 
@@ -32,6 +35,7 @@ impl RowKind {
             Self::AssistantText,
             Self::Reasoning,
             Self::ToolCall,
+            Self::TimelineMarker,
         ]
         .into_iter()
         .find(|kind| row.get("kind").and_then(Value::as_str) == Some(kind.as_str()))

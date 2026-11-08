@@ -56,6 +56,7 @@ impl Live {
         handle: Arc<dyn SessionHandle>,
         view: &SessionView,
         followup: Followup,
+        catalog: Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     ) -> Self {
         let levels = view.selection.reasoning.iter().cloned().collect();
         let epoch = context.fresh("epoch");
@@ -66,7 +67,7 @@ impl Live {
             created_at: view.meta.created_at_ms,
             handle,
             state: Mutex::new(State {
-                projection: Projection::from_view(view, followup, levels),
+                projection: Projection::from_view(view, followup, levels).with_catalog(catalog),
                 log: TopicLog::new(epoch),
                 summary: None,
                 preparation: None,
@@ -186,6 +187,22 @@ impl Live {
         let outgoing = {
             let mut state = self.state();
             let delta = state.projection.set_followup(followup);
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: see [`crate::projection::Projection::auto_drain`].
+    pub fn auto_drain(&self) -> bool {
+        self.state().projection.auto_drain()
+    }
+
+    /// Fork: `setAutoDrain` was accepted: record the queue patch and send it.
+    pub async fn set_auto_drain(&self, auto_drain: bool) {
+        let outgoing = {
+            let mut state = self.state();
+            let delta = state.projection.set_auto_drain(auto_drain);
             state.log.record(vec![delta]);
             self.collect(&mut state)
         };

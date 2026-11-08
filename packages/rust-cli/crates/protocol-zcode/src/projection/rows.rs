@@ -223,40 +223,46 @@ impl Projection {
         self.append(tool_key(tool_use), row, out);
     }
 
-    /// 登记一个询问（只有权限询问进 pendingInteractions，P1）。返回它所属的工具调用。
+    /// 登记一个询问。返回它所属的工具调用。
+    /// Fork: questions and plan approvals are `userInput` interactions (projection/elicitation.rs).
     pub(super) fn ask(
         &mut self,
         interaction: &str,
         request: &InteractionRequest,
         now: u64,
     ) -> Option<String> {
-        let InteractionRequest::Permission {
-            tool_use,
-            tool,
-            input,
-            message,
-            ..
-        } = request
-        else {
-            return None;
-        };
-        let anchor = self.row_id(&tool_key(tool_use.as_str()));
-        self.pending.push(json!({
-            "interactionId": interaction,
-            "kind": "permission",
-            "anchorRowId": anchor,
-            "createdAt": now,
-            "payload": {
+        let tool_use = request.tool_use().as_str().to_owned();
+        let anchor = self.row_id(&tool_key(&tool_use));
+        let pending = match request {
+            InteractionRequest::Permission {
+                tool,
+                input,
+                message,
+                ..
+            } => json!({
+                "interactionId": interaction,
                 "kind": "permission",
-                "toolCallId": tool_use.as_str(),
-                "toolName": tool,
-                "summary": message,
-                "detail": input,
-                "freeText": true,
-                "fullAccessOption": state::full_access_option(),
-                "options": state::permission_options(),
-            },
-        }));
-        Some(tool_use.as_str().to_owned())
+                "anchorRowId": anchor,
+                "createdAt": now,
+                "payload": {
+                    "kind": "permission",
+                    "toolCallId": tool_use,
+                    "toolName": tool,
+                    "summary": message,
+                    "detail": input,
+                    "freeText": true,
+                    "fullAccessOption": state::full_access_option(),
+                    "options": state::permission_options(),
+                },
+            }),
+            InteractionRequest::Question { questions, .. } => {
+                super::elicitation::question(interaction, anchor, now, &tool_use, questions)
+            }
+            InteractionRequest::PlanApproval { plan, .. } => {
+                super::elicitation::plan_approval(interaction, anchor, now, &tool_use, plan)
+            }
+        };
+        self.pending.push(pending);
+        Some(tool_use)
     }
 }

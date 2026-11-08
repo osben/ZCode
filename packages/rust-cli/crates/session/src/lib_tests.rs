@@ -359,6 +359,9 @@ mod steer;
 #[path = "dequeue_tests.rs"]
 mod dequeue;
 
+#[path = "queue_edit_tests.rs"]
+mod queue_edit;
+
 #[path = "notice_tests.rs"]
 mod notice;
 

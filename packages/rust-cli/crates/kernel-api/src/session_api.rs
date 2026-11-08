@@ -158,6 +158,26 @@ pub enum Command {
     Dequeue {
         command: CommandId,
     },
+    /// Replace the text of an input that is still queued, keeping its place and delivery (Node `editQueueItem`).
+    /// Rejected with the same reason as [`Command::Dequeue`] when the input already started a turn or was
+    /// merged into one.
+    EditQueued {
+        command: CommandId,
+        text: String,
+    },
+    /// Move a queued input before another queued input, or to the end of the queue when `before` is `None`
+    /// (Node `reorderQueueItem`). Rejected with the same reason as [`Command::Dequeue`] when either input is
+    /// no longer queued.
+    ReorderQueued {
+        command: CommandId,
+        before: Option<CommandId>,
+    },
+    /// Pause or resume the automatic drain of the queue (Node `setAutoDrain`; `held` is `!autoDrain`). While
+    /// held, a finished turn does not start the next queued input; releasing the hold while idle starts the
+    /// head of the queue, as a turn end would. Always `Accepted`; every change emits `QueueChanged` once.
+    HoldQueue {
+        held: bool,
+    },
 }
 
 /// 带 ID 的命令；同一个 ID 重复提交时返回 [`Ack::Duplicate`]，不重复执行。

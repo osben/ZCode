@@ -686,3 +686,67 @@ fn a_cold_projection_carries_row_actions() {
         json!({"canRetry": true, "canFork": true})
     );
 }
+
+/// Fork: one compact marker row per compaction, running then success (Node `onCompactLifecycle`).
+#[test]
+fn a_compaction_is_one_marker_row_from_running_to_success() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    let started = feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Manual,
+    });
+    let appended = started
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .unwrap();
+    assert_eq!(appended["row"]["kind"], "timelineMarker");
+    assert_eq!(appended["row"]["lane"], "assistantWork");
+    assert_eq!(appended["row"]["turnId"], "turn_1");
+    assert_eq!(
+        appended["row"]["marker"],
+        json!({"type": "compact", "origin": "manual", "status": "running"})
+    );
+    let done = feed.apply(KernelEvent::CompactDone {
+        boundary: MessageId::new("msg_b"),
+    });
+    let upserted = done
+        .iter()
+        .find(|delta| delta["op"] == "row.upserted" && delta["row"]["kind"] == "timelineMarker")
+        .unwrap();
+    assert_eq!(upserted["row"]["rowId"], appended["row"]["rowId"]);
+    assert_eq!(upserted["row"]["marker"]["status"], "success");
+    let failed = feed.apply(KernelEvent::CompactFailed {
+        trigger: CompactTrigger::Auto,
+        message: "no".into(),
+    });
+    assert!(
+        failed
+            .iter()
+            .all(|delta| delta["op"] != "row.upserted" || delta["row"]["kind"] != "timelineMarker")
+    );
+}
+
+#[test]
+fn a_cold_projection_shows_stored_compactions() {
+    use rust_cli_kernel_api::message::{CompactBoundary, CompactTrigger, SystemMessage};
+    let projection = Projection::from_view(
+        &view(vec![
+            user("msg_u1", "question"),
+            Message::System(SystemMessage::CompactBoundary(CompactBoundary {
+                id: MessageId::new("msg_b"),
+                trigger: CompactTrigger::Manual,
+                pre_tokens: 1200,
+                summary: MessageId::new("msg_s"),
+                preserved: None,
+                discovered_tools: Vec::new(),
+            })),
+        ]),
+        Followup::Queue,
+        Vec::new(),
+    );
+    assert_eq!(
+        row_of(&projection, "timelineMarker", "compact_")["marker"],
+        json!({"type": "compact", "origin": "manual", "status": "success", "tokensBefore": 1200})
+    );
+}
