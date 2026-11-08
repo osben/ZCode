@@ -20,6 +20,32 @@ env:
   NODE_COMPILE_CACHE: ${{ github.workspace }}/.v8-cache
 
 jobs:
+  # Path gate for the Rust job. A workflow-level `paths` filter would skip the TS jobs too, and a
+  # job skipped by `if` still satisfies a required check, so the gate lives at job level.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      rust-cli: ${{ steps.diff.outputs.rust-cli }}
+    steps:
+      # Same merge-base as the unit-tests job; trees only, no blobs.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Diff against the merge-base
+        id: diff
+        run: |
+          set -euo pipefail
+          base="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          if git diff --name-only "$base" HEAD -- packages/rust-cli | grep -q .; then
+            echo "rust-cli=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rust-cli=false" >> "$GITHUB_OUTPUT"
+          fi
+
   checks:
     # Name kept identical to the pre-split job so existing branch-protection required
     # checks keep matching; add the new "Unit tests" job to protection as well.
@@ -196,3 +222,87 @@ jobs:
           pnpm test:node
           # Relay suites sit outside both manifests and the affected selection; run them on every PR.
           pnpm test:relay
+
+  # Vendored upstream Rust agent (specs/fork-agent-runtime-selection.md, "Source"). It has no
+  # package.json, so the pnpm jobs above do not see it. Debug profile only: a release build bumps
+  # the tracked packages/rust-cli/build-number, which must never be committed.
+  rust-cli:
+    name: Rust CLI (fmt, clippy, tests)
+    needs: changes
+    if: needs.changes.outputs.rust-cli == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        # rustup reads rust-toolchain.toml from the cwd upward, not from --manifest-path.
+        working-directory: packages/rust-cli
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      # Keeps the cached target directory small while panics still show file:line.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v5
+
+      # Installs the channel and components pinned in packages/rust-cli/rust-toolchain.toml.
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
+
+      # vendor/ugrep is C++ and links libstdc++ statically on linux-gnu (vendor/ugrep/build.rs).
+      - name: Install g++ and the static libstdc++
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends g++
+
+      - name: Restore cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            packages/rust-cli/target
+          # Per-commit key keeps every run saveable (an existing key is immutable); restore-keys
+          # fall back to the newest entry for the same toolchain and lockfile, then toolchain only.
+          key: rust-cli-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml') }}-${{ hashFiles('packages/rust-cli/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-cli-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml') }}-${{ hashFiles('packages/rust-cli/Cargo.lock') }}-
+            rust-cli-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml') }}-
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Two upstream tests are flaky (also locally, before the fork touched them):
+      # - rust-cli-fs exclusive::tests::only_one_holder_at_a_time fails about 1 run in 3;
+      # - rust-cli-platform team::platform_tests::an_account_change_during_the_query_discards_the_round
+      #   fails under full parallel load.
+      # The workspace run skips them (--skip is a substring match; the team:: prefix keeps the
+      # same-named personal:: test in the run), then each runs alone, up to 3 attempts.
+      - name: cargo test
+        run: >
+          cargo test --workspace --locked --
+          --skip exclusive::tests::only_one_holder_at_a_time
+          --skip team::platform_tests::an_account_change_during_the_query_discards_the_round
+
+      - name: cargo test (known upstream flakes, isolated with retries)
+        run: |
+          set -uo pipefail
+          run_flaky() {
+            local package="$1" test="$2" attempt
+            for attempt in 1 2 3; do
+              if cargo test --locked -p "$package" --lib -- --exact "$test"; then
+                return 0
+              fi
+              echo "::warning::$package $test failed on attempt $attempt"
+            done
+            return 1
+          }
+          run_flaky rust-cli-fs exclusive::tests::only_one_holder_at_a_time || exit 1
+          run_flaky rust-cli-platform team::platform_tests::an_account_change_during_the_query_discards_the_round || exit 1
+
+      - name: build-number untouched
+        run: git diff --exit-code -- build-number
