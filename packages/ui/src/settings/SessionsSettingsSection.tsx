@@ -32,6 +32,8 @@ import {
   useSessionManagerUniverse,
 } from "@/session-manager/useSessionManagerTasks.js";
 import type { SettingsSessionsScope } from "@/lib/settingsNavigation.js";
+import type { CreateTaskRequest } from "@/app-shell/types.js";
+import { ExternalSessionsPanel } from "@/external-sessions/index.js";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
@@ -42,6 +44,9 @@ interface SessionsSettingsSectionProps {
   /** Workspace scope carried by the settings navigation intent (project-menu entry). */
   scope?: SettingsSessionsScope;
   onClearScope: () => void;
+  /** Sessions from other tools are read from this machine; only the desktop local Host lists them. */
+  showExternalSessions?: boolean;
+  onCreateTask?: (request: CreateTaskRequest) => void;
 }
 
 export function SessionsSettingsSection({
@@ -49,6 +54,8 @@ export function SessionsSettingsSection({
   scope,
   onClearScope,
   onOpenSession,
+  showExternalSessions = false,
+  onCreateTask,
 }: SessionsSettingsSectionProps) {
   const { intl } = useZCodeIntl();
 
@@ -341,6 +348,14 @@ export function SessionsSettingsSection({
           onRenameCancel={() => setRenamingKey(null)}
         />
       )}
+      <ExternalSessionsPanel
+        enabled={showExternalSessions}
+        workspacePath={scope?.workspacePath}
+        workspaceIdentity={scope?.workspaceIdentity}
+        search={debouncedSearch}
+        onOpenSession={onOpenSession}
+        onCreateTask={onCreateTask}
+      />
       <HiddenSessionsMaintenance
         sessions={allowErase ? hiddenSessions.sessions : null}
         worktrees={allowErase ? hiddenSessions.worktrees : 0}

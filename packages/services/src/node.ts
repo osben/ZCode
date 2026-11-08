@@ -46,6 +46,7 @@ export {
 import { randomUUID } from "node:crypto";
 import {
   getAppConfigDir as getContentAppConfigDir,
+  getDataBaseDir as getExternalSessionsDataBaseDir,
   getZCodeDataRootDir as projectDataRoot,
 } from "#src/paths.js";
 import { ICloudContentService } from "#src/cloud-content/cloudContent.js";
@@ -412,6 +413,11 @@ import {
   IQuickPromptService,
   QUICK_PROMPTS_CHANGED_CHANNEL,
 } from "#src/quick-prompts/index.js";
+import {
+  createDefaultExternalSessionAdapters,
+  createExternalSessionsService,
+} from "#src/external-sessions/index.js";
+import { IExternalSessionsService } from "#src/external-sessions/contract.js";
 import type { BotProjectConnection } from "./bot-project-runtime/contract.js";
 import { createRemoteProjectService } from "#src/remote-projects/index.js";
 import { createGitService } from "./git/gitService.js";
@@ -2788,6 +2794,14 @@ export function createLocalServices(options: {
     afterChange: () =>
       broadcastService.send({ channel: QUICK_PROMPTS_CHANGED_CHANNEL, payload: {} }),
   });
+  // Sessions recorded by other AI coding CLIs (specs/external-sessions.md). Read-only scanner with an in-memory
+  // cache per Host; nothing to close. Local desktop Host only: never registered on remote attachments.
+  const externalSessionsService = createExternalSessionsService({
+    adapters: createDefaultExternalSessionAdapters(),
+    extraHomeDirs: [process.env.HOME?.trim() ?? "", getExternalSessionsDataBaseDir()].filter(
+      Boolean,
+    ),
+  });
   // One-time import of fork sidebar pins into upstream project pins (specs/ui-pins-upstream-migration.md).
   // Startup must not wait on or fail because of it: a failed run is retried on the next start.
   const forkPinLog = createServiceLogger("project-pins-migration");
@@ -2835,6 +2849,7 @@ export function createLocalServices(options: {
     .register(IProjectService, projectService)
     .register(ITaskGroupService, taskGroupService)
     .register(IQuickPromptService, quickPromptService)
+    .register(IExternalSessionsService, externalSessionsService)
     .register(IRemoteProjectService, remoteProjectService)
     .register(ICuaPermissionService, cuaPermissionService)
     .register(ICuaPipSessionService, cuaPipSessionService)

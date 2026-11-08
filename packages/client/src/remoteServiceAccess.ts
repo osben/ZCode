@@ -17,6 +17,7 @@ import {
   IProjectService,
   ITaskGroupService,
   IQuickPromptService,
+  IExternalSessionsService,
   IRemoteProjectService,
   ICuaPermissionService,
   IVoiceDictationService,
@@ -91,6 +92,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly taskGroupService: ITaskGroupService;
   /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
   readonly quickPromptService: IQuickPromptService;
+  /** Fork: external CLI sessions; the channel exists only on the desktop local Host (specs/external-sessions.md). */
+  readonly externalSessionsService: IExternalSessionsService;
   readonly projectService: IProjectService;
   readonly remoteProjectService: IRemoteProjectService;
   // cuaPermissionService is optional on IServiceAccessor (remote/bots hosts do not provide it), but the Desktop renderer
@@ -213,6 +216,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.quickPromptService = ProxyChannel.toService<IQuickPromptService>(
       channelClient.getChannel(IQuickPromptService.channelName),
+    );
+    this.externalSessionsService = ProxyChannel.toService<IExternalSessionsService>(
+      channelClient.getChannel(IExternalSessionsService.channelName),
     );
     this.projectService = ProxyChannel.toService<IProjectService>(
       channelClient.getChannel(IProjectService.channelName),

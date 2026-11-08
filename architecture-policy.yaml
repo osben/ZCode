@@ -28,6 +28,10 @@ modules:
       - packages/services/src/session/offPeakTaskRepo.ts
       - packages/services/src/session/tasksDatabase/migrations.ts
       - packages/services/src/session/tasksDatabase/prepared.ts
+      # Upstream Claude Code JSONL readers reused by the fork external-sessions module (specs/external-sessions.md).
+      - packages/services/src/session/claude-native/claudeNativeSessionHeadParser.ts
+      - packages/services/src/session/claude-native/claudeNativeSessionImportParser.ts
+      - packages/services/src/session/claude-native/sessionHistoryJsonl.ts
     owner: conversation
   - id: storage
     roots: [packages/services/src/storage]
@@ -1036,6 +1040,36 @@ modules:
     publicEntrypoints:
       - packages/ui/src/quick-prompts/index.ts
       - packages/ui/src/quick-prompts/contract.ts
+    layers:
+      contract: contract.ts
+      ui: .
+  # external-sessions: sessions recorded by other AI coding CLIs (specs/external-sessions.md)
+  - id: external-sessions
+    roots:
+      - packages/services/src/external-sessions
+    managed: true
+    requires:
+      - services
+      - shared
+      - session
+      - acp-launch-rules
+    publicEntrypoints:
+      - packages/services/src/external-sessions/index.ts
+      - packages/services/src/external-sessions/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  - id: external-sessions-ui
+    roots:
+      - packages/ui/src/external-sessions
+    managed: true
+    requires:
+      - services
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/external-sessions/index.ts
+      - packages/ui/src/external-sessions/contract.ts
     layers:
       contract: contract.ts
       ui: .

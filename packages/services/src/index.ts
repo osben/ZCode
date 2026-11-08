@@ -431,6 +431,19 @@ export type {
   QuickPromptUpdateInput,
 } from "#src/quick-prompts/contract.js";
 
+export {
+  EXTERNAL_SESSION_SOURCE_CATALOG,
+  EXTERNAL_SESSION_TRANSCRIPT_UNAVAILABLE,
+  IExternalSessionsService,
+  externalSessionSourceLabel,
+} from "#src/external-sessions/contract.js";
+export type {
+  ExternalSessionSource,
+  ExternalSessionSummary,
+  ExternalSessionTranscript,
+  ExternalSessionsListResult,
+} from "#src/external-sessions/contract.js";
+
 export { readProjectCatalog, projectSelectionId } from "#src/project-catalog/index.js";
 export type { ProjectCatalogPort, ProjectCatalogSnapshot } from "#src/project-catalog/contract.js";
 
