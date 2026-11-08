@@ -15,6 +15,8 @@ use serde_json::json;
 
 use super::*;
 
+#[path = "background_shells_tests.rs"]
+mod background_shells;
 #[path = "subagent_rows_tests.rs"]
 mod subagent_rows;
 

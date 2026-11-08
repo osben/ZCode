@@ -226,3 +226,84 @@ fn progress_on_other_tools_is_no_subagent() {
     );
     assert!(manifest(&deltas).is_none());
 }
+
+fn works(deltas: &[Value]) -> Option<&Value> {
+    deltas
+        .iter()
+        .rev()
+        .find_map(|delta| delta["patch"].get("backgroundWorks"))
+}
+
+/// SAT12: a finished foreground child resumed by SendMessage runs again in the background: its row
+/// reopens and it is a cancellable running work until the table reports it stopped.
+#[test]
+fn a_resumed_child_reopens_its_row_and_is_a_background_work() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let tool = agent_call(&mut feed, 1);
+    progress(&mut feed, &tool, 1);
+    done(&mut feed, &tool, 1, "completed");
+    feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    let resumed = feed
+        .projection
+        .subagent_table(&[entry(1, SubagentStatus::Running, false)], 9000);
+    let row = &resumed
+        .iter()
+        .find(|delta| delta["op"] == "row.upserted")
+        .unwrap()["row"];
+    assert_eq!(row["status"], "running");
+    assert_eq!(row["backgrounded"], true);
+    assert_eq!(row["workId"], "agent_1");
+    assert_eq!(row["parentToolCallId"], "toolu_1");
+    assert!(row.get("endedAt").is_none());
+    assert_eq!(
+        manifest(&resumed).unwrap()["running"][0]["status"],
+        "running"
+    );
+    let listed = works(&resumed).unwrap();
+    assert_eq!(
+        listed,
+        &json!([{
+            "workId": "agent_1",
+            "kind": "subagent",
+            "title": "child 1",
+            "status": "running",
+            "startedAt": 9000,
+            "cancellable": true,
+            "blocked": false,
+            "anchorRowId": null,
+            "childSessionId": "sess_subagent_agent_1",
+        }])
+    );
+    assert_eq!(
+        &feed.projection.snapshot(feed.seq, "e")["backgroundWorks"],
+        listed
+    );
+    let stopped = feed
+        .projection
+        .subagent_table(&[entry(1, SubagentStatus::Killed, false)], 9500);
+    assert_eq!(stopped[0]["row"]["status"], "cancelled");
+    assert_eq!(works(&stopped).unwrap(), &json!([]));
+    assert_eq!(manifest(&stopped).unwrap()["running"], json!([]));
+}
+
+/// A foreground child that the table lists as running is no background work.
+#[test]
+fn a_foreground_child_is_no_background_work() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let tool = agent_call(&mut feed, 1);
+    progress(&mut feed, &tool, 1);
+    let mut foreground = entry(1, SubagentStatus::Running, false);
+    foreground.background = false;
+    let deltas = feed.projection.subagent_table(&[foreground], 9000);
+    assert!(works(&deltas).is_none());
+    assert_eq!(
+        feed.projection.snapshot(feed.seq, "e")["backgroundWorks"],
+        json!([])
+    );
+}

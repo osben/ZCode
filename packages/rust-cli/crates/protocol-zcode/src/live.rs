@@ -32,6 +32,8 @@ struct State {
     skip_through: u64,
     /// Fork: the subagent table watcher ([`Live::watch_subagents`]).
     watcher: Option<rust_cli_base::Task<()>>,
+    /// Fork: an event that can change the background ledger was projected; the next flush re-reads it.
+    shells_dirty: bool,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -78,6 +80,7 @@ impl Live {
                 preparation: None,
                 skip_through: view.last_seq,
                 watcher: None,
+                shells_dirty: false,
             }),
             context,
             topics,
@@ -283,6 +286,33 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork: re-read the kernel's background ledger and publish the running shell commands as
+    /// `backgroundWorks` (projection/background_shells.rs). In the session's pump task.
+    pub async fn shells_changed(&self) {
+        let outgoing = {
+            let deltas = self.shell_deltas().await;
+            if deltas.is_empty() {
+                return;
+            }
+            let mut state = self.state();
+            state.log.record(deltas);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    async fn shell_deltas(&self) -> Vec<Value> {
+        let entries = match self.handle.background_tasks().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(event = "protocol.background.read_failed", error = %error, "reading the background tasks failed");
+                return Vec::new();
+            }
+        };
+        let now = self.context.now();
+        self.state().projection.shell_table(&entries, now)
+    }
+
     /// Fork: the watcher of the kernel's subagent table; it ends with this session.
     pub fn watch_subagents(&self, watcher: rust_cli_base::Task<()>) {
         if let Some(previous) = self.state().watcher.replace(watcher) {
@@ -377,6 +407,9 @@ impl Live {
             self.start(&subscription, Purpose::Recovery).await;
         }
         self.publish_summary().await;
+        // Fork: the rebuilt projection starts without background works; re-read both tables.
+        self.subagents_changed().await;
+        self.shells_changed().await;
         self.rebuilds.send_modify(|count| *count += 1);
     }
 
@@ -461,11 +494,26 @@ impl SessionSink for Live {
         }
         let now = self.context.now();
         let mut state = self.state();
+        // Fork: a Bash result (a command went to the background), a background notification (one ended) or a
+        // turn end can change the background ledger.
+        if matches!(
+            event.event,
+            KernelEvent::ToolDone { .. }
+                | KernelEvent::BackgroundWork { .. }
+                | KernelEvent::TurnFinished { .. }
+        ) {
+            state.shells_dirty = true;
+        }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
     }
 
     async fn flush(&self) {
+        let refresh = std::mem::take(&mut self.state().shells_dirty);
+        if refresh {
+            let deltas = self.shell_deltas().await;
+            self.state().log.record(deltas);
+        }
         let outgoing = {
             let mut state = self.state();
             self.collect(&mut state)

@@ -8,7 +8,7 @@ use rust_cli_kernel_api::session_api::{
 };
 use rust_cli_protocol_core::sessions::Bridged;
 
-use super::{file_summary, queue, row_commands, session_config, session_delete};
+use super::{background_work, file_summary, queue, row_commands, session_config, session_delete};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::projection::state::Phase;
@@ -39,6 +39,7 @@ pub(crate) async fn decide(
         "sendQueuedNow" => queue::send_queued_now(live, envelope, revision).await,
         "pauseGoal" => goal(live, envelope, revision, Command::PauseGoal).await,
         "resumeGoal" => goal(live, envelope, revision, Command::ResumeGoal).await,
+        "cancelBackgroundWork" => background_work::cancel(live, envelope, revision).await,
         _ => return None,
     })
 }

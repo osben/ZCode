@@ -72,6 +72,10 @@ pub(super) struct Subagents {
     /// already ended.
     ended: HashMap<String, &'static str>,
     pub(super) manifest: Manifest,
+    /// The snapshot `backgroundWorks`: the running background children of the live table (Node
+    /// `onBackgroundTaskLifecycle` / `resumedSubagentBackgroundWorkDelta` for `kind: "subagent"`). An ended
+    /// child leaves the list; the UI reads only running works.
+    pub(super) works: Vec<Value>,
 }
 
 impl Projection {
@@ -209,6 +213,11 @@ impl Projection {
     /// track which children wait on the user. Returns the deltas, manifest patch included.
     pub fn subagent_table(&mut self, entries: &[SubagentEntry], now: u64) -> Vec<Value> {
         let mut out = Vec::new();
+        for entry in entries {
+            if entry.status == SubagentStatus::Running && entry.background {
+                self.reopen_subagent(entry, now, &mut out);
+            }
+        }
         self.subagents.waiting = entries
             .iter()
             .filter(|entry| entry.status == SubagentStatus::Running && entry.waiting)
@@ -240,10 +249,78 @@ impl Projection {
                 &mut out,
             );
         }
-        if let Some(patch) = self.materialize_subagents() {
-            out.push(json!({"op": "state.updated", "patch": {"subagents": patch}}));
+        let mut patch = Map::new();
+        if let Some(manifest) = self.materialize_subagents() {
+            patch.insert("subagents".into(), manifest);
+        }
+        if self.background_works(entries, now) {
+            patch.insert("backgroundWorks".into(), self.background_works_value());
+        }
+        if !patch.is_empty() {
+            out.push(json!({"op": "state.updated", "patch": patch}));
         }
         out
+    }
+
+    /// A finished child that runs again in the background (SendMessage resume, a parked agent's wake): its
+    /// row runs again, `backgrounded` (Node `onSubagentSpawned` on an existing row; the anchor stays).
+    fn reopen_subagent(&mut self, entry: &SubagentEntry, now: u64, out: &mut Vec<Value>) {
+        let agent = entry.agent.as_str();
+        if !self.subagents.known.contains(agent) {
+            return;
+        }
+        self.subagents.ended.remove(agent);
+        let description = entry.description.trim();
+        self.upsert(
+            &subagent_key(agent),
+            |row| {
+                if field(row, "status") == "running" {
+                    return;
+                }
+                row.insert("status".into(), json!("running"));
+                row.insert("backgrounded".into(), json!(true));
+                row.insert("workId".into(), json!(agent));
+                row.insert("childSessionId".into(), json!(entry.child.as_str()));
+                if !description.is_empty() {
+                    row.insert("summaryText".into(), json!(description));
+                }
+                row.insert("startedAt".into(), json!(now));
+                row.remove("endedAt");
+            },
+            out,
+        );
+    }
+
+    /// The running background children as `backgroundWorks` items; false when the list did not change.
+    fn background_works(&mut self, entries: &[SubagentEntry], now: u64) -> bool {
+        let previous = &self.subagents.works;
+        let works: Vec<Value> = entries
+            .iter()
+            .filter(|entry| entry.status == SubagentStatus::Running && entry.background)
+            .map(|entry| {
+                let agent = entry.agent.as_str();
+                let existing = previous.iter().find(|work| work["workId"] == agent);
+                let description = entry.description.trim();
+                json!({
+                    "workId": agent,
+                    "kind": "subagent",
+                    "title": if description.is_empty() { agent } else { description },
+                    "status": "running",
+                    "startedAt": existing
+                        .and_then(|work| work["startedAt"].as_u64())
+                        .unwrap_or(now),
+                    "cancellable": true,
+                    "blocked": entry.waiting,
+                    "anchorRowId": Value::Null,
+                    "childSessionId": entry.child.as_str(),
+                })
+            })
+            .collect();
+        if works == *previous {
+            return false;
+        }
+        self.subagents.works = works;
+        true
     }
 
     /// Node `materializeSubagentProjection`: the manifest from the subagent rows, published only

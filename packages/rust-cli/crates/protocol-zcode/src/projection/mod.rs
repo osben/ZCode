@@ -4,6 +4,7 @@
 //! 行：turnHeader（回合）、userInput（真人输入）、assistantText、reasoning、toolCall；其余事件只改状态或忽略（P1）。
 
 mod actions;
+mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
@@ -124,6 +125,7 @@ pub struct Projection {
     turn_file_changes: HashMap<String, TurnFileChanges>,
     /// Fork: subagent rows and the snapshot `subagents` manifest (projection/subagent_rows.rs).
     subagents: subagent_rows::Subagents,
+    shells: background_shells::Shells,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -237,6 +239,7 @@ impl Projection {
             pause_reason: None,
             turn_file_changes: HashMap::new(),
             subagents: subagent_rows::Subagents::default(),
+            shells: background_shells::Shells::default(),
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -530,6 +533,7 @@ impl Projection {
             }
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
+                self.remember_shell_title(tool_use.as_str(), &text);
                 // Fork: Node's `buildToolOutput` carries the result display on the row output (all
                 // kinds but `node_repl_images`; the App drops kinds it does not know), so the desktop
                 // renders Bash's `bash_output` window (specs/fork-rust-agent-parity.md).
@@ -1071,7 +1075,7 @@ impl Projection {
             "queue": self.queue_state(),
             "pendingInteractions": self.pending,
             "pendingCommands": [],
-            "backgroundWorks": [],
+            "backgroundWorks": self.background_works_value(),
             "subagents": self.subagents.manifest.to_value(),
             "goal": self.goal_json(),
             "plan": null,
