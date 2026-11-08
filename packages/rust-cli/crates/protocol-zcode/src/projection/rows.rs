@@ -102,7 +102,9 @@ impl Projection {
             }
             // Fork: a notification that opened the turn titles its header (background_result.rs).
             Message::User(user) if is_task_notification(&user.origin) => {
-                self.background_result(&text_of(&user.content), out);
+                let text = text_of(&user.content);
+                self.remember_notified(&text);
+                self.background_result(&text, out);
             }
             Message::Assistant(assistant) => {
                 let Some(turn) = self.turn.clone() else {

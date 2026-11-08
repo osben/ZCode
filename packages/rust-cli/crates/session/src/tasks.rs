@@ -267,6 +267,91 @@ pub(crate) async fn shell_detail(
     })
 }
 
+/// Fork: a background Bash command's output window (Node `readBackgroundBashOutput`). The ledger gives the
+/// status while it lists the command; after its notice is acknowledged the output file of this session is
+/// still read, with no status. A Monitor, or a task with no ledger entry and no file, is None. Runs in the
+/// caller's task, not on the actor.
+pub(crate) async fn bash_output(
+    deps: &SessionDeps,
+    workspace: &WorkspaceRef,
+    session: &SessionId,
+    task: &str,
+) -> Option<rust_cli_kernel_api::panels::BashOutputRead> {
+    use rust_cli_kernel_api::panels::{BASH_OUTPUT_WINDOW_BYTES, BashOutputRead};
+    let key = BackgroundTask {
+        session: session.clone(),
+        task: rust_cli_kernel_api::ids::ShellTaskId::new(task),
+        notify_stop: false,
+    };
+    let places = places(deps, workspace);
+    let mut found = None;
+    for place in &places {
+        let info = place
+            .machine
+            .background()
+            .background_command(key.clone())
+            .await
+            .ok()
+            .flatten();
+        if let Some(info) = info {
+            found = Some((place, Some(info)));
+            break;
+        }
+    }
+    let (place, info) = found.or_else(|| places.first().map(|place| (place, None)))?;
+    if info
+        .as_ref()
+        .is_some_and(|info| info.kind != env_shell::BackgroundKind::Bash)
+    {
+        return None;
+    }
+    let dir = place
+        .machine
+        .shell()
+        .shell_state(&place.workspace, session)
+        .await
+        .ok()
+        .and_then(|state| state.outputs)?;
+    let path = output_path(&dir, task);
+    let request = ReadText {
+        path: path.clone(),
+        start_line: 0,
+        max_lines: None,
+        max_bytes: Some(OUTPUT_MAX_BYTES),
+    };
+    let read = place
+        .machine
+        .files()
+        .read_text(&place.workspace, request)
+        .await;
+    let content = match read {
+        Ok(TextRead::Text(slice)) => slice.content,
+        // An acknowledged command with no file is not this session's command.
+        Err(rust_cli_kernel_api::env::EnvError::NotFound { .. }) if info.is_none() => return None,
+        Err(rust_cli_kernel_api::env::EnvError::NotFound { .. }) => {
+            return Some(BashOutputRead::ReadFailed {
+                code: Some("ENOENT".to_owned()),
+            });
+        }
+        Ok(TextRead::TooLarge { .. }) => {
+            return Some(BashOutputRead::ReadFailed {
+                code: Some("EFBIG".to_owned()),
+            });
+        }
+        Ok(TextRead::Directory) | Err(_) => return Some(BashOutputRead::ReadFailed { code: None }),
+    };
+    let mut start = content.len().saturating_sub(BASH_OUTPUT_WINDOW_BYTES);
+    while !content.is_char_boundary(start) {
+        start += 1;
+    }
+    Some(BashOutputRead::Window {
+        status: info.map(|info| info.status),
+        truncated: start > 0,
+        text: content[start..].to_owned(),
+        path,
+    })
+}
+
 /// 输出文件的末尾（最多 [`SHELL_DETAIL_LINES`] 行）与总行数；还没有文件时是空的，太大时不预览。
 async fn output_preview(place: &Place, path: &rust_cli_kernel_api::env::EnvPath) -> ShellOutput {
     let request = ReadText {

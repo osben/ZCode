@@ -32,12 +32,16 @@ pub(crate) async fn dispatch(
         // Fork: the App's usage surfaces.
         "v4/usage/stats" => super::usage::usage_stats(server, &params).await,
         "v4/conversation/usage" => super::usage::conversation_usage(server, &params).await,
+        // Fork: the background Bash detail pane (Node `readBackgroundBashOutput`).
+        "v4/conversation/backgroundBashOutput" => {
+            super::background_work::bash_output(server, &params).await
+        }
         _ => return None,
     };
     Some(result.map(Reply::new))
 }
 
-fn session_id(params: &Value) -> Result<SessionId, RpcError> {
+pub(super) fn session_id(params: &Value) -> Result<SessionId, RpcError> {
     params["sessionId"]
         .as_str()
         .filter(|id| !id.is_empty())

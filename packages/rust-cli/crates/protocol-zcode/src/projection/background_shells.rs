@@ -23,6 +23,9 @@ pub(super) struct Shells {
     pub(super) works: Vec<Value>,
     /// The Bash call's `description` of each backgrounded command (Node's work title).
     titles: HashMap<String, String>,
+    /// Fork: the terminal status each background command's notification reported (`completed`, `failed`,
+    /// `killed`): the detail pane still reads its output after the ledger forgets it.
+    ended: HashMap<String, String>,
 }
 
 impl Projection {
@@ -54,6 +57,18 @@ impl Projection {
                 .titles
                 .insert(task.to_owned(), description.to_owned());
         }
+    }
+
+    /// Fork: remember the terminal statuses a notification message reports.
+    pub(super) fn remember_notified(&mut self, text: &str) {
+        self.shells
+            .ended
+            .extend(super::background_result::notified_statuses(text));
+    }
+
+    /// Fork: the terminal status the notification of background command `task` reported.
+    pub fn notified_status(&self, task: &str) -> Option<&str> {
+        self.shells.ended.get(task).map(String::as_str)
     }
 
     /// The snapshot `backgroundWorks`: shell commands, then background subagents.

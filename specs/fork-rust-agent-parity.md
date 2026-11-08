@@ -101,9 +101,24 @@ SendMessage resume and background works follow Node under `node_desktop` too:
 - The resume tool result reads Node's `resumed it in the background with your message. You'll be notified when it finishes.` (core `subagent/runner.ts`). zcode-rs keeps no per-agent output file, so Node's trailing `Output: <file>` is absent.
 - The resumed run belongs to the SendMessage call: its completion notification carries that call's `<tool-use-id>`.
 - The snapshot `backgroundWorks` lists the running background children of the kernel subagent table (`kind: "subagent"`, `workId` = agentId, `cancellable: true`, `blocked` = waiting, `childSessionId`). An ended child leaves the list (the UI reads only running works).
-- Running background shell commands and monitors are `kind: "bash"` works (`workId` = the shell task id, the Bash call's `description` as title, else the command line). The kernel background ledger (`SessionHandle::background_tasks`) owns them; the adapter re-reads it after a tool result, a background notification, a turn end, a history rebuild and a `cancelBackgroundWork` (a stopped command sends no notification).
+- Running background shell commands and monitors are `kind: "bash"` works (`workId` = the shell task id, the Bash call's `description` as title, else the command line). The kernel background ledger (`SessionHandle::background_tasks`) owns them; the adapter re-reads it after a tool result, a background notification, a turn end, a history rebuild and a `cancelBackgroundWork`.
 - A finished child that runs again in the background reopens its `subagent` row (`running`, `backgrounded`, `workId`; the `parentToolCallId` anchor is kept), like Node `onSubagentSpawned` on an existing row.
 - `cancelBackgroundWork` is the user's `Command::StopTask` (the TUI `/tasks` path). The stop notification reads `was stopped by user` (Node `stoppedBy: "user"`); a model TaskStop keeps `was stopped by ZCode`. A refusal is Node's `fault.command.backgroundWorkCancelRejected.not_running` / `.not_found`.
+
+Background results, stops and queue promotion follow Node under `node_desktop`:
+
+- A turn woken by a background `<task-notification>` (no command, no user row) carries Node's turn header `origin: "backgroundResult"` with `originMeta {backgroundSource: "subagent" | "bash", workId, title}` (bootstrap `product-projection.ts`; UI `ConversationTurnGroup.tsx` `resolveBackgroundResultTitle`). The title is the quoted name in the notification summary (`Agent "..."`, `Background command "..."`). Cold reads rebuild the same header (`projection/background_result.rs`, `projection/cold.rs`).
+- Stopping a background command (TaskStop or `cancelBackgroundWork`) still records its terminal notice, so the parent wakes with `<status>killed</status>` like Node (`BackgroundTask::notify_stop`, read by env-local `stop`). The TUI keeps the silent stop of shell-permissions.md §2.6.
+- The model's TaskStop of a running agent returns after the agent has stopped (`Live::left_running`), so its `was stopped by ZCode` notification joins the same model request as the tool result (Node).
+- A Bash call that hits its timeout and cannot move to the background reads Node's `<error>Command was aborted before completion</error>` (`tools` `bash_output::aborted`). A command moved to the background is titled by its description (`moved to the background (ID: ...)`).
+- `sendQueuedNow` reserves the queue item before it promotes it; a second promotion of the same item is refused with Node's `guard.queueItemReserved` and does not interrupt the first (`protocol-zcode` `reservations.rs`).
+- A manual compact marker carries `sourceCommandId` (the compact command id), which the UI uses to pair the started and finished markers.
+- `compact` freezes the App's `modelSelection` on the compaction, so a queued compaction summarizes with the model chosen when it was submitted, not with a later menu choice (Node `SessionPane` pins the Composer selection).
+- `forkAssistant` is accepted while a turn runs when its target is a completed turn, not the running one (`SessionDeps::fork_while_running`; Node's stable-target fork). The TUI keeps refusing a fork while busy.
+- A cold-opened topic (a child session opened from the side tab) numbers its live patches after the view's `last_seq` (`TopicLog::with_base`), so the UI does not drop them as already seen.
+- `v4/conversation/backgroundBashOutput` returns the tail (8 KiB) of a background command's output file with its status, `read_failed` with `ENOENT` / `EFBIG`, or `unavailable` (Node `readBackgroundBashOutput`). The status of a finished command comes from the ledger, else from its `<task-notification>`; Rust `killed` reads Node `cancelled`.
+
+`background-notification-batch` is Node-only for its context-usage checks: they read the Node agent's `context_usage_snapshot` log lines from `ZCODE_LOG_DIR`, which the Rust agent does not write.
 
 `stop-tool-results` is Node-only and not in the gate: its fixture drives Node internals (the Node agent's tool barriers and Bash hook, a write lock on the Node tool result table, Node agent logs), which have no counterpart in the Rust agent.
 

@@ -78,7 +78,7 @@ impl Live {
             handle,
             state: Mutex::new(State {
                 projection: Projection::from_view(view, followup, levels).with_catalog(catalog),
-                log: TopicLog::new(epoch),
+                log: TopicLog::with_base(epoch, view.last_seq),
                 summary: None,
                 preparation: None,
                 skip_through: view.last_seq,
@@ -200,6 +200,14 @@ impl Live {
     }
 
     /// Fork: the `v4/conversation/plans` catalog with the topic position it was read at.
+    /// Fork: the terminal status the notification of background command `task` reported.
+    pub fn notified_status(&self, task: &str) -> Option<String> {
+        self.state()
+            .projection
+            .notified_status(task)
+            .map(str::to_owned)
+    }
+
     pub fn plans(&self) -> Value {
         let state = self.state();
         json!({"plans": state.projection.plans(), "atSeq": state.log.seq(),

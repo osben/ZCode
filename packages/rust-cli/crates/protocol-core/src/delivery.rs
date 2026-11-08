@@ -38,9 +38,16 @@ pub struct TopicLog<D> {
 
 impl<D: Clone> TopicLog<D> {
     pub fn new(epoch: impl Into<String>) -> Self {
+        Self::with_base(epoch, 0)
+    }
+
+    /// Fork: a log whose sequence starts at `base` (the kernel's last event sequence of a session opened with
+    /// history), like Node's topic sequence, which is the durable event sequence: the first snapshot of a session
+    /// that already has events is not `seq: 0`.
+    pub fn with_base(epoch: impl Into<String>, base: u64) -> Self {
         Self {
             epoch: epoch.into(),
-            seq: 0,
+            seq: base,
             pending: Vec::new(),
             subscribers: Vec::new(),
         }

@@ -146,6 +146,8 @@ pub struct LocalKernel {
     one_input_per_turn: bool,
     /// Fork: goals run like the Node desktop agent ([`Extensions::node_desktop`]).
     desktop_goals: bool,
+    /// Fork: `/fork` while a turn runs, like the Node desktop agent ([`Extensions::node_desktop`]).
+    fork_while_running: bool,
 }
 
 impl LocalKernel {
@@ -310,6 +312,7 @@ impl LocalKernel {
             detached,
             one_input_per_turn: extensions.node_desktop,
             desktop_goals: extensions.node_desktop,
+            fork_while_running: extensions.node_desktop,
         }
     }
 

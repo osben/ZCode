@@ -27,6 +27,18 @@ fn quoted_title<'a>(summary: &'a str, prefix: &str) -> Option<&'a str> {
     Some(&rest[..end])
 }
 
+/// Every `(task id, status)` of the `<task-notification>` blocks in a notification message.
+pub(super) fn notified_statuses(text: &str) -> Vec<(String, String)> {
+    text.split("<task-notification>")
+        .skip(1)
+        .filter_map(|block| {
+            let task = between(block, "<task-id>", "</task-id>")?.trim();
+            let status = between(block, "<status>", "</status>")?.trim();
+            (!task.is_empty() && !status.is_empty()).then(|| (task.to_owned(), status.to_owned()))
+        })
+        .collect()
+}
+
 /// `originMeta` of the first `<task-notification>` in a notification message; `None` for a
 /// notification the UI does not title (a Monitor, a workflow).
 pub(super) fn origin_meta(text: &str) -> Option<Value> {

@@ -99,6 +99,7 @@ pub(crate) async fn session_on_machines(
             detached: None,
             one_input_per_turn: false,
             desktop_goals: false,
+            fork_while_running: false,
         },
         SessionState {
             commands: Default::default(),

@@ -159,6 +159,13 @@ pub(super) async fn switch_mode(live: &Bridged<Live>, envelope: &Envelope, revis
 /// Node `compact`: idle it starts at once; behind a running turn it is a queued maintenance item
 /// (`kind: compact`, not a user row) that drains in order. A compaction that runs or is queued
 /// already refuses another with `compactOperationLock`.
+/// The `compact` payload (`SessionPane` `{ modelSelection }`).
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompactPayload {
+    model_selection: Option<serde_json::Value>,
+}
+
 pub(super) async fn compact(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -184,12 +191,32 @@ pub(super) async fn compact(
             attachments: Vec::new(),
         },
     );
+    // The App pins the Composer selection on the compaction (`payload.modelSelection`); a queued
+    // compaction keeps it frozen, so a later menu change does not move the summary's model.
+    let pinned: CompactPayload = if envelope.payload.is_null() {
+        CompactPayload::default()
+    } else {
+        match payload(envelope) {
+            Ok(pinned) => pinned,
+            Err(ack) => return *ack,
+        }
+    };
+    let execution = match crate::commands::selection(pinned.model_selection.as_ref()) {
+        Some(chosen) => {
+            let (_, mode, plan) = live.sink.current_config();
+            Some(rust_cli_kernel_api::session_api::InputExecution {
+                state: rust_cli_kernel_api::permission::ExecutionState { mode, plan },
+                selection: Some(chosen),
+            })
+        }
+        None => None,
+    };
     let command = Command::SubmitWith {
         kind: QueuedKind::Compact,
         text: "/compact".to_owned(),
         content: Vec::new(),
         delivery: Delivery::Queue,
-        execution: None,
+        execution,
         behind_held: true,
     };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;

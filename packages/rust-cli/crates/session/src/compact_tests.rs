@@ -185,6 +185,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             detached: None,
             one_input_per_turn: false,
             desktop_goals: false,
+            fork_while_running: false,
         },
         SessionState {
             commands: Default::default(),

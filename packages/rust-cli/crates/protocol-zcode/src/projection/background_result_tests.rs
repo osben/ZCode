@@ -108,3 +108,16 @@ fn a_cold_notification_after_a_finished_turn_opens_its_own_turn() {
     assert_eq!(headers[1]["originMeta"]["title"], "Print background marker");
     assert_eq!(headers[1]["state"], "completedSuccess");
 }
+
+#[test]
+fn every_notified_status_is_read() {
+    let text = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>\n\
+                <task-notification>\n<task-id>agent_2</task-id>\n<status>killed</status>\n</task-notification>";
+    assert_eq!(
+        super::super::background_result::notified_statuses(text),
+        [
+            ("b1".to_owned(), "completed".to_owned()),
+            ("agent_2".to_owned(), "killed".to_owned())
+        ]
+    );
+}

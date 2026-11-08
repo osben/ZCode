@@ -147,6 +147,10 @@ pub struct SessionDeps {
     /// Fork: goals run like the Node desktop agent: Node's continuation prompt, pause and resume,
     /// and `KernelEvent::GoalChanged` for the App's goal panel. The app-server turns it on.
     pub desktop_goals: bool,
+    /// Fork: `/fork` (`forkAssistant`) from a completed turn is accepted while a later turn runs, like the Node
+    /// desktop agent; the copy stops at that turn, so the running turn and the queue stay in the parent. The
+    /// app-server turns it on.
+    pub fork_while_running: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。
@@ -483,6 +487,14 @@ impl SessionHandle for Session {
     ) -> Result<Option<rust_cli_kernel_api::panels::ShellDetail>, KernelError> {
         let meta = self.ask(|reply| Request::Meta { reply }).await?;
         Ok(tasks::shell_detail(&self.deps, &meta.workspace, &meta.id, task).await)
+    }
+
+    async fn background_bash_output(
+        &self,
+        task: &str,
+    ) -> Result<Option<rust_cli_kernel_api::panels::BashOutputRead>, KernelError> {
+        let meta = self.ask(|reply| Request::Meta { reply }).await?;
+        Ok(tasks::bash_output(&self.deps, &meta.workspace, &meta.id, task).await)
     }
 }
 

@@ -192,6 +192,13 @@ pub trait HandleOverride: Send + Sync {
     ) -> Result<Option<crate::panels::ShellDetail>, KernelError> {
         Err(unsupported("shell detail"))
     }
+
+    async fn background_bash_output(
+        &self,
+        _task: &str,
+    ) -> Result<Option<crate::panels::BashOutputRead>, KernelError> {
+        Err(unsupported("background bash output"))
+    }
 }
 
 #[async_trait]
@@ -267,6 +274,13 @@ impl<T: HandleOverride> SessionHandle for T {
         task: &str,
     ) -> Result<Option<crate::panels::ShellDetail>, KernelError> {
         HandleOverride::shell_detail(self, task).await
+    }
+
+    async fn background_bash_output(
+        &self,
+        task: &str,
+    ) -> Result<Option<crate::panels::BashOutputRead>, KernelError> {
+        HandleOverride::background_bash_output(self, task).await
     }
 }
 

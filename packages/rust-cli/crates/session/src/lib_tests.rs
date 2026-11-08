@@ -274,6 +274,7 @@ async fn asking_session_with(
             detached: None,
             one_input_per_turn: false,
             desktop_goals: false,
+            fork_while_running: false,
         },
         SessionState {
             commands: Default::default(),

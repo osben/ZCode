@@ -34,15 +34,29 @@ pub(crate) fn through(messages: &[Message], input: &MessageId) -> Option<Message
     Some(answer.unwrap_or_else(|| input.clone()))
 }
 
+/// `input` starts the last turn of the history (no selectable input after it).
+fn is_last_turn(messages: &[Message], input: &MessageId) -> bool {
+    messages
+        .iter()
+        .rev()
+        .find(|message| selectable(message).is_some())
+        .is_some_and(|message| message.id() == input)
+}
+
 impl Actor {
     /// `ForkFromInput`：空闲时按内存里的活动历史算出终点，交给存储一次写完新会话（§6.5.2）。
     pub(crate) async fn fork_from_input(&self, input: MessageId) -> Ack {
-        if self.busy() {
+        if self.busy() && !self.deps.fork_while_running {
             return rejected("a turn is running; fork after it finishes");
         }
         let Some(through) = through(&self.messages, &input) else {
             return rejected(format!("{input} is not a message to fork from"));
         };
+        // Fork (node_desktop): only a completed turn is a stable target while a turn runs; the running turn
+        // is the last one in the active history, so its input has no later selectable input.
+        if self.busy() && is_last_turn(&self.messages, &input) {
+            return rejected("a turn is running; fork after it finishes");
+        }
         let child = self.deps.ids.session();
         let fork = SessionFork {
             parent: self.meta.id.clone(),

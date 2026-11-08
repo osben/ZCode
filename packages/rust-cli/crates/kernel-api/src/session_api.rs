@@ -512,6 +512,13 @@ pub trait SessionHandle: Send + Sync {
         &self,
         task: &str,
     ) -> Result<Option<crate::panels::ShellDetail>, KernelError>;
+
+    /// Fork: a background Bash command's output window (the desktop detail pane); None when this session has
+    /// no such Bash command or output file.
+    async fn background_bash_output(
+        &self,
+        task: &str,
+    ) -> Result<Option<crate::panels::BashOutputRead>, KernelError>;
 }
 
 #[async_trait]
