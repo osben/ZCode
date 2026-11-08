@@ -1908,6 +1908,7 @@ version = "0.1.0"
 dependencies = [
  "rust-cli-base",
  "rust-cli-kernel-api",
+ "rust-cli-prompts",
  "serde_json",
 ]
 
@@ -1923,6 +1924,7 @@ dependencies = [
  "rust-cli-kernel-api",
  "rust-cli-node-records",
  "rust-cli-paths",
+ "rust-cli-prompts",
  "serde_json",
  "sha2",
  "tempfile",

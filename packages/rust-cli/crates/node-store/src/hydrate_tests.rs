@@ -85,7 +85,11 @@ fn node_text(entry: &Value) -> Option<Value> {
     }
     if role == "user" && entry["metadata"]["source"] == "legacy_synthetic" && !summary_like(message)
     {
-        return None;
+        // Fork: Node's background notification is read back behind the notification preamble.
+        let text = message["content"].as_str()?;
+        return text.contains("<task-notification>").then(
+            || json!({"role": "user", "text": rust_cli_prompts::agents::notification_wrap(text)}),
+        );
     }
     let (texts, reasoning): (Vec<&str>, Vec<Value>) = match &message["content"] {
         Value::String(text) => (vec![text.as_str()], vec![]),

@@ -70,6 +70,35 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             data: Value::Null,
         }));
     }
+    // Fork: Node's background notification (`persistBackgroundTaskNotificationBatch`) has no
+    // `rustCli` marker and stores the bare `<task-notification>` envelopes; the model saw each one
+    // behind the notification preamble, so it is read back as the kernel's notification message.
+    // Both presentations (`task_notification`, mid-turn `task_notification_steer`) are read the
+    // same way, like Node's own cold read (`getConversationModelOnlyTurnTriggerSource` keys on the
+    // `background_task` source); the projection places a mid-turn one in its turn.
+    if marker.is_null() && record.info["source"] == BACKGROUND_TASK_SOURCE {
+        let content = parts
+            .iter()
+            .map(|part| {
+                let body = text(part);
+                ContentBlock::Text {
+                    text: if body.contains("<system-reminder>") {
+                        body
+                    } else {
+                        // Node's stored envelope ends with a newline the wire text does not have.
+                        rust_cli_prompts::agents::notification_wrap(body.trim_end())
+                    },
+                }
+            })
+            .collect();
+        return Some(Message::User(UserMessage {
+            id,
+            content,
+            origin: UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned(),
+            },
+        }));
+    }
     let message = match marker["message"].as_str()? {
         ATTACHMENT => Message::Attachment(AttachmentMessage {
             id,
@@ -143,3 +172,7 @@ fn with_blocks(mut data: Value, blocks: Vec<ContentBlock>) -> Value {
     }
     data
 }
+
+#[cfg(test)]
+#[path = "notices_tests.rs"]
+mod tests;

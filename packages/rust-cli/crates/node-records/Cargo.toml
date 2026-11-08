@@ -18,4 +18,6 @@ doctest = false
 rust-cli-base.workspace = true
 # 内核的消息、事实与 ID 类型（记录 ↔ 内核形状的换算）。
 rust-cli-kernel-api.workspace = true
+# Fork: the notification preamble around a Node-written background notification.
+rust-cli-prompts.workspace = true
 serde_json.workspace = true

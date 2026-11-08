@@ -192,6 +192,20 @@ fn adjacent_user_messages_join_with_a_newline_and_keep_tool_results_first() {
     assert_eq!(texts(&api[0]), ["a\n", "b"]);
 }
 
+/// Fork: the blocks of one notification batch message are separated like adjacent messages.
+#[test]
+fn a_notification_batch_message_separates_its_blocks_with_a_newline() {
+    let batch = Message::User(UserMessage {
+        id: MessageId::new("n1"),
+        content: vec![text("a"), text("b")],
+        origin: UserOrigin::Meta {
+            source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned(),
+        },
+    });
+    let api = normalize(&[batch], &ON);
+    assert_eq!(texts(&api[0]), ["a\n", "b"]);
+}
+
 #[test]
 fn the_turn_effort_rides_on_the_system_turn_after_the_first_prompt() {
     let options = NormalizeOptions {
