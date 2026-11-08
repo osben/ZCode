@@ -256,8 +256,9 @@ jobs:
           cargo --version
 
       # vendor/ugrep is C++ and links libstdc++ statically on linux-gnu (vendor/ugrep/build.rs).
-      - name: Install g++ and the static libstdc++
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends g++
+      # env-local's shell tests run commands under /bin/zsh as well as /bin/bash.
+      - name: Install g++, the static libstdc++ and zsh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends g++ zsh
 
       - name: Restore cargo registry and target
         uses: actions/cache@v4
@@ -288,7 +289,7 @@ jobs:
       # same-named personal:: test in the run), then each runs alone, up to 3 attempts.
       - name: cargo test
         run: >
-          cargo test --workspace --locked --
+          cargo test --workspace --locked --no-fail-fast --
           --skip exclusive::tests::only_one_holder_at_a_time
           --skip team::platform_tests::an_account_change_during_the_query_discards_the_round
 
