@@ -183,6 +183,41 @@ async fn read_optional_distinguishes_missing_files() {
 }
 
 #[tokio::test]
+async fn bounded_reads_refuse_directories_and_oversized_files_without_reading_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    assert_eq!(
+        read_regular_bounded(&path, 4).await.unwrap(),
+        BoundedRead::Missing
+    );
+    // A directory is not a regular file, whatever its size.
+    assert_eq!(
+        read_regular_bounded(dir.path(), 4).await.unwrap(),
+        BoundedRead::NotRegular
+    );
+    std::fs::write(&path, b"abcde").unwrap();
+    // Over the cap by one byte: rejected from the metadata, before any read.
+    assert_eq!(
+        read_regular_bounded(&path, 4).await.unwrap(),
+        BoundedRead::TooLarge
+    );
+    assert_eq!(
+        read_regular_bounded(&path, 5).await.unwrap(),
+        BoundedRead::Bytes(b"abcde".to_vec())
+    );
+    // A sparse file far above the cap is refused without allocating its size.
+    let sparse = dir.path().join("sparse.bin");
+    std::fs::File::create(&sparse)
+        .unwrap()
+        .set_len(1 << 40)
+        .unwrap();
+    assert_eq!(
+        read_regular_bounded(&sparse, 1 << 20).await.unwrap(),
+        BoundedRead::TooLarge
+    );
+}
+
+#[tokio::test]
 async fn appends_create_the_parents_and_keep_the_order() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tui/history.jsonl");

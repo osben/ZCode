@@ -98,6 +98,45 @@ pub async fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
     }
 }
 
+/// What [`read_regular_bounded`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BoundedRead {
+    Missing,
+    /// A directory, FIFO, device or socket: reading it could block or never end.
+    NotRegular,
+    TooLarge,
+    Bytes(Vec<u8>),
+}
+
+/// Reads a regular file of at most `max` bytes. Metadata refuses a non-regular or oversized file before anything is
+/// read; the read itself is capped with `take(max + 1)`, so a file that grows between the two steps still stays bounded.
+///
+/// Residual risk: the path can be swapped for a FIFO between the metadata call and the open, and the open then blocks.
+/// Callers that read only a user-given path accept this.
+pub async fn read_regular_bounded(path: &Path, max: u64) -> io::Result<BoundedRead> {
+    use tokio::io::AsyncReadExt;
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BoundedRead::Missing),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_file() {
+        return Ok(BoundedRead::NotRegular);
+    }
+    if metadata.len() > max {
+        return Ok(BoundedRead::TooLarge);
+    }
+    let file = tokio::fs::File::open(path).await?;
+    let mut bytes = Vec::new();
+    file.take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > max {
+        return Ok(BoundedRead::TooLarge);
+    }
+    Ok(BoundedRead::Bytes(bytes))
+}
+
 /// 打开一个文件只读，按块读（上传到远端的执行器与它的 sha256，docs/specs/rust-cli/remote-exec.md §19.9）。
 pub async fn open_read(path: &Path) -> io::Result<tokio::fs::File> {
     tokio::fs::File::open(path).await

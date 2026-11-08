@@ -57,6 +57,8 @@ pub struct Server {
     preferences: Mutex<Preferences>,
     /// Fork: staged App attachment uploads (crate::uploads).
     pub(crate) uploads: Mutex<crate::uploads::Registry>,
+    /// Fork: serializes submission reservations (crate::preparation::ReservationGate).
+    pub(crate) reservations: crate::preparation::ReservationGate,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -88,6 +90,7 @@ impl Server {
             defaults,
             preferences: Mutex::new(Preferences::default()),
             uploads: Mutex::new(crate::uploads::Registry::default()),
+            reservations: crate::preparation::ReservationGate::default(),
         }
     }
 
@@ -118,7 +121,7 @@ impl Server {
             })
             .await?;
         // Fork: a cold open restores a still-preparing first submission before any subscription starts.
-        if opening && let Some(marker) = crate::preparation::load(self, session).await {
+        if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
             live.sink.set_preparation(marker.exposed());
         }
         Ok(live)

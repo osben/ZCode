@@ -7,6 +7,7 @@
 
 use base64::Engine;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_fs::BoundedRead;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{AttachedBody, AttachedFile, ContentBlock, ImageSource};
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
@@ -16,6 +17,7 @@ use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::server::Server;
@@ -78,27 +80,27 @@ fn from_data_url(content: Vec<u8>, fallback: &str) -> (Vec<u8>, String) {
     (content, fallback.to_owned())
 }
 
+/// Room for the `data:<mime>;base64,` prefix of a stored data URL, when the artifact's size is checked before it is read.
+const DATA_URL_HEADER_ALLOWANCE: u64 = 1024;
+
+/// The largest stored data URL that can hold `decoded` bytes. The artifact's ref size is checked against it before
+/// `get` loads the content; the decoded size is checked again after decoding.
+fn encoded_cap(decoded: u64) -> u64 {
+    decoded.div_ceil(3) * 4 + DATA_URL_HEADER_ALLOWANCE
+}
+
 /// Reads an attachment ref: a session artifact (`zcode-artifact://`, what `v4/attachment/commit` answers) or, from the
-/// desktop, a local absolute path (the Host's prompt attachment transfer is zero-copy on a local Host).
+/// desktop, a local absolute path (the Host's prompt attachment transfer is zero-copy on a local Host). The result never
+/// exceeds `limit` bytes: an oversized file or artifact is refused before its content is loaded.
 async fn read(
     server: &Server,
     session: &SessionId,
     reference: &str,
     mime: &str,
+    limit: u64,
 ) -> Result<(Vec<u8>, String), RpcError> {
     if !reference.starts_with(ARTIFACT_SCHEME) {
-        let path = std::path::Path::new(reference);
-        if !path.is_absolute() {
-            return Err(fault("refInvalid"));
-        }
-        let bytes = rust_cli_fs::read_optional(path)
-            .await
-            .map_err(|_| fault("readFailed"))?
-            .ok_or_else(|| fault("fileNotFound"))?;
-        if bytes.len() as u64 > MAX_BYTES {
-            return Err(fault("tooLarge"));
-        }
-        return Ok((bytes, mime.to_owned()));
+        return read_local(Path::new(reference), mime, limit).await;
     }
     let (owner, id) = rust_cli_kernel_api::prompt_attachment::parse_artifact_uri(reference)
         .ok_or_else(|| fault("refInvalid"))?;
@@ -106,16 +108,41 @@ async fn read(
         return Err(fault("previewRefNotAuthorized"));
     }
     let store = artifacts(server)?;
+    // Store errors can name storage paths, so only the fault code leaves this function.
     let artifact = store
         .find(&owner, &id)
         .await
-        .map_err(|error| RpcError::internal(error.to_string()))?
+        .map_err(|_| fault("storeFailed"))?
         .ok_or_else(|| fault("artifactNotFound"))?;
+    if artifact.size > encoded_cap(limit) {
+        return Err(fault("tooLarge"));
+    }
     let content = store
         .get(&artifact)
         .await
-        .map_err(|error| RpcError::internal(error.to_string()))?;
-    Ok(from_data_url(content, mime))
+        .map_err(|_| fault("storeFailed"))?;
+    let (bytes, media_type) = from_data_url(content, mime);
+    if bytes.len() as u64 > limit {
+        return Err(fault("tooLarge"));
+    }
+    Ok((bytes, media_type))
+}
+
+/// A local ref: a regular file of at most `limit` bytes. A directory, FIFO or device is refused, since reading one can
+/// block or never end.
+async fn read_local(path: &Path, mime: &str, limit: u64) -> Result<(Vec<u8>, String), RpcError> {
+    if !path.is_absolute() {
+        return Err(fault("refInvalid"));
+    }
+    match rust_cli_fs::read_regular_bounded(path, limit)
+        .await
+        .map_err(|_| fault("readFailed"))?
+    {
+        BoundedRead::Bytes(bytes) => Ok((bytes, mime.to_owned())),
+        BoundedRead::Missing => Err(fault("fileNotFound")),
+        BoundedRead::NotRegular => Err(fault("refInvalid")),
+        BoundedRead::TooLarge => Err(fault("tooLarge")),
+    }
 }
 
 fn essence(mime: &str) -> String {
@@ -126,17 +153,39 @@ fn essence(mime: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// One `attachments` entry of `sendText` (`attachmentRefSchema`; only the fields the mapping uses).
+/// One `attachments` entry of `sendText`, read the way Node's strict `attachmentRefSchema` reads it: every schema field
+/// is accepted and nothing else is.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AttachmentRef {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[expect(
+    dead_code,
+    reason = "source_kind and message_count are read only to accept the schema; the mapping does not use them"
+)]
+pub(crate) struct AttachmentRef {
     #[serde(rename = "ref")]
     reference: String,
     file_name: String,
     mime: String,
     bytes: u64,
     #[serde(default)]
+    source_kind: Option<Value>,
+    #[serde(default)]
+    message_count: Option<Value>,
+    #[serde(default)]
     preview_ref: Option<String>,
+}
+
+/// Parses the `attachments` of a `sendText` or a `createSession` first input. Node's schema refuses the whole command when
+/// one entry does not match, so a malformed entry is refused here too, before any session is created. Silently dropping it
+/// would leave the model unaware of the file. The message does not echo the entry: a value there can be a user path.
+pub(crate) fn parse_refs(refs: &[Value]) -> Result<Vec<AttachmentRef>, RpcError> {
+    refs.iter()
+        .map(|value| {
+            serde_json::from_value::<AttachmentRef>(value.clone()).map_err(|_| {
+                RpcError::invalid_params("an attachment ref does not match attachmentRefSchema")
+            })
+        })
+        .collect()
 }
 
 /// The content of an input with attachments (Node `mapAttachmentRef` → `resolveAttachment`): the user's text, then one
@@ -146,7 +195,7 @@ pub(crate) async fn content(
     server: &Server,
     session: &SessionId,
     text: &str,
-    refs: &[Value],
+    refs: Vec<AttachmentRef>,
 ) -> Vec<ContentBlock> {
     let mut out = Vec::new();
     if !text.is_empty() {
@@ -154,10 +203,7 @@ pub(crate) async fn content(
             text: text.to_owned(),
         });
     }
-    for value in refs {
-        let Ok(attachment) = serde_json::from_value::<AttachmentRef>(value.clone()) else {
-            continue;
-        };
+    for attachment in refs {
         let body = body(server, session, &attachment).await;
         let stored = match &body {
             AttachedBody::Image { source } => {
@@ -218,19 +264,69 @@ async fn stored_image(
     }
 }
 
-/// What of one attachment reaches the model (the stored file part keeps it for both runtimes).
-async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) -> AttachedBody {
-    let kind = essence(&attachment.mime);
-    let inline_text = !kind.starts_with("image/")
-        && !kind.starts_with("video/")
-        && kind != "application/pdf"
-        && attachment.bytes <= INLINE_TEXT_MAX_BYTES;
-    let inline_image =
-        kind.starts_with("image/") && attachment.bytes <= INLINE_IMAGE_MAX_BYTES as u64;
-    if !inline_image && !inline_text {
+/// The inline form an attachment may take, from its MIME and the client's declared size. The declared size only decides
+/// whether to read at all; [`admit`] checks the real length of what was read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Inline {
+    Image,
+    Text,
+}
+
+fn inline_form(mime: &str, declared_bytes: u64) -> Option<Inline> {
+    let kind = essence(mime);
+    if kind.starts_with("image/") {
+        (declared_bytes <= INLINE_IMAGE_MAX_BYTES as u64).then_some(Inline::Image)
+    } else if kind.starts_with("video/") || kind == "application/pdf" {
+        None
+    } else {
+        (declared_bytes <= INLINE_TEXT_MAX_BYTES).then_some(Inline::Text)
+    }
+}
+
+impl Inline {
+    fn limit(self) -> u64 {
+        match self {
+            Inline::Image => INLINE_IMAGE_MAX_BYTES as u64,
+            Inline::Text => INLINE_TEXT_MAX_BYTES,
+        }
+    }
+}
+
+/// The inline part of bytes that were read. Their real length is checked against the form's limit, because the declared
+/// size is the client's word. Over the limit, or text that is not UTF-8 or holds a NUL, is metadata only.
+fn admit(form: Inline, mime: &str, bytes: Vec<u8>) -> AttachedBody {
+    if bytes.len() as u64 > form.limit() {
         return AttachedBody::Omitted;
     }
-    let (bytes, mime) = match read(server, session, &attachment.reference, &attachment.mime).await {
+    match form {
+        Inline::Image => AttachedBody::Image {
+            source: ImageSource::Base64 {
+                media_type: essence(mime),
+                data: base64().encode(&bytes),
+            },
+        },
+        Inline::Text => match String::from_utf8(bytes) {
+            Ok(text) if !text.contains('\0') => AttachedBody::Text { text },
+            _ => AttachedBody::Omitted,
+        },
+    }
+}
+
+/// What of one attachment reaches the model (the stored file part keeps it for both runtimes).
+async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) -> AttachedBody {
+    let Some(form) = inline_form(&attachment.mime, attachment.bytes) else {
+        return AttachedBody::Omitted;
+    };
+    // The read is bounded by the form's limit, so a file that grew past its declared size is refused, not loaded.
+    let (bytes, mime) = match read(
+        server,
+        session,
+        &attachment.reference,
+        &attachment.mime,
+        form.limit(),
+    )
+    .await
+    {
         Ok(read) => read,
         Err(error) => {
             // The fault code only: a local ref is a user path.
@@ -238,21 +334,7 @@ async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) 
             return AttachedBody::Omitted;
         }
     };
-    if kind.starts_with("image/") {
-        if bytes.len() > INLINE_IMAGE_MAX_BYTES {
-            return AttachedBody::Omitted;
-        }
-        return AttachedBody::Image {
-            source: ImageSource::Base64 {
-                media_type: essence(&mime),
-                data: base64().encode(&bytes),
-            },
-        };
-    }
-    match String::from_utf8(bytes) {
-        Ok(text) if !text.contains('\0') => AttachedBody::Text { text },
-        _ => AttachedBody::Omitted,
-    }
+    admit(form, &mime, bytes)
 }
 
 /// `v4/attachment/begin`.
@@ -346,9 +428,13 @@ pub async fn commit(server: &Server, params: &Value) -> Result<Reply, RpcError> 
             );
             Ok(Reply::new(json!({"ref": reference})))
         }
-        Err(error) => {
+        Err(_) => {
             server.uploads.lock_unpoisoned().release(&target);
-            tracing::warn!(event = "attachment.commit_failed", error = %error, "storing an attachment failed");
+            // No error text: a storage error can name the storage path.
+            tracing::warn!(
+                event = "attachment.commit_failed",
+                "storing an attachment failed"
+            );
             Err(fault("putFailed"))
         }
     }
@@ -395,7 +481,7 @@ pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcErr
         .sink
         .attachment_mime(&params.reference)
         .ok_or_else(|| fault("previewRefNotAuthorized"))?;
-    let (bytes, media_type) = read(server, &session, &params.reference, &mime).await?;
+    let (bytes, media_type) = read(server, &session, &params.reference, &mime, MAX_BYTES).await?;
     if !previewable(&media_type) {
         return Err(fault("previewUnsupported"));
     }

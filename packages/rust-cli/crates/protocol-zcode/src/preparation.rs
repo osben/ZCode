@@ -85,9 +85,48 @@ impl Marker {
     }
 }
 
-pub async fn load(server: &Server, session: &SessionId) -> Option<Marker> {
-    let records = server.kernel.queries().records(session, KIND).await.ok()?;
-    Marker::latest(&records)
+/// The session's marker. A failed read is an error, not "no marker": a reservation that read it as absent could create
+/// over a reservation it could not see. The text names no storage detail.
+pub async fn load(server: &Server, session: &SessionId) -> Result<Option<Marker>, &'static str> {
+    let records = server
+        .kernel
+        .queries()
+        .records(session, KIND)
+        .await
+        .map_err(|_| "reading the submission reservation failed")?;
+    Ok(Marker::latest(&records))
+}
+
+/// Serializes reservations: the existence check, the create and the marker save of one reservation run under one permit,
+/// so two reservations of the same new id cannot both find it absent. A semaphore, not a Mutex: the lint policy forbids
+/// holding a tokio MutexGuard across an await.
+pub(crate) struct ReservationGate(tokio::sync::Semaphore);
+
+impl Default for ReservationGate {
+    fn default() -> Self {
+        Self(tokio::sync::Semaphore::new(1))
+    }
+}
+
+impl ReservationGate {
+    pub(crate) async fn acquire(&self) -> Result<tokio::sync::SemaphorePermit<'_>, &'static str> {
+        self.0
+            .acquire()
+            .await
+            .map_err(|_| "the reservation gate is closed")
+    }
+}
+
+/// Only "no such session" makes a session id free. Any other snapshot error propagates: reading it as absent would let a
+/// reservation create over a session that exists.
+pub(crate) fn absent_if_not_found<T>(
+    result: Result<T, rust_cli_kernel_api::session_api::KernelError>,
+) -> Result<Option<T>, rust_cli_kernel_api::session_api::KernelError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(rust_cli_kernel_api::session_api::KernelError::NotFound { .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub async fn save(server: &Server, session: &SessionId, marker: &Marker) -> Result<(), String> {
@@ -158,6 +197,47 @@ mod tests {
         };
         assert_eq!(Marker::latest(&[broken]), None);
     }
+    #[tokio::test]
+    async fn two_reservations_of_one_new_id_cannot_both_create_it() {
+        // Finding: check, create and save were not serialized, so both reservations saw the id as absent. The
+        // store stands in for the kernel; the await between check and create is where the race opened.
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        let gate = Arc::new(ReservationGate::default());
+        let store = Arc::new(Mutex::new(HashMap::<&str, &str>::new()));
+        let reserve = |submission: &'static str| {
+            let (gate, store) = (gate.clone(), store.clone());
+            async move {
+                let _permit = gate.acquire().await.unwrap();
+                let absent = !store.lock().unwrap().contains_key("s1");
+                tokio::task::yield_now().await;
+                if absent {
+                    store.lock().unwrap().insert("s1", submission);
+                }
+                absent
+            }
+        };
+        let (first, second) = tokio::join!(reserve("sub-1"), reserve("sub-2"));
+        assert!(
+            first ^ second,
+            "exactly one reservation may create the session"
+        );
+    }
+
+    #[test]
+    fn only_not_found_makes_a_session_id_free() {
+        use rust_cli_kernel_api::session_api::KernelError;
+        assert_eq!(absent_if_not_found(Ok(7)).unwrap(), Some(7));
+        let missing = KernelError::NotFound {
+            session: SessionId::new("s1"),
+        };
+        assert_eq!(absent_if_not_found::<u8>(Err(missing)).unwrap(), None);
+        let failed = KernelError::Failed {
+            message: "disk unavailable".into(),
+        };
+        assert!(absent_if_not_found::<u8>(Err(failed)).is_err());
+    }
+
     #[test]
     fn adopts_only_an_untouched_prewarm_in_the_same_workspace() {
         let marker = Marker::preparing("sub-1", 1);

@@ -30,3 +30,86 @@ fn data_urls_decode_to_their_bytes_and_mime() {
         (b"plain".to_vec(), "text/plain".to_owned())
     );
 }
+
+#[tokio::test]
+async fn local_reads_refuse_directories_and_files_over_the_limit() {
+    // Finding: a huge file, FIFO or directory used to be read whole before the size check.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("note.txt");
+    rust_cli_fs::append(&file, b"abcde").await.unwrap();
+    let fault_of = |result: Result<(Vec<u8>, String), RpcError>| result.unwrap_err().message;
+    assert_eq!(
+        fault_of(read_local(Path::new("note.txt"), "text/plain", 64).await),
+        "fault.attachment.refInvalid"
+    );
+    assert_eq!(
+        fault_of(read_local(dir.path(), "text/plain", 64).await),
+        "fault.attachment.refInvalid"
+    );
+    assert_eq!(
+        fault_of(read_local(&file, "text/plain", 4).await),
+        "fault.attachment.tooLarge"
+    );
+    assert_eq!(
+        fault_of(read_local(&dir.path().join("missing"), "text/plain", 4).await),
+        "fault.attachment.fileNotFound"
+    );
+    assert_eq!(
+        read_local(&file, "text/plain", 5).await.unwrap().0,
+        b"abcde"
+    );
+}
+
+#[test]
+fn the_real_length_decides_the_inline_form() {
+    // Finding: the client's declared size gated the read, never the bytes that were read.
+    assert_eq!(inline_form("text/plain", 64 * 1024), Some(Inline::Text));
+    assert_eq!(inline_form("text/plain", 64 * 1024 + 1), None);
+    assert_eq!(inline_form("application/pdf", 1), None);
+    assert_eq!(inline_form("video/mp4", 1), None);
+    let grown_text = vec![b'a'; 64 * 1024 + 1];
+    assert!(matches!(
+        admit(Inline::Text, "text/plain", grown_text),
+        AttachedBody::Omitted
+    ));
+    assert!(matches!(
+        admit(Inline::Text, "text/plain", b"ok".to_vec()),
+        AttachedBody::Text { .. }
+    ));
+    assert!(matches!(
+        admit(Inline::Text, "text/plain", b"a\0b".to_vec()),
+        AttachedBody::Omitted
+    ));
+    let grown_image = vec![0u8; INLINE_IMAGE_MAX_BYTES + 1];
+    assert!(matches!(
+        admit(Inline::Image, "image/png", grown_image),
+        AttachedBody::Omitted
+    ));
+}
+
+#[test]
+fn the_artifact_size_cap_admits_a_full_inline_image() {
+    // The cap is checked on the stored data URL before it is loaded, so it must not refuse an image at the limit.
+    let image = vec![7u8; INLINE_IMAGE_MAX_BYTES];
+    let stored = format!("data:image/png;base64,{}", base64().encode(&image));
+    assert!(stored.len() as u64 <= encoded_cap(INLINE_IMAGE_MAX_BYTES as u64));
+    assert_eq!(
+        from_data_url(stored.into_bytes(), "text/plain").0.len(),
+        INLINE_IMAGE_MAX_BYTES
+    );
+}
+
+#[test]
+fn a_malformed_ref_is_refused_not_dropped() {
+    // Finding: a malformed entry used to be skipped. Node's strict schema refuses the whole command instead.
+    let good = json!({"ref": "/tmp/a.txt", "fileName": "a.txt", "mime": "text/plain", "bytes": 3});
+    assert_eq!(parse_refs(std::slice::from_ref(&good)).unwrap().len(), 1);
+    let no_size = json!({"ref": "/tmp/a.txt", "fileName": "a.txt", "mime": "text/plain"});
+    let refused = parse_refs(&[good, no_size]).unwrap_err();
+    assert_eq!(refused.code, RpcError::invalid_params(String::new()).code);
+    // The message names no part of the entry, since a value there can be a user path.
+    assert!(!refused.message.contains("a.txt"));
+    let unknown = json!({"ref": "/tmp/a.txt", "fileName": "a.txt", "mime": "text/plain",
+        "bytes": 3, "surprise": true});
+    assert!(parse_refs(&[unknown]).is_err());
+}

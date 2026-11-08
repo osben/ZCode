@@ -287,6 +287,19 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     }
     let config = &payload.config;
     let first = payload.first_input.unwrap_or_default();
+    // Refused before the session exists, so a malformed attachment leaves no session behind.
+    let refs = match crate::attachments::parse_refs(&first.attachments) {
+        Ok(refs) => refs,
+        Err(error) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                error.message,
+                0,
+            );
+        }
+    };
     let chosen = selection(config.model_selection.as_ref())
         .or_else(|| selection(first.model_selection.as_ref()))
         .unwrap_or_else(|| server.defaults.selection.clone());
@@ -337,7 +350,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             &envelope.command_id,
             input_meta(envelope, &first, "startNow", "startNow"),
         );
-        let submit = if first.attachments.is_empty() {
+        let submit = if refs.is_empty() {
             Command::Submit {
                 text,
                 attachments: Vec::new(),
@@ -345,7 +358,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             }
         } else {
             Command::SubmitContent {
-                content: crate::attachments::content(server, &id, &text, &first.attachments).await,
+                content: crate::attachments::content(server, &id, &text, refs).await,
                 delivery: Delivery::Queue,
             }
         };
@@ -377,9 +390,47 @@ async fn reserve_submission(
             Some(json!({"type": "createSession", "sessionId": id.as_str()})),
         )
     };
-    let existing = server.kernel.session_snapshot(&id).await.ok();
+    // Held from the existence check to the marker save (see ReservationGate); released before the session is opened.
+    let reservation = match server.reservations.acquire().await {
+        Ok(permit) => permit,
+        Err(reason) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.createSessionFailed",
+                reason.to_owned(),
+                0,
+            );
+        }
+    };
+    // Only "no such session" leaves the id free; any other snapshot error stops the reservation.
+    let existing =
+        match crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await) {
+            Ok(view) => view,
+            Err(_) => {
+                // No error text: a storage error can name the storage path.
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.createSessionFailed",
+                    "reading the session failed".to_owned(),
+                    0,
+                );
+            }
+        };
     if let Some(view) = &existing {
-        let marker = crate::preparation::load(server, &id).await;
+        let marker = match crate::preparation::load(server, &id).await {
+            Ok(marker) => marker,
+            Err(reason) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.createSessionFailed",
+                    reason.to_owned(),
+                    0,
+                );
+            }
+        };
         let workspace_matches = payload
             .workspace_id
             .as_deref()
@@ -430,15 +481,20 @@ async fn reserve_submission(
         }
     };
     let marker = crate::preparation::Marker::preparing(submission, server.context.now());
-    if let Err(error) = crate::preparation::save(server, &id, &marker).await {
+    // No error text: a storage error can name the storage path.
+    if crate::preparation::save(server, &id, &marker)
+        .await
+        .is_err()
+    {
         return Ack::refused(
             &envelope.command_id,
             Status::Failed,
             "fault.command.createSessionFailed",
-            format!("storing the submission reservation failed: {error}"),
+            "storing the submission reservation failed".to_owned(),
             0,
         );
     }
+    drop(reservation);
     match server.live(&id).await {
         Ok(live) => {
             live.sink.set_preparation(marker.exposed());
@@ -462,7 +518,7 @@ async fn activate_submission(
 ) -> Ack {
     let id = SessionId::new(prepared);
     let marker = match crate::preparation::load(server, &id).await {
-        Some(marker) if marker.submission_id == expected => marker,
+        Ok(Some(marker)) if marker.submission_id == expected => marker,
         _ => {
             return Ack::refused(
                 &envelope.command_id,
@@ -549,7 +605,7 @@ async fn complete_first_submission(
         return;
     };
     let id = SessionId::new(session);
-    let Some(marker) = crate::preparation::load(server, &id).await else {
+    let Ok(Some(marker)) = crate::preparation::load(server, &id).await else {
         return;
     };
     if marker.active {
@@ -561,10 +617,15 @@ async fn complete_first_submission(
     {
         return;
     }
-    if let Err(error) =
-        crate::preparation::save(server, &id, &marker.activated(server.context.now())).await
+    if crate::preparation::save(server, &id, &marker.activated(server.context.now()))
+        .await
+        .is_err()
     {
-        tracing::warn!(event = "protocol.preparation.complete_failed", error = %error, "storing the active submission marker failed");
+        // No error text: a storage error can name the storage path.
+        tracing::warn!(
+            event = "protocol.preparation.complete_failed",
+            "storing the active submission marker failed"
+        );
     }
     let sink = live.sink.clone();
     live.run(Box::pin(async move { sink.complete_preparation().await }));
@@ -606,6 +667,19 @@ async fn send_text(
         Err(ack) => return *ack,
     };
     let command = envelope.command_id.as_str();
+    // Checked before any side effect (model or mode change), so a refused input changes nothing.
+    let refs = match crate::attachments::parse_refs(&input.attachments) {
+        Ok(refs) => refs,
+        Err(error) => {
+            return Ack::refused(
+                command,
+                Status::Rejected,
+                "proto.invalidPayload",
+                error.message,
+                revision,
+            );
+        }
+    };
     // 这次提交带的模型与模式先作用到会话（同 Node：Submission 带完整的选择）。
     let view = handle.view().await.ok();
     if let Some(chosen) = selection(input.model_selection.as_ref())
@@ -640,7 +714,7 @@ async fn send_text(
     let requested = input.requested_delivery;
     let followup = live.followup();
     // Fork: content blocks (attachments) are never steered into a running turn; they wait for it to end.
-    let with_attachments = !input.attachments.is_empty();
+    let with_attachments = !refs.is_empty();
     let (delivery, admitted) = match (requested, running) {
         (_, true) if with_attachments => (Delivery::Queue, "queue"),
         (Some(Requested::Guide), true) => (Delivery::Steer, "guide"),
@@ -653,8 +727,7 @@ async fn send_text(
     let text = input.text.unwrap_or_default();
     let submit = if with_attachments {
         Command::SubmitContent {
-            content: crate::attachments::content(server, handle.id(), &text, &input.attachments)
-                .await,
+            content: crate::attachments::content(server, handle.id(), &text, refs).await,
             delivery,
         }
     } else {
