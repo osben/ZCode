@@ -1004,7 +1004,12 @@ async fn stop(
         && sink.has_queue()
         && sink.auto_drain()
         && matches!(
-            send(handle, &format!("{id}:hold"), Command::HoldQueue { held: true }).await,
+            send(
+                handle,
+                &format!("{id}:hold"),
+                Command::HoldQueue { held: true }
+            )
+            .await,
             KernelAck::Accepted { .. }
         );
     let interrupted = send(handle, id, Command::Interrupt).await;
@@ -1013,15 +1018,17 @@ async fn stop(
             sink.hold_for_stop().await;
         }
     } else if held
-        && let KernelAck::Rejected { reason } =
-            send(handle, &format!("{id}:release"), Command::HoldQueue { held: false }).await
+        && let KernelAck::Rejected { reason } = send(
+            handle,
+            &format!("{id}:release"),
+            Command::HoldQueue { held: false },
+        )
+        .await
     {
         tracing::warn!(event = "protocol.stop.release_failed", reason = %reason,
             "releasing the stop's queue hold failed");
     }
-    ack_of(
-        interrupted,
-        Ack::accepted(id, revision, None),
-        |reason| Ack::refused(id, Status::Noop, "proto.nothingToStop", reason, revision),
-    )
+    ack_of(interrupted, Ack::accepted(id, revision, None), |reason| {
+        Ack::refused(id, Status::Noop, "proto.nothingToStop", reason, revision)
+    })
 }

@@ -50,7 +50,10 @@ fn only_settled_plans_with_text_are_listed_newest_first() {
         tool(5, "ExitPlanMode", "error", json!({"plan": "# five"})),
     ])
     .plans();
-    let ids: Vec<u64> = plans.iter().filter_map(|row| row["rowId"].as_u64()).collect();
+    let ids: Vec<u64> = plans
+        .iter()
+        .filter_map(|row| row["rowId"].as_u64())
+        .collect();
     assert_eq!(ids, vec![5, 1]);
 }
 
