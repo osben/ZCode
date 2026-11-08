@@ -349,3 +349,64 @@ async fn a_failed_title_request_still_writes_a_usage_row() {
     let facts = built.store.facts(&SessionId::new("sess_1"));
     assert!(generated(&facts).is_empty());
 }
+
+fn node_titles(model: Arc<dyn ModelPort>) -> Option<TitleModel> {
+    Some(TitleModel {
+        model,
+        directory: None,
+        node_prompt: true,
+    })
+}
+
+/// Fork (Node desktop titles): the first-input title starts once its turn completed (core `turn.ts`
+/// `maybeStartDeferredSessionTitleGeneration`), not while the turn runs.
+#[tokio::test]
+async fn node_desktop_titles_wait_for_the_turn_to_complete() {
+    let gate = Arc::new(Notify::new());
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]).gated(gate.clone()));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, |event| {
+        titled(event, "Explain the hook trust digest")
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+    gate.notify_one();
+    let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert!(seen.iter().any(finished));
+    assert_eq!(title_model.requests().len(), 1);
+}
+
+/// Fork (Node desktop titles): a turn that does not complete starts no title.
+#[tokio::test]
+async fn node_desktop_titles_skip_a_failed_turn() {
+    let main = Arc::new(ScriptedModel::new(vec![vec![Err(
+        ModelError::Overloaded {
+            message: "busy".to_owned(),
+        },
+    )]]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+}

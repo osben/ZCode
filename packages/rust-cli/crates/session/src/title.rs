@@ -6,7 +6,7 @@
 //! （`Rename`）或 hook 改过标题后，候选标题丢弃（用量行照写）。
 
 use rust_cli_base::{Task, TaskError};
-use rust_cli_kernel_api::ids::{CommandId, MessageId};
+use rust_cli_kernel_api::ids::{CommandId, MessageId, RunId};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
 use rust_cli_kernel_api::session_api::{Ack, KernelEvent};
 use rust_cli_kernel_api::store::{Fact, SessionKind, TurnAnchor};
@@ -44,6 +44,18 @@ pub(crate) struct TitleState {
     /// 本 actor 里改名（`Rename`、hook 的标题、起名写入）的次数：起名期间有新的改名时不写
     /// （titles.md §8.2，`superseded`）。
     renames: u64,
+    /// Fork (Node desktop titles): the first-input title waiting for its turn to complete.
+    deferred: Option<DeferredTitle>,
+}
+
+/// Fork: Node's desktop agent always has a provider runtime-headers port, so `shouldDeferSessionTitleForRuntimeHeaders`
+/// holds and the first-input title starts only after the turn completed (core `turn.ts`
+/// `maybeStartDeferredSessionTitleGeneration`); a turn that does not complete gets none.
+struct DeferredTitle {
+    prompt: MessageId,
+    text: String,
+    turn: Option<TurnAnchor>,
+    run: Option<RunId>,
 }
 
 impl TitleState {
@@ -109,7 +121,7 @@ impl Actor {
             self.meta.title.clone_from(&title);
             self.log.append(KernelEvent::TitleChanged { title });
         }
-        let Some(titles) = self.deps.titles.clone() else {
+        let Some(node_titles) = self.deps.titles.as_ref().map(|titles| titles.node_prompt) else {
             return;
         };
         let eligible = first
@@ -122,14 +134,47 @@ impl Actor {
             return;
         }
         self.titles.attempted = true;
-        // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
-        let selection = self.selection.clone();
-        let session = self.meta.id.clone();
         // 提交这条输入的回合（工作线 F64：标题请求与回合共用 `x-query-id`，Node 的标题沿用回合的 trace，model.md §2.4）。
         let run = self
             .running
             .as_ref()
             .and_then(|running| running.run.clone());
+        let title = DeferredTitle {
+            prompt: message.id().clone(),
+            text,
+            turn: self.turn_anchor(),
+            run,
+        };
+        if node_titles {
+            self.titles.deferred = Some(title);
+        } else {
+            self.start_title(title);
+        }
+    }
+
+    /// Fork (Node desktop titles): the turn ended; a completed turn starts its deferred first-input title.
+    pub(crate) fn after_turn(&mut self, completed: bool) {
+        let Some(title) = self.titles.deferred.take() else {
+            return;
+        };
+        if completed {
+            self.start_title(title);
+        }
+    }
+
+    fn start_title(&mut self, title: DeferredTitle) {
+        let Some(titles) = self.deps.titles.clone() else {
+            return;
+        };
+        let DeferredTitle {
+            prompt,
+            text,
+            turn,
+            run,
+        } = title;
+        // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
+        let selection = self.selection.clone();
+        let session = self.meta.id.clone();
         // 用量事实的时钟与逻辑请求 ID（工作线 F73）。
         let clock = self.deps.clock.clone();
         let request = self.deps.ids.message();
@@ -144,11 +189,7 @@ impl Actor {
                 )
                 .await
         });
-        self.titles.task = Some(TitleJob {
-            prompt: message.id().clone(),
-            turn: self.turn_anchor(),
-            task,
-        });
+        self.titles.task = Some(TitleJob { prompt, turn, task });
     }
 
     /// 标题任务回到 actor：先提交这次请求的用量行，候选标题仍可写时再提交、改内存、发事件。

@@ -36,7 +36,8 @@ pub struct TitleModel {
     pub model: Arc<dyn ModelPort>,
     /// 取辅助选项（推理档位、输出上限）；显式覆盖时没有。
     pub directory: Option<Arc<dyn ModelDirectory>>,
-    /// Fork: Node's title prompt ([`title::node_system`], the input as the user message) instead of this CLI's.
+    /// Fork: Node desktop titles. Node's title prompt ([`title::node_system`], the input as the user message) instead
+    /// of this CLI's, and the first-input title starts once its turn completes (crate::title, `deferred`).
     pub node_prompt: bool,
 }
 

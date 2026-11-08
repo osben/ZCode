@@ -390,6 +390,10 @@ impl Actor {
             });
         // 回合结束那一行（修复线 F118，tui-display.md §2.7）：排在 TurnFinished 之后、下一个回合之前。
         let interrupted = matches!(outcome, TurnOutcome::Interrupted);
+        let completed = matches!(
+            outcome,
+            TurnOutcome::Success | TurnOutcome::HookStopped | TurnOutcome::StopHookPrevented
+        );
         let turn = running.turn.clone();
         self.log.append(KernelEvent::TurnFinished {
             turn: running.turn,
@@ -397,6 +401,7 @@ impl Actor {
             usage,
         });
         self.turn_duration(turn, running.timing, interrupted).await;
+        self.after_turn(completed);
         self.start_next().await;
     }
 
