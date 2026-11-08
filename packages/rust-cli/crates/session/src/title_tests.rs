@@ -390,11 +390,12 @@ async fn node_desktop_titles_wait_for_the_turn_to_complete() {
 /// Fork (Node desktop titles): a turn that does not complete starts no title.
 #[tokio::test]
 async fn node_desktop_titles_skip_a_failed_turn() {
-    let main = Arc::new(ScriptedModel::new(vec![vec![Err(
-        ModelError::Overloaded {
-            message: "busy".to_owned(),
-        },
-    )]]));
+    let main = Arc::new(ScriptedModel::new(vec![
+        vec![Err(ModelError::InvalidRequest {
+            message: "bad".to_owned(),
+        })],
+        text_response(&["Sure."]),
+    ]));
     let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
         "{\"title\":\"Hook trust digest\"}",
     ])]));
@@ -409,4 +410,12 @@ async fn node_desktop_titles_skip_a_failed_turn() {
     until(&mut events, finished).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(title_model.requests().is_empty());
+
+    // The next completed turn is still the first (Node counts completed turns only) and gets the title.
+    built
+        .session
+        .send(submit("c2", "Explain the hook trust digest again"))
+        .await;
+    until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert_eq!(title_model.requests().len(), 1);
 }

@@ -46,6 +46,9 @@ pub(crate) struct TitleState {
     renames: u64,
     /// Fork (Node desktop titles): the first-input title waiting for its turn to complete.
     deferred: Option<DeferredTitle>,
+    /// Fork (Node desktop titles): no turn completed yet after a deferred title was dropped, so the next input is
+    /// still the first (Node counts `turnNumber` on completed turns only).
+    rearmed: bool,
 }
 
 /// Fork: Node's desktop agent always has a provider runtime-headers port, so `shouldDeferSessionTitleForRuntimeHeaders`
@@ -124,7 +127,7 @@ impl Actor {
         let Some(node_titles) = self.deps.titles.as_ref().map(|titles| titles.node_prompt) else {
             return;
         };
-        let eligible = first
+        let eligible = (first || self.titles.rearmed)
             && !self.titles.attempted
             && !self.titles.custom
             && self.meta.kind == SessionKind::Interactive
@@ -134,6 +137,9 @@ impl Actor {
             return;
         }
         self.titles.attempted = true;
+        self.titles.rearmed = false;
+        // Node starts the title of a `/goal` control turn at once (core `control-only-turn.ts`, no defer flag).
+        let deferred = node_titles && crate::goal::command(&text).is_none();
         // 提交这条输入的回合（工作线 F64：标题请求与回合共用 `x-query-id`，Node 的标题沿用回合的 trace，model.md §2.4）。
         let run = self
             .running
@@ -145,20 +151,24 @@ impl Actor {
             turn: self.turn_anchor(),
             run,
         };
-        if node_titles {
+        if deferred {
             self.titles.deferred = Some(title);
         } else {
             self.start_title(title);
         }
     }
 
-    /// Fork (Node desktop titles): the turn ended; a completed turn starts its deferred first-input title.
+    /// Fork (Node desktop titles): the turn ended; a completed turn starts its deferred first-input title, any other
+    /// leaves the next input eligible (Node: no attempt was made and `turnNumber` stays 0).
     pub(crate) fn after_turn(&mut self, completed: bool) {
         let Some(title) = self.titles.deferred.take() else {
             return;
         };
         if completed {
             self.start_title(title);
+        } else {
+            self.titles.attempted = false;
+            self.titles.rearmed = true;
         }
     }
 
