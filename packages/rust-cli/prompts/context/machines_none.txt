@@ -1,0 +1,2 @@
+No machines are connected now besides the primary machine; every tool runs on the default machine "{{name}}".
+{{lines}}
