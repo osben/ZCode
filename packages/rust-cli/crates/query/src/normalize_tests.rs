@@ -324,6 +324,7 @@ fn image() -> ContentBlock {
             media_type: "image/png".to_owned(),
             data: "iVBORw0KGgo=".to_owned(),
         },
+        name: None,
     }
 }
 
@@ -668,7 +669,10 @@ fn attached_files_expand_into_reminders_and_images() {
         [
             &text("look"),
             &text(&prompt_attachment::text_file("a.txt", "abc").join("\n")),
-            &ContentBlock::Image { source: image },
+            &ContentBlock::Image {
+                source: image,
+                name: None
+            },
             &text(&prompt_attachment::metadata_only(
                 "d.pdf",
                 "application/pdf",

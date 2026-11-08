@@ -57,3 +57,58 @@ fn artifact_uris_and_image_data_urls_parse() {
     );
     assert_eq!(image_of_data_url(&huge), None);
 }
+
+#[test]
+fn a_binary_local_file_goes_by_path_with_nodes_three_line_note() {
+    assert!(is_text_like_path("/a/b/notes.MD"));
+    assert!(!is_text_like_path("/a/b/bundle.zip"));
+    assert!(!is_text_like_path("/a/b.d/Makefile"));
+    assert_eq!(mime_of_path("/a/b/bundle.zip"), "application/octet-stream");
+    assert_eq!(mime_of_path("/a/b/data.csv"), "text/csv");
+    let note = path_reference(
+        "application/octet-stream",
+        "/a/bundle.zip",
+        PathReason::BinaryFile,
+    );
+    assert_eq!(
+        note.split('\n').collect::<Vec<_>>(),
+        [
+            "Attached application/octet-stream: /a/bundle.zip",
+            "The file was sent by local path because the file is not a known text attachment.",
+            "Use the available file reading tools if you need to inspect the file contents.",
+        ]
+    );
+    let file = AttachedFile {
+        name: "bundle.zip".into(),
+        mime: "application/zip".into(),
+        bytes: 3,
+        reference: Some("/a/bundle.zip".into()),
+        preview_reference: None,
+        stored: None,
+        body: AttachedBody::PathReference { text: note.clone() },
+    };
+    assert_eq!(blocks(&file), vec![ContentBlock::Text { text: note }]);
+}
+
+#[test]
+fn an_attached_image_block_carries_the_file_name() {
+    let file = AttachedFile {
+        name: "shot.png".into(),
+        mime: "image/png".into(),
+        bytes: 3,
+        reference: None,
+        preview_reference: None,
+        stored: None,
+        body: AttachedBody::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/png".into(),
+                data: "iVBO".into(),
+            },
+        },
+    };
+    let blocks = blocks(&file);
+    let [ContentBlock::Image { name, .. }] = blocks.as_slice() else {
+        panic!("one image block");
+    };
+    assert_eq!(name.as_deref(), Some("shot.png"));
+}

@@ -101,7 +101,7 @@ fn user(record: &WithParts) -> Option<Message> {
                 }
                 return match crate::tool_content::from_file_part(part) {
                     ToolResultContent::Image { source } if !summary => {
-                        Some(ContentBlock::Image { source })
+                        Some(ContentBlock::Image { source, name: None })
                     }
                     _ => None,
                 };

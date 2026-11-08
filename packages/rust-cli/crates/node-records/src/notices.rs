@@ -104,7 +104,7 @@ fn attachment_blocks(record: &WithParts) -> Vec<ContentBlock> {
                 };
             }
             match crate::tool_content::from_file_part(part) {
-                ToolResultContent::Image { source } => ContentBlock::Image { source },
+                ToolResultContent::Image { source } => ContentBlock::Image { source, name: None },
                 ToolResultContent::Text { text } => ContentBlock::Text { text },
                 // attachment 不带 document（提及不附 PDF 内容，tui-input.md §1.3）；万一有，读成 Node 的占位。
                 ToolResultContent::Document { source } => ContentBlock::Text {

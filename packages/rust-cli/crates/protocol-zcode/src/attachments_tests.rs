@@ -113,3 +113,49 @@ fn a_malformed_ref_is_refused_not_dropped() {
         "bytes": 3, "surprise": true});
     assert!(parse_refs(&[unknown]).is_err());
 }
+
+fn local_ref(path: &Path, mime: &str, bytes: u64) -> AttachmentRef {
+    serde_json::from_value(json!({
+        "ref": path.to_str().unwrap(), "fileName": path.file_name().unwrap().to_str().unwrap(),
+        "mime": mime, "bytes": bytes,
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_binary_desktop_file_goes_by_path_like_node() {
+    // Finding (AR01): a zip was read inline as text; Node sends a local path note instead.
+    let dir = tempfile::tempdir().unwrap();
+    let zip = dir.path().join("bundle.zip");
+    rust_cli_fs::append(&zip, b"binary fixture").await.unwrap();
+    let Some(AttachedBody::PathReference { text }) =
+        path_reference(&local_ref(&zip, "application/zip", 14)).await
+    else {
+        panic!("path reference");
+    };
+    assert!(text.starts_with("Attached application/octet-stream: "));
+    assert!(text.contains("The file was sent by local path because"));
+    assert_eq!(text.split('\n').count(), 3);
+    // Text files are read inline; a missing file or an artifact is not a path reference.
+    let note = dir.path().join("note.md");
+    rust_cli_fs::append(&note, b"hi").await.unwrap();
+    assert_eq!(
+        path_reference(&local_ref(&note, "text/markdown", 2)).await,
+        None
+    );
+    assert_eq!(
+        path_reference(&local_ref(
+            &dir.path().join("gone.zip"),
+            "application/zip",
+            2
+        ))
+        .await,
+        None
+    );
+    let small_png = dir.path().join("a.png");
+    rust_cli_fs::append(&small_png, b"x").await.unwrap();
+    assert_eq!(
+        path_reference(&local_ref(&small_png, "image/png", 1)).await,
+        None
+    );
+}

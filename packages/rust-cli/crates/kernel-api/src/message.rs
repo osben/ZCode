@@ -19,6 +19,10 @@ pub enum ContentBlock {
     },
     Image {
         source: ImageSource,
+        /// Fork: the attached file's name (Node `source.placeholder`). The model never sees it, except as
+        /// `[Attached <mime>: <name>]` when the endpoint takes no images; it is not stored.
+        #[serde(skip)]
+        name: Option<String>,
     },
     Thinking {
         thinking: String,
@@ -88,8 +92,11 @@ pub enum AttachedBody {
     Text { text: String },
     /// An image sent as an image block.
     Image { source: ImageSource },
-    /// Only the metadata reminder (too large, binary, unsupported or unreadable).
+    /// Only the metadata reminder (too large, unsupported or unreadable).
     Omitted,
+    /// Node's path reference (`resolvedPathReferenceAttachment`): a local file the model is told to read with its
+    /// tools, e.g. a binary file. `text` is the note as sent, kept so a cold load replays it unchanged.
+    PathReference { text: String },
 }
 
 /// 图片来源。大图不内联在消息里，用 Artifact 引用，在发给模型的一侧物化（§6 规则 10）。

@@ -223,6 +223,7 @@ fn attachment_blocks_live_in_data() {
             media_type: "image/png".to_owned(),
             data: "iVBORw0KGgo=".to_owned(),
         },
+        name: None,
     };
     let attachment = |data: serde_json::Value| AttachmentMessage {
         id: MessageId::new("m"),

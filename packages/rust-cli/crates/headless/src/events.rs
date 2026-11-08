@@ -124,7 +124,9 @@ fn result_content(item: &ToolResultContent) -> Value {
 pub(crate) fn block(block: &ContentBlock) -> Value {
     match block {
         ContentBlock::Text { text } => json!({"type": "text", "text": text}),
-        ContentBlock::Image { source } => json!({"type": "image", "source": image_source(source)}),
+        ContentBlock::Image { source, .. } => {
+            json!({"type": "image", "source": image_source(source)})
+        }
         ContentBlock::Thinking {
             thinking,
             signature,

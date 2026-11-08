@@ -243,6 +243,7 @@ fn unmaterialized_image_artifacts_are_rejected() {
     };
     let error = body(request(vec![user(vec![plain(ContentBlock::Image {
         source: artifact,
+        name: None,
     })])]))
     .unwrap_err();
     assert!(

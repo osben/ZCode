@@ -167,7 +167,7 @@ fn save(
                 "messageID": id, "type": "text", "text": text, "synthetic": true,
                 "time": {"start": created, "end": created}, "metadata": metadata})
             }
-            ContentBlock::Image { source } => crate::tool_content::file_part(
+            ContentBlock::Image { source, .. } => crate::tool_content::file_part(
                 part_id(ctx.now, &(ctx.uuid)()),
                 (ctx.session, id),
                 source,

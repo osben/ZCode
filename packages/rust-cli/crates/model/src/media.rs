@@ -10,12 +10,17 @@ use rust_cli_kernel_api::message::{ContentBlock, ImageSource, ToolResultContent}
 use rust_cli_kernel_api::model::ApiMessage;
 use rust_cli_kernel_api::provider::ModelEndpoint;
 
-/// Node 的占位文字：`[Attached <mime>]` 加一行说明；`kind` 是 Node 的 `image input` / `PDF input`。
-fn placeholder(source: &ImageSource, kind: &str) -> String {
+/// Node 的占位文字：`[Attached <mime>]`（Fork: `[Attached <mime>: <name>]` for an attached file, Node's
+/// `source.placeholder`）加一行说明；`kind` 是 Node 的 `image input` / `PDF input`。
+fn placeholder(source: &ImageSource, name: Option<&str>, kind: &str) -> String {
     let (ImageSource::Base64 { media_type, .. } | ImageSource::Artifact { media_type, .. }) =
         source;
+    let label = match name.filter(|name| !name.is_empty()) {
+        Some(name) => format!("[Attached {media_type}: {name}]"),
+        None => format!("[Attached {media_type}]"),
+    };
     format!(
-        "[Attached {media_type}]\n[Media omitted from provider request because the selected model does not support {kind}.]"
+        "{label}\n[Media omitted from provider request because the selected model does not support {kind}.]"
     )
 }
 
@@ -23,10 +28,10 @@ fn project_result(content: &mut [ToolResultContent], endpoint: &ModelEndpoint) {
     for item in content {
         let text = match item {
             ToolResultContent::Image { source } if !endpoint.capabilities.supports_image => {
-                placeholder(source, "image input")
+                placeholder(source, None, "image input")
             }
             ToolResultContent::Document { source } if !endpoint.capabilities.supports_pdf => {
-                placeholder(source, "PDF input")
+                placeholder(source, None, "PDF input")
             }
             _ => continue,
         };
@@ -42,9 +47,9 @@ pub(crate) fn project(messages: &mut [ApiMessage], endpoint: &ModelEndpoint) {
     for message in messages {
         for content in &mut message.content {
             match &mut content.block {
-                ContentBlock::Image { source } if !endpoint.capabilities.supports_image => {
+                ContentBlock::Image { source, name } if !endpoint.capabilities.supports_image => {
                     content.block = ContentBlock::Text {
-                        text: placeholder(source, "image input"),
+                        text: placeholder(source, name.as_deref(), "image input"),
                     };
                 }
                 ContentBlock::ToolResult { content, .. } => project_result(content, endpoint),
@@ -116,7 +121,14 @@ mod tests {
                     plain(ContentBlock::Text {
                         text: "look".to_owned(),
                     }),
-                    plain(ContentBlock::Image { source: image() }),
+                    plain(ContentBlock::Image {
+                        source: image(),
+                        name: None,
+                    }),
+                    plain(ContentBlock::Image {
+                        source: image(),
+                        name: Some("shot.png".to_owned()),
+                    }),
                 ],
                 output_config: None,
             }],
@@ -206,6 +218,13 @@ mod tests {
             blocks[2],
             &ContentBlock::Text {
                 text: text.to_owned()
+            }
+        );
+        // Fork: an attached file's image names the file, like Node's `source.placeholder`.
+        assert_eq!(
+            blocks[3],
+            &ContentBlock::Text {
+                text: text.replace("[Attached image/png]", "[Attached image/png: shot.png]")
             }
         );
         let mut kept = request();

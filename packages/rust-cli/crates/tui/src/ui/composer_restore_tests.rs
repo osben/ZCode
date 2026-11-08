@@ -31,6 +31,7 @@ fn images_come_back_with_their_placeholders() {
         .map(|block| match block {
             ContentBlock::Image {
                 source: ImageSource::Base64 { data, .. },
+                ..
             } => data.as_str(),
             other => panic!("{other:?}"),
         })

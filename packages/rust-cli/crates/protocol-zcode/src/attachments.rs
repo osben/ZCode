@@ -319,8 +319,41 @@ fn admit(form: Inline, mime: &str, bytes: Vec<u8>) -> AttachedBody {
     }
 }
 
+/// Node `resolveLocalFileAttachment` / `resolveLocalImageAttachment`: a desktop file (an absolute local path) that is
+/// not read inline goes by path, so the model can read it with its tools. Only an existing regular file does (Node stats
+/// it first; anything else is a placeholder).
+async fn path_reference(attachment: &AttachmentRef) -> Option<AttachedBody> {
+    use rust_cli_kernel_api::prompt_attachment::{
+        PathReason, is_text_like_path, mime_of_path, path_reference,
+    };
+    let path = attachment.reference.as_str();
+    if path.starts_with(ARTIFACT_SCHEME) || !Path::new(path).is_absolute() {
+        return None;
+    }
+    let kind = essence(&attachment.mime);
+    let (mime, reason) = if kind.starts_with("image/") {
+        if attachment.bytes <= INLINE_IMAGE_MAX_BYTES as u64 {
+            return None;
+        }
+        (kind, PathReason::ImageTooLarge)
+    } else if kind.starts_with("video/") || kind == "application/pdf" || is_text_like_path(path) {
+        return None;
+    } else {
+        (mime_of_path(path).to_owned(), PathReason::BinaryFile)
+    };
+    if !rust_cli_fs::is_file(Path::new(path)).await {
+        return None;
+    }
+    Some(AttachedBody::PathReference {
+        text: path_reference(&mime, path, reason),
+    })
+}
+
 /// What of one attachment reaches the model (the stored file part keeps it for both runtimes).
 async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) -> AttachedBody {
+    if let Some(reference) = path_reference(attachment).await {
+        return reference;
+    }
     let Some(form) = inline_form(&attachment.mime, attachment.bytes) else {
         return AttachedBody::Omitted;
     };

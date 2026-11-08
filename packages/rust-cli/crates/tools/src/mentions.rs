@@ -233,6 +233,7 @@ pub fn media(path: &str, display: &str, content: &[ToolResultContent]) -> InputA
             ToolResultContent::Text { text } => Some(ContentBlock::Text { text: wrap(text) }),
             ToolResultContent::Image { source } => Some(ContentBlock::Image {
                 source: source.clone(),
+                name: None,
             }),
             // 提及不附 PDF 内容（tui-input.md §1.3），Read 的 notebook 与图片结果里也没有 document。
             ToolResultContent::Document { .. } | ToolResultContent::ToolReference { .. } => None,

@@ -6,7 +6,8 @@
 //! `metadata.preview`, `storageKind: inline`, `recoverability: provider_ready`, which Node's
 //! `shouldAddReadLikePromptAttachmentReminder` requires), the image branch of `persistAttachmentDataUrl` (`url` is the session artifact, or the data URL when none was
 //! stored) and
-//! `resolvedPlaceholderAttachment` (`recoverability: metadata_only`). The App's ref is kept as `metadata.originalUrl`.
+//! `resolvedPlaceholderAttachment` (`recoverability: metadata_only`) and `resolvedPathReferenceAttachment`
+//! (`storageKind: local_ref`, `metadata.pathReferenceText`). The App's ref is kept as `metadata.originalUrl`.
 
 use rust_cli_kernel_api::message::{AttachedBody, AttachedFile, ImageSource, ToolResultContent};
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
@@ -75,6 +76,19 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["sizeBytes"] = json!(file.bytes);
             metadata["storageKind"] = json!("inline");
         }
+        // Node `resolvedPathReferenceAttachment`: the note is the part's `pathReferenceText`.
+        AttachedBody::PathReference { text } => {
+            let path = reference.unwrap_or(&file.name);
+            out["mime"] = json!(rust_cli_kernel_api::prompt_attachment::mime_of_path(path));
+            out["filename"] = json!(file.name);
+            out["url"] = json!(path);
+            out["source"] = json!({"type": "file", "path": path,
+                "text": {"value": path, "start": 0, "end": path.encode_utf16().count()}});
+            metadata["pathReferenceText"] = json!(text);
+            metadata["recoverability"] = json!("metadata_only");
+            metadata["sizeBytes"] = json!(file.bytes);
+            metadata["storageKind"] = json!("local_ref");
+        }
         AttachedBody::Omitted => {
             out["mime"] = json!(file.mime);
             out["filename"] = json!(file.name);
@@ -109,17 +123,26 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
         Some("provider_ready" | "preview_only")
     );
     let preview = metadata["preview"]["text"].as_str();
-    let body = match preview {
-        Some(text) if recoverable && mime.starts_with("text/") => AttachedBody::Text {
+    let path_reference = metadata["pathReferenceText"]
+        .as_str()
+        .filter(|_| metadata["storageKind"] == "local_ref");
+    let body = if let Some(text) = path_reference {
+        AttachedBody::PathReference {
             text: text.to_owned(),
-        },
-        _ if recoverable && mime.starts_with("image/") => {
-            match crate::tool_content::from_file_part(part) {
-                ToolResultContent::Image { source } => AttachedBody::Image { source },
-                _ => AttachedBody::Omitted,
-            }
         }
-        _ => AttachedBody::Omitted,
+    } else {
+        match preview {
+            Some(text) if recoverable && mime.starts_with("text/") => AttachedBody::Text {
+                text: text.to_owned(),
+            },
+            _ if recoverable && mime.starts_with("image/") => {
+                match crate::tool_content::from_file_part(part) {
+                    ToolResultContent::Image { source } => AttachedBody::Image { source },
+                    _ => AttachedBody::Omitted,
+                }
+            }
+            _ => AttachedBody::Omitted,
+        }
     };
     // An image whose bytes live in a session artifact (both runtimes write Node's shape); the store reads it back.
     let stored = metadata["artifactUri"]

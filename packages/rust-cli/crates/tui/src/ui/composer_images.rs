@@ -126,6 +126,7 @@ impl Composer {
                     media_type: image.media_type.clone(),
                     data: image.data.clone(),
                 },
+                name: None,
             })
             .collect()
     }

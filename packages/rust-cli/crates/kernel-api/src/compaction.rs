@@ -281,6 +281,7 @@ fn block_tokens(block: &ContentBlock) -> u64 {
         ContentBlock::Text { text } => rough_tokens(text),
         ContentBlock::Image {
             source: ImageSource::Base64 { .. } | ImageSource::Artifact { .. },
+            ..
         } => IMAGE_TOKENS,
         ContentBlock::Thinking { thinking, .. } => rough_tokens(thinking),
         ContentBlock::RedactedThinking { data } => rough_tokens(data),

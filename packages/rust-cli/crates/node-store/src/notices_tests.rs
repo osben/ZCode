@@ -179,6 +179,7 @@ async fn meta_messages_with_images_are_refused() {
             media_type: "image/png".into(),
             data: "AA==".into(),
         },
+        name: None,
     };
     let fact = user_with(
         "msg_ru_m1",

@@ -180,7 +180,10 @@ fn unmaterialized_images_are_rejected() {
     };
     let messages = vec![message(
         ApiRole::User,
-        vec![ContentBlock::Image { source: artifact }],
+        vec![ContentBlock::Image {
+            source: artifact,
+            name: None,
+        }],
     )];
     assert!(matches!(
         items(Vec::new(), messages),

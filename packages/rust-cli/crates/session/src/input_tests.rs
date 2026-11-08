@@ -234,6 +234,7 @@ async fn submitted_content_keeps_its_images_and_queues_while_running() {
             media_type: "image/png".into(),
             data: "iVBORw0KGgo=".into(),
         },
+        name: None,
     };
     let content = vec![
         ContentBlock::Text {
