@@ -26,6 +26,9 @@ pub struct Context {
     prefix: String,
     /// Fork: the model directory the projection reads reasoning levels from (Node `listThoughtLevels`).
     models: std::sync::OnceLock<Arc<dyn ModelDirectory>>,
+    /// Fork: the storage root for per-session directories (session erase); set once by the
+    /// app-server. Without it the erase removes the rows and skips the files.
+    storage_root: std::sync::OnceLock<std::path::PathBuf>,
 }
 
 impl Context {
@@ -33,6 +36,16 @@ impl Context {
     /// selected reasoning level).
     pub fn set_models(&self, models: Arc<dyn ModelDirectory>) {
         let _ = self.models.set(models);
+    }
+
+    /// Fork: the storage root (Node `context.deps.storageRoot`).
+    pub fn set_storage_root(&self, root: std::path::PathBuf) {
+        let _ = self.storage_root.set(root);
+    }
+
+    /// Fork: the storage root, when the entry point provided one.
+    pub fn storage_root(&self) -> Option<&std::path::Path> {
+        self.storage_root.get().map(std::path::PathBuf::as_path)
     }
 
     /// Fork: the selectable models, empty without a directory.
@@ -57,6 +70,7 @@ impl Context {
             sessions: Mutex::new(HashMap::new()),
             prefix,
             models: std::sync::OnceLock::new(),
+            storage_root: std::sync::OnceLock::new(),
         }
     }
 

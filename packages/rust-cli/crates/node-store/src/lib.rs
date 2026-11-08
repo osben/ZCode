@@ -14,6 +14,8 @@ mod compaction;
 mod facts;
 mod fork;
 mod fork_clone;
+mod fork_usage_query;
+mod fork_usage_rollup;
 mod frontend_records;
 mod ids;
 mod load;
@@ -25,12 +27,15 @@ mod query;
 mod repo;
 mod rewind;
 mod rust_entries;
+mod session_tree;
 mod state;
+mod subagent_rows;
 mod task_lists;
 mod tool_parts;
 mod usage;
 mod usage_query;
 mod usage_stats;
+mod usage_v4;
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。
@@ -48,9 +53,10 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::{ArtifactId, SessionId};
 use rust_cli_kernel_api::permission::{PermissionMode, ProjectRules};
 use rust_cli_kernel_api::store::{
-    ArtifactPurpose, ArtifactRef, ArtifactStore, CommitReceipt, FactBatch, ForkReceipt,
-    LoadedSession, LocalSettings, SessionFilter, SessionFork, SessionKind, SessionMeta,
-    SessionPage, SessionQuery, SessionStore, SessionSummary, StoreError, StoreQueries,
+    AppUsageRows, AppUsageSpan, ArtifactPurpose, ArtifactRef, ArtifactStore, CommitReceipt,
+    ErasedSessionTree, FactBatch, ForkReceipt, LoadedSession, LocalSettings, SessionFilter,
+    SessionFork, SessionKind, SessionMeta, SessionPage, SessionQuery, SessionStore, SessionSummary,
+    SessionTreeCounts, StoreError, StoreQueries, TaskUsageTotals,
 };
 use rust_cli_kernel_api::workspace_trust::TrustKey;
 use rust_cli_paths::StoragePaths;
@@ -375,6 +381,67 @@ impl StoreQueries for NodeStore {
     ) -> Result<Vec<rust_cli_kernel_api::store::FrontendRecord>, StoreError> {
         let (session, kind) = (session.as_str().to_owned(), kind.to_owned());
         self.with_db(move |conn, _| frontend_records::list(conn, &session, &kind))
+            .await
+    }
+
+    async fn session_tree_counts(
+        &self,
+        root_ids: Vec<String>,
+    ) -> Result<SessionTreeCounts, StoreError> {
+        self.with_db(move |conn, _| session_tree::count_tree(conn, &root_ids))
+            .await
+    }
+
+    async fn session_tree_ids(&self, root_ids: Vec<String>) -> Result<Vec<String>, StoreError> {
+        self.with_db(move |conn, _| session_tree::list_tree_ids(conn, &root_ids))
+            .await
+    }
+
+    async fn session_tree_ids_with_surviving_children(
+        &self,
+        root_ids: Vec<String>,
+    ) -> Result<Vec<String>, StoreError> {
+        self.with_db(move |conn, _| {
+            session_tree::list_tree_ids_with_surviving_children(conn, &root_ids)
+        })
+        .await
+    }
+
+    async fn erase_session_tree(
+        &self,
+        root_ids: Vec<String>,
+    ) -> Result<ErasedSessionTree, StoreError> {
+        self.with_db(move |conn, ids| session_tree::delete_tree(conn, &root_ids, ids))
+            .await
+    }
+
+    /// Fork: the App Usage read path behind `v4/usage/stats` — rollup first, raw tables as the
+    /// fallback (SQL copied from the Node agent so both agents read the shared db.sqlite the
+    /// same way).
+    async fn app_usage(&self, span: AppUsageSpan) -> Result<AppUsageRows, StoreError> {
+        self.with_db(move |conn, ids| {
+            fork_usage_query::query_with_rollup(conn, &span, ids.now_ms())
+        })
+        .await
+    }
+
+    /// Fork: the per-session incremental totals behind `v4/conversation/usage`.
+    async fn task_usage(&self, session: &SessionId) -> Result<TaskUsageTotals, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| usage_v4::task_usage(conn, &session))
+            .await
+    }
+
+    /// Fork: the App's subagent directory, the parent document.
+    async fn subagent_rows(&self, session: &SessionId) -> Result<serde_json::Value, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| subagent_rows::parent_rows(conn, &session))
+            .await
+    }
+
+    /// Fork: the child rows for the collected candidate ids, resolved by id (Node `getSession`).
+    async fn subagent_children(&self, ids: Vec<String>) -> Result<serde_json::Value, StoreError> {
+        self.with_db(move |conn, _| subagent_rows::child_rows(conn, &ids))
             .await
     }
 }

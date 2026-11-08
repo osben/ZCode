@@ -22,8 +22,16 @@ pub(crate) async fn dispatch(
         }
         // zcode-rs has no dynamic workflows (P4): there are never runs to list.
         "v4/conversation/workflowRuns" => Ok(json!({"runs": []})),
+        // Fork: permanent session-tree erase and its counts (Node `zcode-protocol/session-tree.ts`).
+        "session/treeCounts" => super::session_tree::tree_counts(server, &params).await,
+        "session/eraseTree" => super::session_tree::erase_tree(server, &params).await,
         "session/debug" => session_debug(&params),
         "skills/referenceCatalog" => super::skills::reference_catalog(server, &params).await,
+        // Fork: the App's subagent directory pane (Node `listSessionSubagents`).
+        "session/subagents" => super::subagents::subagents(server, &params).await,
+        // Fork: the App's usage surfaces.
+        "v4/usage/stats" => super::usage::usage_stats(server, &params).await,
+        "v4/conversation/usage" => super::usage::conversation_usage(server, &params).await,
         _ => return None,
     };
     Some(result.map(Reply::new))

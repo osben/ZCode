@@ -128,6 +128,8 @@ async fn serve(
     if let Some(directory) = opened.directory.clone() {
         context.set_models(directory);
     }
+    // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
+    context.set_storage_root(opened.paths.root().as_path().to_path_buf());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
