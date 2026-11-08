@@ -413,6 +413,46 @@ describe("codexSessionsAdapter.list (rollout-head fallback, subagents)", () => {
   });
 });
 
+describe("codexSessionsAdapter.readTranscript (thread_rolled_back)", () => {
+  it("drops the rolled-back user turns and their answers", async () => {
+    const workspace = join(home, "rollback-project");
+    await mkdir(workspace, { recursive: true });
+    const id = "ab12ab12-1212-4212-8212-ab12ab12ab12";
+    const message = (role: string, text: string, at: string) => ({
+      timestamp: at,
+      type: "response_item",
+      payload: { type: "message", role, content: [{ type: "input_text", text }] },
+    });
+    await writeRollout(home, id, [
+      {
+        timestamp: "2026-11-07T10:00:00.000Z",
+        type: "session_meta",
+        payload: { id, cwd: workspace, timestamp: "2026-11-07T10:00:00.000Z" },
+      },
+      message("user", "first question", "2026-11-07T10:00:01.000Z"),
+      message("assistant", "first answer", "2026-11-07T10:00:02.000Z"),
+      message("user", "second question", "2026-11-07T10:00:03.000Z"),
+      message("assistant", "second answer", "2026-11-07T10:00:04.000Z"),
+      {
+        timestamp: "2026-11-07T10:00:05.000Z",
+        type: "event_msg",
+        payload: { type: "thread_rolled_back", num_turns: 1 },
+      },
+      message("user", "retry question", "2026-11-07T10:00:06.000Z"),
+      message("assistant", "retry answer", "2026-11-07T10:00:07.000Z"),
+    ]);
+    const { ctx } = makeCtx();
+    const sessions = await codexSessionsAdapter.list(ctx);
+    const transcript = await codexSessionsAdapter.readTranscript(ctx, requireSession(sessions, id));
+    expect(transcript?.messages.map((item) => item.text)).toEqual([
+      "first question",
+      "first answer",
+      "retry question",
+      "retry answer",
+    ]);
+  });
+});
+
 describe("codexSessionsAdapter.readTranscript", () => {
   const sessionId = "ee55ee55-5555-4555-8555-ee55ee55ee55";
   const t1 = Date.parse("2026-11-06T09:00:01.000Z");

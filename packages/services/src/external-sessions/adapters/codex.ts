@@ -325,6 +325,12 @@ function parseRolloutTranscript(
       model = readString(payload.model) ?? model;
       continue;
     }
+    // `thread_rolled_back` (codex-rs protocol ThreadRolledBackEvent) removes the last `num_turns` user turns
+    // from context; the rollout keeps the removed records, so replay the rollback before extracting text.
+    if (type === "event_msg" && payload.type === "thread_rolled_back") {
+      rollBackUserTurns(messages, Number(payload.num_turns));
+      continue;
+    }
     if (type !== "response_item" || payload.type !== "message") continue;
     const role = payload.role;
     if (role !== "user" && role !== "assistant") continue; // developer and system never render
@@ -340,6 +346,21 @@ function parseRolloutTranscript(
     });
   }
   return messages;
+}
+
+/** Drops the last `numTurns` user messages and everything after each of them (a turn = one user prompt). */
+function rollBackUserTurns(messages: ExternalSessionTranscriptMessage[], numTurns: number): void {
+  if (!Number.isFinite(numTurns) || numTurns <= 0) return;
+  let remaining = Math.trunc(numTurns);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== "user") continue;
+    remaining -= 1;
+    if (remaining === 0) {
+      messages.length = index;
+      return;
+    }
+  }
+  messages.length = 0;
 }
 
 function concatTextParts(content: unknown): string {
