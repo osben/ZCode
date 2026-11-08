@@ -144,6 +144,7 @@ import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsActio
 import { formatModelChangeLabel } from "@/v4/composer/modelTriggerDisplay.js";
 import { formatMessageTimeLabel } from "@/v4/messageTimeLabel.js";
 import { parseConversationShareContext } from "@/lib/conversationShareContext.js";
+import { editAttachmentsToSubmit } from "@zcode/shared/fork-attachment-ref-trust";
 
 function RowShell({
   rowId,
@@ -1161,9 +1162,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
             ...editPromptContexts,
             conversationSelections: [],
           }),
-          // Omitting an empty array makes the CLI restore canonical original attachments by default,
-          // so edit must always submit the full current list; only explicit [] means "remove all".
-          editAttachments,
+          // Fork: omitted when untouched so the agent keeps the canonical refs; a changed list is
+          // sent in full and only explicit [] means "remove all".
+          editAttachmentsToSubmit(row.attachments, editAttachments),
           workspaceMode,
           ...(parsedPrompt.conversationSelections.length || row.conversationQuotes
             ? [[...editPromptContexts.conversationSelections]]
@@ -1193,6 +1194,7 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
       editContextCount,
       editPromptContexts,
       onEdit,
+      row.attachments,
       row.entityId,
       row.rowId,
       row.conversationQuotes,

@@ -3150,6 +3150,8 @@ const enUS: Record<string, string> = {
   "chat.changeSummary.rewindDialog.reason.fileReadFailed": "current file unreadable",
   "chat.changeSummary.rewindDialog.reason.unsupportedCheckpoint":
     "old checkpoint cannot be safely restored",
+  "chat.edit.attachmentRefNotAuthorized":
+    "This edit keeps attachments this device cannot resend. Remove them from the edit, or edit on the desktop.",
   "chat.edit.resetConversationAndFiles": "Reset chat + files",
   "chat.edit.resetConversationAndFiles.tooltip": "Reset with files",
   "chat.edit.resetConversationAndFiles.available":

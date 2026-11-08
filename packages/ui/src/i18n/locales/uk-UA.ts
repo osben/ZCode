@@ -2202,6 +2202,8 @@ const ukUA: Record<string, string> = {
   "chat.changeSummary.rewindDialog.reason.fileReadFailed": "не вдається прочитати поточний файл",
   "chat.changeSummary.rewindDialog.reason.unsupportedCheckpoint":
     "стару контрольну точку неможливо безпечно відновити",
+  "chat.edit.attachmentRefNotAuthorized":
+    "Ця правка містить вкладення, які цей пристрій не може надіслати повторно. Приберіть їх із правки або редагуйте на комп'ютері.",
   "chat.edit.resetConversationAndFiles": "Скинути чат і файли",
   "chat.edit.resetConversationAndFiles.tooltip": "Скинути разом із файлами",
   "chat.edit.resetConversationAndFiles.available":

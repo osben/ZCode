@@ -19,6 +19,7 @@ import {
   type PluginUiToolResultNotification,
 } from "@zcode/shared/mcp-apps";
 import { supportsResidentRowsRange } from "./resident-rows-range/contract.js";
+import { attachmentRefAdmissionError } from "./fork-attachment-ref-trust/contract.js";
 import {
   offPeakControlParamsSchema,
   offPeakControlResultSchema,
@@ -6890,6 +6891,23 @@ export function createZCodeAgentService(
     },
 
     async sendConversationCommandV4(params: ZCodeAgentConversationCommandParams) {
+      // Fork: refuse attachment refs the trusted origin may not name, before the runtime starts or
+      // any side effect runs (specs/fork-attachment-ref-trust-boundary.md).
+      const attachmentRefRefusal = attachmentRefAdmissionError(
+        params.envelope,
+        readTrustedZCodeAgentV4Connection(params)?.clientMode ??
+          params.clientMode ??
+          "desktop-continuous",
+      );
+      if (attachmentRefRefusal) {
+        logger.warn(undefined, "[attachment-ref-trust] refused command attachment", {
+          commandType: attachmentRefRefusal.commandType,
+          reason: attachmentRefRefusal.reason,
+        });
+        throw Object.assign(new Error(attachmentRefRefusal.code), {
+          code: attachmentRefRefusal.code,
+        });
+      }
       const ttft =
         !params.workspaceIdentity?.trim() &&
         !params.remoteSessionId &&

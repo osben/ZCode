@@ -4,6 +4,7 @@ import { useSessionRuntimeRestart } from "@/app-shell/useWorkspaceSessionReload.
 import { isRequestVerificationConfigNetworkError } from "@/request-security-edition/errors.js";
 import { useShallow } from "zustand/react/shallow";
 import { remoteHostIdFromWorkspaceIdentity } from "@zcode/shared";
+import { isAttachmentRefNotAuthorizedError } from "@zcode/shared/fork-attachment-ref-trust";
 import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
@@ -2405,7 +2406,9 @@ export function SessionPane({
           if (commandLease) {
             commandLease.store.settleCommand(envelope.commandId);
           }
-          if (isProviderNotReadyError(error)) {
+          // Fork: the attachment ref refusal is also decided before Host getClient
+          // (specs/fork-attachment-ref-trust-boundary.md).
+          if (isProviderNotReadyError(error) || isAttachmentRefNotAuthorizedError(error)) {
             // provider_not_ready is rejected deterministically before Host getClient, so the CLI
             // cannot have admitted the command. The unknown query only keeps the pending state, so the
             // rejected record must be cleared explicitly here.
@@ -4867,11 +4870,8 @@ export function SessionPane({
     ) => {
       const current = snapshotRef.current;
       if (!sessionId || current === null) return false;
-      if (
-        !newText.trim() &&
-        (!attachments || attachments.length === 0) &&
-        !conversationQuotes?.length
-      ) {
+      // Omitted attachments keep the edited message's canonical ones, so only an explicit [] is empty.
+      if (!newText.trim() && attachments?.length === 0 && !conversationQuotes?.length) {
         logger.warn("[v4-pane] edit 跳过：行内编辑内容为空且无附件");
         return false;
       }
@@ -4884,24 +4884,36 @@ export function SessionPane({
         logger.warn("[v4-pane] edit 跳过：Highspeed prepare 后 session 已切换");
         return false;
       }
-      const ack = await dispatchCommand(
-        "editUserQuery",
-        {
-          target,
-          newText,
-          workspaceMode,
-          conversationQuotes,
-          // editUserQuery 的 attachments 缺省表示保留 canonical 原附件；
-          // 只有显式透传 []，CLI 才能区分“用户删除全部”与“调用方未修改附件”。
-          ...(attachments ? { attachments: [...attachments] } : {}),
-          ...highspeed.override,
-        },
-        sessionId,
-        latest.revision,
-        latest.logEpoch,
-        undefined,
-        highspeed.acceleratedCard,
-      );
+      let ack: CommandAck;
+      try {
+        ack = await dispatchCommand(
+          "editUserQuery",
+          {
+            target,
+            newText,
+            workspaceMode,
+            conversationQuotes,
+            // editUserQuery 的 attachments 缺省表示保留 canonical 原附件；
+            // 只有显式透传 []，CLI 才能区分“用户删除全部”与“调用方未修改附件”。
+            ...(attachments ? { attachments: [...attachments] } : {}),
+            ...highspeed.override,
+          },
+          sessionId,
+          latest.revision,
+          latest.logEpoch,
+          undefined,
+          highspeed.acceleratedCard,
+        );
+      } catch (error) {
+        // The Host refuses attachment refs a web-remote origin did not upload for this session
+        // (specs/fork-attachment-ref-trust-boundary.md); say so instead of failing silently.
+        if (!isAttachmentRefNotAuthorizedError(error)) throw error;
+        logger.warn("[v4-pane] edit refused: attachment ref not authorized");
+        toast(intl.formatMessage({ id: "chat.edit.attachmentRefNotAuthorized" }), {
+          variant: "warning",
+        });
+        return false;
+      }
       if (ack.status !== "accepted" && ack.status !== "duplicate") {
         logger.warn(`[v4-pane] edit 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
         return false;
@@ -4909,7 +4921,7 @@ export function SessionPane({
       // fork ACK 只做旧协议解码兼容；新 edit 永不导航 child。blocked 由行内冲突弹窗处理。
       return ack;
     },
-    [captureHighspeedPaneOrigin, dispatchCommand, prepareHighspeedTurnFrom, sessionId],
+    [captureHighspeedPaneOrigin, dispatchCommand, intl, prepareHighspeedTurnFrom, sessionId],
   );
 
   const dispatchRetryTurn = useCallback(

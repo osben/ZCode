@@ -622,6 +622,30 @@ modules:
       - packages/services/src/zcode-agent/resident-rows-range/contract.ts
     layers: { app: . }
     owner: remote
+  # fork-attachment-ref-trust-shared: the refusal code and edit-list rule the Host and renderer share
+  # (specs/fork-attachment-ref-trust-boundary.md).
+  - id: fork-attachment-ref-trust-shared
+    roots: [packages/shared/src/fork-attachment-ref-trust]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      [
+        packages/shared/src/fork-attachment-ref-trust/index.ts,
+        packages/shared/src/fork-attachment-ref-trust/contract.ts,
+      ]
+    layers: { domain: "." }
+    owner: remote
+  # fork-attachment-ref-trust: Host admission of AttachmentRef.ref/previewRef by trusted connection origin
+  # (specs/fork-attachment-ref-trust-boundary.md); runs before a v4 command reaches either agent runtime.
+  - id: fork-attachment-ref-trust
+    roots:
+      - packages/services/src/zcode-agent/fork-attachment-ref-trust
+    managed: true
+    requires: [fork-attachment-ref-trust-shared]
+    publicEntrypoints:
+      - packages/services/src/zcode-agent/fork-attachment-ref-trust/contract.ts
+    layers: { app: . }
+    owner: remote
   - id: tool-discovery
     roots:
       - apps/zcode-cli/packages/core/src/tool/search
