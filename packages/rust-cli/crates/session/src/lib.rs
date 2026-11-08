@@ -12,6 +12,7 @@ mod agent_signals;
 mod append;
 mod bash;
 mod checkpoints;
+mod child_live;
 mod closing;
 mod commit;
 mod compact;
@@ -194,6 +195,9 @@ pub struct SessionState {
         rust_cli_kernel_api::ids::MessageId,
         rust_cli_kernel_api::ids::CommandId,
     >,
+    /// Fork (node_desktop): the live run of the subagent this child session belongs to, taken before the cold load
+    /// (crate::child_live). None for every other session.
+    pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
 }
 
 impl SessionState {
@@ -215,6 +219,7 @@ impl SessionState {
             turn: None,
             last_turn_failed: false,
             commands: Default::default(),
+            child_live: None,
         }
     }
 
@@ -243,6 +248,7 @@ impl SessionState {
             start,
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
+            child_live: None,
         }
     }
 }
@@ -280,6 +286,9 @@ impl Session {
             // 中断后续跑：末尾没有结果的调用补中断结果、更早的去掉 tool_use 块（session-lifecycle.md §6.3，工作线
             // F81）；最后一条 user 消息没有回答时补一条 assistant（§6.3.1）。补的消息由 actor 随第一批带消息的提交
             // 落库（工作线 F77），会话里切过去时由 `Command::StoreResumeSentinel` 马上落库（F79）。
+            // Fork: a subagent's child session opened while its run is live (session crate `child_live`) ends on
+            // the run's own unanswered input; the run stores its reply, so nothing is repaired or added.
+            Opened::Loaded if child_live::running(state.child_live.as_ref()) => {}
             Opened::Loaded => {
                 let ids = deps.ids.clone();
                 let (messages, results) =

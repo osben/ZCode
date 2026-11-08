@@ -59,6 +59,27 @@ pub struct AgentNotice {
     pub text: String,
 }
 
+/// Fork (node_desktop): one event of a subagent run in its own child session. The run writes the child session
+/// directly, not through that session's actor, so the actor mirrors these for an open side tab
+/// (specs/fork-rust-agent-parity.md, side-pane tab of a running subagent).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChildLive {
+    Started,
+    /// A query event of the run: stream deltas, tool start, progress and finish, model notices.
+    Event(crate::orchestration::QueryEvent),
+    /// A message the run has already stored in the child session.
+    Committed(crate::message::Message),
+    Finished(crate::session_api::TurnOutcome),
+}
+
+/// Fork: the current child run so far (`Started`, the messages stored during it, the events since the last stored
+/// message) and the later events, taken under one lock so nothing falls between them. The live stream ends when the
+/// subscriber falls behind; the subscriber then takes a new feed.
+pub struct ChildLiveFeed {
+    pub replay: Vec<ChildLive>,
+    pub live: BoxStream<'static, ChildLive>,
+}
+
 /// 发给某个会话的信号。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -124,6 +145,12 @@ pub trait AgentSignals: Send + Sync {
             subagents: self.subagents(session).await,
             background: self.background_entries(session).await,
         }
+    }
+
+    /// Fork (node_desktop): the feed of the subagent run whose child session is `session`. None when the agents do
+    /// not mirror child runs (the TUI).
+    fn child_live(&self, _session: &SessionId) -> Option<ChildLiveFeed> {
+        None
     }
 
     /// 顶层会话 `session` 里一个子代理的只读快照（子会话的消息，tui-panels.md §1.4）。

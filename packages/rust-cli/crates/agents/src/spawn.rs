@@ -253,6 +253,8 @@ pub(crate) async fn drive(
         .asking(&agent.definition.agent_type, agent.asks.clone())
         .with_core(core.clone()),
     );
+    // Fork (node_desktop): an open side tab on the child session streams this run; the guard ends it on every exit.
+    let mut mirrored = crate::mirror::MirrorRun::start(core, &agent.child);
     let result = match core.registry() {
         Some(registry) => {
             run_loop(core, agent, registry, messages, sink.clone(), abort, cancel).await
@@ -277,6 +279,7 @@ pub(crate) async fn drive(
     if let Err(error) = sink.commit(vec![Fact::TurnEnded { status }]).await {
         tracing::warn!(%error, "the subagent turn usage could not be stored");
     }
+    mirrored.finish(crate::mirror::outcome(&result));
     let (last, run_tool_uses) = sink.outcome();
     let tool_uses = earlier + run_tool_uses;
     let mut text = report::final_text(last.as_ref());

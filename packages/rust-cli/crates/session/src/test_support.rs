@@ -171,6 +171,8 @@ pub(crate) struct Setup {
     pub root: &'static str,
     /// 会话 actor 的时钟（回合结束那一行的用时，duration_tests.rs 拨动它）；缺省固定在 1000。
     pub clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+    /// Fork: the mirrored child run (`SessionState::child_live`); none by default.
+    pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
 }
 
 impl Setup {
@@ -209,6 +211,7 @@ impl Setup {
             machines: None,
             root: "/work",
             clock: Arc::new(FixedClock(1_000)),
+            child_live: None,
         }
     }
 
@@ -309,6 +312,7 @@ impl Setup {
                 start: self.start,
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
+                child_live: self.child_live,
             },
             self.opened,
         );

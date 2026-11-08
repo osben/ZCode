@@ -1066,3 +1066,44 @@ fn a_delegated_question_carries_the_subagent_origin() {
         })
     );
 }
+
+/// Node's turn header sums the output tokens of every model response in the turn (`ModelComplete`), not only the
+/// last one: a read then a reply of 16 and 12 tokens shows 28.
+#[test]
+fn the_turn_header_sums_the_output_tokens_of_every_response() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let reply = |id: &str, tokens: u64| {
+        Message::Assistant(AssistantMessage {
+            id: MessageId::new(id),
+            content: vec![ContentBlock::Text { text: id.into() }],
+            model: "m".into(),
+            stop_reason: None,
+            usage: Some(Usage {
+                output_tokens: tokens,
+                ..Usage::default()
+            }),
+        })
+    };
+    let first = feed.apply(KernelEvent::MessageDone {
+        message: reply("msg_a1", 16),
+    });
+    assert_eq!(first[0]["row"]["kind"], "turnHeader");
+    assert_eq!(first[0]["row"]["outputTokens"], 16);
+    feed.apply(KernelEvent::MessageDone {
+        message: reply("msg_a2", 12),
+    });
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: Some(Usage {
+            output_tokens: 12,
+            ..Usage::default()
+        }),
+    });
+    assert_eq!(finished[0]["row"]["kind"], "turnHeader");
+    assert_eq!(finished[0]["row"]["outputTokens"], 28);
+}

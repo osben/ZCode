@@ -398,6 +398,73 @@ impl StreamDecoder for AnthropicStream {
     fn finished(&self) -> bool {
         self.finished
     }
+
+    /// Fork: a whole Anthropic message (`"type": "message"`) is read as the stream it stands for: its blocks start,
+    /// carry their text, thinking, signature or input as one delta each, and stop; then its stop reason and usage.
+    fn whole(&mut self, mut body: Value, out: &mut VecDeque<ModelEvent>) -> Result<bool, Verdict> {
+        if self.started || body.get("type").and_then(Value::as_str) != Some("message") {
+            return Ok(false);
+        }
+        let content = match body.get_mut("content").map(Value::take) {
+            Some(Value::Array(content)) => content,
+            _ => Vec::new(),
+        };
+        let stop_reason = body
+            .get_mut("stop_reason")
+            .map(Value::take)
+            .unwrap_or(Value::Null);
+        let usage = body.get("usage").cloned().unwrap_or_default();
+        body["content"] = Value::Array(Vec::new());
+        self.message_start(serde_json::json!({ "message": body }), out);
+        for (index, mut block) in content.into_iter().enumerate() {
+            let block_type = block.get("type").and_then(Value::as_str).map(str::to_owned);
+            let mut take = |field: &str| block.get_mut(field).map(Value::take);
+            let deltas: Vec<(&str, &str, Value)> = match block_type.as_deref() {
+                Some("text") => vec![("text_delta", "text", take("text").unwrap_or_default())],
+                Some("thinking") => vec![
+                    (
+                        "thinking_delta",
+                        "thinking",
+                        take("thinking").unwrap_or_default(),
+                    ),
+                    (
+                        "signature_delta",
+                        "signature",
+                        take("signature").unwrap_or_default(),
+                    ),
+                ],
+                Some("tool_use") => {
+                    let input = take("input").unwrap_or_else(|| Value::Object(Map::new()));
+                    vec![(
+                        "input_json_delta",
+                        "partial_json",
+                        Value::String(input.to_string()),
+                    )]
+                }
+                _ => Vec::new(),
+            };
+            self.block_start(
+                serde_json::json!({ "index": index, "content_block": block }),
+                out,
+            )?;
+            for (kind, field, value) in deltas {
+                if value.as_str().is_some_and(|text| !text.is_empty()) {
+                    self.block_delta(
+                        serde_json::json!({ "index": index, "delta": { "type": kind, field: value } }),
+                        out,
+                    )?;
+                }
+            }
+            self.block_stop(&serde_json::json!({ "index": index }), out)?;
+        }
+        self.message_delta(
+            serde_json::json!({ "delta": { "stop_reason": stop_reason }, "usage": usage }),
+            out,
+        )?;
+        self.finished = true;
+        out.push_back(ModelEvent::MessageStop);
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

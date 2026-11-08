@@ -20,6 +20,7 @@ mod fork;
 mod frontmatter;
 mod live;
 mod messaging;
+mod mirror;
 mod monitors;
 mod peer_send;
 mod plugin;
@@ -142,6 +143,8 @@ pub(crate) struct Core {
     pub(crate) board: TaskBoard,
     /// 子代理里的 Monitor（agents.md §5.3，工作线 F83）。
     pub(crate) monitors: monitors::MonitorBoard,
+    /// Fork (node_desktop): the live child runs for the child sessions' actors (side tabs).
+    pub(crate) mirrors: mirror::Mirrors,
     pub(crate) keep_alive: bool,
     pub(crate) background_prompts: bool,
     pub(crate) fork: bool,
@@ -245,6 +248,7 @@ impl Agents {
                 live,
                 hub: Hub::default(),
                 monitors: monitors::MonitorBoard::default(),
+                mirrors: mirror::Mirrors::default(),
                 keep_alive: config.keep_alive,
                 background_prompts: config.background_prompts,
                 fork: config.fork,
@@ -317,6 +321,13 @@ struct Signals(Arc<Core>);
 impl AgentSignals for Signals {
     fn signals(&self, session: &SessionId) -> BoxStream<'static, AgentSignal> {
         self.0.hub.subscribe(session)
+    }
+
+    fn child_live(
+        &self,
+        session: &SessionId,
+    ) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.0.node_desktop.then(|| self.0.mirrors.feed(session))
     }
 
     async fn ack(&self, session: &SessionId, seq: u64) {

@@ -137,7 +137,12 @@ pub(crate) struct Events<B> {
     received: bool,
     /// 越过了交出边界：`pending` 里的事件可以交出（provider-errors.md §3.2，修复线 F113）。
     crossed: bool,
+    /// Fork: the body read so far while no SSE frame has arrived (`StreamDecoder::whole`), up to `WHOLE_LIMIT`.
+    unframed: Option<Vec<u8>>,
 }
+
+/// Fork: the largest body read as a whole message when no SSE frame arrives.
+const WHOLE_LIMIT: usize = 8 * 1024 * 1024;
 
 fn item(result: Result<ModelStreamItem, ModelError>) -> Option<Next> {
     Some(Next::Item(result))
@@ -165,6 +170,7 @@ impl<B: Body> Events<B> {
             watch: Watch::new(limits, Instant::now()),
             received: false,
             crossed: false,
+            unframed: Some(Vec::new()),
         }
     }
 
@@ -224,12 +230,22 @@ impl<B: Body> Events<B> {
                     return self.failure(errors::classify_transport(&error));
                 }
                 Some(Waited::Chunk(Ok(None))) => {
+                    if self.read_whole() {
+                        continue;
+                    }
                     return self.failure(Verdict::truncated());
                 }
                 Some(Waited::Chunk(Ok(Some(chunk)))) => chunk,
             };
             let now = Instant::now();
             self.watch.bytes(now);
+            if let Some(unframed) = &mut self.unframed {
+                if unframed.len() + chunk.len() <= WHOLE_LIMIT {
+                    unframed.extend_from_slice(&chunk);
+                } else {
+                    self.unframed = None;
+                }
+            }
             let events = match self.sse.push(&chunk) {
                 Ok(events) => events,
                 Err(error) => {
@@ -237,6 +253,9 @@ impl<B: Body> Events<B> {
                     continue;
                 }
             };
+            if !events.is_empty() {
+                self.unframed = None;
+            }
             let before = self.pending.len();
             for event in events {
                 let ping = event.event.as_deref() == Some("ping");
@@ -253,6 +272,30 @@ impl<B: Body> Events<B> {
             self.crossed = self.crossed
                 || self.decoder.finished()
                 || self.pending.iter().skip(before).any(crosses);
+        }
+    }
+}
+
+impl<B> Events<B> {
+    /// Fork: the body ended without an SSE frame; a JSON body the protocol knows is read as the whole response.
+    fn read_whole(&mut self) -> bool {
+        let Some(body) = self.unframed.take() else {
+            return false;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {
+            return false;
+        };
+        match self.decoder.whole(value, &mut self.pending) {
+            Ok(true) => {
+                self.received = true;
+                self.crossed = true;
+                true
+            }
+            Ok(false) => false,
+            Err(verdict) => {
+                self.failed = Some(verdict);
+                true
+            }
         }
     }
 }

@@ -77,6 +77,8 @@ struct Turn {
     /// Fork: `originMeta` of each notification that opened this turn, in arrival order
     /// (background_result.rs); `None` for one the UI does not title.
     notified: Vec<Option<Value>>,
+    /// Fork: the output tokens of the turn's model responses so far (`None` before the first one).
+    output_tokens: Option<u64>,
 }
 
 /// 一个会话的投影。
@@ -784,6 +786,7 @@ impl Projection {
             response: None,
             keys: Vec::new(),
             notified: Vec::new(),
+            output_tokens: None,
         });
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));
@@ -828,6 +831,7 @@ impl Projection {
         self.phase = phase;
         self.active = None;
         let started = self.turn.as_ref().map_or(now, |turn| turn.started_at);
+        let summed = self.turn.as_ref().and_then(|turn| turn.output_tokens);
         let keys = self.turn.take().map(|turn| turn.keys).unwrap_or_default();
         for key in &keys {
             self.upsert(
@@ -862,7 +866,7 @@ impl Projection {
                 out,
             );
         }
-        let output_tokens = usage.map(|usage| usage.output_tokens);
+        let output_tokens = summed.or_else(|| usage.map(|usage| usage.output_tokens));
         self.upsert(
             &turn_key(turn),
             |row| {

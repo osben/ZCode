@@ -138,6 +138,8 @@ enum Next {
     Sink(Option<SinkRequest>),
     Notice(rust_cli_kernel_api::machine_notices::MachineNotice),
     Agent(AgentSignal),
+    /// Fork: a mirrored child-run event; `None` when its live stream ended.
+    ChildLive(Option<rust_cli_kernel_api::agents::ChildLive>),
     Cron,
     Job(Result<JobDone, rust_cli_base::TaskError>),
     Title(crate::title::TitleDone),
@@ -229,6 +231,8 @@ pub(crate) struct Actor {
     pub(crate) shutting_down: bool,
     stream: Notices,
     agent_stream: AgentStream,
+    /// Fork (node_desktop): the mirrored live run of this child session's subagent (crate::child_live).
+    pub(crate) mirror: crate::child_live::Mirror,
     cron_stream: CronStream,
     /// 跨会话的入站流与状态（peers.rs）。
     peer_stream: crate::watched::Watched<rust_cli_kernel_api::peers::PeerSignal>,
@@ -275,6 +279,7 @@ impl Actor {
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
         let start = state.start;
+        let child_live = state.child_live;
         let goal = crate::goal::Goals::restore(&state.messages, deps.clock.now_ms());
         let mut actor = Self {
             deps,
@@ -306,6 +311,7 @@ impl Actor {
             shutting_down: false,
             stream,
             agent_stream,
+            mirror: crate::child_live::Mirror::new(child_live),
             cron_stream,
             peer_stream,
             peers: crate::peers::PeerState::default(),
@@ -436,7 +442,7 @@ impl Actor {
         use rust_cli_kernel_api::peers::PeerStatus;
         if !self.pending.is_empty() {
             PeerStatus::Waiting
-        } else if self.busy() {
+        } else if self.busy() || self.mirror.running() {
             PeerStatus::Busy
         } else {
             PeerStatus::Idle
@@ -468,6 +474,7 @@ impl Actor {
                 request = sink_request(&mut self.running) => Next::Sink(request),
                 notice = next_notice(&mut self.stream) => Next::Notice(notice),
                 signal = self.agent_stream.next() => Next::Agent(signal),
+                event = crate::child_live::next(&mut self.mirror) => Next::ChildLive(event),
                 () = self.cron_stream.next() => Next::Cron,
                 done = job_done(&mut self.job) => Next::Job(done),
                 done = title_done(&mut self.titles) => Next::Title(done),
@@ -482,6 +489,7 @@ impl Actor {
                 Next::Sink(Some(request)) => self.on_sink(request).await,
                 Next::Notice(notice) => self.on_notice(notice).await,
                 Next::Agent(signal) => self.on_agent_signal(signal).await,
+                Next::ChildLive(event) => self.on_child_live_next(event).await,
                 Next::Cron => self.on_cron_wakeup().await,
                 Next::Job(done) => self.on_job(done).await,
                 Next::Title(done) => self.on_title(done).await,
@@ -502,6 +510,7 @@ impl Actor {
         match request {
             Request::View { reply } => {
                 let _ = reply.send(self.view().await);
+                self.attach_child_live();
             }
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());
@@ -535,6 +544,11 @@ impl Actor {
             Request::Command { envelope, reply } => {
                 if !self.seen.insert(envelope.id.clone()) {
                     let _ = reply.send(Ack::Duplicate);
+                    return;
+                }
+                if self.mirror.running() && crate::child_live::starts_turn(&envelope.command) {
+                    let _ =
+                        reply.send(rejected(rust_cli_kernel_api::session_api::GOAL_ACTIVE_TURN));
                     return;
                 }
                 // 代码回退的回执要等事务结束（spec §5.1），起名的回执要等名字（titles.md §8.2）。
@@ -705,7 +719,7 @@ impl Actor {
             queue: self.inbox.queued(),
             last_seq: self.log.last_seq(),
             revision: self.log.revision(),
-            running: self.running.is_some(),
+            running: self.running.is_some() || self.mirror.running(),
             background: [self.background().await, self.background_agents().await].concat(),
             peer_held: self.peers.views(),
             // 冷加载后不用等下一条回复（F27）：与 `context_changed` 同样两个函数。

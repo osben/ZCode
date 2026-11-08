@@ -288,6 +288,7 @@ async fn asking_session_with(
             start: StartSource::Startup,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
         },
         Opened::Created,
     );

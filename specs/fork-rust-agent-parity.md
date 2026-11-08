@@ -119,7 +119,35 @@ Background results, stops and queue promotion follow Node under `node_desktop`:
 - A subagent's ask (permission, question, plan approval) reaches the parent's `pendingInteractions` with Node's `payload.origin` `{kind: "subagent", agentId, agentType, childSessionId, description, parentSessionId, parentToolCallId}` (`InteractionRequest` `origin`, written by the innermost subagent). A foreground subagent may call AskUserQuestion, delegated to the parent like Node, which only removes the plan tools from subagents; the TUI and background subagents keep it disallowed.
 - `v4/conversation/backgroundBashOutput` returns the tail (8 KiB) of a background command's output file with its status, `read_failed` with `ENOENT` / `EFBIG`, or `unavailable` (Node `readBackgroundBashOutput`). The status of a finished command comes from the ledger, else from its `<task-notification>`; Rust `killed` reads Node `cancelled`.
 
-Known gap: a side-pane tab opened on a running foreground subagent shows the child's committed messages from the cold read, but not its live stream. The child runs in the agents crate and writes its session directly, and the tab's topic opens its own session actor on that store, so no live events reach it (`subagent-side-tabs` SAT01–SAT03; SAT12 passes). The same gap stops BGV04 of `background-bash-output` on Rust before its Node-log checks (Node fails that case later, on its own agent log lines).
+Side-pane tab of a running subagent (Node: the child's own conversation topic streams its run). The child run is owned by the agents crate and writes the child session directly; the tab's topic opens the child session's actor on the same store. So that the tab streams the run without a second write path:
+
+- The agents crate publishes the child run as `ChildLive` events per child session (node_desktop only): `Started`, each query `Event` (stream deltas, tool start/progress/finish), `Committed(message)` after a message is stored, and `Finished(outcome)` on every exit (a drop guard covers an aborted run). It keeps a replay of the current run: the messages stored during it and the events since the last stored message (deltas merged, the latest progress per tool).
+- `AgentSignals::child_live` returns that replay and a live receiver taken under one lock. The kernel takes it before the cold load of the child session; the actor applies it after it has served its first view, so the replayed events get sequence numbers after the projection's `last_seq`.
+- The actor turns the events into its own `TurnStarted` / `StreamDelta` / `ToolStarted` / `ToolProgress` / `ToolDone` / `MessageDone` / `TurnFinished` log events. A mirrored message goes only into the actor's in-memory history (it is already stored); one it already has is skipped, and if a streamed draft was open for it the actor emits `HistoryRewritten` so the projection rebuilds. If the live receiver falls behind, the actor resubscribes, reloads the history from the store and emits `HistoryRewritten`.
+- While a mirrored run is live the view reports `running` and the actor rejects commands that would start its own turn with `activeTurn`.
+- A child session cold-loaded while its run is live ends on the run's own unanswered input. The resume repairs (interrupted tool results, the `No response requested.` sentinel) are skipped for it: the run stores its reply. Before this, the side tab showed a `No response requested.` row next to the streamed reply.
+
+```mermaid
+sequenceDiagram
+  participant A as agents (child run, owner)
+  participant St as store
+  participant M as ChildLive hub
+  participant K as kernel open_session_as
+  participant S as child session actor
+  participant P as protocol projection (side tab)
+  K->>M: child_live(child): replay + receiver
+  K->>St: cold load
+  P->>S: view (last_seq)
+  S->>S: apply replay (seq > last_seq)
+  A->>St: commit message
+  A->>M: Committed(message)
+  A->>M: Event(Delta)
+  M-->>S: live events
+  S-->>P: StreamDelta / MessageDone / TurnFinished
+```
+
+- Turn header tokens: Node sums `outputTokens` over every model response of a turn (`product-projection.ts` on each main-turn `ModelComplete`). The Rust projection adds each stored assistant message's output tokens to the header as it arrives; before, the header showed only the last response (a tool call plus a reply of 16 + 12 tokens read 12 instead of 28).
+- Whole JSON replies: Node's title sidecar is a non-streaming call, so the desktop E2E replays answer it with a whole JSON message. The Rust title request streams; a response body that ends without a single SSE frame and parses as an Anthropic message (`"type": "message"`) is read as that message (`StreamDecoder::whole`, up to 8 MiB). Before, it failed with `stream ended before message_stop` and the task kept its first-input title. Any other body stays a truncated stream. `whole` is a required decoder method, so the trace tape's recording wrapper forwards it (a default would let a wrapper drop it, which is how the first version stayed ineffective whenever tracing was on, as in E2E).
 
 Row-target validation follows Node `validateRowTarget` / `resolveRowActionTarget`: a row action whose row the projection no longer holds, or whose entity id does not match, is refused with status `stale` and `proto.staleTarget`; a row that holds the target but does not offer the action is `rejected` with `guard.actionUnavailable` (`projection/actions.rs` `TargetMiss`, used by edit, retry, fork and the per-turn file summary). Like Node's inbox (`remember: false`), a `stale` ack is not remembered, so the same command id is checked again once the projection has the row.
 

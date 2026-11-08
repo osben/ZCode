@@ -147,6 +147,7 @@ fn spawn(
             start: StartSource::Startup,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
         },
         Opened::Created,
     )

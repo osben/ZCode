@@ -107,6 +107,20 @@ impl Projection {
                 self.background_result(&user.content, out);
             }
             Message::Assistant(assistant) => {
+                // Fork: the turn header sums the output tokens of every model response in the turn, like Node's
+                // ModelComplete projection; a turn's last response alone undercounts a turn with tool calls.
+                if let (Some(usage), Some(turn)) = (assistant.usage, self.turn.as_mut()) {
+                    let tokens = *turn.output_tokens.get_or_insert(0) + usage.output_tokens;
+                    turn.output_tokens = Some(tokens);
+                    let key = super::turn_key(&turn.id.clone());
+                    self.upsert(
+                        &key,
+                        |row| {
+                            row.insert("outputTokens".into(), json!(tokens));
+                        },
+                        out,
+                    );
+                }
                 let Some(turn) = self.turn.clone() else {
                     return;
                 };

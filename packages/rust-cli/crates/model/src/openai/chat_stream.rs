@@ -149,6 +149,15 @@ impl StreamDecoder for ChatStream {
     fn finished(&self) -> bool {
         self.finished
     }
+
+    /// Fork: a whole JSON body is not read for this protocol (it stays a truncated stream).
+    fn whole(
+        &mut self,
+        _body: serde_json::Value,
+        _out: &mut VecDeque<ModelEvent>,
+    ) -> Result<bool, crate::errors::Verdict> {
+        Ok(false)
+    }
 }
 
 #[cfg(test)]

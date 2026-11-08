@@ -329,37 +329,10 @@ impl Actor {
         let Some(turn) = self.running.as_ref().map(|running| running.turn.clone()) else {
             return;
         };
-        let event = match event {
-            QueryEvent::Delta {
-                message,
-                index,
-                delta,
-            } => KernelEvent::StreamDelta {
-                turn,
-                response: u32::try_from(message).unwrap_or(u32::MAX),
-                index,
-                delta,
-            },
-            QueryEvent::ToolStarted {
-                tool_use,
-                name,
-                input,
-            } => KernelEvent::ToolStarted {
-                tool_use,
-                name,
-                input,
-            },
-            QueryEvent::ToolProgress { tool_use, progress } => {
-                KernelEvent::ToolProgress { tool_use, progress }
-            }
-            QueryEvent::ToolFinished { tool_use, output } => {
-                self.ledger.tool_finished(&tool_use, &output);
-                KernelEvent::ToolDone { tool_use, output }
-            }
-            // 模型通知只供显示，不落库（stall-visibility.md §1）。
-            QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
-        };
-        self.log.append(event);
+        if let QueryEvent::ToolFinished { tool_use, output } = &event {
+            self.ledger.tool_finished(tool_use, output);
+        }
+        self.log.append(kernel_event(turn, event));
     }
 
     pub(crate) async fn finish_turn(&mut self) {
@@ -463,6 +436,40 @@ impl Actor {
 
 #[path = "turn_interact.rs"]
 mod interact;
+
+/// The log event of a query event in `turn` (the actor's own run and a mirrored child run, crate::child_live).
+pub(crate) fn kernel_event(
+    turn: rust_cli_kernel_api::ids::TurnId,
+    event: QueryEvent,
+) -> KernelEvent {
+    match event {
+        QueryEvent::Delta {
+            message,
+            index,
+            delta,
+        } => KernelEvent::StreamDelta {
+            turn,
+            response: u32::try_from(message).unwrap_or(u32::MAX),
+            index,
+            delta,
+        },
+        QueryEvent::ToolStarted {
+            tool_use,
+            name,
+            input,
+        } => KernelEvent::ToolStarted {
+            tool_use,
+            name,
+            input,
+        },
+        QueryEvent::ToolProgress { tool_use, progress } => {
+            KernelEvent::ToolProgress { tool_use, progress }
+        }
+        QueryEvent::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
+        // 模型通知只供显示，不落库（stall-visibility.md §1）。
+        QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+    }
+}
 
 #[cfg(test)]
 #[path = "write_failure_tests.rs"]

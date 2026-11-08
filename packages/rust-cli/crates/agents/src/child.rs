@@ -7,6 +7,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::agents::ChildLive;
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::{AgentId, MessageId, SessionId};
 use rust_cli_kernel_api::message::{AssistantMessage, ContentBlock, Message};
@@ -138,6 +139,13 @@ impl ChildSink {
             (Some(parent), _) => Some(&parent.asks),
             (None, Some(asks)) => Some(&asks.0),
             (None, None) => None,
+        }
+    }
+
+    /// Fork (node_desktop): relays this run to the child session's actor (crate::mirror).
+    fn mirror(&self, event: ChildLive) {
+        if let Some(core) = self.core.as_ref().filter(|core| core.node_desktop) {
+            core.mirrors.publish(&self.session, event);
         }
     }
 
@@ -351,6 +359,7 @@ impl ChildSink {
         self.commit(settled.facts).await?;
         // 提交之后才加版本：只读查看看到新版本时去取，存储里一定已有这条消息（tui-panels.md §1.4）。
         self.live.committed(&self.agent, speed);
+        self.mirror(ChildLive::Committed(message.clone()));
         if let Message::Assistant(assistant) = message {
             let mut record = self.record();
             record.tool_uses += tool_use_blocks(&assistant.content);
@@ -398,6 +407,7 @@ impl RunSink for ChildSink {
         if let Some(doing) = Doing::after(&event) {
             self.live.doing(&self.agent, doing);
         }
+        self.mirror(ChildLive::Event(event.clone()));
         // 进度只给 UI：通道满了就丢，不拖慢子循环。
         if let Some(parent) = &self.parent {
             let data = json!({ "agentId": self.agent, "event": event });
