@@ -1,3 +1,4 @@
+import { ZCODE_AGENT_PROVIDER_NOT_READY_CODE } from "@zcode/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   ATTACHMENT_REF_NOT_AUTHORIZED,
@@ -79,6 +80,21 @@ describe("attachmentRefAdmissionError", () => {
     ).toBe("foreign_scheme");
   });
 
+  it("refuses mobile artifact refs of a session id the artifact store would rewrite", () => {
+    // "ses/1" and "ses_1" share one artifact directory, so "ses/1" may not name artifacts.
+    for (const sessionId of ["ses/1", "ses 1", "s".repeat(121)]) {
+      expect(
+        attachmentRefAdmissionError(
+          sendText(
+            [attachment(`zcode-artifact://${encodeURIComponent(sessionId)}/tool-result-1`)],
+            sessionId,
+          ),
+          "web-remote-replayable",
+        )?.reason,
+      ).toBe("unsafe_session");
+    }
+  });
+
   it("refuses a mobile previewRef that names a local path", () => {
     expect(
       attachmentRefAdmissionError(
@@ -119,14 +135,7 @@ describe("attachmentRefAdmissionError", () => {
     ).toBeUndefined();
     expect(
       attachmentRefAdmissionError(
-        {
-          type: "sendText",
-          sessionId: "ses/1",
-          payload: {
-            text: "x",
-            attachments: [attachment("zcode-artifact://ses%2F1/tool-result-1")],
-          },
-        },
+        sendText([attachment("zcode-artifact://sess_7f3a-B.c/tool-result-1")], "sess_7f3a-B.c"),
         "web-remote-replayable",
       ),
     ).toBeUndefined();
@@ -232,16 +241,16 @@ describe("sendConversationCommandV4 attachment ref gate", () => {
   it("admits a desktop local path past the gate", async () => {
     const { service } = await createService();
     try {
-      // This harness has no model provider, so a later stage fails; any failure other than the
-      // gate's code proves the command passed admission.
+      // This harness has no model provider, so the command fails inside Host getClient, which runs
+      // only after admission; that exact code proves the gate let the desktop path through.
       const error = await service
         .sendConversationCommandV4({ workspacePath: "/workspace/app", envelope })
         .then(
           () => undefined,
           (reason: unknown) => reason,
         );
-      expect(error instanceof Error ? error.message : undefined).not.toBe(
-        ATTACHMENT_REF_NOT_AUTHORIZED,
+      expect((error as { code?: unknown } | undefined)?.code).toBe(
+        ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
       );
     } finally {
       service.disposeAll();

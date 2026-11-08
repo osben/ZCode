@@ -7,7 +7,8 @@ export type AttachmentRefRefusalReason =
   | "foreign_scheme"
   | "foreign_session"
   | "malformed_artifact"
-  | "no_session";
+  | "no_session"
+  | "unsafe_session";
 
 export interface AttachmentRefRefusal {
   code: typeof ATTACHMENT_REF_NOT_AUTHORIZED;
@@ -24,6 +25,10 @@ interface CommandEnvelopeLike {
 const ARTIFACT_PREFIX = "zcode-artifact://";
 const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9._~-]+$/;
+// Both artifact stores map a session id to a directory with `sanitizePathSegment` (Node) /
+// `segment` (Rust): other characters become `_` and the result is cut at 120. Only ids that map to
+// themselves keep one directory per session, so a chosen id cannot alias another session's store.
+const PATH_SAFE_SESSION_PATTERN = /^[A-Za-z0-9._-]{1,120}$/;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
@@ -63,6 +68,7 @@ function mobileRefRefusal(
     return URI_SCHEME_PATTERN.test(ref) ? "foreign_scheme" : "local_path";
   }
   if (!sessionId) return "no_session";
+  if (!PATH_SAFE_SESSION_PATTERN.test(sessionId)) return "unsafe_session";
   const rest = ref.slice(ARTIFACT_PREFIX.length);
   const slash = rest.indexOf("/");
   if (slash <= 0) return "malformed_artifact";
