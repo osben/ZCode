@@ -87,6 +87,8 @@ pub(crate) struct Caller<'a> {
     pub(crate) agent: Option<&'a AgentId>,
     pub(crate) machine: &'a MachineEnv,
     pub(crate) operation: &'a OperationContext,
+    /// Fork: the user stops it from the desktop (the notification reads `was stopped by user`).
+    pub(crate) by_user: bool,
 }
 
 /// 后台命令所在的会话与机器（R3：TaskStop 按任务所在的机器停，remote-exec.md §20.7.2）。
@@ -102,6 +104,7 @@ impl<'a> Caller<'a> {
             agent: context.agent.as_ref(),
             machine: &context.machine,
             operation: &context.operation,
+            by_user: false,
         }
     }
 }
@@ -270,7 +273,7 @@ impl TaskStopTool {
     ) -> Result<StoppedTask, ToolError> {
         match self.find(id, context).await {
             Ok(Target::Agent(agent, description)) => {
-                if !self.core.live.stop(&agent)
+                if !self.core.live.stop(&agent, context.by_user)
                     && let Some(wakes) = routing::stop_parked(&self.core, &agent)
                 {
                     self.stop_commands_of(&agent, context).await;

@@ -197,6 +197,10 @@ pub(crate) struct ParentRunner {
     pub(crate) tool: String,
     pub(crate) input: Value,
     pub(crate) output: Arc<Mutex<Option<ToolOutput>>>,
+    /// The progress the call sent (its `data`), in order.
+    pub(crate) progress: Arc<Mutex<Vec<Value>>>,
+    /// The call's tool use id (the shared test context's when None).
+    pub(crate) tool_use: Option<rust_cli_kernel_api::ids::ToolUseId>,
 }
 
 pub(crate) fn workspace() -> WorkspaceRef {
@@ -239,9 +243,12 @@ impl QueryRunner for ParentRunner {
         _abort: Abort,
     ) -> Result<QueryStop, QueryError> {
         let tool = self.registry.find(&self.tool).unwrap();
-        let (progress, _updates) = mpsc::channel(16);
+        let (progress, mut updates) = mpsc::channel(64);
         let mut context = tool_context(&request.session, &request.run);
         context.agent = request.agent.clone();
+        if let Some(tool_use) = &self.tool_use {
+            context.tool_use = tool_use.clone();
+        }
         context.machine = self.machine.clone();
         context.controller = self.controller.clone();
         let output = match tool.validate_input(&self.input, &context).await {
@@ -258,6 +265,9 @@ impl QueryRunner for ParentRunner {
                 .unwrap(),
         };
         *self.output.lock_unpoisoned() = Some(output);
+        while let Ok(update) = updates.try_recv() {
+            self.progress.lock_unpoisoned().push(update.data);
+        }
         Ok(QueryStop::Completed)
     }
 }
@@ -353,8 +363,13 @@ pub(crate) fn harness(gate: Option<Arc<Notify>>) -> Harness {
 
 /// Fork (node_desktop): the harness with the desktop agent's own tools (TaskOutput registered).
 pub(crate) fn desktop_harness() -> Harness {
+    desktop_harness_gated(None)
+}
+
+/// [`desktop_harness`] whose child runs wait on `gate`.
+pub(crate) fn desktop_harness_gated(gate: Option<Arc<Notify>>) -> Harness {
     built_full(
-        None,
+        gate.map(Gate::Shared),
         true,
         machine(Arc::new(UnusedEnvironment)),
         no_peers(),
@@ -588,7 +603,29 @@ impl Harness {
 
     /// 在会话 `session` 的一次运行里调用 `tool`。
     pub(crate) async fn call(&self, session: &str, tool: &str, input: Value) -> ToolOutput {
+        self.call_with_progress(session, tool, input).await.0
+    }
+
+    /// [`Self::call`], with the progress the call sent.
+    pub(crate) async fn call_with_progress(
+        &self,
+        session: &str,
+        tool: &str,
+        input: Value,
+    ) -> (ToolOutput, Vec<Value>) {
+        self.call_as(session, tool, input, None).await
+    }
+
+    /// [`Self::call_with_progress`] with the call's own tool use id.
+    pub(crate) async fn call_as(
+        &self,
+        session: &str,
+        tool: &str,
+        input: Value,
+        tool_use: Option<&str>,
+    ) -> (ToolOutput, Vec<Value>) {
         let output = Arc::new(Mutex::new(None));
+        let progress = Arc::new(Mutex::new(Vec::new()));
         let parent = ParentRunner {
             registry: self.agents.registry(),
             machine: self.machine.clone(),
@@ -596,6 +633,8 @@ impl Harness {
             tool: tool.to_owned(),
             input,
             output: output.clone(),
+            progress: progress.clone(),
+            tool_use: tool_use.map(rust_cli_kernel_api::ids::ToolUseId::new),
         };
         let runner = self.agents.track(Arc::new(parent));
         let session = SessionId::new(session);
@@ -632,7 +671,8 @@ impl Harness {
             .run(request, Arc::new(RecordingSink::default()), Abort::new())
             .await
             .unwrap();
-        output.lock_unpoisoned().take().unwrap()
+        let sent = std::mem::take(&mut *progress.lock_unpoisoned());
+        (output.lock_unpoisoned().take().unwrap(), sent)
     }
 
     pub(crate) fn seen(&self) -> Vec<Seen> {

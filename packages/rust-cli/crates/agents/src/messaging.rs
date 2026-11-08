@@ -103,7 +103,14 @@ impl Messaging {
         }
         // 已结束：在后台续跑子会话。
         let status = agent.status().as_str();
-        if !self.core.live.restart(&id, Abort::new()) {
+        // Fork: on the desktop the resumed run belongs to this SendMessage call (Node's notification carries its
+        // `<tool-use-id>`); the TUI keeps the earlier call.
+        let tool_use = if self.core.node_desktop {
+            Some(context.tool_use.clone())
+        } else {
+            agent.tool_use.clone()
+        };
+        if !self.core.live.restart(&id, Abort::new(), tool_use) {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
             self.core.live.enqueue(&id, input.message.clone());
             let text = format!(
@@ -128,10 +135,19 @@ impl Messaging {
             });
         };
         spawn::background(&self.core, running, opening);
-        let text = format!(
-            "Agent \"{}\" was stopped ({status}); it was resumed in the background with your message. You'll be notified when it finishes.",
-            input.to
-        );
+        // Fork: the desktop reads Node's wording (core subagent/runner.ts resume text); zcode-rs has
+        // no per-agent output file, so Node's trailing `Output:` path is absent.
+        let text = if self.core.node_desktop {
+            format!(
+                "Agent \"{}\" was stopped ({status}); resumed it in the background with your message. You'll be notified when it finishes.",
+                input.to
+            )
+        } else {
+            format!(
+                "Agent \"{}\" was stopped ({status}); it was resumed in the background with your message. You'll be notified when it finishes.",
+                input.to
+            )
+        };
         Ok(rust_cli_kernel_api::tool::text(text))
     }
 }

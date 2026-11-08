@@ -310,7 +310,11 @@ pub(crate) fn agents(
             // 修复线 F67：交互界面里后台子代理也能询问（agents.md §4.1.1）。
             background_prompts: traits.interactive,
             // 修复线 L-A：交互会话缺省打开 fork 子代理，`-p` 关；环境变量可以改（agents.md §8.1.1）。
-            fork: defaults.limits.fork_subagent.unwrap_or(traits.interactive),
+            // Fork (node_desktop): the Node desktop agent has no fork subagent (an explicit setting still wins).
+            fork: defaults
+                .limits
+                .fork_subagent
+                .unwrap_or(traits.interactive && !node_desktop),
             // Fork (node_desktop): Node's TaskOutput only on the app-server's agent.
             node_desktop,
         },

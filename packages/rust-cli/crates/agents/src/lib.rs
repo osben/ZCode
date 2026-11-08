@@ -14,6 +14,7 @@ mod child;
 mod context;
 mod custom;
 mod definitions;
+mod desktop_prompt;
 mod doing;
 mod fork;
 mod frontmatter;
@@ -144,6 +145,9 @@ pub(crate) struct Core {
     pub(crate) keep_alive: bool,
     pub(crate) background_prompts: bool,
     pub(crate) fork: bool,
+    /// Fork (node_desktop): an Agent call runs in the foreground unless it asks for the background
+    /// (Node `agent.ts`: `runInBackground: run_in_background === true`).
+    pub(crate) node_desktop: bool,
     /// 主线程的完整注册表（基础工具 + 本 crate 的工具）；子代理从它过滤。弱引用：注册表里的工具持有 Core，
     /// 两者在 [`Agents::new`] 里用 `Arc::new_cyclic` 一次建好，没有“先建后接”的空档。
     registry: Weak<AgentRegistry>,
@@ -244,6 +248,7 @@ impl Agents {
                 keep_alive: config.keep_alive,
                 background_prompts: config.background_prompts,
                 fork: config.fork,
+                node_desktop: config.node_desktop,
                 registry: registry.clone(),
             });
             let mut own: Vec<Arc<dyn Tool>> = vec![Arc::new(AgentTool { core: core.clone() })];
@@ -379,6 +384,7 @@ impl AgentSignals for Signals {
             agent: None,
             machine: &machine,
             operation: &operation,
+            by_user: self.0.node_desktop,
         };
         tool.stop(task, &caller)
             .await

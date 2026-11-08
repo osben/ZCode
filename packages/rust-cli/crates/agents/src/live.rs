@@ -87,6 +87,9 @@ pub(crate) struct LiveAgent {
     pub(crate) delivered: Vec<AgentId>,
     /// fork 子代理继承的前缀（修复线 L-A，agents.md §8.1.3）：不落库，续跑时拼在子会话的冷读取之前；别的子代理为 None。
     pub(crate) fork_prefix: Option<Arc<Vec<rust_cli_kernel_api::message::Message>>>,
+    /// Fork: the running agent was stopped by the user (desktop `cancelBackgroundWork`), not by TaskStop: its
+    /// notification reads Node's `was stopped by user` (core `completion-notification.ts`). Cleared by each restart.
+    pub(crate) stopped_by_user: bool,
 }
 
 /// 列表显示用的记录：启动顺序、这次运行的开始与结束时刻、等待中的交互、子会话的提交次数、当前活动。
@@ -268,7 +271,13 @@ impl Live {
     }
 
     /// 重新开始运行（SendMessage 续跑已结束或停放的子代理）。已在跑时返回 false。
-    pub(crate) fn restart(&self, agent: &AgentId, abort: Abort) -> bool {
+    /// `tool_use`: the call the resumed run belongs to (its notification's `<tool-use-id>`).
+    pub(crate) fn restart(
+        &self,
+        agent: &AgentId,
+        abort: Abort,
+        tool_use: Option<ToolUseId>,
+    ) -> bool {
         self.change(|agents| {
             let Some(entry) = agents.get_mut(agent) else {
                 return false;
@@ -277,6 +286,8 @@ impl Live {
                 return false;
             }
             entry.background = true;
+            entry.tool_use = tool_use;
+            entry.stopped_by_user = false;
             entry.state = AgentState::Running {
                 abort,
                 mailbox: Vec::new(),
@@ -341,13 +352,18 @@ impl Live {
     }
 
     /// 中止正在跑的子代理；不在跑时返回 false（停放的由 `routing::stop_parked` 处理）。
-    pub(crate) fn stop(&self, agent: &AgentId) -> bool {
-        match self.agents().get(agent).map(|entry| &entry.state) {
-            Some(AgentState::Running { abort, .. }) => {
-                abort.abort(AbortReason::User);
-                true
-            }
-            _ => false,
+    /// `by_user`: the user stopped it (desktop), not the model's TaskStop.
+    pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> bool {
+        match self.agents().get_mut(agent) {
+            Some(entry) => match &entry.state {
+                AgentState::Running { abort, .. } => {
+                    abort.abort(AbortReason::User);
+                    entry.stopped_by_user = by_user;
+                    true
+                }
+                _ => false,
+            },
+            None => false,
         }
     }
 }

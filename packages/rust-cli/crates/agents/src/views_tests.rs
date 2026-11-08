@@ -46,6 +46,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
         shown: crate::live::Shown::default(),
         delivered: Vec::new(),
         fork_prefix: None,
+        stopped_by_user: false,
     }
 }
 
@@ -72,7 +73,7 @@ fn times_follow_the_state_and_restart_resets_the_clock() {
     assert_eq!(entry.ended_ago_ms, Some(6_000));
 
     // SendMessage 续跑：重新开始计时。
-    assert!(live.restart(&AgentId::new("agent_a"), Abort::new()));
+    assert!(live.restart(&AgentId::new("agent_a"), Abort::new(), None));
     clock.set(12_000);
     let entry = &entries(&live, &root)[0];
     assert_eq!(entry.status, SubagentStatus::Running);
@@ -386,7 +387,7 @@ fn the_current_activity_follows_the_child_events() {
     apply(thinking("again"));
     live.finish(&agent, Ending::Completed);
     assert_eq!(activity(), None);
-    assert!(live.restart(&agent, Abort::new()));
+    assert!(live.restart(&agent, Abort::new(), None));
     assert_eq!(activity(), None);
 }
 
