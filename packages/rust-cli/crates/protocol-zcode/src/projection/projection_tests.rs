@@ -15,6 +15,9 @@ use serde_json::json;
 
 use super::*;
 
+#[path = "subagent_rows_tests.rs"]
+mod subagent_rows;
+
 fn view(messages: Vec<Message>) -> SessionView {
     SessionView::new(
         SessionMeta {

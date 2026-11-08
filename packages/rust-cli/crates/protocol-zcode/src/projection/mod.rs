@@ -13,6 +13,7 @@ mod plans;
 mod rows;
 pub(crate) mod rows_range;
 pub mod state;
+mod subagent_rows;
 
 use std::collections::HashMap;
 
@@ -121,6 +122,8 @@ pub struct Projection {
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
     /// the `canRewindFiles` action (`projection/actions.rs`).
     turn_file_changes: HashMap<String, TurnFileChanges>,
+    /// Fork: subagent rows and the snapshot `subagents` manifest (projection/subagent_rows.rs).
+    subagents: subagent_rows::Subagents,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -233,6 +236,7 @@ impl Projection {
             auto_drain: true,
             pause_reason: None,
             turn_file_changes: HashMap::new(),
+            subagents: subagent_rows::Subagents::default(),
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -550,6 +554,19 @@ impl Projection {
                     },
                     &mut out,
                 );
+                let child = match status {
+                    ToolStatus::Cancelled => "cancelled",
+                    ToolStatus::Error => "failed",
+                    _ => "success",
+                };
+                self.subagent_result(
+                    tool_use.as_str(),
+                    &output.display,
+                    child,
+                    now,
+                    seq,
+                    &mut out,
+                );
             }
             KernelEvent::InteractionAsked {
                 interaction,
@@ -694,6 +711,7 @@ impl Projection {
             }
             KernelEvent::ToolProgress { tool_use, progress } => {
                 self.bash_progress(tool_use.as_str(), &progress.data, &mut out);
+                self.subagent_progress(tool_use.as_str(), &progress.data, now, seq, &mut out);
             }
             // 不改 App 的行与状态的事件（P1）。显式列出：内核加了事件时这里编译失败，要当场决定投不投（审查 E9）。
             KernelEvent::SessionCreated { .. }
@@ -708,6 +726,9 @@ impl Projection {
             | KernelEvent::PeerHeldChanged { .. }
             | KernelEvent::TurnDuration(_)
             | KernelEvent::ModelNotice { .. } => {}
+        }
+        if let Some(manifest) = self.materialize_subagents() {
+            patch.insert("subagents".into(), manifest);
         }
         // Fork: row actions follow every change except streamed text (specs/fork-rust-agent-parity.md).
         let structural = !patch.is_empty()
@@ -825,6 +846,7 @@ impl Projection {
                             row.insert("endedAt".into(), json!(now));
                         }
                     }
+                    Some(RowKind::Subagent) => Self::settle_open_subagent(row, now),
                     Some(RowKind::TurnHeader | RowKind::UserInput | RowKind::TimelineMarker)
                     | None => {}
                 },
@@ -1050,7 +1072,7 @@ impl Projection {
             "pendingInteractions": self.pending,
             "pendingCommands": [],
             "backgroundWorks": [],
-            "subagents": {"revision": 0, "childSessionIds": [], "running": [], "endedTotal": 0},
+            "subagents": self.subagents.manifest.to_value(),
             "goal": self.goal_json(),
             "plan": null,
             "workspaceHookAdmission": null,

@@ -48,6 +48,8 @@ pub struct Server {
     pub(crate) context: Arc<Context>,
     pub(crate) kernel: Arc<dyn Kernel>,
     pub(crate) bridge: SessionBridge<Live>,
+    /// Fork: spawns the per-session subagent table watchers.
+    spawner: rust_cli_base::Spawner,
     pub(crate) topics: Arc<Topics>,
     pub(crate) remembered: Mutex<Remembered>,
     pub(crate) followups: Mutex<HashMap<SessionId, Followup>>,
@@ -114,7 +116,8 @@ impl Server {
         let topics = Arc::new(Topics::new(context.clone(), &spawner));
         Self {
             instance: context.fresh("instance"),
-            bridge: SessionBridge::new(kernel.clone(), spawner, EVENT_BATCH_WINDOW),
+            bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW),
+            spawner,
             context,
             kernel,
             topics,
@@ -165,6 +168,12 @@ impl Server {
             live.sink.set_preparation(marker.exposed());
         }
         if opening {
+            // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
+            let watcher = self.spawner.spawn(
+                "subagent-table-watch",
+                crate::live::watch_subagents(live.handle.subagent_changes(), Arc::downgrade(&live)),
+            );
+            live.sink.watch_subagents(watcher);
             self.announce_lifecycle(session, "ready").await;
         }
         Ok(live)

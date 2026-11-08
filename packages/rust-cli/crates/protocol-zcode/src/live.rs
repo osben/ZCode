@@ -30,6 +30,8 @@ struct State {
     preparation: Option<Value>,
     /// Fork: events up to this seq are already in the view the projection was rebuilt from.
     skip_through: u64,
+    /// Fork: the subagent table watcher ([`Live::watch_subagents`]).
+    watcher: Option<rust_cli_base::Task<()>>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -75,6 +77,7 @@ impl Live {
                 summary: None,
                 preparation: None,
                 skip_through: view.last_seq,
+                watcher: None,
             }),
             context,
             topics,
@@ -257,6 +260,36 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork: the kernel's subagent table changed: settle ended children and publish the `subagents` manifest
+    /// (projection/subagent_rows.rs). In the session's pump task, so it is ordered with the session's events.
+    pub async fn subagents_changed(&self) {
+        let entries = match self.handle.subagents().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(event = "protocol.subagents.read_failed", error = %error, "reading the subagent table failed");
+                return;
+            }
+        };
+        let now = self.context.now();
+        let outgoing = {
+            let mut state = self.state();
+            let deltas = state.projection.subagent_table(&entries, now);
+            if deltas.is_empty() {
+                return;
+            }
+            state.log.record(deltas);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: the watcher of the kernel's subagent table; it ends with this session.
+    pub fn watch_subagents(&self, watcher: rust_cli_base::Task<()>) {
+        if let Some(previous) = self.state().watcher.replace(watcher) {
+            previous.abort();
+        }
+    }
+
     /// 会话列表的当前行。
     pub fn summary(&self) -> Value {
         let state = self.state();
@@ -390,6 +423,29 @@ impl Live {
             self.collect(&mut state)
         };
         self.write(outgoing).await;
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        if let Some(watcher) = self.state().watcher.take() {
+            watcher.abort();
+        }
+    }
+}
+
+/// Fork: forwards the kernel's subagent table changes to the session's pump task while the session is open.
+pub(crate) async fn watch_subagents(
+    mut changes: futures_util::stream::BoxStream<'static, ()>,
+    live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,
+) {
+    use futures_util::StreamExt;
+    while changes.next().await.is_some() {
+        let Some(bridged) = live.upgrade() else {
+            return;
+        };
+        let sink = bridged.sink.clone();
+        bridged.run(Box::pin(async move { sink.subagents_changed().await }));
     }
 }
 
