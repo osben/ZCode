@@ -77,6 +77,7 @@ fn file_changes_add_up_per_turn() {
             turn: turn.clone(),
             files: vec![change("a.rs", 2, 1)],
             rewindable: true,
+            turn_input: None,
         },
     );
     feed(
@@ -86,6 +87,7 @@ fn file_changes_add_up_per_turn() {
             turn,
             files: vec![change("a.rs", 3, 0), change("b.rs", 1, 1)],
             rewindable: true,
+            turn_input: None,
         },
     );
     feed(
@@ -95,6 +97,7 @@ fn file_changes_add_up_per_turn() {
             turn: TurnId::new("t2"),
             files: vec![change("c.rs", 4, 0)],
             rewindable: true,
+            turn_input: None,
         },
     );
     let turns = view.turn_changes();

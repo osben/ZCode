@@ -3,10 +3,8 @@
 //! per-path counts the App's summary panel shows. Read-only; the restore itself is the rewind
 //! transaction ([`crate::rewind`]).
 
-use std::collections::HashSet;
 
 use rust_cli_kernel_api::ids::MessageId;
-use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::session_api::{
     FileChange, KernelEvent, TurnFileChanges, TurnFileCount, TurnFileFacts, TurnFileItem,
 };
@@ -69,26 +67,18 @@ impl TurnFileSummary {
     }
 }
 
-/// The checkpoints of the turn opened by `turn_input`: that message and everything after it up
-/// to, not including, the next typed user message (Node `selectCheckpointsForMessages` over the
-/// turn's message ids), in write order. Unlike [`rewind_plan::checkpoints_from`] this is only the
-/// turn's own writes — later turns keep theirs.
+/// The checkpoints of the turn opened by `turn_input`, in write order: every checkpoint records
+/// the message that opened its turn (`WorkspaceCheckpoint::prompt`, Node `messageId`), typed or
+/// model-only (a background task notification opens its own turn). Unlike
+/// [`rewind_plan::checkpoints_from`] this is only the turn's own writes — later turns, including
+/// notification turns before the next typed message, keep theirs.
 pub(crate) fn turn_checkpoints<'a>(
-    messages: &[Message],
     checkpoints: &'a [WorkspaceCheckpoint],
     turn_input: &MessageId,
 ) -> Vec<&'a WorkspaceCheckpoint> {
-    let Some(start) = messages.iter().position(|m| m.id() == turn_input) else {
-        return Vec::new();
-    };
-    let end = messages[start + 1..]
-        .iter()
-        .position(|m| rewind_plan::selectable(m).is_some())
-        .map_or(messages.len(), |at| start + 1 + at);
-    let turn: HashSet<&MessageId> = messages[start..end].iter().map(Message::id).collect();
     checkpoints
         .iter()
-        .filter(|c| turn.contains(&c.prompt) || turn.contains(&c.assistant))
+        .filter(|c| c.prompt == *turn_input)
         .collect()
 }
 
@@ -185,7 +175,7 @@ impl Actor {
     /// The snapshot for [`rust_cli_kernel_api::session_api::SessionHandle::turn_file_changes`]:
     /// the turn's unrestored checkpoints, and whether they were all restored before.
     pub(crate) fn turn_files_snapshot(&self, turn_input: &MessageId) -> Files {
-        let checkpoints: Vec<_> = turn_checkpoints(&self.messages, &self.checkpoints, turn_input)
+        let checkpoints: Vec<_> = turn_checkpoints(&self.checkpoints, turn_input)
             .into_iter()
             .cloned()
             .collect();

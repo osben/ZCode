@@ -60,6 +60,9 @@ struct TurnFileChanges {
     /// Fork: every checkpoint of the turn was restored (`KernelEvent::TurnFilesReverted`); the
     /// header shows `state: "reverted"` and stops offering the rewind-files action.
     reverted: bool,
+    /// Fork: the message that opened the turn (`KernelEvent::FileChanges::turn_input`); the
+    /// per-turn file queries' kernel anchor when the turn has no typed user row.
+    anchor: Option<String>,
 }
 
 /// 一个回合里的行。
@@ -619,7 +622,14 @@ impl Projection {
                 turn,
                 files,
                 rewindable,
-            } => self.file_changes(turn.as_str(), files, *rewindable, &mut out),
+                turn_input,
+            } => self.file_changes(
+                turn.as_str(),
+                files,
+                *rewindable,
+                turn_input.as_ref().map(|input| input.as_str().to_owned()),
+                &mut out,
+            ),
             KernelEvent::TurnFilesReverted { turn_input } => {
                 self.turn_files_reverted(turn_input.as_str(), &mut out);
             }
@@ -785,11 +795,15 @@ impl Projection {
         turn: &str,
         files: &[FileChange],
         rewindable: bool,
+        anchor: Option<String>,
         out: &mut Vec<Value>,
     ) {
         let summary = {
             let changes = self.turn_file_changes.entry(turn.to_owned()).or_default();
             changes.rewindable |= rewindable;
+            if changes.anchor.is_none() {
+                changes.anchor = anchor;
+            }
             for file in files {
                 let counts = changes.files.entry(file.path.clone()).or_insert((0, 0));
                 counts.0 = counts.0.saturating_add(file.additions);
@@ -818,13 +832,22 @@ impl Projection {
     /// header's `fileChanges` state flips to `reverted`, and the next actions recompute drops
     /// `canRewindFiles` (it is offered only for `state: "active"`).
     fn turn_files_reverted(&mut self, turn_input: &str, out: &mut Vec<Value>) {
-        let turn = self.rows.iter().find_map(|row| {
-            (RowKind::of(row) == Some(RowKind::UserInput)
-                && row["origin"] == "realUser"
-                && row["entityId"] == turn_input)
-                .then(|| row["turnId"].as_str().map(str::to_owned))
-                .flatten()
-        });
+        let turn = self
+            .rows
+            .iter()
+            .find_map(|row| {
+                (RowKind::of(row) == Some(RowKind::UserInput)
+                    && row["origin"] == "realUser"
+                    && row["entityId"] == turn_input)
+                    .then(|| row["turnId"].as_str().map(str::to_owned))
+                    .flatten()
+            })
+            .or_else(|| {
+                self.turn_file_changes
+                    .iter()
+                    .find(|(_, changes)| changes.anchor.as_deref() == Some(turn_input))
+                    .map(|(turn, _)| turn.clone())
+            });
         let Some(turn) = turn else {
             return;
         };

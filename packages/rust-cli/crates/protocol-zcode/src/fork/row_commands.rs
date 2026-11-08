@@ -171,7 +171,7 @@ pub(crate) fn preview_json(preview: &RewindPreview) -> Value {
         })
         .collect();
     json!({
-        "canApply": preview.unsafe_files.is_empty(),
+        "canApply": !preview.safe.is_empty() && preview.unsafe_files.is_empty(),
         "ignoredFiles": [],
         "safeFiles": safe,
         "unsafeFiles": unsafe_files,

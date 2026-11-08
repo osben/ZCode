@@ -346,7 +346,7 @@ impl Actor {
             return Err(format!("{turn_input} is not a message to rewind to"));
         }
         let undo: Vec<WorkspaceCheckpoint> =
-            crate::turn_files::turn_checkpoints(&self.messages, &self.checkpoints, turn_input)
+            crate::turn_files::turn_checkpoints(&self.checkpoints, turn_input)
                 .into_iter()
                 .cloned()
                 .collect();
@@ -452,7 +452,7 @@ impl Actor {
             return;
         }
         let undo: Vec<WorkspaceCheckpoint> =
-            crate::turn_files::turn_checkpoints(&self.messages, &self.checkpoints, &target)
+            crate::turn_files::turn_checkpoints(&self.checkpoints, &target)
                 .into_iter()
                 .cloned()
                 .collect();

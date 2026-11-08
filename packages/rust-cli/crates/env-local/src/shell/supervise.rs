@@ -397,16 +397,20 @@ async fn exceeds(plan: &Plan, limit: OutputLimit) {
 /// settlement read; anything larger stays and the result names the path.
 const DESKTOP_INLINE_OUTPUT_BYTES: u64 = 30_000;
 
+/// The command's output files: the output, the separate stderr file and the desktop link.
+fn output_paths(plan: &Plan) -> impl Iterator<Item = &PathBuf> {
+    std::iter::once(&plan.output)
+        .chain(plan.errors.as_ref())
+        .chain(plan.link.as_ref())
+}
+
 /// 前台命令因输出超限被结束后删掉输出文件，不在磁盘上留下超限的文件。
 #[expect(
     clippy::disallowed_methods,
     reason = "env-local 是进程 IO 的入口：删除超限的输出文件（docs/specs/rust-cli/README.md §4）"
 )]
 async fn remove_outputs(plan: &Plan) {
-    for path in std::iter::once(&plan.output)
-        .chain(plan.errors.as_ref())
-        .chain(plan.link.as_ref())
-    {
+    for path in output_paths(plan) {
         if let Err(error) = tokio::fs::remove_file(path).await
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -707,13 +711,16 @@ async fn supervise(
     // fit inline (at most [`DESKTOP_INLINE_OUTPUT_BYTES`]) is deleted after the settlement
     // read, a larger one is kept and the tool result names its path. Background commands
     // (including ones moved there by timeout) keep their file.
-    if job.plan.desktop
+    // The watcher deletes them after its final read (`Finish::discard`).
+    let discard = if job.plan.desktop
         && background.is_none()
         && output_limit.is_none()
         && output_bytes <= DESKTOP_INLINE_OUTPUT_BYTES
     {
-        remove_outputs(&job.plan).await;
-    }
+        output_paths(&job.plan).cloned().collect()
+    } else {
+        Vec::new()
+    };
     // 转到后台的命令结束时不写回会话的当前目录（后台命令不改它），也不报重置。
     let cwd_reset = if moved.is_some() {
         None
@@ -727,6 +734,7 @@ async fn supervise(
         cwd_reset,
         output_bytes,
         output_limit,
+        discard,
     };
     // 登记只放还在跑的命令（工作线 F119）：以前结束的登记按 operationId 一直留着，为的是“同 ID 再来时直接返回”，
     // 可重连的去重本来在执行协议的账本里、本机没有重连，留下的只是一份重复的状态——远端跑了 23 小时的 TUI 留着约

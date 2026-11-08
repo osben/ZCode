@@ -212,8 +212,14 @@ impl Projection {
             // Fork: the row queries (`fileChanges`, `fileRewindPreview`, `applyFileRewind`)
             // address a turn header; the target is the turn's typed user message (the kernel's
             // per-turn anchor).
+            // A turn opened by a model-only message (a background task notification) has no
+            // typed user row; its anchor comes with the turn's file changes.
             RowKind::TurnHeader => Some(RowTarget {
-                user_message: self.turn_user_message(turn_of(row))?,
+                user_message: self.turn_user_message(turn_of(row)).or_else(|| {
+                    self.turn_file_changes
+                        .get(turn_of(row))
+                        .and_then(|changes| changes.anchor.clone())
+                })?,
                 assistant_message: None,
             }),
             _ => None,

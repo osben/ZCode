@@ -116,6 +116,11 @@ pub enum KernelEvent {
         turn: TurnId,
         files: Vec<FileChange>,
         rewindable: bool,
+        /// Fork: the message that opened the turn (the checkpoints' `prompt`), typed or
+        /// model-only. The desktop's per-turn file queries address the turn by it; a turn opened
+        /// by a background task notification has no typed user row to take it from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_input: Option<MessageId>,
     },
     InteractionAsked {
         interaction: InteractionId,

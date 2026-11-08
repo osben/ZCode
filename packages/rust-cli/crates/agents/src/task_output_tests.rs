@@ -28,8 +28,8 @@ use crate::test_support::{desktop_harness, text};
 #[derive(Default)]
 struct Tasks {
     commands: Mutex<HashMap<(String, String), BackgroundStatus>>,
-    outputs: HashMap<String, String>,
-    files: HashMap<String, (u64, Vec<u8>)>,
+    outputs: Mutex<HashMap<String, String>>,
+    files: Mutex<HashMap<String, (u64, Vec<u8>)>>,
 }
 
 impl Tasks {
@@ -42,11 +42,11 @@ impl Tasks {
         Arc::new(tasks)
     }
 
-    fn machine(self: Arc<Self>) -> MachineEnv {
+    fn machine(self: &Arc<Self>) -> MachineEnv {
         unsupported_machine()
             .with_shell(self.clone())
             .with_background(self.clone())
-            .with_files(self)
+            .with_files(self.clone())
     }
 
     fn finish(self: &Arc<Self>, task: &str) {
@@ -66,9 +66,7 @@ impl Shell for Tasks {
     ) -> Result<ShellState, EnvError> {
         Ok(ShellState {
             cwd: EnvPath::new("/"),
-            outputs: self
-                .outputs
-                .get(session.as_str())
+            outputs: self.outputs.lock_unpoisoned().get(session.as_str())
                 .map(|dir| EnvPath::new(dir)),
             background: self
                 .commands
@@ -106,8 +104,7 @@ impl Files for Tasks {
         _workspace: &WorkspaceRef,
         request: ReadFile,
     ) -> Result<FileContent, EnvError> {
-        self.files
-            .get(request.path.as_str())
+        self.files.lock_unpoisoned().get(request.path.as_str())
             .map(|(_, bytes)| FileContent {
                 bytes: bytes.clone(),
                 version: FileVersion::new("v1"),
@@ -133,7 +130,7 @@ impl Files for Tasks {
         _workspace: &WorkspaceRef,
         request: StatFile,
     ) -> Result<Option<FileStat>, EnvError> {
-        Ok(self.files.get(request.path.as_str()).map(|(size, _)| FileStat {
+        Ok(self.files.lock_unpoisoned().get(request.path.as_str()).map(|(size, _)| FileStat {
             kind: FileKind::File,
             size: *size,
             mtime_ms: 0,
@@ -160,13 +157,11 @@ fn large_output() -> (u64, Vec<u8>) {
 async fn a_running_task_reads_a_stable_head_without_blocking() {
     let tasks = Tasks::running("b1");
     let (size, bytes) = large_output();
-    tasks.outputs.insert(
+    tasks.outputs.lock_unpoisoned().insert(
         "sess_1".to_owned(),
         "/tmp/outputs".to_owned(),
     );
-    tasks
-        .files
-        .insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
+    tasks.files.lock_unpoisoned().insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let first = harness
@@ -203,18 +198,14 @@ async fn a_running_task_reads_a_stable_head_without_blocking() {
 /// 完成的任务读文件尾：超过模型字数时按 Node 的写法截断，尾部标记在、头部标记不在。
 #[tokio::test]
 async fn a_completed_task_reads_the_tail_with_nodes_truncation() {
-    let tasks = Tasks::default();
+    let tasks = Arc::new(Tasks::default());
     tasks.commands.lock_unpoisoned().insert(
         ("sess_1".to_owned(), "b1".to_owned()),
         BackgroundStatus::Completed,
     );
-    tasks
-        .outputs
-        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
     let (size, bytes) = large_output();
-    tasks
-        .files
-        .insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
+    tasks.files.lock_unpoisoned().insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let output = harness
@@ -236,18 +227,16 @@ async fn a_completed_task_reads_the_tail_with_nodes_truncation() {
 /// 的四舍五入写整 KB。
 #[tokio::test]
 async fn an_omitted_prefix_names_the_rounded_kilobytes() {
-    let tasks = Tasks::default();
+    let tasks = Arc::new(Tasks::default());
     tasks.commands.lock_unpoisoned().insert(
         ("sess_1".to_owned(), "b1".to_owned()),
         BackgroundStatus::Completed,
     );
-    tasks
-        .outputs
-        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
     // stat 比 read 多 2000 字节：round(2000 / 1024) = 2，不是 1。
     let mut readable = String::from("readable tail\n");
     readable.push_str(&"x".repeat(3_000 - readable.len()));
-    tasks.files.insert(
+    tasks.files.lock_unpoisoned().insert(
         "/tmp/outputs/b1.output".to_owned(),
         (5_000, readable.into_bytes()),
     );
@@ -266,15 +255,13 @@ async fn an_omitted_prefix_names_the_rounded_kilobytes() {
 /// 超过尾读上限的完成文件不整份加载：给一句诚实的说明（与 Node 的差异记录在模块注释）。
 #[tokio::test]
 async fn a_huge_completed_file_is_not_loaded_whole() {
-    let tasks = Tasks::default();
+    let tasks = Arc::new(Tasks::default());
     tasks.commands.lock_unpoisoned().insert(
         ("sess_1".to_owned(), "b1".to_owned()),
         BackgroundStatus::Completed,
     );
-    tasks
-        .outputs
-        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
-    tasks.files.insert(
+    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks.files.lock_unpoisoned().insert(
         "/tmp/outputs/b1.output".to_owned(),
         (9 * 1024 * 1024, Vec::new()),
     );
@@ -294,10 +281,8 @@ async fn a_huge_completed_file_is_not_loaded_whole() {
 #[tokio::test]
 async fn blocking_waits_for_the_task_to_finish() {
     let tasks = Tasks::running("b1");
-    tasks
-        .outputs
-        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
-    tasks.files.insert(
+    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks.files.lock_unpoisoned().insert(
         "/tmp/outputs/b1.output".to_owned(),
         (6, b"done!\n".to_vec()),
     );
@@ -342,11 +327,9 @@ async fn an_unknown_task_is_rejected() {
 /// 账本已忘记（通知已 ack）但文件还留着：按完成读它的尾。
 #[tokio::test]
 async fn a_forgotten_task_with_a_kept_file_reports_the_completed_tail() {
-    let tasks = Tasks::default();
-    tasks
-        .outputs
-        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
-    tasks.files.insert(
+    let tasks = Arc::new(Tasks::default());
+    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks.files.lock_unpoisoned().insert(
         "/tmp/outputs/b1.output".to_owned(),
         (6, b"kept\n".to_vec()),
     );

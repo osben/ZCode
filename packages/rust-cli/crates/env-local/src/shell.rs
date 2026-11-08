@@ -139,6 +139,11 @@ pub(crate) struct Finish {
     pub output_bytes: u64,
     /// 因输出超过上限被结束时的说明。
     pub output_limit: Option<String>,
+    /// Fork (node_desktop): output files the watcher deletes once it has read them to the end
+    /// (a desktop foreground output that fit inline). Deleting them in the supervisor before
+    /// the terminal state raced the watcher, which reopens the file by path on every read and
+    /// then saw an empty, missing file.
+    pub discard: Vec<PathBuf>,
 }
 
 impl Finish {

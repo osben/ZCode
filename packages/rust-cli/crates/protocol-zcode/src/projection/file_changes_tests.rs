@@ -124,6 +124,7 @@ fn batches_merge_per_path_and_offer_rewind_files_when_the_turn_settles() {
         turn: TurnId::new("turn_1"),
         files: vec![change("src/a.txt", 3, 1)],
         rewindable: true,
+        turn_input: None,
     });
     assert_eq!(
         header(&first)["fileChanges"],
@@ -136,6 +137,7 @@ fn batches_merge_per_path_and_offer_rewind_files_when_the_turn_settles() {
         turn: TurnId::new("turn_1"),
         files: vec![change("src/a.txt", 2, 2), change("src/b.rs", 5, 0)],
         rewindable: true,
+        turn_input: None,
     });
     // a.txt sums across batches (3+2 added, 1+2 removed) and is counted once; b.rs is new.
     assert_eq!(
@@ -169,6 +171,7 @@ fn batches_without_rewindable_checkpoints_keep_the_summary_but_not_the_action() 
         turn: TurnId::new("turn_1"),
         files: vec![change("src/a.txt", 4, 2)],
         rewindable: false,
+        turn_input: None,
     });
     let finished = feed.apply(KernelEvent::TurnFinished {
         turn: TurnId::new("turn_1"),
@@ -199,6 +202,7 @@ fn the_reverted_event_flips_the_header_and_drops_the_action() {
         turn: TurnId::new("turn_1"),
         files: vec![change("src/a.txt", 3, 1)],
         rewindable: true,
+        turn_input: None,
     });
     let finished = feed.apply(KernelEvent::TurnFinished {
         turn: TurnId::new("turn_1"),
@@ -217,6 +221,53 @@ fn the_reverted_event_flips_the_header_and_drops_the_action() {
         json!({"additions": 3, "deletions": 1, "files": 1, "state": "reverted"})
     );
     assert!(row["actions"].is_null());
+}
+
+/// A turn opened by a model-only message (a background task notification) has no typed user
+/// row: the per-turn file queries address its header through the turn input the kernel's
+/// `FileChanges` carried, and the reverted event finds the turn the same way.
+#[test]
+fn a_notification_turn_header_is_targeted_through_its_turn_input() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_n"),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: Message::User(UserMessage {
+            id: MessageId::new("msg_notice"),
+            content: vec![ContentBlock::Text {
+                text: "<task-notification>done</task-notification>".into(),
+            }],
+            origin: UserOrigin::Meta { source: "notification".into() },
+        }),
+    });
+    feed.apply(KernelEvent::FileChanges {
+        turn: TurnId::new("turn_n"),
+        files: vec![change("result.md", 1, 1)],
+        rewindable: true,
+        turn_input: Some(MessageId::new("msg_notice")),
+    });
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_n"),
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    let row = header(&finished).clone();
+    let row_id = row["rowId"].as_u64().unwrap();
+    let entity = row["entityId"].as_str().unwrap();
+    for action in [RowAction::FileChanges, RowAction::FileRewind] {
+        let target = feed
+            .projection
+            .row_target(row_id, entity, action)
+            .expect("the notification turn header is a file query target");
+        assert_eq!(target.user_message, "msg_notice");
+    }
+
+    let reverted = feed.apply(KernelEvent::TurnFilesReverted {
+        turn_input: MessageId::new("msg_notice"),
+    });
+    assert_eq!(header(&reverted)["fileChanges"]["state"], "reverted");
 }
 
 /// A cold projection from a view with the kernel's per-turn summaries shows the same header the

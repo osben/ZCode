@@ -223,7 +223,7 @@ fn path_segments_match_nodes_sanitizer() {
     assert_eq!(path_segment("中文 id:1"), "___id_1");
     assert_eq!(path_segment(&"a".repeat(200)), "a".repeat(120));
     assert_eq!(path_segment(""), "unknown");
-    assert_eq!(path_segment("/:*?"), "unknown");
+    assert_eq!(path_segment("/:*?"), "____");
 }
 
 /// 64 KiB，每 20 ms 查一次（同 shell_limit_tests.rs 的 SMALL；生产是 5 GB / 5 s）。
