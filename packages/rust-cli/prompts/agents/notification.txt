@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>{{id}}</task-id>
+<tool-use-id>{{tool_use}}</tool-use-id>
+<status>{{status}}</status>
+<summary>{{summary}}</summary>
+<note>{{note}}</note>{{body}}
+</task-notification>

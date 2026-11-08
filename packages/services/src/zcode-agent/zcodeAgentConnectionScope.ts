@@ -23,6 +23,7 @@ import type {
   ZCodeAgentWorkspaceTarget,
 } from "./zcodeAgent.js";
 import { isRemoteInputPredictionEnabled } from "./inputPredictionSwitch.js";
+import { forkAgentRuntimeHelloOverrides } from "./fork-agent-runtime/contract.js";
 
 export type ZCodeAgentV4ClientMode = "desktop-continuous" | "web-remote-replayable";
 
@@ -234,6 +235,8 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       inputPrediction: isRemoteInputPredictionEnabled(),
       // Mobile task list preload: rowsRange supports residency=resident-only (read-only hot sessions).
       residentRowsRange: true,
+      // Fork: never claim what the frozen agent runtime lacks (specs/fork-agent-runtime-selection.md).
+      ...forkAgentRuntimeHelloOverrides(),
     },
     auth: {},
   };
