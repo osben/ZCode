@@ -36,6 +36,8 @@ struct TestHandle {
     id: SessionId,
     view: SessionView,
     closes: StdMutex<Vec<EndReason>>,
+    /// The kernel's background ledger.
+    background: Vec<rust_cli_kernel_api::manage::BackgroundEntry>,
 }
 
 #[async_trait]
@@ -59,6 +61,12 @@ impl HandleOverride for TestHandle {
     async fn close(&self, reason: EndReason) -> Vec<String> {
         self.closes.lock().unwrap().push(reason);
         Vec::new()
+    }
+
+    async fn background_tasks(
+        &self,
+    ) -> Result<Vec<rust_cli_kernel_api::manage::BackgroundEntry>, KernelError> {
+        Ok(self.background.clone())
     }
 }
 
@@ -184,6 +192,7 @@ async fn an_idle_session_is_closed_deleted_and_forgotten() {
         id: SessionId::new("s1"),
         view: view(false, true),
         closes: StdMutex::new(Vec::new()),
+        background: Vec::new(),
     });
     let (_scope, server, kernel) = server(handle.clone(), false);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
@@ -214,6 +223,7 @@ async fn a_running_turn_refuses_without_side_effects() {
         id: SessionId::new("s1"),
         view: view(true, true),
         closes: StdMutex::new(Vec::new()),
+        background: Vec::new(),
     });
     let (_scope, server, kernel) = server(handle.clone(), false);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
@@ -237,6 +247,7 @@ async fn a_failed_kernel_delete_refuses_with_the_execution_failed_code() {
         id: SessionId::new("s1"),
         view: view(false, true),
         closes: StdMutex::new(Vec::new()),
+        background: Vec::new(),
     });
     let (_scope, server, kernel) = server(handle.clone(), true);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
@@ -259,6 +270,7 @@ async fn restart_ends_the_actor_and_reopens_while_stop_leaves_it_closed() {
         id: SessionId::new("s1"),
         view: view(false, true),
         closes: StdMutex::new(Vec::new()),
+        background: Vec::new(),
     });
     let (_scope, server, _kernel) = server(handle.clone(), false);
     let session = SessionId::new("s1");
@@ -290,6 +302,7 @@ async fn a_stale_row_action_is_decided_again_when_sent_again() {
         id: SessionId::new("s1"),
         view: view(false, true),
         closes: StdMutex::new(Vec::new()),
+        background: Vec::new(),
     });
     let (_scope, server, _kernel) = server(handle, false);
     server.live(&SessionId::new("s1")).await.unwrap();
@@ -305,4 +318,36 @@ async fn a_stale_row_action_is_decided_again_when_sent_again() {
         assert_eq!(ack["status"], "stale", "{ack}");
         assert_eq!(ack["reasonCode"], "proto.staleTarget");
     }
+}
+
+/// Fork: a background command already running when the session opens (a subagent's child session opened in a side
+/// tab, a session reopened while its command runs) is in `backgroundWorks` from the open, not only after the next
+/// ledger change.
+#[tokio::test]
+async fn a_running_background_command_is_listed_when_the_session_opens() {
+    use rust_cli_kernel_api::env_shell::BackgroundStatus;
+    use rust_cli_kernel_api::manage::{BackgroundEntry, BackgroundKind};
+    let handle = Arc::new(TestHandle {
+        id: SessionId::new("s1"),
+        view: view(false, true),
+        closes: StdMutex::new(Vec::new()),
+        background: vec![BackgroundEntry::new(
+            "b1",
+            BackgroundKind::Shell,
+            "sleep 30",
+            BackgroundStatus::Running,
+        )],
+    });
+    let (_scope, server, _kernel) = server(handle, false);
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let mut works = serde_json::Value::Null;
+    for _ in 0..200 {
+        works = live.sink.snapshot()["backgroundWorks"].clone();
+        if works.as_array().is_some_and(|works| !works.is_empty()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let works = works.as_array().expect("backgroundWorks is a list");
+    assert_eq!(works.len(), 1, "{works:?}");
 }

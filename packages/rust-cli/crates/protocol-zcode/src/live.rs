@@ -109,6 +109,13 @@ impl Live {
         self.state.lock_unpoisoned()
     }
 
+    /// The current snapshot, for tests.
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> Value {
+        let state = self.state();
+        state.projection.snapshot(0, state.log.epoch())
+    }
+
     pub fn topic(&self) -> String {
         format!("{CONVERSATION_PREFIX}{}", self.session)
     }
