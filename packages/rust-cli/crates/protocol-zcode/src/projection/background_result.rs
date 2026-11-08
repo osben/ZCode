@@ -54,10 +54,10 @@ pub(super) fn origin_meta(text: &str) -> Option<Value> {
         return None;
     }
     let mut meta = json!({"backgroundSource": source, "workId": work, "title": title});
-    if source == "subagent" {
-        if let Some(result) = subagent_result(text, summary) {
-            meta["subagentResult"] = result;
-        }
+    if source == "subagent"
+        && let Some(result) = subagent_result(text, summary)
+    {
+        meta["subagentResult"] = result;
     }
     Some(meta)
 }
