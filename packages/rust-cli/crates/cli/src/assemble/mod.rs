@@ -140,6 +140,8 @@ pub(crate) struct Controller {
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
     pub(crate) wait_model: bool,
+    /// Fork: [`ContextConfig::token_budget`]; the app-server leaves it off like the Node desktop agent.
+    pub(crate) token_budget: bool,
     pub(crate) cli: CliInputs,
 }
 
@@ -155,6 +157,7 @@ impl Controller {
             headers: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
+            token_budget: true,
             cli,
         }
     }
@@ -175,6 +178,7 @@ impl Controller {
             headers: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
+            token_budget: true,
             cli,
         }
     }
@@ -191,6 +195,7 @@ impl Controller {
             headers: Some(headers),
             root_bypass: RootBypass::Allow,
             wait_model: true,
+            token_budget: false,
             cli: CliInputs::default(),
         }
     }
@@ -528,6 +533,7 @@ pub(crate) async fn kernel(
     };
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
+    context.token_budget = spec.token_budget;
     context.custom_system_prompt = opened.resolved.system_prompt.clone();
     context.append_system_prompt = opened.resolved.append_system_prompt.clone();
     // 附加目录只归会话（deployment.md §21）：环境段、嵌套规则文件与权限规则读这一份。

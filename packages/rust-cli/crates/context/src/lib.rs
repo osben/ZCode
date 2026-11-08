@@ -404,7 +404,7 @@ impl PromptAssembler {
         if let Some(found) = silent::announce(history, silent_turns) {
             out.push(self.attachment(silent::SOURCE, found));
         }
-        if announce::tokens_due(history) {
+        if self.config.token_budget && announce::tokens_due(history) {
             let tokens = match thread {
                 // 修 bug（F82）：以前只看边界之后的历史，压缩之后剩余 token 回到满额；计数应跨压缩延续（压缩前用掉的
                 // 不归还），所以按全部历史从这次输入算起。
@@ -480,6 +480,7 @@ impl ContextBuilder for PromptAssembler {
             output_style: self.config.output_style.as_ref(),
             custom: self.config.custom_system_prompt.as_deref(),
             append: self.config.append_system_prompt.as_deref(),
+            token_budget: self.config.token_budget,
         };
         let system = system_blocks(&facts);
         // 当步的 attachment 在 `start_attachments` / `turn_attachments`（query.md §1.1；子代理同样，F16）；摘要请求见

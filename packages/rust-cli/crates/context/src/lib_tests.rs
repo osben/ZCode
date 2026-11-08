@@ -23,6 +23,10 @@ fn request(source: QuerySource) -> ContextRequest {
 }
 
 fn assembler() -> PromptAssembler {
+    assembler_with(ContextConfig::new(Surface::Print))
+}
+
+fn assembler_with(config: ContextConfig) -> PromptAssembler {
     let env = Arc::new(UnusedEnvironment);
     PromptAssembler::new(
         ContextPorts {
@@ -34,7 +38,7 @@ fn assembler() -> PromptAssembler {
             ids: Arc::new(SequentialIds::default()),
             listings: Arc::new(NoListings),
         },
-        ContextConfig::new(Surface::Print),
+        config,
     )
 }
 
@@ -214,5 +218,29 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
         tokens.text.contains("14009958 tokens left"),
         "{}",
         tokens.text
+    );
+}
+
+/// Fork: without the token budget (the app-server, like the Node desktop agent) neither the system prompt section
+/// nor the per-step reminder mentions `<total_tokens>`.
+#[tokio::test]
+async fn without_the_token_budget_nothing_mentions_total_tokens() {
+    let mut config = ContextConfig::new(Surface::Interactive);
+    config.token_budget = false;
+    let built = assembler_with(config)
+        .step(request(QuerySource::MainThread), &prompt())
+        .await
+        .unwrap();
+    let system: String = built
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect();
+    assert!(!system.contains("total_tokens"), "{system}");
+    assert!(
+        built
+            .attachments
+            .iter()
+            .all(|item| item.source != "total_tokens_reminder")
     );
 }

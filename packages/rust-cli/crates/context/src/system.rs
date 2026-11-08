@@ -40,6 +40,8 @@ pub(crate) struct PromptFacts<'a> {
     pub custom: Option<&'a str>,
     /// `--append-system-prompt` 的文字。
     pub append: Option<&'a str>,
+    /// Fork: [`crate::ContextConfig::token_budget`].
+    pub token_budget: bool,
 }
 
 fn cache(scope: Option<&str>) -> Option<CacheControl> {
@@ -127,7 +129,9 @@ fn session_sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
         "Working style",
         texts::act_dont_rederive().to_owned(),
     ));
-    sections.push(section("Token budget", total_tokens(TOTAL_TOKENS_BUDGET)));
+    if facts.token_budget {
+        sections.push(section("Token budget", total_tokens(TOTAL_TOKENS_BUDGET)));
+    }
     sections
 }
 

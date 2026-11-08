@@ -140,11 +140,21 @@ async fn asking_the_user_follows_the_answer() {
     )
     .await;
     assert!(denied.is_error);
-    assert!(
-        text(&denied).ends_with("the user said:\nuse pnpm"),
-        "{}",
-        text(&denied)
+    // Fork: Node's `buildPermissionDeniedContent`: the full denial (STOP included), then the trimmed feedback.
+    assert_eq!(
+        text(&denied),
+        format!("{REJECT_MESSAGE} To tell you how to proceed, the user said:\nuse pnpm")
     );
+    let (blank, _) = run(
+        ask(),
+        PermissionAnswer::Deny {
+            feedback: Some("   ".to_owned()),
+        },
+        FakeTool::new("Bash", false, "out"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(text(&blank), REJECT_MESSAGE);
 }
 
 #[tokio::test]
