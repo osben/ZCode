@@ -155,6 +155,8 @@ pub(crate) struct Setup {
     pub peers: crate::PeerDeps,
     /// 父会话关闭之后的询问入口（detached_tests.rs）；缺省没有。
     pub detached: Option<Arc<crate::DetachedAsks>>,
+    /// Fork: `SessionDeps::one_input_per_turn`; off by default.
+    pub one_input_per_turn: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -195,6 +197,7 @@ impl Setup {
             last_turn_failed: false,
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
             store: None,
             store_hooks: None,
             machines: None,
@@ -285,6 +288,7 @@ impl Setup {
                 directory_rules: self.directory_rules,
                 peers: self.peers,
                 detached: self.detached,
+                one_input_per_turn: self.one_input_per_turn,
             },
             SessionState {
                 commands: Default::default(),

@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 
 use crate::hooks::{Absorbed, StopVerdict};
-use crate::ids::{AgentId, SessionId};
+use crate::ids::{AgentId, MessageId, SessionId};
 use crate::mcp_state::McpConnections;
 use crate::message::{CompactTrigger, Message};
 use crate::metering::Metered;
@@ -18,8 +18,8 @@ use crate::orchestration::{
     Interactions, QueryEvent, RunSink, SessionOps, ToolRegistry, ToolSnapshot,
 };
 use crate::session_api::{
-    Ack, CommandEnvelope, EndReason, KernelError, RewindOption, SequencedEvent, SessionHandle,
-    SessionView,
+    Ack, CommandEnvelope, EndReason, KernelError, RewindOption, RewindPreview, SequencedEvent,
+    SessionHandle, SessionView,
 };
 use crate::store::StoreError;
 use crate::tool::Tool;
@@ -141,6 +141,10 @@ pub trait HandleOverride: Send + Sync {
         Err(unsupported("rewind options"))
     }
 
+    async fn rewind_preview(&self, _target: &MessageId) -> Result<RewindPreview, KernelError> {
+        Err(unsupported("rewind preview"))
+    }
+
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError> {
         Err(unsupported("goal"))
     }
@@ -200,6 +204,10 @@ impl<T: HandleOverride> SessionHandle for T {
 
     async fn rewind_options(&self) -> Result<Vec<RewindOption>, KernelError> {
         HandleOverride::rewind_options(self).await
+    }
+
+    async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError> {
+        HandleOverride::rewind_preview(self, target).await
     }
 
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError> {

@@ -36,6 +36,60 @@ pub enum RewindScope {
     Both,
 }
 
+/// Fork: what a code rewind to `target` would do, computed without changing anything (Node's file rewind preview).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RewindPreview {
+    /// Files the rewind would restore (or delete) without conflicts.
+    pub safe: Vec<RewindSafeFile>,
+    /// Files the rewind cannot restore, each with why.
+    pub unsafe_files: Vec<RewindUnsafeFile>,
+}
+
+/// A file a code rewind would restore without conflicts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindSafeFile {
+    /// As the checkpoint stores it (absolute).
+    pub path: String,
+    /// True when the file did not exist before and the rewind deletes it.
+    pub delete: bool,
+    /// Checkpoint operations on this path in the rewound range.
+    pub operation_count: u32,
+    /// Distinct tool names that wrote it; empty when the checkpoint records no name.
+    pub tool_names: Vec<String>,
+}
+
+/// A file a code rewind cannot restore, with why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindUnsafeFile {
+    /// As the checkpoint stores it (absolute); the artifact id when the checkpoint cannot be read.
+    pub path: String,
+    pub reason: RewindUnsafeReason,
+    pub operation_count: u32,
+    pub tool_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Why a file cannot be restored by a code rewind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewindUnsafeReason {
+    /// The checkpoint references a snapshot that is gone.
+    CheckpointMissing,
+    /// The checkpoint artifact cannot be parsed.
+    CheckpointUnreadable,
+    /// The file changed on disk after ZCode edited it.
+    ExternalModified,
+    /// Reading the current content failed.
+    FileReadFailed,
+    /// The checkpoint content cannot be turned into a restore plan.
+    UnsupportedCheckpoint,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
@@ -305,6 +359,10 @@ pub trait SessionHandle: Send + Sync {
 
     /// rewind 选择器的条目（活动历史里可选的 user 消息，按顺序）。
     async fn rewind_options(&self) -> Result<Vec<RewindOption>, KernelError>;
+
+    /// Fork: what a code rewind to `target` would restore and which files conflicts block, computed
+    /// without changing anything (Node's file rewind preview).
+    async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError>;
 
     /// `/goal` 面板的数据：会话 actor 的当前目标与最近一次达成的结果（docs/specs/rust-cli/goal.md §6.2）。
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError>;

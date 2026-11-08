@@ -170,7 +170,7 @@ impl Actor {
         let startup = command
             .as_str()
             .starts_with(crate::hooks::SESSION_START_INPUT);
-        if is_slash(head) || screening || startup {
+        if is_slash(head) || screening || startup || self.deps.one_input_per_turn {
             return Vec::new();
         }
         let mut more = Vec::new();

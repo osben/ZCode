@@ -44,6 +44,13 @@ pub(crate) enum Request {
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
     },
+    /// Fork: a dry-run preview of a code rewind (Node's file rewind preview): the actor only picks
+    /// the same machine groups `Command::Rewind{Code}` would run; artifact reads and the hash check
+    /// happen in the caller's task — nothing is prepared or applied.
+    RewindPreview {
+        target: MessageId,
+        reply: oneshot::Sender<Result<crate::rewind::Preview, String>>,
+    },
     Goal {
         reply: oneshot::Sender<rust_cli_kernel_api::goal::GoalView>,
     },
@@ -378,6 +385,9 @@ impl Actor {
             }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());
+            }
+            Request::RewindPreview { target, reply } => {
+                let _ = reply.send(self.rewind_preview(&target));
             }
             Request::Goal { reply } => {
                 let _ = reply.send(self.goal_view());

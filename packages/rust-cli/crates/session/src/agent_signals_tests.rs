@@ -105,6 +105,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
         },
         SessionState {
             commands: Default::default(),

@@ -3,7 +3,8 @@
 //! specs/fork-rust-agent-parity.md). Each recompute upserts only the rows whose actions changed, so the latest target
 //! moving from one row to another upserts both rows.
 //!
-//! `canRewindFiles` is not offered yet: the projection does not carry turn file changes.
+//! `canRewindFiles` follows the turn header's `fileChanges` summary and the kernel's `rewindable` flag
+//! (`KernelEvent::FileChanges`; the App's "conversation + files" rewind button).
 
 use std::collections::{HashMap, HashSet};
 
@@ -127,6 +128,31 @@ impl Projection {
                         actions.insert("canFork".into(), json!(true));
                     } else {
                         actions.remove("canFork");
+                    }
+                }
+                Some(RowKind::TurnHeader) => {
+                    // Fork: `canRewindFiles` like Node's `materializeCommandRowActions`: a finished turn with
+                    // active file changes offers the rewind-files action, and only when the kernel reported the
+                    // checkpoints rewindable and nothing (running turn, compaction, pending interaction) blocks
+                    // completion. Every finished turn with changes offers it, not just the latest.
+                    let can_rewind_files = !blocking
+                        && row["state"] != "running"
+                        && self.pending.is_empty()
+                        && row.get("fileChanges").is_some_and(|changes| {
+                            changes.get("state").and_then(Value::as_str) == Some("active")
+                                && changes
+                                    .get("files")
+                                    .and_then(Value::as_u64)
+                                    .is_some_and(|files| files > 0)
+                        })
+                        && self
+                            .turn_file_changes
+                            .get(turn_of(row))
+                            .is_some_and(|changes| changes.rewindable);
+                    if can_rewind_files {
+                        actions.insert("canRewindFiles".into(), json!(true));
+                    } else {
+                        actions.remove("canRewindFiles");
                     }
                 }
                 _ => continue,

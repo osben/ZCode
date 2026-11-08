@@ -18,7 +18,7 @@ use rust_cli_kernel_api::message::{ContentBlock, Usage, text_of as text_of_resul
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    KernelEvent, QueuedInput, SequencedEvent, SessionView, TurnOutcome,
+    FileChange, KernelEvent, QueuedInput, SequencedEvent, SessionView, TurnOutcome,
 };
 use serde_json::{Map, Value, json};
 
@@ -44,6 +44,17 @@ pub struct InputMeta {
     /// Fork: the `attachments` refs sent with the input; only the queue shows them (a stored input's row reads its
     /// file parts).
     pub attachments: Vec<Value>,
+}
+
+/// Fork: a turn's file changes merged across the turn's `KernelEvent::FileChanges` batches (Node derives the
+/// header summary from one ModelComplete; the kernel reports one event per checkpoint batch). Counts are summed
+/// per path so a path seen again is counted once, like Node's per-turn `fileChanges`.
+#[derive(Debug, Clone, Default)]
+struct TurnFileChanges {
+    /// path → summed (additions, deletions).
+    files: HashMap<String, (u64, u64)>,
+    /// Any of the turn's batches said its checkpoints can be rewound.
+    rewindable: bool,
 }
 
 /// 一个回合里的行。
@@ -95,6 +106,9 @@ pub struct Projection {
     compactions: u64,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
+    /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
+    /// the `canRewindFiles` action (`projection/actions.rs`).
+    turn_file_changes: HashMap<String, TurnFileChanges>,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -182,6 +196,7 @@ impl Projection {
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
+            turn_file_changes: HashMap::new(),
         };
         cold::rows(&mut projection, view);
         for (interaction, request) in &view.pending {
@@ -248,7 +263,7 @@ impl Projection {
         self.followup = followup;
         json!({"op": "state.updated", "patch": {
             "config": self.config(),
-            "inputRouting": state::input_routing(self.phase, self.followup),
+            "inputRouting": self.input_routing(),
         }})
     }
 
@@ -279,8 +294,20 @@ impl Projection {
         self.queue_patch()
     }
 
+    /// The queue and the input routing derived from it change together (Node's `queuePatch`).
     fn queue_patch(&self) -> Value {
-        json!({"op": "state.updated", "patch": {"queue": self.queue_state()}})
+        json!({"op": "state.updated", "patch": {
+            "queue": self.queue_state(),
+            "inputRouting": self.input_routing(),
+        }})
+    }
+
+    fn input_routing(&self) -> Value {
+        state::input_routing(
+            self.phase,
+            self.followup,
+            !self.auto_drain && self.has_queue(),
+        )
     }
 
     /// Fork: the model, permission mode and plan switch the projection shows, so a switch command can
@@ -382,10 +409,7 @@ impl Projection {
     fn phase_patch(&self, patch: &mut Map<String, Value>) {
         patch.insert("control".into(), self.control());
         patch.insert("availability".into(), state::availability());
-        patch.insert(
-            "inputRouting".into(),
-            state::input_routing(self.phase, self.followup),
-        );
+        patch.insert("inputRouting".into(), self.input_routing());
     }
 
     /// 一个事件 → 增量（`row.*` 与 `state.updated`）。`now` 是行的时间。
@@ -558,12 +582,17 @@ impl Projection {
                 let after = self.queue_state();
                 if after != before {
                     patch.insert("queue".into(), after);
+                    patch.insert("inputRouting".into(), self.input_routing());
                 }
             }
+            KernelEvent::FileChanges {
+                turn,
+                files,
+                rewindable,
+            } => self.file_changes(turn.as_str(), files, *rewindable, &mut out),
             // 不改 App 的行与状态的事件（P1）。显式列出：内核加了事件时这里编译失败，要当场决定投不投（审查 E9）。
             KernelEvent::SessionCreated { .. }
             | KernelEvent::ToolProgress { .. }
-            | KernelEvent::FileChanges { .. }
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
             | KernelEvent::TasksChanged { .. }
@@ -712,6 +741,49 @@ impl Projection {
         );
     }
 
+    /// Fork: a checkpoint batch's file changes land on the turn header as the `fileChanges` summary
+    /// (`turnHeaderRowSchema.fileChanges`; Node puts it there from ModelComplete). Counts are summed per path
+    /// across the turn's batches and a path is counted once; an empty batch publishes nothing.
+    fn file_changes(
+        &mut self,
+        turn: &str,
+        files: &[FileChange],
+        rewindable: bool,
+        out: &mut Vec<Value>,
+    ) {
+        let summary = {
+            let changes = self.turn_file_changes.entry(turn.to_owned()).or_default();
+            changes.rewindable |= rewindable;
+            for file in files {
+                let counts = changes.files.entry(file.path.clone()).or_insert((0, 0));
+                counts.0 = counts.0.saturating_add(file.additions);
+                counts.1 = counts.1.saturating_add(file.deletions);
+            }
+            if changes.files.is_empty() {
+                return;
+            }
+            let (additions, deletions) = changes
+                .files
+                .values()
+                .fold((0, 0), |(add, del), (file_add, file_del)| {
+                    (add + file_add, del + file_del)
+                });
+            json!({
+                "additions": additions,
+                "deletions": deletions,
+                "files": changes.files.len(),
+                "state": "active",
+            })
+        };
+        self.upsert(
+            &turn_key(turn),
+            |row| {
+                row.insert("fileChanges".into(), summary);
+            },
+            out,
+        );
+    }
+
     /// 队列（`queueStateSchema`）：内核的排队输入加上 sendText 时记下的事实。
     fn queue_state(&self) -> Value {
         let items: Vec<Value> = self
@@ -777,7 +849,7 @@ impl Projection {
             "revision": self.revision,
             "control": self.control(),
             "availability": state::availability(),
-            "inputRouting": state::input_routing(self.phase, self.followup),
+            "inputRouting": self.input_routing(),
             "meta": state::meta(&self.title, true),
             "config": self.config(),
             "modelTransition": null,
@@ -802,3 +874,7 @@ impl Projection {
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "file_changes_tests.rs"]
+mod file_changes_tests;

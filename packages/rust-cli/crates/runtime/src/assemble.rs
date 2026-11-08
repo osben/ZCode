@@ -67,10 +67,10 @@ pub(crate) fn hooks(ports: &Ports, operations: &Operations) -> Arc<HookEngine> {
 
 /// 一个判决链实例：工具注册（Edit / Write 的先读规则）与执行管线共用，会话内“总是允许”的规则因此对两边都生效。规则
 /// 快照由入口层接入配置后替换；“总是允许”落库后从会话存储读回 LocalSettings 层（shell-permissions.md §5）。
-pub(crate) fn gate(ports: &Ports, node_plan_mode: bool) -> Arc<PolicyGate> {
+pub(crate) fn gate(ports: &Ports, node_desktop: bool) -> Arc<PolicyGate> {
     Arc::new(
         PolicyGate::default()
-            .with_node_plan_mode(node_plan_mode)
+            .with_node_plan_mode(node_desktop)
             .with_local_rules(Arc::new(permissions::StoredRules(ports.store.clone()))),
     )
 }

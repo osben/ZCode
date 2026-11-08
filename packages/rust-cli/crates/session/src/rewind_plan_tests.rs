@@ -10,6 +10,7 @@ fn write(path: &str, before: Option<&str>, after: &str) -> Artifact {
             before_content: before.map(str::to_owned),
             after_content: Some(after.into()),
         }],
+        tool_name: None,
     }
 }
 

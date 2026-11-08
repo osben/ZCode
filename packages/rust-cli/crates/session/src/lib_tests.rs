@@ -272,6 +272,7 @@ async fn asking_session_with(
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
         },
         SessionState {
             commands: Default::default(),

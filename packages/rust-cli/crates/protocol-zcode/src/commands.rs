@@ -67,6 +67,18 @@ struct Input {
     /// Fork: App attachment refs (`attachmentRefSchema`), expanded in [`crate::attachments::content`].
     #[serde(default)]
     attachments: Vec<Value>,
+    /// Fork: the client's answer to a paused queue (`inputRouting.mode = choice`), see [`held_queue_choice`].
+    held_queue_disposition: Option<HeldDisposition>,
+    /// Fork: the queue the client confirmed, as `queueItemId`s; a changed queue makes the confirmation stale.
+    expected_held_queue_item_ids: Option<Vec<String>>,
+}
+
+/// Fork: `heldQueueDisposition` (`command.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum HeldDisposition {
+    ClearQueueAndSend,
+    KeepQueueAndSend,
 }
 
 /// sendText 要的投递（`requestedDelivery`）。
@@ -652,6 +664,82 @@ fn input_meta(
     }
 }
 
+/// Fork: Node's `applyHeldQueueDisposition`. After a finished turn a paused queue (`autoDrain` off, items
+/// waiting) routes input as `choice`: without a disposition the input is refused
+/// (`heldQueueDispositionRequired`), a queue that changed since the client's confirmation is stale
+/// (`guard.heldQueueConfirmationStale`), `clearQueueAndSend` drops the waiting items and releases the hold, and
+/// `keepQueueAndSend` leaves them. The input itself then starts at once: an idle submit is not held.
+async fn held_queue_choice(
+    handle: &dyn SessionHandle,
+    live: &crate::live::Live,
+    envelope: &Envelope,
+    input: &Input,
+    view: Option<&rust_cli_kernel_api::session_api::SessionView>,
+    phase: Phase,
+    revision: u64,
+) -> Result<(), Box<Ack>> {
+    let command = envelope.command_id.as_str();
+    let queue = view.map(|view| view.queue.as_slice()).unwrap_or_default();
+    let completed = matches!(phase, Phase::CompletedSuccess | Phase::CompletedInterrupted);
+    if !(completed && !queue.is_empty() && !live.auto_drain()) {
+        return Ok(());
+    }
+    let refused = |code: &str, message: &str| {
+        Box::new(Ack::refused(
+            command,
+            Status::Rejected,
+            code,
+            message.to_owned(),
+            revision,
+        ))
+    };
+    let Some(disposition) = input.held_queue_disposition else {
+        return Err(refused(
+            "heldQueueDispositionRequired",
+            "held queue requires heldQueueDisposition (clearQueueAndSend | keepQueueAndSend)",
+        ));
+    };
+    if let Some(expected) = &input.expected_held_queue_item_ids {
+        let current: std::collections::HashSet<String> = queue
+            .iter()
+            .map(|item| format!("queue_{}", item.command.as_str()))
+            .collect();
+        let confirmed: std::collections::HashSet<&String> = expected.iter().collect();
+        let same = confirmed.len() == expected.len()
+            && current.len() == expected.len()
+            && expected.iter().all(|id| current.contains(id));
+        if !same {
+            return Err(refused(
+                "guard.heldQueueConfirmationStale",
+                "paused queue changed after send confirmation opened",
+            ));
+        }
+    }
+    if disposition == HeldDisposition::ClearQueueAndSend {
+        for item in queue {
+            send(
+                handle,
+                &format!("{command}:clear:{}", item.command.as_str()),
+                Command::Dequeue {
+                    command: item.command.clone(),
+                },
+            )
+            .await;
+        }
+        // The Stop's hold protected the cleared items only (Node ISSUE-063): release it after the clear.
+        let release = send(
+            handle,
+            &format!("{command}:release"),
+            Command::HoldQueue { held: false },
+        )
+        .await;
+        if matches!(release, KernelAck::Accepted { .. }) {
+            live.set_auto_drain(true).await;
+        }
+    }
+    Ok(())
+}
+
 async fn send_text(
     server: &Server,
     handle: &dyn SessionHandle,
@@ -678,8 +766,22 @@ async fn send_text(
             );
         }
     };
-    // 这次提交带的模型与模式先作用到会话（同 Node：Submission 带完整的选择）。
     let view = handle.view().await.ok();
+    // Fork: checked before the model or mode change, like Node's admission.
+    if let Err(ack) = held_queue_choice(
+        handle,
+        live,
+        envelope,
+        &input,
+        view.as_ref(),
+        phase,
+        revision,
+    )
+    .await
+    {
+        return *ack;
+    }
+    // 这次提交带的模型与模式先作用到会话（同 Node：Submission 带完整的选择）。
     if let Some(chosen) = selection(input.model_selection.as_ref())
         && view.as_ref().is_none_or(|view| view.selection != chosen)
     {

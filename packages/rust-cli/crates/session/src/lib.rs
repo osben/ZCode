@@ -69,13 +69,13 @@ use rust_cli_base::{Spawner, Task};
 use rust_cli_kernel_api::agents::AgentSignals;
 use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::env::Operations;
-use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::{ModelPort, ModelSelection};
 use rust_cli_kernel_api::orchestration::{Compactor, HookRunner, QueryRunner};
 use rust_cli_kernel_api::session_api::{
-    Ack, CommandEnvelope, EndReason, KernelError, KernelEvent, RewindOption, SequencedEvent,
-    SessionHandle, SessionView, StartSource,
+    Ack, CommandEnvelope, EndReason, KernelError, KernelEvent, RewindOption, RewindPreview,
+    SequencedEvent, SessionHandle, SessionView, StartSource,
 };
 use rust_cli_kernel_api::store::{ArtifactStore, SessionMeta, SessionStore, WorkspaceCheckpoint};
 use tokio::sync::{mpsc, oneshot};
@@ -139,6 +139,9 @@ pub struct SessionDeps {
     pub peers: PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）；没有时那些询问按会话已关闭失败。
     pub detached: Option<Arc<DetachedAsks>>,
+    /// Fork: queued inputs are not merged into one turn; each runs as its own turn, like the Node desktop agent
+    /// (its queue drains one item per turn). The app-server turns it on.
+    pub one_input_per_turn: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。
@@ -371,6 +374,23 @@ impl SessionHandle for Session {
     async fn rewind_options(&self) -> Result<Vec<RewindOption>, KernelError> {
         let snapshot = self.ask(|reply| Request::RewindOptions { reply }).await?;
         Ok(rewind::options(self.deps.artifacts.as_ref(), snapshot).await)
+    }
+
+    /// Fork: what a code rewind to `target` would restore and which files conflicts block, computed
+    /// without changing anything (Node's file rewind preview): the actor picks the same machine
+    /// groups the rewind would run; artifact reads and the hash check run in the caller's task,
+    /// and every prepared token is released without applying.
+    async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError> {
+        let snapshot = self
+            .ask(|reply| Request::RewindPreview {
+                target: target.clone(),
+                reply,
+            })
+            .await?
+            .map_err(|reason| KernelError::Failed { message: reason })?;
+        rewind::preview(self.deps.artifacts.as_ref(), snapshot)
+            .await
+            .map_err(|reason| KernelError::Failed { message: reason })
     }
 
     async fn goal(&self) -> Result<rust_cli_kernel_api::goal::GoalView, KernelError> {

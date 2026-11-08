@@ -11,7 +11,8 @@ use futures_util::StreamExt;
 use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, CommandResult, Delivery, KernelEvent, RewindScope,
+    Ack as KernelAck, Command, CommandResult, Delivery, KernelEvent, RewindPreview, RewindScope,
+    RewindUnsafeReason,
 };
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -46,6 +47,9 @@ struct EditPayload {
     attachments: Option<Vec<Value>>,
     #[serde(default)]
     model_selection: Option<Value>,
+    /// Fork: `rewind` also restores the files the rewound turns changed (Node's `workspaceMode`).
+    #[serde(default)]
+    workspace_mode: Option<String>,
 }
 
 fn refused(envelope: &Envelope, code: &str, message: impl Into<String>, revision: u64) -> Ack {
@@ -92,16 +96,110 @@ async fn settle_running_turn(live: &Bridged<Live>, envelope: &Envelope) -> Resul
     Err("the session ended before the running turn stopped".to_owned())
 }
 
-async fn rewind_to(live: &Bridged<Live>, envelope: &Envelope, input: &str) -> Result<(), String> {
+async fn rewind_to(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    input: &str,
+    scope: RewindScope,
+) -> Result<(), String> {
     let command = Command::Rewind {
         target: MessageId::new(input),
-        scope: RewindScope::Conversation,
+        scope,
     };
     let id = format!("{}:rewind", envelope.command_id);
+    let mut rebuilds = live.sink.rebuilds();
+    rebuilds.mark_unchanged();
     match send(live.handle.as_ref(), &id, command).await {
-        KernelAck::Accepted { .. } | KernelAck::Duplicate => Ok(()),
+        // The accepted rewind has appended `HistoryRewritten`; the resubmitted input must reach the kernel only after
+        // the projection is rebuilt from the cut history (`Live::rebuilds`).
+        KernelAck::Accepted { .. } => rebuilds
+            .changed()
+            .await
+            .map_err(|_| "the session closed before the history was rebuilt".to_owned()),
+        KernelAck::Duplicate => Ok(()),
         KernelAck::Rejected { reason } => Err(reason),
     }
+}
+
+enum Blocked {
+    /// The `editUserQuery` result with `disposition: blocked` (Node returns it as an accepted result).
+    Preview(Value),
+    Failed(String),
+}
+
+/// Node's `fileRewindPreview` result (`v4ConversationFileRewindPreviewResultSchema`). Shell changes are not tracked
+/// by this agent's checkpoints, so `ignoredFiles` stays empty.
+pub(crate) fn preview_json(preview: &RewindPreview) -> Value {
+    let safe: Vec<Value> = preview
+        .safe
+        .iter()
+        .map(|file| {
+            json!({
+                "action": if file.delete { "delete" } else { "restore" },
+                "operationCount": file.operation_count,
+                "path": file.path,
+                "toolNames": file.tool_names,
+            })
+        })
+        .collect();
+    let unsafe_files: Vec<Value> = preview
+        .unsafe_files
+        .iter()
+        .map(|file| {
+            let mut value = json!({
+                "operationCount": file.operation_count,
+                "path": file.path,
+                "reason": match file.reason {
+                    RewindUnsafeReason::CheckpointMissing => "checkpoint_missing",
+                    RewindUnsafeReason::CheckpointUnreadable => "checkpoint_unreadable",
+                    RewindUnsafeReason::ExternalModified => "external_modified",
+                    RewindUnsafeReason::FileReadFailed => "file_read_failed",
+                    RewindUnsafeReason::UnsupportedCheckpoint => "unsupported_checkpoint",
+                },
+                "toolNames": file.tool_names,
+            });
+            for (key, field) in [
+                ("currentHash", &file.current_hash),
+                ("expectedHash", &file.expected_hash),
+                ("message", &file.message),
+            ] {
+                if let Some(text) = field {
+                    value[key] = json!(text);
+                }
+            }
+            value
+        })
+        .collect();
+    json!({
+        "canApply": preview.unsafe_files.is_empty(),
+        "ignoredFiles": [],
+        "safeFiles": safe,
+        "unsafeFiles": unsafe_files,
+    })
+}
+
+/// Node's `editUserQuery` with `workspaceMode: rewind`: the files are checked first; unsafe files, or no file to
+/// restore, block the whole edit (fail closed) and return the preview, and nothing changes.
+async fn workspace_rewind(live: &Bridged<Live>, input: &str) -> Result<(), Blocked> {
+    let preview = live
+        .handle
+        .rewind_preview(&MessageId::new(input))
+        .await
+        .map_err(|error| Blocked::Failed(error.to_string()))?;
+    let reason = if !preview.unsafe_files.is_empty() {
+        "guard.workspaceRewindUnsafeFiles"
+    } else if preview.safe.is_empty() {
+        "guard.workspaceRewindUnavailable"
+    } else {
+        return Ok(());
+    };
+    Err(Blocked::Preview(json!({
+        "type": "editUserQuery",
+        "disposition": "blocked",
+        "sessionId": live.handle.id().as_str(),
+        "reasonCode": reason,
+        "preview": preview_json(&preview),
+    })))
 }
 
 /// Submits `content` under the command's id, so the new turn's rows carry it as `sourceCommandId`.
@@ -251,6 +349,19 @@ pub(super) async fn edit(
     if let Err(reason) = settle_running_turn(live, envelope).await {
         return refused(envelope, EXECUTION_FAILED, reason, revision);
     }
+    let scope = if body.workspace_mode.as_deref() == Some("rewind") {
+        match workspace_rewind(live, &target.user_message).await {
+            Ok(()) => RewindScope::Both,
+            Err(Blocked::Preview(result)) => {
+                return Ack::accepted(&envelope.command_id, revision, Some(result));
+            }
+            Err(Blocked::Failed(reason)) => {
+                return refused(envelope, EXECUTION_FAILED, reason, revision);
+            }
+        }
+    } else {
+        RewindScope::Conversation
+    };
     if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref())
         && live.sink.current_config().0 != chosen
     {
@@ -262,7 +373,7 @@ pub(super) async fn edit(
         )
         .await;
     }
-    if let Err(reason) = rewind_to(live, envelope, &target.user_message).await {
+    if let Err(reason) = rewind_to(live, envelope, &target.user_message, scope).await {
         return refused(envelope, EXECUTION_FAILED, reason, revision);
     }
     let result =
@@ -303,7 +414,14 @@ pub(super) async fn retry(live: &Bridged<Live>, envelope: &Envelope, revision: u
             revision,
         );
     };
-    if let Err(reason) = rewind_to(live, envelope, &target.user_message).await {
+    if let Err(reason) = rewind_to(
+        live,
+        envelope,
+        &target.user_message,
+        RewindScope::Conversation,
+    )
+    .await
+    {
         return refused(envelope, EXECUTION_FAILED, reason, revision);
     }
     let text = crate::projection::text_of(&stored);

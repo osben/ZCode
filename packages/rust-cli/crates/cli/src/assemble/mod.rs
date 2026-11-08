@@ -152,6 +152,9 @@ pub(crate) struct Controller {
     pub(crate) wait_model: bool,
     /// Fork: [`ContextConfig::token_budget`]; the app-server leaves it off like the Node desktop agent.
     pub(crate) token_budget: bool,
+    /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
+    /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
+    pub(crate) node_desktop: bool,
     pub(crate) cli: CliInputs,
 }
 
@@ -168,6 +171,7 @@ impl Controller {
             root_bypass: RootBypass::Refuse,
             wait_model: false,
             token_budget: true,
+            node_desktop: false,
             cli,
         }
     }
@@ -189,6 +193,7 @@ impl Controller {
             root_bypass: RootBypass::Refuse,
             wait_model: true,
             token_budget: true,
+            node_desktop: false,
             cli,
         }
     }
@@ -206,6 +211,7 @@ impl Controller {
             root_bypass: RootBypass::Allow,
             wait_model: true,
             token_budget: false,
+            node_desktop: true,
             cli: CliInputs::default(),
         }
     }
@@ -573,8 +579,7 @@ pub(crate) async fn kernel(
     )
     .await;
     extensions.monitor = opened.monitor;
-    // Fork: the app-server keeps Node's plan mode (the desktop's behaviour).
-    extensions.node_plan_mode = spec.titles == Titles::Node;
+    extensions.node_desktop = spec.node_desktop;
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened

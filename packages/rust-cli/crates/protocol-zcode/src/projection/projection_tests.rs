@@ -765,3 +765,57 @@ fn the_queue_pause_reason_follows_who_paused_it() {
     assert!(resumed["patch"]["queue"].get("pauseReason").is_none());
     assert!(!feed.projection.has_queue());
 }
+
+/// Node's `computeInputRouting`: a finished turn with a paused, non-empty queue asks the client to choose.
+#[test]
+fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.projection.remember_input(
+        "c2",
+        InputMeta {
+            client: "k".into(),
+            origin: None,
+            text: "later".into(),
+            selection: None,
+            mode: None,
+            plan: None,
+            admitted_at: 0,
+            requested: "queue",
+            admitted: "queue",
+            attachments: Vec::new(),
+        },
+    );
+    let queued = feed.apply(KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            command: CommandId::new("c2"),
+            text: "later".into(),
+            delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+        }],
+    });
+    let routing = queued
+        .iter()
+        .find_map(|delta| delta["patch"].get("inputRouting"))
+        .unwrap();
+    assert_eq!(routing["mode"], "enqueue");
+    let stopped = feed.projection.hold_for_stop();
+    assert_eq!(stopped["patch"]["inputRouting"]["mode"], "enqueue");
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Interrupted,
+        usage: None,
+    });
+    let routing = finished
+        .iter()
+        .find_map(|delta| delta["patch"].get("inputRouting"))
+        .unwrap();
+    assert_eq!(
+        *routing,
+        json!({"mode": "choice", "reasonCode": "heldQueueInputRequiresChoice"})
+    );
+    let resumed = feed.projection.set_auto_drain(true);
+    assert_eq!(resumed["patch"]["inputRouting"]["mode"], "startNow");
+}

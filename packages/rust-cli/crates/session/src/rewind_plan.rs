@@ -84,9 +84,13 @@ pub(crate) fn checkpoints_from<'a>(
 }
 
 /// checkpoint artifact 里本工程用到的字段（Node `workspaceCheckpointArtifactSchema`）。
+/// Fork: `toolName` is recorded by the tools' checkpoint writer; older artifacts have none.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Artifact {
     pub files: Vec<ArtifactFile>,
+    #[serde(default)]
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

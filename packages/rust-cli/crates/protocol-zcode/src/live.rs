@@ -47,6 +47,9 @@ pub struct Live {
     /// Fork: reads the view again after the history is rewritten.
     handle: Arc<dyn SessionHandle>,
     state: Mutex<State>,
+    /// Fork: counts finished rebuilds, so a command that rewrites the history can wait for the projection to be
+    /// rebuilt before it submits more input (see [`Self::rebuilds`]).
+    rebuilds: tokio::sync::watch::Sender<u64>,
 }
 
 impl Live {
@@ -75,7 +78,16 @@ impl Live {
             }),
             context,
             topics,
+            rebuilds: tokio::sync::watch::Sender::new(0),
         }
+    }
+
+    /// Fork: a receiver of the rebuild count. The rebuild reads the session view when the pump reaches
+    /// `HistoryRewritten` and skips every event the view already holds; input submitted before that read lands in
+    /// the view only once its turn ends, so its turn's events would be skipped and its rows never shown. Commands
+    /// that rewind and then submit wait for the next rebuild between the two.
+    pub fn rebuilds(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.rebuilds.subscribe()
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -297,6 +309,7 @@ impl Live {
             Ok(view) => view,
             Err(error) => {
                 tracing::warn!(event = "protocol.projection.rebuild_failed", error = %error, "reading the rewritten session failed");
+                self.rebuilds.send_modify(|count| *count += 1);
                 return;
             }
         };
@@ -318,6 +331,7 @@ impl Live {
             self.start(&subscription, Purpose::Recovery).await;
         }
         self.publish_summary().await;
+        self.rebuilds.send_modify(|count| *count += 1);
     }
 
     /// 待发的增量与变了的会话列表行（阶段、标题、待回答的询问或预览变了才发，活动时间不算）。

@@ -125,7 +125,12 @@ impl Followup {
     }
 }
 
-pub fn input_routing(phase: Phase, followup: Followup) -> Value {
+/// `held`: a paused queue still holds items (Node's `computeInputRouting`: after a finished turn new input needs the
+/// client's clear/keep choice, `heldQueueInputRequiresChoice`).
+pub fn input_routing(phase: Phase, followup: Followup, held: bool) -> Value {
+    if held && matches!(phase, Phase::CompletedSuccess | Phase::CompletedInterrupted) {
+        return json!({"mode": "choice", "reasonCode": "heldQueueInputRequiresChoice"});
+    }
     match (phase, followup) {
         (Phase::Running, Followup::Queue) => json!({"mode": "enqueue"}),
         (Phase::Running, Followup::Guide) => json!({"mode": "guide"}),
