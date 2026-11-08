@@ -1262,6 +1262,33 @@
               "key": "bigmodel"
             }
           }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "providerName": "ChatGPT Plan",
+          "config": {
+            "group": "chatgpt-family",
+            "builtinModelIds": [
+              "gpt-6.1-sol",
+              "gpt-6-astra",
+              "gpt-6-sol",
+              "gpt-6-luna",
+              "gpt-5.6-sol",
+              "gpt-5.6-terra",
+              "gpt-5.6-luna"
+            ],
+            "access": {
+              "type": "chatgpt-account"
+            },
+            "api": {
+              "type": "openai-responses",
+              "baseUrl": "https://api.openai.com/v1"
+            },
+            "logo": {
+              "type": "builtin",
+              "key": "openai"
+            }
+          }
         }
       ]
     },
@@ -1774,7 +1801,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["none", "low", "medium", "high", "xhigh", "max"]
+                "values": ["none", "low", "medium", "high", "xhigh", "max"],
+                "default": "high"
               }
             }
           }
@@ -1800,7 +1828,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra.*",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "config": {
             "properties": {
               "contextWindow": 1050000,
@@ -1814,7 +1842,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["low", "medium", "high", "xhigh", "max"]
+                "values": ["low", "medium", "high", "xhigh", "max"],
+                "default": "high"
               }
             }
           }
@@ -3498,7 +3527,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra.*",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "apiTypeMatch": "openai-responses",
           "config": {
             "optionSpecs": {
@@ -4604,7 +4633,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "apiTypeMatch": "anthropic-messages",
           "baseUrlMatch": "https://openrouter\\.ai/api(?:/v1)?/?",
           "config": {
@@ -8462,6 +8491,76 @@
           "modelId": "GLM-5.3",
           "config": {
             "enabled": true
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-6.1-sol",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 500000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-6-astra",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-6-sol",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-6-luna",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-5.6-sol",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-5.6-terra",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-5.6-luna",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
           }
         }
       ]
