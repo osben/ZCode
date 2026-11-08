@@ -152,6 +152,8 @@ pub async fn flow(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     if params["state"] == "closed" {
         let connection = params["connectionId"].as_str().unwrap_or_default();
         server.topics.drop_connection(connection);
+        rust_cli_base::sync::LockUnpoisoned::lock_unpoisoned(&server.uploads)
+            .clear_connection(connection);
         for live in server.bridge.sessions() {
             live.sink.drop_connection(connection);
         }

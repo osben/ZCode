@@ -614,3 +614,66 @@ fn notices_and_models_without_system_turns_keep_the_old_place_for_queued_command
         ["<task-notification>done</task-notification>"]
     );
 }
+
+/// Fork: an attached file reaches the model as Node's reminders (inline text), its image block, or the metadata
+/// reminder; the adapters never see a `File` block.
+#[test]
+fn attached_files_expand_into_reminders_and_images() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile, ImageSource};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |name: &str, mime: &str, body| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: mime.into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            body,
+        },
+    };
+    let image = ImageSource::Base64 {
+        media_type: "image/png".into(),
+        data: "iVBO".into(),
+    };
+    let message = Message::User(UserMessage {
+        id: MessageId::new("u1"),
+        content: vec![
+            text("look"),
+            file(
+                "a.txt",
+                "text/plain",
+                AttachedBody::Text { text: "abc".into() },
+            ),
+            file(
+                "p.png",
+                "image/png",
+                AttachedBody::Image {
+                    source: image.clone(),
+                },
+            ),
+            file("d.pdf", "application/pdf", AttachedBody::Omitted),
+        ],
+        origin: UserOrigin::Human,
+    });
+    let out = normalize([&message], &ON);
+    let user = out
+        .iter()
+        .find(|message| message.role == ApiRole::User)
+        .unwrap();
+    let blocks: Vec<&ContentBlock> = user.content.iter().map(|item| &item.block).collect();
+    assert_eq!(
+        blocks,
+        [
+            &text("look"),
+            &text(&prompt_attachment::text_file("a.txt", "abc").join("\n")),
+            &ContentBlock::Image { source: image },
+            &text(&prompt_attachment::metadata_only(
+                "d.pdf",
+                "application/pdf",
+                3
+            )),
+        ]
+    );
+}

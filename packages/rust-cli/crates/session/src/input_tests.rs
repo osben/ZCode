@@ -147,6 +147,11 @@ async fn bash_mode_records_input_and_output_then_queries() {
         request.contains("<bash-stdout>ran ls</bash-stdout>"),
         "{request}"
     );
+    // Fork: only the bash input maps to its command (node-store anchors it; the output is a synthetic message).
+    assert_eq!(
+        view.commands.keys().collect::<Vec<_>>(),
+        vec![view.messages[0].id()]
+    );
     // 标题写成 `! 命令`。
     assert_eq!(view.meta.title, "! ls");
 }

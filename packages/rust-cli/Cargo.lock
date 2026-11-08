@@ -2043,6 +2043,7 @@ dependencies = [
  "base64",
  "futures-util",
  "rust-cli-base",
+ "rust-cli-fs",
  "rust-cli-kernel-api",
  "rust-cli-protocol-core",
  "serde",

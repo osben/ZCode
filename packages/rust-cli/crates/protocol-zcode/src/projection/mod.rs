@@ -36,6 +36,9 @@ pub struct InputMeta {
     pub admitted_at: u64,
     pub requested: &'static str,
     pub admitted: &'static str,
+    /// Fork: the `attachments` refs sent with the input; only the queue shows them (a stored input's row reads its
+    /// file parts).
+    pub attachments: Vec<Value>,
 }
 
 /// 一个回合里的行。
@@ -90,7 +93,8 @@ pub(crate) fn text_of(content: &[ContentBlock]) -> String {
             | ContentBlock::ToolUse { .. }
             | ContentBlock::ToolResult { .. }
             | ContentBlock::ServerToolUse { .. }
-            | ContentBlock::WebSearchToolResult { .. } => None,
+            | ContentBlock::WebSearchToolResult { .. }
+            | ContentBlock::File { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -175,6 +179,19 @@ impl Projection {
     /// 用户拒绝了这个工具调用（resolveInteraction 的裁决在内核事件之前）：结果投成 cancelled（与 Node 相同）。
     pub fn deny(&mut self, tool_use: &str) {
         self.denied.insert(tool_use.to_owned());
+    }
+
+    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these).
+    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+        self.rows.iter().find_map(|row| {
+            row.get("attachments")?
+                .as_array()?
+                .iter()
+                .find_map(|attachment| {
+                    (attachment["ref"] == reference || attachment["previewRef"] == reference)
+                        .then(|| attachment["mime"].as_str().unwrap_or_default().to_owned())
+                })
+        })
     }
 
     /// 记下 sendText 的事实（行与队列项要用）。
@@ -588,7 +605,8 @@ impl Projection {
                     "clientId": meta.map_or("unknown", |meta| meta.client.as_str()),
                     "kind": "sendText",
                     "text": item.text,
-                    "attachments": [],
+                    // Fork: a queued input is not stored yet; its chips are the refs it was sent with.
+                    "attachments": meta.map_or_else(Vec::new, |meta| meta.attachments.clone()),
                     "delivery": {
                         "requested": meta.map_or("queue", |meta| meta.requested),
                         "admitted": meta.map_or("queue", |meta| meta.admitted),

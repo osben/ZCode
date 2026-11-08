@@ -57,3 +57,26 @@ async fn a_turn_that_ended_with_an_error_is_reported_until_the_next_input() {
         .unwrap();
     assert!(!t.store.load(&session).await.unwrap().last_turn_failed);
 }
+
+/// Fork: a cold load maps each typed user message to the command that submitted it (`anchor.sourceCommandId`).
+#[tokio::test]
+async fn a_cold_load_carries_the_submitting_command_of_each_typed_input() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let session = SessionId::new("sess_1");
+    let mut sent = batch(vec![user("msg_u1", "one")], "msg_u1", "turn_1");
+    sent.command = Some(CommandId::new("cmd_1"));
+    t.store.commit(&session, sent).await.unwrap();
+    t.store
+        .commit(
+            &session,
+            batch(vec![user("msg_u2", "two")], "msg_u2", "turn_2"),
+        )
+        .await
+        .unwrap();
+    let loaded = t.store.load(&session).await.unwrap();
+    assert_eq!(
+        loaded.commands.into_iter().collect::<Vec<_>>(),
+        vec![(MessageId::new("msg_u1"), CommandId::new("cmd_1"))]
+    );
+}

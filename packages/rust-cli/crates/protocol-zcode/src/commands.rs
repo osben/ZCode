@@ -64,6 +64,9 @@ struct Input {
     plan_enabled: Option<bool>,
     input_origin: Option<String>,
     requested_delivery: Option<Requested>,
+    /// Fork: App attachment refs (`attachmentRefSchema`), expanded in [`crate::attachments::content`].
+    #[serde(default)]
+    attachments: Vec<Value>,
 }
 
 /// sendText 要的投递（`requestedDelivery`）。
@@ -92,8 +95,19 @@ struct CreateSessionPayload {
     session_id: Option<String>,
     workspace_id: Option<String>,
     first_input: Option<Input>,
+    /// Fork: durable first submission (crate::preparation).
+    submission_preparation: Option<SubmissionPreparation>,
+    prepared_session_id: Option<String>,
+    expected_submission_id: Option<String>,
+    expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmissionPreparation {
+    submission_id: String,
 }
 
 /// createSession 的 `config`。
@@ -231,7 +245,13 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     let (phase, revision) = live.sink.status();
     let handle = live.handle.as_ref();
     match envelope.kind.as_str() {
-        "sendText" => send_text(handle, &live.sink, envelope, phase, revision).await,
+        "sendText" => {
+            let ack = send_text(server, handle, &live.sink, envelope, phase, revision).await;
+            if ack.status == Status::Accepted {
+                complete_first_submission(server, &live, envelope).await;
+            }
+            ack
+        }
         "stop" => ack_of(
             send(handle, &envelope.command_id, Command::Interrupt).await,
             Ack::accepted(&envelope.command_id, revision, None),
@@ -256,6 +276,15 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    if let Some(preparation) = &payload.submission_preparation {
+        return reserve_submission(server, envelope, &payload, &preparation.submission_id).await;
+    }
+    if let (Some(prepared), Some(expected)) = (
+        payload.prepared_session_id.as_deref(),
+        payload.expected_submission_id.as_deref(),
+    ) {
+        return activate_submission(server, envelope, &payload, prepared, expected).await;
+    }
     let config = &payload.config;
     let first = payload.first_input.unwrap_or_default();
     let chosen = selection(config.model_selection.as_ref())
@@ -308,10 +337,17 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             &envelope.command_id,
             input_meta(envelope, &first, "startNow", "startNow"),
         );
-        let submit = Command::Submit {
-            text,
-            attachments: Vec::new(),
-            delivery: Delivery::Queue,
+        let submit = if first.attachments.is_empty() {
+            Command::Submit {
+                text,
+                attachments: Vec::new(),
+                delivery: Delivery::Queue,
+            }
+        } else {
+            Command::SubmitContent {
+                content: crate::attachments::content(server, &id, &text, &first.attachments).await,
+                delivery: Delivery::Queue,
+            }
         };
         if let KernelAck::Accepted { .. } =
             send(live.handle.as_ref(), &envelope.command_id, submit).await
@@ -320,6 +356,218 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
         }
     }
     Ack::accepted(&envelope.command_id, 0, Some(result))
+}
+
+/// Fork: reservation. Creates the session with the draft's selection and stores a preparing marker; a repeat with
+/// the same submission returns the same session, anything else that already owns the id is refused.
+async fn reserve_submission(
+    server: &Server,
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+    submission: &str,
+) -> Ack {
+    let refused = |code: &str, message: String| {
+        Ack::refused(&envelope.command_id, Status::Rejected, code, message, 0)
+    };
+    let id = SessionId::new(payload.session_id.as_deref().unwrap_or(submission));
+    let accepted = |id: &SessionId| {
+        Ack::accepted(
+            &envelope.command_id,
+            0,
+            Some(json!({"type": "createSession", "sessionId": id.as_str()})),
+        )
+    };
+    let existing = server.kernel.session_snapshot(&id).await.ok();
+    if let Some(view) = &existing {
+        let marker = crate::preparation::load(server, &id).await;
+        let workspace_matches = payload
+            .workspace_id
+            .as_deref()
+            .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
+        let conversation = !view.messages.is_empty() || !view.queue.is_empty() || view.running;
+        match crate::preparation::reserve_existing(
+            marker.as_ref(),
+            submission,
+            workspace_matches,
+            conversation,
+        ) {
+            crate::preparation::Reserve::Repeat => return accepted(&id),
+            crate::preparation::Reserve::Adopt => {}
+            crate::preparation::Reserve::Refuse(reason) => {
+                return refused(
+                    "proto.invalidPayload",
+                    format!("session {} cannot be reserved: {reason}", id.as_str()),
+                );
+            }
+        }
+    }
+    let workspace = payload.workspace_id.as_deref().unwrap_or_default();
+    let created = if existing.is_some() {
+        Ok(id.clone())
+    } else {
+        server
+            .kernel
+            .create_session(CreateSession {
+                id: Some(id.clone()),
+                workspace: server.workspace(workspace),
+                selection: selection(payload.config.model_selection.as_ref())
+                    .unwrap_or_else(|| server.defaults.selection.clone()),
+                mode: server.defaults.mode,
+                plan: false,
+            })
+            .await
+    };
+    let id = match created {
+        Ok(id) => id,
+        Err(error) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.createSessionFailed",
+                error.to_string(),
+                0,
+            );
+        }
+    };
+    let marker = crate::preparation::Marker::preparing(submission, server.context.now());
+    if let Err(error) = crate::preparation::save(server, &id, &marker).await {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Failed,
+            "fault.command.createSessionFailed",
+            format!("storing the submission reservation failed: {error}"),
+            0,
+        );
+    }
+    match server.live(&id).await {
+        Ok(live) => {
+            live.sink.set_preparation(marker.exposed());
+            crate::subscribe::announce(&live);
+        }
+        Err(error) => {
+            tracing::warn!(event = "protocol.preparation.open_failed", error = %error, "opening the reserved session failed");
+        }
+    }
+    accepted(&id)
+}
+
+/// Fork: activation. Reports how far an earlier attempt got so the client neither re-sends an admitted first
+/// input nor skips one that never arrived. The marker stays preparing until the first sendText is admitted.
+async fn activate_submission(
+    server: &Server,
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+    prepared: &str,
+    expected: &str,
+) -> Ack {
+    let id = SessionId::new(prepared);
+    let marker = match crate::preparation::load(server, &id).await {
+        Some(marker) if marker.submission_id == expected => marker,
+        _ => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                format!("session {prepared} has no reservation for submission {expected}"),
+                0,
+            );
+        }
+    };
+    let live = match server.live(&id).await {
+        Ok(live) => live,
+        Err(error) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.createSessionFailed",
+                kernel_error(&error).message,
+                0,
+            );
+        }
+    };
+    let admitted = match payload.expected_first_input_command_id.as_deref() {
+        Some(first) => server
+            .kernel
+            .queries()
+            .records(&id, inbox::COMMAND_FACT)
+            .await
+            .ok()
+            .and_then(|records| inbox::find_fact(&records, first))
+            .is_some_and(|ack| ack.status == Status::Accepted),
+        None => false,
+    };
+    let outcome = if admitted {
+        "input-admitted"
+    } else if marker.active {
+        "already-active"
+    } else {
+        // The draft's choices: the first sendText carries them too, this keeps a config-only activation right.
+        let handle = live.handle.as_ref();
+        if let Some(chosen) = selection(payload.config.model_selection.as_ref()) {
+            send(
+                handle,
+                &format!("{}:model", envelope.command_id),
+                Command::SetModel { selection: chosen },
+            )
+            .await;
+        }
+        if let Some((permission, plan)) =
+            mode(payload.config.mode.as_deref(), payload.config.plan_enabled)
+        {
+            send(
+                handle,
+                &format!("{}:mode", envelope.command_id),
+                Command::SetMode { mode: permission },
+            )
+            .await;
+            send(
+                handle,
+                &format!("{}:plan", envelope.command_id),
+                Command::SetPlan { enabled: plan },
+            )
+            .await;
+        }
+        "input-pending"
+    };
+    Ack::accepted(
+        &envelope.command_id,
+        0,
+        Some(
+            json!({"type": "createSession", "sessionId": id.as_str(), "preparedActivation": outcome}),
+        ),
+    )
+}
+
+/// Fork: the first input of a reserved session was admitted: persist the marker as active, then drop
+/// `submissionPreparation` from the snapshot and the sessions-index row (after the events already received).
+async fn complete_first_submission(
+    server: &Server,
+    live: &std::sync::Arc<rust_cli_protocol_core::sessions::Bridged<crate::live::Live>>,
+    envelope: &Envelope,
+) {
+    let Some(session) = envelope.session_id.as_deref() else {
+        return;
+    };
+    let id = SessionId::new(session);
+    let Some(marker) = crate::preparation::load(server, &id).await else {
+        return;
+    };
+    if marker.active {
+        return;
+    }
+    // An older renderer omits firstSubmissionId: complete any still-preparing reservation, as Node does.
+    if let Some(submission) = envelope.payload["firstSubmissionId"].as_str()
+        && submission != marker.submission_id
+    {
+        return;
+    }
+    if let Err(error) =
+        crate::preparation::save(server, &id, &marker.activated(server.context.now())).await
+    {
+        tracing::warn!(event = "protocol.preparation.complete_failed", error = %error, "storing the active submission marker failed");
+    }
+    let sink = live.sink.clone();
+    live.run(Box::pin(async move { sink.complete_preparation().await }));
 }
 
 fn input_meta(
@@ -341,10 +589,12 @@ fn input_meta(
         admitted_at: 0,
         requested,
         admitted,
+        attachments: input.attachments.clone(),
     }
 }
 
 async fn send_text(
+    server: &Server,
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
     envelope: &Envelope,
@@ -389,7 +639,10 @@ async fn send_text(
     let running = phase == Phase::Running;
     let requested = input.requested_delivery;
     let followup = live.followup();
+    // Fork: content blocks (attachments) are never steered into a running turn; they wait for it to end.
+    let with_attachments = !input.attachments.is_empty();
     let (delivery, admitted) = match (requested, running) {
+        (_, true) if with_attachments => (Delivery::Queue, "queue"),
         (Some(Requested::Guide), true) => (Delivery::Steer, "guide"),
         (None, true) if followup == Followup::Guide => (Delivery::Steer, "guide"),
         (_, true) => (Delivery::Queue, "queue"),
@@ -397,10 +650,19 @@ async fn send_text(
     };
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
-    let submit = Command::Submit {
-        text: input.text.unwrap_or_default(),
-        attachments: Vec::new(),
-        delivery,
+    let text = input.text.unwrap_or_default();
+    let submit = if with_attachments {
+        Command::SubmitContent {
+            content: crate::attachments::content(server, handle.id(), &text, &input.attachments)
+                .await,
+            delivery,
+        }
+    } else {
+        Command::Submit {
+            text,
+            attachments: Vec::new(),
+            delivery,
+        }
     };
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(

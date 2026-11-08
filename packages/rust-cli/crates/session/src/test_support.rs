@@ -287,6 +287,7 @@ impl Setup {
                 detached: self.detached,
             },
             SessionState {
+                commands: Default::default(),
                 meta,
                 messages: self.messages,
                 earlier: self.earlier,

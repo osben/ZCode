@@ -26,6 +26,8 @@ struct State {
     log: TopicLog<Value>,
     /// 最后一次发出去的会话列表行（活动时间记成 0，不参与比较）。
     summary: Option<Value>,
+    /// Fork: `submissionPreparation` while a durable first submission is still preparing.
+    preparation: Option<Value>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -61,6 +63,7 @@ impl Live {
                 projection: Projection::from_view(view, followup, levels),
                 log: TopicLog::new(epoch),
                 summary: None,
+                preparation: None,
             }),
             context,
             topics,
@@ -91,7 +94,10 @@ impl Live {
             let Some(seq) = state.log.start(subscription) else {
                 return;
             };
-            let snapshot = state.projection.snapshot(seq, state.log.epoch());
+            let mut snapshot = state.projection.snapshot(seq, state.log.epoch());
+            if let Some(preparation) = &state.preparation {
+                snapshot["meta"]["submissionPreparation"] = preparation.clone();
+            }
             ((0, seq), json!({"kind": "snapshot", "snapshot": snapshot}))
         };
         self.context
@@ -125,6 +131,11 @@ impl Live {
 
     pub fn remember_input(&self, command: &str, meta: InputMeta) {
         self.state().projection.remember_input(command, meta);
+    }
+
+    /// Fork: see [`Projection::attachment_mime`].
+    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+        self.state().projection.attachment_mime(reference)
     }
 
     /// 用户拒绝了这个工具调用：之后它的结果投成 cancelled（与 Node 相同）。
@@ -161,7 +172,7 @@ impl Live {
 
     fn summary_of(&self, state: &State) -> Value {
         let reply = state.projection.last_reply();
-        Summary {
+        let mut row = Summary {
             session: &self.session,
             workspace: &self.workspace,
             title: state.projection.title(),
@@ -171,7 +182,43 @@ impl Live {
             last_reply: reply.as_deref(),
             permissions: state.projection.pending_permissions(),
         }
-        .to_value()
+        .to_value();
+        if let Some(preparation) = &state.preparation {
+            row["submissionPreparation"] = preparation.clone();
+            row["phase"] = json!("draft");
+            row["sessionEnded"] = json!(false);
+        }
+        row
+    }
+
+    /// Fork: set the `submissionPreparation` the snapshot and the sessions-index row carry. Called before the
+    /// first subscription starts (reservation or cold open), so no frame needs resending.
+    pub fn set_preparation(&self, preparation: Option<Value>) {
+        self.state().preparation = preparation;
+    }
+
+    /// Fork: the first submission was admitted. Meta has no delta op, so every started subscription gets a fresh
+    /// snapshot without `submissionPreparation`, and the sessions-index row drops it. In the session's pump task.
+    pub async fn complete_preparation(&self) {
+        let started: Vec<String> = {
+            let mut state = self.state();
+            if state.preparation.take().is_none() {
+                return;
+            }
+            // The ids are collected first: restarting needs `state.log` mutably.
+            #[allow(clippy::needless_collect)]
+            let ids: Vec<String> = state
+                .log
+                .subscribers()
+                .iter()
+                .map(|subscriber| subscriber.subscription.clone())
+                .collect();
+            ids.into_iter().filter(|id| state.log.restart(id)).collect()
+        };
+        for subscription in started {
+            self.start(&subscription, Purpose::Recovery).await;
+        }
+        self.publish_summary().await;
     }
 
     /// 待发的增量与变了的会话列表行（阶段、标题、待回答的询问或预览变了才发，活动时间不算）。

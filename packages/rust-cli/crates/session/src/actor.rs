@@ -156,6 +156,9 @@ pub(crate) struct Actor {
     /// 模型侧的一切（主循环、压缩、token、标题、rewind、fork、goal 与任务的恢复）只看 `messages`。另一个只读的读者：
     /// 打开时旧会话的跨会话 entry 在这里按文字找一次是否并入过（peer_restore.rs，F139）。
     pub(crate) earlier: Vec<Message>,
+    /// Fork: the command that submitted each typed user message, loaded with the session and extended by
+    /// [`Self::commit`]; only [`Self::view`] reads it (cold rows' `sourceCommandId`).
+    pub(crate) commands: std::collections::BTreeMap<MessageId, CommandId>,
     pub(crate) selection: ModelSelection,
     /// 执行状态：权限模式 × plan 开关（修复线 F20，shell-permissions.md §4.6）。判决用的模式是 [`Self::mode`]。
     pub(crate) execution: rust_cli_kernel_api::permission::ExecutionState,
@@ -251,6 +254,7 @@ impl Actor {
             meta: state.meta,
             messages: state.messages,
             earlier: state.earlier,
+            commands: state.commands,
             selection: state.selection,
             execution: state.mode,
             plan_flags: Default::default(),
@@ -546,6 +550,7 @@ impl Actor {
             context_usage: self.context_occupancy(),
             context_notice: self.context_notice().unwrap_or_default(),
             output_speed: self.output_speed,
+            commands: self.commands.clone(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

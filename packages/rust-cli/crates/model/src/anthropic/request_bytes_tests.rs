@@ -195,6 +195,11 @@ mod reference {
                 ("name", Value::String(name)),
                 ("input", input),
             ]),
+            ContentBlock::File { .. } => {
+                return Err(ModelError::InvalidRequest {
+                    message: "attached files must be expanded before the model request".to_owned(),
+                });
+            }
             ContentBlock::WebSearchToolResult {
                 tool_use_id,
                 content,

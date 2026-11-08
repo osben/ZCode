@@ -61,7 +61,24 @@ impl Projection {
                     return;
                 }
                 let mut row = self.base(&turn.id, user.id.as_str(), RowKind::UserInput, now, seq);
-                row.insert("text".into(), json!(text_of(&user.content)));
+                let text = text_of(&user.content);
+                // Fork: rows stored before attachments were file parts kept the reminders in the model text.
+                let shown = rust_cli_kernel_api::prompt_attachment::display(&text).unwrap_or(text);
+                row.insert("text".into(), json!(shown));
+                // Fork: chips come from the stored attachments (live and cold alike), never from the input facts.
+                let chips: Vec<Value> = user
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::File { file } => {
+                            Some(rust_cli_kernel_api::prompt_attachment::chip(file))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !chips.is_empty() {
+                    row.insert("attachments".into(), Value::Array(chips));
+                }
                 row.insert("origin".into(), json!("realUser"));
                 if let Some(command) = &turn.command {
                     row.insert("sourceCommandId".into(), json!(command));
@@ -126,7 +143,8 @@ impl Projection {
                         | ContentBlock::RedactedThinking { .. }
                         | ContentBlock::ToolResult { .. }
                         | ContentBlock::ServerToolUse { .. }
-                        | ContentBlock::WebSearchToolResult { .. } => {}
+                        | ContentBlock::WebSearchToolResult { .. }
+                        | ContentBlock::File { .. } => {}
                     }
                 }
                 if let Some(current) = &mut self.turn {

@@ -2,7 +2,7 @@
 //! （docs/specs/rust-cli/node-store.md §5，docs/specs/rust-m11-node-storage.md §6）。
 use rusqlite::Connection;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-use rust_cli_kernel_api::ids::{EnvironmentId, MessageId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, MessageId, SessionId, TraceId, TurnId};
 use rust_cli_kernel_api::model::{ModelConnection, ModelSelection};
 use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::store::{
@@ -47,6 +47,7 @@ pub fn load(
             turn: turn.map(TurnId::new),
         });
     let loaded = LoadedSession {
+        commands: commands(&records),
         messages: crate::hydrate::hydrate(&active),
         earlier: crate::hydrate::hydrate(&earlier),
         model,
@@ -65,6 +66,19 @@ pub fn load(
         },
     };
     Ok((loaded, crate::rewind::active_checkpoints(conn, session)?))
+}
+
+/// Fork: the `anchor.sourceCommandId` of each user message (Node `buildProjectionAnchor` writes it for typed input), so
+/// a cold projection can correlate its rows with the App's pending commands.
+fn commands(records: &[messages::WithParts]) -> std::collections::BTreeMap<MessageId, CommandId> {
+    records
+        .iter()
+        .filter(|record| record.info["role"] == "user")
+        .filter_map(|record| {
+            let command = record.info["anchor"]["sourceCommandId"].as_str()?;
+            (!command.is_empty()).then(|| (MessageId::new(record.id()), CommandId::new(command)))
+        })
+        .collect()
 }
 
 pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSummary>, StoreError> {

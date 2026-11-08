@@ -19,7 +19,11 @@ pub async fn read(server: &Server, params: &Value) -> Result<Value, RpcError> {
     .map_err(|error| kernel_error(&error))?;
     let id = view.meta.id.as_str();
     let at = view.meta.created_at_ms;
+    let workspace = view.meta.workspace.root.as_str();
     let mut messages = Vec::new();
+    // Fork: the desktop Host validates `messages[].info` strictly (Node message shape), so every
+    // message carries the main agent name and assistants carry parent, path, cost and tokens.
+    let mut last_user_id: Option<String> = None;
     for (index, message) in view.messages.iter().enumerate() {
         let (role, body, message_id) = match message {
             Message::User(user) if user.origin == UserOrigin::Human => {
@@ -35,13 +39,23 @@ pub async fn read(server: &Server, params: &Value) -> Result<Value, RpcError> {
         if body.is_empty() {
             continue;
         }
+        let mut info = json!({"messageId": message_id, "role": role, "sessionId": id,
+            "time": {"created": at}, "agent": "zcode-agent"});
+        if role == "user" {
+            last_user_id = Some(message_id.to_owned());
+        } else {
+            info["parentMessageId"] = json!(last_user_id.as_deref().unwrap_or(message_id));
+            info["path"] = json!({"cwd": workspace, "root": workspace});
+            info["cost"] = json!(0);
+            info["tokens"] = json!({"input": 0, "output": 0, "reasoning": 0,
+                "cache": {"read": 0, "write": 0}});
+        }
         messages.push(json!({
-            "info": {"messageId": message_id, "role": role, "sessionId": id, "time": {"created": at}},
+            "info": info,
             "parts": [{"messageId": message_id, "partId": format!("{message_id}:part:{index}"),
                 "sessionId": id, "type": "text", "text": body}],
         }));
     }
-    let workspace = view.meta.workspace.root.as_str();
     let mode = view.mode.node_name();
     let status = if view.running { "running" } else { "idle" };
     let model = json!({"providerId": view.selection.provider, "modelId": view.selection.model});
@@ -80,7 +94,6 @@ pub async fn read(server: &Server, params: &Value) -> Result<Value, RpcError> {
             "backgroundJobs": [],
             "contextUsed": used,
             "contextWindow": size,
-            "currentTurnId": null,
             "mode": mode,
             "pendingPermissions": [],
             "sessionId": id,

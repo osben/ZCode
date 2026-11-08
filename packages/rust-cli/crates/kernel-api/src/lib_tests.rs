@@ -102,6 +102,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         created_at_ms: 1,
     };
     let loaded = LoadedSession {
+        commands: Default::default(),
         meta,
         messages: vec![assistant()],
         model: None,

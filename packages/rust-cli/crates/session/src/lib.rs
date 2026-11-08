@@ -176,6 +176,11 @@ pub struct SessionState {
     /// 当前轮以错误结束（冷加载的 `LoadedSession.last_turn_failed`）：续写时不补 assistant（session-lifecycle.md
     /// §6.3.1）。
     pub last_turn_failed: bool,
+    /// Fork: the command that submitted each typed user message (cold load: `LoadedSession.commands`).
+    pub commands: std::collections::BTreeMap<
+        rust_cli_kernel_api::ids::MessageId,
+        rust_cli_kernel_api::ids::CommandId,
+    >,
 }
 
 impl SessionState {
@@ -196,6 +201,7 @@ impl SessionState {
             start,
             turn: None,
             last_turn_failed: false,
+            commands: Default::default(),
         }
     }
 
@@ -212,6 +218,7 @@ impl SessionState {
             meta: loaded.meta,
             messages: loaded.messages,
             earlier: loaded.earlier,
+            commands: loaded.commands,
             selection: loaded.model.unwrap_or_else(|| selection.clone()),
             mode: loaded.mode.map_or_else(
                 || mode.into(),

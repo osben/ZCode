@@ -105,6 +105,7 @@ pub mod peers;
 pub mod permission;
 pub mod persisted_output;
 pub mod plan;
+pub mod prompt_attachment;
 pub mod provider;
 pub mod reminder_fold;
 pub mod run_ledger;

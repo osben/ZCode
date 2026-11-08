@@ -240,6 +240,9 @@ pub struct LoadedSession {
     /// 模型侧的历史只是 `messages`；界面显示 `earlier ++ messages`。没有压缩点时为空（serde 缺省为空、为空时不写出）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub earlier: Vec<Message>,
+    /// Fork: the stored `anchor.sourceCommandId` of each typed user message ([`crate::session_api::SessionView::commands`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub commands: std::collections::BTreeMap<MessageId, CommandId>,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、

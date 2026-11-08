@@ -99,6 +99,7 @@ pub(crate) async fn session_on_machines(
             detached: None,
         },
         SessionState {
+            commands: Default::default(),
             meta: meta(),
             messages,
             earlier: Vec::new(),

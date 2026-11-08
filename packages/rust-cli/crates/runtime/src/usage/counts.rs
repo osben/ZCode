@@ -41,6 +41,11 @@ pub(crate) fn block(block: &ContentBlock, per: u64) -> u64 {
         ContentBlock::Text { text } => rough(text, per),
         // 每张图的估计与压缩共用（2000，F55）。
         ContentBlock::Image { .. } => rust_cli_compact::IMAGE_TOKENS,
+        // Fork: an attached file counts as what the model receives for it.
+        ContentBlock::File { file } => rust_cli_kernel_api::prompt_attachment::blocks(file)
+            .iter()
+            .map(|block| self::block(block, per))
+            .sum(),
         other => rough(&serde_json::to_string(other).unwrap_or_default(), per),
     }
 }

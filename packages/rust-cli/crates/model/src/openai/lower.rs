@@ -105,7 +105,8 @@ pub(crate) fn items(
                         // 服务端工具的块在 OpenAI 协议里没有对应物，不回放（model.md §10）。
                         ContentBlock::RedactedThinking { .. }
                         | ContentBlock::ServerToolUse { .. }
-                        | ContentBlock::WebSearchToolResult { .. } => {}
+                        | ContentBlock::WebSearchToolResult { .. }
+                        | ContentBlock::File { .. } => {}
                         ContentBlock::Image { .. } | ContentBlock::ToolResult { .. } => {
                             return Err(invalid(
                                 "assistant messages carry only text and tool calls",
@@ -137,6 +138,12 @@ fn user(
         match block {
             ContentBlock::Text { text } => parts.push(Part::Text(text)),
             ContentBlock::Image { source } => parts.push(Part::Image(data_url(source)?)),
+            // Fork: `query::normalize` expands attached files before lowering.
+            ContentBlock::File { .. } => {
+                return Err(invalid(
+                    "attached files must be expanded before the model request",
+                ));
+            }
             ContentBlock::ToolResult {
                 tool_use_id,
                 content,

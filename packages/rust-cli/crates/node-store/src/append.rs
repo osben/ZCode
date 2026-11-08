@@ -56,6 +56,7 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
         // docs/specs/rust-cli/query.md §1.9）。这里仍拒收，挡住没走 query 的写入。
         ContentBlock::ServerToolUse { .. } => "server_tool_use",
         ContentBlock::WebSearchToolResult { .. } => "web_search_tool_result",
+        ContentBlock::File { .. } => "file",
     }
 }
 
@@ -64,11 +65,12 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
 fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     let mut texts = Vec::with_capacity(user.content.len());
     // 粘贴的图片（tui-input.md §3.2）：文字 part 之后的 Node `file` part（`persistUserPrompt` 的附件顺序）。
-    let mut images = Vec::new();
+    // Fork: App attachments are `file` parts in the same order (node-records `attached_file`).
+    let mut media = Vec::new();
     for block in &user.content {
         match block {
             ContentBlock::Text { text } => texts.push(text.as_str()),
-            ContentBlock::Image { source } => images.push(source),
+            ContentBlock::Image { .. } | ContentBlock::File { .. } => media.push(block),
             other => return Err(unsupported(&format!("user {} block", block_kind(other)))),
         }
     }
@@ -102,12 +104,19 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         );
         messages::save_part(ctx.conn, &part, ctx.now as i64).storage()?;
     }
-    for source in images {
-        let part = crate::tool_content::file_part(
-            part_id(ctx.now, &(ctx.uuid)()),
-            (ctx.session, id),
-            source,
-        );
+    for block in media {
+        let owner = (ctx.session, id);
+        let part = match block {
+            ContentBlock::File { file } => rust_cli_node_records::attached_file::part(
+                part_id(ctx.now, &(ctx.uuid)()),
+                owner,
+                file,
+            ),
+            ContentBlock::Image { source } => {
+                crate::tool_content::file_part(part_id(ctx.now, &(ctx.uuid)()), owner, source)
+            }
+            _ => continue,
+        };
         messages::save_part(ctx.conn, &part, ctx.now as i64).storage()?;
     }
     let title = sessions::Update {
@@ -293,5 +302,7 @@ fn append_assistant(ctx: &Commit<'_>, assistant: &AssistantMessage) -> Result<()
 fn display_input(text: &str) -> String {
     rust_cli_kernel_api::user_command::display(text)
         .or_else(|| rust_cli_kernel_api::user_input::display(text))
+        // Fork: attachment reminders stay in `metadata.modelInput`, not in the bubble.
+        .or_else(|| rust_cli_kernel_api::prompt_attachment::display(text))
         .unwrap_or_else(|| text.to_owned())
 }

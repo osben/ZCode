@@ -134,6 +134,7 @@ fn spawn(
             detached: None,
         },
         SessionState {
+            commands: Default::default(),
             meta: meta(),
             messages: Vec::new(),
             earlier: Vec::new(),

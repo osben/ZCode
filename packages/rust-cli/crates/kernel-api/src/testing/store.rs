@@ -262,6 +262,7 @@ impl SessionStore for MemoryStore {
             (Vec::new(), messages)
         };
         Ok(LoadedSession {
+            commands: Default::default(),
             meta,
             messages,
             earlier,

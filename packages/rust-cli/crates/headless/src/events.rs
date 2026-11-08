@@ -150,6 +150,9 @@ pub(crate) fn block(block: &ContentBlock) -> Value {
         } => {
             json!({"type": "web_search_tool_result", "tool_use_id": tool_use_id, "content": content})
         }
+        // Fork: an attached file is written as its metadata (the content stays in the session store).
+        ContentBlock::File { file } => json!({"type": "file", "name": file.name, "mime": file.mime,
+            "bytes": file.bytes}),
         ContentBlock::ToolResult {
             tool_use_id,
             content,

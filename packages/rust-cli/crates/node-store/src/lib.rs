@@ -9,6 +9,7 @@
 //! （`rust_cli_base::blocking`），不在 async 线程上做同步 IO。
 mod append;
 mod artifacts;
+mod attached_images;
 mod compaction;
 mod facts;
 mod fork;
@@ -214,11 +215,11 @@ impl SessionStore for NodeStore {
     }
 
     async fn load(&self, session: &SessionId) -> Result<LoadedSession, StoreError> {
-        let session = session.clone();
-        let (mut loaded, checkpoints) = self
-            .with_db(move |conn, _| load::load(conn, &session))
-            .await?;
+        let id = session.clone();
+        let (mut loaded, checkpoints) = self.with_db(move |conn, _| load::load(conn, &id)).await?;
         loaded.checkpoints = node_checkpoints::resolve(self.paths.artifacts(), checkpoints).await;
+        // Fork: artifact-backed App images (file IO, so not on the database thread).
+        attached_images::resolve(self, session, &mut loaded.messages).await;
         Ok(loaded)
     }
 

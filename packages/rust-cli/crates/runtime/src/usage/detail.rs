@@ -102,6 +102,8 @@ fn assistant_kind(block: &ContentBlock) -> Kind {
         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => Kind::Thinking,
         ContentBlock::ToolUse { .. } | ContentBlock::ServerToolUse { .. } => Kind::Calls,
         ContentBlock::ToolResult { .. } | ContentBlock::WebSearchToolResult { .. } => Kind::Results,
+        // Fork: only user messages carry attached files.
+        ContentBlock::File { .. } => Kind::Attachments,
     }
 }
 
@@ -149,7 +151,11 @@ pub(crate) fn pieces(messages: &[&Message], per: u64) -> Vec<Piece> {
                     UserOrigin::ToolResult { .. } | UserOrigin::Meta { .. } => Kind::Attachments,
                     UserOrigin::CompactSummary => Kind::Summary,
                 };
-                out.extend(user.content.iter().map(|block| piece(block, kind)));
+                // Fork: an attached file counts as an attachment, not as what the user typed.
+                out.extend(user.content.iter().map(|block| match block {
+                    ContentBlock::File { .. } => piece(block, Kind::Attachments),
+                    _ => piece(block, kind),
+                }));
             }
             Message::Assistant(assistant) => out.extend(
                 assistant

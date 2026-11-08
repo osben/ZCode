@@ -2,10 +2,31 @@
 //! 补在内存里、还没落库的消息排在第一批带消息的提交最前面（§6.3、§6.3.1）。先落库，调用方在成功之后才改内存、发事件。
 
 use rust_cli_kernel_api::ids::{CommandId, MessageId, OwnerEpoch};
+use rust_cli_kernel_api::message::{Message, UserOrigin};
 use rust_cli_kernel_api::session_api::Ack;
 use rust_cli_kernel_api::store::{Fact, FactBatch, StoreError, TurnAnchor};
+use rust_cli_kernel_api::user_input;
 
 use crate::actor::{Actor, accepted, rejected};
+
+/// Fork: the typed user messages of a batch, filtered like node-store `append_user` (Human, not an interrupt, not bash
+/// output): the store anchors exactly these to the batch command.
+fn typed_inputs(facts: &[Fact]) -> Vec<MessageId> {
+    facts
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::MessageAppended {
+                message: Message::User(user),
+            } if matches!(user.origin, UserOrigin::Human)
+                && !user_input::is_interrupt(user)
+                && !user_input::is_bash_output(user) =>
+            {
+                Some(user.id.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
 
 impl Actor {
     /// 提交一批（先落库，再改内存、发事件：调用方在成功之后才改状态）。当前轮由 actor 的 `RunLedger` 给出（性能修复，
@@ -23,8 +44,17 @@ impl Actor {
         let facts = pending.into_iter().chain(facts).collect();
         let batch = self.ledger.batch(command, facts, self.deps.ids.as_ref());
         let turn = batch.turn.clone();
+        let typed = batch
+            .command
+            .clone()
+            .map(|command| (typed_inputs(&batch.facts), command));
         self.deps.store.commit(&self.meta.id, batch).await?;
         self.ledger.committed(turn);
+        if let Some((ids, command)) = typed {
+            for id in ids {
+                self.commands.insert(id, command.clone());
+            }
+        }
         if stored_pending {
             self.resume_pending.clear();
         }

@@ -337,6 +337,41 @@ fn a_cold_view_rebuilds_the_rows_of_finished_turns() {
     assert_eq!(snapshot["config"]["followupMode"], "guide");
 }
 
+/// Fork: after an agent restart a cold turn keeps the command that submitted it, so the App settles that command.
+#[test]
+fn a_cold_turn_carries_its_stored_submitting_command() {
+    let mut cold = view(vec![
+        user("msg_u1", "first"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "one".into() }]),
+        user("msg_u2", "second"),
+    ]);
+    cold.commands
+        .insert(MessageId::new("msg_u1"), CommandId::new("cmd_1"));
+    let snapshot = Projection::from_view(&cold, Followup::Guide, Vec::new()).snapshot(0, "epoch");
+    let commands: Vec<String> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] != "assistantText")
+        .map(|row| {
+            format!(
+                "{}:{}",
+                row["kind"].as_str().unwrap(),
+                row["sourceCommandId"].as_str().unwrap_or("-")
+            )
+        })
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "turnHeader:cmd_1",
+            "userInput:cmd_1",
+            "turnHeader:-",
+            "userInput:-",
+        ]
+    );
+}
+
 /// revision 只在事件带来的值变了时才进 patch；流式增量不带 patch。
 #[test]
 fn the_revision_comes_from_the_events_only() {
@@ -391,6 +426,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
             admitted_at: 0,
             requested: "startNow",
             admitted: "startNow",
+            attachments: Vec::new(),
         },
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
@@ -430,4 +466,60 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
         message: user("msg_i", rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[0]),
     });
     assert!(marker.iter().all(|delta| delta.get("row").is_none()));
+}
+
+/// Fork: a cold `userInput` row shows the stored attachments as chips (after a restart too), and `attachmentRead`
+/// authorizes their refs; the bubble is only the typed text.
+#[test]
+fn cold_rows_carry_the_chips_of_stored_attachments() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+
+    let message = Message::User(UserMessage {
+        id: MessageId::new("msg_u1"),
+        content: vec![
+            ContentBlock::Text { text: "see".into() },
+            ContentBlock::File {
+                file: AttachedFile {
+                    name: "p.png".into(),
+                    mime: "image/png".into(),
+                    bytes: 4,
+                    reference: Some("zcode-artifact://session_1/a".into()),
+                    preview_reference: Some("zcode-artifact://session_1/b".into()),
+                    stored: None,
+                    body: AttachedBody::Omitted,
+                },
+            },
+        ],
+        origin: UserOrigin::Human,
+    });
+    let projection = Projection::from_view(
+        &view(vec![
+            message,
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let row = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "userInput")
+        .unwrap()
+        .clone();
+    assert_eq!(row["text"], "see");
+    assert_eq!(
+        row["attachments"],
+        json!([{"fileName": "p.png", "mime": "image/png", "bytes": 4,
+            "ref": "zcode-artifact://session_1/a", "previewRef": "zcode-artifact://session_1/b"}])
+    );
+    assert_eq!(
+        projection.attachment_mime("zcode-artifact://session_1/b"),
+        Some("image/png".into())
+    );
+    assert_eq!(
+        projection.attachment_mime("zcode-artifact://session_1/c"),
+        None
+    );
 }

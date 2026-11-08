@@ -185,6 +185,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             detached: None,
         },
         SessionState {
+            commands: Default::default(),
             meta: meta(),
             messages: history,
             earlier: Vec::new(),

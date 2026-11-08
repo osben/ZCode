@@ -288,6 +288,10 @@ fn block_tokens(block: &ContentBlock) -> u64 {
         ContentBlock::ToolResult { content, .. } => result_tokens(content),
         ContentBlock::ServerToolUse { name, input, .. } => rough_tokens(&format!("{name}{input}")),
         ContentBlock::WebSearchToolResult { content, .. } => rough_tokens(&content.to_string()),
+        ContentBlock::File { file } => crate::prompt_attachment::blocks(file)
+            .iter()
+            .map(block_tokens)
+            .sum(),
     }
 }
 

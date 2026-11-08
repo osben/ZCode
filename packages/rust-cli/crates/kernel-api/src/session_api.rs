@@ -232,6 +232,10 @@ pub struct SessionView {
     /// 本进程里最近一个完成的主回合请求（子代理的快照是子代理请求，F112）的输出速度（F105）：只在内存里，冷打开的为空。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_speed: Option<crate::metering::OutputSpeed>,
+    /// Fork: the command that submitted each typed user message (`anchor.sourceCommandId`), so a cold projection can
+    /// put `sourceCommandId` on its rows after an agent restart. Empty when unknown.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub commands: std::collections::BTreeMap<MessageId, CommandId>,
 }
 
 // 内核事件与回合结局放在分出的文件里（800 行上限，工作线 F131；路径与名字不变）。
@@ -454,6 +458,12 @@ pub trait Kernel: Send + Sync {
     /// 不经会话 actor。以前是 4 个透传的方法（`session_metering`、`request_stats`、`put_session_record`、
     /// `session_records`）。
     fn queries(&self) -> Arc<dyn crate::store::StoreQueries>;
+
+    /// Fork: the artifact store of this kernel's sessions (the App attachment upload stores prompt attachments in it).
+    /// Kernels without one return `None` and the attachment methods report `fault.attachment.putUnsupported`.
+    fn artifacts(&self) -> Option<Arc<dyn crate::store::ArtifactStore>> {
+        None
+    }
 
     /// 活动统计（`/stats`，usage.md §5）：今天与时区偏移取自内核的时钟，聚合在存储。默认 `Unsupported`。
     async fn activity(

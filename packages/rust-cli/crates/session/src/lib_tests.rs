@@ -109,7 +109,13 @@ async fn a_submitted_text_runs_a_turn_and_commits_both_messages() {
     assert!(matches!(facts[1], Fact::MessageAppended { .. }));
     assert!(matches!(facts[2], Fact::ModelCalled { .. }));
     assert!(matches!(facts[3], Fact::TurnEnded { .. }));
-    assert_eq!(fixture.session.view().await.unwrap().messages.len(), 2);
+    let view = fixture.session.view().await.unwrap();
+    assert_eq!(view.messages.len(), 2);
+    // Fork: the typed input maps to its submitting command (cold rows' `sourceCommandId`); the reply does not.
+    assert_eq!(
+        view.commands.into_iter().collect::<Vec<_>>(),
+        vec![(view.messages[0].id().clone(), CommandId::new("c1"))]
+    );
     assert_eq!(
         fixture.session.send(submit("c1", "again")).await,
         Ack::Duplicate
@@ -268,6 +274,7 @@ async fn asking_session_with(
             detached: None,
         },
         SessionState {
+            commands: Default::default(),
             meta: meta(),
             messages: Vec::new(),
             earlier: Vec::new(),

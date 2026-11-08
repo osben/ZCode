@@ -218,6 +218,10 @@ impl Kernel for LocalKernel {
         self.ports.store.clone()
     }
 
+    fn artifacts(&self) -> Option<Arc<dyn rust_cli_kernel_api::store::ArtifactStore>> {
+        Some(self.ports.artifacts.clone())
+    }
+
     /// 活动统计（usage.md §5）：今天与本地日的偏移取自注入的时钟，聚合在存储。
     async fn activity(
         &self,

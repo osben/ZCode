@@ -18,6 +18,8 @@ async-trait.workspace = true
 # wire v3 的分片（dataBase64）。
 base64.workspace = true
 rust-cli-base.workspace = true
+# Fork: desktop attachment refs are local paths (the Host's zero-copy prompt attachment transfer).
+rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
 rust-cli-protocol-core.workspace = true
 serde.workspace = true

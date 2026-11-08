@@ -52,6 +52,44 @@ pub enum ContentBlock {
         tool_use_id: String,
         content: Value,
     },
+    /// Fork: a file the App attached to a user message. It is stored as Node's `file` part (the one owner of the
+    /// attachment, read back by both runtimes) and expanded into the model's reminders by `query::normalize`.
+    File {
+        file: AttachedFile,
+    },
+}
+
+/// Fork: an App file attachment of a user message (Node `file` part of `persistUserPrompt`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttachedFile {
+    /// The file name the App shows and the reminders name.
+    pub name: String,
+    pub mime: String,
+    /// The size the App declared.
+    pub bytes: u64,
+    /// The App's ref: a local absolute path (desktop) or a `zcode-artifact://` URI (web remote).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// The App's `previewRef` (a smaller rendition the App previews instead), when it sent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_reference: Option<String>,
+    /// The session artifact (`zcode-artifact://`) holding an image's `data:` URL, Node's `metadata.artifactUri`: the
+    /// stored part points at it instead of inlining the bytes, and a cold load reads the image back from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored: Option<String>,
+    pub body: AttachedBody,
+}
+
+/// What of an [`AttachedFile`] reaches the model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttachedBody {
+    /// A UTF-8 text file read inline (Node's Read-style reminder pair).
+    Text { text: String },
+    /// An image sent as an image block.
+    Image { source: ImageSource },
+    /// Only the metadata reminder (too large, binary, unsupported or unreadable).
+    Omitted,
 }
 
 /// 图片来源。大图不内联在消息里，用 Artifact 引用，在发给模型的一侧物化（§6 规则 10）。

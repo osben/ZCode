@@ -9,6 +9,7 @@
 //! - [`mode`]：权限模式与 Node 的协作模式；[`artifacts`]：artifact 的 URI。
 
 pub mod artifacts;
+pub mod attached_file;
 pub mod branch;
 pub mod codecs;
 pub mod compaction;

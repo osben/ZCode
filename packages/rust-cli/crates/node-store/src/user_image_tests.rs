@@ -115,3 +115,181 @@ async fn attachment_blocks_round_trip_as_parts_after_the_text() {
     let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
     assert_eq!(loaded.messages, vec![human, attachment]);
 }
+
+/// Fork: App attachments are Node `file` parts after the user's text part (the one owner both runtimes read); the text
+/// part has no `metadata.modelInput`, and a cold read rebuilds the same blocks.
+#[tokio::test]
+async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let file = |name: &str, mime: &str, body| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: mime.into(),
+            bytes: 7,
+            reference: Some(format!("/work/{name}")),
+            preview_reference: None,
+            stored: None,
+            body,
+        },
+    };
+    let message = Message::User(UserMessage {
+        id: MessageId::new("msg_ru_u1"),
+        content: vec![
+            ContentBlock::Text {
+                text: "read these".into(),
+            },
+            file(
+                "note.txt",
+                "text/plain",
+                AttachedBody::Text {
+                    text: "line one\nline two".into(),
+                },
+            ),
+            file(
+                "pic.png",
+                "image/png",
+                AttachedBody::Image {
+                    source: ImageSource::Base64 {
+                        media_type: "image/png".into(),
+                        data: "iVBORw0KGgo=".into(),
+                    },
+                },
+            ),
+            file("big.pdf", "application/pdf", AttachedBody::Omitted),
+        ],
+        origin: UserOrigin::Human,
+    });
+    t.store
+        .commit(
+            &SessionId::new("sess_1"),
+            batch(
+                Some("cmd"),
+                vec![Fact::MessageAppended {
+                    message: message.clone(),
+                }],
+            ),
+        )
+        .await
+        .unwrap();
+    let parts: Vec<Value> = t
+        .rows("select data from part where message_id = 'msg_ru_u1' order by sequence")
+        .iter()
+        .filter_map(|row| row[0].as_str())
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect();
+    let kinds: Vec<&str> = parts
+        .iter()
+        .map(|part| part["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["text", "file", "file", "file"]);
+    assert_eq!(parts[0]["text"], "read these");
+    assert!(parts[0]["metadata"]["modelInput"].is_null());
+    assert_eq!(
+        parts[1]["metadata"]["preview"]["text"],
+        "line one\nline two"
+    );
+    assert_eq!(parts[2]["url"], "data:image/png;base64,iVBORw0KGgo=");
+    assert_eq!(parts[3]["metadata"]["recoverability"], "metadata_only");
+    let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
+    assert_eq!(loaded.messages, vec![message]);
+    assert_eq!(loaded.meta.title, "read these");
+}
+
+/// Fork: an App image stored in a session artifact (Node's shape) is read back from the artifact on load; one whose
+/// artifact is missing or belongs to another session stays the metadata reminder.
+#[tokio::test]
+async fn stored_app_images_are_read_back_from_their_artifacts() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactStore};
+
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let session = SessionId::new("sess_1");
+    let artifact = t
+        .store
+        .put(
+            &session,
+            ArtifactPurpose::Attachment,
+            "text/plain".into(),
+            b"data:image/png;base64,iVBORw0KGgo=".to_vec(),
+        )
+        .await
+        .unwrap();
+    let image = ImageSource::Base64 {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+    };
+    let file = |name: &str, stored: String| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: "image/png".into(),
+            bytes: 8,
+            reference: Some(format!("/work/{name}")),
+            preview_reference: None,
+            stored: Some(stored),
+            body: AttachedBody::Image {
+                source: image.clone(),
+            },
+        },
+    };
+    let message = Message::User(UserMessage {
+        id: MessageId::new("msg_ru_u1"),
+        content: vec![
+            ContentBlock::Text { text: "see".into() },
+            file("a.png", rust_cli_node_records::artifacts::uri(&artifact)),
+            file(
+                "gone.png",
+                "zcode-artifact://sess_1/tool-result-gone".into(),
+            ),
+            file("other.png", "zcode-artifact://sess_2/tool-result-x".into()),
+        ],
+        origin: UserOrigin::Human,
+    });
+    t.store
+        .commit(
+            &session,
+            batch(
+                Some("cmd"),
+                vec![Fact::MessageAppended {
+                    message: message.clone(),
+                }],
+            ),
+        )
+        .await
+        .unwrap();
+    let urls: Vec<String> = t
+        .rows("select data from part where message_id = 'msg_ru_u1' order by sequence")
+        .iter()
+        .filter_map(|row| row[0].as_str())
+        .map(|data| serde_json::from_str::<Value>(data).unwrap()["url"].to_string())
+        .collect();
+    assert!(
+        urls.iter()
+            .skip(1)
+            .all(|url| url.contains("zcode-artifact://")),
+        "{urls:?}"
+    );
+    let loaded = t.store.load(&session).await.unwrap();
+    let Message::User(user) = &loaded.messages[0] else {
+        panic!("expected the user message");
+    };
+    let bodies: Vec<&AttachedBody> = user
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::File { file } => Some(&file.body),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        bodies,
+        [
+            &AttachedBody::Image { source: image },
+            &AttachedBody::Omitted,
+            &AttachedBody::Omitted
+        ]
+    );
+}

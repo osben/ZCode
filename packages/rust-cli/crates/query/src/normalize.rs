@@ -49,6 +49,11 @@ fn message(role: ApiRole, content: Vec<ApiContent>) -> ApiMessage {
 fn plain(blocks: Vec<ContentBlock>) -> Vec<ApiContent> {
     blocks
         .into_iter()
+        // Fork: an attached file reaches the model as its reminders or image (kernel-api `prompt_attachment::blocks`).
+        .flat_map(|block| match block {
+            ContentBlock::File { file } => rust_cli_kernel_api::prompt_attachment::blocks(&file),
+            block => vec![block],
+        })
         .map(|block| ApiContent {
             block,
             cache_control: None,

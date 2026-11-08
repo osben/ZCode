@@ -24,7 +24,9 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 interrupted = false;
                 turns += 1;
                 let turn = format!("{}:turn:{turns}", user.id.as_str());
-                projection.start_turn(&turn, None, at, 0, &mut out);
+                // Fork: the stored submitting command, so the App settles its pending command after a restart.
+                let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
+                projection.start_turn(&turn, command, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
             }
             Message::User(user) => {

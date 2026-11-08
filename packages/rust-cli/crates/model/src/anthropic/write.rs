@@ -140,6 +140,12 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
             key(out, "content", false);
             write(out, content);
         }
+        // Fork: `query::normalize` expands attached files; one reaching the adapter is a bug upstream of it.
+        ContentBlock::File { .. } => {
+            return Err(ModelError::InvalidRequest {
+                message: "attached files must be expanded before the model request".to_owned(),
+            });
+        }
         ContentBlock::ToolResult {
             tool_use_id,
             content,

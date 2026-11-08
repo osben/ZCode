@@ -55,6 +55,8 @@ pub struct Server {
     /// 本进程的实例标识（时钟探测的 `clock.instanceId`）。
     pub(crate) instance: String,
     preferences: Mutex<Preferences>,
+    /// Fork: staged App attachment uploads (crate::uploads).
+    pub(crate) uploads: Mutex<crate::uploads::Registry>,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -85,6 +87,7 @@ impl Server {
             followups: Mutex::new(HashMap::new()),
             defaults,
             preferences: Mutex::new(Preferences::default()),
+            uploads: Mutex::new(crate::uploads::Registry::default()),
         }
     }
 
@@ -107,11 +110,18 @@ impl Server {
             .copied()
             .unwrap_or(Followup::Queue);
         let (context, topics) = (self.context.clone(), self.topics.clone());
-        self.bridge
+        let opening = self.bridge.get(session).is_none();
+        let live = self
+            .bridge
             .open(session, move |_, view| {
                 Live::new(context, topics, view, followup)
             })
-            .await
+            .await?;
+        // Fork: a cold open restores a still-preparing first submission before any subscription starts.
+        if opening && let Some(marker) = crate::preparation::load(self, session).await {
+            live.sink.set_preparation(marker.exposed());
+        }
+        Ok(live)
     }
 
     fn preferences(&self) -> std::sync::MutexGuard<'_, Preferences> {
@@ -151,6 +161,8 @@ impl Server {
         match method {
             // 不支持的能力给 false（app-protocol.md §4.3）。
             "runtime/capabilities" => reply(json!({
+                // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
+                "durableFirstSubmission": true,
                 "independentPlanState": false,
                 "historyFirst": false,
                 "sessionDirectorySource": false,
@@ -202,6 +214,14 @@ impl Server {
             "v4/sessionsIndex/reconcile" => crate::subscribe::reconcile(self, &params).await,
             "v4/command" => crate::commands::command(self, params).await.map(Reply::new),
             "v4/commands/query" => crate::commands::query(self, &params).await.map(Reply::new),
+            "v4/attachment/begin" => crate::attachments::begin(self, &params).await,
+            "v4/attachment/chunk" => crate::attachments::chunk(self, &params).await,
+            "v4/attachment/commit" => crate::attachments::commit(self, &params).await,
+            "v4/attachment/abort" => crate::attachments::abort(self, &params).await,
+            "v4/attachment/read" => crate::attachments::read_chunk(self, &params).await,
+            "v4/attachment/previewSource" => {
+                crate::attachments::preview_source(self, &params).await
+            }
             other => Err(RpcError::method_not_found(other)),
         }
     }
