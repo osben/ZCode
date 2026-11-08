@@ -82,6 +82,8 @@ The PR gate is the curated spec list below, run one spec at a time (`pnpm test:e
 
 `stop-tool-results` is Node-only and not in the gate: its fixture drives Node internals (the Node agent's tool barriers and Bash hook, a write lock on the Node tool result table, Node agent logs), which have no counterpart in the Rust agent.
 
+`changes-group-responsive-file-summary` is not in the gate: its first assertion waits for the running `Changes` group, which only exists while the replayed turn runs. The replay adds no delay to `tool-use` fixtures, and the Rust agent finishes the five replayed tool calls in about 100 ms, so the running state is gone before the first poll. Without that assertion, the rest of the spec passes on Rust: the four unique files and the chips or `+N` at both widths.
+
 The default runtime stays `node`, so specs outside the gate keep their Node behaviour; the matrix lists the gaps that remain.
 
 ## Order of work
