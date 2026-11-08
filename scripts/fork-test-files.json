@@ -82,6 +82,7 @@
   "packages/services/test/botsService.remoteLink.test.ts",
   "packages/services/test/clientScenesService.test.ts",
   "packages/services/test/cuaPipSessionService.test.ts",
+  "packages/services/test/forkAttachmentRefTrust.test.ts",
   "packages/services/test/forkLocaleStorage.test.ts",
   "packages/services/test/forkWorkspacePinMigration.test.ts",
   "packages/services/test/forkWorkspacePinRepo.test.ts",

@@ -622,6 +622,17 @@ modules:
       - packages/services/src/zcode-agent/resident-rows-range/contract.ts
     layers: { app: . }
     owner: remote
+  # fork-attachment-ref-trust: Host admission of AttachmentRef.ref/previewRef by trusted connection origin
+  # (specs/fork-attachment-ref-trust-boundary.md); runs before a v4 command reaches either agent runtime.
+  - id: fork-attachment-ref-trust
+    roots:
+      - packages/services/src/zcode-agent/fork-attachment-ref-trust
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/services/src/zcode-agent/fork-attachment-ref-trust/contract.ts
+    layers: { app: . }
+    owner: remote
   - id: tool-discovery
     roots:
       - apps/zcode-cli/packages/core/src/tool/search
