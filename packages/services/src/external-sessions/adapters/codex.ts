@@ -211,6 +211,8 @@ async function listFromRolloutFiles(
         ctx.warn(`codex rollout ${filePath} without session_meta head skipped`);
         continue;
       }
+      // The index path drops subagent threads; the rollout path must apply the same predicate to session_meta.
+      if (isSubagentThread(payload)) continue;
       const workspacePath = readString(payload.cwd) ?? "";
       // session_meta holds the creation time only; a resumed rollout keeps growing, so its mtime is the activity time.
       const mtimeMs = Math.trunc((await statOrNull(filePath))?.mtimeMs ?? 0);

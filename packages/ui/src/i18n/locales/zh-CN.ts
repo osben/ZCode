@@ -8648,6 +8648,8 @@ const zhCN: Record<string, string> = {
   "externalSessions.toast.imported": "已导入到 ZCode",
   "externalSessions.toast.importFailed": "导入失败：{error}",
   "externalSessions.toast.workspaceMissing": "目录 {path} 已不存在，无法在其中创建草稿",
+  "externalSessions.toast.secondaryRoot":
+    "该目录是项目 {project} 的附加目录；ZCode 草稿会在其主目录 {primary} 中创建，请先把该目录单独作为项目打开",
   "externalSessions.transcript.meta": "{source} · {count} 条消息 · {path}",
   "externalSessions.transcript.loading": "正在读取记录…",
   "externalSessions.transcript.truncated": "记录已裁剪为最近的消息；不显示工具调用和推理。",

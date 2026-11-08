@@ -244,6 +244,61 @@ describe("geminiSessionsAdapter.readTranscript", () => {
     });
   });
 
+  it("replays $rewindTo, $patch and $set.messages before extracting the transcript", async () => {
+    const journalHome = await mkdtemp(join(tmpdir(), "zcode-gemini-journal-"));
+    try {
+      const project = join(journalHome, "proj");
+      await mkdir(project, { recursive: true });
+      await writeJson(join(journalHome, ".gemini", "projects.json"), {
+        projects: { [project]: "proj" },
+      });
+      const file = join(journalHome, ".gemini", "tmp", "proj", "chats", "session-journal.jsonl");
+      const at = (offset: number) => iso(Date.UTC(2026, 0, 1) + offset * MINUTE);
+      await writeLines(file, [
+        {
+          sessionId: "gemini-journal",
+          projectHash: "x",
+          startTime: at(0),
+          lastUpdated: at(9),
+          kind: "main",
+        },
+        { id: "u1", timestamp: at(1), type: "user", content: [{ text: "Original prompt" }] },
+        { id: "g1", timestamp: at(2), type: "gemini", content: [{ text: "Discarded answer" }] },
+        { $rewindTo: "g1" },
+        { id: "g2", timestamp: at(3), type: "gemini", content: [{ text: "Kept answer" }] },
+        { $patch: { id: "u1", content: [{ text: "Patched prompt" }] } },
+        { id: "u2", timestamp: at(4), type: "user", content: [{ text: "Removed later" }] },
+        { $patch: { removeIds: ["u2"] } },
+        { $set: { lastUpdated: at(9) } },
+      ]);
+      const ctx = makeCtx(journalHome);
+      const sessions = await adapter.list(ctx);
+      const journal = sessions.find((item) => item.sessionId === "gemini-journal");
+      if (!journal) throw new Error("journal session missing");
+      const transcript = await adapter.readTranscript(ctx, journal);
+      expect(transcript?.messages.map((message) => [message.role, message.text])).toEqual([
+        ["user", "Patched prompt"],
+        ["assistant", "Kept answer"],
+      ]);
+
+      await writeLines(file, [
+        {
+          sessionId: "gemini-journal",
+          projectHash: "x",
+          startTime: at(0),
+          lastUpdated: at(9),
+          kind: "main",
+        },
+        { id: "a", timestamp: at(1), type: "user", content: "old" },
+        { $set: { messages: [{ id: "b", timestamp: at(2), type: "user", content: "replaced" }] } },
+      ]);
+      const replaced = await adapter.readTranscript(ctx, journal);
+      expect(replaced?.messages.map((message) => message.text)).toEqual(["replaced"]);
+    } finally {
+      await rm(journalHome, { recursive: true, force: true });
+    }
+  });
+
   it("returns null for an unknown session id and for a vanished source file", async () => {
     const ctx = makeCtx();
     const sessions = await adapter.list(ctx);

@@ -9140,6 +9140,8 @@ const enUS: Record<string, string> = {
   "externalSessions.toast.importFailed": "Import failed: {error}",
   "externalSessions.toast.workspaceMissing":
     "Folder {path} no longer exists, so the draft cannot be created there",
+  "externalSessions.toast.secondaryRoot":
+    "This folder is a secondary root of project {project}; ZCode drafts start in its primary folder {primary}, so open the folder as its own project first",
   "externalSessions.transcript.meta": "{source} · {count} messages · {path}",
   "externalSessions.transcript.loading": "Reading transcript…",
   "externalSessions.transcript.truncated":

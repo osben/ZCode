@@ -8465,6 +8465,8 @@ const ukUA: Record<string, string> = {
   "externalSessions.toast.importFailed": "Імпорт не вдався: {error}",
   "externalSessions.toast.workspaceMissing":
     "Теки {path} більше немає, тому створити там чернетку не можна",
+  "externalSessions.toast.secondaryRoot":
+    "Ця тека є додатковим коренем проєкту {project}; чернетки ZCode створюються в його головній теці {primary}, тож спершу відкрийте теку як окремий проєкт",
   "externalSessions.transcript.meta": "{source} · {count} повідомлень · {path}",
   "externalSessions.transcript.loading": "Читання транскрипту…",
   "externalSessions.transcript.truncated":

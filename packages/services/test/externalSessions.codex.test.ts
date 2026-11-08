@@ -382,6 +382,37 @@ describe("codexSessionsAdapter.list (rollout-head fallback)", () => {
   });
 });
 
+describe("codexSessionsAdapter.list (rollout-head fallback, subagents)", () => {
+  it("excludes subagent rollouts by their session_meta source", async () => {
+    const workspace = join(home, "fallback-sub");
+    await mkdir(workspace, { recursive: true });
+    const userId = "dd44dd44-4444-4444-8444-dd44dd44dd44";
+    const subId = "ee55ee55-5555-4555-8555-ee55ee55ee56";
+    const guardianId = "ff66ff66-6666-4666-8666-ff66ff66ff66";
+    const meta = (id: string, extra: Record<string, unknown>) => ({
+      timestamp: "2026-11-07T10:00:00.000Z",
+      type: "session_meta",
+      payload: { id, cwd: workspace, timestamp: "2026-11-07T10:00:00.000Z", ...extra },
+    });
+    await writeRollout(home, userId, [meta(userId, { source: "vscode", thread_source: "user" })]);
+    await writeRollout(home, subId, [
+      meta(subId, {
+        source: JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: userId } } }),
+        thread_source: "subagent",
+      }),
+    ]);
+    await writeRollout(home, guardianId, [
+      meta(guardianId, {
+        source: '{"subagent":{"other":"guardian"}}',
+        thread_source: "guardian_review",
+      }),
+    ]);
+
+    const sessions = await codexSessionsAdapter.list(makeCtx().ctx);
+    expect(sessions.map((session) => session.sessionId)).toEqual([userId]);
+  });
+});
+
 describe("codexSessionsAdapter.readTranscript", () => {
   const sessionId = "ee55ee55-5555-4555-8555-ee55ee55ee55";
   const t1 = Date.parse("2026-11-06T09:00:01.000Z");

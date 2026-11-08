@@ -12,6 +12,15 @@ export interface ExternalSessionImportOutcome {
   failureReason?: string;
 }
 
+export type ExternalSessionContinuationTarget =
+  | { kind: "project"; projectId: string }
+  /** The folder is only a secondary root; drafts start in the project's primary folder, so no draft is created. */
+  | { kind: "secondary-root"; projectName: string; primaryRootPath: string };
+
+function trimTrailingSeparators(path: string): string {
+  return path.replace(/[\\/]+$/, "");
+}
+
 export interface ExternalSessionActions {
   /** The upstream Claude import is available (local task service present). */
   canImport: boolean;
@@ -25,7 +34,7 @@ export interface ExternalSessionActions {
    * Resolves the folder's local project the way "Open folder" does (idempotent per root), so a draft created with
    * this project id lands in the source repository instead of a managed directory.
    */
-  resolveContinuationProjectId(workspacePath: string): Promise<string>;
+  resolveContinuation(workspacePath: string): Promise<ExternalSessionContinuationTarget>;
 }
 
 /** Service orchestration for the panel (packages/ui/AGENTS.md: components reach services through hooks). */
@@ -77,14 +86,23 @@ export function useExternalSessionActions(
     [taskService],
   );
 
-  const resolveContinuationProjectId = useCallback(
-    async (workspacePath: string) => {
+  const resolveContinuation = useCallback(
+    async (workspacePath: string): Promise<ExternalSessionContinuationTarget> => {
       if (!projectService) throw new Error("project service unavailable");
       const project = await projectService.saveProject({
         roots: [workspacePath],
         reuseExistingRoot: true,
       });
-      return project.id;
+      // reuseExistingRoot matches any root, but prepareSession always starts the draft in the primary root;
+      // a secondary root would silently open the draft in a different directory.
+      const primaryRootPath = project.roots.find((root) => root.isPrimary)?.rootPath;
+      if (
+        primaryRootPath &&
+        trimTrailingSeparators(primaryRootPath) !== trimTrailingSeparators(workspacePath)
+      ) {
+        return { kind: "secondary-root", projectName: project.name, primaryRootPath };
+      }
+      return { kind: "project", projectId: project.id };
     },
     [projectService],
   );
@@ -96,7 +114,7 @@ export function useExternalSessionActions(
       openInTerminal,
       readTranscript,
       importClaudeSession,
-      resolveContinuationProjectId,
+      resolveContinuation,
     }),
     [
       taskService,
@@ -104,7 +122,7 @@ export function useExternalSessionActions(
       openInTerminal,
       readTranscript,
       importClaudeSession,
-      resolveContinuationProjectId,
+      resolveContinuation,
     ],
   );
 }

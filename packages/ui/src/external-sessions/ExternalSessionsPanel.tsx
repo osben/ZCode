@@ -161,12 +161,25 @@ export function ExternalSessionsPanel({
       }
       // `targetWorkspace.workspacePath` alone does not decide the draft's cwd (prepareSession would allocate a
       // managed directory); the hook resolves the folder's local project first, like "Open folder" does.
-      const projectId = await actions.resolveContinuationProjectId(sourcePath);
+      const target = await actions.resolveContinuation(sourcePath);
+      if (target.kind === "secondary-root") {
+        toast(
+          intl.formatMessage(
+            { id: "externalSessions.toast.secondaryRoot" },
+            { project: target.projectName, primary: target.primaryRootPath },
+          ),
+        );
+        return;
+      }
       onCreateTask({
         initialPrompt: buildExternalSessionContextPack(transcript),
-        projectId,
+        projectId: target.projectId,
         hostId: "local",
-        targetWorkspace: { workspacePath: sourcePath, projectId, hostId: "local" },
+        targetWorkspace: {
+          workspacePath: sourcePath,
+          projectId: target.projectId,
+          hostId: "local",
+        },
       });
       setDialog(null);
     },

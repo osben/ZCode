@@ -220,9 +220,9 @@ async function readGeminiTranscript(
   if (!header || readString(header.sessionId) !== summary.sessionId) return null;
 
   const messages: ExternalSessionTranscriptMessage[] = [];
-  for (const record of records) {
+  for (const record of replayGeminiJournal(records.slice(1))) {
     const type = readString(record.type);
-    if (type !== "user" && type !== "gemini") continue; // skips the header, $set and error records
+    if (type !== "user" && type !== "gemini") continue;
     let text = contentText(record.content) ?? "";
     if (type === "user") text = stripLeadingSessionContext(text);
     if (!text.trim()) continue;
@@ -253,4 +253,75 @@ function contentText(content: unknown): string | undefined {
 /** Gemini CLI prepends a `<session_context>` environment block to the first user prompt; drop it. */
 function stripLeadingSessionContext(text: string): string {
   return text.replace(/^\s*<session_context>[\s\S]*?<\/session_context>\s*/, "");
+}
+
+/**
+ * Replays the Gemini CLI conversation journal the way its loader does (chatRecordingService.ts):
+ * message records are keyed by `id`; `{"$rewindTo": id}` drops that message and everything after it
+ * (or everything when the id is unknown); `{"$patch": {...}}` replaces content by id (`id` or
+ * `updates[]`), removes `removeIds` and reorders `orderIds`; `{"$set": {messages: [...]}}` replaces
+ * the whole conversation. Without this, a rewound answer or an edited prompt would still be shown.
+ */
+export function replayGeminiJournal(records: readonly JsonRecord[]): JsonRecord[] {
+  const map = new Map<string, JsonRecord>();
+  const applyPatch = (patch: unknown) => {
+    if (!isRecord(patch)) return;
+    const id = readString(patch.id);
+    if (!id) return;
+    const existing = map.get(id);
+    if (!existing) return;
+    if ("content" in patch && patch.content !== undefined) {
+      map.set(id, { ...existing, content: patch.content });
+    }
+  };
+  for (const record of records) {
+    const rewindTo = readString(record.$rewindTo);
+    if (rewindTo !== undefined) {
+      if (map.has(rewindTo)) {
+        let found = false;
+        for (const id of [...map.keys()]) {
+          if (id === rewindTo) found = true;
+          if (found) map.delete(id);
+        }
+      } else {
+        map.clear();
+      }
+      continue;
+    }
+    if (isRecord(record.$patch)) {
+      const patch = record.$patch;
+      applyPatch(patch);
+      if (Array.isArray(patch.updates)) for (const update of patch.updates) applyPatch(update);
+      if (Array.isArray(patch.removeIds)) {
+        for (const removeId of patch.removeIds) {
+          if (typeof removeId === "string") map.delete(removeId);
+        }
+      }
+      if (Array.isArray(patch.orderIds)) {
+        const ordered: [string, JsonRecord][] = [];
+        for (const id of patch.orderIds) {
+          const message = typeof id === "string" ? map.get(id) : undefined;
+          if (message && typeof id === "string") ordered.push([id, message]);
+        }
+        const orderedIds = new Set(ordered.map(([id]) => id));
+        const prefix = [...map.entries()].filter(([id]) => !orderedIds.has(id));
+        map.clear();
+        for (const [id, message] of [...prefix, ...ordered]) map.set(id, message);
+      }
+      continue;
+    }
+    if (isRecord(record.$set)) {
+      if (Array.isArray(record.$set.messages)) {
+        map.clear();
+        for (const message of record.$set.messages) {
+          const id = isRecord(message) ? readString(message.id) : undefined;
+          if (id && isRecord(message)) map.set(id, message);
+        }
+      }
+      continue;
+    }
+    const id = readString(record.id);
+    if (id) map.set(id, record);
+  }
+  return [...map.values()];
 }

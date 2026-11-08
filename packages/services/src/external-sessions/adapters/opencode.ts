@@ -97,7 +97,8 @@ function parseModelText(value: SQLOutputValue | undefined): string | undefined {
 
 function formatModelRecord(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined;
-  const id = readString(value.id);
+  // session_v2 / assistant parts use `id`; legacy message data uses `modelID`.
+  const id = readString(value.id) ?? readString(value.modelID);
   if (!id) return undefined;
   const providerId = readString(value.providerID);
   return providerId ? `${providerId}/${id}` : id;
@@ -182,24 +183,35 @@ function v2TitleFromFirstUserMessage(db: DatabaseSync, sessionId: string): strin
 
 // --- Legacy schema: session + message + part ---
 
+function tableColumns(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as DbRow[];
+  return new Set(rows.map((row) => String(row.name)));
+}
+
+/**
+ * Legacy store (OpenCode ≤ 1.x `session.sql.ts`): `message.data` and `part.data` are JSON documents
+ * (`{"role":"user",...}` / `{"type":"text","text":"..."}`); there are no standalone role/type/text columns.
+ */
 function listLegacySessions(
   ctx: ExternalSessionScanContext,
   db: DatabaseSync,
   dbPath: string,
 ): ExternalSessionSummary[] {
+  const sessionColumns = tableColumns(db, "session");
   const withProject = tableNames(db).has("project");
-  const rows: DbRow[] = db
+  const modelSelect = sessionColumns.has("model") ? "s.model as model" : "null as model";
+  const worktreeSelect = withProject ? "p.worktree as worktree" : "null as worktree";
+  const projectJoin = withProject ? "left join project p on p.id = s.project_id" : "";
+  // Child sessions (parent_id) are subagent/fork children in the legacy store too.
+  const whereClause = sessionColumns.has("parent_id") ? "where s.parent_id is null" : "";
+  const rows = db
     .prepare(
-      withProject
-        ? `select s.id as id, s.directory as directory, s.title as title,
-                  s.time_created as time_created, s.time_updated as time_updated, p.worktree as worktree
-           from session s left join project p on p.id = s.project_id`
-        : `select s.id as id, s.directory as directory, s.title as title,
-                  s.time_created as time_created, s.time_updated as time_updated, null as worktree
-           from session s`,
+      `select s.id as id, s.directory as directory, s.title as title, ${modelSelect},
+              s.time_created as time_created, s.time_updated as time_updated, ${worktreeSelect}
+       from session s ${projectJoin} ${whereClause}`,
     )
-    .all();
-  const counts = messageCounts(db, "message", "role");
+    .all() as DbRow[];
+  const counts = messageCounts(db, "message", "json_extract(data, '$.role')");
   const summaries: ExternalSessionSummary[] = [];
   for (const row of rows) {
     const sessionId = rowString(row, "id");
@@ -228,6 +240,7 @@ function listLegacySessions(
         title: rowString(row, "title") ?? legacyTitleFromFirstUserMessage(db, sessionId),
         createdAt,
         updatedAt,
+        model: parseModelText(row.model),
         messageCount: counts.get(sessionId),
         sourcePath: dbPath,
         transcriptAvailable: true,
@@ -240,13 +253,13 @@ function listLegacySessions(
 function legacyTitleFromFirstUserMessage(db: DatabaseSync, sessionId: string): string | undefined {
   const row = db
     .prepare(
-      `select pt.text as text from message m
-       join part pt on pt.message_id = m.id and pt.type = 'text'
-       where m.session_id = ? and m.role = 'user'
-       order by m.time_created, m.rowid, pt.rowid limit 1`,
+      `select pt.data as part_data from message m
+       join part pt on pt.message_id = m.id and json_extract(pt.data, '$.type') = 'text'
+       where m.session_id = ? and json_extract(m.data, '$.role') = 'user'
+       order by m.time_created, m.id, pt.time_created, pt.id limit 1`,
     )
-    .get(sessionId);
-  return titleFromPrompt(row ? readString(row.text) : undefined);
+    .get(sessionId) as DbRow | undefined;
+  return titleFromPrompt(row ? readString(parseDataRecord(row.part_data)?.text) : undefined);
 }
 
 function messageCounts(db: DatabaseSync, table: string, typeColumn: string): Map<string, number> {
@@ -324,16 +337,17 @@ function legacyTranscript(
   if (!exists) return null;
   const rows = db
     .prepare(
-      `select m.id as message_id, m.role as role, m.time_created as time_created, pt.text as text
-       from message m join part pt on pt.message_id = m.id and pt.type = 'text'
-       where m.session_id = ? and m.role in ('user','assistant')
-       order by m.time_created, m.rowid, pt.rowid`,
+      `select m.id as message_id, m.data as message_data, m.time_created as time_created, pt.data as part_data
+       from message m join part pt on pt.message_id = m.id and json_extract(pt.data, '$.type') = 'text'
+       where m.session_id = ? and json_extract(m.data, '$.role') in ('user','assistant')
+       order by m.time_created, m.id, pt.time_created, pt.id`,
     )
-    .all(sessionId);
+    .all(sessionId) as DbRow[];
   const messages: ExternalSessionTranscriptMessage[] = [];
   let currentId: string | undefined;
   let currentRole: "user" | "assistant" | undefined;
   let currentTimestamp: number | undefined;
+  let currentModel: string | undefined;
   let currentParts: string[] = [];
   const flush = (): void => {
     if (currentId && currentRole && currentParts.length > 0) {
@@ -341,6 +355,7 @@ function legacyTranscript(
         role: currentRole,
         text: currentParts.join("\n\n"),
         ...(currentTimestamp ? { timestamp: currentTimestamp } : {}),
+        ...(currentModel ? { model: currentModel } : {}),
       });
     }
     currentParts = [];
@@ -350,10 +365,13 @@ function legacyTranscript(
     if (messageId !== currentId) {
       flush();
       currentId = messageId;
-      currentRole = row.role === "assistant" ? "assistant" : "user";
-      currentTimestamp = rowTimestamp(row, "time_created");
+      const data = parseDataRecord(row.message_data);
+      currentRole = data?.role === "assistant" ? "assistant" : "user";
+      currentTimestamp =
+        toTimestampMs(readTimeCreated(data?.time)) ?? rowTimestamp(row, "time_created");
+      currentModel = currentRole === "assistant" ? formatModelRecord(data?.model) : undefined;
     }
-    const text = readString(row.text);
+    const text = readString(parseDataRecord(row.part_data)?.text);
     if (text) currentParts.push(text);
   }
   flush();

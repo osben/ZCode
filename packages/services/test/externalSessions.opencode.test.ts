@@ -206,38 +206,80 @@ function seedV2Store(db: DatabaseSync, projectDir: string, missingDir: string): 
 }
 
 function seedLegacyStore(db: DatabaseSync, projectDir: string): void {
+  // Upstream legacy schema (opencode session.sql.ts ≤ 1.x): role lives in message.data JSON and
+  // type/text in part.data JSON; there are no standalone role/type/text columns.
   db.exec(`
     create table session (
-      id text primary key, project_id text, directory text, title text,
-      time_created integer, time_updated integer
+      id text primary key, project_id text, parent_id text, directory text, title text,
+      model text, time_created integer, time_updated integer
     );
     create table project (id text primary key, worktree text);
-    create table message (id text primary key, session_id text, role text, time_created integer);
-    create table part (id text primary key, message_id text, session_id text, type text, text text);
+    create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
+    create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);
   `);
   db.prepare("insert into project (id, worktree) values (?, ?)").run("proj_leg", projectDir);
   const insertSession = db.prepare(
-    "insert into session (id, project_id, directory, title, time_created, time_updated) values (?, ?, ?, ?, ?, ?)",
+    "insert into session (id, project_id, parent_id, directory, title, model, time_created, time_updated) values (?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  insertSession.run("leg_main", null, projectDir, "Legacy chat", T0, T0 + 100_000);
-  insertSession.run("leg_notitle", "proj_leg", null, "", T0 + 200_000, T0 + 300_000);
+  insertSession.run("leg_main", null, null, projectDir, "Legacy chat", null, T0, T0 + 100_000);
+  insertSession.run(
+    "leg_notitle",
+    "proj_leg",
+    null,
+    null,
+    "",
+    JSON.stringify({ providerID: "openrouter", modelID: "openrouter/free" }),
+    T0 + 200_000,
+    T0 + 300_000,
+  );
+  insertSession.run("leg_child", null, "leg_main", projectDir, "child", null, T0, T0);
 
   const insertMessage = db.prepare(
-    "insert into message (id, session_id, role, time_created) values (?, ?, ?, ?)",
+    "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
   );
   const insertPart = db.prepare(
-    "insert into part (id, message_id, session_id, type, text) values (?, ?, ?, ?, ?)",
+    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
   );
-  insertMessage.run("lm1", "leg_main", "user", T0 + 1_000);
-  insertPart.run("lp1", "lm1", "leg_main", "text", "Hi there");
-  insertPart.run("lp2", "lm1", "leg_main", "text", "second line");
-  insertMessage.run("lm2", "leg_main", "assistant", T0 + 2_000);
-  insertPart.run("lp3", "lm2", "leg_main", "text", "Answer");
-  insertMessage.run("lm3", "leg_main", "system", T0 + 3_000);
-  insertPart.run("lp4", "lm3", "leg_main", "text", "system preamble");
+  const message = (role: string, created: number, model?: Record<string, string>) =>
+    JSON.stringify({ role, time: { created }, ...(model ? { model } : {}) });
+  const textPart = (text: string) => JSON.stringify({ type: "text", text });
+  insertMessage.run("lm1", "leg_main", T0 + 1_000, T0 + 1_000, message("user", T0 + 1_000));
+  insertPart.run("lp1", "lm1", "leg_main", T0 + 1_000, T0 + 1_000, textPart("Hi there"));
+  insertPart.run("lp2", "lm1", "leg_main", T0 + 1_001, T0 + 1_001, textPart("second line"));
+  insertMessage.run(
+    "lm2",
+    "leg_main",
+    T0 + 2_000,
+    T0 + 2_000,
+    message("assistant", T0 + 2_000, { providerID: "openrouter", modelID: "openrouter/free" }),
+  );
+  insertPart.run("lp3", "lm2", "leg_main", T0 + 2_000, T0 + 2_000, textPart("Answer"));
+  insertPart.run(
+    "lp3r",
+    "lm2",
+    "leg_main",
+    T0 + 2_001,
+    T0 + 2_001,
+    JSON.stringify({ type: "reasoning", text: "hidden" }),
+  );
+  insertMessage.run("lm3", "leg_main", T0 + 3_000, T0 + 3_000, message("system", T0 + 3_000));
+  insertPart.run("lp4", "lm3", "leg_main", T0 + 3_000, T0 + 3_000, textPart("system preamble"));
 
-  insertMessage.run("ln1", "leg_notitle", "user", T0 + 210_000);
-  insertPart.run("lnp1", "ln1", "leg_notitle", "text", "First legacy prompt");
+  insertMessage.run(
+    "ln1",
+    "leg_notitle",
+    T0 + 210_000,
+    T0 + 210_000,
+    message("user", T0 + 210_000),
+  );
+  insertPart.run(
+    "lnp1",
+    "ln1",
+    "leg_notitle",
+    T0 + 210_000,
+    T0 + 210_000,
+    textPart("First legacy prompt"),
+  );
 }
 
 const adapter = opencodeSessionsAdapter;
@@ -425,7 +467,9 @@ describe("opencodeSessionsAdapter (legacy session/message/part)", () => {
     expect(findSession(sessions, "leg_notitle")).toMatchObject({
       workspacePath: projDir,
       title: "First legacy prompt",
+      model: "openrouter/openrouter/free",
     });
+    expect(sessions.some((session) => session.sessionId === "leg_child")).toBe(false);
   });
 
   it("groups legacy text parts per message and filters roles", async () => {
@@ -435,7 +479,12 @@ describe("opencodeSessionsAdapter (legacy session/message/part)", () => {
 
     expect(transcript?.messages).toEqual([
       { role: "user", text: "Hi there\n\nsecond line", timestamp: T0 + 1_000 },
-      { role: "assistant", text: "Answer", timestamp: T0 + 2_000 },
+      {
+        role: "assistant",
+        text: "Answer",
+        timestamp: T0 + 2_000,
+        model: "openrouter/openrouter/free",
+      },
     ]);
   });
 
