@@ -626,6 +626,7 @@ async fn writes_rewinds_and_background_survive_the_wire() {
     let task = BackgroundTask {
         session: SessionId::new("s1"),
         task: ShellTaskId::new("b1"),
+        notify_stop: false,
     };
     let stop = machine
         .background()

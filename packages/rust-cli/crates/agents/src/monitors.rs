@@ -178,6 +178,7 @@ async fn stop(core: &Core, live: &LiveAgent, armed: &MonitorArmed) {
     let request = BackgroundTask {
         session: live.child.clone(),
         task: armed.task.clone(),
+        notify_stop: false,
     };
     if let Err(error) = core
         .ports
@@ -237,6 +238,7 @@ async fn run(
     let key = BackgroundTask {
         session: live.child.clone(),
         task: armed.task.clone(),
+        notify_stop: false,
     };
     let pending = matches!(
         machine.background().background_command(key).await,

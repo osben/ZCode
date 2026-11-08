@@ -172,6 +172,7 @@ async fn running_on(place: &Place, session: &SessionId, tail: bool) -> Vec<Backg
         let key = BackgroundTask {
             session: session.clone(),
             task: task.clone(),
+            notify_stop: false,
         };
         let Ok(Some(info)) = place.machine.background().background_command(key).await else {
             continue;
@@ -222,6 +223,7 @@ pub(crate) async fn shell_detail(
     let key = BackgroundTask {
         session: session.clone(),
         task: rust_cli_kernel_api::ids::ShellTaskId::new(task),
+        notify_stop: false,
     };
     let mut found = None;
     for place in places(deps, workspace) {

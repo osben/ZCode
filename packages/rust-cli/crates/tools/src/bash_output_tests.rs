@@ -126,3 +126,15 @@ fn a_requested_move_explains_why() {
         "Command was moved to the background (ID: b1) so that a message that arrived while it was running can reach you; it was not interrupted. Output is being written to: /tmp/b1.output. You will be notified when it completes. To check interim output, use Read on that file path."
     );
 }
+
+#[test]
+fn a_desktop_timeout_reads_node_abort_line() {
+    assert_eq!(
+        aborted(""),
+        "<error>Command was aborted before completion</error>"
+    );
+    assert_eq!(
+        aborted("\nslept\n"),
+        "slept\n<error>Command was aborted before completion</error>"
+    );
+}

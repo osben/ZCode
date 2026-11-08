@@ -173,6 +173,7 @@ async fn every_port_of_a_machine_reaches_the_same_object() {
     let task = BackgroundTask {
         session: session.clone(),
         task: ShellTaskId::new("t1"),
+        notify_stop: false,
     };
     let _ = machine.info().facts(&workspace()).await;
     let request = ReadFile {

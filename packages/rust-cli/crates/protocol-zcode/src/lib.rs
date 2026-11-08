@@ -18,6 +18,7 @@ mod lifecycle;
 mod live;
 mod preparation;
 mod projection;
+mod reservations;
 mod server;
 mod subscribe;
 mod uploads;

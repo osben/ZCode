@@ -219,6 +219,7 @@ pub(crate) fn background_task(task: ws::BackgroundTask) -> BackgroundTask {
     BackgroundTask {
         session: SessionId::new(task.session),
         task: ShellTaskId::new(task.task),
+        notify_stop: false,
     }
 }
 

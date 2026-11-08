@@ -8,6 +8,12 @@ use serde_json::{Value, json};
 
 use super::{Projection, RowKind, ToolStatus, block_key, state, text_of, tool_key};
 
+/// A background task notification (the session's notification turns and the agents' completion notices).
+pub(super) fn is_task_notification(origin: &UserOrigin) -> bool {
+    matches!(origin, UserOrigin::Meta { source }
+        if source == rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION)
+}
+
 impl Projection {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn stream(
@@ -93,6 +99,10 @@ impl Projection {
                     }
                 }
                 self.append(key, row, out);
+            }
+            // Fork: a notification that opened the turn titles its header (background_result.rs).
+            Message::User(user) if is_task_notification(&user.origin) => {
+                self.background_result(&text_of(&user.content), out);
             }
             Message::Assistant(assistant) => {
                 let Some(turn) = self.turn.clone() else {

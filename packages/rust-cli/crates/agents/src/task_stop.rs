@@ -184,6 +184,7 @@ impl TaskStopTool {
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: ShellTaskId::new(id),
+                    notify_stop: self.core.node_desktop,
                 };
                 match machine.background().background_command(key).await {
                     Ok(Some(info)) if info.status == BackgroundStatus::Running => {
@@ -233,6 +234,7 @@ impl TaskStopTool {
             let key = BackgroundTask {
                 session: entry.child.clone(),
                 task,
+                notify_stop: false,
             };
             if let Err(error) = context
                 .machine
@@ -273,9 +275,13 @@ impl TaskStopTool {
     ) -> Result<StoppedTask, ToolError> {
         match self.find(id, context).await {
             Ok(Target::Agent(agent, description)) => {
-                if !self.core.live.stop(&agent, context.by_user)
-                    && let Some(wakes) = routing::stop_parked(&self.core, &agent)
-                {
+                if self.core.live.stop(&agent, context.by_user) {
+                    // Fork (node_desktop): Node's TaskStop returns after the agent has stopped, so its
+                    // `was stopped by ZCode` notification joins the same model request as this tool result.
+                    if self.core.node_desktop && !context.by_user {
+                        self.core.live.left_running(&agent).await;
+                    }
+                } else if let Some(wakes) = routing::stop_parked(&self.core, &agent) {
                     self.stop_commands_of(&agent, context).await;
                     routing::wake(&self.core, wakes).await;
                 }
@@ -290,6 +296,7 @@ impl TaskStopTool {
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: ShellTaskId::new(id),
+                    notify_stop: false,
                 };
                 match machine
                     .background()

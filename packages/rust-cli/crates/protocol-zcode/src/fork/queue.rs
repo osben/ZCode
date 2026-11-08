@@ -24,6 +24,8 @@ const ITEM_MISSING: &str = "queue.itemMissing";
 const ITEM_UNAVAILABLE: &str = "fault.command.executionFailed";
 /// Node `V4QueuePromotionCommitError`: the promotion started but the queue item could not be removed.
 const PROMOTION_COMMIT_FAILED: &str = "fault.command.queuePromotionCommitFailed";
+/// Node `V4QueueItemReservedError`: another `sendQueuedNow` is already promoting this item.
+const ITEM_RESERVED: &str = "guard.queueItemReserved";
 /// Node `V4QueuePromotionLeaseUnavailableError`: the foreground is not available for the promotion.
 const PROMOTION_BUSY: &str = "guard.queuePromotionBusy";
 
@@ -261,6 +263,18 @@ pub(super) async fn send_queued_now(
             message,
             revision,
         )
+    };
+    // Node `reserveQueueItem`: a second click on the same item is refused, so it cannot preempt the
+    // turn the first promotion started or let the drain consume another item. Reserved before the read,
+    // so a promotion that already finished has removed the item by then.
+    let Some(_reservation) = live.sink.reserve_promotion(source) else {
+        return failed(
+            ITEM_RESERVED,
+            format!(
+                "v4 sendQueuedNow queue item already reserved: {}",
+                body.queue_item_id
+            ),
+        );
     };
     // The full item is read up front (Node refuses a text-only fallback): no item, no promotion.
     let Some(item) = handle.view().await.ok().and_then(|view| {

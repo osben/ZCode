@@ -589,7 +589,9 @@ impl BashTool {
                 &code,
             )));
         }
-        let head = if timed_out {
+        let head = if timed_out && self.settings.node_desktop {
+            output::aborted(&head)
+        } else if timed_out {
             output::timed_out(timeout_ms, &head)
         } else {
             head

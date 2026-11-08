@@ -186,6 +186,7 @@ fn background_task_dtos_round_trip() {
     round_trip(&BackgroundTask {
         session: SessionId::new("s1"),
         task: ShellTaskId::new("b0123abcd"),
+        notify_stop: false,
     });
     round_trip(&Some(BackgroundInfo {
         command: "sleep 30".to_owned(),

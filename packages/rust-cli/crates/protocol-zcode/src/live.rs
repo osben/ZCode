@@ -54,6 +54,9 @@ pub struct Live {
     /// Fork: counts finished rebuilds, so a command that rewrites the history can wait for the projection to be
     /// rebuilt before it submits more input (see [`Self::rebuilds`]).
     rebuilds: tokio::sync::watch::Sender<u64>,
+    /// Fork: the queue items a `sendQueuedNow` is promoting (Node `reserveQueueItem`): a second promotion of the
+    /// same item is refused instead of preempting the turn the first one started.
+    promotions: crate::reservations::Reservations,
 }
 
 impl Live {
@@ -85,7 +88,13 @@ impl Live {
             context,
             topics,
             rebuilds: tokio::sync::watch::Sender::new(0),
+            promotions: crate::reservations::Reservations::default(),
         }
+    }
+
+    /// Fork: reserves a queue item for one promotion; `None` while another promotion holds it.
+    pub fn reserve_promotion(&self, item: &str) -> Option<crate::reservations::Reservation<'_>> {
+        self.promotions.reserve(item)
     }
 
     /// Fork: a receiver of the rebuild count. The rebuild reads the session view when the pump reaches

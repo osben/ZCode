@@ -12,6 +12,9 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     let mut out = Vec::new();
     let mut turns = 0u64;
     let mut interrupted = false;
+    // Fork: the last assistant message ended its turn (no tool call waits for a result), so a
+    // notification after it opened a turn of its own instead of joining a tool boundary.
+    let mut turn_ended = true;
     for message in &view.messages {
         match message {
             Message::User(user)
@@ -23,10 +26,24 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 }
                 interrupted = false;
                 turns += 1;
+                turn_ended = false;
                 let turn = format!("{}:turn:{turns}", user.id.as_str());
                 // Fork: the stored submitting command, so the App settles its pending command after a restart.
                 let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
                 projection.start_turn(&turn, command, at, 0, &mut out);
+                projection.message(message, at, 0, &mut out);
+            }
+            Message::User(user)
+                if turn_ended && super::rows::is_task_notification(&user.origin) =>
+            {
+                if projection.turn.is_some() {
+                    projection.close_cold_turn(interrupted, at, &mut out);
+                }
+                interrupted = false;
+                turns += 1;
+                turn_ended = false;
+                let turn = format!("{}:turn:{turns}", user.id.as_str());
+                projection.start_turn(&turn, None, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
             }
             Message::User(user) => {
@@ -63,7 +80,13 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                     }
                 }
             }
-            Message::Assistant(_) => projection.message(message, at, 0, &mut out),
+            Message::Assistant(assistant) => {
+                turn_ended = !assistant
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
+                projection.message(message, at, 0, &mut out);
+            }
             Message::System(SystemMessage::Interrupted { .. }) => interrupted = true,
             // Fork: a stored compaction shows as its timeline marker (projection/markers.rs).
             Message::System(SystemMessage::CompactBoundary(boundary)) => {

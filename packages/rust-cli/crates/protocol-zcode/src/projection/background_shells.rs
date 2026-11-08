@@ -15,6 +15,7 @@ use super::{Projection, tool_key};
 
 /// The Bash result text of a backgrounded command (`tools` `bash_output.rs`); the id ends at the period.
 const BACKGROUND_PREFIX: &str = "Command running in background with ID: ";
+const MOVED_MARKER: &str = "moved to the background (ID: ";
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct Shells {
@@ -27,10 +28,17 @@ pub(super) struct Shells {
 impl Projection {
     /// A Bash call that went to the background: remember its description as the work's title.
     pub(super) fn remember_shell_title(&mut self, tool_use: &str, text: &str) {
-        let Some(rest) = text.strip_prefix(BACKGROUND_PREFIX) else {
-            return;
+        // A launch reads "...with ID: X."; a command moved there later (timeout, a message that
+        // arrived while it ran) reads "...moved to the background (ID: X)...".
+        let task = if let Some(rest) = text.strip_prefix(BACKGROUND_PREFIX) {
+            rest.split('.').next()
+        } else if text.contains(MOVED_MARKER) {
+            text.split_once(MOVED_MARKER)
+                .and_then(|(_, rest)| rest.split(')').next())
+        } else {
+            None
         };
-        let Some(task) = rest.split('.').next().filter(|task| !task.is_empty()) else {
+        let Some(task) = task.map(str::trim).filter(|task| !task.is_empty()) else {
             return;
         };
         let Some(&at) = self.index.get(&tool_key(tool_use)) else {

@@ -287,6 +287,7 @@ impl Tool for MonitorTool {
             let request = BackgroundTask {
                 session: context.session.clone(),
                 task,
+                notify_stop: false,
             };
             let _ = context
                 .machine

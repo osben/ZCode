@@ -52,6 +52,12 @@ impl Projection {
         }
         row.insert("lane".into(), json!("assistantWork"));
         row.insert("marker".into(), marker);
+        // Node `onCompactLifecycle`: a manual compaction carries the input that asked for it.
+        if trigger == CompactTrigger::Manual
+            && let Some(command) = self.turn.as_ref().and_then(|turn| turn.command.clone())
+        {
+            row.insert("sourceCommandId".into(), json!(command));
+        }
         self.append(key, row, out);
     }
 

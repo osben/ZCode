@@ -106,6 +106,23 @@ pub fn timed_out(timeout_ms: u64, output: &str) -> String {
     }
 }
 
+/// Fork (node_desktop): Node's timed-out foreground command (`bash-model-content.ts`
+/// `formatStderrForModel`): the process was interrupted, so the abort line follows the output.
+pub fn aborted(output: &str) -> String {
+    const ABORTED: &str = "<error>Command was aborted before completion</error>";
+    // Node drops the leading blank lines (`/^(\s*\n)+/`) and the trailing whitespace.
+    let blank = output.len() - output.trim_start().len();
+    let output = output[..blank]
+        .rfind('\n')
+        .map_or(output, |at| &output[at + 1..])
+        .trim_end();
+    if output.is_empty() {
+        ABORTED.to_owned()
+    } else {
+        format!("{output}\n{ABORTED}")
+    }
+}
+
 /// 输出文件超过上限被结束的输出：说明放在输出前面（有输出时用换行连接）。
 pub fn killed_for_size(note: &str, output: &str) -> String {
     if output.is_empty() {

@@ -147,6 +147,7 @@ impl TaskOutputTool {
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: task.clone(),
+                    notify_stop: false,
                 };
                 // An environment that does not support background commands counts as not
                 // knowing the task, same as unknown.

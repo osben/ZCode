@@ -24,6 +24,7 @@ fn key(session: &str, task: &ShellTaskId) -> BackgroundTask {
     BackgroundTask {
         session: SessionId::new(session),
         task: task.clone(),
+        notify_stop: false,
     }
 }
 

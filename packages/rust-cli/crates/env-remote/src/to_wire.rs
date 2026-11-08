@@ -248,7 +248,7 @@ pub(crate) fn start_command(request: StartCommand, body: &mut BodyBuilder) -> wc
 }
 
 pub(crate) fn background_task(task: BackgroundTask) -> ws::BackgroundTask {
-    let BackgroundTask { session, task } = task;
+    let BackgroundTask { session, task, .. } = task;
     ws::BackgroundTask {
         session: session.as_str().to_owned(),
         task: task.as_str().to_owned(),

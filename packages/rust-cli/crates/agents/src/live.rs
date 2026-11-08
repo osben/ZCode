@@ -166,6 +166,22 @@ impl Live {
         self.changes.subscribe()
     }
 
+    /// Fork (node_desktop): resolves once `agent` is no longer running (finished, parked or gone). Its run settles
+    /// and routes its own notification under the same lock that leaves the running state, so after this the
+    /// notification is already in the owner's inbox.
+    pub(crate) async fn left_running(&self, agent: &AgentId) {
+        let mut changes = self.subscribe();
+        loop {
+            let running = self
+                .agents()
+                .get(agent)
+                .is_some_and(|entry| matches!(entry.state, AgentState::Running { .. }));
+            if !running || changes.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
     /// 顶层会话 `root` 里条目的快照与查询时刻（列表用）。先过滤再复制（修复线 F6，审查 R5-11：以前每次列表查询都复制
     /// 全部会话的全部条目）。
     pub(crate) fn snapshot_in(&self, root: &SessionId) -> (Vec<LiveAgent>, u64) {

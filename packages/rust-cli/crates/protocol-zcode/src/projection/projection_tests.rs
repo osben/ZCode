@@ -15,6 +15,8 @@ use serde_json::json;
 
 use super::*;
 
+#[path = "background_result_tests.rs"]
+mod background_result;
 #[path = "background_shells_tests.rs"]
 mod background_shells;
 #[path = "subagent_rows_tests.rs"]
@@ -995,4 +997,23 @@ fn goal_changes_are_the_snapshot_goal_and_its_actions() {
     );
     feed.apply(KernelEvent::GoalChanged { goal: None });
     assert_eq!(feed.projection.snapshot(1, "e")["goal"], Value::Null);
+}
+
+/// Fork: a manual compaction marker names the input that asked for it (Node `sourceCommandId`).
+#[test]
+fn a_manual_compact_marker_carries_its_source_command() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_c"),
+        command: Some(CommandId::new("cmd_compact")),
+    });
+    let started = feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Manual,
+    });
+    let appended = started
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .unwrap();
+    assert_eq!(appended["row"]["sourceCommandId"], "cmd_compact");
 }

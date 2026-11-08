@@ -4,6 +4,7 @@
 //! 行：turnHeader（回合）、userInput（真人输入）、assistantText、reasoning、toolCall；其余事件只改状态或忽略（P1）。
 
 mod actions;
+mod background_result;
 mod background_shells;
 mod bash_progress;
 mod cold;

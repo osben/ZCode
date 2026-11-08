@@ -546,3 +546,36 @@ async fn a_desktop_user_stop_of_a_resumed_agent_names_the_send_message_call() {
         notice.text
     );
 }
+
+/// Fork (node_desktop): the model's TaskStop of a running agent returns after the agent has stopped, so its
+/// `was stopped by ZCode` notice is already there for the same model request as the tool result (Node).
+#[tokio::test]
+async fn a_desktop_task_stop_returns_after_the_agent_notice() {
+    use futures_util::FutureExt as _;
+    let gate = Arc::new(Notify::new());
+    let harness = crate::test_support::desktop_harness_gated(Some(gate.clone()));
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&parent);
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Long job", "prompt": "Work.", "run_in_background": true}),
+        )
+        .await;
+    harness.started(1).await;
+    harness
+        .call("sess_parent", "TaskStop", json!({"task_id": "agent_1"}))
+        .await;
+    let Some(Some(AgentSignal::Notice(notice))) = stream.next().now_or_never() else {
+        panic!("the notice was not delivered before TaskStop returned");
+    };
+    assert!(
+        notice
+            .text
+            .contains("<summary>Agent \"Long job\" was stopped by ZCode</summary>"),
+        "{}",
+        notice.text
+    );
+}
