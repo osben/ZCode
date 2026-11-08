@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { join, resolve } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import {
   buildSummary,
   capTranscript,
@@ -33,12 +34,44 @@ const STAT_CONCURRENCY = 8;
 /** session_meta is the first rollout record; a few spare head lines tolerate minor format drift. */
 const META_HEAD_LINES = 5;
 
-const THREADS_QUERY = `
-  SELECT id, rollout_path, created_at, created_at_ms, updated_at, updated_at_ms, cwd, title, name,
-         first_user_message, preview, model, git_branch, source, thread_source, agent_role,
-         attached_thread_parent_id
-  FROM threads
-`;
+/** Without these two columns the index cannot be used at all (format drift → source unavailable). */
+const THREAD_REQUIRED_COLUMNS = ["id", "rollout_path"] as const;
+/** Metadata columns that differ between Codex versions; absent ones are simply not selected. */
+const THREAD_OPTIONAL_COLUMNS = [
+  "created_at",
+  "created_at_ms",
+  "updated_at",
+  "updated_at_ms",
+  "cwd",
+  "title",
+  "name",
+  "first_user_message",
+  "preview",
+  "model",
+  "git_branch",
+  "source",
+  "thread_source",
+  "agent_role",
+  "attached_thread_parent_id",
+] as const;
+
+/**
+ * Builds the threads SELECT from the columns this database actually has. Codex 0.163 lacks
+ * `attached_thread_parent_id`; selecting it unconditionally made the whole source unavailable.
+ */
+function buildThreadsQuery(db: DatabaseSync): string | null {
+  const present = new Set(
+    (db.prepare("PRAGMA table_info(threads)").all() as unknown[])
+      .filter(isRecord)
+      .map((column) => String(column.name)),
+  );
+  if (!THREAD_REQUIRED_COLUMNS.every((column) => present.has(column))) return null;
+  const columns = [
+    ...THREAD_REQUIRED_COLUMNS,
+    ...THREAD_OPTIONAL_COLUMNS.filter((column) => present.has(column)),
+  ];
+  return `SELECT ${columns.join(", ")} FROM threads`;
+}
 
 const RELOCATE_QUERY = "SELECT rollout_path FROM threads WHERE id = ?";
 
@@ -84,9 +117,11 @@ async function listFromStateDb(
   codexRoot: string,
   dbPath: string,
 ): Promise<ExternalSessionSummary[]> {
-  const rows = withReadOnlySqlite(dbPath, (db) =>
-    (db.prepare(THREADS_QUERY).all() as unknown[]).filter(isRecord),
-  );
+  const rows = withReadOnlySqlite(dbPath, (db) => {
+    const query = buildThreadsQuery(db);
+    if (!query) throw new Error(`codex: threads table without id/rollout_path in ${dbPath}`);
+    return (db.prepare(query).all() as unknown[]).filter(isRecord);
+  });
   const candidates: ThreadCandidate[] = [];
   for (const row of rows) {
     const sessionId = readString(row.id);

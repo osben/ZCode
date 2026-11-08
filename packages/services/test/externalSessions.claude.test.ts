@@ -93,10 +93,31 @@ describe("claudeSessionsAdapter", () => {
       gitBranch: "feat/x",
       model: "claude-opus-5-5",
       transcriptAvailable: true,
+      importable: true,
       resumeCommand: "claude --resume s1",
     });
     expect(s1?.createdAt).toBe(Date.parse("2026-11-01T10:00:00.000Z"));
     expect(s1?.updatedAt).toBeGreaterThanOrEqual(Date.parse("2026-11-01T10:00:05.000Z"));
+  });
+
+  it("lists sessions under .claude/worktrees but marks them not importable", async () => {
+    const home = await makeHome();
+    const worktree = join(home, "repo", ".claude", "worktrees", "wt-1");
+    await mkdir(worktree, { recursive: true });
+    const slugDir = join(home, ".claude", "projects", "-repo--claude-worktrees-wt-1");
+    await mkdir(slugDir, { recursive: true });
+    await writeFile(
+      join(slugDir, "w1.jsonl"),
+      line(userRecord("w1", worktree, "worktree task", "2026-11-01T10:00:00.000Z")),
+    );
+    const [session] = await claudeSessionsAdapter.list(ctx(home));
+    expect(session).toMatchObject({
+      sessionId: "w1",
+      workspacePath: worktree,
+      transcriptAvailable: true,
+      importable: false,
+      resumeCommand: "claude --resume w1",
+    });
   });
 
   it("returns [] without a projects root and skips a malformed file with a warning", async () => {

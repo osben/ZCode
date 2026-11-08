@@ -33,6 +33,7 @@ function summary(
     updatedAt: 1,
     sourcePath: "/tmp/src",
     transcriptAvailable: true,
+    importable: false,
     resumeCommand: buildExternalSessionResumeCommand(partial.source, partial.sessionId),
     ...partial,
   };

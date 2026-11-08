@@ -17,6 +17,7 @@ function transcript(count: number): ExternalSessionTranscript {
       updatedAt: 2,
       sourcePath: "/x",
       transcriptAvailable: true,
+      importable: false,
       resumeCommand: "codex resume abc",
     },
     messages: Array.from({ length: count }, (_, index) => ({

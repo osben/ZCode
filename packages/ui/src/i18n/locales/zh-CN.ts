@@ -8638,6 +8638,8 @@ const zhCN: Record<string, string> = {
   "externalSessions.action.resume": "在 {tool} 中继续",
   "externalSessions.action.continue": "在 ZCode 中继续",
   "externalSessions.action.import": "导入到 ZCode",
+  "externalSessions.action.importUnavailable":
+    "无法导入：Claude Code 导入器会跳过 .claude/worktrees 下的会话",
   "externalSessions.action.copyCommand": "复制恢复命令",
   "externalSessions.action.copySessionId": "复制会话 ID",
   "externalSessions.action.showInFileManager": "在文件管理器中显示",

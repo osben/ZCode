@@ -60,7 +60,7 @@ export function useExternalSessionActions(
 
   const importClaudeSession = useCallback(
     async (summary: ExternalSessionSummary): Promise<ExternalSessionImportOutcome> => {
-      if (!taskService || summary.source !== "claude") {
+      if (!taskService || summary.source !== "claude" || !summary.importable) {
         return { failureReason: "unsupported" };
       }
       const result = await taskService.importClaudeSessions({

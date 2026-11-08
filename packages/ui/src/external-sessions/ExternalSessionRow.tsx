@@ -137,7 +137,15 @@ export function ExternalSessionRow({
             </DropdownMenuItem>
           ) : null}
           {canImport && summary.source === "claude" ? (
-            <DropdownMenuItem onSelect={() => onImport(summary)}>
+            <DropdownMenuItem
+              disabled={!summary.importable}
+              title={
+                summary.importable
+                  ? undefined
+                  : intl.formatMessage({ id: "externalSessions.action.importUnavailable" })
+              }
+              onSelect={() => onImport(summary)}
+            >
               <Download className="size-3.5" />
               {intl.formatMessage({ id: "externalSessions.action.import" })}
             </DropdownMenuItem>

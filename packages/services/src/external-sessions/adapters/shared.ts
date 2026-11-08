@@ -151,6 +151,7 @@ export function buildSummary(params: {
   messageCount?: number;
   sourcePath: string;
   transcriptAvailable: boolean;
+  importable?: boolean;
 }): ExternalSessionSummary {
   const title =
     params.title?.trim() || buildExternalSessionFallbackTitle(params.source, params.sessionId);
@@ -169,6 +170,7 @@ export function buildSummary(params: {
     ...(params.messageCount !== undefined ? { messageCount: params.messageCount } : {}),
     sourcePath: params.sourcePath,
     transcriptAvailable: params.transcriptAvailable,
+    importable: params.importable === true,
     resumeCommand: buildExternalSessionResumeCommand(params.source, params.sessionId),
   };
 }

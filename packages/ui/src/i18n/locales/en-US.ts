@@ -9129,6 +9129,8 @@ const enUS: Record<string, string> = {
   "externalSessions.action.resume": "Resume in {tool}",
   "externalSessions.action.continue": "Continue in ZCode",
   "externalSessions.action.import": "Import to ZCode",
+  "externalSessions.action.importUnavailable":
+    "Import unavailable: the Claude Code importer skips sessions under .claude/worktrees",
   "externalSessions.action.copyCommand": "Copy resume command",
   "externalSessions.action.copySessionId": "Copy session id",
   "externalSessions.action.showInFileManager": "Show in file manager",

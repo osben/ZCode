@@ -190,7 +190,7 @@ export function ExternalSessionsPanel({
 
   const importToZCode = useCallback(
     async (summary: ExternalSessionSummary) => {
-      if (!actions.canImport || summary.source !== "claude") return;
+      if (!actions.canImport || !summary.importable) return;
       setBusyKey(summary.key);
       try {
         const outcome = await actions.importClaudeSession(summary);
@@ -359,7 +359,7 @@ export function ExternalSessionsPanel({
           transcript={dialog.transcript}
           loading={dialog.loading}
           error={dialog.error}
-          canImport={canImport && dialog.summary.source === "claude"}
+          canImport={canImport && dialog.summary.importable}
           canContinue={canContinue}
           onClose={() => setDialog(null)}
           onResume={(item) => void resume(item)}

@@ -52,13 +52,13 @@ source, and it cannot hand the session back to the native tool.
 
 ## Sources (v1)
 
-| Source      | Id         | Where it is read                                                                                                  | Listing fields                                                              | Transcript                                                                                                                       | Resume command                              |
-| ----------- | ---------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Claude Code | `claude`   | `~/.claude/projects/<slug>/<sessionId>.jsonl` via the upstream `claudeNativeSessionImportRepo` scan + head parser | cwd, created/updated, preview title, (model, branch, count from head/tail)  | yes (upstream parser `parseClaudeNativeSessionFile`)                                                                             | `claude --resume <sessionId>`               |
-| Codex       | `codex`    | `~/.codex/state_5.sqlite` table `threads` (read-only); rows whose `rollout_path` is missing on disk are dropped   | cwd, title/first_user_message, created/updated, model, git_branch, archived | yes, from the rollout JSONL (`response_item` messages of role user/assistant; `developer` skipped); `.zst` archives are not read | `codex resume <sessionId>`                  |
-| OpenCode    | `opencode` | `~/.local/share/opencode/opencode.db` tables `session_v2` + `session_message` (read-only)                         | directory, title, created/updated, model JSON, message count                | yes (`session_message` rows of type user/assistant, text parts only)                                                             | `opencode --session <sessionId>`            |
-| Cursor      | `cursor`   | `~/.cursor/acp-sessions/<id>/meta.json` and `~/.cursor/chats/<md5(cwd)>/<agentId>/meta.json`                      | cwd, title (acp) / name, created/updated (chats meta), no model             | **no** (blob stores are opaque; `transcriptAvailable: false`)                                                                    | `cursor-agent --resume <sessionId>`         |
-| Gemini CLI  | `gemini`   | `~/.gemini/projects.json` → `~/.gemini/tmp/<name>/chats/session-*.jsonl`                                          | project path, created (`startTime`) / updated (`lastUpdated`), model, count | yes (records of type user/gemini; `$set` lines skipped)                                                                          | `gemini --resume <sessionId>` (best effort) |
+| Source      | Id         | Where it is read                                                                                                                                                                                    | Listing fields                                                              | Transcript                                                                                                                       | Resume command                              |
+| ----------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Claude Code | `claude`   | `~/.claude/projects/<slug>/<sessionId>.jsonl` via the upstream `claudeNativeSessionImportRepo` scan + head parser                                                                                   | cwd, created/updated, preview title, (model, branch, count from head/tail)  | yes (upstream parser `parseClaudeNativeSessionFile`)                                                                             | `claude --resume <sessionId>`               |
+| Codex       | `codex`    | `~/.codex/state_5.sqlite` table `threads` (read-only; only `id` and `rollout_path` are required, other columns are selected when present); rows whose `rollout_path` is missing on disk are dropped | cwd, title/first_user_message, created/updated, model, git_branch, archived | yes, from the rollout JSONL (`response_item` messages of role user/assistant; `developer` skipped); `.zst` archives are not read | `codex resume <sessionId>`                  |
+| OpenCode    | `opencode` | `~/.local/share/opencode/opencode.db` tables `session_v2` + `session_message` (read-only)                                                                                                           | directory, title, created/updated, model JSON, message count                | yes (`session_message` rows of type user/assistant, text parts only)                                                             | `opencode --session <sessionId>`            |
+| Cursor      | `cursor`   | `~/.cursor/acp-sessions/<id>/meta.json` and `~/.cursor/chats/<md5(cwd)>/<agentId>/meta.json`                                                                                                        | cwd, title (acp) / name, created/updated (chats meta), no model             | **no** (blob stores are opaque; `transcriptAvailable: false`)                                                                    | `cursor-agent --resume <sessionId>`         |
+| Gemini CLI  | `gemini`   | `~/.gemini/projects.json` → `~/.gemini/tmp/<name>/chats/session-*.jsonl`                                                                                                                            | project path, created (`startTime`) / updated (`lastUpdated`), model, count | yes (records of type user/gemini; `$set` lines skipped)                                                                          | `gemini --resume <sessionId>` (best effort) |
 
 Roots honour `HOME`; tests inject `homeDir` explicitly. Adapters live one per file under
 `packages/services/src/external-sessions/adapters/`, each exporting a pure
@@ -88,6 +88,7 @@ interface ExternalSessionSummary {
   messageCount?: number; // user + assistant, when the listing can know it cheaply
   sourcePath: string; // file or db path, for "Show in file manager" and diagnostics
   transcriptAvailable: boolean;
+  importable: boolean; // the upstream Claude importer accepts it (not under .claude/worktree(s)); false for other sources
   resumeCommand: string; // ready to paste; argument quoted for POSIX sh
 }
 
@@ -189,7 +190,10 @@ command to the clipboard instead.
     `CONTEXT_PACK_CHARS_PER_MESSAGE` (1200), ending with "Continue from here." This is lossy by
     design and labelled as such in the UI.
   - **Import to ZCode** (Claude Code only) → existing `zcodeTaskService.importClaudeSessions` for
-    the session's workspace, then `onOpenSession` on the imported task. Other sources do not offer
+    the session's workspace, then `onOpenSession` on the imported task. The item is disabled with
+    an explanation when `importable` is false: the upstream importer rejects sessions whose cwd is
+    under `.claude/worktree(s)` even though the panel lists them (transcript, resume and continue
+    stay available). Other sources do not offer
     it: imported rows would need a `migrationSource` value the upstream realtime schema rejects
     (`z.enum(["claudeCode"])`) and the tasks index is shared with upstream.
   - **Copy resume command**, **Copy session id**, **Show in file manager** (`sourcePath`).

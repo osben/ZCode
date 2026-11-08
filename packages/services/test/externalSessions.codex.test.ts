@@ -564,3 +564,48 @@ describe("codexSessionsAdapter.readTranscript", () => {
     expect(await codexSessionsAdapter.readTranscript(ctx, unknown)).toBeNull();
   });
 });
+
+describe("codexSessionsAdapter.list (older threads schema)", () => {
+  it("lists threads when optional columns such as attached_thread_parent_id are absent", async () => {
+    // Codex 0.163 ships `threads` without attached_thread_parent_id / agent_role / thread_source.
+    const sessionId = "aa11aa11-1111-4111-8111-aa11aa11aa11";
+    const workspace = join(home, "older-repo");
+    await mkdir(workspace, { recursive: true });
+    const rolloutPath = await writeRollout(home, sessionId, [
+      {
+        timestamp: "2026-11-07T10:00:00.000Z",
+        type: "session_meta",
+        payload: { id: sessionId, cwd: workspace, timestamp: "2026-11-07T10:00:00.000Z" },
+      },
+    ]);
+    await mkdir(join(home, ".codex"), { recursive: true });
+    const db = new DatabaseSync(join(home, ".codex", "state_5.sqlite"));
+    db.exec(
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, created_at_ms INTEGER, updated_at_ms INTEGER)",
+    );
+    db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)").run(
+      sessionId,
+      rolloutPath,
+      workspace,
+      "older schema",
+      Date.parse("2026-11-07T10:00:00.000Z"),
+      Date.parse("2026-11-07T11:00:00.000Z"),
+    );
+    db.close();
+
+    const { ctx, warn } = makeCtx();
+    const sessions = await codexSessionsAdapter.list(ctx);
+    expect(sessions.map((session) => [session.sessionId, session.title])).toEqual([
+      [sessionId, "older schema"],
+    ]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("marks the source unavailable when the threads table lacks id or rollout_path", async () => {
+    await mkdir(join(home, ".codex"), { recursive: true });
+    const db = new DatabaseSync(join(home, ".codex", "state_5.sqlite"));
+    db.exec("CREATE TABLE threads (id TEXT, cwd TEXT)");
+    db.close();
+    await expect(codexSessionsAdapter.list(makeCtx().ctx)).rejects.toThrow(/rollout_path/);
+  });
+});

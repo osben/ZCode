@@ -8454,6 +8454,8 @@ const ukUA: Record<string, string> = {
   "externalSessions.action.resume": "Продовжити в {tool}",
   "externalSessions.action.continue": "Продовжити в ZCode",
   "externalSessions.action.import": "Імпортувати в ZCode",
+  "externalSessions.action.importUnavailable":
+    "Імпорт недоступний: імпортер Claude Code пропускає сесії в .claude/worktrees",
   "externalSessions.action.copyCommand": "Копіювати команду відновлення",
   "externalSessions.action.copySessionId": "Копіювати id сесії",
   "externalSessions.action.showInFileManager": "Показати у файловому менеджері",

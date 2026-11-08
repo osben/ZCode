@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, normalize, resolve } from "node:path";
 import {
   extractClaudeNativeSessionHeadInfo,
   hasClaudeNativeSidechainMarker,
@@ -26,6 +26,23 @@ import {
 
 const HEAD_RECORDS = 16;
 const TAIL_BYTES = 64 * 1024;
+
+/**
+ * Mirrors the upstream import boundary (`isClaudeWorktreeWorkspacePath` in claudeNativeSessionImportRepo):
+ * `importClaudeSessions` rejects sessions whose cwd sits under a `.claude/worktree(s)` directory, so the panel
+ * must not offer Import for them. Listing, transcript and resume stay available.
+ */
+function isUpstreamImportableWorkspace(workspacePath: string): boolean {
+  const segments = normalize(resolve(workspacePath))
+    .replaceAll("\\", "/")
+    .split("/")
+    .map((segment) => segment.toLowerCase());
+  return !segments.some(
+    (segment, index) =>
+      segment === ".claude" &&
+      (segments[index + 1] === "worktree" || segments[index + 1] === "worktrees"),
+  );
+}
 
 /**
  * Claude Code keeps one JSONL per session under ~/.claude/projects/<slug>/<sessionId>.jsonl; the slug is a
@@ -111,6 +128,7 @@ async function summarizeFile(
     gitBranch: tail.gitBranch,
     sourcePath: filePath,
     transcriptAvailable: true,
+    importable: isUpstreamImportableWorkspace(headInfo.workspacePath),
   });
 }
 

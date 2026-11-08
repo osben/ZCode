@@ -53,6 +53,8 @@ export interface ExternalSessionSummary {
   /** File or database path backing the session, for "Show in file manager" and diagnostics. */
   sourcePath: string;
   transcriptAvailable: boolean;
+  /** The upstream Claude Code importer accepts this session (it skips `.claude/worktree(s)` cwds); false elsewhere. */
+  importable: boolean;
   /** Ready to paste into a shell in `workspacePath`; empty when the id fails the id pattern. */
   resumeCommand: string;
 }
