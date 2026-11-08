@@ -185,6 +185,7 @@ impl Pipeline {
             asked_by: None,
             // 额外机器上的调用，询问带机器名（R3，remote-exec.md §20.8；主 env 不写出）。
             machine: call.machine.clone(),
+            once,
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));

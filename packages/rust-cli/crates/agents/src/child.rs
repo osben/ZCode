@@ -207,6 +207,7 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: None,
                 machine,
+                once,
             } => InteractionRequest::Permission {
                 machine,
                 tool_use,
@@ -216,6 +217,7 @@ impl Interactions for ChildSink {
                 suggestions,
                 rule_seed,
                 asked_by: Some(self.name.clone()),
+                once,
             },
             other => other,
         };

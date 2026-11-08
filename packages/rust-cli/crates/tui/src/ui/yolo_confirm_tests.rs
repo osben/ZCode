@@ -357,6 +357,7 @@ fn confirming_for_an_ask_allows_it_once_then_switches() {
                     message: String::new(),
                     suggestions: Vec::new(),
                     asked_by: None,
+                    once: false,
                 },
             },
         },

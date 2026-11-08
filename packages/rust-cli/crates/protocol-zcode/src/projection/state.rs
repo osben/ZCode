@@ -248,6 +248,20 @@ pub fn permission_options() -> Value {
     ])
 }
 
+/// Fork: the single-use ask (Node `approvalMode: "user-once"` keeps only allow once and deny).
+pub fn single_use_permission_options() -> Value {
+    let options = permission_options();
+    Value::Array(
+        options
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|option| option["kind"] != "allowAlways")
+            .cloned()
+            .collect(),
+    )
+}
+
 /// “完全访问”选项（与 Node 的 V4 投影相同）：选它时会话切到 yolo（bypassPermissions）并放行这一次。
 pub fn full_access_option() -> Value {
     json!({"optionId": "fullAccess", "label": "Full access", "kind": "custom",

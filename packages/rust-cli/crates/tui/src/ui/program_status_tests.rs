@@ -62,6 +62,7 @@ fn bash() -> InteractionRequest {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: None,
+        once: false,
     }
 }
 

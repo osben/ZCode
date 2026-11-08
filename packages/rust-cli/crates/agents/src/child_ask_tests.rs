@@ -35,6 +35,7 @@ fn permission(asked_by: Option<&str>) -> InteractionRequest {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: asked_by.map(str::to_owned),
+        once: false,
     }
 }
 

@@ -240,13 +240,10 @@ impl Projection {
                 tool,
                 input,
                 message,
+                once,
                 ..
-            } => json!({
-                "interactionId": interaction,
-                "kind": "permission",
-                "anchorRowId": anchor,
-                "createdAt": now,
-                "payload": {
+            } => {
+                let mut payload = json!({
                     "kind": "permission",
                     "toolCallId": tool_use,
                     "toolName": tool,
@@ -255,8 +252,22 @@ impl Projection {
                     "freeText": true,
                     "fullAccessOption": state::full_access_option(),
                     "options": state::permission_options(),
-                },
-            }),
+                });
+                // Node `approvalMode: "user-once"`: only allow once / deny, and no full access.
+                if *once {
+                    payload["options"] = state::single_use_permission_options();
+                    if let Some(payload) = payload.as_object_mut() {
+                        payload.remove("fullAccessOption");
+                    }
+                }
+                json!({
+                    "interactionId": interaction,
+                    "kind": "permission",
+                    "anchorRowId": anchor,
+                    "createdAt": now,
+                    "payload": payload,
+                })
+            }
             InteractionRequest::Question { questions, .. } => {
                 super::elicitation::question(interaction, anchor, now, &tool_use, questions)
             }

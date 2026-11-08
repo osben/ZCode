@@ -147,6 +147,7 @@ async fn no_one_to_ask_answers_by_the_kind_of_question() {
         rule_seed: None,
         asked_by: None,
         machine: crate::ids::MachineName::primary(),
+        once: false,
     };
     let question = InteractionRequest::Question {
         tool_use: ToolUseId::new("toolu_2"),

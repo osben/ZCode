@@ -500,6 +500,10 @@ pub enum InteractionRequest {
         /// 调用在哪台机器上执行（R3，remote-exec.md §20.8）；主 env 不写出。界面的标记在 R4。
         #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
         machine: crate::ids::MachineName,
+        /// Fork: approves this one execution only (guarded dangerous command, Node
+        /// `approvalMode: "user-once"`): the App offers no "always allow" option for it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        once: bool,
     },
     Question {
         tool_use: ToolUseId,

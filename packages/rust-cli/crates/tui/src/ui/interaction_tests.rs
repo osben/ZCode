@@ -55,6 +55,7 @@ fn bash(command: &str, suggestions: &[&str]) -> InteractionRequest {
             .collect(),
         rule_seed: None,
         asked_by: None,
+        once: false,
     }
 }
 

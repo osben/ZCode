@@ -24,6 +24,7 @@ mod notices;
 mod project_mode;
 mod project_rules;
 mod query;
+mod reconcile_row;
 mod repo;
 mod rewind;
 mod rust_entries;
@@ -442,6 +443,16 @@ impl StoreQueries for NodeStore {
     /// Fork: the child rows for the collected candidate ids, resolved by id (Node `getSession`).
     async fn subagent_children(&self, ids: Vec<String>) -> Result<serde_json::Value, StoreError> {
         self.with_db(move |conn, _| subagent_rows::child_rows(conn, &ids))
+            .await
+    }
+
+    /// Fork: the stored row behind the session-list reconcile, soft-deleted rows included.
+    async fn reconcile_row(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| reconcile_row::row(conn, &session))
             .await
     }
 }

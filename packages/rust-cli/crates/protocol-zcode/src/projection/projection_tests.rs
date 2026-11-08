@@ -234,6 +234,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
             rule_seed: None,
             asked_by: None,
             machine: Default::default(),
+            once: false,
         },
     });
     assert_eq!(asked[0]["row"]["status"], "pendingApproval");
@@ -263,6 +264,51 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
     });
     assert_eq!(done[0]["row"]["status"], "success");
     assert_eq!(done[0]["row"]["output"]["text"], "ok");
+}
+
+/// A guarded dangerous command asks once (Node `approvalMode: "user-once"`): only allow once and
+/// deny, no full access option.
+#[test]
+fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_1");
+    feed.apply(KernelEvent::MessageDone {
+        message: assistant(
+            "msg_a1",
+            vec![ContentBlock::ToolUse {
+                id: tool.clone(),
+                name: "Bash".into(),
+                input: json!({"command": "rm -rf target"}),
+            }],
+        ),
+    });
+    let asked = feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_1"),
+        request: InteractionRequest::Permission {
+            tool_use: tool,
+            tool: "Bash".into(),
+            input: json!({"command": "rm -rf target"}),
+            message: "Dangerous command requires your approval for this execution".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: true,
+        },
+    });
+    let payload = &asked[1]["patch"]["pendingInteractions"][0]["payload"];
+    let kinds: Vec<&str> = payload["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|option| option["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["allowOnce", "deny"]);
+    assert!(payload.get("fullAccessOption").is_none());
 }
 
 #[test]

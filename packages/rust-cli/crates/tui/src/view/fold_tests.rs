@@ -330,6 +330,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: None,
+        once: false,
     };
     feed.push(started())
         .push(KernelEvent::ToolStarted {

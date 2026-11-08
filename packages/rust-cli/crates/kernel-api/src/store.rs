@@ -739,6 +739,16 @@ pub trait StoreQueries: Send + Sync {
             what: "subagent children".to_owned(),
         })
     }
+
+    /// Fork: the stored row behind the session-list reconcile (Node `reconcileSessions` reads
+    /// `getSession`, soft-deleted rows included): `{directory, workspaceId, title, titleSource,
+    /// timeCreated, timeUpdated, timeTitleUpdated, timeDeleted, lastOutcome}`; `None` when the
+    /// session has no row. Stores without that read answer `Unsupported`.
+    async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "reconcile row".to_owned(),
+        })
+    }
 }
 
 /// 一个存储适配器实现的全部会话端口（组装根与 runtime 的 `Ports` 用；各能力只拿自己用的那一个）。node-store 与测试的
