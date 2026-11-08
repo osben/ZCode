@@ -77,6 +77,7 @@ impl Commands for Scripted {
             }),
         ];
         let finished = CommandEvent::Finished {
+            output_unreadable: None,
             outcome: if self.hold || self.output_limit.is_some() {
                 Outcome::Cancelled
             } else {

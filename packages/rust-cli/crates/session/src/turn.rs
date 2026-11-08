@@ -66,6 +66,8 @@ pub(crate) enum TurnInput {
         command: CommandId,
         content: Vec<ContentBlock>,
     },
+    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
+    Compact { command: CommandId },
 }
 
 impl Actor {
@@ -92,6 +94,12 @@ impl Actor {
             }
             TurnInput::Bash { command, line } => {
                 self.start_bash_turn(command, line);
+                return Ok(());
+            }
+            TurnInput::Compact { command } => {
+                if let Err(reason) = self.start_compaction(command, None) {
+                    tracing::warn!(%reason, "queued compaction could not start");
+                }
                 return Ok(());
             }
             TurnInput::Cron(fire) => {
@@ -208,8 +216,12 @@ impl Actor {
                 self.log
                     .append(KernelEvent::CompactFailed { trigger, message });
             }
-            SinkRequest::SetPlan { enabled, reply } => {
-                let changed = self.change_plan(enabled).await;
+            SinkRequest::SetPlan {
+                enabled,
+                tool_call,
+                reply,
+            } => {
+                let changed = self.change_plan(enabled, tool_call).await;
                 let _ = reply.send(changed.map_err(failed));
             }
             SinkRequest::View { reply } => {
@@ -398,13 +410,22 @@ impl Actor {
         }
         // 这次工作期间到达的本地命令记录先进对话，再开下一个回合（修复线 L-A，tui-manage.md §11.3）。
         self.flush_held_records().await;
-        let input = if let Some(input) = self.next_turn_input() {
-            input
+        let (input, execution) = if let Some(next) = self.next_turn_input() {
+            next
         } else if let Some(fire) = self.next_cron().await {
-            TurnInput::Cron(fire)
+            (TurnInput::Cron(fire), None)
         } else {
             return;
         };
+        // Fork: the item's frozen state becomes the session's through the same facts as `SetModel` /
+        // `SetMode` / `SetPlan`, so a cold open sees what the turn ran with.
+        if let Some(execution) = execution
+            // Boxed: the mode change's peer release is an async path back into `start_next` (not taken
+            // here, `submitted_execution` does not start peers, but the future type is recursive).
+            && let Err(reason) = Box::pin(self.submitted_execution(execution)).await
+        {
+            tracing::warn!(%reason, "queued input's execution state could not be applied");
+        }
         // 提交失败时只记日志：排队输入已出队，前端从 QueueChanged 看到它消失；通知没有 ack，
         // 会再次送达。
         if let Err(reason) = self.start_turn(input).await {

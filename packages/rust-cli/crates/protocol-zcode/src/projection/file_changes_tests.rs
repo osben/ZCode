@@ -11,8 +11,7 @@ use rust_cli_kernel_api::message::{
 };
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    FileChange, KernelEvent, SequencedEvent, SessionView, TurnFileCount, TurnFileFacts,
-    TurnOutcome,
+    FileChange, KernelEvent, SequencedEvent, SessionView, TurnFileCount, TurnFileFacts, TurnOutcome,
 };
 use rust_cli_kernel_api::store::{SessionKind, SessionMeta};
 use rust_cli_kernel_api::testing::selection;
@@ -209,7 +208,10 @@ fn the_reverted_event_flips_the_header_and_drops_the_action() {
         outcome: TurnOutcome::Success,
         usage: None,
     });
-    assert_eq!(header(&finished)["actions"], json!({"canRewindFiles": true}));
+    assert_eq!(
+        header(&finished)["actions"],
+        json!({"canRewindFiles": true})
+    );
 
     let reverted = feed.apply(KernelEvent::TurnFilesReverted {
         turn_input: MessageId::new("msg_1"),
@@ -239,7 +241,9 @@ fn a_notification_turn_header_is_targeted_through_its_turn_input() {
             content: vec![ContentBlock::Text {
                 text: "<task-notification>done</task-notification>".into(),
             }],
-            origin: UserOrigin::Meta { source: "notification".into() },
+            origin: UserOrigin::Meta {
+                source: "notification".into(),
+            },
         }),
     });
     feed.apply(KernelEvent::FileChanges {

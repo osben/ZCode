@@ -33,9 +33,7 @@ pub(crate) async fn run(
                 .content
                 .iter()
                 .map(|block| match block {
-                    rust_cli_kernel_api::message::ToolResultContent::Text { text } => {
-                        text.as_str()
-                    }
+                    rust_cli_kernel_api::message::ToolResultContent::Text { text } => text.as_str(),
                     _ => "",
                 })
                 .collect::<Vec<_>>()

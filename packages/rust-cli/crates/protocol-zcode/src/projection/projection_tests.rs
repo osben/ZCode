@@ -426,9 +426,6 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
             client: "k".into(),
             origin: None,
             text: "hi".into(),
-            selection: None,
-            mode: None,
-            plan: None,
             admitted_at: 0,
             requested: "startNow",
             admitted: "startNow",
@@ -440,6 +437,8 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
             command: CommandId::new("c1"),
             text: "hi".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
         }],
     });
     assert!(
@@ -780,9 +779,6 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
             client: "k".into(),
             origin: None,
             text: "later".into(),
-            selection: None,
-            mode: None,
-            plan: None,
             admitted_at: 0,
             requested: "queue",
             admitted: "queue",
@@ -794,6 +790,8 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
         }],
     });
     let routing = queued
@@ -818,4 +816,75 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     );
     let resumed = feed.projection.set_auto_drain(true);
     assert_eq!(resumed["patch"]["inputRouting"]["mode"], "startNow");
+}
+
+/// Fork: the queue item's kind and frozen execution state come from the kernel's item (one owner):
+/// a goal shows its objective, a compaction is `/compact`, and only a frozen state is shown.
+#[test]
+fn queue_items_show_the_kernel_kind_and_frozen_state() {
+    use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
+    use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
+    let mut feed = Feed::new();
+    let item = |id: &str, text: &str, kind, execution| QueuedInput {
+        command: CommandId::new(id),
+        text: text.into(),
+        delivery: Delivery::Queue,
+        kind,
+        execution,
+    };
+    let frozen = InputExecution {
+        state: ExecutionState {
+            mode: PermissionMode::Guarded,
+            plan: true,
+        },
+        selection: Some(selection()),
+    };
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![
+            item("c1", "plan this", QueuedKind::Text, Some(frozen)),
+            item("c2", "/goal ship it", QueuedKind::Goal, None),
+            item("c3", "/compact", QueuedKind::Compact, None),
+        ],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    let items = queue["items"].as_array().unwrap();
+    let kinds: Vec<&str> = items
+        .iter()
+        .map(|item| item["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["sendText", "sendGoalCommand", "compact"]);
+    assert_eq!(items[0]["mode"], "guarded");
+    assert_eq!(items[0]["planEnabled"], true);
+    assert_eq!(items[0]["modelSelection"], state::selection(&selection()));
+    assert_eq!(items[1]["text"], "ship it");
+    assert!(items[1].get("mode").is_none());
+    assert_eq!(items[2]["text"], "/compact");
+}
+
+/// Fork: the desktop composer adopts the session mode once per full-access grant and the plan
+/// switch once per plan tool transition (Node `config.permissionGrant` / `config.planTransition`);
+/// both stay in `config` across later mode patches and in the snapshot.
+#[test]
+fn full_access_grants_and_plan_tool_transitions_are_in_the_config() {
+    let mut feed = Feed::new();
+    let deltas = feed.apply(KernelEvent::PermissionGranted {
+        interaction: "ask-1".into(),
+    });
+    let config = &deltas.last().unwrap()["patch"]["config"];
+    assert_eq!(config["permissionGrant"], json!({"interactionId": "ask-1"}));
+    let deltas = feed.apply(KernelEvent::PlanTransition {
+        tool_call: "call-1".into(),
+        enabled: false,
+    });
+    let config = &deltas.last().unwrap()["patch"]["config"];
+    assert_eq!(
+        config["planTransition"],
+        json!({"toolCallId": "call-1", "planEnabled": false})
+    );
+    assert_eq!(config["permissionGrant"]["interactionId"], "ask-1");
+    let snapshot = feed.projection.snapshot(1, "e");
+    assert_eq!(snapshot["config"]["planTransition"]["toolCallId"], "call-1");
 }

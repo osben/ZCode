@@ -18,12 +18,11 @@ pub(crate) async fn decide(
     phase: Phase,
     revision: u64,
 ) -> Option<Ack> {
-    let _ = phase;
     Some(match envelope.kind.as_str() {
         "renameSession" => session_config::rename(live, envelope, revision).await,
         "switchModelConfig" => session_config::switch_model(live, envelope, revision).await,
         "switchCollaborationMode" => session_config::switch_mode(live, envelope, revision).await,
-        "compact" => session_config::compact(live, envelope, revision).await,
+        "compact" => session_config::compact(live, envelope, phase, revision).await,
         "editUserQuery" => row_commands::edit(server, live, envelope, revision).await,
         "retryTurn" => row_commands::retry(live, envelope, revision).await,
         "forkAssistant" => row_commands::fork(server, live, envelope, revision).await,

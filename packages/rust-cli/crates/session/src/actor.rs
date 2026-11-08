@@ -329,6 +329,99 @@ impl Actor {
     }
 
     /// 有回合或后台工作在跑：新输入排队，回退 / fork 拒绝。
+    /// The user's model choice (`Command::SetModel`, or a submitted input's frozen selection).
+    pub(crate) async fn select_model(
+        &mut self,
+        command: Option<CommandId>,
+        selection: rust_cli_kernel_api::model::ModelSelection,
+    ) -> Result<(), StoreError> {
+        let fact = Fact::ModelSelected {
+            selection: selection.clone(),
+        };
+        self.commit(command, vec![fact]).await?;
+        self.selection = selection.clone();
+        self.log.append(KernelEvent::ModelChanged { selection });
+        // F27：有效窗口随模型变，上下文提示与 footer 的 ctx 按新模型重算（按当前模型算）；修前要等下一条回复。
+        self.context_changed();
+        Ok(())
+    }
+
+    /// Fork: `Command::SubmitWith` (the desktop App's inputs). A compaction is refused while one runs
+    /// (a run-less turn) or is queued; busy, the input is queued with its execution state frozen on it
+    /// (a compaction or goal never steers); idle, the state is applied first and the turn or compaction
+    /// starts.
+    async fn submit_with(
+        &mut self,
+        id: CommandId,
+        kind: rust_cli_kernel_api::session_api::QueuedKind,
+        text: String,
+        content: Vec<rust_cli_kernel_api::message::ContentBlock>,
+        delivery: rust_cli_kernel_api::session_api::Delivery,
+        execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
+    ) -> Ack {
+        use rust_cli_kernel_api::session_api::{COMPACT_LOCKED, Delivery, QueuedKind};
+        let compact = kind == QueuedKind::Compact;
+        if compact {
+            let compacting = self
+                .running
+                .as_ref()
+                .is_some_and(|running| running.run.is_none());
+            if compacting || self.inbox.has_compact() {
+                return rejected(COMPACT_LOCKED);
+            }
+        }
+        if self.busy() {
+            let (input_kind, delivery) = match kind {
+                QueuedKind::Compact => (crate::inbox::InputKind::Compact, Delivery::Queue),
+                QueuedKind::Goal => (crate::inbox::InputKind::Text, Delivery::Queue),
+                QueuedKind::Text if !content.is_empty() => {
+                    (crate::inbox::InputKind::Content(content), Delivery::Queue)
+                }
+                QueuedKind::Text => (crate::inbox::InputKind::Text, delivery),
+            };
+            self.inbox.push_input(
+                QueuedInput {
+                    command: id,
+                    text,
+                    delivery,
+                    kind,
+                    execution,
+                },
+                input_kind,
+            );
+            self.emit_queue();
+            return accepted();
+        }
+        if let Some(execution) = execution
+            && let Err(reason) = self.submitted_execution(execution).await
+        {
+            return rejected(reason);
+        }
+        if compact {
+            return match self.start_compaction(id, None) {
+                Ok(()) => accepted(),
+                Err(reason) => rejected(reason),
+            };
+        }
+        let input = if content.is_empty() {
+            TurnInput::Human {
+                command: id,
+                text,
+                screened: None,
+                more: Vec::new(),
+            }
+        } else {
+            TurnInput::Content {
+                command: id,
+                content,
+            }
+        };
+        match self.start_turn(input).await {
+            Ok(()) => accepted(),
+            Err(reason) => rejected(reason),
+        }
+    }
+
     pub(crate) fn busy(&self) -> bool {
         self.running.is_some() || self.job.is_some()
     }
@@ -467,6 +560,8 @@ impl Actor {
                             command: id,
                             text,
                             delivery,
+                            kind: Default::default(),
+                            execution: None,
                         },
                         crate::inbox::InputKind::Text,
                     );
@@ -493,18 +588,25 @@ impl Actor {
                 interaction,
                 answer,
             } => self.resolve(id, interaction, answer).await,
-            Command::SetModel { selection } => {
-                let fact = Fact::ModelSelected {
-                    selection: selection.clone(),
-                };
-                if let Err(reason) = self.commit(Some(id), vec![fact]).await {
-                    return rejected(reason);
+            Command::SetModel { selection } => match self.select_model(Some(id), selection).await {
+                Ok(()) => accepted(),
+                Err(reason) => rejected(reason),
+            },
+            Command::SubmitWith {
+                kind,
+                text,
+                content,
+                delivery,
+                execution,
+            } => {
+                self.submit_with(id, kind, text, content, delivery, execution)
+                    .await
+            }
+            Command::GrantFullAccess { interaction } => {
+                match self.grant_full_access(id, interaction).await {
+                    Ok(()) => accepted(),
+                    Err(reason) => rejected(reason),
                 }
-                self.selection = selection.clone();
-                self.log.append(KernelEvent::ModelChanged { selection });
-                // F27：有效窗口随模型变，上下文提示与 footer 的 ctx 按新模型重算（按当前模型算）；修前要等下一条回复。
-                self.context_changed();
-                accepted()
             }
             Command::SetMode { mode } => match self.user_mode(id, mode).await {
                 Ok(()) => accepted(),

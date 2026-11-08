@@ -36,6 +36,8 @@ impl Actor {
                 command,
                 text: bash_input(&line),
                 delivery: Delivery::Queue,
+                kind: Default::default(),
+                execution: None,
             };
             self.inbox.push_input(input, InputKind::Bash(line));
             self.emit_queue();
@@ -63,6 +65,8 @@ impl Actor {
                 command,
                 text,
                 delivery: Delivery::Queue,
+                kind: Default::default(),
+                execution: None,
             };
             self.inbox.push_input(input, InputKind::Content(content));
             self.emit_queue();

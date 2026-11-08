@@ -23,7 +23,10 @@ fn task_ids_are_stable_and_well_shaped() {
 /// `<root>/<session>/<toolCallId>-stdout.log` from the task id alone.
 #[test]
 fn desktop_task_ids_use_nodes_path_segment_sanitizer() {
-    assert_eq!(desktop_task_id("toolu_bdo_small").as_str(), "toolu_bdo_small");
+    assert_eq!(
+        desktop_task_id("toolu_bdo_small").as_str(),
+        "toolu_bdo_small"
+    );
     // Safe characters stay, everything else becomes `_`, the cap is 120 characters.
     assert_eq!(desktop_task_id("a/b c:d").as_str(), "a_b_c_d");
     assert_eq!(desktop_task_id("中文").as_str(), "__");

@@ -423,7 +423,7 @@ async fn remove_outputs(plan: &Plan) {
     clippy::disallowed_methods,
     reason = "env-local 是进程 IO 的入口：读回 cwd 文件与输出大小（docs/specs/rust-cli/README.md §4）"
 )]
-async fn read_back(plan: &Plan) -> (Option<PathBuf>, u64) {
+async fn read_back(plan: &Plan) -> (Option<PathBuf>, Result<u64, String>) {
     let cwd = tokio::fs::read_to_string(&plan.cwd_file)
         .await
         .ok()
@@ -433,7 +433,8 @@ async fn read_back(plan: &Plan) -> (Option<PathBuf>, u64) {
     let _ = tokio::fs::remove_file(&plan.cwd_file).await;
     let size = tokio::fs::metadata(&plan.output)
         .await
-        .map_or(0, |meta| meta.len());
+        .map(|meta| meta.len())
+        .map_err(|error| errno_name(&error));
     (cwd, size)
 }
 
@@ -698,7 +699,17 @@ async fn supervise(
     {
         mark_exit(&job.plan, &outcome, exit).await;
     }
-    let (cwd, output_bytes) = read_back(&job.plan).await;
+    let (cwd, read) = read_back(&job.plan).await;
+    // Fork (node_desktop): Node settles a foreground result by reading the merged file after
+    // exit; a failed read (the file was deleted mid-run, ...) is reported with its OS code so the
+    // tool shows Node's unavailable text even when nothing had been streamed.
+    let output_unreadable = match &read {
+        Err(code) if job.plan.desktop && background.is_none() && job.plan.events.is_none() => {
+            Some(code.clone())
+        }
+        _ => None,
+    };
+    let output_bytes = read.unwrap_or(0);
     // monitor 的字节数是 stdout 的（终态 summary 分“有没有输出”）。
     let output_bytes = match &job.plan.events {
         Some(events) => file_size(events).await,
@@ -734,6 +745,7 @@ async fn supervise(
         cwd_reset,
         output_bytes,
         output_limit,
+        output_unreadable,
         discard,
     };
     // 登记只放还在跑的命令（工作线 F119）：以前结束的登记按 operationId 一直留着，为的是“同 ID 再来时直接返回”，

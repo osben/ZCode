@@ -18,6 +18,7 @@ use std::collections::VecDeque;
 use rust_cli_kernel_api::hooks::HookOutcome;
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
 use rust_cli_kernel_api::message::ContentBlock;
+use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{Delivery, QueuedInput};
 
 use crate::lane::Waiting;
@@ -31,6 +32,8 @@ pub(crate) enum InputKind {
     Bash(String),
     /// 带内容块的输入（粘贴的图片）。
     Content(Vec<ContentBlock>),
+    /// Fork: a manual compaction queued behind the running turn (`Command::SubmitWith`).
+    Compact,
 }
 
 /// 并入点的筛查（steering.rs）。
@@ -213,12 +216,37 @@ impl Inbox {
         for item in &mut self.items {
             if let Item::Input(queued) = item
                 && queued.input.command == *command
+                // A queued compaction has no text to edit (Node `queueEdit` refuses maintenance items).
+                && !matches!(queued.kind, InputKind::Compact)
             {
                 queued.input.text = text;
                 return true;
             }
         }
         false
+    }
+
+    /// Fork: a compaction is already queued (Node `compactOperationLock`).
+    pub(crate) fn has_compact(&self) -> bool {
+        self.items.iter().any(
+            |item| matches!(item, Item::Input(queued) if matches!(queued.kind, InputKind::Compact)),
+        )
+    }
+
+    /// Fork: full access rewrites the frozen permission mode of every queued input that carries one,
+    /// keeping its plan switch (Node's `fullAccess` rewrites the queued intents). `true` when one changed.
+    pub(crate) fn set_queued_mode(&mut self, mode: PermissionMode) -> bool {
+        let mut changed = false;
+        for item in &mut self.items {
+            if let Item::Input(queued) = item
+                && let Some(execution) = &mut queued.input.execution
+                && execution.state.mode != mode
+            {
+                execution.state = execution.state.with_mode(mode);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Fork: move a queued input before another queued input, or to the end of the queue when `before`

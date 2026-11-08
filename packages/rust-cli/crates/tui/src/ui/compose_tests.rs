@@ -105,6 +105,8 @@ mod send_now {
                 command: CommandId::new("c2"),
                 text: "also check the date".into(),
                 delivery: Delivery::Steer,
+                kind: Default::default(),
+                execution: None,
             }],
         }
     }

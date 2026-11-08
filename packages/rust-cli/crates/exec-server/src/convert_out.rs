@@ -399,6 +399,7 @@ pub(crate) fn command_event(event: CommandEvent, body: &mut BodyBuilder) -> wc::
             wc::CommandEvent::Backgrounded
         }
         CommandEvent::Finished {
+            output_unreadable: _,
             outcome: ended,
             exit_code,
             timed_out,

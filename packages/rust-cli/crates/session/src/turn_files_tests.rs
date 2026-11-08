@@ -29,7 +29,11 @@ pub(crate) struct Writing;
 
 /// One write's hunk, shaped like tools/checkpoint.rs (a single hunk around the changed region).
 fn hunk(before: Option<&str>, after: &str) -> Value {
-    let old: Vec<&str> = before.unwrap_or_default().split('\n').filter(|l| !l.is_empty()).collect();
+    let old: Vec<&str> = before
+        .unwrap_or_default()
+        .split('\n')
+        .filter(|l| !l.is_empty())
+        .collect();
     let new: Vec<&str> = after.split('\n').filter(|l| !l.is_empty()).collect();
     let mut lines: Vec<String> = old.iter().map(|line| format!("-{line}")).collect();
     lines.extend(new.iter().map(|line| format!("+{line}")));
@@ -116,7 +120,13 @@ async fn two_turns(
     seed: &str,
     first: &str,
     second: &str,
-) -> (Built, Arc<MemoryEnvironment>, MessageId, MessageId, Arc<MemoryArtifacts>) {
+) -> (
+    Built,
+    Arc<MemoryEnvironment>,
+    MessageId,
+    MessageId,
+    Arc<MemoryArtifacts>,
+) {
     let model = Arc::new(ScriptedModel::new(vec![
         tool_use_response(
             "toolu_1",
@@ -169,7 +179,7 @@ async fn turn_two_changes_preview_and_rewind_touch_only_turn_two() {
 
     // The summary of each turn reports only that turn's write.
     let turn_one = built.session.turn_file_changes(&first).await.unwrap();
-    assert_eq!(turn_one.reverted, false);
+    assert!(!turn_one.reverted);
     assert_eq!(turn_one.items.len(), 1);
     assert_eq!(turn_one.items[0].path, "/work/a.txt");
     assert_eq!(turn_one.items[0].additions, 1);
@@ -178,7 +188,7 @@ async fn turn_two_changes_preview_and_rewind_touch_only_turn_two() {
     assert_eq!(turn_one.items[0].tool_names, vec!["Write".to_owned()]);
     assert_eq!(turn_one.items[0].patches.len(), 1);
     let turn_two = built.session.turn_file_changes(&second).await.unwrap();
-    assert_eq!(turn_two.reverted, false);
+    assert!(!turn_two.reverted);
     assert_eq!(turn_two.items.len(), 1);
     assert_eq!(turn_two.items[0].additions, 1);
     assert_eq!(turn_two.items[0].write_count, 1);
@@ -209,7 +219,9 @@ async fn turn_two_changes_preview_and_rewind_touch_only_turn_two() {
         .session
         .send(envelope(
             "rewind-turn",
-            Command::RewindTurnFiles { target: second.clone() },
+            Command::RewindTurnFiles {
+                target: second.clone(),
+            },
         ))
         .await;
     match ack {
@@ -234,10 +246,10 @@ async fn turn_two_changes_preview_and_rewind_touch_only_turn_two() {
     // Turn 2 reports reverted with no unrestored checkpoints; turn 1 is untouched (its checkpoint
     // now matches the disk again, so it became restorable).
     let turn_two = built.session.turn_file_changes(&second).await.unwrap();
-    assert_eq!(turn_two.reverted, true);
+    assert!(turn_two.reverted);
     assert!(turn_two.items.is_empty());
     let turn_one = built.session.turn_file_changes(&first).await.unwrap();
-    assert_eq!(turn_one.reverted, false);
+    assert!(!turn_one.reverted);
     assert_eq!(turn_one.items.len(), 1);
     let preview = built.session.turn_rewind_preview(&second).await;
     assert!(preview.is_err());
@@ -274,7 +286,9 @@ async fn an_externally_changed_file_blocks_the_turn_rewind() {
         .session
         .send(envelope(
             "rewind-turn",
-            Command::RewindTurnFiles { target: second.clone() },
+            Command::RewindTurnFiles {
+                target: second.clone(),
+            },
         ))
         .await;
     match ack {
@@ -288,7 +302,7 @@ async fn an_externally_changed_file_blocks_the_turn_rewind() {
     );
     assert_eq!(built.session.view().await.unwrap().messages.len(), 8);
     let changes = built.session.turn_file_changes(&second).await.unwrap();
-    assert_eq!(changes.reverted, false);
+    assert!(!changes.reverted);
     assert_eq!(changes.items.len(), 1);
 }
 
@@ -302,7 +316,9 @@ async fn a_cold_reopen_keeps_the_summaries() {
         .session
         .send(envelope(
             "rewind-turn",
-            Command::RewindTurnFiles { target: second.clone() },
+            Command::RewindTurnFiles {
+                target: second.clone(),
+            },
         ))
         .await;
     assert!(matches!(ack, Ack::Accepted { .. }));
@@ -326,20 +342,26 @@ async fn a_cold_reopen_keeps_the_summaries() {
     let view = reopened.session.view().await.unwrap();
     assert_eq!(view.messages.len(), 8);
     let first_facts = view.turn_files.get(&first).expect("turn one's summary");
-    assert_eq!(first_facts.reverted, false);
-    assert_eq!(first_facts.rewindable, true);
+    assert!(!first_facts.reverted);
+    assert!(first_facts.rewindable);
     assert_eq!(first_facts.files.len(), 1);
     assert_eq!(first_facts.files[0].path, "/work/a.txt");
-    assert_eq!((first_facts.files[0].additions, first_facts.files[0].deletions), (1, 1));
+    assert_eq!(
+        (
+            first_facts.files[0].additions,
+            first_facts.files[0].deletions
+        ),
+        (1, 1)
+    );
     let second_facts = view.turn_files.get(&second).expect("turn two's summary");
-    assert_eq!(second_facts.reverted, true);
+    assert!(second_facts.reverted);
     assert_eq!(second_facts.files.len(), 1);
     assert_eq!(second_facts.files[0].path, "/work/a.txt");
     // The query agrees: turn one still restorable, turn two reverted with no items.
     let turn_one = reopened.session.turn_file_changes(&first).await.unwrap();
-    assert_eq!(turn_one.reverted, false);
+    assert!(!turn_one.reverted);
     assert_eq!(turn_one.items.len(), 1);
     let turn_two = reopened.session.turn_file_changes(&second).await.unwrap();
-    assert_eq!(turn_two.reverted, true);
+    assert!(turn_two.reverted);
     assert!(turn_two.items.is_empty());
 }

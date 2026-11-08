@@ -256,6 +256,7 @@ async fn events_reach_the_running_subagent_and_the_end_carries_the_rest() {
     env.end(notice);
     output
         .send(Ok(CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Completed,
             exit_code: Some(0),
             timed_out: false,
@@ -313,6 +314,7 @@ async fn a_live_monitor_parks_the_subagent_until_it_ends() {
     env.stop("b1");
     output
         .send(Ok(CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Cancelled,
             exit_code: Some(137),
             timed_out: false,
@@ -361,6 +363,7 @@ async fn a_resumed_stream_does_not_repeat_what_was_read() {
     env.end(notice);
     second
         .send(Ok(CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Completed,
             exit_code: Some(0),
             timed_out: false,
@@ -432,6 +435,7 @@ async fn a_monitor_that_ends_before_a_command_keeps_the_subagent_parked() {
     env.stop("b1");
     output
         .send(Ok(CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Cancelled,
             exit_code: Some(137),
             timed_out: false,

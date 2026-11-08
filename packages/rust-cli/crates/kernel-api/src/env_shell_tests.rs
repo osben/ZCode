@@ -122,6 +122,7 @@ fn command_events_and_notices_round_trip() {
         output: path("/tmp/b1.output"),
     });
     round_trip(&CommandEvent::Finished {
+        output_unreadable: None,
         outcome: Outcome::Failed {
             code: Some("timeout".to_owned()),
             message: "Command timed out after 1s".to_owned(),
@@ -133,6 +134,7 @@ fn command_events_and_notices_round_trip() {
         output_limit: None,
     });
     round_trip(&CommandEvent::Finished {
+        output_unreadable: None,
         outcome: Outcome::Cancelled,
         exit_code: Some(137),
         timed_out: false,

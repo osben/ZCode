@@ -3,13 +3,18 @@
 //! (small foreground files deleted after the settlement read, larger ones and background files
 //! kept without the terminal line), and the errno-named open failure (`EISDIR`).
 #![cfg(unix)]
-#![allow(clippy::disallowed_methods, reason = "tests prepare and inspect output files synchronously")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests prepare and inspect output files synchronously"
+)]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use rust_cli_kernel_api::env::{CommandEvent, CommandKind, EnvError, EnvPath, Outcome, StartCommand};
+use rust_cli_kernel_api::env::{
+    CommandEvent, CommandKind, EnvError, EnvPath, Outcome, StartCommand,
+};
 use rust_cli_kernel_api::env_shell::{BackgroundCommand, CwdScope};
 use rust_cli_kernel_api::ids::{SessionId, ShellTaskId};
 use rust_cli_kernel_api::machine::CommandEvents;
@@ -150,7 +155,10 @@ async fn a_large_foreground_output_is_kept_with_its_link() {
     let file = desktop.session_dir().join("toolu_bdo_large-stdout.log");
     let kept = std::fs::read(&file).unwrap();
     use std::os::unix::fs::PermissionsExt;
-    assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     assert_eq!(kept.len(), output.len());
     assert!(kept.starts_with(b"HEAD"));
     assert!(kept.ends_with(b"TAIL"));
@@ -184,7 +192,9 @@ async fn background_commands_keep_the_exact_file_without_a_terminal_line() {
             ..
         }
     ));
-    let file = desktop.session_dir().join("toolu_bdo_background-stdout.log");
+    let file = desktop
+        .session_dir()
+        .join("toolu_bdo_background-stdout.log");
     assert_eq!(std::fs::read(&file).unwrap(), b"BG".to_vec());
 }
 
@@ -265,10 +275,12 @@ async fn a_desktop_foreground_command_past_the_limit_is_killed_and_cleaned_up() 
         note.as_deref(),
         Some("Command killed: output file exceeded 64KB")
     );
-    assert!(!desktop
-        .session_dir()
-        .join("toolu_bdo_limit_fg-stdout.log")
-        .exists());
+    assert!(
+        !desktop
+            .session_dir()
+            .join("toolu_bdo_limit_fg-stdout.log")
+            .exists()
+    );
     assert!(!desktop.link("toolu_bdo_limit_fg").exists());
 }
 
@@ -300,12 +312,46 @@ async fn a_desktop_background_command_past_the_limit_keeps_the_exact_file() {
         (notice.outcome, notice.exit_code),
         (Outcome::Cancelled, Some(137))
     );
-    let file = desktop
-        .session_dir()
-        .join("toolu_bdo_limit_bg-stdout.log");
+    let file = desktop.session_dir().join("toolu_bdo_limit_bg-stdout.log");
     let kept = std::fs::read(&file).unwrap();
     assert_eq!(kept.len(), SMALL.bytes as usize + 1);
     assert!(kept.iter().all(|byte| *byte == b'x'));
     // The compatibility link still resolves the task name for TaskOutput.
-    assert_eq!(std::fs::read(desktop.link("toolu_bdo_limit_bg")).unwrap(), kept);
+    assert_eq!(
+        std::fs::read(desktop.link("toolu_bdo_limit_bg")).unwrap(),
+        kept
+    );
+}
+
+/// A foreground command that deletes its own output file before exiting: the settlement read
+/// fails, so the terminal event carries the OS code even though nothing was streamed (Node's
+/// `<bash output unavailable ...>`).
+#[tokio::test]
+async fn a_deleted_foreground_output_reports_the_read_failure_code() {
+    let desktop = Desktop::new();
+    let file = desktop.session_dir().join("del1-stdout.log");
+    let command = format!("rm -f '{}'", file.display());
+    let (_, output, finished) = run(&desktop, "op-del", request(&desktop, &command, "del1")).await;
+    assert!(output.is_empty());
+    let CommandEvent::Finished {
+        output_unreadable, ..
+    } = finished
+    else {
+        unreachable!()
+    };
+    assert_eq!(output_unreadable.as_deref(), Some("ENOENT"));
+}
+
+/// A normal foreground command reads its file back: no read failure is reported.
+#[tokio::test]
+async fn a_readable_foreground_output_reports_no_read_failure() {
+    let desktop = Desktop::new();
+    let (_, _, finished) = run(&desktop, "op-ok", request(&desktop, "echo hi", "ok1")).await;
+    let CommandEvent::Finished {
+        output_unreadable, ..
+    } = finished
+    else {
+        unreachable!()
+    };
+    assert_eq!(output_unreadable, None);
 }

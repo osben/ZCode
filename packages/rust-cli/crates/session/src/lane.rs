@@ -12,6 +12,7 @@ use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::machine_notices::MachineNotice;
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
+use rust_cli_kernel_api::session_api::InputExecution;
 use rust_cli_kernel_api::store::Fact;
 
 use crate::actor::Actor;
@@ -246,7 +247,9 @@ impl Actor {
 
     /// 回合结束后的下一项（query.md §5）：通道头是输入就是它；是通知就取走头部连续的通知，合成一个
     /// 回合（通知合并）；通道空时是 `Queue` 输入（优先级 `later`）。定时任务由调用方最后看。
-    pub(crate) fn next_turn_input(&mut self) -> Option<TurnInput> {
+    /// The next turn's input, with the execution state frozen on it when it was submitted
+    /// (`Command::SubmitWith`); the caller applies that state before the turn starts.
+    pub(crate) fn next_turn_input(&mut self) -> Option<(TurnInput, Option<InputExecution>)> {
         // 只在工具边界并入的项（`-p` 的回执）不开回合：留在通道里，看后面的项。
         let passive = self.inbox.take_passive_prefix();
         let next = self.next_active_input();
@@ -255,7 +258,7 @@ impl Actor {
     }
 
     /// 通道头不是只在工具边界并入的项时的下一项。
-    fn next_active_input(&mut self) -> Option<TurnInput> {
+    fn next_active_input(&mut self) -> Option<(TurnInput, Option<InputExecution>)> {
         match self.inbox.lane_front() {
             // Fork: the queue is held (`Command::HoldQueue`): queued inputs wait. A notice behind a held
             // input waits too — the lane is the arrival order and the drain may not skip ahead of it.
@@ -265,7 +268,8 @@ impl Actor {
                     return None;
                 };
                 self.emit_queue();
-                Some(self.human_turn(queued))
+                let execution = queued.input.execution.clone();
+                Some((self.human_turn(queued), execution))
             }
             Some(LaneItem::Notice(_)) => {
                 let mut notices = Vec::new();
@@ -277,7 +281,7 @@ impl Actor {
                         notices.push(notice.waiting);
                     }
                 }
-                Some(TurnInput::Notices(notices))
+                Some((TurnInput::Notices(notices), None))
             }
             None => {
                 // Fork: held stops the `later` inputs as well — they are part of the same queue.
@@ -287,11 +291,14 @@ impl Actor {
                 let next = self.inbox.pop_later()?;
                 self.emit_queue();
                 let command = next.input.command.clone();
-                match next.kind {
-                    InputKind::Bash(line) => Some(TurnInput::Bash { command, line }),
-                    InputKind::Content(content) => Some(TurnInput::Content { command, content }),
-                    InputKind::Text => Some(self.human_turn(next)),
-                }
+                let execution = next.input.execution.clone();
+                let input = match next.kind {
+                    InputKind::Bash(line) => TurnInput::Bash { command, line },
+                    InputKind::Content(content) => TurnInput::Content { command, content },
+                    InputKind::Compact => TurnInput::Compact { command },
+                    InputKind::Text => self.human_turn(next),
+                };
+                Some((input, execution))
             }
         }
     }

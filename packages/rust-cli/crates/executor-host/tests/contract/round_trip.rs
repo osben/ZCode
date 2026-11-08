@@ -190,6 +190,7 @@ fn events() -> Vec<CommandEvent> {
             cwd_reset: Some(path("/srv/work")),
             output_bytes: 3,
             output_limit: Some("Command killed: output file exceeded 5GB".to_owned()),
+            output_unreadable: None,
         },
     ]
 }

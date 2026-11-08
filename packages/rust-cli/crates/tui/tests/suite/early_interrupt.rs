@@ -47,6 +47,7 @@ impl HeldHook {
 
 fn finished(outcome: Outcome, exit_code: Option<i32>) -> Result<CommandEvent, EnvError> {
     Ok(CommandEvent::Finished {
+        output_unreadable: None,
         outcome,
         exit_code,
         timed_out: false,

@@ -4,13 +4,17 @@
 
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command};
+use rust_cli_kernel_api::session_api::{
+    Ack as KernelAck, COMPACT_LOCKED, Command, Delivery, QueuedKind,
+};
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
 
 use crate::commands::{ack_of, payload, send};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
+use crate::projection::InputMeta;
+use crate::projection::state::Phase;
 
 /// Node's no-op reason for a switch to the value already in effect.
 const CONFIG_UNCHANGED: &str = "config.unchanged";
@@ -105,8 +109,9 @@ pub(super) async fn switch_model(live: &Bridged<Live>, envelope: &Envelope, revi
     kernel_ack(envelope, revision, "fault.command.inputRejected", kernel)
 }
 
-/// Without independent plan state the App lists plan as one of the modes, so `plan` opens plan and
-/// every other mode sets the permission mode and closes plan.
+/// Node `setMode`: `plan` opens plan (the permission mode is kept); every other mode sets the
+/// permission mode and closes plan. The plan switch alone travels with the input (`sendText`'s
+/// `planEnabled`, `independentPlanState`).
 pub(super) async fn switch_mode(live: &Bridged<Live>, envelope: &Envelope, revision: u64) -> Ack {
     let body: SwitchModePayload = match payload(envelope) {
         Ok(body) => body,
@@ -151,8 +156,50 @@ pub(super) async fn switch_mode(live: &Bridged<Live>, envelope: &Envelope, revis
 }
 
 /// `modelSelection` in the payload is not used: the kernel compacts with the session's model.
-pub(super) async fn compact(live: &Bridged<Live>, envelope: &Envelope, revision: u64) -> Ack {
-    let command = Command::Compact { instructions: None };
+/// Node `compact`: idle it starts at once; behind a running turn it is a queued maintenance item
+/// (`kind: compact`, not a user row) that drains in order. A compaction that runs or is queued
+/// already refuses another with `compactOperationLock`.
+pub(super) async fn compact(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    phase: Phase,
+    revision: u64,
+) -> Ack {
+    let admitted = if phase == Phase::Running {
+        "queue"
+    } else {
+        "startNow"
+    };
+    live.sink.remember_input(
+        &envelope.command_id,
+        InputMeta {
+            client: envelope.client_id.clone(),
+            origin: envelope.input_origin.clone(),
+            text: "/compact".to_owned(),
+            admitted_at: 0,
+            requested: "queue",
+            admitted,
+            attachments: Vec::new(),
+        },
+    );
+    let command = Command::SubmitWith {
+        kind: QueuedKind::Compact,
+        text: "/compact".to_owned(),
+        content: Vec::new(),
+        delivery: Delivery::Queue,
+        execution: None,
+    };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
+    if let KernelAck::Rejected { reason } = &kernel
+        && reason == COMPACT_LOCKED
+    {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "compactOperationLock",
+            reason.clone(),
+            revision,
+        );
+    }
     kernel_ack(envelope, revision, "fault.command.inputRejected", kernel)
 }

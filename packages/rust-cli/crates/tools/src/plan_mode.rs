@@ -54,7 +54,7 @@ fn invalid(message: &str) -> Validation {
 async fn set_plan(context: &ToolUseContext, enabled: bool) -> Result<(), ToolError> {
     context
         .session_ops
-        .set_plan(enabled)
+        .set_plan_from_tool(enabled, context.tool_use.as_str())
         .await
         .map_err(|error| failed(error.to_string()))
 }

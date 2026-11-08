@@ -527,7 +527,10 @@ impl Actor {
                             "per-turn summary rewind committed"
                         );
                         Ack::Accepted {
-                            result: CommandResult::Rewound { restored, removed: 0 },
+                            result: CommandResult::Rewound {
+                                restored,
+                                removed: 0,
+                            },
                         }
                     }
                     Err(error) => rejected(error),

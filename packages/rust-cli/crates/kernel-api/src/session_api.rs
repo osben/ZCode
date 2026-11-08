@@ -18,6 +18,9 @@ use crate::orchestration::InteractionRequest;
 use crate::permission::PermissionMode;
 use crate::store::{ArtifactRef, SessionFilter, SessionMeta, SessionSummary};
 
+/// Fork: [`Command::SubmitWith`]'s rejection while a compaction runs or is queued (Node `compactOperationLock`).
+pub const COMPACT_LOCKED: &str = "Compact is already running or queued";
+
 /// 运行中提交的输入怎样投递（工具边界吸收排队消息）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -151,6 +154,29 @@ pub enum Command {
     Compact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instructions: Option<String>,
+    },
+    /// Fork (desktop App): an input submitted with its own execution state (Node `sendText`,
+    /// `sendGoalCommand`, `compact`). Idle: the session first commits `execution` (model, mode, plan)
+    /// through the same facts as [`Command::SetModel`] / [`Command::SetMode`] / [`Command::SetPlan`],
+    /// then starts the turn, or the compaction for [`QueuedKind::Compact`]. Busy: the input is queued
+    /// with `execution` frozen on it, and the session's state is left alone until the item drains.
+    /// A compaction is refused with [`COMPACT_LOCKED`] while one runs or is queued. Non-empty
+    /// `content` is the input's blocks (attachments); `text` is then its display text.
+    SubmitWith {
+        kind: QueuedKind,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<crate::message::ContentBlock>,
+        delivery: Delivery,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        execution: Option<InputExecution>,
+    },
+    /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
+    /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are
+    /// kept. The pending ask itself is answered separately. `interaction` is the ask that granted it
+    /// (Node `config.permissionGrant`, [`crate::session_api_events::KernelEvent::PermissionGranted`]).
+    GrantFullAccess {
+        interaction: String,
     },
     Rewind {
         target: MessageId,
@@ -373,7 +399,10 @@ pub struct TurnFileCount {
 // 内核事件与回合结局放在分出的文件里（800 行上限，工作线 F131；路径与名字不变）。
 #[path = "session_api_events.rs"]
 mod events;
-pub use events::{FileChange, KernelEvent, NoticeLevel, QueuedInput, SequencedEvent, TurnOutcome};
+pub use events::{
+    FileChange, InputExecution, KernelEvent, NoticeLevel, QueuedInput, QueuedKind, SequencedEvent,
+    TurnOutcome,
+};
 
 // 命令的结果放在分出的文件里（800 行上限，工作线 F134）。
 #[path = "session_api_results.rs"]

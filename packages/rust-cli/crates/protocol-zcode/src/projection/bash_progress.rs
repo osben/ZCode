@@ -54,7 +54,11 @@ impl Projection {
             }
             row.remove("outputPreview");
             let id = row.get("rowId").cloned();
-            if let Some(stored) = self.rows.iter_mut().find(|stored| stored.get("rowId") == id.as_ref()) {
+            if let Some(stored) = self
+                .rows
+                .iter_mut()
+                .find(|stored| stored.get("rowId") == id.as_ref())
+            {
                 stored.remove("outputPreview");
             }
         }

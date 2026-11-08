@@ -78,6 +78,7 @@ impl Commands for ShellEnv {
                 cursor: size,
             }),
             Ok(CommandEvent::Finished {
+                output_unreadable: None,
                 outcome: Outcome::Completed,
                 exit_code: Some(0),
                 timed_out: false,

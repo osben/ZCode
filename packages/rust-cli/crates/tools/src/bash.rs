@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use rust_cli_base::proto::exit;
 use rust_cli_kernel_api::env::{CommandEvent, CommandKind, EnvPath, Outcome, StartCommand};
-use std::time::Duration;
 use rust_cli_kernel_api::env_shell::{
     self, BackgroundCommand, CwdScope, SandboxPolicy, ShellKind, TimeoutBackground,
 };
@@ -21,6 +20,7 @@ use rust_cli_kernel_api::tool::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::bash_output::{self as output, INLINE_LIMIT};
@@ -178,12 +178,8 @@ impl DesktopProgress {
     /// count carries to the next tick.
     fn tick(&mut self, total: u64, task: &str, timeout_ms: u64) -> ToolProgress {
         let text = String::from_utf8_lossy(&self.tail).into_owned();
-        let preview = crate::bash_preview::build(
-            &text,
-            self.tail.len() as u64,
-            total,
-            self.previous_lines,
-        );
+        let preview =
+            crate::bash_preview::build(&text, self.tail.len() as u64, total, self.previous_lines);
         self.previous_lines = preview.total_lines;
         ToolProgress {
             data: json!({
@@ -545,6 +541,7 @@ impl BashTool {
             )));
         }
         let CommandEvent::Finished {
+            output_unreadable,
             outcome,
             exit_code,
             timed_out,
@@ -580,9 +577,17 @@ impl BashTool {
         // file once the process exited; the environment reports the file size it saw then, so a
         // value below the streamed bytes means that read failed (for example the file was deleted
         // mid-run) and Node's unavailable text replaces the output.
-        if self.settings.node_desktop && output_bytes < collected.total {
-            let code = read_failure_code(&context, &collected.output_file).await;
-            return Ok(Ran::Text(output::unavailable(&collected.output_file, &code)));
+        if self.settings.node_desktop
+            && (output_unreadable.is_some() || output_bytes < collected.total)
+        {
+            let code = match output_unreadable {
+                Some(code) => code,
+                None => read_failure_code(&context, &collected.output_file).await,
+            };
+            return Ok(Ran::Text(output::unavailable(
+                &collected.output_file,
+                &code,
+            )));
         }
         let head = if timed_out {
             output::timed_out(timeout_ms, &head)

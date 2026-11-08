@@ -166,11 +166,7 @@ impl TaskOutputTool {
     /// The fallback for an environment-forgotten task: the first session (on any machine) whose
     /// outputs directory still holds `<task>.output`. Reports where the file was found so the
     /// read goes through the same machine and workspace.
-    async fn forgotten(
-        &self,
-        id: &str,
-        context: &ToolUseContext,
-    ) -> Option<Found> {
+    async fn forgotten(&self, id: &str, context: &ToolUseContext) -> Option<Found> {
         let task = ShellTaskId::new(id);
         for machine in self.machines(context) {
             for (session, workspace) in self.sessions(context) {
@@ -244,9 +240,11 @@ impl TaskOutputTool {
         }
         let omitted = size.saturating_sub(bytes.len() as u64);
         // Node rounds to whole KB (`Math.round(omittedBytes / 1024)`), it does not truncate.
-        let note = (omitted > 0)
-            .then(|| format!("[{}KB of earlier output omitted]\n", (omitted + 512) / 1024))
-            .unwrap_or_default();
+        let note = if omitted > 0 {
+            format!("[{}KB of earlier output omitted]\n", (omitted + 512) / 1024)
+        } else {
+            String::new()
+        };
         Some((
             format!("{note}{}", String::from_utf8_lossy(&bytes)),
             Some(path.as_str().to_owned()),
@@ -386,11 +384,7 @@ impl Tool for TaskOutputTool {
             });
         };
         let retrieval = if found.status == BackgroundStatus::Running {
-            if block {
-                "timeout"
-            } else {
-                "not_ready"
-            }
+            if block { "timeout" } else { "not_ready" }
         } else {
             "success"
         };
@@ -401,7 +395,9 @@ impl Tool for TaskOutputTool {
             output,
             output_file,
         };
-        Ok(rust_cli_kernel_api::tool::text(model_text(retrieval, &view)))
+        Ok(rust_cli_kernel_api::tool::text(model_text(
+            retrieval, &view,
+        )))
     }
 }
 

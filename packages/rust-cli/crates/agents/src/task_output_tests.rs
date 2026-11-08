@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::env::{
-    EnvError, EnvPath, FileContent, FileVersion, OperationContext, ReadFile, WriteFile,
-    WriteReceipt, WorkspaceRef,
+    EnvError, EnvPath, FileContent, FileVersion, OperationContext, ReadFile, WorkspaceRef,
+    WriteFile, WriteReceipt,
 };
 use rust_cli_kernel_api::env_files::{FileKind, FileStat, StatFile};
 use rust_cli_kernel_api::env_shell::{
@@ -20,7 +20,7 @@ use rust_cli_kernel_api::machine::{Background, Files, MachineEnv, Shell};
 use rust_cli_kernel_api::testing::unsupported_machine;
 use serde_json::json;
 
-use crate::task_output::{model_text, truncate, TaskView};
+use crate::task_output::{TaskView, model_text, truncate};
 use crate::test_support::{desktop_harness, text};
 
 /// TaskOutput 看到的执行环境替身：后台账本（可变状态，供阻塞等待的测试翻转）、会话的输出
@@ -66,8 +66,11 @@ impl Shell for Tasks {
     ) -> Result<ShellState, EnvError> {
         Ok(ShellState {
             cwd: EnvPath::new("/"),
-            outputs: self.outputs.lock_unpoisoned().get(session.as_str())
-                .map(|dir| EnvPath::new(dir)),
+            outputs: self
+                .outputs
+                .lock_unpoisoned()
+                .get(session.as_str())
+                .map(EnvPath::new),
             background: self
                 .commands
                 .lock_unpoisoned()
@@ -104,7 +107,9 @@ impl Files for Tasks {
         _workspace: &WorkspaceRef,
         request: ReadFile,
     ) -> Result<FileContent, EnvError> {
-        self.files.lock_unpoisoned().get(request.path.as_str())
+        self.files
+            .lock_unpoisoned()
+            .get(request.path.as_str())
             .map(|(_, bytes)| FileContent {
                 bytes: bytes.clone(),
                 version: FileVersion::new("v1"),
@@ -130,12 +135,16 @@ impl Files for Tasks {
         _workspace: &WorkspaceRef,
         request: StatFile,
     ) -> Result<Option<FileStat>, EnvError> {
-        Ok(self.files.lock_unpoisoned().get(request.path.as_str()).map(|(size, _)| FileStat {
-            kind: FileKind::File,
-            size: *size,
-            mtime_ms: 0,
-            version: FileVersion::new("v1"),
-        }))
+        Ok(self
+            .files
+            .lock_unpoisoned()
+            .get(request.path.as_str())
+            .map(|(size, _)| FileStat {
+                kind: FileKind::File,
+                size: *size,
+                mtime_ms: 0,
+                version: FileVersion::new("v1"),
+            }))
     }
 }
 
@@ -157,11 +166,14 @@ fn large_output() -> (u64, Vec<u8>) {
 async fn a_running_task_reads_a_stable_head_without_blocking() {
     let tasks = Tasks::running("b1");
     let (size, bytes) = large_output();
-    tasks.outputs.lock_unpoisoned().insert(
-        "sess_1".to_owned(),
-        "/tmp/outputs".to_owned(),
-    );
-    tasks.files.lock_unpoisoned().insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
+    tasks
+        .outputs
+        .lock_unpoisoned()
+        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks
+        .files
+        .lock_unpoisoned()
+        .insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let first = harness
@@ -203,9 +215,15 @@ async fn a_completed_task_reads_the_tail_with_nodes_truncation() {
         ("sess_1".to_owned(), "b1".to_owned()),
         BackgroundStatus::Completed,
     );
-    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks
+        .outputs
+        .lock_unpoisoned()
+        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
     let (size, bytes) = large_output();
-    tasks.files.lock_unpoisoned().insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
+    tasks
+        .files
+        .lock_unpoisoned()
+        .insert("/tmp/outputs/b1.output".to_owned(), (size, bytes));
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let output = harness
@@ -232,7 +250,10 @@ async fn an_omitted_prefix_names_the_rounded_kilobytes() {
         ("sess_1".to_owned(), "b1".to_owned()),
         BackgroundStatus::Completed,
     );
-    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks
+        .outputs
+        .lock_unpoisoned()
+        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
     // stat 比 read 多 2000 字节：round(2000 / 1024) = 2，不是 1。
     let mut readable = String::from("readable tail\n");
     readable.push_str(&"x".repeat(3_000 - readable.len()));
@@ -243,7 +264,11 @@ async fn an_omitted_prefix_names_the_rounded_kilobytes() {
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let output = harness
-        .call("sess_1", "TaskOutput", json!({"task_id": "b1", "block": false}))
+        .call(
+            "sess_1",
+            "TaskOutput",
+            json!({"task_id": "b1", "block": false}),
+        )
         .await;
     assert!(
         text(&output).contains("[2KB of earlier output omitted]\nreadable tail"),
@@ -260,7 +285,10 @@ async fn a_huge_completed_file_is_not_loaded_whole() {
         ("sess_1".to_owned(), "b1".to_owned()),
         BackgroundStatus::Completed,
     );
-    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks
+        .outputs
+        .lock_unpoisoned()
+        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
     tasks.files.lock_unpoisoned().insert(
         "/tmp/outputs/b1.output".to_owned(),
         (9 * 1024 * 1024, Vec::new()),
@@ -268,7 +296,11 @@ async fn a_huge_completed_file_is_not_loaded_whole() {
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let output = harness
-        .call("sess_1", "TaskOutput", json!({"task_id": "b1", "block": false}))
+        .call(
+            "sess_1",
+            "TaskOutput",
+            json!({"task_id": "b1", "block": false}),
+        )
         .await;
     assert!(
         text(&output).contains("use Read on the output file for the tail"),
@@ -281,7 +313,10 @@ async fn a_huge_completed_file_is_not_loaded_whole() {
 #[tokio::test]
 async fn blocking_waits_for_the_task_to_finish() {
     let tasks = Tasks::running("b1");
-    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks
+        .outputs
+        .lock_unpoisoned()
+        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
     tasks.files.lock_unpoisoned().insert(
         "/tmp/outputs/b1.output".to_owned(),
         (6, b"done!\n".to_vec()),
@@ -294,7 +329,11 @@ async fn blocking_waits_for_the_task_to_finish() {
         flipping.finish("b1");
     });
     let waited = harness
-        .call("sess_1", "TaskOutput", json!({"task_id": "b1", "timeout": 5000}))
+        .call(
+            "sess_1",
+            "TaskOutput",
+            json!({"task_id": "b1", "timeout": 5000}),
+        )
         .await;
     assert!(text(&waited).contains("<retrieval_status>success</retrieval_status>"));
 
@@ -328,15 +367,22 @@ async fn an_unknown_task_is_rejected() {
 #[tokio::test]
 async fn a_forgotten_task_with_a_kept_file_reports_the_completed_tail() {
     let tasks = Arc::new(Tasks::default());
-    tasks.outputs.lock_unpoisoned().insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
-    tasks.files.lock_unpoisoned().insert(
-        "/tmp/outputs/b1.output".to_owned(),
-        (6, b"kept\n".to_vec()),
-    );
+    tasks
+        .outputs
+        .lock_unpoisoned()
+        .insert("sess_1".to_owned(), "/tmp/outputs".to_owned());
+    tasks
+        .files
+        .lock_unpoisoned()
+        .insert("/tmp/outputs/b1.output".to_owned(), (6, b"kept\n".to_vec()));
     let mut harness = desktop_harness();
     harness.set_machine(tasks.machine());
     let output = harness
-        .call("sess_1", "TaskOutput", json!({"task_id": "b1", "block": false}))
+        .call(
+            "sess_1",
+            "TaskOutput",
+            json!({"task_id": "b1", "block": false}),
+        )
         .await;
     assert!(!output.is_error, "{}", text(&output));
     assert!(text(&output).contains("<retrieval_status>success</retrieval_status>"));

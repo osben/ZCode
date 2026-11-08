@@ -38,11 +38,15 @@ fn projection(rows: Vec<Value>) -> Projection {
 }
 
 fn rows(count: u64) -> Vec<Value> {
-    (1..=count).map(|id| json!({"rowId": id * 2, "kind": "message"})).collect()
+    (1..=count)
+        .map(|id| json!({"rowId": id * 2, "kind": "message"}))
+        .collect()
 }
 
 fn ids(rows: &[Value]) -> Vec<u64> {
-    rows.iter().map(|row| row["rowId"].as_u64().unwrap()).collect()
+    rows.iter()
+        .map(|row| row["rowId"].as_u64().unwrap())
+        .collect()
 }
 
 #[test]
@@ -70,7 +74,10 @@ fn the_limit_is_clamped_like_node() {
 fn the_snapshot_carries_only_the_tail_window_with_the_full_count() {
     let projection = projection(rows(70));
     let snapshot = projection.snapshot(1, "epoch");
-    assert_eq!(snapshot["rows"]["window"].as_array().unwrap().len(), WINDOW_ROWS);
+    assert_eq!(
+        snapshot["rows"]["window"].as_array().unwrap().len(),
+        WINDOW_ROWS
+    );
     assert_eq!(snapshot["rows"]["totalCount"], 70);
     assert_eq!(snapshot["rows"]["firstRowId"], 2);
     assert_eq!(WINDOW_ROWS, 60);

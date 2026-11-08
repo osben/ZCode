@@ -237,9 +237,11 @@ async fn settle_running_turn(live: &Bridged<Live>, envelope: &Envelope) -> Resul
 /// - restore the user's hold: with the promoted turn running, releasing only clears the flag and the
 ///   drain resumes at its end.
 ///
+/// The promoted item keeps its kernel kind and frozen execution state (the body's
+/// `modelSelection` overrides the frozen selection) and restarts under a fresh command id.
+///
 /// Not ported: Node's reservation (`guard.queueItemReserved`) — the kernel has a single queue owner
-/// and no competing promotions; per-item execution bundles and attachments — a promoted item
-/// restarts as plain text under a fresh command id.
+/// and no competing promotions; queued attachments — a promoted item restarts without them.
 pub(super) async fn send_queued_now(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -297,16 +299,21 @@ pub(super) async fn send_queued_now(
         send(handle, &part("resume"), release()).await;
         return failed(PROMOTION_COMMIT_FAILED, reason);
     }
-    // A selection the client re-sent with the promotion applies now, like the row commands' resubmit.
-    if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref())
-        && live.sink.current_config().0 != chosen
-    {
-        send(
-            handle,
-            &part("model"),
-            Command::SetModel { selection: chosen },
-        )
-        .await;
+    // The item starts with its own frozen execution state; a selection the client re-sent with the
+    // promotion overrides the item's model, like the row commands' resubmit.
+    let mut execution = item.execution.clone();
+    if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref()) {
+        let state = execution.as_ref().map_or_else(
+            || {
+                let (_, mode, plan) = live.sink.current_config();
+                rust_cli_kernel_api::permission::ExecutionState { mode, plan }
+            },
+            |execution| execution.state,
+        );
+        execution = Some(rust_cli_kernel_api::session_api::InputExecution {
+            state,
+            selection: Some(chosen),
+        });
     }
     live.sink.remember_input(
         &part("send"),
@@ -314,9 +321,6 @@ pub(super) async fn send_queued_now(
             client: envelope.client_id.clone(),
             origin: envelope.input_origin.clone(),
             text: item.text.clone(),
-            selection: body.model_selection.clone(),
-            mode: None,
-            plan: None,
             admitted_at: 0,
             requested: "queue",
             admitted: "startNow",
@@ -326,10 +330,12 @@ pub(super) async fn send_queued_now(
     let submitted = send(
         handle,
         &part("send"),
-        Command::Submit {
+        Command::SubmitWith {
+            kind: item.kind,
             text: item.text,
-            attachments: Vec::new(),
+            content: Vec::new(),
             delivery: Delivery::Queue,
+            execution,
         },
     )
     .await;

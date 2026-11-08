@@ -187,6 +187,7 @@ pub(crate) async fn run(shared: Arc<Shared>, job: SocketJob) {
         cwd_reset: None,
         output_bytes,
         output_limit: None,
+        output_unreadable: None,
         discard: Vec::new(),
     };
     // 结束时删登记，再写终态（同命令的监督任务，工作线 F119）。

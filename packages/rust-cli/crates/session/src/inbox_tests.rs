@@ -11,6 +11,8 @@ fn input(command: &str, text: &str, delivery: Delivery) -> QueuedInput {
         command: CommandId::new(command),
         text: text.to_owned(),
         delivery,
+        kind: Default::default(),
+        execution: None,
     }
 }
 

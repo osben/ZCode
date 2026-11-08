@@ -360,6 +360,9 @@ mod steer;
 #[path = "dequeue_tests.rs"]
 mod dequeue;
 
+#[path = "submit_with_tests.rs"]
+mod submit_with;
+
 #[path = "queue_edit_tests.rs"]
 mod queue_edit;
 

@@ -95,8 +95,12 @@ impl Server {
             .live(&session)
             .await
             .map_err(|error| kernel_error(&error))?;
-        let before = params["beforeRowId"].as_f64().map(|before| before.ceil() as u64);
-        Ok(live.sink.rows_range(before, usize::try_from(limit).unwrap_or(usize::MAX)))
+        let before = params["beforeRowId"]
+            .as_f64()
+            .map(|before| before.ceil() as u64);
+        Ok(live
+            .sink
+            .rows_range(before, usize::try_from(limit).unwrap_or(usize::MAX)))
     }
 }
 
@@ -235,7 +239,9 @@ impl Server {
             "runtime/capabilities" => reply(json!({
                 // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
                 "durableFirstSubmission": true,
-                "independentPlanState": false,
+                // Fork: plan is a switch beside the permission mode, frozen per queued input
+                // (`Command::SubmitWith`); yolo with plan on still runs in plan mode.
+                "independentPlanState": true,
                 "historyFirst": false,
                 "sessionDirectorySource": false,
                 "genUiContext": false,

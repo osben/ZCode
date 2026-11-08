@@ -174,10 +174,7 @@ pub(super) async fn apply(live: &Bridged<Live>, envelope: &Envelope, revision: u
             &envelope.command_id,
             Status::Rejected,
             "guard.actionUnavailable",
-            format!(
-                "row {} does not offer the file rewind",
-                body.target.row_id
-            ),
+            format!("row {} does not offer the file rewind", body.target.row_id),
             revision,
         );
     };

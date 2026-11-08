@@ -59,6 +59,8 @@ fn queued(text: &str) -> KernelEvent {
             text: text.to_owned(),
             // 等下一轮的（栈只放它们；插进这一回合的在 transcript 的尾巴里，tui-kit.md §4.0）。
             delivery: Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
         }],
     }
 }
@@ -150,6 +152,8 @@ fn the_queue_is_puffins_stack() {
             command: CommandId::new(format!("c{i}")),
             text: format!("message {i}\nline two"),
             delivery: Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
         })
         .collect();
     feed(&mut app, vec![KernelEvent::QueueChanged { items }]);

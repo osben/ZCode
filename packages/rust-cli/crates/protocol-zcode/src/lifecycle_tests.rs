@@ -11,5 +11,8 @@ fn a_change_raises_the_revision_the_query_reports() {
     assert_eq!(ready["lastError"], Value::Null);
     assert_eq!(lifecycles.current(&session, "ready")["revision"], 1);
     assert_eq!(lifecycles.changed(&session, "unloaded")["revision"], 2);
-    assert_eq!(lifecycles.current(&SessionId::new("s2"), "unloaded")["revision"], 0);
+    assert_eq!(
+        lifecycles.current(&SessionId::new("s2"), "unloaded")["revision"],
+        0
+    );
 }

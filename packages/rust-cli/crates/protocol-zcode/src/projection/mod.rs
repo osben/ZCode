@@ -20,7 +20,7 @@ use rust_cli_kernel_api::message::{ContentBlock, Usage, text_of as text_of_resul
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    FileChange, KernelEvent, QueuedInput, SequencedEvent, SessionView, TurnOutcome,
+    FileChange, KernelEvent, QueuedInput, QueuedKind, SequencedEvent, SessionView, TurnOutcome,
 };
 use serde_json::{Map, Value, json};
 
@@ -37,9 +37,6 @@ pub struct InputMeta {
     pub client: String,
     pub origin: Option<String>,
     pub text: String,
-    pub selection: Option<Value>,
-    pub mode: Option<String>,
-    pub plan: Option<bool>,
     pub admitted_at: u64,
     pub requested: &'static str,
     pub admitted: &'static str,
@@ -92,6 +89,11 @@ pub struct Projection {
     selection: ModelSelection,
     mode: PermissionMode,
     plan: bool,
+    /// Fork: the last full-access grant (`config.permissionGrant`), the composer's one-shot
+    /// adoption key; protocol memory like Node's runtime `lastPermissionGrantId`.
+    permission_grant: Option<String>,
+    /// Fork: the last plan tool transition (`config.planTransition`: call id, plan switch).
+    plan_transition: Option<(String, bool)>,
     followup: Followup,
     levels: Vec<String>,
     context: Option<rust_cli_kernel_api::compaction::ContextOccupancy>,
@@ -184,6 +186,10 @@ impl Projection {
         projection.auto_drain = self.auto_drain;
         projection.pause_reason = self.pause_reason;
         projection
+            .permission_grant
+            .clone_from(&self.permission_grant);
+        projection.plan_transition.clone_from(&self.plan_transition);
+        projection
     }
 
     fn from_view_at(
@@ -206,6 +212,8 @@ impl Projection {
             selection: view.selection.clone(),
             mode: view.mode,
             plan: view.plan,
+            permission_grant: None,
+            plan_transition: None,
             followup,
             levels,
             context: view.context_usage,
@@ -343,13 +351,20 @@ impl Projection {
     }
 
     fn config(&self) -> Value {
-        state::config(
+        let mut config = state::config(
             &self.selection,
             self.mode,
             self.plan,
             self.followup,
             &self.thought_levels(),
-        )
+        );
+        if let Some(interaction) = &self.permission_grant {
+            config["permissionGrant"] = json!({"interactionId": interaction});
+        }
+        if let Some((tool_call, enabled)) = &self.plan_transition {
+            config["planTransition"] = json!({"toolCallId": tool_call, "planEnabled": enabled});
+        }
+        config
     }
 
     /// Fork: uses the model directory for `thoughtLevels` from now on.
@@ -593,6 +608,14 @@ impl Projection {
             }
             KernelEvent::PlanChanged { enabled } => {
                 self.plan = *enabled;
+                patch.insert("config".into(), self.config());
+            }
+            KernelEvent::PermissionGranted { interaction } => {
+                self.permission_grant = Some(interaction.clone());
+                patch.insert("config".into(), self.config());
+            }
+            KernelEvent::PlanTransition { tool_call, enabled } => {
+                self.plan_transition = Some((tool_call.clone(), *enabled));
                 patch.insert("config".into(), self.config());
             }
             // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
@@ -862,10 +885,9 @@ impl Projection {
                     row.insert("fileChanges".into(), summary);
                 }
                 None => {
-                    if let Some(changes) = row.get_mut("fileChanges") {
-                        if let Some(summary) = changes.as_object_mut() {
-                            summary.insert("state".into(), json!("reverted"));
-                        }
+                    if let Some(summary) = row.get_mut("fileChanges").and_then(Value::as_object_mut)
+                    {
+                        summary.insert("state".into(), json!("reverted"));
                     }
                 }
             },
@@ -923,12 +945,24 @@ impl Projection {
             .map(|item| {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
+                // Fork: kind and the frozen execution state come from the kernel's item (one owner).
+                let (kind, text) = match item.kind {
+                    QueuedKind::Text => ("sendText", item.text.as_str()),
+                    QueuedKind::Goal => (
+                        "sendGoalCommand",
+                        item.text
+                            .trim_start()
+                            .strip_prefix("/goal")
+                            .map_or(item.text.as_str(), str::trim),
+                    ),
+                    QueuedKind::Compact => ("compact", "/compact"),
+                };
                 let mut value = json!({
                     "sourceCommandId": command,
                     "queueItemId": format!("queue_{command}"),
                     "clientId": meta.map_or("unknown", |meta| meta.client.as_str()),
-                    "kind": "sendText",
-                    "text": item.text,
+                    "kind": kind,
+                    "text": text,
                     // Fork: a queued input is not stored yet; its chips are the refs it was sent with.
                     "attachments": meta.map_or_else(Vec::new, |meta| meta.attachments.clone()),
                     "delivery": {
@@ -940,19 +974,15 @@ impl Projection {
                     "dispatch": {"state": "queued"},
                     "admittedAt": meta.map_or(self.created_at, |meta| meta.admitted_at),
                 });
-                if let Some(meta) = meta {
-                    if let Some(origin) = &meta.origin {
-                        value["inputOrigin"] = json!(origin);
+                if let Some(origin) = meta.and_then(|meta| meta.origin.as_ref()) {
+                    value["inputOrigin"] = json!(origin);
+                }
+                if let Some(execution) = &item.execution {
+                    if let Some(selection) = &execution.selection {
+                        value["modelSelection"] = state::selection(selection);
                     }
-                    if let Some(selection) = &meta.selection {
-                        value["modelSelection"] = selection.clone();
-                    }
-                    if let Some(mode) = &meta.mode {
-                        value["mode"] = json!(mode);
-                    }
-                    if let Some(plan) = meta.plan {
-                        value["planEnabled"] = json!(plan);
-                    }
+                    value["mode"] = json!(state::mode_name(execution.state.mode));
+                    value["planEnabled"] = json!(execution.state.plan);
                 }
                 value
             })

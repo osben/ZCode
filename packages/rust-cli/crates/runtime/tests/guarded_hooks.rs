@@ -54,6 +54,7 @@ mod guarded_hooks {
 
     fn finished() -> CommandEvent {
         CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Completed,
             exit_code: Some(0),
             timed_out: false,

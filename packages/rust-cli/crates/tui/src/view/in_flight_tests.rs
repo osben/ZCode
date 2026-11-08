@@ -9,6 +9,8 @@ fn item(id: &str, text: &str) -> QueuedInput {
         command: CommandId::new(id),
         text: text.to_owned(),
         delivery: Delivery::Queue,
+        kind: Default::default(),
+        execution: None,
     }
 }
 

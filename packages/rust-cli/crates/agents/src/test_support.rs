@@ -481,10 +481,22 @@ fn built_with(
     hidden: &'static [&'static str],
     clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
 ) -> Harness {
-    built_full(gate, keep_alive, machine_env, peers, hidden, clock, None, false)
+    built_full(
+        gate,
+        keep_alive,
+        machine_env,
+        peers,
+        hidden,
+        clock,
+        None,
+        false,
+    )
 }
 
-#[expect(clippy::too_many_arguments, reason = "测试组装的参数本来就是平铺的开关")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "测试组装的参数本来就是平铺的开关"
+)]
 fn built_full(
     gate: Option<Gate>,
     keep_alive: bool,

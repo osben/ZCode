@@ -139,6 +139,9 @@ pub(crate) struct Finish {
     pub output_bytes: u64,
     /// 因输出超过上限被结束时的说明。
     pub output_limit: Option<String>,
+    /// Fork (node_desktop): the OS error code of a failed settlement read of a foreground
+    /// output file (see [`CommandEvent::Finished`]).
+    pub output_unreadable: Option<String>,
     /// Fork (node_desktop): output files the watcher deletes once it has read them to the end
     /// (a desktop foreground output that fit inline). Deleting them in the supervisor before
     /// the terminal state raced the watcher, which reopens the file by path on every read and
@@ -149,6 +152,7 @@ pub(crate) struct Finish {
 impl Finish {
     pub(crate) fn event(&self) -> CommandEvent {
         CommandEvent::Finished {
+            output_unreadable: self.output_unreadable.clone(),
             outcome: self.outcome.clone(),
             exit_code: self.exit_code,
             timed_out: self.timed_out,
@@ -388,9 +392,11 @@ impl Shells {
             )
         });
         if let Some(root) = desktop {
-            rust_cli_proc::private::ensure(root).await.map_err(|error| EnvError::Io {
-                message: error.to_string(),
-            })?;
+            rust_cli_proc::private::ensure(root)
+                .await
+                .map_err(|error| EnvError::Io {
+                    message: error.to_string(),
+                })?;
         }
         let tasks = self.task_outputs(&session);
         let mut dir = tasks.clone();

@@ -5,9 +5,11 @@ use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
 use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
+use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, SessionHandle,
+    Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, InputExecution,
+    QueuedKind, SessionHandle,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
@@ -263,8 +265,13 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     let (phase, revision) = live.sink.status();
     let handle = live.handle.as_ref();
     match envelope.kind.as_str() {
-        "sendText" => {
-            let ack = send_text(server, handle, &live.sink, envelope, phase, revision).await;
+        "sendText" | "sendGoalCommand" => {
+            let kind = if envelope.kind == "sendGoalCommand" {
+                QueuedKind::Goal
+            } else {
+                QueuedKind::Text
+            };
+            let ack = send_text(server, handle, &live.sink, envelope, kind, phase, revision).await;
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
             }
@@ -654,9 +661,6 @@ fn input_meta(
             .clone()
             .or_else(|| input.input_origin.clone()),
         text: input.text.clone().unwrap_or_default(),
-        selection: input.model_selection.clone(),
-        mode: input.mode.clone(),
-        plan: input.plan_enabled,
         admitted_at: 0,
         requested,
         admitted,
@@ -740,11 +744,37 @@ async fn held_queue_choice(
     Ok(())
 }
 
+/// Fork: the execution state an input was submitted with (Node's Submission), frozen on the kernel's
+/// queued item when it waits; missing parts are the session's current state.
+fn input_execution(
+    input: &Input,
+    view: Option<&rust_cli_kernel_api::session_api::SessionView>,
+) -> Option<InputExecution> {
+    let chosen = selection(input.model_selection.as_ref());
+    let state = mode(input.mode.as_deref(), input.plan_enabled)
+        .map(|(mode, plan)| ExecutionState { mode, plan });
+    if chosen.is_none() && state.is_none() {
+        return None;
+    }
+    let current = view.map_or_else(ExecutionState::default, |view| ExecutionState {
+        mode: view.mode,
+        plan: view.plan,
+    });
+    Some(InputExecution {
+        state: state.unwrap_or(current),
+        selection: chosen,
+    })
+}
+
+/// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
+/// now and queueing, and applies the input's execution state only when its turn starts
+/// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
 async fn send_text(
     server: &Server,
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
     envelope: &Envelope,
+    kind: QueuedKind,
     phase: Phase,
     revision: u64,
 ) -> Ack {
@@ -753,6 +783,16 @@ async fn send_text(
         Err(ack) => return *ack,
     };
     let command = envelope.command_id.as_str();
+    // Fork: Node's `guard.planGoalMutuallyExclusive` (plan cannot create a goal).
+    if kind == QueuedKind::Goal && input.plan_enabled == Some(true) {
+        return Ack::refused(
+            command,
+            Status::Rejected,
+            "guard.planGoalMutuallyExclusive",
+            "plan mode cannot set a goal",
+            revision,
+        );
+    }
     // Checked before any side effect (model or mode change), so a refused input changes nothing.
     let refs = match crate::attachments::parse_refs(&input.attachments) {
         Ok(refs) => refs,
@@ -781,35 +821,7 @@ async fn send_text(
     {
         return *ack;
     }
-    // 这次提交带的模型与模式先作用到会话（同 Node：Submission 带完整的选择）。
-    if let Some(chosen) = selection(input.model_selection.as_ref())
-        && view.as_ref().is_none_or(|view| view.selection != chosen)
-    {
-        send(
-            handle,
-            &format!("{command}:model"),
-            Command::SetModel { selection: chosen },
-        )
-        .await;
-    }
-    if let Some((permission, plan)) = mode(input.mode.as_deref(), input.plan_enabled) {
-        if view.as_ref().is_none_or(|view| view.mode != permission) {
-            send(
-                handle,
-                &format!("{command}:mode"),
-                Command::SetMode { mode: permission },
-            )
-            .await;
-        }
-        if view.as_ref().is_none_or(|view| view.plan != plan) {
-            send(
-                handle,
-                &format!("{command}:plan"),
-                Command::SetPlan { enabled: plan },
-            )
-            .await;
-        }
-    }
+    let execution = input_execution(&input, view.as_ref());
     let running = phase == Phase::Running;
     let requested = input.requested_delivery;
     let followup = live.followup();
@@ -825,17 +837,23 @@ async fn send_text(
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();
-    let submit = if with_attachments {
-        Command::SubmitContent {
-            content: crate::attachments::content(server, handle.id(), &text, refs).await,
-            delivery,
-        }
+    let content = if with_attachments {
+        crate::attachments::content(server, handle.id(), &text, refs).await
     } else {
-        Command::Submit {
-            text,
-            attachments: Vec::new(),
-            delivery,
-        }
+        Vec::new()
+    };
+    // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
+    let text = if kind == QueuedKind::Goal {
+        format!("/goal {}", text.trim())
+    } else {
+        text
+    };
+    let submit = Command::SubmitWith {
+        kind,
+        text,
+        content,
+        delivery,
+        execution,
     };
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(
@@ -891,16 +909,20 @@ async fn resolve(
             );
         }
     };
-    // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。
+    // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。Fork: queued inputs' frozen modes become yolo
+    // too, plan switches kept (Node `fullAccess`).
     if option == Some("fullAccess") {
-        send(
+        let ack = send(
             handle,
             &format!("{}:mode", envelope.command_id),
-            Command::SetMode {
-                mode: PermissionMode::BypassPermissions,
+            Command::GrantFullAccess {
+                interaction: interaction.to_owned(),
             },
         )
         .await;
+        if !matches!(ack, KernelAck::Accepted { .. }) {
+            tracing::warn!(event = "protocol.full_access.refused", ack = ?ack, "full access was not granted");
+        }
     }
     let answer = match option {
         Some("allowOnce" | "fullAccess") => PermissionAnswer::Allow {

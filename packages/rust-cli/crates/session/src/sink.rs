@@ -56,6 +56,8 @@ pub(crate) enum SinkRequest {
     /// 工具请求打开或关掉 plan 开关（EnterPlanMode / ExitPlanMode，修复线 F20）。
     SetPlan {
         enabled: bool,
+        /// Fork: the plan tool call that asked for it (`KernelEvent::PlanTransition`).
+        tool_call: Option<String>,
         reply: oneshot::Sender<Result<(), OrchestrationError>>,
     },
     /// 主循环与工具读会话现在的状态（判决用的模式、计划模式的会话标志、工作目录、主模型、目标，一次往返，工作线
@@ -197,8 +199,26 @@ impl SessionOps for ActorSink {
     }
 
     async fn set_plan(&self, enabled: bool) -> Result<(), OrchestrationError> {
-        self.command(|reply| SinkRequest::SetPlan { enabled, reply })
-            .await
+        self.command(|reply| SinkRequest::SetPlan {
+            enabled,
+            tool_call: None,
+            reply,
+        })
+        .await
+    }
+
+    async fn set_plan_from_tool(
+        &self,
+        enabled: bool,
+        tool_call: &str,
+    ) -> Result<(), OrchestrationError> {
+        let tool_call = Some(tool_call.to_owned());
+        self.command(|reply| SinkRequest::SetPlan {
+            enabled,
+            tool_call,
+            reply,
+        })
+        .await
     }
 
     async fn set_workspace(

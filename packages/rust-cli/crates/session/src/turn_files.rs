@@ -3,7 +3,6 @@
 //! per-path counts the App's summary panel shows. Read-only; the restore itself is the rewind
 //! transaction ([`crate::rewind`]).
 
-
 use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::session_api::{
     FileChange, KernelEvent, TurnFileChanges, TurnFileCount, TurnFileFacts, TurnFileItem,
@@ -184,7 +183,10 @@ impl Actor {
                 .turn_files
                 .get(turn_input)
                 .is_some_and(|summary| summary.reverted);
-        Files { checkpoints, reverted }
+        Files {
+            checkpoints,
+            reverted,
+        }
     }
 
     /// One of the turn's checkpoints settled (committed with its tool result): keep the per-turn
@@ -233,7 +235,10 @@ impl Actor {
             let Ok(artifact) = artifact else {
                 continue;
             };
-            let summary = self.turn_files.entry(checkpoint.prompt.clone()).or_default();
+            let summary = self
+                .turn_files
+                .entry(checkpoint.prompt.clone())
+                .or_default();
             summary.rewindable = true;
             for file in &artifact.files {
                 let (additions, deletions) = write_counts(file);
