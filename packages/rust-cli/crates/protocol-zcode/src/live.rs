@@ -172,6 +172,13 @@ impl Live {
         self.state().projection.row_target(row_id, entity, action)
     }
 
+    /// Fork: the `v4/conversation/plans` catalog with the topic position it was read at.
+    pub fn plans(&self) -> Value {
+        let state = self.state();
+        json!({"plans": state.projection.plans(), "atSeq": state.log.seq(),
+            "atLogEpoch": state.log.epoch()})
+    }
+
     pub fn followup(&self) -> Followup {
         self.state().projection.followup()
     }
@@ -196,6 +203,22 @@ impl Live {
     /// Fork: see [`crate::projection::Projection::auto_drain`].
     pub fn auto_drain(&self) -> bool {
         self.state().projection.auto_drain()
+    }
+
+    /// Fork: see [`crate::projection::Projection::has_queue`].
+    pub fn has_queue(&self) -> bool {
+        self.state().projection.has_queue()
+    }
+
+    /// Fork: a user stop held the queue: record the queue patch and send it.
+    pub async fn hold_for_stop(&self) {
+        let outgoing = {
+            let mut state = self.state();
+            let delta = state.projection.hold_for_stop();
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
     }
 
     /// Fork: `setAutoDrain` was accepted: record the queue patch and send it.

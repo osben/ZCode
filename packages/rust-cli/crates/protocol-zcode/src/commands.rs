@@ -208,8 +208,10 @@ pub async fn command(server: &Server, params: Value) -> Result<Value, RpcError> 
         server.remembered.lock_unpoisoned().put(key, ack.clone());
     }
     // 命令事实（G2）：会话命令照 Node 的格式落库；写失败只记日志，ACK 照常回。
+    // Fork: a deleted session has no record store left for its delete fact.
     if let Some(session) = &envelope.session_id
         && ack.is_fact()
+        && envelope.kind != "deleteSession"
         && let Err(error) = server
             .kernel
             .queries()
@@ -256,19 +258,7 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             }
             ack
         }
-        "stop" => ack_of(
-            send(handle, &envelope.command_id, Command::Interrupt).await,
-            Ack::accepted(&envelope.command_id, revision, None),
-            |reason| {
-                Ack::refused(
-                    &envelope.command_id,
-                    Status::Noop,
-                    "proto.nothingToStop",
-                    reason,
-                    revision,
-                )
-            },
-        ),
+        "stop" => stop(handle, &live.sink, envelope, phase, revision).await,
         "resolveInteraction" => resolve(handle, &live.sink, envelope, revision).await,
         "setFollowupMode" => set_followup(server, handle, &live, envelope).await,
         // Fork: command kinds ported for desktop parity (specs/fork-rust-agent-parity.md).
@@ -996,4 +986,42 @@ pub async fn query(server: &Server, params: &Value) -> Result<Value, RpcError> {
         });
     }
     Ok(reply)
+}
+
+/// Fork: Node's stop holds the following queue (specs/stop-queue-hold.md rules 1-4): a stop that will cancel a turn
+/// while inputs are queued and the queue still drains pauses the drain first, so the turn end cannot promote the head
+/// the user just stopped. The hold is written to the kernel before the interrupt (the session actor applies commands in
+/// order), and released again when there was nothing to stop.
+async fn stop(
+    handle: &dyn SessionHandle,
+    sink: &crate::live::Live,
+    envelope: &Envelope,
+    phase: Phase,
+    revision: u64,
+) -> Ack {
+    let id = &envelope.command_id;
+    let held = phase == Phase::Running
+        && sink.has_queue()
+        && sink.auto_drain()
+        && matches!(
+            send(handle, &format!("{id}:hold"), Command::HoldQueue { held: true }).await,
+            KernelAck::Accepted { .. }
+        );
+    let interrupted = send(handle, id, Command::Interrupt).await;
+    if matches!(interrupted, KernelAck::Accepted { .. }) {
+        if held {
+            sink.hold_for_stop().await;
+        }
+    } else if held
+        && let KernelAck::Rejected { reason } =
+            send(handle, &format!("{id}:release"), Command::HoldQueue { held: false }).await
+    {
+        tracing::warn!(event = "protocol.stop.release_failed", reason = %reason,
+            "releasing the stop's queue hold failed");
+    }
+    ack_of(
+        interrupted,
+        Ack::accepted(id, revision, None),
+        |reason| Ack::refused(id, Status::Noop, "proto.nothingToStop", reason, revision),
+    )
 }

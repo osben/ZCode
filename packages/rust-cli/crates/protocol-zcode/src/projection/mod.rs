@@ -8,6 +8,7 @@ mod cold;
 pub mod elicitation;
 mod kinds;
 mod markers;
+mod plans;
 mod rows;
 pub mod state;
 
@@ -84,6 +85,9 @@ pub struct Projection {
     denied: std::collections::HashSet<String>,
     /// Fork: the queue drains on its own (`setAutoDrain`); the kernel's hold is set by the same command.
     auto_drain: bool,
+    /// Fork: why the queue is paused (`queue.pauseReason`): `manual` after `setAutoDrain(false)`, `stopped` after a
+    /// user stop held it (specs/stop-queue-hold.md).
+    pause_reason: Option<&'static str>,
     created_at: u64,
     /// Fork: a compaction is running (row actions are withheld, like Node's `compact` active work).
     compacting: bool,
@@ -139,6 +143,7 @@ impl Projection {
         projection.denied.clone_from(&self.denied);
         projection.catalog = self.catalog.clone();
         projection.auto_drain = self.auto_drain;
+        projection.pause_reason = self.pause_reason;
         projection
     }
 
@@ -176,6 +181,7 @@ impl Projection {
             compactions: 0,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
+            pause_reason: None,
         };
         cold::rows(&mut projection, view);
         for (interaction, request) in &view.pending {
@@ -254,6 +260,26 @@ impl Projection {
     /// Fork: `setAutoDrain` was accepted: returns the `state.updated` for the queue.
     pub fn set_auto_drain(&mut self, auto_drain: bool) -> Value {
         self.auto_drain = auto_drain;
+        self.pause_reason = (!auto_drain).then_some("manual");
+        self.queue_patch()
+    }
+
+    /// Fork: whether queued inputs wait behind the running turn (a stop would hold them).
+    pub fn has_queue(&self) -> bool {
+        self.queue_state()["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    }
+
+    /// Fork: a user stop cancelled the turn and held the queue (Node's cancelled `TurnComplete` without the preserve
+    /// intent: `autoDrain: false`, `pauseReason: "stopped"`).
+    pub fn hold_for_stop(&mut self) -> Value {
+        self.auto_drain = false;
+        self.pause_reason = Some("stopped");
+        self.queue_patch()
+    }
+
+    fn queue_patch(&self) -> Value {
         json!({"op": "state.updated", "patch": {"queue": self.queue_state()}})
     }
 
@@ -733,7 +759,11 @@ impl Projection {
                 value
             })
             .collect();
-        json!({"items": items, "autoDrain": self.auto_drain})
+        let mut queue = json!({"items": items, "autoDrain": self.auto_drain});
+        if let Some(reason) = self.pause_reason.filter(|_| !self.auto_drain) {
+            queue["pauseReason"] = json!(reason);
+        }
+        queue
     }
 
     /// 快照（`conversationSnapshotSchema`）：`seq` 是主题的序号，`epoch` 是主题的代际标识。

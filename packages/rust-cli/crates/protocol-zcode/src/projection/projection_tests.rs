@@ -750,3 +750,18 @@ fn a_cold_projection_shows_stored_compactions() {
         json!({"type": "compact", "origin": "manual", "status": "success", "tokensBefore": 1200})
     );
 }
+
+#[test]
+fn the_queue_pause_reason_follows_who_paused_it() {
+    let mut feed = Feed::new();
+    assert!(feed.projection.queue_state().get("pauseReason").is_none());
+    let manual = feed.projection.set_auto_drain(false);
+    assert_eq!(manual["patch"]["queue"]["autoDrain"], false);
+    assert_eq!(manual["patch"]["queue"]["pauseReason"], "manual");
+    let stopped = feed.projection.hold_for_stop();
+    assert_eq!(stopped["patch"]["queue"]["pauseReason"], "stopped");
+    let resumed = feed.projection.set_auto_drain(true);
+    assert_eq!(resumed["patch"]["queue"]["autoDrain"], true);
+    assert!(resumed["patch"]["queue"].get("pauseReason").is_none());
+    assert!(!feed.projection.has_queue());
+}
