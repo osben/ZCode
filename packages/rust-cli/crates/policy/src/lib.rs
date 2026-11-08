@@ -71,11 +71,16 @@ use crate::rules::Rules;
 pub(crate) struct PolicyOptions {
     /// plan 模式按自动模式的语义走分类器（缺省开启）。
     pub(crate) auto_in_plan: bool,
+    /// Fork: Node's plan mode ([`chain::Outer::node_plan`]).
+    pub(crate) node_plan: bool,
 }
 
 impl Default for PolicyOptions {
     fn default() -> Self {
-        Self { auto_in_plan: true }
+        Self {
+            auto_in_plan: true,
+            node_plan: false,
+        }
     }
 }
 
@@ -125,6 +130,13 @@ impl PolicyGate {
     #[must_use]
     pub(crate) fn with_options(mut self, options: PolicyOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// Fork: plan mode denies what would ask, with Node's reason (the desktop app-server).
+    #[must_use]
+    pub fn with_node_plan_mode(mut self, enabled: bool) -> Self {
+        self.options.node_plan = enabled;
         self
     }
 
@@ -265,6 +277,7 @@ impl ScopedGate for PolicyGate {
         let options = Outer {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
+            node_plan: self.options.node_plan,
         };
         chain::outer(
             &call,

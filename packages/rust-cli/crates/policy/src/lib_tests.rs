@@ -246,6 +246,7 @@ async fn plan_mode_sends_questions_to_the_classifier() {
     );
     let classic = PolicyGate::default().with_options(PolicyOptions {
         auto_in_plan: false,
+        node_plan: false,
     });
     assert!(matches!(
         bash(&classic, PermissionMode::Plan, "touch plan.txt").await,

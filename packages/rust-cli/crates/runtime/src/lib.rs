@@ -214,7 +214,7 @@ impl LocalKernel {
             extensions.streaming_input,
         );
         let late = Arc::new(late::LateCompactor::default());
-        let gate = assemble::gate(&ports);
+        let gate = assemble::gate(&ports, extensions.node_plan_mode);
         let base = assemble::base_tools(&ports, &defaults, &extensions, (traits, &gate));
         let ext = assemble::ext(
             &ports,

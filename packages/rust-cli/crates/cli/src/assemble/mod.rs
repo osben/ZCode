@@ -573,6 +573,8 @@ pub(crate) async fn kernel(
     )
     .await;
     extensions.monitor = opened.monitor;
+    // Fork: the app-server keeps Node's plan mode (the desktop's behaviour).
+    extensions.node_plan_mode = spec.titles == Titles::Node;
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened
