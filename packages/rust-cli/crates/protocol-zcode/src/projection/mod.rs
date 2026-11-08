@@ -74,6 +74,9 @@ struct Turn {
     /// 当前模型响应的序号（流式增量带来；assistant 消息落定时用它找行）。
     response: Option<u32>,
     keys: Vec<String>,
+    /// Fork: `originMeta` of each notification that opened this turn, in arrival order
+    /// (background_result.rs); `None` for one the UI does not title.
+    notified: Vec<Option<Value>>,
 }
 
 /// 一个会话的投影。
@@ -780,6 +783,7 @@ impl Projection {
             started_at: now,
             response: None,
             keys: Vec::new(),
+            notified: Vec::new(),
         });
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));

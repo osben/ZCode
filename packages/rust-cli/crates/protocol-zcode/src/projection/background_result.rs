@@ -20,7 +20,7 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
 /// so a quote inside the title or the error text does not cut it short.
 fn quoted_title<'a>(summary: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = summary.strip_prefix(prefix)?;
-    let end = ["\" completed", "\" failed", "\" was "]
+    let end = ["\" finished", "\" completed", "\" failed", "\" was "]
         .iter()
         .filter_map(|ending| rest.find(ending))
         .min()?;
@@ -53,29 +53,97 @@ pub(super) fn origin_meta(text: &str) -> Option<Value> {
     if work.is_empty() || title.is_empty() {
         return None;
     }
-    Some(json!({"backgroundSource": source, "workId": work, "title": title}))
+    let mut meta = json!({"backgroundSource": source, "workId": work, "title": title});
+    if source == "subagent" {
+        if let Some(result) = subagent_result(text, summary) {
+            meta["subagentResult"] = result;
+        }
+    }
+    Some(meta)
+}
+
+/// Node `SUBAGENT_RESULT_ERROR_MAX_CHARS`: the structured error is bounded, the summary is not.
+const RESULT_ERROR_MAX_CHARS: usize = 2_000;
+
+/// Node `localAgentSubagentResult`: the subagent's terminal state, with the failure reason that
+/// follows `failed: ` in the summary.
+fn subagent_result(text: &str, summary: &str) -> Option<Value> {
+    let status = between(text, "<status>", "</status>")?.trim();
+    match status {
+        "failed" => {
+            let reason = summary
+                .split_once("\" failed: ")
+                .map(|(_, reason)| reason.trim())
+                .filter(|reason| !reason.is_empty())
+                .unwrap_or("Unknown error");
+            let error = if reason.chars().count() <= RESULT_ERROR_MAX_CHARS {
+                reason.to_owned()
+            } else {
+                let mut bounded: String = reason.chars().take(RESULT_ERROR_MAX_CHARS - 1).collect();
+                bounded.push('…');
+                bounded
+            };
+            Some(json!({"status": "failed", "error": error}))
+        }
+        "completed" | "killed" => Some(json!({"status": status})),
+        _ => None,
+    }
+}
+
+/// Node `MAX_BACKGROUND_RESULT_TITLES`: a batch header names this many tasks, then `+N`.
+const MAX_TITLES: usize = 3;
+
+/// Node `resolveBackgroundTaskNotificationOriginMeta`: one notification keeps its meta; a batch keeps
+/// the first task's source and work id and joins the titles with ` · `, and is untitled when any of
+/// its notifications is.
+pub(super) fn batch_meta(metas: &[Option<Value>]) -> Option<Value> {
+    if let [single] = metas {
+        return single.clone();
+    }
+    let metas: Vec<&Value> = metas.iter().map(Option::as_ref).collect::<Option<_>>()?;
+    let first = metas.first()?;
+    let mut titles: Vec<String> = metas
+        .iter()
+        .take(MAX_TITLES)
+        .filter_map(|meta| meta["title"].as_str().map(str::to_owned))
+        .collect();
+    if metas.len() > MAX_TITLES {
+        titles.push(format!("+{}", metas.len() - MAX_TITLES));
+    }
+    // Like Node, a batch keeps only the base fields: one turn cannot carry each task's result.
+    Some(json!({
+        "backgroundSource": first["backgroundSource"],
+        "workId": first["workId"],
+        "title": titles.join(" · "),
+    }))
 }
 
 impl Projection {
-    /// A notification opened the current turn: its header becomes the background result header. A
+    /// Notifications opened the current turn: their header becomes the background result header.
+    /// Each notification is its own user message, so a batch retitles the header as it grows. A
     /// notification merged into a turn the user opened leaves the header alone.
     pub(super) fn background_result(&mut self, text: &str, out: &mut Vec<Value>) {
-        let Some(turn) = &self.turn else {
+        let Some(turn) = &mut self.turn else {
             return;
         };
         if turn.command.is_some() || turn.keys.iter().any(|key| key.starts_with("user:")) {
             return;
         }
-        let Some(meta) = origin_meta(text) else {
-            return;
-        };
+        turn.notified.push(origin_meta(text));
+        let meta = batch_meta(&turn.notified);
         let key = turn_key(&turn.id);
         self.upsert(
             &key,
-            |row| {
-                if row["origin"] == "userInput" {
+            |row| match meta {
+                Some(meta)
+                    if row["origin"] == "userInput" || row["origin"] == "backgroundResult" =>
+                {
                     row.insert("origin".into(), json!("backgroundResult"));
                     row.insert("originMeta".into(), meta);
+                }
+                Some(_) => {}
+                None => {
+                    row.remove("originMeta");
                 }
             },
             out,
