@@ -1,4 +1,5 @@
 import { localRuntimeNetworkCapture } from "#src/zcode-agent/localRuntimeNetworkCapture.js";
+import { selectForkAgentRuntimeCommand } from "#src/zcode-agent/fork-agent-runtime/contract.js";
 import { resolveZCodeAgentSpawnCwd } from "#src/zcode-agent/zcodeAgentSpawnCwd.js";
 import type { ZCodeAgentStorageStartupSnapshot } from "#src/zcode-agent/zcodeAgent.js";
 /* eslint-disable max-lines -- zcodeAgentProcessManager centrally owns agent subprocess spawn, reuse, timeout reclamation, and runtime identity; splitting it would widen the process-lifecycle state sync surface */
@@ -262,6 +263,14 @@ const serviceLog = createServiceLogger("zcode-agent");
 
 const log = (...args: unknown[]) => serviceLog.info(undefined, ...args);
 const warnLog = (...args: unknown[]) => serviceLog.warn(undefined, ...args);
+
+// Storage preparation and every spawn resolve the command; one warning per Host is enough.
+let forkRustAgentUnavailableWarned = false;
+function warnForkRustAgentUnavailableOnce(reason: string): void {
+  if (forkRustAgentUnavailableWarned) return;
+  forkRustAgentUnavailableWarned = true;
+  warnLog("[fork-agent-runtime] selected=rust effective=node", { reason });
+}
 const errorLog = (...args: unknown[]) => serviceLog.error(undefined, ...args);
 
 const AGENT_STDERR_TAIL_MAX_LINES = 20;
@@ -491,9 +500,13 @@ export function resolveDefaultZCodeAgentCommand(
   // Order: explicit env override → monorepo dev source/dist (dev source edits take effect
   // immediately, never preempted by a remotely-installed legacy native binary) → packaged
   // desktop Electron Node runtime running zcode.cjs → deployed native binary (remote SSH fallback).
-  const bundled =
+  const bundled = selectForkAgentRuntimeCommand(
     resolveBundledWorkspaceZCodeAgentCommand(context) ??
-    resolveElectronRuntimeZCodeAgentCommand(context);
+      resolveElectronRuntimeZCodeAgentCommand(context),
+    context,
+    process.env,
+    warnForkRustAgentUnavailableOnce,
+  );
   return applyPresentationSurfaceToCommand(
     bundled
       ? { ...bundled, supportsStorageStartup: true }

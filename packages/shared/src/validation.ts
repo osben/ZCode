@@ -74,7 +74,11 @@ export type {
   SharedLocalePreference,
 } from "./forkAppSettings.js";
 export {
+  FORK_AGENT_RUNTIME_ENV,
+  FORK_AGENT_RUNTIMES,
+  FORK_RUST_AGENT_PATH_ENV,
   FORK_SETTING_KEYS,
+  forkAgentRuntimeSchema,
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
@@ -86,7 +90,12 @@ export {
   splitForkSettingsPatch,
   splitLocaleSettings,
 } from "./forkAppSettings.js";
-export type { ForkAppSettings, ForkAppSettingsStored, ForkSettingKey } from "./forkAppSettings.js";
+export type {
+  ForkAgentRuntime,
+  ForkAppSettings,
+  ForkAppSettingsStored,
+  ForkSettingKey,
+} from "./forkAppSettings.js";
 export { isValidWslUser, WSL_USER_MAX_LENGTH, wslUserSchema } from "./wslUserValidation.js";
 export { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
 

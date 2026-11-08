@@ -1,0 +1,15 @@
+# rust-cli 的 cargo 构建配置。
+# 来源：feat/rust-cli-archive（f6eceb801e）仓库根的 .cargo/config.toml，内容不变（工作线 F46）。
+# cargo 从当前目录往上找这个文件：与 rust-toolchain.toml 相同，cargo 在 packages/rust-cli 下执行。
+# Windows MSVC 目标静态链接 C 运行时，安装后的二进制不依赖 VC++ 运行库。
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# pcre2-sys（内嵌的 rg 与 ugrep 的 PCRE2，docs/specs/rust-cli/embedded-search.md §5）总用自带的源码静态链接：否则它在
+# 找得到系统库时动态链接（例如 Homebrew 的 libpcre2-8.dylib），发布的二进制在别的机器上起不来。
+[env]
+PCRE2_SYS_STATIC = "1"
+# macOS 的最低系统版本（13.0，docs/specs/rust-cli/embedded-search.md §9.3）：rustc 链接与 cc crate 编 C/C++ 都读它。
+# 缺陷修复：以前不设时 rustc 按 11.0 链接，cc 却按构建机 Xcode SDK 的版本编 ugrep 等 C/C++，macos-26 上编出的包从系统
+# libc++ 强引用老系统没有的符号，二进制写着 11.0、老系统上启动即失败。force：发版不受构建机环境变量的影响。
+MACOSX_DEPLOYMENT_TARGET = { value = "13.0", force = true }

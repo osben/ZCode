@@ -1,0 +1,441 @@
+//! 用量的计量事实与查询（docs/specs/rust-cli/usage.md，工作线 L32）。
+//!
+//! 计时只在主循环里读注入的时钟（请求前、首个增量、流结束；工具开工与结束），作为事实与所属的消息同批提交；
+//! 存储映射成 Node 的 `model_usage` / `tool_usage` / `turn_usage`。`/usage` 的 API 时长与活动统计都从存储查，
+//! 不在内存里另记累计值。
+
+use rust_cli_base::units;
+use serde::{Deserialize, Serialize};
+
+use crate::context_usage::format_tokens;
+
+#[path = "metering_speeds.rs"]
+mod speeds;
+use crate::ids::{MessageId, ToolUseId};
+use crate::message::{StopReason, Usage};
+use crate::model::{ModelError, ModelSelection, QuerySource};
+pub use speeds::{MIN_OUTPUT, SpeedHistory, Speeds};
+
+/// 一次调用或一个回合的结局（Node 用量表的 `status`；`running` 不写）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallStatus {
+    Completed,
+    Error,
+    /// 用户中断。
+    Cancelled,
+}
+
+/// 一次模型请求（一次 `ModelPort` 调用，适配器内的重试算在里面）：Node `model_usage` 的一行（usage.md §2.2）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelCall {
+    /// 这次响应的 assistant 消息 id（请求前生成）。没有提交消息时也用它作逻辑请求 id。
+    pub message: MessageId,
+    pub source: QuerySource,
+    /// 发请求时的选择快照：运行中切换模型不影响这一行。
+    pub selection: ModelSelection,
+    pub started_at_ms: u64,
+    /// 第一个非空的文本或推理增量。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_at_ms: Option<u64>,
+    /// 首个内容：第一个非空的文本或推理增量、第一个工具参数增量、第一个 tool_use 块开始里最早的一个（footer 的 TPS，
+    /// docs/specs/rust-cli/tui-display.md §2.6，修复线 F105）。只在内存里交给会话 actor，存储不写它。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_content_at_ms: Option<u64>,
+    pub completed_at_ms: u64,
+    pub status: CallStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StopReason>,
+    /// 响应里的 tool_use 块数。
+    #[serde(default)]
+    pub tool_calls: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
+    /// 适配器内部重试的次数（`ModelNotice::Retrying`）。
+    #[serde(default)]
+    pub retries: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ModelError>,
+}
+
+impl ModelCall {
+    /// 一次模型请求的计量：没有首字与首个内容的时刻、停止原因、工具调用、用量、重试与错误（主循环按响应用结构更新
+    /// 填上）。
+    pub fn new(
+        message: MessageId,
+        source: QuerySource,
+        selection: ModelSelection,
+        started_at_ms: u64,
+        completed_at_ms: u64,
+        status: CallStatus,
+    ) -> Self {
+        Self {
+            message,
+            source,
+            selection,
+            started_at_ms,
+            first_token_at_ms: None,
+            first_content_at_ms: None,
+            completed_at_ms,
+            status,
+            stop_reason: None,
+            tool_calls: 0,
+            usage: None,
+            retries: 0,
+            error: None,
+        }
+    }
+}
+
+/// 一次工具调用：Node `tool_usage` 的一行（usage.md §2.3）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub tool_use: ToolUseId,
+    pub name: String,
+    /// 执行器开工的时刻；没有开工就有结果时等于 `completed_at_ms`。
+    pub started_at_ms: u64,
+    pub completed_at_ms: u64,
+    pub status: CallStatus,
+    /// 结果里文字的 UTF-8 字节数。
+    #[serde(default)]
+    pub output_bytes: u64,
+}
+
+/// [`crate::orchestration::RunSink::commit_metered`] 的计量部分。
+// 修复线 F105 给 `ModelCall` 加了 `first_content_at_ms`，两个变体的大小差过了 clippy 的门槛。`Metered` 每次请求只传一次、
+// 不成批存放；把变体改成 `Box` 要改已有的项（kernel-api 只加不改），所以这里放开这条 lint。
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "call", rename_all = "snake_case")]
+pub enum Metered {
+    Model(ModelCall),
+    Tool(ToolCall),
+}
+
+/// 计量落库的事实（会话 actor 与子代理的 sink 共用，以前各写一份）。
+impl From<Metered> for crate::store::Fact {
+    fn from(metered: Metered) -> Self {
+        match metered {
+            Metered::Model(call) => Self::ModelCalled { call },
+            Metered::Tool(call) => Self::ToolCalled { call },
+        }
+    }
+}
+
+/// `/usage` 的会话部分里来自存储的值（usage.md §4）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionMetering {
+    /// 会话及其子代理子会话里成功请求的耗时之和（`/usage` 的 `Total duration (API)`）。
+    pub api_duration_ms: u64,
+}
+
+/// footer 的请求统计（docs/specs/rust-cli/tui-display.md §2.6、usage.md §4.1，修复线 F27）：本会话完成的主回合请求
+/// （`query_source = main_turn`、`status = completed`）在用量表里的聚合。存储是唯一来源：前端每次重查，不在内存里
+/// 累加；显示的值由 [`Self::tokens_per_second`] 与 [`Self::cache_hit_rate`] 按 Node 的口径算。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestStats {
+    /// 完成的主回合请求数（Node `hitRateRequestCount`）。
+    pub requests: u64,
+    /// 累计输入：Node 归一化后的 `inputTokens`（AI SDK v6 的总输入，含缓存读与缓存写）。
+    pub input_tokens: u64,
+    /// 累计缓存读。
+    pub cache_read_tokens: u64,
+    /// 有一次请求的输入或缓存读未知（Node `hasUnknownCacheUsage`）。
+    #[serde(default)]
+    pub unknown_cache_usage: bool,
+    /// 最近一个完成的主回合请求（按完成时刻）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last: Option<LastRequest>,
+    /// 累计输出：输出已知的请求的输出之和（子代理的 token 列，tui-panels.md §1.3）。
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// 量得到速度的请求（输出已知且大于 0、生成时长大于 0）的输出之和与生成时长之和（子代理结束后的平均速度）。
+    #[serde(default)]
+    pub measured_output_tokens: u64,
+    #[serde(default)]
+    pub generation_ms: u64,
+}
+
+/// 最近一个完成的主回合请求：TPS 的输入（用量表那一行的 `output_tokens`、`duration_ms`、`time_to_first_token_ms`）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastRequest {
+    /// 输出 token；用量未知时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// 请求总时长。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// 首个输出内容的时间（相对请求开始；第一个非空的文本或推理增量，Node `firstModelTokenAt`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<u64>,
+}
+
+impl LastRequest {
+    /// 生成时长：总时长大于首字时间时是两者之差，否则没有（Node 调试面板的 `generationDurationMs`）。
+    pub fn generation_ms(&self) -> Option<u64> {
+        let (duration, first) = (self.duration_ms?, self.first_token_ms?);
+        (duration > first).then(|| duration - first)
+    }
+}
+
+impl RequestStats {
+    /// 最近一个完成的主回合请求的输出速度（[`output_tps`]）。
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        let last = self.last?;
+        output_tps(last.output_tokens, last.generation_ms())
+    }
+
+    /// 子代理的 token（Puffin `subagentUsage` 的 `tokens`）：完成的请求的输入（含缓存）加输出；还没有完成的请求时没有值。
+    pub fn tokens(&self) -> Option<u64> {
+        let tokens = self.input_tokens.saturating_add(self.output_tokens);
+        (self.requests > 0 && tokens > 0).then_some(tokens)
+    }
+
+    /// 全部量到的请求的平均速度（Puffin `subagentUsage` 的 `avg`）：输出之和 ÷ 生成时长之和（[`output_tps`]）。
+    pub fn average_tps(&self) -> Option<f64> {
+        output_tps(Some(self.measured_output_tokens), Some(self.generation_ms))
+    }
+
+    /// 累计缓存命中率 `缓存读 ÷ 输入`：有一次未知或累计输入为 0 时没有值（Node 调试面板的 `cache.hitRate`）。
+    #[allow(clippy::cast_precision_loss)]
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        (!self.unknown_cache_usage && self.input_tokens > 0)
+            .then(|| self.cache_read_tokens as f64 / self.input_tokens as f64)
+    }
+}
+
+/// 一个完成的主回合请求的输出速度（footer 的 TPS，docs/specs/rust-cli/tui-display.md §2.6，修复线 F105）：会话 actor
+/// 在内存里记最近的一个（`KernelEvent::OutputSpeed`、`SessionView.output_speed`），不落库，冷打开的会话没有。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputSpeed {
+    /// 输出 token；用量未知时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// 请求总时长。
+    pub duration_ms: u64,
+    /// 首个内容的时间（相对请求开始，[`ModelCall::first_content_at_ms`]）；没有内容时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_content_ms: Option<u64>,
+}
+
+impl OutputSpeed {
+    /// 一个完成的请求的输出速度（修复线 F112）：时刻都相对请求开始；失败与中断的请求没有。会话 actor（只取主回合）与
+    /// agents（只取子代理）共用这一个写法，各自再按来源筛。
+    pub fn of(call: &ModelCall) -> Option<Self> {
+        (call.status == CallStatus::Completed).then(|| Self {
+            output_tokens: call.usage.as_ref().map(|usage| usage.output_tokens),
+            duration_ms: call.completed_at_ms.saturating_sub(call.started_at_ms),
+            first_content_ms: call
+                .first_content_at_ms
+                .map(|at| at.saturating_sub(call.started_at_ms)),
+        })
+    }
+
+    /// 生成时长：总时长大于首个内容的时间时是两者之差，否则没有。
+    pub fn generation_ms(&self) -> Option<u64> {
+        let first = self.first_content_ms?;
+        (self.duration_ms > first).then(|| self.duration_ms - first)
+    }
+
+    /// 输出速度（[`output_tps`]，口径同 Node 调试面板）。
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        output_tps(self.output_tokens, self.generation_ms())
+    }
+}
+
+/// Node `calculateOutputTps`（`packages/shared/src/session-debug.ts`）：`output × 1000 / 生成时长`；任一未知或生成时长
+/// 不大于 0 时没有值，不用请求总时长代替。
+#[allow(clippy::cast_precision_loss)]
+pub fn output_tps(output_tokens: Option<u64>, generation_ms: Option<u64>) -> Option<f64> {
+    let output = output_tokens?;
+    let generation = generation_ms.filter(|ms| *ms > 0)?;
+    let tps = output as f64 * units::MS_PER_SECOND_F64 / generation as f64;
+    tps.is_finite().then_some(tps)
+}
+
+/// “最近 30 天”的天数。
+const MONTH_RANGE_DAYS: u64 = 30;
+
+/// 活动统计的日期范围（`all` / `7d` / `30d`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityRange {
+    All,
+    Week,
+    Month,
+}
+
+impl ActivityRange {
+    /// 范围包含的天数；`Self::All` 没有上限。
+    pub fn days(self) -> Option<u64> {
+        match self {
+            Self::All => None,
+            Self::Week => Some(units::DAYS_PER_WEEK),
+            Self::Month => Some(MONTH_RANGE_DAYS),
+        }
+    }
+
+    /// 切换顺序：All time → Last 7 days → Last 30 days → All time。
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Week,
+            Self::Week => Self::Month,
+            Self::Month => Self::All,
+        }
+    }
+}
+
+/// 存储的活动统计查询：本地日由 `utc_offset_minutes` 换算，`today` 是本地的今天（`YYYY-MM-DD`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityQuery {
+    pub range: ActivityRange,
+    pub today: String,
+    pub utc_offset_minutes: i32,
+}
+
+/// 一个本地日的消息数。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityDay {
+    pub date: String,
+    pub messages: u64,
+}
+
+/// 一个模型的 token（`input` 不含缓存读写）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelTokens {
+    pub model: String,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+impl ModelTokens {
+    /// 四项之和。
+    pub fn total(&self) -> u64 {
+        self.input
+            .saturating_add(self.output)
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write)
+    }
+}
+
+/// 活动统计的原始聚合（usage.md §5.2）；连续天数等由前端从它算。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityStats {
+    pub range: Option<ActivityRange>,
+    /// 查询时本地的今天。
+    pub today: String,
+    /// 有消息的本地日，按日期升序。
+    pub days: Vec<ActivityDay>,
+    /// 按 token 总数降序。
+    pub models: Vec<ModelTokens>,
+    /// 范围内开始的会话数。
+    pub sessions: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longest_session_ms: Option<u64>,
+    /// 范围内最早与最晚的会话开始（Unix 毫秒）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_session_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_session_ms: Option<u64>,
+}
+
+/// 时长的写法：不到一分钟是秒数加 `s`；否则 `Xm Ys`、`Xh Ym Zs`、`Xd Yh Zm`。
+pub fn format_duration(ms: u64) -> String {
+    if ms < units::MS_PER_MINUTE {
+        return format!("{}s", ms / units::MS_PER_SECOND);
+    }
+    // 拆分与进位只定义在 base 的 `units::split_ms`（秒按 Math.round 取）。
+    let units::DurationParts {
+        days,
+        hours,
+        minutes,
+        seconds,
+    } = units::split_ms(ms);
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else {
+        format!("{minutes}m {seconds}s")
+    }
+}
+
+/// 同 [`format_duration`]，末尾为 0 的单位不写（`10m`、`1h 30m`、`2h`、`1d`；工作线 F69 新增：超时转后台的说明里的
+/// 期限，docs/specs/rust-cli/shell-permissions.md §1.2.1）。不到一分钟时与 [`format_duration`] 相同。
+pub fn format_duration_trimmed(ms: u64) -> String {
+    let full = format_duration(ms);
+    if ms < units::MS_PER_MINUTE {
+        return full;
+    }
+    let mut units: Vec<&str> = full.split(' ').collect();
+    // 从最后一个单位往前去掉值为 0 的，至少留一个。
+    while units.len() > 1
+        && units
+            .last()
+            .is_some_and(|unit| unit.trim_end_matches(char::is_alphabetic) == "0")
+    {
+        units.pop();
+    }
+    units.join(" ")
+}
+
+/// 数字的写法：小于 1000 原样；否则 compact 写法、固定一位小数（`1.0k`）。
+pub fn format_number(value: u64) -> String {
+    let text = format_tokens(value);
+    if value < crate::context_usage::COMPACT_STEP || text.contains('.') {
+        return text;
+    }
+    let split = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    format!("{}.0{}", &text[..split], &text[split..])
+}
+
+/// `/usage` 会话部分的输入（usage.md §4）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub api_duration_ms: u64,
+    pub wall_duration_ms: u64,
+    pub lines_added: u64,
+    pub lines_removed: u64,
+    /// 按模型累计的用量，按首次出现的顺序。
+    pub models: Vec<(String, Usage)>,
+}
+
+impl SessionSummary {
+    /// 会话用量摘要的文字，去掉没有数据来源的费用（usage.md D1）与缓存行（D9）。
+    pub fn text(&self) -> String {
+        let lines = |n: u64| if n == 1 { "line" } else { "lines" };
+        let mut out = format!(
+            "Total duration (API):  {}\nTotal duration (wall): {}\nTotal code changes:    {} {} added, {} {} removed\n",
+            format_duration(self.api_duration_ms),
+            format_duration(self.wall_duration_ms),
+            self.lines_added,
+            lines(self.lines_added),
+            self.lines_removed,
+            lines(self.lines_removed),
+        );
+        if self.models.is_empty() {
+            out.push_str("Usage:                 0 input, 0 output, 0 cache read, 0 cache write");
+            return out;
+        }
+        out.push_str("Usage by model:");
+        for (model, usage) in &self.models {
+            out.push_str(&format!(
+                "\n{:>21}  {} input, {} output, {} cache read, {} cache write",
+                format!("{model}:"),
+                format_number(usage.input_tokens),
+                format_number(usage.output_tokens),
+                format_number(usage.cache_read_input_tokens),
+                format_number(usage.cache_creation_input_tokens),
+            ));
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+#[path = "metering_tests.rs"]
+mod tests;

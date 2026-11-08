@@ -14,6 +14,7 @@
     "third-party/runtime/*.txt",
     "docs/knip/docs/LICENSE",
     "docs/knip/docs/licenses/**",
-    "docs/electron/**"
+    "docs/electron/**",
+    "packages/rust-cli/**"
   ]
 }

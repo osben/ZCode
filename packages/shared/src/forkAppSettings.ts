@@ -27,6 +27,7 @@ export const FORK_SETTING_KEYS = [
   "memoryIndexAsContext",
   "incognitoDefaults",
   "resourceTelemetryEnabled",
+  "agentRuntime",
 ] as const satisfies readonly (keyof AppSettings)[];
 
 export type ForkSettingKey = (typeof FORK_SETTING_KEYS)[number];
@@ -59,6 +60,15 @@ const voiceDictationStoredSchema = voiceDictationSettingsSchema.extend({
   postProcessPrompt: voiceDictationSettingsSchema.shape.postProcessPrompt.catch(undefined),
 });
 
+/** Agent conversation runtime (specs/fork-agent-runtime-selection.md); takes effect after restart. */
+export const FORK_AGENT_RUNTIMES = ["node", "rust"] as const;
+export type ForkAgentRuntime = (typeof FORK_AGENT_RUNTIMES)[number];
+export const forkAgentRuntimeSchema = z.enum(FORK_AGENT_RUNTIMES);
+/** Main writes the effective runtime into every local Host env; a shell value overrides the setting. */
+export const FORK_AGENT_RUNTIME_ENV = "ZCODE_FORK_AGENT_RUNTIME";
+/** Absolute path of the zcode-rs binary; Main writes it only when the effective runtime is rust. */
+export const FORK_RUST_AGENT_PATH_ENV = "ZCODE_FORK_RUST_AGENT_PATH";
+
 const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);
 const worktreeProjectOverrideSchema = z.object({
   defaultBaseBranch: nonEmptyStringSchema.optional(),
@@ -85,6 +95,7 @@ export const forkAppSettingsStoredSchema = z.object({
   memoryIndexAsContext: z.boolean().optional().catch(undefined),
   incognitoDefaults: incognitoDefaultsStoredSchema.optional().catch(undefined),
   resourceTelemetryEnabled: z.boolean().optional().catch(undefined),
+  agentRuntime: forkAgentRuntimeSchema.optional().catch(undefined),
   // Only uk-UA is ever stored here; any other value is dropped on read (specs/fork-locale-storage.md).
   localePreferenceOverride: z.literal("uk-UA").optional().catch(undefined),
   localeOverride: z.literal("uk-UA").optional().catch(undefined),
@@ -96,6 +107,7 @@ export type ForkAppSettingsStored = z.infer<typeof forkAppSettingsStoredSchema>;
 export const forkAppSettingsSchema = forkAppSettingsStoredSchema.extend({
   codingPlanLimitAutoContinueDefaultEnabled: z.boolean().default(true).catch(true),
   resourceTelemetryEnabled: z.boolean().default(false).catch(false),
+  agentRuntime: forkAgentRuntimeSchema.default("node").catch("node"),
 });
 
 export type ForkAppSettings = z.infer<typeof forkAppSettingsSchema>;
@@ -110,6 +122,7 @@ export const forkAppSettingsPatchSchema = z.object({
   memoryIndexAsContext: z.boolean().optional(),
   incognitoDefaults: incognitoDefaultsPatchSchema.optional(),
   resourceTelemetryEnabled: z.boolean().optional(),
+  agentRuntime: forkAgentRuntimeSchema.optional(),
   localePreferenceOverride: z.literal("uk-UA").optional(),
   localeOverride: z.literal("uk-UA").optional(),
 });
