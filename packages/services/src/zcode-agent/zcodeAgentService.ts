@@ -6904,7 +6904,9 @@ export function createZCodeAgentService(
           commandType: attachmentRefRefusal.commandType,
           reason: attachmentRefRefusal.reason,
         });
-        throw new Error(attachmentRefRefusal.code);
+        throw Object.assign(new Error(attachmentRefRefusal.code), {
+          code: attachmentRefRefusal.code,
+        });
       }
       const ttft =
         !params.workspaceIdentity?.trim() &&

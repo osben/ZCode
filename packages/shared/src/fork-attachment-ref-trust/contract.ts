@@ -10,11 +10,23 @@
  */
 export const ATTACHMENT_REF_NOT_AUTHORIZED = "fault.attachment.refNotAuthorized";
 
-/** True when a rejected command error carries the attachment ref refusal code. */
+/**
+ * True when a rejected command error carries the attachment ref refusal code: as `code`, or in the
+ * message (IPC bridges prefix the remote message), on an Error, a plain record or a nested `error`.
+ */
 export function isAttachmentRefNotAuthorizedError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  // IPC and RPC bridges prefix the remote message, so match the code anywhere in it.
-  return message.includes(ATTACHMENT_REF_NOT_AUTHORIZED);
+  if (typeof error === "string") return error.includes(ATTACHMENT_REF_NOT_AUTHORIZED);
+  if (typeof error !== "object" || error === null) return false;
+  const record = error as { code?: unknown; message?: unknown; error?: unknown };
+  if (record.code === ATTACHMENT_REF_NOT_AUTHORIZED) return true;
+  if (typeof record.message === "string" && record.message.includes(ATTACHMENT_REF_NOT_AUTHORIZED))
+    return true;
+  return (
+    typeof record.error === "object" &&
+    record.error !== null &&
+    record.error !== error &&
+    isAttachmentRefNotAuthorizedError(record.error)
+  );
 }
 
 /**

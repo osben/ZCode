@@ -15,14 +15,24 @@ describe("isAttachmentRefNotAuthorizedError", () => {
       ),
     ).toBe(true);
     expect(isAttachmentRefNotAuthorizedError(ATTACHMENT_REF_NOT_AUTHORIZED)).toBe(true);
+    // The RPC client rebuilds an Error and passes `code` through; other bridges send records.
+    expect(
+      isAttachmentRefNotAuthorizedError(
+        Object.assign(new Error("Command failed"), { code: ATTACHMENT_REF_NOT_AUTHORIZED }),
+      ),
+    ).toBe(true);
+    expect(isAttachmentRefNotAuthorizedError({ message: ATTACHMENT_REF_NOT_AUTHORIZED })).toBe(
+      true,
+    );
+    expect(
+      isAttachmentRefNotAuthorizedError({ error: { code: ATTACHMENT_REF_NOT_AUTHORIZED } }),
+    ).toBe(true);
   });
 
   it("ignores other failures", () => {
     expect(isAttachmentRefNotAuthorizedError(new Error("proto.invalidPayload"))).toBe(false);
     expect(isAttachmentRefNotAuthorizedError(undefined)).toBe(false);
-    expect(isAttachmentRefNotAuthorizedError({ message: ATTACHMENT_REF_NOT_AUTHORIZED })).toBe(
-      false,
-    );
+    expect(isAttachmentRefNotAuthorizedError({ code: "proto.invalidPayload" })).toBe(false);
   });
 });
 
