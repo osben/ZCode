@@ -238,6 +238,11 @@ pub enum KernelEvent {
         tool_call: String,
         enabled: bool,
     },
+    /// Fork: the desktop goal changed (set, paused, resumed, evaluated, cleared); `goal` is the
+    /// state after the change (Node `TargetChanged`, projected as the snapshot `goal`).
+    GoalChanged {
+        goal: Option<crate::goal::GoalState>,
+    },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。
     ScheduledFire {

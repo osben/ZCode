@@ -184,6 +184,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             peers: crate::PeerDeps::off(),
             detached: None,
             one_input_per_turn: false,
+            desktop_goals: false,
         },
         SessionState {
             commands: Default::default(),

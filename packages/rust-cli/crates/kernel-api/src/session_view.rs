@@ -32,6 +32,7 @@ impl SessionView {
             output_speed: None,
             commands: Default::default(),
             turn_files: Default::default(),
+            goal: None,
         }
     }
 }

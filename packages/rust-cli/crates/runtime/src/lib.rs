@@ -144,6 +144,8 @@ pub struct LocalKernel {
     detached: Arc<rust_cli_session::DetachedAsks>,
     /// Fork: each queued input runs as its own turn, like the Node desktop agent ([`Extensions::node_desktop`]).
     one_input_per_turn: bool,
+    /// Fork: goals run like the Node desktop agent ([`Extensions::node_desktop`]).
+    desktop_goals: bool,
 }
 
 impl LocalKernel {
@@ -307,6 +309,7 @@ impl LocalKernel {
             peers: extensions.peers,
             detached,
             one_input_per_turn: extensions.node_desktop,
+            desktop_goals: extensions.node_desktop,
         }
     }
 

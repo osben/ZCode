@@ -888,3 +888,60 @@ fn full_access_grants_and_plan_tool_transitions_are_in_the_config() {
     let snapshot = feed.projection.snapshot(1, "e");
     assert_eq!(snapshot["config"]["planTransition"]["toolCallId"], "call-1");
 }
+
+/// Fork: the desktop goal is the snapshot `goal` (Node `goalStateSchema`) and drives the
+/// `pauseGoal` / `resumeGoal` actions.
+#[test]
+fn goal_changes_are_the_snapshot_goal_and_its_actions() {
+    use rust_cli_kernel_api::goal::{GoalPhase, GoalState};
+    let mut feed = Feed::new();
+    let snapshot = feed.projection.snapshot(1, "e");
+    assert_eq!(snapshot["goal"], Value::Null);
+    assert_eq!(
+        snapshot["availability"]["pauseGoal"],
+        json!({"allowed": false, "reasonCode": "noGoalToPause"})
+    );
+    let goal = |status| GoalState {
+        target: "msg_goal".into(),
+        objective: "tests pass".into(),
+        status,
+        iteration: 0,
+        time_used_seconds: 3,
+        active_run_started_at_ms: (status == GoalPhase::Active).then_some(1_000),
+    };
+    let deltas = feed.apply(KernelEvent::GoalChanged {
+        goal: Some(goal(GoalPhase::Active)),
+    });
+    let patch = &deltas.last().unwrap()["patch"];
+    assert_eq!(
+        patch["goal"],
+        json!({
+            "targetId": "msg_goal",
+            "objective": "tests pass",
+            "summaryTitle": null,
+            "timeUsedSeconds": 3,
+            "activeRunStartedAtMs": 1_000,
+            "status": "active",
+            "iteration": 0,
+            "verifications": [],
+            "iterations": [],
+        })
+    );
+    assert_eq!(patch["availability"]["pauseGoal"], json!({"allowed": true}));
+    assert_eq!(
+        patch["availability"]["resumeGoal"],
+        json!({"allowed": false, "reasonCode": "goalNotPaused"})
+    );
+    let deltas = feed.apply(KernelEvent::GoalChanged {
+        goal: Some(goal(GoalPhase::Paused)),
+    });
+    let patch = &deltas.last().unwrap()["patch"];
+    assert_eq!(patch["goal"]["status"], "paused");
+    assert_eq!(patch["goal"]["activeRunStartedAtMs"], Value::Null);
+    assert_eq!(
+        patch["availability"]["resumeGoal"],
+        json!({"allowed": true})
+    );
+    feed.apply(KernelEvent::GoalChanged { goal: None });
+    assert_eq!(feed.projection.snapshot(1, "e")["goal"], Value::Null);
+}

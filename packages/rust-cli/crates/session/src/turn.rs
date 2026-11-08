@@ -68,6 +68,9 @@ pub(crate) enum TurnInput {
     },
     /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
     Compact { command: CommandId },
+    /// Fork (desktop App): a resumed goal's continuation (Node `goal-continuation`, model-only):
+    /// `text` is the wrapped continuation prompt, a meta user message.
+    GoalContinuation { text: String },
 }
 
 impl Actor {
@@ -102,6 +105,10 @@ impl Actor {
                 }
                 return Ok(());
             }
+            TurnInput::GoalContinuation { text } => (
+                vec![(text, meta(rust_cli_kernel_api::goal::CONTINUATION_SOURCE))],
+                Vec::new(),
+            ),
             TurnInput::Cron(fire) => {
                 fired = Some(self.fire_prelude(fire.kind));
                 // `/loop` 的哨兵在这里展开（tools-more.md §17.3）。

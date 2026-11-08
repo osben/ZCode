@@ -178,6 +178,13 @@ pub enum Command {
     GrantFullAccess {
         interaction: String,
     },
+    /// Fork (desktop App): Node `pauseGoal`: an active goal becomes paused (persisted as a
+    /// `goal_status` attachment), then the running turn is aborted. No active goal: a no-op.
+    PauseGoal,
+    /// Fork (desktop App): Node `resumeGoal`: a paused goal becomes active and a continuation turn
+    /// starts. Rejected while a turn runs ([`GOAL_ACTIVE_TURN`]) or with plan on
+    /// ([`GOAL_PLAN_EXCLUSIVE`]); no paused goal: a no-op.
+    ResumeGoal,
     Rewind {
         target: MessageId,
         scope: RewindScope,
@@ -375,7 +382,16 @@ pub struct SessionView {
     /// actor from its checkpoints; empty for sessions without file writes.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub turn_files: std::collections::BTreeMap<MessageId, TurnFileFacts>,
+    /// Fork: the desktop goal state (Node snapshot `goal`); None without a goal or outside the
+    /// desktop App.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<crate::goal::GoalState>,
 }
+
+/// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
+pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
+/// Fork: `Command::ResumeGoal` with plan on (Node `guard.planGoalMutuallyExclusive`).
+pub const GOAL_PLAN_EXCLUSIVE: &str = "guard.planGoalMutuallyExclusive";
 
 /// One turn's file summary carried in [`SessionView::turn_files`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

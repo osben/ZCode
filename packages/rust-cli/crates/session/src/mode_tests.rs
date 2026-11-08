@@ -133,6 +133,7 @@ fn spawn(
             peers: crate::PeerDeps::off(),
             detached: None,
             one_input_per_turn: false,
+            desktop_goals: false,
         },
         SessionState {
             commands: Default::default(),

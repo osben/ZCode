@@ -4,13 +4,15 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use rust_cli_kernel_api::goal::GoalStatus;
 use rust_cli_kernel_api::hooks::{HookEvent, HookOutcome, HookRunner, StopCondition, StopVerdict};
+use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{
     AssistantMessage, AttachmentMessage, ContentBlock, Message, Usage, UserMessage, UserOrigin,
 };
-use rust_cli_kernel_api::session_api::SessionHandle;
+use rust_cli_kernel_api::session_api::{Ack, Command, CommandEnvelope, KernelEvent, SessionHandle};
 use rust_cli_kernel_api::testing::{ScriptedModel, text_response};
 use rust_cli_kernel_api::user_command::command_input;
 use tokio_util::sync::CancellationToken;
@@ -327,4 +329,152 @@ fn finished_goals_are_not_restored_and_stale_verdicts_are_ignored() {
     assert!(goals.checked("a", &StopVerdict::TimedOut, 20).is_none());
     let view = goals.view(&[], 20).active.unwrap();
     assert_eq!(view.tokens, 7);
+}
+
+/// Fork (desktop App): a goal set from the App reads Node's continuation prompt, is evaluated by
+/// this kernel, and reports each change as `KernelEvent::GoalChanged`.
+async fn desktop(
+    responses: usize,
+    evaluator: Arc<Evaluator>,
+) -> (crate::test_support::Built, Arc<ScriptedModel>) {
+    let model = Arc::new(ScriptedModel::new(
+        (0..responses)
+            .map(|index| text_response(&[&format!("reply {index}")]))
+            .collect(),
+    ));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = evaluator;
+    setup.desktop_goals = true;
+    (setup.build().await, model)
+}
+
+fn goal_command(id: &str, command: Command) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command,
+    }
+}
+
+#[tokio::test]
+async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
+    use rust_cli_kernel_api::goal::GoalPhase;
+    let (built, model) = desktop(1, Evaluator::with(Vec::new())).await;
+    let mut events = built.session.subscribe(Some(0));
+    turn(&built.session, "c1", "/goal tests pass").await;
+    let view = built.session.view().await.unwrap();
+    let shown = shorten(&view.messages);
+    let kinds: Vec<&str> = shown.iter().map(|(kind, _)| kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "goal_status",
+            "human",
+            "target_continuation",
+            "assistant",
+            "goal_status"
+        ]
+    );
+    assert!(
+        shown[2]
+            .1
+            .starts_with("<system-reminder>\nContinue working toward the active session goal.\n")
+    );
+    let request = format!("{:?}", model.requests()[0].messages);
+    assert!(request.contains("<untrusted_objective>\\ntests pass\\n</untrusted_objective>"));
+    assert!(!request.contains("Goal set: tests pass"));
+    let goal = view.goal.unwrap();
+    assert_eq!(
+        (goal.objective.as_str(), goal.status),
+        ("tests pass", GoalPhase::Verified)
+    );
+    let mut phases = Vec::new();
+    while let Ok(Some(event)) =
+        tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await
+    {
+        if let KernelEvent::GoalChanged { goal } = event.event {
+            phases.push(goal.map(|goal| goal.status));
+        }
+    }
+    assert_eq!(phases, [Some(GoalPhase::Active), Some(GoalPhase::Verified)]);
+}
+
+#[tokio::test]
+async fn a_desktop_goal_pauses_and_resumes_with_a_continuation_turn() {
+    use rust_cli_kernel_api::goal::GoalPhase;
+    // The first evaluation fails (the goal stays active, the turn ends); the resumed one is met.
+    let failed = StopVerdict::Failed {
+        message: "no verdict".to_owned(),
+    };
+    let (built, model) = desktop(2, Evaluator::with(vec![failed])).await;
+    turn(&built.session, "c1", "/goal tests pass").await;
+    let active = built.session.view().await.unwrap().goal.unwrap();
+    assert_eq!(active.status, GoalPhase::Active);
+    assert!(active.active_run_started_at_ms.is_some());
+    // Resuming an active goal is a no-op.
+    assert!(matches!(
+        built
+            .session
+            .send(goal_command("c2", Command::ResumeGoal))
+            .await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(model.requests().len(), 1);
+    assert!(matches!(
+        built
+            .session
+            .send(goal_command("c3", Command::PauseGoal))
+            .await,
+        Ack::Accepted { .. }
+    ));
+    let paused = built.session.view().await.unwrap().goal.unwrap();
+    assert_eq!(
+        (
+            paused.status,
+            paused.active_run_started_at_ms,
+            paused.target
+        ),
+        (GoalPhase::Paused, None, active.target.clone())
+    );
+    let mut events = built.session.subscribe(None);
+    assert!(matches!(
+        built
+            .session
+            .send(goal_command("c4", Command::ResumeGoal))
+            .await,
+        Ack::Accepted { .. }
+    ));
+    until(&mut events, finished).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        format!("{:?}", requests[1].messages)
+            .contains("Continue working toward the active session goal.")
+    );
+    let done = built.session.view().await.unwrap();
+    assert_eq!(done.goal.unwrap().status, GoalPhase::Verified);
+    // The continuation is model-only: no second human message.
+    let humans = shorten(&done.messages)
+        .iter()
+        .filter(|(kind, _)| kind == "human")
+        .count();
+    assert_eq!(humans, 1);
+}
+
+#[test]
+fn a_paused_goal_is_restored_paused_and_not_evaluated() {
+    let paused = [
+        status(r#"{"met":false,"sentinel":true,"condition":"a"}"#),
+        status(r#"{"met":false,"condition":"a","paused":true}"#),
+    ];
+    let goals = Goals::restore(&paused, 5);
+    assert_eq!(goals.condition(), None);
+    assert_eq!(
+        goals.state().map(|goal| goal.status),
+        Some(rust_cli_kernel_api::goal::GoalPhase::Paused)
+    );
+    assert!(goals.control(true).is_none());
+    assert_eq!(
+        goals.control(false).and_then(|status| status.paused),
+        Some(false)
+    );
 }

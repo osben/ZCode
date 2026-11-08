@@ -278,6 +278,7 @@ impl LocalKernel {
             peers: self.peers.clone(),
             detached: Some(self.detached.clone()),
             one_input_per_turn: self.one_input_per_turn,
+            desktop_goals: self.desktop_goals,
         };
         let session = Arc::new(Session::spawn(deps, state, opened));
         tracing::info!(event = "session.open", session = %id, opened = ?opened, "session opened");

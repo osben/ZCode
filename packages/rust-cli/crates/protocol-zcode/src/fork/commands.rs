@@ -3,10 +3,13 @@
 
 use std::sync::Arc;
 
+use rust_cli_kernel_api::session_api::{
+    Ack as KernelAck, Command, GOAL_ACTIVE_TURN, GOAL_PLAN_EXCLUSIVE,
+};
 use rust_cli_protocol_core::sessions::Bridged;
 
 use super::{file_summary, queue, row_commands, session_config, session_delete};
-use crate::inbox::{Ack, Envelope};
+use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::projection::state::Phase;
 use crate::server::Server;
@@ -34,6 +37,30 @@ pub(crate) async fn decide(
         "reorderQueueItem" => queue::reorder_queue_item(live, envelope, revision).await,
         "setAutoDrain" => queue::set_auto_drain(live, envelope, revision).await,
         "sendQueuedNow" => queue::send_queued_now(live, envelope, revision).await,
+        "pauseGoal" => goal(live, envelope, revision, Command::PauseGoal).await,
+        "resumeGoal" => goal(live, envelope, revision, Command::ResumeGoal).await,
         _ => return None,
     })
+}
+
+/// Fork: Node `pauseGoal` / `resumeGoal`. The kernel owns the goal; a refused resume carries Node's
+/// reason code (`activeTurn`, `guard.planGoalMutuallyExclusive`).
+async fn goal(live: &Bridged<Live>, envelope: &Envelope, revision: u64, command: Command) -> Ack {
+    match crate::commands::send(live.handle.as_ref(), &envelope.command_id, command).await {
+        KernelAck::Rejected { reason } => {
+            let code = if reason == GOAL_ACTIVE_TURN || reason == GOAL_PLAN_EXCLUSIVE {
+                reason.clone()
+            } else {
+                "fault.command.inputRejected".to_owned()
+            };
+            Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                &code,
+                reason,
+                revision,
+            )
+        }
+        _ => Ack::accepted(&envelope.command_id, revision, None),
+    }
 }

@@ -157,6 +157,8 @@ pub(crate) struct Setup {
     pub detached: Option<Arc<crate::DetachedAsks>>,
     /// Fork: `SessionDeps::one_input_per_turn`; off by default.
     pub one_input_per_turn: bool,
+    /// Fork: `SessionDeps::desktop_goals`; off by default.
+    pub desktop_goals: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -198,6 +200,7 @@ impl Setup {
             peers: crate::PeerDeps::off(),
             detached: None,
             one_input_per_turn: false,
+            desktop_goals: false,
             store: None,
             store_hooks: None,
             machines: None,
@@ -289,6 +292,7 @@ impl Setup {
                 peers: self.peers,
                 detached: self.detached,
                 one_input_per_turn: self.one_input_per_turn,
+                desktop_goals: self.desktop_goals,
             },
             SessionState {
                 commands: Default::default(),

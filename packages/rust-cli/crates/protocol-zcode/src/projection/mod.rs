@@ -94,6 +94,8 @@ pub struct Projection {
     permission_grant: Option<String>,
     /// Fork: the last plan tool transition (`config.planTransition`: call id, plan switch).
     plan_transition: Option<(String, bool)>,
+    /// Fork: the desktop goal (snapshot `goal`), from the view and `KernelEvent::GoalChanged`.
+    goal: Option<rust_cli_kernel_api::goal::GoalState>,
     followup: Followup,
     levels: Vec<String>,
     context: Option<rust_cli_kernel_api::compaction::ContextOccupancy>,
@@ -214,6 +216,7 @@ impl Projection {
             plan: view.plan,
             permission_grant: None,
             plan_transition: None,
+            goal: view.goal.clone(),
             followup,
             levels,
             context: view.context_usage,
@@ -446,10 +449,35 @@ impl Projection {
         state::control(self.phase, self.active.as_ref(), self.error.as_ref())
     }
 
+    /// Fork: the session actions for the current phase, compaction and goal.
+    fn availability(&self) -> Value {
+        let goal = self.goal_json();
+        state::availability(self.phase, self.compacting, goal["status"].as_str())
+    }
+
+    /// Fork: the snapshot `goal` (Node `goalStateSchema`); this kernel keeps no verifier records.
+    fn goal_json(&self) -> Value {
+        let Some(goal) = &self.goal else {
+            return Value::Null;
+        };
+        let status = serde_json::to_value(goal.status).unwrap_or(Value::Null);
+        json!({
+            "targetId": goal.target,
+            "objective": goal.objective,
+            "summaryTitle": null,
+            "timeUsedSeconds": goal.time_used_seconds,
+            "activeRunStartedAtMs": goal.active_run_started_at_ms,
+            "status": status,
+            "iteration": goal.iteration,
+            "verifications": [],
+            "iterations": [],
+        })
+    }
+
     /// 回合的开始、结束等改变阶段的事件：control、availability 与 inputRouting 一起换。
     fn phase_patch(&self, patch: &mut Map<String, Value>) {
         patch.insert("control".into(), self.control());
-        patch.insert("availability".into(), state::availability());
+        patch.insert("availability".into(), self.availability());
         patch.insert("inputRouting".into(), self.input_routing());
     }
 
@@ -618,18 +646,26 @@ impl Projection {
                 self.plan_transition = Some((tool_call.clone(), *enabled));
                 patch.insert("config".into(), self.config());
             }
+            KernelEvent::GoalChanged { goal } => {
+                self.goal.clone_from(goal);
+                patch.insert("goal".into(), self.goal_json());
+                patch.insert("availability".into(), self.availability());
+            }
             // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
             KernelEvent::CompactStarted { trigger } => {
                 self.compacting = true;
                 self.compact_started(*trigger, now, seq, &mut out);
+                patch.insert("availability".into(), self.availability());
             }
             KernelEvent::CompactDone { .. } => {
                 self.compacting = false;
                 self.compact_settled("success", &mut out);
+                patch.insert("availability".into(), self.availability());
             }
             KernelEvent::CompactFailed { .. } => {
                 self.compacting = false;
                 self.compact_settled("failed", &mut out);
+                patch.insert("availability".into(), self.availability());
             }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
@@ -1004,7 +1040,7 @@ impl Projection {
             "seq": seq,
             "revision": self.revision,
             "control": self.control(),
-            "availability": state::availability(),
+            "availability": self.availability(),
             "inputRouting": self.input_routing(),
             "meta": state::meta(&self.title, true),
             "config": self.config(),
@@ -1015,7 +1051,7 @@ impl Projection {
             "pendingCommands": [],
             "backgroundWorks": [],
             "subagents": {"revision": 0, "childSessionIds": [], "running": [], "endedTotal": 0},
-            "goal": null,
+            "goal": self.goal_json(),
             "plan": null,
             "workspaceHookAdmission": null,
             "rows": {

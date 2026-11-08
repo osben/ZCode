@@ -21,6 +21,7 @@ mod duration;
 mod fork;
 mod fork_input;
 mod goal;
+mod goal_desktop;
 mod hooks;
 mod inbox;
 mod input;
@@ -143,6 +144,9 @@ pub struct SessionDeps {
     /// Fork: queued inputs are not merged into one turn; each runs as its own turn, like the Node desktop agent
     /// (its queue drains one item per turn). The app-server turns it on.
     pub one_input_per_turn: bool,
+    /// Fork: goals run like the Node desktop agent: Node's continuation prompt, pause and resume,
+    /// and `KernelEvent::GoalChanged` for the App's goal panel. The app-server turns it on.
+    pub desktop_goals: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。

@@ -217,6 +217,7 @@ fn what_rings() {
             iterations: None,
             duration_ms: None,
             tokens: None,
+            paused: None,
         }))
     };
     assert!(rings(&goal(true, false)));

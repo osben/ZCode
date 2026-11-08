@@ -64,6 +64,8 @@ impl Projection {
                 let text = text_of(&user.content);
                 // Fork: rows stored before attachments were file parts kept the reminders in the model text.
                 let shown = rust_cli_kernel_api::prompt_attachment::display(&text).unwrap_or(text);
+                // Fork: a slash command row shows what the user typed (`/goal <objective>`), like Node.
+                let shown = rust_cli_kernel_api::user_command::display(&shown).unwrap_or(shown);
                 row.insert("text".into(), json!(shown));
                 // Fork: chips come from the stored attachments (live and cold alike), never from the input facts.
                 let chips: Vec<Value> = user

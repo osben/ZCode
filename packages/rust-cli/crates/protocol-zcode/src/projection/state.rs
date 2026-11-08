@@ -93,18 +93,52 @@ fn denied(reason: &str) -> Value {
     json!({"allowed": false, "reasonCode": reason})
 }
 
-/// 操作是否可用。P1 不支持的命令（fork、compact、立即发送排队项）标成不可用，原因是 `proto.unsupportedCommand`。
-pub fn availability() -> Value {
-    let unsupported = "proto.unsupportedCommand";
+/// Fork: the session actions (Node `computeAvailability`, projection-state.ts): `goal` is the goal
+/// status name (snapshot `goal.status`), None without a goal.
+pub fn availability(phase: Phase, compacting: bool, goal: Option<&str>) -> Value {
+    let running = phase == Phase::Running;
+    let draft = phase == Phase::Draft;
+    let lock = || denied("compactOperationLock");
+    let fork = if compacting {
+        lock()
+    } else if draft {
+        denied("forkTargetNotStable")
+    } else {
+        allowed()
+    };
+    let compact = if compacting {
+        lock()
+    } else if draft {
+        denied("idleCannotCompact")
+    } else {
+        allowed()
+    };
+    let send_queued_now = if compacting {
+        lock()
+    } else if running {
+        allowed()
+    } else {
+        denied("sendQueuedNowRequiresRunning")
+    };
+    let pause = match goal {
+        Some("active" | "verifying" | "notSatisfied") => allowed(),
+        Some(_) => denied("goalNotActive"),
+        None => denied("noGoalToPause"),
+    };
+    let resume = match goal {
+        Some("paused") => allowed(),
+        Some(_) => denied("goalNotPaused"),
+        None => denied("noGoalToResume"),
+    };
     json!({
-        "fork": denied(unsupported),
-        "compact": denied(unsupported),
+        "fork": fork,
+        "compact": compact,
         "switchModelConfig": allowed(),
         "setFollowupMode": allowed(),
         "queueEdit": allowed(),
-        "sendQueuedNow": denied(unsupported),
-        "pauseGoal": denied("noGoalToPause"),
-        "resumeGoal": denied("noGoalToResume"),
+        "sendQueuedNow": send_queued_now,
+        "pauseGoal": pause,
+        "resumeGoal": resume,
     })
 }
 

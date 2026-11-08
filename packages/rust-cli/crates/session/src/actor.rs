@@ -602,6 +602,8 @@ impl Actor {
                 self.submit_with(id, kind, text, content, delivery, execution)
                     .await
             }
+            Command::PauseGoal => self.pause_goal().await,
+            Command::ResumeGoal => self.resume_goal().await,
             Command::GrantFullAccess { interaction } => {
                 match self.grant_full_access(id, interaction).await {
                     Ok(()) => accepted(),
@@ -711,6 +713,7 @@ impl Actor {
                 .filter(|(prompt, _)| self.messages.iter().any(|m| m.id() == *prompt))
                 .map(|(prompt, summary)| (prompt.clone(), summary.facts()))
                 .collect(),
+            goal: self.goal_state(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

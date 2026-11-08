@@ -98,6 +98,7 @@ pub(crate) async fn session_on_machines(
             peers: crate::PeerDeps::off(),
             detached: None,
             one_input_per_turn: false,
+            desktop_goals: false,
         },
         SessionState {
             commands: Default::default(),
