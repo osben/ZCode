@@ -550,7 +550,12 @@ impl Projection {
                 if !output.display.is_null() && output.display["kind"] != "node_repl_images" {
                     settled["display"] = output.display.clone();
                 }
-                let status = if self.denied.remove(tool_use.as_str()) {
+                // Fork: a plan-mode policy denial is Node's `PermissionDenied` (`settlePermission(.., "cancelled")`):
+                // the row is cancelled without output, not a failed tool. The stored result carries only its text,
+                // so the cold read settles it by the same text.
+                let plan_denied =
+                    output.is_error && text == rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
+                let status = if self.denied.remove(tool_use.as_str()) || plan_denied {
                     ToolStatus::Cancelled
                 } else if output.is_error {
                     ToolStatus::Error
@@ -561,8 +566,10 @@ impl Projection {
                     &tool_key(tool_use.as_str()),
                     |row| {
                         row.insert("status".into(), json!(status.as_str()));
-                        row.insert("output".into(), settled);
-                        row.insert("endedAt".into(), json!(now));
+                        if !plan_denied {
+                            row.insert("output".into(), settled);
+                            row.insert("endedAt".into(), json!(now));
+                        }
                         row.remove("approvalInteractionId");
                     },
                     &mut out,

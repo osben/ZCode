@@ -1137,3 +1137,69 @@ fn a_control_turn_header_is_control_only_and_counts_no_usage() {
     let snapshot = feed.projection.snapshot(9, "epoch-1");
     assert_eq!(snapshot["usage"]["cumulative"]["outputTokens"], 0);
 }
+
+/// Fork: a plan-mode policy denial settles its tool row like Node's `PermissionDenied` (`cancelled`, no output), not
+/// as a failed tool, live and on a cold read of the stored result.
+#[test]
+fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
+    use rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
+
+    let tool = ToolUseId::new("toolu_w");
+    let call = assistant(
+        "msg_a1",
+        vec![ContentBlock::ToolUse {
+            id: tool.clone(),
+            name: "Write".into(),
+            input: json!({"file_path": "/w/x.txt", "content": "x"}),
+        }],
+    );
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: call.clone(),
+    });
+    let done = feed.apply(KernelEvent::ToolDone {
+        tool_use: tool.clone(),
+        output: rust_cli_kernel_api::tool::ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: PLAN_MODE_READ_ONLY.into(),
+            }],
+            is_error: true,
+            display: Value::Null,
+        },
+    });
+    let row = &done[0]["row"];
+    assert_eq!(row["status"], "cancelled", "{row}");
+    assert!(row.get("output").is_none(), "{row}");
+
+    let result = Message::User(UserMessage {
+        id: MessageId::new("msg_r1"),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: tool,
+            content: vec![ToolResultContent::Text {
+                text: PLAN_MODE_READ_ONLY.into(),
+            }],
+            is_error: true,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new("msg_a1"),
+        },
+    });
+    let snapshot = Projection::from_view(
+        &view(vec![user("msg_u1", "plan"), call, result]),
+        Followup::Guide,
+        Vec::new(),
+    )
+    .snapshot(0, "epoch");
+    let cold = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "toolCall")
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(cold["status"], "cancelled", "{snapshot}");
+}
