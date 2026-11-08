@@ -281,33 +281,32 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # Two upstream tests are flaky (also locally, before the fork touched them):
+      # Same runner as upstream's `pnpm test:rust-cli`. Pinned prebuilt release binary instead of a
+      # multi-minute `cargo install`.
+      - name: Install cargo-nextest
+        env:
+          NEXTEST_VERSION: 0.9.151
+        run: |
+          curl -LsSf "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          cargo nextest --version
+
+      # nextest runs every test in its own process; packages/rust-cli/.config/nextest.toml sets
+      # fail-fast = false and the slow-test timeouts. Process isolation matters on Linux: many tests
+      # write a fake executable and exec it, and under `cargo test` a sibling thread's fork() can
+      # still hold the write fd (ETXTBSY, "Text file busy"; seen in ssh-connect provision_latest_tests).
+      # --retries 2 (config default is 1) covers the known upstream flakes, which nextest then
+      # reports as FLAKY instead of failing the job:
       # - rust-cli-fs exclusive::tests::only_one_holder_at_a_time fails about 1 run in 3;
       # - rust-cli-platform team::platform_tests::an_account_change_during_the_query_discards_the_round
       #   fails under full parallel load.
-      # The workspace run skips them (--skip is a substring match; the team:: prefix keeps the
-      # same-named personal:: test in the run), then each runs alone, up to 3 attempts.
-      - name: cargo test
-        run: >
-          cargo test --workspace --locked --no-fail-fast --
-          --skip exclusive::tests::only_one_holder_at_a_time
-          --skip team::platform_tests::an_account_change_during_the_query_discards_the_round
+      # A test that fails all three attempts still fails the job.
+      - name: cargo nextest
+        run: cargo nextest run --workspace --locked --retries 2
 
-      - name: cargo test (known upstream flakes, isolated with retries)
-        run: |
-          set -uo pipefail
-          run_flaky() {
-            local package="$1" test="$2" attempt
-            for attempt in 1 2 3; do
-              if cargo test --locked -p "$package" --lib -- --exact "$test"; then
-                return 0
-              fi
-              echo "::warning::$package $test failed on attempt $attempt"
-            done
-            return 1
-          }
-          run_flaky rust-cli-fs exclusive::tests::only_one_holder_at_a_time || exit 1
-          run_flaky rust-cli-platform team::platform_tests::an_account_change_during_the_query_discards_the_round || exit 1
+      # nextest does not run doctests.
+      - name: cargo test (doctests)
+        run: cargo test --workspace --locked --doc
 
       - name: build-number untouched
         run: git diff --exit-code -- build-number
