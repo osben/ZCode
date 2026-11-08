@@ -345,6 +345,14 @@ impl Kernel for LocalKernel {
         permissions::change(&self.gate, self.ports.store.as_ref(), change).await
     }
 
+    /// Fork (desktop App): the Composer skill reference catalog (Node `skill-reference-catalog.ts`).
+    async fn skill_references(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Vec<rust_cli_kernel_api::user_command::SkillReference> {
+        self.ext.skills().references(workspace).await
+    }
+
     /// TUI 的斜杠补全：ext 给出的可调用 skill（ext.md §2.7）。
     async fn user_commands(
         &self,

@@ -9,3 +9,4 @@ mod queue;
 mod row_commands;
 mod session_config;
 mod session_delete;
+mod skills;

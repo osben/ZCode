@@ -563,6 +563,14 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// Fork (desktop App): the Composer skill reference catalog of this workspace. Default: none.
+    async fn skill_references(
+        &self,
+        _workspace: &crate::env::WorkspaceRef,
+    ) -> Vec<crate::user_command::SkillReference> {
+        Vec::new()
+    }
+
     /// 这个工作区里用户可调用的斜杠命令（skill，TUI 的补全；ext.md §2.7，L22）。默认没有。
     async fn user_commands(
         &self,

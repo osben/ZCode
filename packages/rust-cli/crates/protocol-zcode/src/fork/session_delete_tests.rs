@@ -250,3 +250,34 @@ async fn a_failed_kernel_delete_refuses_with_the_execution_failed_code() {
     assert!(kernel.deleted.lock().unwrap().is_empty());
     assert_eq!(*handle.closes.lock().unwrap(), vec![EndReason::Other]);
 }
+
+/// `session/lifecycle/restart` ends the kernel actor and opens the session again, announcing
+/// `unloaded` and then `ready`; `stop` ends it and leaves it closed.
+#[tokio::test]
+async fn restart_ends_the_actor_and_reopens_while_stop_leaves_it_closed() {
+    let handle = Arc::new(TestHandle {
+        id: SessionId::new("s1"),
+        view: view(false, true),
+        closes: StdMutex::new(Vec::new()),
+    });
+    let (_scope, server, _kernel) = server(handle.clone(), false);
+    let session = SessionId::new("s1");
+    server.live(&session).await.unwrap();
+    let params = json!({"sessionId": "s1", "workspace": {"workspacePath": "/w"}});
+    let restarted = server
+        .lifecycle_operation("session/lifecycle/restart", &params)
+        .await
+        .unwrap();
+    assert_eq!(restarted, json!({"completed": true}));
+    assert_eq!(*handle.closes.lock().unwrap(), vec![EndReason::Other]);
+    assert!(server.bridge.get(&session).is_some());
+    // ready (first open), unloaded, ready (reopen).
+    assert_eq!(server.lifecycles.current(&session, "ready")["revision"], 3);
+
+    server
+        .lifecycle_operation("session/lifecycle/stop", &params)
+        .await
+        .unwrap();
+    assert_eq!(handle.closes.lock().unwrap().len(), 2);
+    assert!(server.bridge.get(&session).is_none());
+}

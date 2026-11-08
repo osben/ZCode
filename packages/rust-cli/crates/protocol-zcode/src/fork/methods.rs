@@ -23,6 +23,7 @@ pub(crate) async fn dispatch(
         // zcode-rs has no dynamic workflows (P4): there are never runs to list.
         "v4/conversation/workflowRuns" => Ok(json!({"runs": []})),
         "session/debug" => session_debug(&params),
+        "skills/referenceCatalog" => super::skills::reference_catalog(server, &params).await,
         _ => return None,
     };
     Some(result.map(Reply::new))

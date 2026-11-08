@@ -10,7 +10,7 @@ use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::session_api::{Kernel, KernelError};
+use rust_cli_kernel_api::session_api::{EndReason, Kernel, KernelError};
 use rust_cli_protocol_core::connection::{Reply, Service};
 use rust_cli_protocol_core::rpc::RpcError;
 use rust_cli_protocol_core::sessions::{Bridged, SessionBridge};
@@ -196,6 +196,40 @@ impl Server {
         Ok(self.lifecycles.current(&session, "unloaded"))
     }
 
+    /// Fork: `session/lifecycle/{ensureReady,stop,restart}` (Node `SessionLifecycleController`). A manual stop
+    /// does not wait for a busy turn, like Node's no-op `assertCanStop`; restart is stop plus a cold open, so the
+    /// App sees `unloaded` and then `ready` with higher revisions. An unknown session fails like `getState`.
+    pub(crate) async fn lifecycle_operation(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
+        let Some(id) = params["sessionId"].as_str().filter(|id| !id.is_empty()) else {
+            return Err(RpcError::invalid_params("sessionId is required"));
+        };
+        let session = SessionId::new(id);
+        if self.bridge.get(&session).is_none() {
+            self.kernel
+                .session_snapshot(&session)
+                .await
+                .map_err(|error| kernel_error(&error))?;
+        }
+        if method != "session/lifecycle/ensureReady"
+            && let Some(bridged) = self.bridge.close(&session)
+        {
+            // End the kernel actor too (as session delete does): a bridge-only close keeps the old runtime, and the
+            // kernel's next open waits for this close before it cold-loads the session again.
+            bridged.handle.close(EndReason::Other).await;
+            self.announce_lifecycle(&session, "unloaded").await;
+        }
+        if method != "session/lifecycle/stop" {
+            self.live(&session)
+                .await
+                .map_err(|error| kernel_error(&error))?;
+        }
+        Ok(json!({"completed": true}))
+    }
+
     fn preferences(&self) -> std::sync::MutexGuard<'_, Preferences> {
         self.preferences.lock_unpoisoned()
     }
@@ -289,6 +323,12 @@ impl Server {
             "v4/conversation/unsubscribe" => crate::subscribe::unsubscribe(self, &params).await,
             "v4/conversation/resync" => crate::subscribe::resync(self, &params).await,
             "session/lifecycle/getState" => self.lifecycle_state(&params).await.map(Reply::new),
+            "session/lifecycle/ensureReady"
+            | "session/lifecycle/stop"
+            | "session/lifecycle/restart" => self
+                .lifecycle_operation(method, &params)
+                .await
+                .map(Reply::new),
             "v4/conversation/rowsRange" => self.rows_range(&params).await.map(Reply::new),
             "v4/connection/flow" => crate::subscribe::flow(self, &params).await,
             "v4/sessionsIndex/reconcile" => crate::subscribe::reconcile(self, &params).await,
