@@ -1,0 +1,355 @@
+//! 内核会话 API 的本地实现（[`Kernel`]）：建会话、打开会话（冷加载）、列出会话。
+
+use super::*;
+use rust_cli_kernel_api::permission::ExecutionState;
+
+#[async_trait]
+impl Kernel for LocalKernel {
+    async fn create_session(&self, request: CreateSession) -> Result<SessionId, KernelError> {
+        self.create_session_as(request, StartSource::Startup).await
+    }
+
+    /// 旧会话的询问（agents.md §4.1.2，工作线 F72）。
+    fn detached_asks(
+        &self,
+    ) -> futures_util::stream::BoxStream<'static, rust_cli_kernel_api::orchestration::DetachedEvent>
+    {
+        self.detached.subscribe()
+    }
+
+    async fn resolve_detached(
+        &self,
+        interaction: &rust_cli_kernel_api::ids::InteractionId,
+        answer: rust_cli_kernel_api::orchestration::Answer,
+    ) -> Result<(), KernelError> {
+        self.detached.resolve(interaction, answer).await
+    }
+
+    async fn open_session(
+        &self,
+        session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        self.open_session_as(session, StartSource::Resume).await
+    }
+
+    async fn create_session_as(
+        &self,
+        request: CreateSession,
+        start: StartSource,
+    ) -> Result<SessionId, KernelError> {
+        // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
+        // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
+        self.defaults.selection.settled().await;
+        let id = request.id.unwrap_or_else(|| self.ports.ids.session());
+        let meta = SessionMeta {
+            id: id.clone(),
+            kind: SessionKind::Interactive,
+            parent: None,
+            workspace: request.workspace,
+            title: String::new(),
+            // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
+            trace: TraceId::new(id.as_str()),
+            created_at_ms: self.ports.clock.now_ms(),
+        };
+        self.ports.store.create(meta.clone()).await?;
+        // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
+        let execution = ExecutionState::from_parts(request.mode, request.plan);
+        let batch = FactBatch {
+            owner_epoch: OwnerEpoch::LOCAL,
+            command: None,
+            facts: vec![
+                Fact::ModelSelected {
+                    selection: request.selection.clone(),
+                },
+                Fact::ExecutionChanged { state: execution },
+            ],
+            turn: None,
+        };
+        self.ports.store.commit(&id, batch).await?;
+        self.start(
+            SessionState::created(meta, request.selection, execution, start),
+            Opened::Created,
+        );
+        Ok(id)
+    }
+
+    async fn open_session_as(
+        &self,
+        session: &SessionId,
+        start: StartSource,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        // 同 `create_session_as`：开会话也先等缺省模型定下。
+        self.defaults.selection.settled().await;
+        // 修复（F33，session-lifecycle.md §3.3.1）：以前表里有这个会话就直接给出句柄，它正在关闭时（actor 已退出、
+        // 还没移出表）打开拿到的是死句柄，`view()` 报 `the session is closed`；两个并发的打开还会各自冷加载。现在
+        // 关闭中、加载中的等它换掉；没有条目时登记 Loading，由这个调用冷加载（失败或被丢下时守卫移出 Loading）。
+        let _loading = match self.claim(session).await {
+            table::Claim::Open(open) => return Ok(open),
+            table::Claim::Load(loading) => loading,
+        };
+        let loaded = self.ports.store.load(session).await?;
+        // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
+        // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
+        // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
+        let rules = self.ports.store.session_rules(session).await?;
+        // 会话之外按会话保存的状态（判决链的会话规则、“先读后改”记录）在启动 actor 之前恢复（table.rs 的
+        // `SessionScoped`，关闭时在同一处释放）。
+        self.closer
+            .scoped
+            .restored(
+                session,
+                &loaded,
+                rules.as_ref(),
+                self.machine().files().as_ref(),
+            )
+            .await;
+        let state = SessionState::from_loaded(
+            loaded,
+            &self.defaults.selection.current(),
+            self.defaults.mode,
+            start,
+        );
+        Ok(self.start(state, Opened::Loaded))
+    }
+
+    async fn list_sessions(
+        &self,
+        filter: SessionFilter,
+    ) -> Result<Vec<SessionSummary>, KernelError> {
+        self.ports
+            .store
+            .list(filter)
+            .await
+            .map_err(KernelError::from)
+    }
+
+    /// `/context`（context-usage.md §2）：有会话时按会话 actor 的当前视图（历史、模型、模式），只读。
+    async fn context_usage(
+        &self,
+        query: rust_cli_kernel_api::context_usage::ContextUsageQuery,
+    ) -> Result<rust_cli_kernel_api::context_usage::ContextUsage, KernelError> {
+        let Some(session) = &query.session else {
+            return self.usage.analyze(query, &[]).await;
+        };
+        let view = self.open_session(session).await?.view().await?;
+        let query = rust_cli_kernel_api::context_usage::ContextUsageQuery {
+            selection: view.selection,
+            // 判决用的模式（plan 开时是 plan，修复线 F20）。
+            mode: ExecutionState::from_parts(view.mode, view.plan).effective(),
+            ..query
+        };
+        self.usage.analyze(query, &view.messages).await
+    }
+
+    /// `@` 补全的文件清单（tui-input.md §1.2）：执行环境从工作区根遍历（遵守忽略规则）。
+    async fn workspace_files(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Result<Vec<String>, KernelError> {
+        let request = rust_cli_kernel_api::env_files::ListFiles {
+            cwd: workspace.root.clone(),
+        };
+        self.machine()
+            .search()
+            .list_files(workspace, request)
+            .await
+            .map(|list| list.files)
+            .map_err(|error| KernelError::Failed {
+                message: error.to_string(),
+            })
+    }
+
+    /// `-p` 的 stream-json 的 system/init：会话可用的工具、agent 与 skill（headless.md §3.3）。
+    async fn session_catalog(
+        &self,
+        query: rust_cli_kernel_api::catalog::CatalogQuery,
+    ) -> Result<rust_cli_kernel_api::catalog::SessionCatalog, KernelError> {
+        Ok(catalog::catalog(&self.usage, &query).await)
+    }
+
+    /// 工作区的 agent 类型（agents.md §8 的 PT 增量）：不要会话。
+    async fn agent_definitions(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Vec<rust_cli_kernel_api::catalog::AgentInfo> {
+        catalog::agents(&self.usage, workspace).await
+    }
+
+    /// `/mcp`、`/status`：ext 的连接管理给出的状态（tui-display.md §3.4）。
+    async fn mcp_servers(&self) -> Vec<rust_cli_kernel_api::manage::McpServerInfo> {
+        self.ext.mcp().server_infos()
+    }
+
+    /// `/plan open`：计划文件的位置（与 ExitPlanMode 同一个来源）与它有没有内容（tui-manage.md §8）。
+    async fn plan_file(
+        &self,
+        query: rust_cli_kernel_api::manage::PlanFileQuery,
+    ) -> Result<rust_cli_kernel_api::manage::PlanFile, KernelError> {
+        directory::plan_file(
+            self.machine().info().as_ref(),
+            self.machine().files().as_ref(),
+            &query,
+        )
+        .await
+    }
+
+    /// `/cd <path>`：检查路径，有会话时经会话 actor 换工作目录（tui-manage.md §7.1）。
+    async fn change_directory(
+        &self,
+        request: rust_cli_kernel_api::manage::ChangeDirectory,
+    ) -> Result<rust_cli_kernel_api::manage::DirectoryChanged, KernelError> {
+        directory::change(self, request).await
+    }
+
+    /// `/mcp reconnect|enable|disable`：经 ext 的连接管理（tui-manage.md §6.1）。
+    async fn mcp_control(
+        &self,
+        control: rust_cli_kernel_api::manage::McpControl,
+    ) -> Result<Vec<rust_cli_kernel_api::manage::McpServerInfo>, KernelError> {
+        Ok(self
+            .ext
+            .mcp()
+            .control(control.action, &control.servers)
+            .await)
+    }
+
+    /// 存储的只读查询与前端记录（审查 K7）：同一个存储适配器，不经会话 actor（这些都不是会话状态）。
+    fn queries(&self) -> Arc<dyn rust_cli_kernel_api::store::StoreQueries> {
+        self.ports.store.clone()
+    }
+
+    fn artifacts(&self) -> Option<Arc<dyn rust_cli_kernel_api::store::ArtifactStore>> {
+        Some(self.ports.artifacts.clone())
+    }
+
+    /// 活动统计（usage.md §5）：今天与本地日的偏移取自注入的时钟，聚合在存储。
+    async fn activity(
+        &self,
+        range: rust_cli_kernel_api::metering::ActivityRange,
+    ) -> Result<rust_cli_kernel_api::metering::ActivityStats, KernelError> {
+        let clock = &self.ports.clock;
+        let query = rust_cli_kernel_api::metering::ActivityQuery {
+            range,
+            today: clock.today(),
+            utc_offset_minutes: clock.utc_offset_minutes(clock.now_ms()),
+        };
+        self.ports
+            .store
+            .activity(query)
+            .await
+            .map_err(KernelError::from)
+    }
+
+    /// ← 会话面板：库里的会话合并本进程里打开着的会话的实时状态（tui-panels.md §2.1）。
+    async fn workspace_sessions(
+        &self,
+        filter: SessionFilter,
+    ) -> Result<Vec<rust_cli_kernel_api::panels::WorkspaceSession>, KernelError> {
+        self.overview(filter).await
+    }
+
+    /// ← 项目页与 `/resume` 页（修复线 F29，tui-panels.md §2.1）。
+    async fn project_sessions(
+        &self,
+        query: rust_cli_kernel_api::store::SessionQuery,
+    ) -> Result<rust_cli_kernel_api::panels::ProjectSessions, KernelError> {
+        self.projects(query).await
+    }
+
+    async fn set_presence(
+        &self,
+        session: &SessionId,
+        presence: rust_cli_kernel_api::peers::PeerPresence,
+    ) {
+        self.peers.port.set_presence(session, presence).await;
+    }
+
+    async fn stop_peer(
+        &self,
+        address: &rust_cli_kernel_api::peers::PeerAddress,
+    ) -> Result<(), KernelError> {
+        self.peers
+            .port
+            .stop(address)
+            .await
+            .map_err(|error| KernelError::Failed {
+                message: error.to_string(),
+            })
+    }
+
+    async fn rename_session(&self, session: &SessionId, title: String) -> Result<(), KernelError> {
+        self.rename(session, title).await
+    }
+
+    async fn delete_session(&self, session: &SessionId) -> Result<(), KernelError> {
+        self.delete(session).await
+    }
+
+    async fn session_snapshot(
+        &self,
+        session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::session_api::SessionView, KernelError> {
+        self.snapshot(session).await
+    }
+
+    /// `/hooks`：hooks 引擎当前快照里的配置（tui-display.md §3.5）。
+    async fn hooks(&self) -> Vec<rust_cli_kernel_api::manage::HookEntry> {
+        self.hooks.entries()
+    }
+
+    /// `/diff` 的未提交改动：执行环境里 git 的原始输出（tui-manage.md §4.1）。
+    async fn uncommitted_diff(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Result<rust_cli_kernel_api::env_git::GitDiff, KernelError> {
+        let request = rust_cli_kernel_api::env_git::GitDiffRequest {
+            cwd: workspace.root.clone(),
+        };
+        // `/diff` 看会话主 env 上的仓库（deployment.md §10）。
+        self.machine()
+            .git()
+            .git_diff(workspace, request)
+            .await
+            .map_err(|error| KernelError::Failed {
+                message: error.to_string(),
+            })
+    }
+
+    /// `/export <文件名>`：经执行环境写文件（tui-manage.md §3）。
+    async fn write_export(
+        &self,
+        file: rust_cli_kernel_api::manage::ExportFile,
+    ) -> Result<String, KernelError> {
+        export::write(
+            self.machine().info().as_ref(),
+            self.machine().files().as_ref(),
+            &self.operations,
+            file,
+        )
+        .await
+    }
+
+    /// `/permissions` 的列表（tui-manage.md §1.1）。
+    async fn permission_rules(
+        &self,
+        query: rust_cli_kernel_api::permission::PermissionRulesQuery,
+    ) -> Result<Vec<rust_cli_kernel_api::permission::SourcedRule>, KernelError> {
+        permissions::listing(&self.gate, self.ports.store.as_ref(), &query).await
+    }
+
+    /// `/permissions` 的修改：落库后换上新快照（tui-manage.md §1.1）。
+    async fn change_permission_rules(
+        &self,
+        change: rust_cli_kernel_api::permission::PermissionRulesChange,
+    ) -> Result<Vec<rust_cli_kernel_api::permission::SourcedRule>, KernelError> {
+        permissions::change(&self.gate, self.ports.store.as_ref(), change).await
+    }
+
+    /// TUI 的斜杠补全：ext 给出的可调用 skill（ext.md §2.7）。
+    async fn user_commands(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Vec<rust_cli_kernel_api::user_command::UserCommand> {
+        self.ext.user_commands().commands(workspace).await
+    }
+}

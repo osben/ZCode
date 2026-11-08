@@ -999,6 +999,22 @@ modules:
     publicEntrypoints: [packages/desktop/src/main/storage-sweep-gate/contract.ts]
     layers:
       adapters: .
+  # Fork: Main-side Node/Rust agent runtime selection, frozen per app process (specs/fork-agent-runtime-selection.md).
+  - id: desktop-fork-agent-runtime
+    roots: [packages/desktop/src/main/fork-agent-runtime]
+    managed: true
+    requires: [shared]
+    publicEntrypoints: [packages/desktop/src/main/fork-agent-runtime/contract.ts]
+    layers:
+      adapters: .
+  # Fork: Host-side mapping of the frozen runtime env onto the agent command (specs/fork-agent-runtime-selection.md).
+  - id: services-fork-agent-runtime
+    roots: [packages/services/src/zcode-agent/fork-agent-runtime]
+    managed: true
+    requires: [shared]
+    publicEntrypoints: [packages/services/src/zcode-agent/fork-agent-runtime/contract.ts]
+    layers:
+      adapters: .
   # web-remote-control：由 architecture:adopt 登记
   - id: web-remote-control
     roots:

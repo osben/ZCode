@@ -413,6 +413,9 @@ export interface AppSettings {
   /** Main-process resource sampling and ARMS resource events (specs/resource-telemetry-toggle.md).
    *  Fork-only: stored in fork-settings.json. Default false. */
   resourceTelemetryEnabled?: boolean;
+  /** Agent conversation runtime (specs/fork-agent-runtime-selection.md). Fork-only: stored in
+   *  fork-settings.json. Default "node"; read once at app start. */
+  agentRuntime?: "node" | "rust";
   onboardingOccupation?:
     | "office"
     | "developer"

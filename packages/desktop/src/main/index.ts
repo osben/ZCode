@@ -100,6 +100,7 @@ import {
   HostMessageTypes,
 } from "@zcode/shared";
 import { logger, webRemoteControlRelayLogger, flushLocalTtftLogs } from "./logger.js";
+import { primeForkAgentRuntimeSelection } from "./fork-agent-runtime/contract.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import { createDesktopTelemetryFetch } from "./desktopTelemetryFetch.js";
@@ -206,7 +207,10 @@ import {
   runtimeUserDataPath,
   shouldUseElectronDefaultUserDataPath,
 } from "./desktopRuntimeEnv.js";
-import { buildAppRendererAdditionalArguments } from "./desktopElectronApp.js";
+import {
+  buildAppRendererAdditionalArguments,
+  isElectronAppPackaged,
+} from "./desktopElectronApp.js";
 import {
   disposeHostProcess,
   disposeHostProcessAndWait,
@@ -806,6 +810,12 @@ function awaitFirstHostSpawnDecision(): Promise<void> {
     return firstHostSpawnDecisionPromise;
   }
   firstHostSpawnDecisionPromise = (async () => {
+    // Fork: the agent runtime is frozen per app process before the first Host fork (specs/fork-agent-runtime-selection.md).
+    await primeForkAgentRuntimeSelection({
+      readStoredSetting: async () => (await mainSettingService.get()).agentRuntime,
+      logger,
+      isPackaged: isElectronAppPackaged(),
+    });
     const rollout = desktopContextPromptRollout;
     if (!rollout) {
       return;

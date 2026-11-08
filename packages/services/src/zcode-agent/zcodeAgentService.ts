@@ -56,6 +56,10 @@ import {
   supportsHistoryFirst,
   supportsProviderRegistryRefresh,
 } from "./runtimeCapabilitySupport.js";
+import {
+  forkAgentRuntimeCommandGateError,
+  forkAgentRuntimeHelloOverrides,
+} from "./fork-agent-runtime/contract.js";
 import { isRemoteInputPredictionEnabled } from "./inputPredictionSwitch.js";
 import { randomUUID } from "node:crypto";
 import { createTopicResourceBridge } from "./topicResourceBridge.js";
@@ -6748,6 +6752,8 @@ export function createZCodeAgentService(
           workflowRunDeltas: true,
           historyFirst: true,
           residentRowsRange: true,
+          // Fork: never claim what the frozen agent runtime lacks (specs/fork-agent-runtime-selection.md).
+          ...forkAgentRuntimeHelloOverrides(),
         },
         auth: {},
       };
@@ -6943,6 +6949,8 @@ export function createZCodeAgentService(
         }
       };
       const client = await measure("host.runtime", () => getClient(params));
+      const forkRuntimeGateError = forkAgentRuntimeCommandGateError(params.envelope);
+      if (forkRuntimeGateError) throw new Error(forkRuntimeGateError);
       // A new Host may connect to an old CLI; check the execution end first, so z.object does not silently drop state and then execute user input anyway.
       const genUiContext = (params.envelope.payload as { genUiContext?: unknown } | null)
         ?.genUiContext;

@@ -1,0 +1,154 @@
+//! 执行环境的注册表（docs/specs/rust-cli/remote-exec.md §15.8、§15.8.1、§20.4；deployment.md §7）：机器名 →
+//! [`MachineEnv`]，与 controller 所在机器的 [`ControllerServices`]。
+//!
+//! 只在组装根建：入口按部署配置选好会话的主 env（本进程里的 env-local，或经执行器的远端），runtime 从注册表取主 env
+//! 的端口分给各能力。一个 controller 进程只服务一个主 env（deployment.md §6）。R3 起连上的额外机器也在这里：工具执行
+//! 按调用的 `machine` 查它（[`EnvironmentRegistry::remote`]），各能力每次用时读 [`EnvironmentRegistry::machines`] 的
+//! 快照，连接变化经 [`EnvironmentRegistry::changes`] 推给要订阅的地方。注册表是“哪些机器连着”的唯一来源。
+
+use futures_util::future::BoxFuture;
+use futures_util::stream::BoxStream;
+use futures_util::{FutureExt, StreamExt};
+use serde::{Deserialize, Serialize};
+
+use crate::controller_services::ControllerServices;
+use crate::env::{EnvPath, WorkspaceRef};
+use crate::env_files::PathStyle;
+use crate::ids::MachineName;
+use crate::machine::MachineEnv;
+
+/// 一台远端机器的事实（握手时执行器报告的，remote-exec.md §18.4）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineFacts {
+    /// 系统（`linux`、`macos`……，执行器的写法）。
+    pub os: String,
+    /// 架构（`x86_64`、`aarch64`……）。
+    pub arch: String,
+    /// 执行器跑命令用的 shell（可能为空）。
+    pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<EnvPath>,
+    pub path_style: PathStyle,
+}
+
+/// 一台连上的远端机器。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteMachine {
+    pub name: String,
+    /// 那台机器上的工作区：`environment` 是机器名，`root` 是它的工作目录（remote-exec.md §20.3.1）。
+    pub workspace: WorkspaceRef,
+    pub facts: MachineFacts,
+}
+
+/// 连上的远端机器的快照（不含本机）。`version` 每次连接变化加一；机器按名字排。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineSet {
+    pub version: u64,
+    pub machines: Vec<RemoteMachine>,
+}
+
+impl MachineSet {
+    pub fn is_empty(&self) -> bool {
+        self.machines.is_empty()
+    }
+
+    /// 连上的远端机器的名字（按名字）。
+    pub fn names(&self) -> Vec<String> {
+        self.machines
+            .iter()
+            .map(|machine| machine.name.clone())
+            .collect()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&RemoteMachine> {
+        self.machines.iter().find(|machine| machine.name == name)
+    }
+}
+
+pub trait EnvironmentRegistry: Send + Sync {
+    /// 会话的主 env（[`crate::ids::PRIMARY_MACHINE`]）：每个注册表都有。
+    fn primary_machine(&self) -> MachineEnv;
+
+    /// 按名字取一台机器；没有这台机器（或没连上）时 None。缺省：主 env 或 [`EnvironmentRegistry::remote`]。
+    ///
+    /// 工作线 F137（审查 K9 的剩余）：查找的键是 [`MachineName`]（以前是字符串，每个实现与调用方各自认主 env 的几种写法）；
+    /// 机器清单与配置文件里的名字（machines crate、`mcp-machines.json`）在进注册表的一处换算。
+    fn machine(&self, name: &MachineName) -> Option<MachineEnv> {
+        match name.remote() {
+            None => Some(self.primary_machine()),
+            Some(_) => self.remote(name).map(|(machine, _)| machine),
+        }
+    }
+
+    /// controller 所在机器的服务（取网页）。
+    fn controller(&self) -> ControllerServices;
+
+    /// 连上的远端机器（R3）：内存里的快照，读的时候不做 IO。缺省没有。
+    fn machines(&self) -> MachineSet {
+        MachineSet::default()
+    }
+
+    /// 一台连上的远端机器的执行端口与它的工作区；本机、不认识或没连上时 None。缺省没有。
+    fn remote(&self, _name: &MachineName) -> Option<(MachineEnv, WorkspaceRef)> {
+        None
+    }
+
+    /// 连接变化：每次 [`EnvironmentRegistry::machines`] 的 `version` 变了出一项（新的 version）。只用来唤醒订阅方，
+    /// 订阅方醒来后自己读快照。缺省永不出项。
+    fn changes(&self) -> BoxStream<'static, u64> {
+        futures_util::stream::pending().boxed()
+    }
+
+    /// 同 [`EnvironmentRegistry::remote`]，但这台机器正在连（`/machines connect`、启动时的自动连接）时等它连完
+    /// （R5：绑定到它的 MCP 服务器在握手的期限之内等，remote-exec.md §22.6）。不认识、没在连或连不上时 None。
+    /// 缺省不等：立即返回 `remote(name)`。取消由调用方负责（丢掉这个 future）。
+    fn wait_remote(
+        &self,
+        name: &MachineName,
+    ) -> BoxFuture<'static, Option<(MachineEnv, WorkspaceRef)>> {
+        let found = self.remote(name);
+        async move { found }.boxed()
+    }
+
+    /// 这台连上的远端机器的连接断了、正在重连（远端执行 F96，remote-exec.md §23.3）：它还在 [`Self::remote`] 里（显式的
+    /// 调用等重连），隐式访问它的地方（后台任务的快照、每步的文件变化检查、会话关闭）不等它。不做 IO。缺省 false。
+    fn reconnecting(&self, _name: &MachineName) -> bool {
+        false
+    }
+
+    /// 这台机器在机器清单里（连着或没连着，远端执行 F98，remote-exec.md §25.2.2）：模型点名一台清单里有、现在没连上
+    /// 的机器时，执行管线回“没有执行”的说明，不报 schema 错误。读内存里的清单副本，不做 IO。缺省 false。
+    fn listed(&self, _name: &MachineName) -> bool {
+        false
+    }
+}
+
+/// 只有主 env 的注册表（没有额外机器）。
+#[derive(Clone)]
+pub struct PrimaryRegistry {
+    machine: MachineEnv,
+    controller: ControllerServices,
+}
+
+impl PrimaryRegistry {
+    pub fn new(machine: MachineEnv, controller: ControllerServices) -> Self {
+        Self {
+            machine,
+            controller,
+        }
+    }
+}
+
+impl EnvironmentRegistry for PrimaryRegistry {
+    fn primary_machine(&self) -> MachineEnv {
+        self.machine.clone()
+    }
+
+    fn controller(&self) -> ControllerServices {
+        self.controller.clone()
+    }
+}
+
+#[cfg(test)]
+#[path = "env_registry_tests.rs"]
+mod tests;

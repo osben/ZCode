@@ -57,6 +57,10 @@ import type {
   LocalHostStartupTicket,
 } from "./storage-sweep-gate/contract.js";
 import { buildHostE2ECoverageEnv } from "./e2eCoverage.js";
+import {
+  buildForkAgentRuntimeHostEnv,
+  getForkAgentRuntimeSelection,
+} from "./fork-agent-runtime/contract.js";
 import { createFeedbackLogArchiveFromExportLogs } from "./exportLogs.js";
 import { createHostLogRelay } from "./hostLogRelay.js";
 import { ingestCliResourceSample } from "./processResourceCliSource.js";
@@ -342,7 +346,10 @@ export function spawnHostProcess(
     serviceName: formatZCodeHostProcessName(label),
     execArgv,
     env: {
-      ...buildHostProcessEnv(dependencies.hostProcessLocalEnv),
+      ...buildForkAgentRuntimeHostEnv(
+        buildHostProcessEnv(dependencies.hostProcessLocalEnv),
+        getForkAgentRuntimeSelection(),
+      ),
       ...buildHostE2ECoverageEnv(),
       ZCODE_PROCESS_LABEL: label,
       // macOS-only: the Computer Use Helper launcher runs inside this forked host utilityProcess, whose

@@ -1124,6 +1124,14 @@ function configureZCodeAgentServerEnv() {
   delete process.env.ZCODE_AGENT_SERVER_COMMAND;
   delete process.env.ZCODE_AGENT_SERVER_ARGS_JSON;
   delete process.env.ZCODE_AGENT_SERVER_CWD;
+  // Fork: desktop E2E runs the Node agent unless a run opts into the Rust agent explicitly
+  // (specs/fork-agent-runtime-selection.md).
+  if (process.env.ZCODE_E2E_AGENT_RUNTIME !== "rust") {
+    delete process.env.ZCODE_FORK_AGENT_RUNTIME;
+    delete process.env.ZCODE_FORK_RUST_AGENT_PATH;
+  } else {
+    process.env.ZCODE_FORK_AGENT_RUNTIME = "rust";
+  }
 }
 
 function assertUpstreamCaptureConfig() {
