@@ -219,3 +219,60 @@ fn a_cold_notification_batch_is_one_turn() {
         json!({"backgroundSource": "subagent", "workId": "agent_2", "title": "Second · Third"})
     );
 }
+
+/// A batch stored as one message with a text block per notification (Node's storage) titles the
+/// header with every notified work, live and cold.
+#[test]
+fn one_notification_message_with_two_blocks_is_one_batch_header() {
+    let block = |task: &str, title: &str| ContentBlock::Text {
+        text: format!(
+            "<system-reminder>\n<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n<summary>Background command \"{title}\" completed (exit code 0)</summary>\n</task-notification>\n</system-reminder>"
+        ),
+    };
+    let batch = Message::User(UserMessage {
+        id: MessageId::new("msg_n"),
+        content: vec![block("b1", "First"), block("b2", "Second")],
+        origin: UserOrigin::Meta {
+            source: "task-notification".into(),
+        },
+    });
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_n"),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: batch.clone(),
+    });
+    let live = row_of(&feed.projection, "turnHeader", "turn_n");
+    assert_eq!(live["origin"], "backgroundResult");
+    assert_eq!(live["originMeta"]["title"], "First · Second");
+
+    let projection = Projection::from_view(
+        &view(vec![
+            user("msg_u1", "start it"),
+            assistant(
+                "msg_a1",
+                vec![ContentBlock::Text {
+                    text: "started".into(),
+                }],
+            ),
+            batch,
+            assistant(
+                "msg_a2",
+                vec![ContentBlock::Text {
+                    text: "consumed".into(),
+                }],
+            ),
+        ]),
+        Followup::Queue,
+        Vec::new(),
+    );
+    let cold: Vec<_> = projection
+        .rows
+        .iter()
+        .filter(|row| row["kind"] == "turnHeader")
+        .collect();
+    assert_eq!(cold.len(), 2);
+    assert_eq!(cold[1]["originMeta"]["title"], "First · Second");
+}

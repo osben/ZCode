@@ -1,7 +1,7 @@
 //! next 通道（docs/specs/rust-cli/query.md §5，L18）：后台通知在下一个工具边界并入当前回合，与插话按
 //! 到达顺序交错；回合结束后连续的通知合成一个回合，排在 `Queue` 输入之前；提交之后才 ack。
 
-use rust_cli_kernel_api::message::{Message, UserOrigin};
+use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::testing::{NoticeEnvironment, shell_notice, tool_use_response};
 use rust_cli_kernel_api::tool::Tool;
 
@@ -154,6 +154,77 @@ async fn notices_left_at_the_end_share_one_turn_before_queued_input() {
     let view = session.view().await.unwrap();
     assert_eq!(notices_in(&view.messages).len(), 2);
     assert_eq!(env.acked(), [1, 2]);
+}
+
+/// Fork: with the Node desktop drain, the notices that open a turn are one meta user message with a
+/// text block per notification (Node `persistBackgroundTaskNotificationBatch`); a notification
+/// delivered again is found in that message and only acked.
+#[tokio::test]
+async fn a_desktop_notice_batch_is_one_message_with_a_block_per_notice() {
+    let gate = Arc::new(Notify::new());
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(
+        ScriptedModel::new(vec![
+            text_response(&["ok"]),
+            text_response(&["notices seen"]),
+        ])
+        .gated_at(0, gate.clone()),
+    );
+    let session = super::notice::session_with_drain(
+        &scope,
+        rust_cli_kernel_api::testing::registry(rust_cli_kernel_api::testing::machine(env.clone())),
+        model.clone(),
+        Vec::new(),
+        Vec::new(),
+        Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
+        true,
+    )
+    .await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "first")).await;
+    env.finish(shell_notice(1, "b1"));
+    queued(&mut events, "b1").await;
+    env.finish(shell_notice(2, "b2"));
+    queued(&mut events, "b2").await;
+    gate.notify_one();
+    until_finished(&mut events, 2).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let second = format!("{:?}", requests[1].messages);
+    assert!(second.contains("b1") && second.contains("b2"), "{second}");
+    let view = session.view().await.unwrap();
+    let batch: Vec<&UserMessage> = view
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) if matches!(&user.origin, UserOrigin::Meta { .. }) => Some(user),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(batch.len(), 1);
+    assert_eq!(
+        batch[0].content,
+        vec![
+            ContentBlock::Text {
+                text: task_notification(&shell_notice(1, "b1")),
+            },
+            ContentBlock::Text {
+                text: task_notification(&shell_notice(2, "b2")),
+            },
+        ]
+    );
+    assert_eq!(env.acked(), [1, 2]);
+    // Delivered again: found in the batch message, acked, no new turn.
+    env.finish(shell_notice(2, "b2"));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while env.acked().len() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(model.requests().len(), 2);
 }
 
 #[tokio::test]

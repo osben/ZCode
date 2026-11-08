@@ -124,16 +124,36 @@ impl Actor {
                 (texts, notices)
             }
         };
+        // Fork: the Node desktop agent stores a batch of task notifications as one user message with a
+        // text block per notification (`persistBackgroundTaskNotificationBatch`); the model request is
+        // the same either way. Mixed sources (a peer message among them) keep a message each.
+        let blocks: Vec<(Vec<ContentBlock>, UserOrigin)> = if self.deps.one_input_per_turn
+            && texts.len() > 1
+            && texts.iter().all(|(_, origin)| {
+                matches!(origin, UserOrigin::Meta { source } if source == crate::notices::NOTICE_SOURCE)
+            }) {
+            let origin = texts[0].1.clone();
+            let content = texts
+                .into_iter()
+                .map(|(text, _)| ContentBlock::Text { text })
+                .collect();
+            vec![(content, origin)]
+        } else {
+            texts
+                .into_iter()
+                .map(|(text, origin)| (vec![ContentBlock::Text { text }], origin))
+                .collect()
+        };
         let before = fired
             .as_ref()
             .map(|fired| fired.before.clone())
             .unwrap_or_default();
         let users: Vec<Message> = before
             .into_iter()
-            .chain(texts.into_iter().map(|(text, origin)| {
+            .chain(blocks.into_iter().map(|(content, origin)| {
                 Message::User(UserMessage {
                     id: self.deps.ids.message(),
-                    content: vec![ContentBlock::Text { text }],
+                    content,
                     origin,
                 })
             }))

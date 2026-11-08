@@ -25,6 +25,13 @@ pub const BASH_OUTPUT_SOURCE: &str = "bash_output";
 /// 冷读取去掉前缀。修复线 F2：Node 把同名的当成自己的提醒（`plan_mode_exit` 在 Node 是只在运行时的提醒）。
 pub const RENAMED_SOURCES: [&str; 1] = [rust_cli_kernel_api::plan::EXIT_SOURCE];
 
+/// Fork: Node's source of a background task notification message
+/// (`persistBackgroundTaskNotificationBatch`). The kernel's notice origin
+/// (`queued_command::TASK_NOTIFICATION`) is stored under it, so Node's cold read sees a background
+/// result turn; the cold read here maps it back. Rows written before used the kernel name and read
+/// as before.
+pub const BACKGROUND_TASK_SOURCE: &str = "background_task";
+
 pub const ATTACHMENT: &str = "attachment";
 pub const META: &str = "meta";
 pub const INTERRUPT: &str = "interrupt";
@@ -76,7 +83,13 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
         META => Message::User(UserMessage {
             id,
             content: content(),
-            origin: UserOrigin::Meta { source },
+            origin: UserOrigin::Meta {
+                source: if source == BACKGROUND_TASK_SOURCE {
+                    rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned()
+                } else {
+                    source
+                },
+            },
         }),
         INTERRUPT | BASH_OUTPUT => Message::User(UserMessage {
             id,

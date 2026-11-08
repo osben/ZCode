@@ -218,7 +218,9 @@ pub async fn command(server: &Server, params: Value) -> Result<Value, RpcError> 
         ),
         Ok(()) => decide(server, &envelope).await,
     };
-    if ack.status != Status::Duplicate {
+    // Like Node (`remember: false`), a stale ack is not remembered: a resend of the same command
+    // after the client caught up is decided again instead of replaying the stale verdict.
+    if !matches!(ack.status, Status::Duplicate | Status::Stale) {
         server.remembered.lock_unpoisoned().put(key, ack.clone());
     }
     // 命令事实（G2）：会话命令照 Node 的格式落库；写失败只记日志，ACK 照常回。

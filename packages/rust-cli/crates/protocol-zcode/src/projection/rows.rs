@@ -104,7 +104,7 @@ impl Projection {
             Message::User(user) if is_task_notification(&user.origin) => {
                 let text = text_of(&user.content);
                 self.remember_notified(&text);
-                self.background_result(&text, out);
+                self.background_result(&user.content, out);
             }
             Message::Assistant(assistant) => {
                 let Some(turn) = self.turn.clone() else {

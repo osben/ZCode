@@ -97,21 +97,27 @@ impl Waiting {
 }
 
 /// 消息里的通知全文：开回合的 meta user 消息，或工具边界并入的 `task-notification` attachment。
-fn notice_text(message: &Message) -> Option<&str> {
+/// Fork: a desktop notice batch is one meta message with a text block per notification, so each
+/// block is a notification of its own.
+fn notice_texts(message: &Message) -> Vec<&str> {
     match message {
         Message::User(user) if matches!(&user.origin, UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE) => {
-            match user.content.as_slice() {
-                [ContentBlock::Text { text }] => Some(text),
-                _ => None,
-            }
+            user.content
+                .iter()
+                .map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .unwrap_or_default()
         }
         Message::Attachment(attachment)
             if attachment.source == queued_command::SOURCE
                 && attachment.data[queued_command::MODE_KEY] == NOTICE_SOURCE =>
         {
-            Some(&attachment.text)
+            vec![attachment.text.as_str()]
         }
-        _ => None,
+        _ => Vec::new(),
     }
 }
 
@@ -122,7 +128,7 @@ impl Actor {
         let seen = self
             .messages
             .iter()
-            .any(|message| notice_text(message) == Some(text.as_str()));
+            .any(|message| notice_texts(message).contains(&text.as_str()));
         let waiting = self.inbox.has_notice(&notice);
         if seen || waiting {
             if !waiting {

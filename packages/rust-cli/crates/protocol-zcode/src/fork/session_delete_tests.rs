@@ -281,3 +281,28 @@ async fn restart_ends_the_actor_and_reopens_while_stop_leaves_it_closed() {
     assert_eq!(handle.closes.lock().unwrap().len(), 2);
     assert!(server.bridge.get(&session).is_none());
 }
+
+/// Like Node's inbox (`remember: false`), a stale row action is not remembered: the same command
+/// id sent again is decided again (stale again here), not replayed as a duplicate.
+#[tokio::test]
+async fn a_stale_row_action_is_decided_again_when_sent_again() {
+    let handle = Arc::new(TestHandle {
+        id: SessionId::new("s1"),
+        view: view(false, true),
+        closes: StdMutex::new(Vec::new()),
+    });
+    let (_scope, server, _kernel) = server(handle, false);
+    server.live(&SessionId::new("s1")).await.unwrap();
+    let params = json!({
+        "commandId": "c-stale", "clientId": "k", "sessionId": "s1", "type": "retryTurn",
+        "payload": {"target": {"rowId": 999_999, "entityId": "missing"}}, "issuedAt": 1,
+        "baseRevision": 0, "baseLogEpoch": "e",
+    });
+    for _ in 0..2 {
+        let ack = crate::commands::command(&server, params.clone())
+            .await
+            .unwrap();
+        assert_eq!(ack["status"], "stale", "{ack}");
+        assert_eq!(ack["reasonCode"], "proto.staleTarget");
+    }
+}

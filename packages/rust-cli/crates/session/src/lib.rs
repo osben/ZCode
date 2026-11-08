@@ -142,7 +142,8 @@ pub struct SessionDeps {
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）；没有时那些询问按会话已关闭失败。
     pub detached: Option<Arc<DetachedAsks>>,
     /// Fork: queued inputs are not merged into one turn; each runs as its own turn, like the Node desktop agent
-    /// (its queue drains one item per turn). The app-server turns it on.
+    /// (its queue drains one item per turn), and a batch of task notifications that opens a turn is one user
+    /// message with a text block per notification, as Node stores it. The app-server turns it on.
     pub one_input_per_turn: bool,
     /// Fork: goals run like the Node desktop agent: Node's continuation prompt, pause and resume,
     /// and `KernelEvent::GoalChanged` for the App's goal panel. The app-server turns it on.
