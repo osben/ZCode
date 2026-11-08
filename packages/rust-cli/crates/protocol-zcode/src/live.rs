@@ -8,7 +8,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::session_api::{SequencedEvent, SessionView};
+use rust_cli_kernel_api::session_api::{KernelEvent, SequencedEvent, SessionHandle, SessionView};
 use rust_cli_protocol_core::delivery::TopicLog;
 use rust_cli_protocol_core::sessions::SessionSink;
 use serde_json::{Value, json};
@@ -28,6 +28,8 @@ struct State {
     summary: Option<Value>,
     /// Fork: `submissionPreparation` while a durable first submission is still preparing.
     preparation: Option<Value>,
+    /// Fork: events up to this seq are already in the view the projection was rebuilt from.
+    skip_through: u64,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -42,6 +44,8 @@ pub struct Live {
     session: String,
     workspace: String,
     created_at: u64,
+    /// Fork: reads the view again after the history is rewritten.
+    handle: Arc<dyn SessionHandle>,
     state: Mutex<State>,
 }
 
@@ -49,6 +53,7 @@ impl Live {
     pub fn new(
         context: Arc<Context>,
         topics: Arc<Topics>,
+        handle: Arc<dyn SessionHandle>,
         view: &SessionView,
         followup: Followup,
     ) -> Self {
@@ -59,11 +64,13 @@ impl Live {
             session: view.meta.id.as_str().to_owned(),
             workspace: view.meta.workspace.root.as_str().to_owned(),
             created_at: view.meta.created_at_ms,
+            handle,
             state: Mutex::new(State {
                 projection: Projection::from_view(view, followup, levels),
                 log: TopicLog::new(epoch),
                 summary: None,
                 preparation: None,
+                skip_through: view.last_seq,
             }),
             context,
             topics,
@@ -141,6 +148,27 @@ impl Live {
     /// 用户拒绝了这个工具调用：之后它的结果投成 cancelled（与 Node 相同）。
     pub fn deny(&self, tool_use: &rust_cli_kernel_api::ids::ToolUseId) {
         self.state().projection.deny(tool_use.as_str());
+    }
+
+    /// Fork: see [`crate::projection::Projection::current_config`].
+    pub fn current_config(
+        &self,
+    ) -> (
+        rust_cli_kernel_api::model::ModelSelection,
+        rust_cli_kernel_api::permission::PermissionMode,
+        bool,
+    ) {
+        self.state().projection.current_config()
+    }
+
+    /// Fork: see [`Projection::row_target`].
+    pub fn row_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+        action: crate::projection::RowAction,
+    ) -> Option<crate::projection::RowTarget> {
+        self.state().projection.row_target(row_id, entity, action)
     }
 
     pub fn followup(&self) -> Followup {
@@ -221,6 +249,37 @@ impl Live {
         self.publish_summary().await;
     }
 
+    /// Fork: the history was rewritten (rewind, edit, retry). Like the TUI, the projection is rebuilt from a fresh
+    /// view; every started subscription gets a new snapshot, and events already in that view are skipped. In the
+    /// session's pump task, so no event of this session is projected meanwhile.
+    async fn rebuild(&self) {
+        let view = match self.handle.view().await {
+            Ok(view) => view,
+            Err(error) => {
+                tracing::warn!(event = "protocol.projection.rebuild_failed", error = %error, "reading the rewritten session failed");
+                return;
+            }
+        };
+        let started: Vec<String> = {
+            let mut state = self.state();
+            state.projection = state.projection.rebuilt(&view);
+            state.skip_through = view.last_seq;
+            // The ids are collected first: restarting needs `state.log` mutably.
+            #[allow(clippy::needless_collect)]
+            let ids: Vec<String> = state
+                .log
+                .subscribers()
+                .iter()
+                .map(|subscriber| subscriber.subscription.clone())
+                .collect();
+            ids.into_iter().filter(|id| state.log.restart(id)).collect()
+        };
+        for subscription in started {
+            self.start(&subscription, Purpose::Recovery).await;
+        }
+        self.publish_summary().await;
+    }
+
     /// 待发的增量与变了的会话列表行（阶段、标题、待回答的询问或预览变了才发，活动时间不算）。
     fn collect(&self, state: &mut State) -> Outgoing {
         let frames = state
@@ -270,6 +329,13 @@ impl Live {
 #[async_trait]
 impl SessionSink for Live {
     async fn event(&self, event: SequencedEvent) {
+        if event.seq <= self.state().skip_through {
+            return;
+        }
+        if matches!(event.event, KernelEvent::HistoryRewritten { .. }) {
+            self.rebuild().await;
+            return;
+        }
         let now = self.context.now();
         let mut state = self.state();
         let deltas = state.projection.apply(&event, now);

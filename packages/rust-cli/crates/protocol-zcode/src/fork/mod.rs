@@ -1,0 +1,8 @@
+//! Fork: protocol surface ported from the Node agent so the desktop UI behaves the same on
+//! `zcode-rs` (specs/fork-rust-agent-parity.md). Each method family or command group lives in its
+//! own module and is registered with one line in [`commands`] or [`methods`].
+
+pub(crate) mod commands;
+pub(crate) mod methods;
+mod row_commands;
+mod session_config;

@@ -175,6 +175,13 @@ pub(crate) struct AttachmentRef {
     preview_ref: Option<String>,
 }
 
+impl AttachmentRef {
+    /// Fork: the App's ref (a stored attachment keeps it as [`rust_cli_kernel_api::message::AttachedFile::reference`]).
+    pub(crate) fn reference(&self) -> &str {
+        &self.reference
+    }
+}
+
 /// Parses the `attachments` of a `sendText` or a `createSession` first input. Node's schema refuses the whole command when
 /// one entry does not match, so a malformed entry is refused here too, before any session is created. Silently dropping it
 /// would leave the model unaware of the file. The message does not echo the entry: a value there can be a user path.

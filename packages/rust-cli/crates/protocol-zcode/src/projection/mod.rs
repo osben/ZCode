@@ -3,6 +3,7 @@
 //!
 //! 行：turnHeader（回合）、userInput（真人输入）、assistantText、reasoning、toolCall；其余事件只改状态或忽略（P1）。
 
+mod actions;
 mod cold;
 mod kinds;
 mod rows;
@@ -18,6 +19,7 @@ use rust_cli_kernel_api::session_api::{
 };
 use serde_json::{Map, Value, json};
 
+pub use actions::{RowAction, RowTarget};
 use kinds::{RowKind, ToolStatus};
 use state::{ActiveWork, Followup, LastError, Phase};
 
@@ -79,6 +81,8 @@ pub struct Projection {
     /// 用户拒绝了的工具调用：结果投成 cancelled。
     denied: std::collections::HashSet<String>,
     created_at: u64,
+    /// Fork: a compaction is running (row actions are withheld, like Node's `compact` active work).
+    compacting: bool,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -115,11 +119,30 @@ fn tool_key(tool_use: &str) -> String {
 impl Projection {
     /// 从视图建投影（冷打开或第一次订阅）。`followup` 与 `levels` 是协议自己保存的配置（不在内核里）。
     pub fn from_view(view: &SessionView, followup: Followup, levels: Vec<String>) -> Self {
+        Self::from_view_at(view, followup, levels, 1)
+    }
+
+    /// Fork: the projection of a rewritten history (rewind, edit, retry). Keeps what the protocol remembers outside the
+    /// kernel (follow-up mode, levels, input facts, denials) and keeps row ids increasing.
+    pub fn rebuilt(&self, view: &SessionView) -> Self {
+        let mut projection =
+            Self::from_view_at(view, self.followup, self.levels.clone(), self.next_row);
+        projection.inputs.clone_from(&self.inputs);
+        projection.denied.clone_from(&self.denied);
+        projection
+    }
+
+    fn from_view_at(
+        view: &SessionView,
+        followup: Followup,
+        levels: Vec<String>,
+        first_row: u64,
+    ) -> Self {
         let mut projection = Self {
             session: view.meta.id.as_str().to_owned(),
             rows: Vec::new(),
             index: HashMap::new(),
-            next_row: 1,
+            next_row: first_row,
             revision: view.revision,
             phase: Phase::Draft,
             active: None,
@@ -139,11 +162,13 @@ impl Projection {
             inputs: HashMap::new(),
             denied: std::collections::HashSet::new(),
             created_at: view.meta.created_at_ms,
+            compacting: false,
         };
         cold::rows(&mut projection, view);
         for (interaction, request) in &view.pending {
             projection.ask(interaction.as_str(), request, view.meta.created_at_ms);
         }
+        projection.refresh_actions(&mut Vec::new());
         projection
     }
 
@@ -206,6 +231,12 @@ impl Projection {
             "config": self.config(),
             "inputRouting": state::input_routing(self.phase, self.followup),
         }})
+    }
+
+    /// Fork: the model, permission mode and plan switch the projection shows, so a switch command can
+    /// answer `config.unchanged` the way Node does.
+    pub fn current_config(&self) -> (ModelSelection, PermissionMode, bool) {
+        (self.selection.clone(), self.mode, self.plan)
     }
 
     fn config(&self) -> Value {
@@ -435,6 +466,11 @@ impl Projection {
                 self.plan = *enabled;
                 patch.insert("config".into(), self.config());
             }
+            // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
+            KernelEvent::CompactStarted { .. } => self.compacting = true,
+            KernelEvent::CompactDone { .. } | KernelEvent::CompactFailed { .. } => {
+                self.compacting = false;
+            }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
                 let before = self.queue_state();
@@ -452,9 +488,6 @@ impl Projection {
             | KernelEvent::OutputSpeed { .. }
             | KernelEvent::TasksChanged { .. }
             | KernelEvent::BackgroundWork { .. }
-            | KernelEvent::CompactStarted { .. }
-            | KernelEvent::CompactDone { .. }
-            | KernelEvent::CompactFailed { .. }
             | KernelEvent::HistoryRewritten { .. }
             | KernelEvent::ScheduledFire { .. }
             | KernelEvent::SystemNotice { .. }
@@ -462,6 +495,18 @@ impl Projection {
             | KernelEvent::PeerHeldChanged { .. }
             | KernelEvent::TurnDuration(_)
             | KernelEvent::ModelNotice { .. } => {}
+        }
+        // Fork: row actions follow every change except streamed text (specs/fork-rust-agent-parity.md).
+        let structural = !patch.is_empty()
+            || out.iter().any(|delta| delta["op"] != "row.delta")
+            || matches!(
+                event.event,
+                KernelEvent::CompactStarted { .. }
+                    | KernelEvent::CompactDone { .. }
+                    | KernelEvent::CompactFailed { .. }
+            );
+        if structural {
+            self.refresh_actions(&mut out);
         }
         if event.revision != self.revision {
             self.revision = event.revision;

@@ -18,6 +18,8 @@ async-trait.workspace = true
 # wire v3 的分片（dataBase64）。
 base64.workspace = true
 rust-cli-base.workspace = true
+# Fork: row commands wait for a preempted turn on the session's event stream.
+futures-util.workspace = true
 # Fork: desktop attachment refs are local paths (the Host's zero-copy prompt attachment transfer).
 rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
@@ -28,7 +30,6 @@ tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
-futures-util.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }

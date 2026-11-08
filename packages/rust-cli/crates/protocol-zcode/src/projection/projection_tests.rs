@@ -175,13 +175,19 @@ fn a_text_turn_becomes_rows_and_control_states() {
         ops(&finished),
         [
             "row.upserted(turnHeader)",
+            "row.upserted(assistantText)",
             "state(availability,control,inputRouting,revision,usage)"
         ]
     );
     assert_eq!(finished[0]["row"]["state"], "completedSuccess");
-    assert_eq!(finished[1]["patch"]["control"]["phase"], "completedSuccess");
+    // Fork: the finished reply offers retry and fork (Node `materializeCommandRowActions`).
     assert_eq!(
-        finished[1]["patch"]["usage"]["cumulative"]["outputTokens"],
+        finished[1]["row"]["actions"],
+        json!({"canRetry": true, "canFork": true})
+    );
+    assert_eq!(finished[2]["patch"]["control"]["phase"], "completedSuccess");
+    assert_eq!(
+        finished[2]["patch"]["usage"]["cumulative"]["outputTokens"],
         3
     );
     let snapshot = feed.projection.snapshot(9, "epoch-1");
@@ -521,5 +527,162 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     assert_eq!(
         projection.attachment_mime("zcode-artifact://session_1/c"),
         None
+    );
+}
+
+/// Fork: one finished turn `n` (typed input `msg_u<n>`, reply `msg_a<n>`).
+fn finished_turn(feed: &mut Feed, n: u32) {
+    let turn = TurnId::new(format!("turn_{n}"));
+    feed.apply(KernelEvent::TurnStarted {
+        turn: turn.clone(),
+        command: Some(CommandId::new(format!("c{n}"))),
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: user(&format!("msg_u{n}"), "question"),
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: assistant(
+            &format!("msg_a{n}"),
+            vec![ContentBlock::Text {
+                text: "answer".into(),
+            }],
+        ),
+    });
+    feed.apply(KernelEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+}
+
+fn row_of<'a>(
+    projection: &'a Projection,
+    kind: &str,
+    entity_prefix: &str,
+) -> &'a Map<String, Value> {
+    projection
+        .rows
+        .iter()
+        .find(|row| {
+            row["kind"] == kind
+                && row["entityId"]
+                    .as_str()
+                    .is_some_and(|entity| entity.starts_with(entity_prefix))
+        })
+        .unwrap()
+}
+
+#[test]
+fn row_actions_follow_the_latest_turn_like_node() {
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    finished_turn(&mut feed, 2);
+    let projection = &feed.projection;
+    let (user_1, user_2) = (
+        row_of(projection, "userInput", "msg_u1"),
+        row_of(projection, "userInput", "msg_u2"),
+    );
+    let (reply_1, reply_2) = (
+        row_of(projection, "assistantText", "msg_a1"),
+        row_of(projection, "assistantText", "msg_a2"),
+    );
+    assert!(user_1.get("actions").is_none());
+    assert_eq!(
+        user_2["actions"],
+        json!({"canEdit": true, "editDisposition": "rewind"})
+    );
+    assert_eq!(reply_1["actions"], json!({"canFork": true}));
+    assert_eq!(
+        reply_2["actions"],
+        json!({"canRetry": true, "canFork": true})
+    );
+    let id = |row: &Map<String, Value>| row["rowId"].as_u64().unwrap();
+    let entity = |row: &Map<String, Value>| row["entityId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        projection.row_target(id(user_2), &entity(user_2), RowAction::Edit),
+        Some(RowTarget {
+            user_message: "msg_u2".into(),
+            assistant_message: None,
+        })
+    );
+    assert_eq!(
+        projection.row_target(id(user_1), &entity(user_1), RowAction::Edit),
+        None
+    );
+    assert_eq!(
+        projection.row_target(id(reply_1), &entity(reply_1), RowAction::Retry),
+        None
+    );
+    assert_eq!(
+        projection.row_target(id(reply_1), &entity(reply_1), RowAction::Fork),
+        Some(RowTarget {
+            user_message: "msg_u1".into(),
+            assistant_message: Some("msg_a1".into()),
+        })
+    );
+    // A stale entity id for the same row is refused.
+    assert_eq!(
+        projection.row_target(id(reply_2), "other", RowAction::Retry),
+        None
+    );
+}
+
+#[test]
+fn row_actions_are_withheld_while_running_or_compacting() {
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    let started = feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_2"),
+        command: None,
+    });
+    // Retry needs an idle session; fork and edit stay.
+    let reply = started
+        .iter()
+        .find(|delta| delta["op"] == "row.upserted" && delta["row"]["kind"] == "assistantText")
+        .unwrap();
+    assert_eq!(reply["row"]["actions"], json!({"canFork": true}));
+    feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_2"),
+        outcome: TurnOutcome::Interrupted,
+        usage: None,
+    });
+    feed.apply(KernelEvent::CompactStarted {
+        trigger: rust_cli_kernel_api::message::CompactTrigger::Manual,
+    });
+    let projection = &feed.projection;
+    assert!(
+        row_of(projection, "userInput", "msg_u1")
+            .get("actions")
+            .is_none()
+    );
+    assert!(
+        row_of(projection, "assistantText", "msg_a1")
+            .get("actions")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_cold_projection_carries_row_actions() {
+    let projection = Projection::from_view(
+        &view(vec![
+            user("msg_u1", "question"),
+            assistant(
+                "msg_a1",
+                vec![ContentBlock::Text {
+                    text: "answer".into(),
+                }],
+            ),
+        ]),
+        Followup::Queue,
+        Vec::new(),
+    );
+    assert_eq!(
+        row_of(&projection, "userInput", "msg_u1")["actions"],
+        json!({"canEdit": true, "editDisposition": "rewind"})
+    );
+    assert_eq!(
+        row_of(&projection, "assistantText", "msg_a1")["actions"],
+        json!({"canRetry": true, "canFork": true})
     );
 }

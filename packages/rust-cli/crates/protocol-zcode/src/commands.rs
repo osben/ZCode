@@ -37,7 +37,7 @@ struct AppSelectionOptions {
 }
 
 /// App 的模型选择 → 内核的选择。原样留着 JSON（排队项照原样带回去），用时再解。
-fn selection(value: Option<&Value>) -> Option<ModelSelection> {
+pub(crate) fn selection(value: Option<&Value>) -> Option<ModelSelection> {
     let chosen: AppSelection = serde_json::from_value(value?.clone()).ok()?;
     Some(ModelSelection {
         reasoning: chosen.options.reasoning_level,
@@ -142,7 +142,7 @@ struct FollowupPayload {
 }
 
 /// 解 payload（已经过 schema，失败只会是 schema 与这里的结构不一致）：解不出时按 payload 不合规拒绝。
-fn payload<P: DeserializeOwned>(envelope: &Envelope) -> Result<P, Box<Ack>> {
+pub(crate) fn payload<P: DeserializeOwned>(envelope: &Envelope) -> Result<P, Box<Ack>> {
     serde_json::from_value(envelope.payload.clone()).map_err(|error| {
         Box::new(Ack::refused(
             &envelope.command_id,
@@ -155,7 +155,7 @@ fn payload<P: DeserializeOwned>(envelope: &Envelope) -> Result<P, Box<Ack>> {
 }
 
 /// 内核的回执 → 命令的 ACK：接受是 `accepted`，重复是同一个标成 duplicate，拒绝按 `refused` 给出。
-fn ack_of(kernel: KernelAck, accepted: Ack, refused: impl FnOnce(String) -> Ack) -> Ack {
+pub(crate) fn ack_of(kernel: KernelAck, accepted: Ack, refused: impl FnOnce(String) -> Ack) -> Ack {
     match kernel {
         KernelAck::Accepted { .. } => accepted,
         KernelAck::Duplicate => inbox::duplicate(&accepted),
@@ -163,7 +163,7 @@ fn ack_of(kernel: KernelAck, accepted: Ack, refused: impl FnOnce(String) -> Ack)
     }
 }
 
-async fn send(handle: &dyn SessionHandle, id: &str, command: Command) -> KernelAck {
+pub(crate) async fn send(handle: &dyn SessionHandle, id: &str, command: Command) -> KernelAck {
     handle
         .send(CommandEnvelope {
             id: CommandId::new(id),
@@ -172,7 +172,8 @@ async fn send(handle: &dyn SessionHandle, id: &str, command: Command) -> KernelA
         .await
 }
 
-fn unsupported(envelope: &Envelope, revision: u64) -> Ack {
+pub(crate) fn unsupported(envelope: &Envelope, revision: u64) -> Ack {
+    tracing::info!(event = "protocol.command.unsupported", kind = %envelope.kind, "command is not supported by this agent");
     Ack::refused(
         &envelope.command_id,
         Status::Rejected,
@@ -267,7 +268,11 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
         ),
         "resolveInteraction" => resolve(handle, &live.sink, envelope, revision).await,
         "setFollowupMode" => set_followup(server, handle, &live, envelope).await,
-        _ => unsupported(envelope, revision),
+        // Fork: command kinds ported for desktop parity (specs/fork-rust-agent-parity.md).
+        _ => match crate::fork::commands::decide(server, &live, envelope, phase, revision).await {
+            Some(ack) => ack,
+            None => unsupported(envelope, revision),
+        },
     }
 }
 

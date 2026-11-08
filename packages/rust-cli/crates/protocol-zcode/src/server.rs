@@ -116,8 +116,8 @@ impl Server {
         let opening = self.bridge.get(session).is_none();
         let live = self
             .bridge
-            .open(session, move |_, view| {
-                Live::new(context, topics, view, followup)
+            .open(session, move |handle, view| {
+                Live::new(context, topics, handle.clone(), view, followup)
             })
             .await?;
         // Fork: a cold open restores a still-preparing first submission before any subscription starts.
@@ -170,7 +170,7 @@ impl Server {
                 "historyFirst": false,
                 "sessionDirectorySource": false,
                 "genUiContext": false,
-                "sessionWorkspaceRouting": false,
+                "sessionWorkspaceRouting": true,
                 "residentRowsRange": false,
             })),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
@@ -225,7 +225,18 @@ impl Server {
             "v4/attachment/previewSource" => {
                 crate::attachments::preview_source(self, &params).await
             }
-            other => Err(RpcError::method_not_found(other)),
+            // Fork: method families ported for desktop parity (specs/fork-rust-agent-parity.md).
+            other => match crate::fork::methods::dispatch(self, other, params).await {
+                Some(result) => result,
+                None => {
+                    tracing::info!(
+                        event = "protocol.method.unsupported",
+                        method = other,
+                        "method is not supported by this agent"
+                    );
+                    Err(RpcError::method_not_found(other))
+                }
+            },
         }
     }
 }
