@@ -59,6 +59,8 @@ pub struct Server {
     pub(crate) uploads: Mutex<crate::uploads::Registry>,
     /// Fork: serializes submission reservations (crate::preparation::ReservationGate).
     pub(crate) reservations: crate::preparation::ReservationGate,
+    /// Fork: session lifecycle revisions (crate::lifecycle).
+    pub(crate) lifecycles: crate::lifecycle::Lifecycles,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -68,6 +70,33 @@ pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
             format!("Session unavailable: {}", session.as_str()),
         ),
         other => RpcError::internal(other.to_string()),
+    }
+}
+
+impl Server {
+    /// Fork: `v4/conversation/rowsRange`, the cursor read behind the App's load-older (Node `V4Gateway.rowsRange`).
+    /// `residency: "resident-only"` (the phone's preload) never opens a stored session.
+    async fn rows_range(&self, params: &Value) -> Result<Value, RpcError> {
+        let Some(id) = params["sessionId"].as_str().filter(|id| !id.is_empty()) else {
+            return Err(RpcError::invalid_params("sessionId is required"));
+        };
+        let Some(limit) = params["limit"].as_u64().filter(|limit| *limit >= 1) else {
+            return Err(RpcError::invalid_params("limit must be a positive number"));
+        };
+        let session = SessionId::new(id);
+        if params["residency"] == "resident-only" && self.bridge.get(&session).is_none() {
+            return Err(RpcError::new(
+                SESSION_UNAVAILABLE,
+                format!("session is not resident: {id} (proto.sessionNotResident)"),
+            )
+            .with_data(json!({"reasonCode": "proto.sessionNotResident"})));
+        }
+        let live = self
+            .live(&session)
+            .await
+            .map_err(|error| kernel_error(&error))?;
+        let before = params["beforeRowId"].as_f64().map(|before| before.ceil() as u64);
+        Ok(live.sink.rows_range(before, usize::try_from(limit).unwrap_or(usize::MAX)))
     }
 }
 
@@ -91,6 +120,7 @@ impl Server {
             preferences: Mutex::new(Preferences::default()),
             uploads: Mutex::new(crate::uploads::Registry::default()),
             reservations: crate::preparation::ReservationGate::default(),
+            lifecycles: crate::lifecycle::Lifecycles::default(),
         }
     }
 
@@ -130,7 +160,36 @@ impl Server {
         if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
             live.sink.set_preparation(marker.exposed());
         }
+        if opening {
+            self.announce_lifecycle(session, "ready").await;
+        }
         Ok(live)
+    }
+
+    /// Fork: records a lifecycle change and tells the App (crate::lifecycle).
+    async fn announce_lifecycle(&self, session: &SessionId, state: &str) {
+        let snapshot = self.lifecycles.changed(session, state);
+        self.context
+            .peer
+            .notify(crate::lifecycle::CHANGED, &snapshot)
+            .await;
+    }
+
+    /// Fork: `session/lifecycle/getState`. An open session is `ready`, a stored one `unloaded`; an unknown one is an
+    /// error, like Node's `exists` check.
+    async fn lifecycle_state(&self, params: &Value) -> Result<Value, RpcError> {
+        let Some(id) = params["sessionId"].as_str().filter(|id| !id.is_empty()) else {
+            return Err(RpcError::invalid_params("sessionId is required"));
+        };
+        let session = SessionId::new(id);
+        if self.bridge.get(&session).is_some() {
+            return Ok(self.lifecycles.current(&session, "ready"));
+        }
+        self.kernel
+            .session_snapshot(&session)
+            .await
+            .map_err(|error| kernel_error(&error))?;
+        Ok(self.lifecycles.current(&session, "unloaded"))
     }
 
     fn preferences(&self) -> std::sync::MutexGuard<'_, Preferences> {
@@ -161,7 +220,11 @@ impl Server {
 
     async fn close_session(&self, params: &Value) -> Value {
         let session = SessionId::new(params["sessionId"].as_str().unwrap_or_default());
+        let open = self.bridge.get(&session).is_some();
         self.bridge.close(&session);
+        if open {
+            self.announce_lifecycle(&session, "unloaded").await;
+        }
         json!({"closed": true})
     }
 
@@ -177,7 +240,7 @@ impl Server {
                 "sessionDirectorySource": false,
                 "genUiContext": false,
                 "sessionWorkspaceRouting": true,
-                "residentRowsRange": false,
+                "residentRowsRange": true,
             })),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({
@@ -219,6 +282,8 @@ impl Server {
             "v4/conversation/subscribe" => crate::subscribe::subscribe(self, &params).await,
             "v4/conversation/unsubscribe" => crate::subscribe::unsubscribe(self, &params).await,
             "v4/conversation/resync" => crate::subscribe::resync(self, &params).await,
+            "session/lifecycle/getState" => self.lifecycle_state(&params).await.map(Reply::new),
+            "v4/conversation/rowsRange" => self.rows_range(&params).await.map(Reply::new),
             "v4/connection/flow" => crate::subscribe::flow(self, &params).await,
             "v4/sessionsIndex/reconcile" => crate::subscribe::reconcile(self, &params).await,
             "v4/command" => crate::commands::command(self, params).await.map(Reply::new),

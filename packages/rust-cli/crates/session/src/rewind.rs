@@ -43,6 +43,20 @@ pub(crate) struct Finished {
     result: Result<Vec<RewoundFile>, String>,
 }
 
+/// Fork: the per-turn summary rewind's transaction result ([`Command::RewindTurnFiles`]), back at
+/// the actor to be committed. Unlike [`Finished`] it never cuts the conversation, and the settled
+/// event is [`KernelEvent::TurnFilesReverted`].
+pub(crate) struct TurnRewound {
+    command: CommandId,
+    turn_input: MessageId,
+    reply: oneshot::Sender<Ack>,
+    /// The per-machine tokens (released after the commit).
+    tokens: Vec<(Arc<dyn Checkpoints>, OperationId)>,
+    /// The checkpoints the restore undid.
+    restored: Vec<String>,
+    result: Result<Vec<RewoundFile>, String>,
+}
+
 async fn read(
     store: &dyn ArtifactStore,
     checkpoint: &WorkspaceCheckpoint,
@@ -162,6 +176,7 @@ pub(crate) async fn preview(
         for (path, operations, tools) in &stats {
             let entries: Vec<Artifact> = artifacts
                 .iter()
+                // plan() reads only the contents; the hunks are irrelevant here.
                 .map(|artifact| Artifact {
                     files: artifact
                         .files
@@ -307,7 +322,38 @@ impl Actor {
                 .into_iter()
                 .cloned()
                 .collect();
+        self.rewind_preview_of(undo)
+    }
+
+    /// Fork: the machine groups a dry-run preview of restoring exactly these checkpoints would
+    /// check (shared by the whole-range preview and the per-turn one).
+    fn rewind_preview_of(&self, undo: Vec<WorkspaceCheckpoint>) -> Result<Preview, String> {
         self.rewind_groups(undo).map(|groups| Preview { groups })
+    }
+
+    /// Fork: like [`Actor::rewind_preview`], but over only the checkpoints of the turn opened by
+    /// `turn_input` (the App's per-turn `fileRewindPreview`): the planning and the hash check are
+    /// the same [`rewind::preview`], the selection is the turn's own writes.
+    pub(crate) fn turn_rewind_preview(&self, turn_input: &MessageId) -> Result<Preview, String> {
+        if self.busy() {
+            return Err("a turn is running; rewind after it finishes".to_owned());
+        }
+        if !self
+            .messages
+            .iter()
+            .any(|m| m.id() == turn_input && rewind_plan::selectable(m).is_some())
+        {
+            return Err(format!("{turn_input} is not a message to rewind to"));
+        }
+        let undo: Vec<WorkspaceCheckpoint> =
+            crate::turn_files::turn_checkpoints(&self.messages, &self.checkpoints, turn_input)
+                .into_iter()
+                .cloned()
+                .collect();
+        if undo.is_empty() {
+            return Err("there are no code changes to restore".to_owned());
+        }
+        self.rewind_preview_of(undo)
     }
 
     pub(crate) async fn rewind(
@@ -383,6 +429,132 @@ impl Actor {
         self.job = Some(Job { task, cancel: None });
     }
 
+    /// Fork: [`Command::RewindTurnFiles`] — restore only the turn's own checkpoints (the App's
+    /// per-turn summary rewind, Node `applyFileRewind`); the conversation is not cut. The guards
+    /// match the rewind: a busy session rejects, and the turn must still have unrestored
+    /// checkpoints. The reply waits for the transaction, like [`Actor::rewind`].
+    pub(crate) async fn rewind_turn_files(
+        &mut self,
+        command: CommandId,
+        target: MessageId,
+        reply: oneshot::Sender<Ack>,
+    ) {
+        if self.busy() {
+            let _ = reply.send(rejected("a turn is running; rewind after it finishes"));
+            return;
+        }
+        if !self
+            .messages
+            .iter()
+            .any(|m| m.id() == &target && rewind_plan::selectable(m).is_some())
+        {
+            let _ = reply.send(rejected(format!("{target} is not a message to rewind to")));
+            return;
+        }
+        let undo: Vec<WorkspaceCheckpoint> =
+            crate::turn_files::turn_checkpoints(&self.messages, &self.checkpoints, &target)
+                .into_iter()
+                .cloned()
+                .collect();
+        if undo.is_empty() {
+            let _ = reply.send(rejected("there are no code changes to restore"));
+            return;
+        }
+        let groups = match self.rewind_groups(undo) {
+            Ok(groups) => groups,
+            Err(reason) => {
+                let _ = reply.send(rejected(reason));
+                return;
+            }
+        };
+        let tokens = groups
+            .iter()
+            .map(|group| (group.port.clone(), group.token().clone()))
+            .collect();
+        let store = self.deps.artifacts.clone();
+        let task = self.deps.spawner.spawn("rewind-turn-files", async move {
+            let outcome = rewind_machines::restore(store.as_ref(), &groups).await;
+            JobDone::TurnFilesRewound(Box::new(TurnRewound {
+                command,
+                turn_input: target,
+                reply,
+                tokens,
+                restored: outcome.restored,
+                result: outcome.result.map(|done| rewound_files(&done)),
+            }))
+        });
+        self.job = Some(Job { task, cancel: None });
+    }
+
+    /// Fork: the per-turn summary rewind's transaction ended: commit the restored checkpoints
+    /// (with the turn's reverted marker, so a cold open keeps the header), flip the turn's
+    /// summary to reverted, reply (`removed: 0` — the conversation is not cut), then release the
+    /// tokens.
+    pub(crate) async fn finish_turn_rewind(&mut self, finished: TurnRewound) {
+        let TurnRewound {
+            command,
+            turn_input,
+            reply,
+            tokens,
+            restored: checkpoints,
+            result,
+        } = finished;
+        let ack = match result {
+            // Same partial-success rule as the rewind: machines that applied are recorded.
+            Err(reason) if !checkpoints.is_empty() => {
+                let mut facts = vec![Fact::CheckpointsRestored {
+                    checkpoints: checkpoints.clone(),
+                }];
+                facts.extend(self.reverted_entries(&checkpoints));
+                if self.commit(Some(command), facts).await.is_ok() {
+                    self.checkpoints_restored(&checkpoints);
+                }
+                rejected(reason)
+            }
+            Err(reason) => rejected(reason),
+            Ok(restored) => {
+                let mut facts = vec![Fact::CheckpointsRestored {
+                    checkpoints: checkpoints.clone(),
+                }];
+                facts.extend(self.reverted_entries(&checkpoints));
+                match self.commit(Some(command), facts).await {
+                    Ok(()) => {
+                        self.checkpoints_restored(&checkpoints);
+                        tracing::info!(
+                            event = "session.turn_files_rewound",
+                            turn = %turn_input,
+                            files = restored.len(),
+                            "per-turn summary rewind committed"
+                        );
+                        Ack::Accepted {
+                            result: CommandResult::Rewound { restored, removed: 0 },
+                        }
+                    }
+                    Err(error) => rejected(error),
+                }
+            }
+        };
+        let _ = reply.send(ack);
+        drop(self.deps.spawner.spawn("rewind-finish", async move {
+            for (port, token) in tokens {
+                if let Err(error) = port.rewind_finish(&token).await {
+                    tracing::warn!(%error, "rewind token was not released");
+                }
+            }
+        }));
+        self.start_next().await;
+    }
+
+    /// Drop the restored checkpoints from the session's list and flip every turn that was left
+    /// without checkpoints to reverted (its summary stays for the view, now `reverted`).
+    fn checkpoints_restored(&mut self, restored: &[String]) {
+        let prompts = self.fully_restored(restored);
+        self.checkpoints.retain(|c| !restored.contains(&c.id));
+        for prompt in prompts {
+            self.turn_files_reverted(&prompt);
+        }
+    }
+
     /// 事务结束：先提交（撤销的 checkpoint、对话游标），再改内存、发事件、回复，最后释放 token。
     pub(crate) async fn finish_rewind(&mut self, finished: Finished) {
         let Finished {
@@ -397,31 +569,33 @@ impl Actor {
         let ack = match result {
             // 跨机器时一台 apply 失败：成功的那几台已经改回，记下它们（不动对话），再拒绝（R3）。
             Err(reason) if !checkpoints.is_empty() => {
-                let fact = Fact::CheckpointsRestored {
+                let mut facts = vec![Fact::CheckpointsRestored {
                     checkpoints: checkpoints.clone(),
-                };
-                if self.commit(Some(command), vec![fact]).await.is_ok() {
-                    self.checkpoints.retain(|c| !checkpoints.contains(&c.id));
+                }];
+                facts.extend(self.reverted_entries(&checkpoints));
+                if self.commit(Some(command), facts).await.is_ok() {
+                    self.checkpoints_restored(&checkpoints);
                 }
                 rejected(reason)
             }
             Err(reason) => rejected(reason),
             Ok(restored) => {
-                let fact = Fact::CheckpointsRestored {
+                let mut facts = vec![Fact::CheckpointsRestored {
                     checkpoints: checkpoints.clone(),
-                };
+                }];
+                facts.extend(self.reverted_entries(&checkpoints));
                 let committed = if scope == RewindScope::Both {
-                    self.rewind_conversation(Some(command), &target, vec![fact])
+                    self.rewind_conversation(Some(command), &target, facts)
                         .await
                 } else {
-                    self.commit(Some(command), vec![fact])
+                    self.commit(Some(command), facts)
                         .await
                         .map(|()| 0)
                         .map_err(|error| error.to_string())
                 };
                 match committed {
                     Ok(removed) => {
-                        self.checkpoints.retain(|c| !checkpoints.contains(&c.id));
+                        self.checkpoints_restored(&checkpoints);
                         Ack::Accepted {
                             result: CommandResult::Rewound { restored, removed },
                         }

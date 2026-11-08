@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rust_cli_protocol_core::sessions::Bridged;
 
-use super::{queue, row_commands, session_config, session_delete};
+use super::{file_summary, queue, row_commands, session_config, session_delete};
 use crate::inbox::{Ack, Envelope};
 use crate::live::Live;
 use crate::projection::state::Phase;
@@ -27,6 +27,8 @@ pub(crate) async fn decide(
         "editUserQuery" => row_commands::edit(server, live, envelope, revision).await,
         "retryTurn" => row_commands::retry(live, envelope, revision).await,
         "forkAssistant" => row_commands::fork(server, live, envelope, revision).await,
+        // Fork: the per-turn summary rewind (specs/fork-rust-agent-parity.md).
+        "applyFileRewind" => file_summary::apply(live, envelope, revision).await,
         "deleteSession" => session_delete::delete(server, live, envelope, revision).await,
         "deleteQueueItem" => queue::delete_queue_item(live, envelope, revision).await,
         "editQueueItem" => queue::edit_queue_item(live, envelope, revision).await,

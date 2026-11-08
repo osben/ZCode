@@ -1,10 +1,10 @@
 //! Fork: the `v4/conversation/plans` catalog, like Node's `ConversationTopicPublisher.getPlans` (bootstrap
 //! `zcode-protocol-v4/conversation-topic-publisher.ts`; specs/fork-rust-agent-parity.md): the settled ExitPlanMode
-//! tool rows with a non-blank plan in the row window, newest first.
+//! tool rows with a non-blank plan on the whole branch (not only the snapshot window), newest first.
 
 use serde_json::Value;
 
-use super::{Projection, WINDOW_ROWS};
+use super::Projection;
 
 const SETTLED: [&str; 3] = ["success", "error", "cancelled"];
 
@@ -22,8 +22,8 @@ fn has_plan(row: &serde_json::Map<String, Value>) -> bool {
 
 impl Projection {
     pub fn plans(&self) -> Vec<Value> {
-        let start = self.rows.len().saturating_sub(WINDOW_ROWS);
-        let mut plans: Vec<Value> = self.rows[start..]
+        let mut plans: Vec<Value> = self
+            .rows
             .iter()
             .filter(|row| {
                 row.get("kind").and_then(Value::as_str) == Some("toolCall")

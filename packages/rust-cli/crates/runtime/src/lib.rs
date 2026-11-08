@@ -251,7 +251,7 @@ impl LocalKernel {
             &ports,
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
-            (&defaults, traits),
+            (&defaults, traits, extensions.node_desktop),
         );
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use rust_cli_base::proto::exit;
 use rust_cli_kernel_api::env::{CommandEvent, CommandKind, EnvPath, Outcome, StartCommand};
+use std::time::Duration;
 use rust_cli_kernel_api::env_shell::{
     self, BackgroundCommand, CwdScope, SandboxPolicy, ShellKind, TimeoutBackground,
 };
@@ -39,6 +40,12 @@ const WITH_SEARCH_TOOLS: &str = "`find`, `grep`, `cat`, `head`, `tail`, `sed`, `
 
 /// 进度里带上这一块输出的最后这么多个字节。
 const PROGRESS_TAIL_BYTES: usize = 2_000;
+/// Fork (node_desktop): Node's progress constants (`execution-utils.ts`) — the first preview read
+/// happens after `DEFAULT_PROGRESS_THRESHOLD_MS`, then every `DEFAULT_PROGRESS_INTERVAL_MS`, and
+/// each read covers at most `DEFAULT_PROGRESS_TAIL_BYTES` of the output file.
+const DESKTOP_PROGRESS_DELAY: Duration = Duration::from_millis(2_000);
+const DESKTOP_PROGRESS_INTERVAL: Duration = Duration::from_millis(1_000);
+const DESKTOP_PROGRESS_TAIL_BYTES: usize = 4_096;
 /// 校验错误码：命令是被拦下的 sleep 一类。
 const SLEEP_BLOCKED_CODE: i32 = 10;
 
@@ -130,11 +137,65 @@ impl BashTool {
     }
 }
 
-/// 读事件流直到终态。返回输出文件、前 [`INLINE_LIMIT`] 字节与终态事件；被取消时先发取消再等终态。
+/// Reads the event stream to the terminal event. Returns the output file, the first
+/// [`INLINE_LIMIT`] bytes, the total streamed bytes and the terminal event; on cancellation the
+/// cancel is sent first and the terminal event is still awaited. With `desktop` (node_desktop)
+/// progress is not sent per chunk: like Node, one update per second after the initial delay,
+/// carrying the `outputPreview` built by Node's algorithm.
 struct Collected {
     output_file: String,
     head: Vec<u8>,
+    total: u64,
     finished: CommandEvent,
+}
+
+/// Fork (node_desktop): per-tick progress state — the retained output tail (kept across chunks)
+/// and the previous tick's line count.
+struct DesktopProgress {
+    tail: Vec<u8>,
+    previous_lines: u64,
+    next: tokio::time::Instant,
+}
+
+impl DesktopProgress {
+    fn new() -> Self {
+        Self {
+            tail: Vec::new(),
+            previous_lines: 0,
+            next: tokio::time::Instant::now() + DESKTOP_PROGRESS_DELAY,
+        }
+    }
+
+    fn extend(&mut self, data: &[u8]) {
+        self.tail.extend_from_slice(data);
+        let extra = self.tail.len().saturating_sub(DESKTOP_PROGRESS_TAIL_BYTES);
+        if extra > 0 {
+            self.tail.drain(..extra);
+        }
+    }
+
+    /// One tick: build the preview from the tail by Node's `buildBashOutputPreview`; the line
+    /// count carries to the next tick.
+    fn tick(&mut self, total: u64, task: &str, timeout_ms: u64) -> ToolProgress {
+        let text = String::from_utf8_lossy(&self.tail).into_owned();
+        let preview = crate::bash_preview::build(
+            &text,
+            self.tail.len() as u64,
+            total,
+            self.previous_lines,
+        );
+        self.previous_lines = preview.total_lines;
+        ToolProgress {
+            data: json!({
+                "type": "bash_progress",
+                "output": text,
+                "totalBytes": total,
+                "taskId": task,
+                "timeoutMs": timeout_ms,
+                "outputPreview": crate::bash_preview::to_value(&preview),
+            }),
+        }
+    }
 }
 
 async fn collect(
@@ -143,18 +204,32 @@ async fn collect(
     progress: &mpsc::Sender<ToolProgress>,
     task: &str,
     timeout_ms: u64,
+    desktop: bool,
 ) -> Result<Collected, ToolError> {
     let operation = context.operation.operation.clone();
     let mut output_file = String::new();
     let mut head = Vec::new();
     let mut total: u64 = 0;
     let mut cancelled = false;
+    let mut desktop_progress = desktop.then(DesktopProgress::new);
     loop {
         let event = tokio::select! {
             event = events.next() => event,
             () = context.cancel.cancelled(), if !cancelled => {
                 cancelled = true;
                 context.machine.commands().cancel(operation.clone()).await.map_err(env_failure)?;
+                continue;
+            }
+            () = async {
+                match desktop_progress.as_ref() {
+                    Some(state) => tokio::time::sleep_until(state.next).await,
+                    None => std::future::pending().await,
+                }
+            }, if desktop_progress.is_some() => {
+                let Some(state) = desktop_progress.as_mut() else { continue };
+                let ticked = state.tick(total, task, timeout_ms);
+                state.next += DESKTOP_PROGRESS_INTERVAL;
+                let _ = progress.try_send(ticked);
                 continue;
             }
         };
@@ -169,6 +244,10 @@ async fn collect(
                 total += data.len() as u64;
                 let room = INLINE_LIMIT.saturating_sub(head.len());
                 head.extend_from_slice(&data[..data.len().min(room)]);
+                if let Some(state) = desktop_progress.as_mut() {
+                    state.extend(&data);
+                    continue;
+                }
                 let tail = String::from_utf8_lossy(
                     &data[data.len().saturating_sub(PROGRESS_TAIL_BYTES)..],
                 )
@@ -190,6 +269,7 @@ async fn collect(
                 return Ok(Collected {
                     output_file,
                     head,
+                    total,
                     finished: moved,
                 });
             }
@@ -201,6 +281,7 @@ async fn collect(
                 return Ok(Collected {
                     output_file,
                     head,
+                    total,
                     finished,
                 });
             }
@@ -314,6 +395,7 @@ impl Tool for BashTool {
             })?;
         match self.run(input, context, progress, true).await? {
             Ran::Text(body) => Ok(text(body)),
+            Ran::Shown(output) => Ok(output),
             Ran::Failed { code, output } => Err(ToolError::Failed {
                 message: output::failure(code, &output),
             }),
@@ -325,6 +407,8 @@ impl Tool for BashTool {
 pub(crate) enum Ran {
     /// 结果的文字：成功的输出（超长时是 `<persisted-output>` 预览）或后台命令的启动说明。
     Text(String),
+    /// Fork (node_desktop)：带界面数据的结果（桌面的 bash_output display），文字同 `Text`。
+    Shown(ToolOutput),
     /// 退出码表示失败或超时：合流的输出（超时时前面是超时说明），不带 `Exit code N`。
     Failed { code: i32, output: String },
 }
@@ -380,7 +464,14 @@ impl BashTool {
         let deadline_ms = on_timeout.as_ref().and_then(|moved| moved.deadline_ms);
         // 交互会话的后台命令没有期限。
         let start_timeout = (!background || deadline).then_some(timeout_ms);
-        let task = output::task_id(&context.operation.operation);
+        // Fork (node_desktop): the desktop resolves output files by the model's tool call
+        // (`<root>/<session>/<toolCallId>-stdout.log`, Node's adapter layout), so the task id
+        // is the sanitized tool-call id there; the CLI keeps the operation-derived id.
+        let task = if self.settings.node_desktop {
+            output::desktop_task_id(context.tool_use.as_str())
+        } else {
+            output::task_id(&context.operation.operation)
+        };
         let workspace = &context.workspace;
         // 子代理不改主线程的 cwd：在子会话的当前目录启动（派生时取自父会话，
         // tools-files.md §3.3）、结束后不保留。
@@ -431,7 +522,15 @@ impl BashTool {
             }
             return Ok(Ran::Text(file_on_machine(text, &context)));
         }
-        let collected = collect(&context, events, &progress, task.as_str(), timeout_ms).await?;
+        let collected = collect(
+            &context,
+            events,
+            &progress,
+            task.as_str(),
+            timeout_ms,
+            self.settings.node_desktop,
+        )
+        .await?;
         if collected.finished == CommandEvent::Backgrounded {
             return Ok(Ran::Text(file_on_machine(
                 output::moved_to_background(timeout_ms, &task, &collected.output_file, deadline_ms),
@@ -477,6 +576,14 @@ impl BashTool {
         if matches!(outcome, Outcome::Cancelled | Outcome::Interrupted) {
             return Err(ToolError::Cancelled);
         }
+        // Fork (node_desktop): Node settles the foreground result by reading the merged output
+        // file once the process exited; the environment reports the file size it saw then, so a
+        // value below the streamed bytes means that read failed (for example the file was deleted
+        // mid-run) and Node's unavailable text replaces the output.
+        if self.settings.node_desktop && output_bytes < collected.total {
+            let code = read_failure_code(&context, &collected.output_file).await;
+            return Ok(Ran::Text(output::unavailable(&collected.output_file, &code)));
+        }
         let head = if timed_out {
             output::timed_out(timeout_ms, &head)
         } else {
@@ -493,13 +600,48 @@ impl BashTool {
             let truncated = total > INLINE_LIMIT as u64;
             crate::bash_reads::record(files, &context, &input.command, (code, truncated)).await;
         }
-        let text = output::success(&head, total, &collected.output_file, reset);
+        let summary = output::success(&head, total, &collected.output_file, reset);
         // 输出太长时结果给的是输出文件（`<persisted-output>`），远端时同样写明机器。
-        Ok(Ran::Text(if total > INLINE_LIMIT as u64 {
-            file_on_machine(text, &context)
+        let body = if total > INLINE_LIMIT as u64 {
+            file_on_machine(summary, &context)
         } else {
-            text
-        }))
+            summary
+        };
+        // Fork (node_desktop): Node's `createBashResultDisplay` — only a result whose file was kept
+        // (past the inline cap) carries the bounded `bash_output` header and the file path the
+        // desktop renders (packages/shared/src/bash-output-display.ts); `output` is the raw merged
+        // head, not the trimmed model text.
+        if self.settings.node_desktop && total > INLINE_LIMIT as u64 {
+            let mut shown = text(body);
+            shown.display = json!({
+                "kind": "bash_output",
+                "output": head,
+                "truncated": true,
+                "outputPath": collected.output_file,
+            });
+            return Ok(Ran::Shown(shown));
+        }
+        Ok(Ran::Text(body))
+    }
+}
+
+/// Fork (node_desktop): the errno name for the settlement read failure — Node's unavailable text
+/// carries the OS error code (`ENOENT` and friends). The file was unreadable at settlement, so it
+/// is missing (`ENOENT`) or something equally unusual (`unknown`); the plain stat keeps this
+/// best-effort instead of failing the result over a diagnostic lookup.
+async fn read_failure_code(context: &ToolUseContext, output_file: &str) -> String {
+    use rust_cli_kernel_api::env_files::StatFile;
+    let request = StatFile {
+        path: EnvPath::new(output_file),
+    };
+    match context
+        .machine
+        .files()
+        .stat(&context.workspace, request)
+        .await
+    {
+        Ok(None) => "ENOENT".to_owned(),
+        Ok(Some(_)) | Err(_) => "unknown".to_owned(),
     }
 }
 

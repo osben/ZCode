@@ -231,7 +231,18 @@ pub(crate) struct LocalEnv {
 pub(crate) async fn local_env(
     process: &ProcessFacts,
     egress: &Arc<Egress>,
+    flags: (bool, bool),
+) -> LocalEnv {
+    local_env_with(process, egress, flags, false).await
+}
+
+/// Fork (node_desktop): `desktop` (the app-server's `node_desktop`) additionally configures the
+/// Node adapter's temp output layout for Bash tool commands (see `shell::desktop_root`).
+pub(crate) async fn local_env_with(
+    process: &ProcessFacts,
+    egress: &Arc<Egress>,
     (find_and_grep, expanding_vars): (bool, bool),
+    desktop: bool,
 ) -> LocalEnv {
     let shell =
         crate::assemble::shell::config(process.env.clone(), &process.temp, find_and_grep).await;
@@ -250,6 +261,11 @@ pub(crate) async fn local_env(
         .with_shell(shell)
         // WebFetch 的网络出口（tools-more.md §4），与模型请求共用出口策略。
         .with_web(egress.clone());
+    let env = if desktop {
+        env.with_bash_outputs(crate::assemble::shell::desktop_root(&process.temp))
+    } else {
+        env
+    };
     LocalEnv { env, mcp, bash }
 }
 
@@ -312,7 +328,13 @@ pub(crate) async fn open(
         directory
     });
     let find_and_grep = !names_search_tools(&spec.cli.allowed);
-    let local = local_env(&facts.process, &egress, (find_and_grep, false)).await;
+    let local = local_env_with(
+        &facts.process,
+        &egress,
+        (find_and_grep, false),
+        spec.node_desktop,
+    )
+    .await;
     let monitor = options::monitor(&facts.hooks.assume, local.bash.is_some());
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);

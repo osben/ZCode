@@ -3,6 +3,7 @@
 //! own module and is registered with one line in [`commands`] or [`methods`].
 
 pub(crate) mod commands;
+mod file_summary;
 pub(crate) mod methods;
 mod queue;
 mod row_commands;

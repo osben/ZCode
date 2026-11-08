@@ -18,6 +18,44 @@ pub fn task_id(operation: &OperationId) -> ShellTaskId {
     ))
 }
 
+/// Fork (node_desktop): the desktop task id is the model's tool-call id, because the Node adapter
+/// names the merged output file `<root>/<session>/<toolCallId>-stdout.log` and the desktop app
+/// resolves that path by session and tool call.
+pub fn desktop_task_id(tool_use: &str) -> ShellTaskId {
+    ShellTaskId::new(sanitize_segment(tool_use))
+}
+
+/// Node's path segment sanitizer (`sanitizePathSegment`): characters outside `[a-zA-Z0-9._-]`
+/// become `_`, the result is capped at 120 characters, and an empty result becomes `unknown`.
+pub(crate) fn sanitize_segment(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut trimmed = cleaned.as_str();
+    if trimmed.len() > 120 {
+        // The cap is in bytes of the sanitized ASCII-only string.
+        trimmed = &cleaned[..120];
+    }
+    if trimmed.is_empty() {
+        "unknown".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// Fork (node_desktop): the result text when the merged output file could not be read at
+/// settlement (Node's `BashFileOutput.result` catch branch).
+pub fn unavailable(path: &str, code: &str) -> String {
+    format!("<bash output unavailable: output file {path} could not be read ({code}).>")
+}
+
 /// 这几个命令的退出码 1 是“没找到 / 不相同 / 假”，从它起才是出错。
 const SEARCH_TROUBLE_EXIT: i32 = 2;
 

@@ -100,6 +100,10 @@ pub(crate) struct ArtifactFile {
     pub existed_before: bool,
     pub before_content: Option<String>,
     pub after_content: Option<String>,
+    /// The write's hunks (Node `structuredPatch`, the App's `readonlyDiffHunkSchema` on the wire);
+    /// the App's per-turn summary shows them. Older artifacts omit it.
+    #[serde(default)]
+    pub structured_patch: Vec<serde_json::Value>,
 }
 
 /// 恢复计划：按写入的逆序、按路径模拟（Node `buildWorkspaceFileRewindPlan`）。每个路径期望磁盘上是
@@ -184,7 +188,7 @@ const DIAGONAL_STEP: isize = 2;
 
 /// 增删行数：先去掉公共前后缀，再用 Myers 求最小编辑距离 D（与 jsdiff 的统计相同）；
 /// LCS = (N + M - D) / 2，新增 = M - LCS，删除 = N - LCS。
-fn line_changes(before: &str, after: &str) -> (u64, u64) {
+pub(crate) fn line_changes(before: &str, after: &str) -> (u64, u64) {
     let split = |text: &str| -> Vec<String> {
         if text.is_empty() {
             return Vec::new();

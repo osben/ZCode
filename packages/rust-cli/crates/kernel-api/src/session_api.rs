@@ -90,6 +90,32 @@ pub enum RewindUnsafeReason {
     UnsupportedCheckpoint,
 }
 
+/// Fork: the files the turn opened by one typed user message changed, answering the App's
+/// per-turn summary query (Node `v4/conversation/fileChanges`): per-path counts with the writes'
+/// diff hunks, plus whether the turn's checkpoints were already restored by a summary rewind.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TurnFileChanges {
+    /// Per path, sorted by path.
+    pub items: Vec<TurnFileItem>,
+    /// True when every checkpoint of the turn was already restored.
+    pub reverted: bool,
+}
+
+/// One path's summary inside [`TurnFileChanges`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnFileItem {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+    /// How many checkpoint writes touched the path in this turn.
+    pub write_count: u32,
+    /// Distinct tools that wrote it, sorted; empty when the checkpoints record no name.
+    pub tool_names: Vec<String>,
+    /// The writes' hunks in write order, shaped like the App's `readonlyDiffHunkSchema`
+    /// (`{oldStart, oldLines, newStart, newLines, lines}`).
+    pub patches: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
@@ -129,6 +155,14 @@ pub enum Command {
     Rewind {
         target: MessageId,
         scope: RewindScope,
+    },
+    /// Fork: restore only the checkpoints of the turn opened by `target` (the App's per-turn
+    /// summary rewind, Node `applyFileRewind`): the conversation is not cut, and the turn's
+    /// summary flips to reverted ([`KernelEvent::TurnFilesReverted`]). Rejected while busy or when
+    /// the turn has no unrestored checkpoints; the reply waits for the transaction, like
+    /// [`Command::Rewind`], and reports the restored files with `removed: 0`.
+    RewindTurnFiles {
+        target: MessageId,
     },
     /// 从 `at` 处分叉出新会话；回执是 [`CommandResult::Forked`]。
     Fork {
@@ -310,6 +344,30 @@ pub struct SessionView {
     /// put `sourceCommandId` on its rows after an agent restart. Empty when unknown.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: per-turn file-change summaries for the projection (the App's turn header
+    /// `fileChanges`), keyed by the typed user message that opened the turn. Filled by the session
+    /// actor from its checkpoints; empty for sessions without file writes.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub turn_files: std::collections::BTreeMap<MessageId, TurnFileFacts>,
+}
+
+/// One turn's file summary carried in [`SessionView::turn_files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileFacts {
+    /// Per path, sorted by path.
+    pub files: Vec<TurnFileCount>,
+    /// The turn's checkpoints can be rewound (they were when they settled).
+    pub rewindable: bool,
+    /// Every checkpoint of the turn was already restored.
+    pub reverted: bool,
+}
+
+/// One path's counts inside [`SessionView::turn_files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileCount {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
 }
 
 // 内核事件与回合结局放在分出的文件里（800 行上限，工作线 F131；路径与名字不变）。
@@ -363,6 +421,21 @@ pub trait SessionHandle: Send + Sync {
     /// Fork: what a code rewind to `target` would restore and which files conflicts block, computed
     /// without changing anything (Node's file rewind preview).
     async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError>;
+
+    /// Fork: the files the turn opened by the typed user message `turn_input` changed (the App's
+    /// per-turn "N files changed" summary query, Node `v4/conversation/fileChanges`). The actor
+    /// picks the turn's unrestored checkpoints; the artifact reads run in the caller's task.
+    async fn turn_file_changes(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<TurnFileChanges, KernelError>;
+
+    /// Fork: what restoring only that turn's own checkpoints would do (the App's per-turn
+    /// `v4/conversation/fileRewindPreview`), computed without changing anything.
+    async fn turn_rewind_preview(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError>;
 
     /// `/goal` 面板的数据：会话 actor 的当前目标与最近一次达成的结果（docs/specs/rust-cli/goal.md §6.2）。
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError>;

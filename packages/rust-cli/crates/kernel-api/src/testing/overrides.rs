@@ -19,7 +19,7 @@ use crate::orchestration::{
 };
 use crate::session_api::{
     Ack, CommandEnvelope, EndReason, KernelError, RewindOption, RewindPreview, SequencedEvent,
-    SessionHandle, SessionView,
+    SessionHandle, SessionView, TurnFileChanges,
 };
 use crate::store::StoreError;
 use crate::tool::Tool;
@@ -145,6 +145,20 @@ pub trait HandleOverride: Send + Sync {
         Err(unsupported("rewind preview"))
     }
 
+    async fn turn_file_changes(
+        &self,
+        _turn_input: &MessageId,
+    ) -> Result<TurnFileChanges, KernelError> {
+        Err(unsupported("turn file changes"))
+    }
+
+    async fn turn_rewind_preview(
+        &self,
+        _turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError> {
+        Err(unsupported("turn rewind preview"))
+    }
+
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError> {
         Err(unsupported("goal"))
     }
@@ -208,6 +222,20 @@ impl<T: HandleOverride> SessionHandle for T {
 
     async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError> {
         HandleOverride::rewind_preview(self, target).await
+    }
+
+    async fn turn_file_changes(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<TurnFileChanges, KernelError> {
+        HandleOverride::turn_file_changes(self, turn_input).await
+    }
+
+    async fn turn_rewind_preview(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError> {
+        HandleOverride::turn_rewind_preview(self, turn_input).await
     }
 
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError> {

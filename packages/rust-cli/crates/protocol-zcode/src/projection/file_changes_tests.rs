@@ -1,12 +1,18 @@
 //! Fork: the turn header's `fileChanges` summary and the `canRewindFiles` action from
 //! `KernelEvent::FileChanges` (Node's product projection: counts on the header row, the rewind-files
-//! action only once the turn settles and the checkpoints are rewindable).
+//! action only once the turn settles and the checkpoints are rewindable), the reverted flip on
+//! `KernelEvent::TurnFilesReverted`, and the cold projection from a view with the kernel's
+//! per-turn summaries.
 
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::ids::{EnvironmentId, MessageId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::message::{
+    AssistantMessage, ContentBlock, Message, UserMessage, UserOrigin,
+};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    FileChange, KernelEvent, SequencedEvent, SessionView, TurnOutcome,
+    FileChange, KernelEvent, SequencedEvent, SessionView, TurnFileCount, TurnFileFacts,
+    TurnOutcome,
 };
 use rust_cli_kernel_api::store::{SessionKind, SessionMeta};
 use rust_cli_kernel_api::testing::selection;
@@ -76,6 +82,24 @@ fn change(path: &str, additions: u64, deletions: u64) -> FileChange {
         deletions,
         machine: Default::default(),
     }
+}
+
+fn user(id: &str, text: &str) -> Message {
+    Message::User(UserMessage {
+        id: MessageId::new(id),
+        content: vec![ContentBlock::Text { text: text.into() }],
+        origin: UserOrigin::Human,
+    })
+}
+
+fn assistant(id: &str, text: &str) -> Message {
+    Message::Assistant(AssistantMessage {
+        id: MessageId::new(id),
+        content: vec![ContentBlock::Text { text: text.into() }],
+        model: "m".into(),
+        stop_reason: None,
+        usage: None,
+    })
 }
 
 /// The last turn header row delta of a batch (refresh_actions appends its own header upsert after
@@ -155,6 +179,113 @@ fn batches_without_rewindable_checkpoints_keep_the_summary_but_not_the_action() 
     assert_eq!(
         row["fileChanges"],
         json!({"additions": 4, "deletions": 2, "files": 1, "state": "active"})
+    );
+    assert!(row["actions"].is_null());
+}
+
+/// The turn's checkpoints were all restored: the header's state flips to `reverted`, the counts
+/// stay, and the rewind-files action is dropped.
+#[test]
+fn the_reverted_event_flips_the_header_and_drops_the_action() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: user("msg_1", "write it"),
+    });
+    feed.apply(KernelEvent::FileChanges {
+        turn: TurnId::new("turn_1"),
+        files: vec![change("src/a.txt", 3, 1)],
+        rewindable: true,
+    });
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    assert_eq!(header(&finished)["actions"], json!({"canRewindFiles": true}));
+
+    let reverted = feed.apply(KernelEvent::TurnFilesReverted {
+        turn_input: MessageId::new("msg_1"),
+    });
+    let row = header(&reverted);
+    // The counts stay; only the state flips.
+    assert_eq!(
+        row["fileChanges"],
+        json!({"additions": 3, "deletions": 1, "files": 1, "state": "reverted"})
+    );
+    assert!(row["actions"].is_null());
+}
+
+/// A cold projection from a view with the kernel's per-turn summaries shows the same header the
+/// live one had: counts, `state`, and the `canRewindFiles` action for the active turns.
+#[test]
+fn a_cold_projection_from_the_view_shows_the_same_header() {
+    let mut view = empty_view();
+    view.messages = vec![user("msg_1", "write it"), assistant("msg_2", "done")];
+    view.turn_files.insert(
+        MessageId::new("msg_1"),
+        TurnFileFacts {
+            files: vec![
+                TurnFileCount {
+                    path: "src/a.txt".into(),
+                    additions: 3,
+                    deletions: 1,
+                },
+                TurnFileCount {
+                    path: "src/b.rs".into(),
+                    additions: 5,
+                    deletions: 0,
+                },
+            ],
+            rewindable: true,
+            reverted: false,
+        },
+    );
+    let projection = Projection::from_view(&view, Followup::Queue, vec!["high".into()]);
+    let snapshot = projection.snapshot(1, "epoch");
+    let row = snapshot["rows"]["window"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .rev()
+        .find(|row| row["kind"] == "turnHeader")
+        .expect("the turn header");
+    assert_eq!(
+        row["fileChanges"],
+        json!({"additions": 8, "deletions": 1, "files": 2, "state": "active"})
+    );
+    assert_eq!(row["actions"], json!({"canRewindFiles": true}));
+
+    // A reverted turn carries the same counts with `state: "reverted"` and no action.
+    let mut view = empty_view();
+    view.messages = vec![user("msg_1", "write it"), assistant("msg_2", "done")];
+    view.turn_files.insert(
+        MessageId::new("msg_1"),
+        TurnFileFacts {
+            files: vec![TurnFileCount {
+                path: "src/a.txt".into(),
+                additions: 3,
+                deletions: 1,
+            }],
+            rewindable: true,
+            reverted: true,
+        },
+    );
+    let projection = Projection::from_view(&view, Followup::Queue, vec!["high".into()]);
+    let snapshot = projection.snapshot(1, "epoch");
+    let row = snapshot["rows"]["window"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .rev()
+        .find(|row| row["kind"] == "turnHeader")
+        .expect("the turn header");
+    assert_eq!(
+        row["fileChanges"],
+        json!({"additions": 3, "deletions": 1, "files": 1, "state": "reverted"})
     );
     assert!(row["actions"].is_null());
 }

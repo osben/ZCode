@@ -16,6 +16,7 @@ mod base64;
 mod bash;
 mod bash_mode;
 pub mod bash_output;
+mod bash_preview;
 mod bash_reads;
 mod bash_settings;
 mod bash_sleep;

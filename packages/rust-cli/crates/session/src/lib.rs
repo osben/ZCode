@@ -58,6 +58,7 @@ mod title;
 mod title_model;
 mod title_parse;
 mod turn;
+mod turn_files;
 mod watched;
 mod workspace;
 
@@ -384,6 +385,41 @@ impl SessionHandle for Session {
         let snapshot = self
             .ask(|reply| Request::RewindPreview {
                 target: target.clone(),
+                reply,
+            })
+            .await?
+            .map_err(|reason| KernelError::Failed { message: reason })?;
+        rewind::preview(self.deps.artifacts.as_ref(), snapshot)
+            .await
+            .map_err(|reason| KernelError::Failed { message: reason })
+    }
+
+    /// Fork: the files the turn opened by `turn_input` changed (Node `v4/conversation/fileChanges`):
+    /// the actor picks the turn's unrestored checkpoints; the artifact reads and the per-path
+    /// summary run in the caller's task.
+    async fn turn_file_changes(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<rust_cli_kernel_api::session_api::TurnFileChanges, KernelError> {
+        let snapshot = self
+            .ask(|reply| Request::TurnFileChanges {
+                turn_input: turn_input.clone(),
+                reply,
+            })
+            .await?
+            .map_err(|reason| KernelError::Failed { message: reason })?;
+        Ok(turn_files::changes(self.deps.artifacts.as_ref(), snapshot).await)
+    }
+
+    /// Fork: what restoring only that turn's own checkpoints would do (Node
+    /// `v4/conversation/fileRewindPreview`), computed without changing anything.
+    async fn turn_rewind_preview(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError> {
+        let snapshot = self
+            .ask(|reply| Request::TurnRewindPreview {
+                turn_input: turn_input.clone(),
                 reply,
             })
             .await?

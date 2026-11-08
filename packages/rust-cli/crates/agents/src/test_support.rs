@@ -351,6 +351,20 @@ pub(crate) fn harness(gate: Option<Arc<Notify>>) -> Harness {
     )
 }
 
+/// Fork (node_desktop): the harness with the desktop agent's own tools (TaskOutput registered).
+pub(crate) fn desktop_harness() -> Harness {
+    built_full(
+        None,
+        true,
+        machine(Arc::new(UnusedEnvironment)),
+        no_peers(),
+        &[],
+        Arc::new(FixedClock(1_000)),
+        None,
+        true,
+    )
+}
+
 fn no_peers() -> Arc<dyn rust_cli_kernel_api::peers::PeerMessaging> {
     Arc::new(rust_cli_kernel_api::peers::NoPeers)
 }
@@ -455,6 +469,7 @@ pub(crate) fn with_machines(
         &[],
         Arc::new(FixedClock(1_000)),
         Some(machines),
+        false,
     )
 }
 
@@ -466,9 +481,10 @@ fn built_with(
     hidden: &'static [&'static str],
     clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
 ) -> Harness {
-    built_full(gate, keep_alive, machine_env, peers, hidden, clock, None)
+    built_full(gate, keep_alive, machine_env, peers, hidden, clock, None, false)
 }
 
+#[expect(clippy::too_many_arguments, reason = "测试组装的参数本来就是平铺的开关")]
 fn built_full(
     gate: Option<Gate>,
     keep_alive: bool,
@@ -477,6 +493,7 @@ fn built_full(
     hidden: &'static [&'static str],
     clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
     machines: Option<Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>>,
+    node_desktop: bool,
 ) -> Harness {
     let scope = TaskScope::root("agents-test", |_| {});
     let store = Arc::new(MemoryStore::default());
@@ -533,6 +550,8 @@ fn built_full(
             background_prompts: keep_alive,
             // fork 子代理由 TUI 的集成测试与 fork_tests.rs 覆盖（agents.md §8.1）。
             fork: false,
+            // Fork (node_desktop): only the desktop harness registers TaskOutput.
+            node_desktop,
         },
     );
     Harness {

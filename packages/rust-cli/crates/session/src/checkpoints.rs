@@ -19,6 +19,8 @@ impl Actor {
         }
         let mut files = Vec::new();
         for (checkpoint, change) in settled {
+            // Fork: the per-turn summary the view serves (and a cold projection rebuilds from).
+            self.turn_files_settled(&checkpoint.prompt, &change);
             self.checkpoints.push(checkpoint);
             files.push(change);
         }

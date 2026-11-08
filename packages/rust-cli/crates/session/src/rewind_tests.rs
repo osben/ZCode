@@ -195,9 +195,13 @@ async fn rewinding_code_and_conversation_restores_the_file_and_cuts_history() {
     let view = built.session.view().await.unwrap();
     assert!(view.messages.is_empty());
     let facts = built.store.facts(&crate::test_support::meta().id);
-    let tail: Vec<&Fact> = facts.iter().rev().take(2).collect();
-    assert!(matches!(tail[0], Fact::RevertSet { cursor } if cursor.target == prompt));
-    assert!(matches!(tail[1], Fact::CheckpointsRestored { checkpoints } if checkpoints.len() == 1));
+    let mut tail = facts.iter().rev();
+    assert!(matches!(tail.next(), Some(Fact::RevertSet { cursor }) if cursor.target == prompt));
+    // The same commit also records the turn summaries the restore left reverted.
+    assert!(tail.any(|fact| matches!(
+        fact,
+        Fact::CheckpointsRestored { checkpoints } if checkpoints.len() == 1
+    )));
     assert!(built.session.rewind_options().await.unwrap().is_empty());
 }
 

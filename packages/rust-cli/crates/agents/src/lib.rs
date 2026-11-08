@@ -28,6 +28,7 @@ mod runs;
 mod shell_notices;
 mod signals;
 mod spawn;
+mod task_output;
 mod task_stop;
 mod tasks;
 mod toolset;
@@ -117,6 +118,9 @@ pub struct AgentsConfig {
     pub background_prompts: bool,
     /// fork 子代理（修复线 L-A，agents.md §8.1）：交互会话打开，`-p` 关。打开时 Agent 用 fork 写法、全部在后台。
     pub fork: bool,
+    /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
+    /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
+    pub node_desktop: bool,
 }
 
 impl AgentsPorts {
@@ -246,6 +250,10 @@ impl Agents {
             own.extend(messaging::tools(&core));
             if !matches!(config.task_tools, TaskTools::Off) {
                 own.extend(tasks::tools(&core, &config.task_tools));
+            }
+            // Fork (node_desktop): only the app-server's agent exposes Node's TaskOutput.
+            if config.node_desktop {
+                own.push(Arc::new(task_output::TaskOutputTool { core: core.clone() }));
             }
             AgentRegistry { base, own, core }
         });

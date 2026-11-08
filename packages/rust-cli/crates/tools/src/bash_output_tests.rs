@@ -18,6 +18,33 @@ fn task_ids_are_stable_and_well_shaped() {
     );
 }
 
+/// Fork (node_desktop): the desktop task id is Node's sanitized tool-call id
+/// (`sanitizePathSegment`), so the environment can derive the adapter layout
+/// `<root>/<session>/<toolCallId>-stdout.log` from the task id alone.
+#[test]
+fn desktop_task_ids_use_nodes_path_segment_sanitizer() {
+    assert_eq!(desktop_task_id("toolu_bdo_small").as_str(), "toolu_bdo_small");
+    // Safe characters stay, everything else becomes `_`, the cap is 120 characters.
+    assert_eq!(desktop_task_id("a/b c:d").as_str(), "a_b_c_d");
+    assert_eq!(desktop_task_id("中文").as_str(), "__");
+    assert_eq!(
+        desktop_task_id(&"x".repeat(130)).as_str().len(),
+        120,
+        "capped at 120 characters"
+    );
+    assert_eq!(desktop_task_id("").as_str(), "unknown");
+    assert_eq!(desktop_task_id("///").as_str(), "___");
+}
+
+/// Fork (node_desktop): Node's read-failure text from `BashFileOutput.result`.
+#[test]
+fn the_unavailable_text_matches_node() {
+    assert_eq!(
+        unavailable("/tmp/zcode-bash-1/s1/toolu_x-stdout.log", "ENOENT"),
+        "<bash output unavailable: output file /tmp/zcode-bash-1/s1/toolu_x-stdout.log could not be read (ENOENT).>"
+    );
+}
+
 #[test]
 fn durations_and_exit_code_semantics() {
     assert!(!is_error("grep", 1));

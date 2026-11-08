@@ -191,6 +191,19 @@ impl Live {
             "atLogEpoch": state.log.epoch()})
     }
 
+    /// Fork: one `v4/conversation/rowsRange` page with the topic position it was read at.
+    pub fn rows_range(&self, before: Option<u64>, limit: usize) -> Value {
+        let state = self.state();
+        let (rows, more) = state.projection.rows_range(before, limit);
+        crate::projection::rows_range::result(
+            rows,
+            more,
+            state.log.seq(),
+            state.projection.revision(),
+            state.log.epoch(),
+        )
+    }
+
     pub fn followup(&self) -> Followup {
         self.state().projection.followup()
     }

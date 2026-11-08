@@ -14,6 +14,7 @@ mod inbound;
 mod inbox;
 mod index;
 mod legacy;
+mod lifecycle;
 mod live;
 mod preparation;
 mod projection;

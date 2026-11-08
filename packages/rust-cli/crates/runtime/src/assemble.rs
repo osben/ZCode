@@ -109,6 +109,8 @@ fn bash_settings(
         background_deadline: traits.non_interactive,
         bash_first_trimmed: ModeClass::of(defaults.mode) == ModeClass::Bypass,
         monitor: extensions.monitor,
+        // Fork (node_desktop): only the app-server runs like the Node desktop agent.
+        node_desktop: extensions.node_desktop,
     }
 }
 
@@ -278,7 +280,7 @@ pub(crate) fn agents(
     ports: &Ports,
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
-    (defaults, traits): (&Defaults, SurfaceTraits),
+    (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
 ) -> Agents {
     Agents::new(
         AgentsPorts {
@@ -309,6 +311,8 @@ pub(crate) fn agents(
             background_prompts: traits.interactive,
             // 修复线 L-A：交互会话缺省打开 fork 子代理，`-p` 关；环境变量可以改（agents.md §8.1.1）。
             fork: defaults.limits.fork_subagent.unwrap_or(traits.interactive),
+            // Fork (node_desktop): Node's TaskOutput only on the app-server's agent.
+            node_desktop,
         },
     )
 }

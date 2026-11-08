@@ -14,35 +14,18 @@ pub(crate) async fn dispatch(
     params: Value,
 ) -> Option<Result<Reply, RpcError>> {
     let result = match method {
-        "session/lifecycle/getState" => lifecycle_state(server, &params).await,
         "v4/conversation/plans" => plans(server, &params).await,
+        // Fork: the App's per-turn file summary queries (specs/fork-rust-agent-parity.md).
+        "v4/conversation/fileChanges" => super::file_summary::file_changes(server, &params).await,
+        "v4/conversation/fileRewindPreview" => {
+            super::file_summary::file_rewind_preview(server, &params).await
+        }
         // zcode-rs has no dynamic workflows (P4): there are never runs to list.
         "v4/conversation/workflowRuns" => Ok(json!({"runs": []})),
         "session/debug" => session_debug(&params),
         _ => return None,
     };
     Some(result.map(Reply::new))
-}
-
-/// Node `SessionLifecycleController.getState` without an operation in flight: an open session is `ready`, a stored
-/// one is `unloaded`. zcode-rs opens sessions on demand and never fails an activation it reports, so `generation`
-/// and `revision` stay 0 and `lastError` is null.
-async fn lifecycle_state(server: &Server, params: &Value) -> Result<Value, RpcError> {
-    let Some(id) = params["sessionId"].as_str().filter(|id| !id.is_empty()) else {
-        return Err(RpcError::invalid_params("sessionId is required"));
-    };
-    let session = SessionId::new(id);
-    let state = if server.bridge.get(&session).is_some() {
-        "ready"
-    } else {
-        server
-            .kernel
-            .session_snapshot(&session)
-            .await
-            .map_err(|error| kernel_error(&error))?;
-        "unloaded"
-    };
-    Ok(json!({"sessionId": id, "state": state, "generation": 0, "revision": 0, "lastError": null}))
 }
 
 fn session_id(params: &Value) -> Result<SessionId, RpcError> {

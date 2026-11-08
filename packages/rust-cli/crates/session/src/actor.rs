@@ -51,6 +51,20 @@ pub(crate) enum Request {
         target: MessageId,
         reply: oneshot::Sender<Result<crate::rewind::Preview, String>>,
     },
+    /// Fork: the files the turn opened by `turn_input` changed (the App's per-turn summary query):
+    /// the actor picks the turn's unrestored checkpoints (or reports the turn already reverted);
+    /// the artifact reads and the per-path summary run in the caller's task.
+    TurnFileChanges {
+        turn_input: MessageId,
+        reply: oneshot::Sender<Result<crate::turn_files::Files, String>>,
+    },
+    /// Fork: a dry-run preview of restoring only that turn's checkpoints (the App's per-turn
+    /// `fileRewindPreview`): the actor picks the machine groups over the turn's own checkpoints;
+    /// reads and the hash check happen in the caller's task.
+    TurnRewindPreview {
+        turn_input: MessageId,
+        reply: oneshot::Sender<Result<crate::rewind::Preview, String>>,
+    },
     Goal {
         reply: oneshot::Sender<rust_cli_kernel_api::goal::GoalView>,
     },
@@ -82,6 +96,8 @@ pub(crate) enum AskScope {
 pub(crate) enum JobDone {
     Startup(Box<rust_cli_kernel_api::hooks::HookOutcome>),
     Rewind(Box<crate::rewind::Finished>),
+    /// Fork: the per-turn summary rewind (`Command::RewindTurnFiles`).
+    TurnFilesRewound(Box<crate::rewind::TurnRewound>),
 }
 
 pub(crate) struct Job {
@@ -182,6 +198,11 @@ pub(crate) struct Actor {
     pub(crate) job: Option<Job>,
     /// 没有被代码回退撤销的 checkpoint，按写入顺序（spec §4）。
     pub(crate) checkpoints: Vec<WorkspaceCheckpoint>,
+    /// Fork: per-turn file summaries keyed by the typed user message that opened the turn
+    /// (the App's turn header `fileChanges`): updated as checkpoints settle and are restored,
+    /// rebuilt from the stored artifacts on a cold open ([`crate::turn_files`]). Only `view`
+    /// reads it.
+    pub(crate) turn_files: std::collections::HashMap<MessageId, crate::turn_files::TurnFileSummary>,
     /// 提交核心（kernel-api `RunLedger`，与子代理的 sink 同一份，工作线 F130）：当前轮（随每个批次交给存储，node-store.md
     /// §4，修复线 F6；冷加载时取 `LoadedSession.turn`）、工具已结束而结果还没提交的 checkpoint 与子代理关联。只在
     /// [`Self::commit`] 与提交消息时改。
@@ -271,6 +292,7 @@ impl Actor {
             running: None,
             job: None,
             checkpoints: state.checkpoints,
+            turn_files: std::collections::HashMap::new(),
             ledger: RunLedger::new(state.turn),
             generation: 0,
             titles: TitleState::default(),
@@ -326,6 +348,9 @@ impl Actor {
     pub(crate) async fn run(mut self, mut requests: mpsc::Receiver<Request>) {
         // 跨会话：绑定为主会话并从库里恢复（cross-session.md §2.2）；在处理第一条命令之前。
         self.peers_open().await;
+        // Fork: on a cold open, rebuild the per-turn file summaries from the stored checkpoints
+        // (the previous process's `FileChanges` events are gone).
+        self.restore_turn_files().await;
         loop {
             // 修复（R1-1）：以前这里在“所有句柄都已释放”（`recv` 返回 None）时退出，但内核的会话表一直持有
             // 句柄，这个分支永远到不了——关闭后 actor 还活着，收到后台通知就自己开回合。现在由 `Request::Close`
@@ -389,6 +414,12 @@ impl Actor {
             Request::RewindPreview { target, reply } => {
                 let _ = reply.send(self.rewind_preview(&target));
             }
+            Request::TurnFileChanges { turn_input, reply } => {
+                let _ = reply.send(Ok(self.turn_files_snapshot(&turn_input)));
+            }
+            Request::TurnRewindPreview { turn_input, reply } => {
+                let _ = reply.send(self.turn_rewind_preview(&turn_input));
+            }
             Request::Goal { reply } => {
                 let _ = reply.send(self.goal_view());
             }
@@ -412,6 +443,9 @@ impl Actor {
                 match envelope.command {
                     Command::Rewind { target, scope } => {
                         return self.rewind(envelope.id, target, scope, reply).await;
+                    }
+                    Command::RewindTurnFiles { target } => {
+                        return self.rewind_turn_files(envelope.id, target, reply).await;
                     }
                     Command::GenerateName => return self.generate_name(envelope.id, reply),
                     _ => {}
@@ -510,7 +544,7 @@ impl Actor {
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
             // 在 `handle` 里处理（回执要等事务结束或名字）。
-            Command::Rewind { .. } | Command::GenerateName => {
+            Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")
             }
             Command::Bash {
@@ -535,6 +569,7 @@ impl Actor {
         match done {
             Ok(JobDone::Startup(outcome)) => self.finish_startup(*outcome).await,
             Ok(JobDone::Rewind(finished)) => self.finish_rewind(*finished).await,
+            Ok(JobDone::TurnFilesRewound(finished)) => self.finish_turn_rewind(*finished).await,
             Err(error) => {
                 tracing::warn!(%error, "a session job ended without a result");
                 self.start_next().await;
@@ -567,6 +602,13 @@ impl Actor {
             context_notice: self.context_notice().unwrap_or_default(),
             output_speed: self.output_speed,
             commands: self.commands.clone(),
+            // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
+            turn_files: self
+                .turn_files
+                .iter()
+                .filter(|(prompt, _)| self.messages.iter().any(|m| m.id() == *prompt))
+                .map(|(prompt, summary)| (prompt.clone(), summary.facts()))
+                .collect(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

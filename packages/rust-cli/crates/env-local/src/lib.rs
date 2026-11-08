@@ -97,6 +97,9 @@ pub struct LocalEnvironment {
     web: Option<std::sync::Arc<rust_cli_net::Egress>>,
     /// pdftoppm 是否可用（可用的结论只查一次，tools-files.md §1.5）。
     poppler: pdf::Poppler,
+    /// Fork (node_desktop): the desktop output root handed to [`Shells`]; kept here so
+    /// `with_shell` applies it whichever order the builders are chained in.
+    bash_outputs: Option<PathBuf>,
 }
 
 #[async_trait]

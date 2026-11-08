@@ -4,12 +4,14 @@
 //! 行：turnHeader（回合）、userInput（真人输入）、assistantText、reasoning、toolCall；其余事件只改状态或忽略（P1）。
 
 mod actions;
+mod bash_progress;
 mod cold;
 pub mod elicitation;
 mod kinds;
 mod markers;
 mod plans;
 mod rows;
+pub(crate) mod rows_range;
 pub mod state;
 
 use std::collections::HashMap;
@@ -26,8 +28,8 @@ pub use actions::{RowAction, RowTarget};
 use kinds::{RowKind, ToolStatus};
 use state::{ActiveWork, Followup, LastError, Phase};
 
-/// 快照里最多带的行（尾部窗口）。
-const WINDOW_ROWS: usize = 200;
+/// Node's `PROTOCOL_V4_LIMITS.snapshotTailWindowRows`: the snapshot's row window; older rows come from `rowsRange`.
+const WINDOW_ROWS: usize = 60;
 
 /// sendText 带来的输入的事实（行与队列项要用）。
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +57,9 @@ struct TurnFileChanges {
     files: HashMap<String, (u64, u64)>,
     /// Any of the turn's batches said its checkpoints can be rewound.
     rewindable: bool,
+    /// Fork: every checkpoint of the turn was restored (`KernelEvent::TurnFilesReverted`); the
+    /// header shows `state: "reverted"` and stops offering the rewind-files action.
+    reverted: bool,
 }
 
 /// 一个回合里的行。
@@ -134,6 +139,23 @@ fn turn_key(turn: &str) -> String {
     format!("turn:{turn}")
 }
 
+/// Fork: the turn header's `fileChanges` JSON (`turnHeaderRowSchema.fileChanges`): totals over the
+/// per-path counts and the turn's restore state.
+fn summary_json(changes: &TurnFileChanges) -> Value {
+    let (additions, deletions) = changes
+        .files
+        .values()
+        .fold((0, 0), |(add, del), (file_add, file_del)| {
+            (add + file_add, del + file_del)
+        });
+    json!({
+        "additions": additions,
+        "deletions": deletions,
+        "files": changes.files.len(),
+        "state": if changes.reverted { "reverted" } else { "active" },
+    })
+}
+
 fn block_key(kind: RowKind, turn: &str, response: u32, index: usize) -> String {
     format!("{}:{turn}:{response}:{index}", kind.as_str())
 }
@@ -199,6 +221,7 @@ impl Projection {
             turn_file_changes: HashMap::new(),
         };
         cold::rows(&mut projection, view);
+        projection.adopt_turn_files(view);
         for (interaction, request) in &view.pending {
             projection.ask(interaction.as_str(), request, view.meta.created_at_ms);
         }
@@ -457,6 +480,13 @@ impl Projection {
             }
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
+                // Fork: Node's `buildToolOutput` carries the result display on the row output (all
+                // kinds but `node_repl_images`; the App drops kinds it does not know), so the desktop
+                // renders Bash's `bash_output` window (specs/fork-rust-agent-parity.md).
+                let mut settled = json!({"text": text});
+                if !output.display.is_null() && output.display["kind"] != "node_repl_images" {
+                    settled["display"] = output.display.clone();
+                }
                 let status = if self.denied.remove(tool_use.as_str()) {
                     ToolStatus::Cancelled
                 } else if output.is_error {
@@ -468,7 +498,7 @@ impl Projection {
                     &tool_key(tool_use.as_str()),
                     |row| {
                         row.insert("status".into(), json!(status.as_str()));
-                        row.insert("output".into(), json!({"text": text}));
+                        row.insert("output".into(), settled);
                         row.insert("endedAt".into(), json!(now));
                         row.remove("approvalInteractionId");
                     },
@@ -590,9 +620,14 @@ impl Projection {
                 files,
                 rewindable,
             } => self.file_changes(turn.as_str(), files, *rewindable, &mut out),
+            KernelEvent::TurnFilesReverted { turn_input } => {
+                self.turn_files_reverted(turn_input.as_str(), &mut out);
+            }
+            KernelEvent::ToolProgress { tool_use, progress } => {
+                self.bash_progress(tool_use.as_str(), &progress.data, &mut out);
+            }
             // 不改 App 的行与状态的事件（P1）。显式列出：内核加了事件时这里编译失败，要当场决定投不投（审查 E9）。
             KernelEvent::SessionCreated { .. }
-            | KernelEvent::ToolProgress { .. }
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
             | KernelEvent::TasksChanged { .. }
@@ -617,6 +652,7 @@ impl Projection {
         if structural {
             self.refresh_actions(&mut out);
         }
+        self.clear_settled_output_previews(&mut out);
         if event.revision != self.revision {
             self.revision = event.revision;
             patch.insert("revision".into(), json!(self.revision));
@@ -762,18 +798,7 @@ impl Projection {
             if changes.files.is_empty() {
                 return;
             }
-            let (additions, deletions) = changes
-                .files
-                .values()
-                .fold((0, 0), |(add, del), (file_add, file_del)| {
-                    (add + file_add, del + file_del)
-                });
-            json!({
-                "additions": additions,
-                "deletions": deletions,
-                "files": changes.files.len(),
-                "state": "active",
-            })
+            summary_json(changes)
         };
         self.upsert(
             &turn_key(turn),
@@ -782,6 +807,84 @@ impl Projection {
             },
             out,
         );
+    }
+
+    /// Fork: the turn header's `fileChanges` JSON of one turn's merged counts.
+    fn summary_of(&self, turn: &str) -> Option<Value> {
+        self.turn_file_changes.get(turn).map(summary_json)
+    }
+
+    /// Fork: the turn's checkpoints were all restored (`KernelEvent::TurnFilesReverted`): the turn
+    /// header's `fileChanges` state flips to `reverted`, and the next actions recompute drops
+    /// `canRewindFiles` (it is offered only for `state: "active"`).
+    fn turn_files_reverted(&mut self, turn_input: &str, out: &mut Vec<Value>) {
+        let turn = self.rows.iter().find_map(|row| {
+            (RowKind::of(row) == Some(RowKind::UserInput)
+                && row["origin"] == "realUser"
+                && row["entityId"] == turn_input)
+                .then(|| row["turnId"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        let Some(turn) = turn else {
+            return;
+        };
+        if let Some(changes) = self.turn_file_changes.get_mut(&turn) {
+            changes.reverted = true;
+        }
+        let recomputed = self.summary_of(&turn);
+        self.upsert(
+            &turn_key(&turn),
+            |row| match recomputed {
+                Some(summary) => {
+                    row.insert("fileChanges".into(), summary);
+                }
+                None => {
+                    if let Some(changes) = row.get_mut("fileChanges") {
+                        if let Some(summary) = changes.as_object_mut() {
+                            summary.insert("state".into(), json!("reverted"));
+                        }
+                    }
+                }
+            },
+            out,
+        );
+    }
+
+    /// Fork: the finished turns' file summaries from the session view (a cold open, or the rebuild
+    /// after a history rewrite): the kernel keeps them per typed user message; the rows need them
+    /// on the turn headers, keyed by the turn ids the cold rows were built with.
+    fn adopt_turn_files(&mut self, view: &SessionView) {
+        for (prompt, facts) in &view.turn_files {
+            let Some(turn) = self.rows.iter().find_map(|row| {
+                (RowKind::of(row) == Some(RowKind::UserInput)
+                    && row["origin"] == "realUser"
+                    && row["entityId"] == prompt.as_str())
+                .then(|| row["turnId"].as_str().map(str::to_owned))
+                .flatten()
+            }) else {
+                continue;
+            };
+            let entry = self.turn_file_changes.entry(turn.clone()).or_default();
+            entry.rewindable = facts.rewindable;
+            entry.reverted = facts.reverted;
+            for file in &facts.files {
+                let counts = entry.files.entry(file.path.clone()).or_insert((0, 0));
+                counts.0 = counts.0.saturating_add(file.additions);
+                counts.1 = counts.1.saturating_add(file.deletions);
+            }
+            if entry.files.is_empty() {
+                continue;
+            }
+            let summary = summary_json(entry);
+            let mut out = Vec::new();
+            self.upsert(
+                &turn_key(&turn),
+                |row| {
+                    row.insert("fileChanges".into(), summary);
+                },
+                &mut out,
+            );
+        }
     }
 
     /// 队列（`queueStateSchema`）：内核的排队输入加上 sendText 时记下的事实。

@@ -18,14 +18,22 @@ pub enum RowAction {
     Edit,
     Retry,
     Fork,
+    /// Fork: the `v4/conversation/fileChanges` query (any turn header row, like Node's row rule).
+    FileChanges,
+    /// Fork: `v4/conversation/fileRewindPreview` and the `applyFileRewind` command (a finished
+    /// turn offering `canRewindFiles`).
+    FileRewind,
 }
 
 impl RowAction {
-    fn flag(self) -> &'static str {
+    fn flag(self) -> Option<&'static str> {
         match self {
-            Self::Edit => "canEdit",
-            Self::Retry => "canRetry",
-            Self::Fork => "canFork",
+            Self::Edit => Some("canEdit"),
+            Self::Retry => Some("canRetry"),
+            Self::Fork => Some("canFork"),
+            Self::FileRewind => Some("canRewindFiles"),
+            // Node's `fileChanges` query needs only a turnHeader row (product-projection.ts).
+            Self::FileChanges => None,
         }
     }
 }
@@ -183,11 +191,12 @@ impl Projection {
             .rows
             .iter()
             .find(|row| row["rowId"].as_u64() == Some(row_id))?;
-        let offered = row
-            .get("actions")
-            .and_then(|actions| actions.get(action.flag()))
-            .and_then(Value::as_bool)
-            == Some(true);
+        let offered = action.flag().is_none_or(|flag| {
+            row.get("actions")
+                .and_then(|actions| actions.get(flag))
+                .and_then(Value::as_bool)
+                == Some(true)
+        });
         if row["entityId"] != entity || !offered {
             return None;
         }
@@ -199,6 +208,13 @@ impl Projection {
             RowKind::AssistantText => Some(RowTarget {
                 user_message: self.turn_user_message(turn_of(row))?,
                 assistant_message: row["assistantResponseId"].as_str().map(str::to_owned),
+            }),
+            // Fork: the row queries (`fileChanges`, `fileRewindPreview`, `applyFileRewind`)
+            // address a turn header; the target is the turn's typed user message (the kernel's
+            // per-turn anchor).
+            RowKind::TurnHeader => Some(RowTarget {
+                user_message: self.turn_user_message(turn_of(row))?,
+                assistant_message: None,
             }),
             _ => None,
         }

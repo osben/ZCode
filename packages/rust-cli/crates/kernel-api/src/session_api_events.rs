@@ -165,6 +165,12 @@ pub enum KernelEvent {
     HistoryRewritten {
         generation: u64,
     },
+    /// Fork: the checkpoints of the turn opened by `turn_input` were all restored
+    /// ([`crate::session_api::Command::RewindTurnFiles`]); the turn header's file summary flips to
+    /// reverted and stops offering the rewind-files action.
+    TurnFilesReverted {
+        turn_input: MessageId,
+    },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。
     ScheduledFire {

@@ -52,6 +52,13 @@ pub(crate) struct Plan {
     pub env: BTreeMap<String, String>,
     /// 内嵌搜索工具的 prelude（embedded-search.md §8）；hook 命令与没有内置时是 None。
     pub prelude: Option<String>,
+    /// Fork (node_desktop): the command uses the desktop output layout (see `Shells`), so the
+    /// merged file is settled like the Node adapter and a compatibility link below covers the
+    /// scratch tasks name.
+    pub desktop: bool,
+    /// Fork (node_desktop): `<scratch>/<session>/tasks/<task>.output` pointing at
+    /// [`Plan::output`], created after the output file opens and removed with it.
+    pub link: Option<PathBuf>,
 }
 
 /// 监督任务的输入。
@@ -134,6 +141,67 @@ fn io(error: &std::io::Error) -> EnvError {
     }
 }
 
+/// Fork (node_desktop): the errno name like Node's `error.code` (`EISDIR` and friends). The
+/// core errno numbers are shared by the Unix targets; anything unmapped falls back to the raw
+/// code so the diagnostic stays identifiable.
+fn errno_name(error: &std::io::Error) -> String {
+    let code = match error.raw_os_error() {
+        Some(code) => code,
+        None => return "unknown".to_owned(),
+    };
+    let name = match code {
+        1 => "EPERM",
+        2 => "ENOENT",
+        13 => "EACCES",
+        17 => "EEXIST",
+        20 => "ENOTDIR",
+        21 => "EISDIR",
+        22 => "EINVAL",
+        28 => "ENOSPC",
+        30 => "EROFS",
+        63 => "ENAMETOOLONG",
+        _ => return format!("os error {code}"),
+    };
+    name.to_owned()
+}
+
+/// Opening an output file failed. For desktop commands the message carries the errno name
+/// (Node's adapter reports `EISDIR: illegal operation on a directory, open …` and the desktop
+/// regression asserts on the code itself).
+fn open_failed(plan: &Plan, error: &std::io::Error) -> EnvError {
+    let message = if plan.desktop {
+        format!("{} ({})", error, errno_name(error))
+    } else {
+        error.to_string()
+    };
+    EnvError::Io { message }
+}
+
+/// Fork (node_desktop): point the scratch tasks name at the desktop output file so
+/// `ShellState::outputs`-based lookups (TaskOutput) keep working. Best effort: a filesystem
+/// without symlinks only loses that alias, and a stale link from an earlier crashed run is
+/// replaced.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "env-local is the process IO entry: output files live on the executing side (docs/specs/rust-cli/README.md §4)"
+)]
+async fn link_output(plan: &Plan) {
+    let Some(link) = &plan.link else {
+        return;
+    };
+    if let Some(parent) = link.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let _ = tokio::fs::remove_file(link).await;
+    #[cfg(unix)]
+    let created = tokio::fs::symlink(&plan.output, link).await;
+    #[cfg(windows)]
+    let created = std::os::windows::fs::symlink_file(&plan.output, link);
+    if let Err(error) = created {
+        tracing::warn!(%error, link = %link.display(), "could not link the desktop output file");
+    }
+}
+
 /// 启动进程树；失败时不登记命令。返回的布尔值表示套了 Linux sandbox、已登记它的挂载点（结束时由 [`run`]
 /// 注销）。
 pub(crate) async fn spawn(
@@ -145,12 +213,15 @@ pub(crate) async fn spawn(
 ) -> Result<(Tracked, bool), EnvError> {
     let output = open_output(plan, &plan.output)
         .await
-        .map_err(|error| io(&error))?;
+        .map_err(|error| open_failed(plan, &error))?;
     let errors = match &plan.errors {
         Some(path) => open_output(plan, path).await,
         None => output.try_clone(),
     }
-    .map_err(|error| io(&error))?;
+    .map_err(|error| open_failed(plan, &error))?;
+    if plan.desktop {
+        link_output(plan).await;
+    }
     let cwd_file = matches!(request.cwd_scope, CwdScope::Session { .. }).then_some(&*plan.cwd_file);
     let hook = matches!(request.kind, CommandKind::Hook { .. });
     let text = script(
@@ -321,13 +392,21 @@ async fn exceeds(plan: &Plan, limit: OutputLimit) {
     }
 }
 
+/// Fork (node_desktop): Node's inline output cap (`MAX_INLINE_OUTPUT_BYTES`, the same 30000
+/// as the tools' `INLINE_LIMIT`): a foreground output at or below it is deleted after the
+/// settlement read; anything larger stays and the result names the path.
+const DESKTOP_INLINE_OUTPUT_BYTES: u64 = 30_000;
+
 /// 前台命令因输出超限被结束后删掉输出文件，不在磁盘上留下超限的文件。
 #[expect(
     clippy::disallowed_methods,
     reason = "env-local 是进程 IO 的入口：删除超限的输出文件（docs/specs/rust-cli/README.md §4）"
 )]
 async fn remove_outputs(plan: &Plan) {
-    for path in std::iter::once(&plan.output).chain(plan.errors.as_ref()) {
+    for path in std::iter::once(&plan.output)
+        .chain(plan.errors.as_ref())
+        .chain(plan.link.as_ref())
+    {
         if let Err(error) = tokio::fs::remove_file(path).await
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -606,9 +685,12 @@ async fn supervise(
         leave_sandbox(&shared).await;
     }
     // monitor 的输出文件是事件流（工作线 F83）：不写终态一行，否则它会成为一条事件。
+    // Fork (node_desktop): the desktop reads the merged file as the child wrote it (the
+    // regression asserts exact file contents), so the terminal line is not appended there.
     if background
         .as_ref()
         .is_some_and(|background| background.kind == BackgroundKind::Bash)
+        && !job.plan.desktop
     {
         mark_exit(&job.plan, &outcome, exit).await;
     }
@@ -619,6 +701,17 @@ async fn supervise(
         None => output_bytes,
     };
     if output_limit.is_some() && background.is_none() {
+        remove_outputs(&job.plan).await;
+    }
+    // Fork (node_desktop): settle the foreground output like the Node adapter — a file that
+    // fit inline (at most [`DESKTOP_INLINE_OUTPUT_BYTES`]) is deleted after the settlement
+    // read, a larger one is kept and the tool result names its path. Background commands
+    // (including ones moved there by timeout) keep their file.
+    if job.plan.desktop
+        && background.is_none()
+        && output_limit.is_none()
+        && output_bytes <= DESKTOP_INLINE_OUTPUT_BYTES
+    {
         remove_outputs(&job.plan).await;
     }
     // 转到后台的命令结束时不写回会话的当前目录（后台命令不改它），也不报重置。
