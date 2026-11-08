@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use crate::commands::{payload, send};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
-use crate::projection::RowAction;
+use crate::projection::{RowAction, TargetMiss};
 use crate::server::{Server, kernel_error};
 
 const EXECUTION_FAILED: &str = "fault.command.executionFailed";
@@ -88,15 +88,17 @@ async fn resolve(
             "proto.staleRevision: the conversation changed",
         ));
     }
-    let Some(target) = live
+    let target = live
         .sink
         .row_target(params.target.row_id, &params.target.entity_id, action)
-    else {
-        return Err(coded(
-            "guard.actionUnavailable",
-            "guard.actionUnavailable: the row does not offer this action",
-        ));
-    };
+        .map_err(|miss| {
+            let code = miss.code();
+            let reason = match miss {
+                TargetMiss::Stale => "the row is no longer in the conversation",
+                TargetMiss::Unavailable => "the row does not offer this action",
+            };
+            coded(code, &format!("{code}: {reason}"))
+        })?;
     Ok((live, target.user_message))
 }
 
@@ -165,18 +167,20 @@ pub(super) async fn apply(live: &Bridged<Live>, envelope: &Envelope, revision: u
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let Some(target) = live.sink.row_target(
+    let target = match live.sink.row_target(
         body.target.row_id,
         &body.target.entity_id,
         RowAction::FileRewind,
-    ) else {
-        return Ack::refused(
-            &envelope.command_id,
-            Status::Rejected,
-            "guard.actionUnavailable",
-            format!("row {} does not offer the file rewind", body.target.row_id),
-            revision,
-        );
+    ) {
+        Ok(target) => target,
+        Err(miss) => {
+            return super::row_commands::target_refused(
+                envelope,
+                miss,
+                format!("row {} does not offer the file rewind", body.target.row_id),
+                revision,
+            );
+        }
     };
     let turn = MessageId::new(&target.user_message);
     let preview = match live.handle.turn_rewind_preview(&turn).await {

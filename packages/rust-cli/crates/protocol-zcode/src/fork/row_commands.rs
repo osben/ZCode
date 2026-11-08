@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use crate::commands::{payload, send};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
-use crate::projection::{InputMeta, RowAction};
+use crate::projection::{InputMeta, RowAction, TargetMiss};
 use crate::server::Server;
 
 const EXECUTION_FAILED: &str = "fault.command.executionFailed";
@@ -60,6 +60,21 @@ fn refused(envelope: &Envelope, code: &str, message: impl Into<String>, revision
         message,
         revision,
     )
+}
+
+/// A row action command whose target missed: stale when the projection no longer holds the row,
+/// rejected when the row does not offer the action (Node's `validateRowTarget`).
+pub(super) fn target_refused(
+    envelope: &Envelope,
+    miss: TargetMiss,
+    message: impl Into<String>,
+    revision: u64,
+) -> Ack {
+    let status = match miss {
+        TargetMiss::Stale => Status::Stale,
+        TargetMiss::Unavailable => Status::Rejected,
+    };
+    Ack::refused(&envelope.command_id, status, miss.code(), message, revision)
 }
 
 /// The typed user message `id` as it is stored now.
@@ -299,20 +314,24 @@ pub(super) async fn edit(
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let Some(target) =
-        live.sink
+    let target =
+        match live
+            .sink
             .row_target(body.target.row_id, &body.target.entity_id, RowAction::Edit)
-    else {
-        return refused(
-            envelope,
-            "guard.latestQueryEditOnly",
-            format!(
-                "row {} is not the latest editable input",
-                body.target.row_id
-            ),
-            revision,
-        );
-    };
+        {
+            Ok(target) => target,
+            Err(miss) => {
+                return target_refused(
+                    envelope,
+                    miss,
+                    format!(
+                        "row {} is not the latest editable input",
+                        body.target.row_id
+                    ),
+                    revision,
+                );
+            }
+        };
     let Some(stored) = stored_input(live, &target.user_message).await else {
         return refused(
             envelope,
@@ -388,20 +407,24 @@ pub(super) async fn retry(live: &Bridged<Live>, envelope: &Envelope, revision: u
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let Some(target) =
-        live.sink
+    let target =
+        match live
+            .sink
             .row_target(body.target.row_id, &body.target.entity_id, RowAction::Retry)
-    else {
-        return refused(
-            envelope,
-            "guard.latestAssistantRetryOnly",
-            format!(
-                "row {} is not the latest assistant reply",
-                body.target.row_id
-            ),
-            revision,
-        );
-    };
+        {
+            Ok(target) => target,
+            Err(miss) => {
+                return target_refused(
+                    envelope,
+                    miss,
+                    format!(
+                        "row {} is not the latest assistant reply",
+                        body.target.row_id
+                    ),
+                    revision,
+                );
+            }
+        };
     // Read before the cut: after it the input is gone.
     let Some(stored) = stored_input(live, &target.user_message).await else {
         return refused(
@@ -440,17 +463,21 @@ pub(super) async fn fork(
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let Some(target) =
-        live.sink
+    let target =
+        match live
+            .sink
             .row_target(body.target.row_id, &body.target.entity_id, RowAction::Fork)
-    else {
-        return refused(
-            envelope,
-            "guard.forkTargetNotStable",
-            format!("row {} cannot be forked from", body.target.row_id),
-            revision,
-        );
-    };
+        {
+            Ok(target) => target,
+            Err(miss) => {
+                return target_refused(
+                    envelope,
+                    miss,
+                    format!("row {} cannot be forked from", body.target.row_id),
+                    revision,
+                );
+            }
+        };
     let command = Command::ForkFromInput {
         input: MessageId::new(&target.user_message),
     };

@@ -27,7 +27,7 @@ use rust_cli_kernel_api::session_api::{
 };
 use serde_json::{Map, Value, json};
 
-pub use actions::{RowAction, RowTarget};
+pub use actions::{RowAction, RowTarget, TargetMiss};
 use kinds::{RowKind, ToolStatus};
 use state::{ActiveWork, Followup, LastError, Phase};
 

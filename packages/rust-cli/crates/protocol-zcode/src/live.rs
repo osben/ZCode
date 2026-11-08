@@ -195,7 +195,7 @@ impl Live {
         row_id: u64,
         entity: &str,
         action: crate::projection::RowAction,
-    ) -> Option<crate::projection::RowTarget> {
+    ) -> Result<crate::projection::RowTarget, crate::projection::TargetMiss> {
         self.state().projection.row_target(row_id, entity, action)
     }
 

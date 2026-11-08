@@ -654,30 +654,34 @@ fn row_actions_follow_the_latest_turn_like_node() {
     let entity = |row: &Map<String, Value>| row["entityId"].as_str().unwrap().to_owned();
     assert_eq!(
         projection.row_target(id(user_2), &entity(user_2), RowAction::Edit),
-        Some(RowTarget {
+        Ok(RowTarget {
             user_message: "msg_u2".into(),
             assistant_message: None,
         })
     );
     assert_eq!(
         projection.row_target(id(user_1), &entity(user_1), RowAction::Edit),
-        None
+        Err(TargetMiss::Unavailable)
     );
     assert_eq!(
         projection.row_target(id(reply_1), &entity(reply_1), RowAction::Retry),
-        None
+        Err(TargetMiss::Unavailable)
     );
     assert_eq!(
         projection.row_target(id(reply_1), &entity(reply_1), RowAction::Fork),
-        Some(RowTarget {
+        Ok(RowTarget {
             user_message: "msg_u1".into(),
             assistant_message: Some("msg_a1".into()),
         })
     );
-    // A stale entity id for the same row is refused.
+    // A stale entity id for the same row, or a row the projection no longer holds, is stale.
     assert_eq!(
         projection.row_target(id(reply_2), "other", RowAction::Retry),
-        None
+        Err(TargetMiss::Stale)
+    );
+    assert_eq!(
+        projection.row_target(u64::MAX, &entity(reply_2), RowAction::Retry),
+        Err(TargetMiss::Stale)
     );
 }
 

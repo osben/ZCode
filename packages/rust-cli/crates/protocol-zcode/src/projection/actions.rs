@@ -47,6 +47,25 @@ pub struct RowTarget {
     pub assistant_message: Option<String>,
 }
 
+/// Why a row action command has no target, like Node's `resolveRowActionTarget`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetMiss {
+    /// The projection no longer holds the row, or the row's `entityId` changed: `proto.staleTarget`.
+    Stale,
+    /// The row exists but does not offer the action now: `guard.actionUnavailable`.
+    Unavailable,
+}
+
+impl TargetMiss {
+    /// The Node reason code of the refusal.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Stale => "proto.staleTarget",
+            Self::Unavailable => "guard.actionUnavailable",
+        }
+    }
+}
+
 fn turn_of(row: &Map<String, Value>) -> &str {
     row.get("turnId")
         .and_then(Value::as_str)
@@ -186,26 +205,35 @@ impl Projection {
 
     /// The target of a row action command: the row must exist with this `entityId` and offer `action` now (Node's
     /// latest-only guards: an older row lost its action when a newer one became the target).
-    pub fn row_target(&self, row_id: u64, entity: &str, action: RowAction) -> Option<RowTarget> {
+    pub fn row_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+        action: RowAction,
+    ) -> Result<RowTarget, TargetMiss> {
         let row = self
             .rows
             .iter()
-            .find(|row| row["rowId"].as_u64() == Some(row_id))?;
+            .find(|row| row["rowId"].as_u64() == Some(row_id))
+            .ok_or(TargetMiss::Stale)?;
         let offered = action.flag().is_none_or(|flag| {
             row.get("actions")
                 .and_then(|actions| actions.get(flag))
                 .and_then(Value::as_bool)
                 == Some(true)
         });
-        if row["entityId"] != entity || !offered {
-            return None;
+        if row["entityId"] != entity {
+            return Err(TargetMiss::Stale);
         }
-        match RowKind::of(row)? {
-            RowKind::UserInput => Some(RowTarget {
+        if !offered {
+            return Err(TargetMiss::Unavailable);
+        }
+        let target = (|| match RowKind::of(row) {
+            Some(RowKind::UserInput) => Some(RowTarget {
                 user_message: entity.to_owned(),
                 assistant_message: None,
             }),
-            RowKind::AssistantText => Some(RowTarget {
+            Some(RowKind::AssistantText) => Some(RowTarget {
                 user_message: self.turn_user_message(turn_of(row))?,
                 assistant_message: row["assistantResponseId"].as_str().map(str::to_owned),
             }),
@@ -214,7 +242,7 @@ impl Projection {
             // per-turn anchor).
             // A turn opened by a model-only message (a background task notification) has no
             // typed user row; its anchor comes with the turn's file changes.
-            RowKind::TurnHeader => Some(RowTarget {
+            Some(RowKind::TurnHeader) => Some(RowTarget {
                 user_message: self.turn_user_message(turn_of(row)).or_else(|| {
                     self.turn_file_changes
                         .get(turn_of(row))
@@ -223,6 +251,7 @@ impl Projection {
                 assistant_message: None,
             }),
             _ => None,
-        }
+        })();
+        target.ok_or(TargetMiss::Unavailable)
     }
 }
