@@ -23,7 +23,7 @@ Where refs come from today:
 | Desktop renderer, remote workspace                        | path inside the remote staging dir                                          | `createRemotePromptAttachmentTransferService.stage`                                                                                                     |
 | Desktop renderer, fallback / text material                | `zcode-artifact://<session>/<id>`                                           | `v4/attachment/commit`                                                                                                                                  |
 | Web remote (paired phone over relay, plain `/ws` browser) | `zcode-artifact://<session>/<id>`                                           | `v4/attachment/commit`, uploaded for the target session                                                                                                 |
-| Edit of an existing row (any origin)                      | the row's projected refs: local paths, own-session or fork-parent artifacts | `ConversationRowView` resends the full current list                                                                                                     |
+| Edit of an existing row (any origin)                      | the row's projected refs: local paths, own-session or fork-parent artifacts | `ConversationRowView` omits an untouched list; after a removal it sends the remaining list                                                              |
 
 So only the desktop renderer legitimately sends local paths. A web-remote client never has a Host
 path of its own; without a boundary it could name any Host file and have either agent read it into
@@ -55,6 +55,30 @@ Origin is the Host-trusted connection mode, never a payload field:
 Gated fields: `sendText.attachments`, `createSession.firstInput.attachments`,
 `editUserQuery.attachments` (both `ref` and `previewRef`).
 
+The error code and the edit-list rule are owned by the shared module
+`@zcode/shared/fork-attachment-ref-trust` (`ATTACHMENT_REF_NOT_AUTHORIZED`,
+`isAttachmentRefNotAuthorizedError`, `editAttachmentsToSubmit`), so the renderer uses them without
+importing services.
+
+## Editing a message
+
+`editUserQuery.attachments` absent means "keep the edited message's canonical attachments"; an
+explicit `[]` removes them all. The Node agent resolves an absent field to the canonical intent's refs
+(`payload.attachments ?? stableAttachmentRefs(editTarget)` in `fork-edit-retry.ts`), read from its
+own store, not from the client. The Rust agent (`zcode-rs`) does not implement `editUserQuery` yet
+(it answers `unsupported`), so it has no attachment semantics to keep.
+
+1. The inline edit view (`ConversationRowView` via `editAttachmentsToSubmit`) omits `attachments`
+   when the list is unchanged (same refs in the same order). The edit view can only remove items, so
+   any change is a removal and the remaining list is sent in full.
+2. An unchanged mobile edit therefore carries no ref and passes the gate, whatever the row holds
+   (desktop local paths, fork-parent artifacts). The gate itself is not relaxed for edits: the Host
+   cannot see canonical rows, and admitting refs "already on the row" would trust the client.
+3. A mobile edit that removes some attachments still resends the rest. If any of them is not an
+   own-session artifact, the Host refuses the command; `SessionPane.handleEdit` catches the code and
+   shows `chat.edit.attachmentRefNotAuthorized` (a warning toast) instead of failing silently. The
+   edit stays open.
+
 ## Known limits
 
 - Not covered yet: the legacy `session/send` surface. `ZCodePromptAttachment.localPath` reaches
@@ -64,9 +88,9 @@ Gated fields: `sendText.attachments`, `createSession.firstInput.attachments`,
   Mobile legitimately uses that path with `dataBase64`, so the follow-up rule is "a web-remote
   origin may not send `localPath`", enforced where each surface is exposed to a web-remote
   attachment (desktop Host attachment and `packages/server` `/ws`).
-- A mobile `editUserQuery` that resends a row holding desktop local-path refs or fork-parent
-  artifact refs is refused. The Host cannot see canonical rows; weakening the gate for edits would
-  reopen the bypass. Mitigation is a renderer decision (see follow-ups).
+- A mobile edit that removes some attachments of a row that also holds desktop local paths or
+  fork-parent artifacts is refused (see "Editing a message", rule 3). Supporting it needs an
+  agent-side "keep these canonical attachments by index" field, which is a protocol change.
 - A paired phone also has the Host `File` and `Terminal` channels
   (`windowHostAttachmentRpcPolicy.ts`). This rule closes the agent-read path only; it does not make
   the phone a least-privilege client.
@@ -82,5 +106,10 @@ Gated fields: `sendText.attachments`, `createSession.firstInput.attachments`,
 - A mobile-origin `previewRef` that is a local path is refused.
 - A mobile-origin artifact ref of the command's own session is admitted.
 - A desktop-origin local path (picker) is admitted.
+- An unchanged inline edit sends no `attachments`; a removal sends the remaining list; removing all
+  sends `[]`.
+- A refused edit shows the warning toast instead of failing silently.
 
-Tests: `packages/services/test/forkAttachmentRefTrust.test.ts` (fork manifest).
+Tests (fork manifest): `packages/services/test/forkAttachmentRefTrust.test.ts`,
+`packages/shared/src/fork-attachment-ref-trust/contract.test.ts`.
+The toast wiring in `SessionPane` has no automated test.

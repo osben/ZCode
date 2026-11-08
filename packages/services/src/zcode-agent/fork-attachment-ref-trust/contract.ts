@@ -1,5 +1,6 @@
-/** Stable code of a command refused because one of its attachment refs is not admitted for its origin. */
-export const ATTACHMENT_REF_NOT_AUTHORIZED = "fault.attachment.refNotAuthorized";
+import { ATTACHMENT_REF_NOT_AUTHORIZED } from "@zcode/shared/fork-attachment-ref-trust";
+
+export { ATTACHMENT_REF_NOT_AUTHORIZED };
 
 export type AttachmentRefRefusalReason =
   | "local_path"

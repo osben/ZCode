@@ -5,7 +5,7 @@
  */
 export const forkAttachmentRefTrustModule = {
   id: "fork-attachment-ref-trust",
-  requires: [],
+  requires: ["fork-attachment-ref-trust-shared"],
   provides: ["fork-attachment-ref-trust"],
   publicEntrypoints: ["contract.ts"],
 } as const;

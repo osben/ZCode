@@ -2948,6 +2948,8 @@ const zhCN: Record<string, string> = {
   "chat.changeSummary.rewindDialog.reason.externalModified": "当前文件已被外部修改",
   "chat.changeSummary.rewindDialog.reason.fileReadFailed": "无法读取当前文件",
   "chat.changeSummary.rewindDialog.reason.unsupportedCheckpoint": "旧 checkpoint 无法安全还原",
+  "chat.edit.attachmentRefNotAuthorized":
+    "此编辑保留了本设备无法重新发送的附件。请从编辑中移除这些附件，或在桌面端编辑。",
   "chat.edit.resetConversationAndFiles": "对话 + 文件重置",
   "chat.edit.resetConversationAndFiles.tooltip": "与文件一起重置",
   "chat.edit.resetConversationAndFiles.available": "恢复本轮文件、重置对话并发送",

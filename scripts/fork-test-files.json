@@ -137,6 +137,7 @@
   "packages/services/test/zcodeTaskErase.test.ts",
   "packages/shared/src/acp-launch-rules/contract.test.ts",
   "packages/shared/src/definition-preview/contract.test.ts",
+  "packages/shared/src/fork-attachment-ref-trust/contract.test.ts",
   "packages/shared/test/contextBudgetPolicy.test.ts",
   "packages/shared/test/forkAgentRuntimeSetting.test.ts",
   "packages/shared/test/forkLocaleSettings.test.ts",
