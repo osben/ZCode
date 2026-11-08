@@ -42,6 +42,7 @@ async fn the_request_uses_the_title_prompt_and_node_auxiliary_options() {
     let titles = TitleModel {
         model: model.clone(),
         directory: Some(Arc::new(Directory(4_096))),
+        node_prompt: false,
     };
     let generated = titles
         .generate(
@@ -99,6 +100,7 @@ async fn without_a_directory_the_output_cap_is_5000() {
     let titles = TitleModel {
         model: model.clone(),
         directory: None,
+        node_prompt: false,
     };
     let generated = titles
         .generate(
@@ -128,6 +130,7 @@ async fn a_catalog_cap_above_5000_hands_5000_to_the_provider_patch() {
     let titles = TitleModel {
         model: model.clone(),
         directory: Some(Arc::new(Directory(128_000))),
+        node_prompt: false,
     };
     titles
         .generate(
@@ -157,6 +160,7 @@ async fn title_usage(started: Usage, reported: Usage) -> Option<Usage> {
     let titles = TitleModel {
         model: Arc::new(ScriptedModel::new(vec![events])),
         directory: None,
+        node_prompt: false,
     };
     titles
         .generate(
@@ -201,4 +205,39 @@ async fn usage_with_the_input_in_the_message_start_is_unchanged() {
         ..started
     };
     assert_eq!(title_usage(started, reported).await, Some(reported));
+}
+
+/// Fork: the app-server sends Node's title prompt, with the normalized input as the whole user message.
+#[tokio::test]
+async fn the_node_prompt_sends_the_input_as_the_user_message() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust\"}",
+    ])]));
+    let titles = TitleModel {
+        model: model.clone(),
+        directory: None,
+        node_prompt: true,
+    };
+    let generated = titles
+        .generate(
+            &selection(),
+            (&SessionId::new("sess_title"), None),
+            "  trust   the project hooks ",
+            (&FixedClock(0), MessageId::new("msg_title")),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(generated.title.as_deref(), Some("Hook trust"));
+    let request = &model.requests()[0];
+    assert!(
+        request.system[0]
+            .text
+            .starts_with("Generate a concise title for this coding session.")
+    );
+    assert_eq!(
+        request.messages[0].content[0].block,
+        ContentBlock::Text {
+            text: "trust the project hooks".to_owned()
+        }
+    );
 }

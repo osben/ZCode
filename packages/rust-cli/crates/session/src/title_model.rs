@@ -36,6 +36,8 @@ pub struct TitleModel {
     pub model: Arc<dyn ModelPort>,
     /// 取辅助选项（推理档位、输出上限）；显式覆盖时没有。
     pub directory: Option<Arc<dyn ModelDirectory>>,
+    /// Fork: Node's title prompt ([`title::node_system`], the input as the user message) instead of this CLI's.
+    pub node_prompt: bool,
 }
 
 /// 一次标题请求的结果：候选标题（失败、超时或解析为空时没有）与这次请求的用量事实（Node 不论结果都写一行，
@@ -107,19 +109,24 @@ impl TitleModel {
     ) -> Generated {
         let (selection, max_tokens) = self.auxiliary(small_fast_model(main)).await;
         let content = normalize_input(input);
-        let user = render(
-            title::user(),
-            &[
-                ("content", content.as_str()),
-                ("language", title::language_default()),
-            ],
-        );
+        let (system, user) = if self.node_prompt {
+            (title::node_system(), content)
+        } else {
+            let user = render(
+                title::user(),
+                &[
+                    ("content", content.as_str()),
+                    ("language", title::language_default()),
+                ],
+            );
+            (title::system(), user)
+        };
         let source = QuerySource::Side(SOURCE);
         let mut request = ModelRequest::side(
             selection.clone(),
             SOURCE,
             vec![SystemBlock {
-                text: title::system().to_owned(),
+                text: system.to_owned(),
                 cache_control: None,
             }],
             vec![ApiMessage::user_text(user)],

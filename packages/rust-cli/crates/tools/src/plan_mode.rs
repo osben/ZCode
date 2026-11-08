@@ -11,7 +11,8 @@ use rust_cli_kernel_api::orchestration::{InteractionRequest, PlanApprovalAnswer}
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
 use rust_cli_kernel_api::plan::PlanFiles;
 use rust_cli_kernel_api::tool::{
-    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation,
+    PromptContext, Tool, ToolCallOutput, ToolError, ToolOutput, ToolProgress, ToolUseContext,
+    Validation,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -242,10 +243,29 @@ impl Tool for ExitPlanModeTool {
 
     async fn call(
         &self,
+        input: Value,
+        context: ToolUseContext,
+        progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        Ok(self
+            .call_with_messages(input, context, progress)
+            .await?
+            .output)
+    }
+
+    /// Node's `withPlanExitDeniedTurnStop`: a decline without feedback ends the turn after the result, so the model
+    /// does not rewrite the plan on its own; feedback keeps the turn going.
+    async fn call_with_messages(
+        &self,
         _input: Value,
         context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
-    ) -> Result<ToolOutput, ToolError> {
+    ) -> Result<ToolCallOutput, ToolError> {
+        let done = |output: ToolOutput| ToolCallOutput {
+            output,
+            new_messages: Vec::new(),
+            stop_turn: false,
+        };
         let path = plan_file(&context).await?;
         let plan = read_plan(&context, &path).await.unwrap_or_default();
         let request = InteractionRequest::PlanApproval {
@@ -261,21 +281,24 @@ impl Tool for ExitPlanModeTool {
             Some(PlanApprovalAnswer::KeepPlanning {
                 feedback: Some(feedback),
             }) if !feedback.trim().is_empty() => {
-                return Ok(rejected(format!("{REJECT_WITH_REASON}{feedback}")));
+                return Ok(done(rejected(format!("{REJECT_WITH_REASON}{feedback}"))));
             }
             Some(PlanApprovalAnswer::KeepPlanning { .. }) | None => {
-                return Ok(rejected(REJECT_MESSAGE.to_owned()));
+                return Ok(ToolCallOutput {
+                    stop_turn: true,
+                    ..done(rejected(REJECT_MESSAGE.to_owned()))
+                });
             }
         }
         if context.agent.is_some() {
             // 子代理的模式不归会话 actor 管：只回报批准。
-            return Ok(text(texts::AGENT_PLAN_APPROVED.to_owned()));
+            return Ok(done(text(texts::AGENT_PLAN_APPROVED.to_owned())));
         }
         set_plan(&context, false).await?;
         if plan.trim().is_empty() {
-            return Ok(text(texts::PLAN_EXIT_APPROVED.to_owned()));
+            return Ok(done(text(texts::PLAN_EXIT_APPROVED.to_owned())));
         }
-        Ok(text(texts::plan_approved(&path, &plan)))
+        Ok(done(text(texts::plan_approved(&path, &plan))))
     }
 }
 

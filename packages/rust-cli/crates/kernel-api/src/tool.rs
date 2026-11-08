@@ -145,6 +145,10 @@ pub struct ToolCallOutput {
     pub output: ToolOutput,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub new_messages: Vec<Message>,
+    /// Fork: end the turn once this batch's results are committed, like a hook's `continue: false` (Node's
+    /// `turnControl.stopTurnAfterResult`, e.g. a plan exit declined without feedback).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stop_turn: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -302,6 +306,7 @@ pub trait Tool: Send + Sync {
         Ok(ToolCallOutput {
             output: self.call(input, context, progress).await?,
             new_messages: Vec::new(),
+            stop_turn: false,
         })
     }
 

@@ -671,7 +671,7 @@ fn attached_files_expand_into_reminders_and_images() {
             &text(&prompt_attachment::text_file("a.txt", "abc").join("\n")),
             &ContentBlock::Image {
                 source: image,
-                name: None
+                name: Some("p.png".into())
             },
             &text(&prompt_attachment::metadata_only(
                 "d.pdf",

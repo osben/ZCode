@@ -396,7 +396,9 @@ impl Pipeline {
             Ok(ToolCallOutput {
                 mut output,
                 mut new_messages,
+                stop_turn,
             }) => {
+                messages.stop_turn |= stop_turn;
                 let payload = tag(
                     hooks::post_tool_use(tool.name(), &input, &output, &context),
                     machine,

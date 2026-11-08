@@ -203,6 +203,7 @@ impl SkillTool {
         ToolCallOutput {
             output,
             new_messages: vec![message],
+            stop_turn: false,
         }
     }
 }

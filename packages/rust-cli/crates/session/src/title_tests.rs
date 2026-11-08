@@ -20,6 +20,7 @@ fn titles(model: Arc<dyn ModelPort>) -> Option<TitleModel> {
     Some(TitleModel {
         model,
         directory: None,
+        node_prompt: false,
     })
 }
 

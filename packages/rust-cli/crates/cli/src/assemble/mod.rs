@@ -124,12 +124,22 @@ impl CliInputs {
     }
 }
 
+/// Fork: whether sessions get generated titles, and with which prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Titles {
+    Off,
+    /// This CLI's prompt (titles.md §1).
+    Cli,
+    /// Node's prompt ([`rust_cli_prompts::title::node_system`]), for the desktop app-server.
+    Node,
+}
+
 /// 一个 controller 前端的组装规格。
 pub(crate) struct Controller {
     /// 提示词与工具的形态：`-p` 是 Print，交互界面与 App 是 Interactive。
     pub(crate) surface: Surface,
-    /// 会话标题（只在交互界面生成，titles.md §2）。
-    pub(crate) titles: bool,
+    /// 会话标题（只在交互界面生成，titles.md §2）。Fork: the app-server generates them too, like the Node desktop agent.
+    pub(crate) titles: Titles,
     pub(crate) peers: Peering,
     /// 远端机器（R3，remote-exec.md §20）：None 是没有机器清单（app-server：注册表只有主 env）。
     pub(crate) machines: Option<machines::When>,
@@ -150,7 +160,7 @@ impl Controller {
     pub(crate) fn tui(cli: CliInputs) -> Self {
         Self {
             surface: Surface::Interactive,
-            titles: true,
+            titles: Titles::Cli,
             peers: Peering::Interactive,
             machines: Some(machines::When::Background),
             primary: Primary::Configured,
@@ -167,7 +177,7 @@ impl Controller {
         let declared = hooks.assume.loopback_machines || hooks.assume.ssh_machines;
         Self {
             surface: Surface::Print,
-            titles: false,
+            titles: Titles::Off,
             peers: Peering::Print,
             machines: Some(if declared {
                 machines::When::Now
@@ -183,12 +193,12 @@ impl Controller {
         }
     }
 
-    /// app-server（app-protocol.md §3.7）：交互形态的提示词；不生成标题、不登记跨会话通信、不连远端机器、只接受本地主
+    /// app-server（app-protocol.md §3.7）：交互形态的提示词；Fork: 标题照 Node 桌面端生成（Node 的提示词）；不登记跨会话通信、不连远端机器、只接受本地主
     /// env；账号凭据经 Host；root 下的 bypass 照 Node 不拒绝。
     pub(crate) fn app(headers: Arc<dyn HeaderSource>) -> Self {
         Self {
             surface: Surface::Interactive,
-            titles: false,
+            titles: Titles::Node,
             peers: Peering::Off,
             machines: None,
             primary: Primary::LocalOnly,
@@ -608,10 +618,11 @@ pub(crate) async fn kernel(
         extensions,
     );
     // 会话标题只在交互界面生成（titles.md §2），模型经小模型槽位从会话当前的主模型得出。
-    let kernel = Arc::new(if spec.titles {
+    let kernel = Arc::new(if spec.titles != Titles::Off {
         let titles = TitleModel {
             model: kernel.ports().model.clone(),
             directory: opened.directory.clone(),
+            node_prompt: spec.titles == Titles::Node,
         };
         kernel.with_titles(titles)
     } else {

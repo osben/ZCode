@@ -189,6 +189,7 @@ async fn records_before_the_first_input_keep_it_the_first_turn() {
     setup.titles = Some(crate::TitleModel {
         model: title_model.clone(),
         directory: None,
+        node_prompt: false,
     });
     let built = setup.build().await;
     let mut events = built.session.subscribe(Some(0));

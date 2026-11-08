@@ -71,6 +71,7 @@ impl Tool for Loader {
                 display: Value::Null,
             },
             new_messages: vec![loaded()],
+            stop_turn: false,
         })
     }
 }
