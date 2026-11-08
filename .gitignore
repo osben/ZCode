@@ -71,6 +71,8 @@ packages/desktop/resources/macos-window-bounds/
 # Apple Foundation Models bridge for voice-dictation post-processing (built by prepare:macos-apple-fm from
 # packages/desktop/native/apple-fm/main.swift; source is tracked, the binary is not)
 packages/desktop/resources/apple-fm/
+# Fork: zcode-rs staged for packaging by scripts/fork-rust-agent/stage-resources.mjs (built in the release job)
+packages/desktop/resources/zcode-rs/
 # CUA Helper SEA 基座下载缓存（scripts/cua-helper-sea-base.mjs 落盘的官方 Node 22 运行时，纯下载产物）
 /.tmp/
 # Disposable git repositories created by scripts/run-pre-commit-checks.test.mjs under scripts/
