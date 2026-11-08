@@ -8,6 +8,7 @@ use super::*;
 
 fn permission() -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("toolu_1"),
         tool: "Bash".to_owned(),
@@ -43,6 +44,7 @@ fn only_allow_with_rules_adds_project_rules() {
     let deny = Answer::from(PermissionAnswer::Deny { feedback: None });
     assert_eq!(remembered(&permission(), &deny), None);
     let question = InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("toolu_2"),
         questions: json!([]),
     };

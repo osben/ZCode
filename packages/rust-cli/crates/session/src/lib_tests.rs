@@ -190,6 +190,7 @@ impl rust_cli_kernel_api::tool::Tool for AskingTool {
             .interactions
             .ask(
                 rust_cli_kernel_api::orchestration::InteractionRequest::Question {
+                    origin: None,
                     tool_use: context.tool_use.clone(),
                     questions: input,
                 },

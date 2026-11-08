@@ -13,6 +13,7 @@ use crate::DetachedAsks;
 
 fn question() -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".to_owned(),

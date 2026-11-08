@@ -354,6 +354,7 @@ pub fn ask_of(
         InteractionRequest::Question {
             tool_use,
             questions,
+            ..
         } => {
             let (tool, input) = tool_of(tool_use.as_str())
                 .unwrap_or_else(|| ("AskUserQuestion".to_owned(), Value::Null));
@@ -372,7 +373,7 @@ pub fn ask_of(
                 },
             }
         }
-        InteractionRequest::PlanApproval { tool_use, plan } => Ask {
+        InteractionRequest::PlanApproval { tool_use, plan, .. } => Ask {
             id: id.to_string(),
             item_id: item_of(view, tool_use.as_str()),
             tool_name: "ExitPlanMode".to_owned(),

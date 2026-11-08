@@ -38,8 +38,8 @@ pub(super) async fn cancel(live: &Bridged<Live>, envelope: &Envelope, revision: 
     };
     let command = Command::StopTask { task: body.work_id };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
-    // A stopped command sends no notification: re-read the ledger so its work leaves the list. Subagents
-    // settle from the subagent table.
+    // Re-read the ledger so a stopped command leaves the list before its killed notice arrives.
+    // Subagents settle from the subagent table.
     let sink = live.sink.clone();
     live.run(Box::pin(async move { sink.shells_changed().await }));
     ack_of(

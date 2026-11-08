@@ -7,6 +7,7 @@ use super::{Afk, QuestionTimeout, Tick};
 
 fn question() -> InteractionRequest {
     InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("tu1"),
         questions: json!([]),
     }
@@ -107,6 +108,7 @@ fn only_questions_are_timed() {
     assert_eq!(off.next_due(start), None);
     let mut afk = afk(4_000, None);
     let permission = InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".to_owned(),

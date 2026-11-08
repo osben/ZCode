@@ -233,6 +233,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
     let asked = feed.apply(KernelEvent::InteractionAsked {
         interaction: InteractionId::new("int_1"),
         request: InteractionRequest::Permission {
+            origin: None,
             tool_use: tool.clone(),
             tool: "Write".into(),
             input: json!({"file_path": "/w/a.txt"}),
@@ -296,6 +297,7 @@ fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
     let asked = feed.apply(KernelEvent::InteractionAsked {
         interaction: InteractionId::new("int_1"),
         request: InteractionRequest::Permission {
+            origin: None,
             tool_use: tool,
             tool: "Bash".into(),
             input: json!({"command": "rm -rf target"}),
@@ -1016,4 +1018,47 @@ fn a_manual_compact_marker_carries_its_source_command() {
         .find(|delta| delta["op"] == "row.appended")
         .unwrap();
     assert_eq!(appended["row"]["sourceCommandId"], "cmd_compact");
+}
+
+/// Fork: a subagent's question reaches the parent with Node's `payload.origin`; its tool call is
+/// not a parent row, so the ask has no anchor.
+#[test]
+fn a_delegated_question_carries_the_subagent_origin() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let asked = feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_q"),
+        request: InteractionRequest::Question {
+            tool_use: ToolUseId::new("toolu_child"),
+            questions: json!([{"question": "Pick", "header": "P", "options": [{"label": "a"}]}]),
+            origin: Some(Box::new(rust_cli_kernel_api::orchestration::AskOrigin {
+                agent: rust_cli_kernel_api::ids::AgentId::new("agent_1"),
+                agent_type: "general-purpose".into(),
+                child_session: rust_cli_kernel_api::ids::SessionId::new("ses_child"),
+                parent_session: rust_cli_kernel_api::ids::SessionId::new("ses_parent"),
+                description: "Run case".into(),
+                parent_tool_use: Some(ToolUseId::new("toolu_agent")),
+            })),
+        },
+    });
+    let pending = asked
+        .iter()
+        .find_map(|patch| patch["patch"]["pendingInteractions"].get(0))
+        .unwrap();
+    assert_eq!(pending["anchorRowId"], Value::Null);
+    assert_eq!(
+        pending["payload"]["origin"],
+        json!({
+            "kind": "subagent",
+            "agentId": "agent_1",
+            "agentType": "general-purpose",
+            "childSessionId": "ses_child",
+            "description": "Run case",
+            "parentSessionId": "ses_parent",
+            "parentToolCallId": "toolu_agent",
+        })
+    );
 }

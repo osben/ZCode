@@ -176,6 +176,7 @@ impl Pipeline {
         // “不再询问”一行的种子与建议规则出自同一套命令分析（shell-permissions.md §4.10）；前端不再自己算（F133）。
         let rule_seed = rust_cli_policy::ask_rule_seed(tool.name(), input, &suggestions);
         let request = InteractionRequest::Permission {
+            origin: None,
             tool_use: context.tool_use.clone(),
             tool: tool.name().to_owned(),
             input: input.clone(),

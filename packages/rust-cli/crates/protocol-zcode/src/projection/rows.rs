@@ -287,7 +287,27 @@ impl Projection {
                 super::elicitation::plan_approval(interaction, anchor, now, &tool_use, plan)
             }
         };
+        let mut pending = pending;
+        if let Some(origin) = request.origin() {
+            pending["payload"]["origin"] = ask_origin(origin);
+        }
         self.pending.push(pending);
         Some(tool_use)
     }
+}
+
+/// Fork: the subagent a delegated ask came from (Node `buildSubagentInteractionOrigin`).
+fn ask_origin(origin: &rust_cli_kernel_api::orchestration::AskOrigin) -> Value {
+    let mut value = json!({
+        "kind": "subagent",
+        "agentId": origin.agent.as_str(),
+        "agentType": origin.agent_type,
+        "childSessionId": origin.child_session.as_str(),
+        "description": origin.description,
+        "parentSessionId": origin.parent_session.as_str(),
+    });
+    if let Some(tool_use) = &origin.parent_tool_use {
+        value["parentToolCallId"] = json!(tool_use.as_str());
+    }
+    value
 }

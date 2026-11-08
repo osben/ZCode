@@ -162,6 +162,21 @@ impl ChildSink {
     }
 }
 
+impl ChildSink {
+    /// Fork: the subagent behind this sink, as an ask's origin.
+    fn origin(&self) -> Option<rust_cli_kernel_api::orchestration::AskOrigin> {
+        let agent = self.live.get(&self.agent)?;
+        Some(rust_cli_kernel_api::orchestration::AskOrigin {
+            agent: agent.agent.clone(),
+            agent_type: agent.definition.agent_type.clone(),
+            child_session: agent.child.clone(),
+            parent_session: agent.parent.clone(),
+            description: agent.description.clone(),
+            parent_tool_use: agent.tool_use.clone(),
+        })
+    }
+}
+
 /// 经父会话询问的这段时间：开始时记一次等待，结束（含被取消、future 被丢弃）时复原。
 struct Waiting<'a> {
     live: &'a Live,
@@ -208,6 +223,7 @@ impl Interactions for ChildSink {
                 asked_by: None,
                 machine,
                 once,
+                origin,
             } => InteractionRequest::Permission {
                 machine,
                 tool_use,
@@ -218,8 +234,14 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: Some(self.name.clone()),
                 once,
+                origin,
             },
             other => other,
+        };
+        // Fork: the App shows a delegated ask with the subagent it came from (Node `payload.origin`).
+        let request = match self.origin() {
+            Some(origin) => request.asked_from(origin),
+            None => request,
         };
         // 等用户回答期间列表显示 ` · waiting`（tui-panels.md §1.1）；被取消时 guard 复原。
         let _waiting = Waiting::start(&self.live, &self.agent);

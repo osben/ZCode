@@ -478,6 +478,7 @@ fn question_and_plan_answers_have_a_stable_shape() {
             session: SessionId::new("s1"),
             title: String::new(),
             request: InteractionRequest::Question {
+                origin: None,
                 tool_use: ToolUseId::new("tu1"),
                 questions: json!([]),
             },

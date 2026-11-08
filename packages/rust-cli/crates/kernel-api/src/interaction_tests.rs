@@ -8,6 +8,7 @@ use crate::permission::{PermissionMode, PermissionRule};
 
 fn question() -> InteractionRequest {
     InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("tu1"),
         questions: json!([]),
     }

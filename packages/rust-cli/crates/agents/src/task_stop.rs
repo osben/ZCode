@@ -184,7 +184,7 @@ impl TaskStopTool {
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: ShellTaskId::new(id),
-                    notify_stop: self.core.node_desktop,
+                    notify_stop: false,
                 };
                 match machine.background().background_command(key).await {
                     Ok(Some(info)) if info.status == BackgroundStatus::Running => {
@@ -293,10 +293,12 @@ impl TaskStopTool {
                 })
             }
             Ok(Target::Command(Found { session, machine })) => {
+                // Fork (node_desktop): the stopped command still records its killed notice (Node).
+                let notify = self.core.node_desktop;
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: ShellTaskId::new(id),
-                    notify_stop: false,
+                    notify_stop: notify,
                 };
                 match machine
                     .background()

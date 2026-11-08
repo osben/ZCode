@@ -269,6 +269,7 @@ impl Tool for ExitPlanModeTool {
         let path = plan_file(&context).await?;
         let plan = read_plan(&context, &path).await.unwrap_or_default();
         let request = InteractionRequest::PlanApproval {
+            origin: None,
             tool_use: context.tool_use.clone(),
             plan: plan.clone(),
         };

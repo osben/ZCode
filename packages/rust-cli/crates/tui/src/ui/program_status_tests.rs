@@ -54,6 +54,7 @@ fn finished(app: &mut App, outcome: TurnOutcome, seen: bool) {
 
 fn bash() -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".into(),
@@ -195,6 +196,7 @@ fn asks_name_what_they_wait_for() {
     ask(
         &mut app,
         InteractionRequest::Question {
+            origin: None,
             tool_use: ToolUseId::new("tu1"),
             questions: json!([]),
         },
@@ -210,6 +212,7 @@ fn asks_name_what_they_wait_for() {
     ask(
         &mut plan,
         InteractionRequest::PlanApproval {
+            origin: None,
             tool_use: ToolUseId::new("tu1"),
             plan: "1. do it".into(),
         },

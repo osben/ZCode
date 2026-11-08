@@ -16,6 +16,7 @@ use crate::test_support::meta;
 
 fn permission(tool_use: &str) -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new(tool_use),
         tool: "Bash".to_owned(),

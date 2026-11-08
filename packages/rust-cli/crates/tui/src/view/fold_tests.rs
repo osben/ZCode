@@ -322,6 +322,7 @@ fn a_compaction_is_one_row_with_its_token_arrow() {
 fn permission_asks_mark_the_tool_and_resolve() {
     let mut feed = Feed::new();
     let ask = InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".into(),

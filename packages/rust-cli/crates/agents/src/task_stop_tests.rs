@@ -25,6 +25,8 @@ use crate::test_support::{harness, text};
 struct Shells {
     commands: Mutex<HashMap<(String, String), (String, BackgroundStatus)>>,
     stops: Mutex<Vec<OperationId>>,
+    /// Fork: `notify_stop` of each stop request.
+    notified: Mutex<Vec<bool>>,
 }
 
 impl Shells {
@@ -91,6 +93,7 @@ impl Background for Shells {
         request: BackgroundTask,
     ) -> Result<BackgroundStop, EnvError> {
         self.stops.lock().unwrap().push(context.operation);
+        self.notified.lock().unwrap().push(request.notify_stop);
         let mut commands = self.commands.lock_unpoisoned();
         Ok(match commands.get(&Self::key(&request)).cloned() {
             None => BackgroundStop::NotFound,
@@ -381,4 +384,27 @@ async fn stopping_a_remote_command_names_its_machine() {
         r#"{"message":"Successfully stopped task: b0000000l (sleep 100)","task_id":"b0000000l","task_type":"local_bash","command":"sleep 100"}"#
     );
     assert_eq!(output.display, serde_json::Value::Null);
+}
+
+/// Fork (node_desktop): stopping a background command asks the machine to keep its killed notice (Node
+/// `<status>killed</status>`); the TUI keeps the silent stop (shell-permissions.md §2.6).
+#[tokio::test]
+async fn a_desktop_stop_keeps_the_command_notice() {
+    for (mut harness, desktop) in [
+        (crate::test_support::desktop_harness(), true),
+        (harness(None), false),
+    ] {
+        let shells = Arc::new(Shells::with(
+            "sess_parent",
+            "b1",
+            "sleep 60",
+            BackgroundStatus::Running,
+        ));
+        harness.set_machine(shells.clone().machine());
+        let output = harness
+            .call("sess_parent", "TaskStop", json!({"task_id": "b1"}))
+            .await;
+        assert!(!output.is_error, "{}", text(&output));
+        assert_eq!(*shells.notified.lock().unwrap(), [desktop]);
+    }
 }

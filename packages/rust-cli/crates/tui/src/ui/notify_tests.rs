@@ -60,6 +60,7 @@ fn sequences_match_each_channel() {
 
 fn permission() -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("toolu_1"),
         tool: "Bash".to_owned(),
