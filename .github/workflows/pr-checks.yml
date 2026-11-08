@@ -40,7 +40,11 @@ jobs:
         run: |
           set -euo pipefail
           base="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
-          if git diff --name-only "$base" HEAD -- packages/rust-cli | grep -q .; then
+          # Captured, not piped into `grep -q`: grep exits on the first match, git diff then dies
+          # of SIGPIPE on a large diff, and pipefail turns a real change into "false".
+          changed="$(git diff --name-only "$base" HEAD -- packages/rust-cli)"
+          echo "packages/rust-cli files changed since $base: $(grep -c . <<<"$changed" || true)"
+          if [ -n "$changed" ]; then
             echo "rust-cli=true" >> "$GITHUB_OUTPUT"
           else
             echo "rust-cli=false" >> "$GITHUB_OUTPUT"
