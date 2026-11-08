@@ -348,6 +348,25 @@ async fn desktop(
     (setup.build().await, model)
 }
 
+/// Fork (desktop App): `/goal X` is a control turn without a model call; the continuation runs in
+/// its own turn once that one completes. Returns the kernel events of both turns.
+async fn desktop_goal_turns(session: &crate::Session, id: &str, text: &str) -> Vec<KernelEvent> {
+    let mut events = session.subscribe(None);
+    session.send(submit(id, text)).await;
+    let mut seen = Vec::new();
+    let mut turns = 0;
+    while turns < 2 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
+            .await
+            .expect("both goal turns finish")
+            .expect("the event stream stays open")
+            .event;
+        turns += usize::from(finished(&event));
+        seen.push(event);
+    }
+    seen
+}
+
 fn goal_command(id: &str, command: Command) -> CommandEnvelope {
     CommandEnvelope {
         id: CommandId::new(id),
@@ -360,7 +379,20 @@ async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
     use rust_cli_kernel_api::goal::GoalPhase;
     let (built, model) = desktop(1, Evaluator::with(Vec::new())).await;
     let mut events = built.session.subscribe(Some(0));
-    turn(&built.session, "c1", "/goal tests pass").await;
+    let turns = desktop_goal_turns(&built.session, "c1", "/goal tests pass").await;
+    // The control turn streams nothing; only the continuation turn calls the model.
+    let first_finish = turns.iter().position(finished).unwrap();
+    assert!(
+        !turns[..first_finish]
+            .iter()
+            .any(|event| matches!(event, KernelEvent::StreamDelta { .. }))
+    );
+    let started = turns
+        .iter()
+        .filter(|event| matches!(event, KernelEvent::TurnStarted { .. }))
+        .count();
+    assert_eq!(started, 2);
+    assert_eq!(model.requests().len(), 1);
     let view = built.session.view().await.unwrap();
     let shown = shorten(&view.messages);
     let kinds: Vec<&str> = shown.iter().map(|(kind, _)| kind.as_str()).collect();
@@ -395,7 +427,16 @@ async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
             phases.push(goal.map(|goal| goal.status));
         }
     }
-    assert_eq!(phases, [Some(GoalPhase::Active), Some(GoalPhase::Verified)]);
+    // Set, then summarized (no title model: Node's fallback, the objective), then verified.
+    assert_eq!(
+        phases,
+        [
+            Some(GoalPhase::Active),
+            Some(GoalPhase::Active),
+            Some(GoalPhase::Verified)
+        ]
+    );
+    assert_eq!(goal.summary_title.as_deref(), Some("tests pass"));
 }
 
 #[tokio::test]
@@ -406,7 +447,7 @@ async fn a_desktop_goal_pauses_and_resumes_with_a_continuation_turn() {
         message: "no verdict".to_owned(),
     };
     let (built, model) = desktop(2, Evaluator::with(vec![failed])).await;
-    turn(&built.session, "c1", "/goal tests pass").await;
+    desktop_goal_turns(&built.session, "c1", "/goal tests pass").await;
     let active = built.session.view().await.unwrap().goal.unwrap();
     assert_eq!(active.status, GoalPhase::Active);
     assert!(active.active_run_started_at_ms.is_some());
@@ -476,5 +517,57 @@ fn a_paused_goal_is_restored_paused_and_not_evaluated() {
     assert_eq!(
         goals.control(false).and_then(|status| status.paused),
         Some(false)
+    );
+}
+
+/// Fork (desktop App): the title of a first `/goal` input is also the goal's summary (Node
+/// `goalSummaryTargetID`); a later goal, or one without a title model, gets the objective.
+#[tokio::test]
+async fn a_desktop_goal_gets_its_summary_title() {
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Green test suite\"}",
+    ])]));
+    let model = Arc::new(ScriptedModel::new(
+        (0..2)
+            .map(|index| text_response(&[&format!("reply {index}")]))
+            .collect(),
+    ));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = Evaluator::with(Vec::new());
+    setup.desktop_goals = true;
+    setup.titles = Some(crate::TitleModel {
+        model: title_model.clone(),
+        directory: None,
+        node_prompt: true,
+    });
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "/goal make the whole test suite pass"))
+        .await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::GoalChanged { goal: Some(goal) }
+            if goal.summary_title.as_deref() == Some("Green test suite"))
+    })
+    .await;
+    assert_eq!(title_model.requests().len(), 1);
+}
+
+#[test]
+fn a_restored_goal_summarizes_its_objective() {
+    let long = "x ".repeat(80);
+    let goals = Goals::restore(
+        &[status(&format!(
+            r#"{{"met":false,"sentinel":true,"condition":"{long}"}}"#
+        ))],
+        0,
+    );
+    let summary = goals.state().unwrap().summary_title.unwrap();
+    assert_eq!(summary.chars().count(), 100);
+    assert!(summary.ends_with("x..."));
+    assert_eq!(
+        fallback_summary("  tests \n pass "),
+        Some("tests pass".to_owned())
     );
 }

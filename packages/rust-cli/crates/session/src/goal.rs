@@ -50,6 +50,9 @@ pub(crate) struct Goals {
     /// Fork (desktop App): the goal this session last finished (met or impossible), still shown
     /// in the App's goal panel until another goal is set or cleared.
     finished: Option<GoalState>,
+    /// Fork (desktop App): a goal was set in the running control turn; its continuation turn starts
+    /// once that turn completes (Node `continueGoalAfterChange`).
+    continue_after_set: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +69,22 @@ struct Active {
     /// Fork (desktop App): active time before the current active stretch, and its start.
     used_ms: u64,
     running_since: Option<u64>,
+    /// Fork (desktop App): Node `target.summaryTitle`; in memory only (a cold load uses the fallback).
+    summary_title: Option<String>,
+}
+
+/// Node `fallbackGoalSummaryTitle`: the normalized objective, at most 100 characters.
+fn fallback_summary(objective: &str) -> Option<String> {
+    const MAX: usize = 100;
+    let normalized = objective.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.chars().count() <= MAX {
+        return Some(normalized);
+    }
+    let head: String = normalized.chars().take(MAX - 3).collect();
+    Some(format!("{}...", head.trim_end()))
 }
 
 impl Active {
@@ -80,6 +99,7 @@ impl Active {
             paused: false,
             used_ms: 0,
             running_since: Some(now_ms),
+            summary_title: None,
         }
     }
 
@@ -98,6 +118,7 @@ impl Active {
             iteration: self.iterations,
             time_used_seconds: self.used_ms / 1000,
             active_run_started_at_ms: self.running_since,
+            summary_title: self.summary_title.clone(),
         }
     }
 }
@@ -130,6 +151,7 @@ impl Goals {
                     .map(|message| message.id().as_str().to_owned())
                     .unwrap_or_default();
                 let mut active = Active::new(status.condition, target, 0, now_ms);
+                active.summary_title = fallback_summary(&active.condition);
                 if status.paused == Some(true) {
                     active.paused = true;
                     active.running_since = None;
@@ -140,6 +162,28 @@ impl Goals {
             active,
             output_tokens: 0,
             finished: None,
+            continue_after_set: false,
+        }
+    }
+
+    /// Fork (desktop App): Node `persistGeneratedGoalSummaryTitle` / `persistFallbackGoalSummaryTitle`: a generated
+    /// title replaces the summary; without one the objective fills an empty summary. Only for the goal `target` still
+    /// active.
+    fn summarize(&mut self, target: &str, generated: Option<String>) {
+        // A goal met before its title arrived keeps it too (Node writes the target whatever its status).
+        let (summary, objective) = match (&mut self.active, &mut self.finished) {
+            (Some(active), _) if active.target == target => {
+                (&mut active.summary_title, active.condition.as_str())
+            }
+            (None, Some(finished)) if finished.target == target => {
+                (&mut finished.summary_title, finished.objective.as_str())
+            }
+            _ => return,
+        };
+        match generated {
+            Some(title) => *summary = Some(title),
+            None if summary.is_none() => *summary = fallback_summary(objective),
+            None => {}
         }
     }
 
@@ -398,22 +442,12 @@ impl Actor {
             ));
         }
         if self.deps.desktop_goals {
-            // Fork (desktop App): Node starts a continuation turn right away; the model reads
-            // Node's continuation prompt (the goal is new: no time or tokens used yet).
-            let budget = crate::goal_desktop::Budget {
-                time_used_seconds: 0,
-                tokens_used: 0,
-            };
+            // Fork (desktop App): like Node, `/goal X` is a control turn that only sets the goal
+            // (core `control-only-turn.ts`); the continuation runs in its own model-only turn once
+            // this one completes (`continue_goal_after_set`).
             return Inputs {
-                messages: vec![
-                    self.status_message(&sentinel(false, args)),
-                    input,
-                    self.meta(
-                        goal::CONTINUATION_SOURCE,
-                        crate::goal_desktop::continuation(args, &budget, None),
-                    ),
-                ],
-                query: true,
+                messages: vec![self.status_message(&sentinel(false, args)), input],
+                query: false,
                 plain: false,
             };
         }
@@ -441,6 +475,36 @@ impl Actor {
         }
         let before = self.goal.state();
         self.goal.observe(message, now);
+        if status_of(message).is_some_and(|status| status.sentinel && !status.met) {
+            self.goal.continue_after_set = true;
+        }
+        let after = self.goal.state();
+        if after != before {
+            self.log
+                .append(rust_cli_kernel_api::session_api::KernelEvent::GoalChanged { goal: after });
+        }
+    }
+
+    /// Fork (desktop App): the goal `prompt` set (its `goal_status` attachment precedes it), when it is still active.
+    pub(crate) fn goal_set_by(&self, prompt: &MessageId) -> Option<String> {
+        if !self.deps.desktop_goals {
+            return None;
+        }
+        let target = self.goal.active.as_ref()?.target.clone();
+        let index = self
+            .messages
+            .iter()
+            .position(|message| message.id() == prompt)?;
+        let set_by = index
+            .checked_sub(1)
+            .and_then(|before| self.messages.get(before))?;
+        (set_by.id().as_str() == target).then_some(target)
+    }
+
+    /// Fork (desktop App): the goal summary title arrived (`None`: generation was skipped or gave nothing).
+    pub(crate) fn goal_summarized(&mut self, target: &str, generated: Option<String>) {
+        let before = self.goal.state();
+        self.goal.summarize(target, generated);
         let after = self.goal.state();
         if after != before {
             self.log
@@ -500,6 +564,38 @@ impl Actor {
         {
             Ok(()) => accepted(),
             Err(error) => rejected(error),
+        }
+    }
+
+    /// Fork (desktop App): the control turn that set a goal ended. A completed one starts the goal's
+    /// continuation turn (Node `continueGoalAfterChange`); returns whether a turn started.
+    pub(crate) async fn continue_goal_after_set(&mut self, completed: bool) -> bool {
+        if !std::mem::take(&mut self.goal.continue_after_set) || !completed {
+            return false;
+        }
+        if self.closing.is_some() || self.shutting_down || self.execution.plan {
+            return false;
+        }
+        let active = self
+            .goal
+            .state()
+            .is_some_and(|goal| goal.status == rust_cli_kernel_api::goal::GoalPhase::Active);
+        if !active {
+            return false;
+        }
+        let now = self.deps.clock.now_ms();
+        let Some(text) = self.goal.continuation(now, None) else {
+            return false;
+        };
+        match self
+            .start_turn(crate::turn::TurnInput::GoalContinuation { text })
+            .await
+        {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "the goal continuation turn could not start");
+                false
+            }
         }
     }
 

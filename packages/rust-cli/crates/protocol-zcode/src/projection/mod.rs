@@ -477,7 +477,7 @@ impl Projection {
         json!({
             "targetId": goal.target,
             "objective": goal.objective,
-            "summaryTitle": null,
+            "summaryTitle": goal.summary_title,
             "timeUsedSeconds": goal.time_used_seconds,
             "activeRunStartedAtMs": goal.active_run_started_at_ms,
             "status": status,

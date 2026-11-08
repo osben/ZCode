@@ -967,6 +967,7 @@ fn goal_changes_are_the_snapshot_goal_and_its_actions() {
         iteration: 0,
         time_used_seconds: 3,
         active_run_started_at_ms: (status == GoalPhase::Active).then_some(1_000),
+        summary_title: Some("Pass the tests".into()),
     };
     let deltas = feed.apply(KernelEvent::GoalChanged {
         goal: Some(goal(GoalPhase::Active)),
@@ -977,7 +978,7 @@ fn goal_changes_are_the_snapshot_goal_and_its_actions() {
         json!({
             "targetId": "msg_goal",
             "objective": "tests pass",
-            "summaryTitle": null,
+            "summaryTitle": "Pass the tests",
             "timeUsedSeconds": 3,
             "activeRunStartedAtMs": 1_000,
             "status": "active",

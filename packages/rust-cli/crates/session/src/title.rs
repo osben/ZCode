@@ -22,6 +22,8 @@ struct TitleJob {
     prompt: MessageId,
     /// 起任务时的回合锚点（首条输入与它的轮次）：用量行写在这一轮，标题晚于下一条输入回来也不变。
     turn: Option<TurnAnchor>,
+    /// Fork (desktop App): the goal this first input set; the title is also its summary (Node `goalSummaryTargetID`).
+    goal: Option<String>,
     task: Task<Generated>,
 }
 
@@ -29,6 +31,7 @@ struct TitleJob {
 pub(crate) struct TitleDone {
     prompt: MessageId,
     turn: Option<TurnAnchor>,
+    goal: Option<String>,
     result: Result<Generated, TaskError>,
 }
 
@@ -59,6 +62,7 @@ struct DeferredTitle {
     text: String,
     turn: Option<TurnAnchor>,
     run: Option<RunId>,
+    goal: Option<String>,
 }
 
 impl TitleState {
@@ -80,6 +84,7 @@ pub(crate) async fn title_done(state: &mut TitleState) -> TitleDone {
             TitleDone {
                 prompt: job.prompt.clone(),
                 turn: job.turn.clone(),
+                goal: job.goal.clone(),
                 result,
             }
         }
@@ -124,7 +129,12 @@ impl Actor {
             self.meta.title.clone_from(&title);
             self.log.append(KernelEvent::TitleChanged { title });
         }
+        // Fork (desktop App): a `/goal` input that set a goal; it gets a summary title either way.
+        let goal = self.goal_set_by(message.id());
         let Some(node_titles) = self.deps.titles.as_ref().map(|titles| titles.node_prompt) else {
+            if let Some(target) = goal {
+                self.goal_summarized(&target, None);
+            }
             return;
         };
         let eligible = (first || self.titles.rearmed)
@@ -134,6 +144,11 @@ impl Actor {
             && self.meta.parent.is_none()
             && long_enough(&text);
         if !eligible {
+            // Node asks the title model for the summary of a later `/goal` (`goal_summary_title`); this kernel
+            // uses Node's fallback, the objective (specs/fork-rust-agent-parity.md).
+            if let Some(target) = goal {
+                self.goal_summarized(&target, None);
+            }
             return;
         }
         self.titles.attempted = true;
@@ -150,6 +165,7 @@ impl Actor {
             text,
             turn: self.turn_anchor(),
             run,
+            goal,
         };
         if deferred {
             self.titles.deferred = Some(title);
@@ -181,6 +197,7 @@ impl Actor {
             text,
             turn,
             run,
+            goal,
         } = title;
         // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
         let selection = self.selection.clone();
@@ -199,7 +216,12 @@ impl Actor {
                 )
                 .await
         });
-        self.titles.task = Some(TitleJob { prompt, turn, task });
+        self.titles.task = Some(TitleJob {
+            prompt,
+            turn,
+            goal,
+            task,
+        });
     }
 
     /// 标题任务回到 actor：先提交这次请求的用量行，候选标题仍可写时再提交、改内存、发事件。
@@ -208,15 +230,23 @@ impl Actor {
         let TitleDone {
             prompt,
             turn,
+            goal,
             result,
         } = done;
         let generated = match result {
             Ok(generated) => generated,
             Err(error) => {
                 tracing::warn!(%error, "the session title task ended without a result");
+                if let Some(target) = goal {
+                    self.goal_summarized(&target, None);
+                }
                 return;
             }
         };
+        // Node writes the goal summary even when the session title is custom (`goalSummaryTargetID`).
+        if let Some(target) = &goal {
+            self.goal_summarized(target, generated.title.clone());
+        }
         // 工作线 F73（usage.md §2.1.1）：Node 在标题请求结束时就写用量行，不看标题用不用；单独一批，锚在起任务时的
         // 回合；写入失败只记日志（Node 同）。
         let usage = vec![Fact::ModelCalled {

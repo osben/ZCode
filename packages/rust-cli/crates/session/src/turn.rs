@@ -402,6 +402,9 @@ impl Actor {
         });
         self.turn_duration(turn, running.timing, interrupted).await;
         self.after_turn(completed);
+        if self.continue_goal_after_set(completed).await {
+            return;
+        }
         self.start_next().await;
     }
 

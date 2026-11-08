@@ -64,6 +64,9 @@ pub struct GoalState {
     /// When the current active stretch started; None while paused or finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_run_started_at_ms: Option<u64>,
+    /// Fork (desktop App): the goal's short title (Node `target.summaryTitle`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_title: Option<String>,
 }
 
 /// 正在生效的目标的快照。
