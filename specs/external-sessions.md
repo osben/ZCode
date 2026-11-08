@@ -25,7 +25,9 @@ source, and it cannot hand the session back to the native tool.
   another tool is written into `tasks-index.sqlite` or any ZCode store: external rows exist only
   in a per-Host in-memory cache and are rebuilt on demand.
 - **Desktop and local only.** External sessions live on the machine that runs the Host. The service
-  is registered only by the local desktop Host (`createLocalServices`); it is absent on web, on
+  is registered only when `createLocalServices` runs with `serviceAuthorityMode === "desktop-local"`
+  (the same gate as voice dictation), which only the desktop local Host sets; the HTTP and stdio
+  server entry points share that factory and never register the channel, so it is absent on web, on
   web-remote attachments (the mobile RPC allowlist fails closed) and on remote workspaces. The UI
   treats an absent service as "unsupported" and renders nothing.
 - **Metadata first, bodies lazily.** Listing reads only what a title, dates, cwd, model and a
@@ -166,6 +168,9 @@ command to the clipboard instead.
   attached to one because its path happens to match.
 - The hook sends `refresh: true` only for the one request the Refresh button started; later search,
   scope or source changes are served from the Host cache.
+- Service calls (list, transcript, terminal, Claude import, project resolution) live in the module's
+  hooks (`useExternalSessions`, `useExternalSessionActions`); the panel and dialog only render and
+  keep dialog/busy state.
 - Header: source chips (one per catalog source with its count; unavailable sources are shown
   disabled with the reason in a tooltip) and Refresh. An empty stored selection means "every
   source"; toggling a chip expands that sentinel first, so a click always flips that chip alone.

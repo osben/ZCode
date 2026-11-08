@@ -10,6 +10,9 @@ Invariants:
 - The panel renders only when the base workspace services expose `externalSessionsService`
   (desktop local Host) and the host passes `enabled`; web, web remote control and remote workspace
   scopes render nothing and make no RPC call.
+- Components never take services themselves: `useExternalSessions` (listing) and
+  `useExternalSessionActions` (terminal, transcript, Claude import, project resolution) are the only
+  files that touch the service accessor.
 - Listing state belongs to the Host cache; `useExternalSessions` only re-queries. `refresh: true` is
   sent for the one request the Refresh button started, never for later filter changes.
 - An external session is a local fact: no remote workspace identity is ever attached to it because a
