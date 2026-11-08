@@ -177,15 +177,17 @@ async function listFromRolloutFiles(
         continue;
       }
       const workspacePath = readString(payload.cwd) ?? "";
-      const timestamp = toMs(payload.timestamp) ?? (await statOrNull(filePath))?.mtimeMs ?? 0;
+      // session_meta holds the creation time only; a resumed rollout keeps growing, so its mtime is the activity time.
+      const mtimeMs = Math.trunc((await statOrNull(filePath))?.mtimeMs ?? 0);
+      const createdAt = toMs(payload.timestamp) ?? mtimeMs;
       summaries.push(
         buildSummary({
           source: "codex",
           sessionId,
           workspacePath,
           workspaceMissing: workspacePath ? !(await pathExists(workspacePath)) : true,
-          createdAt: timestamp,
-          updatedAt: timestamp,
+          createdAt,
+          updatedAt: Math.max(createdAt, mtimeMs),
           gitBranch: isRecord(payload.git) ? readString(payload.git.branch) : undefined,
           sourcePath: filePath,
           transcriptAvailable: true,

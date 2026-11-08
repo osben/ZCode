@@ -161,17 +161,25 @@ command to the clipboard instead.
 - A panel titled "Sessions from other tools" renders under the ZCode sessions table in the same
   section, obeying the same scope chip (workspace-scoped when entered from a project menu) and the
   same debounced search text. It is rendered only when `externalSessionsService` is present on the
-  base workspace services (desktop local Host).
+  base workspace services (desktop local Host) and the scope is not a remote workspace identity
+  (`isRemoteWorkspaceIdentity`): external sessions are local facts, and a scope identity is never
+  attached to one because its path happens to match.
+- The hook sends `refresh: true` only for the one request the Refresh button started; later search,
+  scope or source changes are served from the Host cache.
 - Header: source chips (one per catalog source with its count; unavailable sources are shown
-  disabled with the reason in a tooltip), Refresh, and the scanned-at time.
+  disabled with the reason in a tooltip) and Refresh. An empty stored selection means "every
+  source"; toggling a chip expands that sentinel first, so a click always flips that chip alone.
 - Rows (virtualised list, same row height as the ZCode table): source mark + label, title, cwd leaf
   (hidden when scoped), model, message count, updated (relative), and a `⋯` menu:
   - **Open transcript** (disabled with hint when `transcriptAvailable` is false)
   - **Resume in <tool>** → `openExternalSessionInTerminal`; on `{opened:false}` falls back to copy +
     toast
-  - **Continue in ZCode** → reads the transcript, builds a context pack and calls
-    `onCreateTask({ initialPrompt, targetWorkspace: { workspacePath } })`; nothing is sent
-    automatically, the user reviews the draft. The pack is: a one-line header naming the source and
+  - **Continue in ZCode** → reads the transcript, resolves the session folder's local project through
+    `projectService.saveProject({ roots: [cwd], reuseExistingRoot: true })` (the same idempotent step
+    "Open folder" performs; `targetWorkspace.workspacePath` alone would let `prepareSession` allocate
+    an unrelated managed directory) and calls `onCreateTask({ initialPrompt, projectId, hostId:
+"local", targetWorkspace })`; nothing is sent automatically, the user reviews the draft. A session
+    whose folder is missing gets a toast instead. The pack is: a one-line header naming the source and
     title, then the last `CONTEXT_PACK_MESSAGES` (12) user/assistant messages, each trimmed to
     `CONTEXT_PACK_CHARS_PER_MESSAGE` (1200), ending with "Continue from here." This is lossy by
     design and labelled as such in the UI.

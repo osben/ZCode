@@ -370,11 +370,14 @@ describe("codexSessionsAdapter.list (rollout-head fallback)", () => {
       workspaceMissing: false,
       title: `Codex · ${fallbackId.slice(0, 8)}`,
       createdAt: Date.parse("2026-11-07T10:00:00.000Z"),
-      updatedAt: Date.parse("2026-11-07T10:00:00.000Z"),
       gitBranch: "feat/fallback",
       transcriptAvailable: true,
       resumeCommand: `codex resume ${fallbackId}`,
     });
+    // session_meta carries the creation time only; a resumed rollout keeps growing, so the file mtime is the
+    // activity time (spec "Sources", Codex row). The fixture was just written, so its mtime is newer than 10:00.
+    expect(fallback.updatedAt).toBeGreaterThan(Date.parse("2026-11-07T10:00:00.000Z"));
+    expect(fallback.updatedAt).toBeGreaterThanOrEqual(fallback.createdAt);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 });

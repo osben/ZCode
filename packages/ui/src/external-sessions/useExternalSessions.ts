@@ -33,11 +33,15 @@ export function useExternalSessions(params: UseExternalSessionsParams): UseExter
   const [result, setResult] = useState<ExternalSessionsListResult | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const requestSeq = useRef(0);
+  // The Refresh button bypasses the Host cache for exactly one request; later filter changes must hit the cache.
+  const consumedRefreshNonce = useRef(0);
   const sourcesKey = params.sources.join(",");
 
   useEffect(() => {
     if (!supported || !service) return;
     const seq = ++requestSeq.current;
+    const refresh = refreshNonce !== consumedRefreshNonce.current;
+    consumedRefreshNonce.current = refreshNonce;
     setLoading(true);
     const sources = sourcesKey ? (sourcesKey.split(",") as ExternalSessionSource[]) : undefined;
     void service
@@ -45,7 +49,7 @@ export function useExternalSessions(params: UseExternalSessionsParams): UseExter
         ...(params.workspacePath ? { workspacePath: params.workspacePath } : {}),
         ...(sources?.length ? { sources } : {}),
         ...(params.search.trim() ? { search: params.search.trim() } : {}),
-        ...(refreshNonce > 0 ? { refresh: true } : {}),
+        ...(refresh ? { refresh: true } : {}),
       })
       .then((next) => {
         if (seq !== requestSeq.current) return;

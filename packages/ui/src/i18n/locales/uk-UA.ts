@@ -8461,6 +8461,8 @@ const ukUA: Record<string, string> = {
   "externalSessions.toast.resumeCopied": "Команду відновлення скопійовано: {command}",
   "externalSessions.toast.imported": "Імпортовано в ZCode",
   "externalSessions.toast.importFailed": "Імпорт не вдався: {error}",
+  "externalSessions.toast.workspaceMissing":
+    "Теки {path} більше немає, тому створити там чернетку не можна",
   "externalSessions.transcript.meta": "{source} · {count} повідомлень · {path}",
   "externalSessions.transcript.loading": "Читання транскрипту…",
   "externalSessions.transcript.truncated":

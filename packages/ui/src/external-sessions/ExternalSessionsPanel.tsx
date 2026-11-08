@@ -27,9 +27,9 @@ import { useExternalSessions } from "./useExternalSessions.js";
 
 export interface ExternalSessionsPanelProps {
   /** Desktop local Host only; false renders nothing. */
+  /** Desktop local Host only, never a remote workspace scope; false renders nothing. */
   enabled: boolean;
   workspacePath?: string;
-  workspaceIdentity?: string;
   /** Debounced search text shared with the sessions table. */
   search: string;
   onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
@@ -47,7 +47,6 @@ interface TranscriptDialogState {
 export function ExternalSessionsPanel({
   enabled,
   workspacePath,
-  workspaceIdentity,
   search,
   onOpenSession,
   onCreateTask,
@@ -72,7 +71,12 @@ export function ExternalSessionsPanel({
 
   const toggleSource = useCallback((source: ExternalSessionSource) => {
     setView((current) => {
-      const next = new Set(current.sources);
+      // An empty list is the "every source" sentinel: expand it first so a click always flips the chip's own state.
+      const next = new Set<ExternalSessionSource>(
+        current.sources.length === 0
+          ? EXTERNAL_SESSION_SOURCE_CATALOG.map((item) => item.source)
+          : current.sources,
+      );
       if (next.has(source)) next.delete(source);
       else next.add(source);
       const all = EXTERNAL_SESSION_SOURCE_CATALOG.length;
@@ -153,21 +157,35 @@ export function ExternalSessionsPanel({
   );
 
   const continueInZCode = useCallback(
-    (transcript: ExternalSessionTranscript) => {
-      if (!onCreateTask) return;
-      const text = buildExternalSessionContextPack(transcript);
+    async (transcript: ExternalSessionTranscript) => {
+      const projectService = baseServices?.projectService;
+      if (!onCreateTask || !projectService) return;
+      const { workspacePath: sourcePath, workspaceMissing } = transcript.summary;
+      if (workspaceMissing) {
+        toast(
+          intl.formatMessage(
+            { id: "externalSessions.toast.workspaceMissing" },
+            { path: sourcePath },
+          ),
+        );
+        return;
+      }
+      // `targetWorkspace.workspacePath` alone does not decide the draft's cwd: prepareSession allocates a managed
+      // directory unless a project owns the folder. Resolve the folder's local project the same way "Open folder"
+      // does (idempotent per root), so the draft really lands in the source repository.
+      const project = await projectService.saveProject({
+        roots: [sourcePath],
+        reuseExistingRoot: true,
+      });
       onCreateTask({
-        initialPrompt: text,
-        targetWorkspace: {
-          workspacePath: transcript.summary.workspacePath,
-          ...(workspaceIdentity && transcript.summary.workspacePath === workspacePath
-            ? { workspaceIdentity }
-            : {}),
-        },
+        initialPrompt: buildExternalSessionContextPack(transcript),
+        projectId: project.id,
+        hostId: "local",
+        targetWorkspace: { workspacePath: sourcePath, projectId: project.id, hostId: "local" },
       });
       setDialog(null);
     },
-    [onCreateTask, workspaceIdentity, workspacePath],
+    [baseServices?.projectService, intl, onCreateTask],
   );
 
   const continueFromRow = useCallback(
@@ -175,7 +193,7 @@ export function ExternalSessionsPanel({
       setBusyKey(summary.key);
       try {
         const transcript = await loadTranscript(summary);
-        if (transcript) continueInZCode(transcript);
+        if (transcript) await continueInZCode(transcript);
       } catch (error) {
         toast(getErrorMessage(error));
       } finally {
@@ -191,11 +209,9 @@ export function ExternalSessionsPanel({
       if (!taskService || summary.source !== "claude") return;
       setBusyKey(summary.key);
       try {
+        // The scanned session is a local fact; no scope identity is ever attached to it by path equality.
         const result = await taskService.importClaudeSessions({
           workspacePath: summary.workspacePath,
-          ...(workspaceIdentity && summary.workspacePath === workspacePath
-            ? { workspaceIdentity }
-            : {}),
           sessionIds: [summary.sessionId],
         });
         const imported = result.imported[0];
@@ -226,7 +242,7 @@ export function ExternalSessionsPanel({
         setBusyKey(null);
       }
     },
-    [baseServices?.zcodeTaskService, intl, onOpenSession, workspaceIdentity, workspacePath],
+    [baseServices?.zcodeTaskService, intl, onOpenSession],
   );
 
   const showInFileManager = useCallback(
@@ -246,7 +262,7 @@ export function ExternalSessionsPanel({
   if (!state.supported) return null;
 
   const canImport = Boolean(baseServices?.zcodeTaskService && onOpenSession);
-  const canContinue = Boolean(onCreateTask);
+  const canContinue = Boolean(onCreateTask && baseServices?.projectService);
   const everySourceUnavailable =
     statuses !== undefined && Object.values(statuses).every((item) => !item.available);
 
@@ -371,7 +387,7 @@ export function ExternalSessionsPanel({
           canContinue={canContinue}
           onClose={() => setDialog(null)}
           onResume={(item) => void resume(item)}
-          onContinue={continueInZCode}
+          onContinue={(transcript) => void continueInZCode(transcript)}
           onImport={(item) => void importToZCode(item)}
         />
       ) : null}

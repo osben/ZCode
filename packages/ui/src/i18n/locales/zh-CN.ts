@@ -8645,6 +8645,7 @@ const zhCN: Record<string, string> = {
   "externalSessions.toast.resumeCopied": "已复制恢复命令：{command}",
   "externalSessions.toast.imported": "已导入到 ZCode",
   "externalSessions.toast.importFailed": "导入失败：{error}",
+  "externalSessions.toast.workspaceMissing": "目录 {path} 已不存在，无法在其中创建草稿",
   "externalSessions.transcript.meta": "{source} · {count} 条消息 · {path}",
   "externalSessions.transcript.loading": "正在读取记录…",
   "externalSessions.transcript.truncated": "记录已裁剪为最近的消息；不显示工具调用和推理。",

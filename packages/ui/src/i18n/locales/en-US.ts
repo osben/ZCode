@@ -9136,6 +9136,8 @@ const enUS: Record<string, string> = {
   "externalSessions.toast.resumeCopied": "Resume command copied: {command}",
   "externalSessions.toast.imported": "Imported to ZCode",
   "externalSessions.toast.importFailed": "Import failed: {error}",
+  "externalSessions.toast.workspaceMissing":
+    "Folder {path} no longer exists, so the draft cannot be created there",
   "externalSessions.transcript.meta": "{source} · {count} messages · {path}",
   "externalSessions.transcript.loading": "Reading transcript…",
   "externalSessions.transcript.truncated":

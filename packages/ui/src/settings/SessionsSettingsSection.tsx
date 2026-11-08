@@ -32,6 +32,7 @@ import {
   useSessionManagerUniverse,
 } from "@/session-manager/useSessionManagerTasks.js";
 import type { SettingsSessionsScope } from "@/lib/settingsNavigation.js";
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import { ExternalSessionsPanel } from "@/external-sessions/index.js";
 
@@ -349,9 +350,13 @@ export function SessionsSettingsSection({
         />
       )}
       <ExternalSessionsPanel
-        enabled={showExternalSessions}
+        // External sessions are scanned on this machine; a remote project's scope must never show them, even
+        // when a local folder happens to share the remote root path (AGENTS.md "Workspace Identity").
+        enabled={
+          showExternalSessions &&
+          !(scope?.workspaceIdentity && isRemoteWorkspaceIdentity(scope.workspaceIdentity))
+        }
         workspacePath={scope?.workspacePath}
-        workspaceIdentity={scope?.workspaceIdentity}
         search={debouncedSearch}
         onOpenSession={onOpenSession}
         onCreateTask={onCreateTask}
