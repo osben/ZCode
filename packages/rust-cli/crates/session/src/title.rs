@@ -9,6 +9,7 @@ use rust_cli_base::{Task, TaskError};
 use rust_cli_kernel_api::ids::{CommandId, MessageId, RunId};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
 use rust_cli_kernel_api::session_api::{Ack, KernelEvent};
+use rust_cli_kernel_api::side_request::SideSource;
 use rust_cli_kernel_api::store::{Fact, SessionKind, TurnAnchor};
 use rust_cli_kernel_api::user_command::LocalCommandRecord;
 use tokio_util::sync::CancellationToken;
@@ -24,6 +25,8 @@ struct TitleJob {
     turn: Option<TurnAnchor>,
     /// Fork (desktop App): the goal this first input set; the title is also its summary (Node `goalSummaryTargetID`).
     goal: Option<String>,
+    /// The title is the session's (false: only a goal summary, Node `goal_summary_title`).
+    session: bool,
     task: Task<Generated>,
 }
 
@@ -32,6 +35,7 @@ pub(crate) struct TitleDone {
     prompt: MessageId,
     turn: Option<TurnAnchor>,
     goal: Option<String>,
+    session: bool,
     result: Result<Generated, TaskError>,
 }
 
@@ -63,6 +67,8 @@ struct DeferredTitle {
     turn: Option<TurnAnchor>,
     run: Option<RunId>,
     goal: Option<String>,
+    /// The session title's request, or only a goal summary's (`SideSource::GoalSummaryTitle`).
+    source: SideSource,
 }
 
 impl TitleState {
@@ -85,6 +91,7 @@ pub(crate) async fn title_done(state: &mut TitleState) -> TitleDone {
                 prompt: job.prompt.clone(),
                 turn: job.turn.clone(),
                 goal: job.goal.clone(),
+                session: job.session,
                 result,
             }
         }
@@ -144,10 +151,8 @@ impl Actor {
             && self.meta.parent.is_none()
             && long_enough(&text);
         if !eligible {
-            // Node asks the title model for the summary of a later `/goal` (`goal_summary_title`); this kernel
-            // uses Node's fallback, the objective (specs/fork-rust-agent-parity.md).
             if let Some(target) = goal {
-                self.goal_summarized(&target, None);
+                self.start_goal_summary(target);
             }
             return;
         }
@@ -166,6 +171,7 @@ impl Actor {
             turn: self.turn_anchor(),
             run,
             goal,
+            source: crate::title_model::SOURCE,
         };
         if deferred {
             self.titles.deferred = Some(title);
@@ -198,6 +204,7 @@ impl Actor {
             turn,
             run,
             goal,
+            source,
         } = title;
         // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
         let selection = self.selection.clone();
@@ -213,6 +220,7 @@ impl Actor {
                     &text,
                     (clock.as_ref(), request),
                     CancellationToken::new(),
+                    source,
                 )
                 .await
         });
@@ -220,7 +228,38 @@ impl Actor {
             prompt,
             turn,
             goal,
+            session: source == crate::title_model::SOURCE,
             task,
+        });
+    }
+
+    /// Fork (desktop App): Node `maybeStartGoalSummaryTitleGeneration`: a goal set after the first input asks the
+    /// title model for its summary only (`goal_summary_title`); when that cannot start, the objective is the summary.
+    fn start_goal_summary(&mut self, target: String) {
+        let eligible = self.titles.task.is_none()
+            && self.meta.kind == SessionKind::Interactive
+            && self.meta.parent.is_none();
+        let objective = self.goal_objective(&target);
+        let (Some(objective), true) = (objective, eligible) else {
+            self.goal_summarized(&target, None);
+            return;
+        };
+        let prompt = self.messages.last().map(|message| message.id().clone());
+        let Some(prompt) = prompt else {
+            self.goal_summarized(&target, None);
+            return;
+        };
+        let run = self
+            .running
+            .as_ref()
+            .and_then(|running| running.run.clone());
+        self.start_title(DeferredTitle {
+            prompt,
+            text: objective,
+            turn: self.turn_anchor(),
+            run,
+            goal: Some(target),
+            source: SideSource::GoalSummaryTitle,
         });
     }
 
@@ -231,6 +270,7 @@ impl Actor {
             prompt,
             turn,
             goal,
+            session,
             result,
         } = done;
         let generated = match result {
@@ -255,7 +295,7 @@ impl Actor {
         if let Err(reason) = self.commit_in_turn(turn, usage).await {
             tracing::warn!(%reason, "the session title usage was not stored");
         }
-        let Some(title) = generated.title else {
+        let Some(title) = generated.title.filter(|_| session) else {
             return;
         };
         // 用户先改了名，或首条输入已被回退掉（Node `isSuppressedByFirstQueryEdit`）：丢弃。

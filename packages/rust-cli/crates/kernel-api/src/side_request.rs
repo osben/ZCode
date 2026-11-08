@@ -29,16 +29,19 @@ pub enum SideSource {
     WebFetch,
     /// WebSearch（tools-more.md §5）。
     WebSearch,
+    /// Fork (desktop App): the summary title of a goal set after the first input (Node `goal_summary_title`).
+    GoalSummaryTitle,
 }
 
 impl SideSource {
     /// 全部来源（`from_wire` 按它查；测试核对它列全了）。
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::SessionTitle,
         Self::Rename,
         Self::HookPrompt,
         Self::WebFetch,
         Self::WebSearch,
+        Self::GoalSummaryTitle,
     ];
 
     /// 本工程的来源名（`QuerySource` 序列化后的 `name`；用量表与请求头另经 [`Self::node_name`]）。
@@ -49,6 +52,7 @@ impl SideSource {
             Self::HookPrompt => "hook_prompt",
             Self::WebFetch => "web_fetch_apply",
             Self::WebSearch => "web_search_tool",
+            Self::GoalSummaryTitle => "goal_summary_title",
         }
     }
 
@@ -64,7 +68,9 @@ impl SideSource {
         match self {
             Self::SessionTitle => "session_title",
             Self::WebFetch => "web_fetch_processing",
-            Self::Rename | Self::HookPrompt | Self::WebSearch => self.as_wire(),
+            Self::Rename | Self::HookPrompt | Self::WebSearch | Self::GoalSummaryTitle => {
+                self.as_wire()
+            }
         }
     }
 
@@ -72,7 +78,7 @@ impl SideSource {
     pub const fn foreground(self) -> bool {
         match self {
             Self::HookPrompt | Self::WebFetch | Self::WebSearch => true,
-            Self::SessionTitle | Self::Rename => false,
+            Self::SessionTitle | Self::Rename | Self::GoalSummaryTitle => false,
         }
     }
 
@@ -80,7 +86,11 @@ impl SideSource {
     pub const fn quiet(self) -> bool {
         match self {
             Self::HookPrompt => true,
-            Self::SessionTitle | Self::Rename | Self::WebFetch | Self::WebSearch => false,
+            Self::SessionTitle
+            | Self::Rename
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::GoalSummaryTitle => false,
         }
     }
 
@@ -91,7 +101,8 @@ impl SideSource {
             | Self::Rename
             | Self::HookPrompt
             | Self::WebFetch
-            | Self::WebSearch => false,
+            | Self::WebSearch
+            | Self::GoalSummaryTitle => false,
         }
     }
 }

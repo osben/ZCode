@@ -501,6 +501,15 @@ impl Actor {
         (set_by.id().as_str() == target).then_some(target)
     }
 
+    /// Fork (desktop App): the objective of the active goal `target`.
+    pub(crate) fn goal_objective(&self, target: &str) -> Option<String> {
+        self.goal
+            .active
+            .as_ref()
+            .filter(|active| active.target == target)
+            .map(|active| active.condition.clone())
+    }
+
     /// Fork (desktop App): the goal summary title arrived (`None`: generation was skipped or gave nothing).
     pub(crate) fn goal_summarized(&mut self, target: &str, generated: Option<String>) {
         let before = self.goal.state();

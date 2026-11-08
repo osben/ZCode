@@ -131,6 +131,11 @@ pub enum KernelEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<CommandId>,
     },
+    /// Fork (desktop App): the turn that just started makes no model call, like Node's `/goal X` control turn
+    /// (`executionKind: "controlOnly"`): the App shows no work footer for it.
+    TurnControlOnly {
+        turn: TurnId,
+    },
     TurnFinished {
         turn: TurnId,
         outcome: TurnOutcome,

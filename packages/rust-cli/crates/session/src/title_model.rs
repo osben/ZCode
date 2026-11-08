@@ -28,7 +28,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// Node `AUXILIARY_MAX_OUTPUT_TOKENS`。
 const AUXILIARY_MAX_OUTPUT_TOKENS: u64 = 5_000;
 /// 请求来源（`querySource`；用量表与请求头写成 Node 的 `session_title`，工作线 F71）。
-const SOURCE: SideSource = SideSource::SessionTitle;
+pub(crate) const SOURCE: SideSource = SideSource::SessionTitle;
 
 /// 标题生成用的模型端口与模型目录（交互形态的会话才有，`-p` 不生成，titles.md §2）。
 #[derive(Clone)]
@@ -107,6 +107,7 @@ impl TitleModel {
         input: &str,
         (clock, request_id): (&dyn Clock, MessageId),
         cancel: CancellationToken,
+        source: SideSource,
     ) -> Generated {
         let (selection, max_tokens) = self.auxiliary(small_fast_model(main)).await;
         let content = normalize_input(input);
@@ -122,10 +123,11 @@ impl TitleModel {
             );
             (title::system(), user)
         };
-        let source = QuerySource::Side(SOURCE);
+        let side = source;
+        let source = QuerySource::Side(side);
         let mut request = ModelRequest::side(
             selection.clone(),
-            SOURCE,
+            side,
             vec![SystemBlock {
                 text: system.to_owned(),
                 cache_control: None,

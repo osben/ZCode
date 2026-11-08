@@ -280,7 +280,8 @@ impl Transcript {
             KernelEvent::TurnFilesReverted { .. }
             | KernelEvent::PermissionGranted { .. }
             | KernelEvent::PlanTransition { .. }
-            | KernelEvent::GoalChanged { .. } => {}
+            | KernelEvent::GoalChanged { .. }
+            | KernelEvent::TurnControlOnly { .. } => {}
             // HistoryRewritten 由 runner 处理（丢弃视图后重新 view()）；后台任务的快照由 runner 在
             // BackgroundWork 之后重取（tui-display.md §1）；其余不显示（tui.md §9）。
             KernelEvent::WorkspaceChanged { workspace } => self.workspace = workspace,

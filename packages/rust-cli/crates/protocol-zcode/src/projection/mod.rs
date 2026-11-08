@@ -79,6 +79,8 @@ struct Turn {
     notified: Vec<Option<Value>>,
     /// Fork: the output tokens of the turn's model responses so far (`None` before the first one).
     output_tokens: Option<u64>,
+    /// Fork: the turn makes no model call (`KernelEvent::TurnControlOnly`, Node `executionKind: "controlOnly"`).
+    control_only: bool,
 }
 
 /// 一个会话的投影。
@@ -510,6 +512,7 @@ impl Projection {
                 );
                 self.phase_patch(&mut patch);
             }
+            KernelEvent::TurnControlOnly { turn } => self.control_only(turn.as_str(), &mut out),
             KernelEvent::MessageDone { message } => self.message(message, now, seq, &mut out),
             KernelEvent::StreamDelta {
                 turn,
@@ -787,6 +790,7 @@ impl Projection {
             keys: Vec::new(),
             notified: Vec::new(),
             output_tokens: None,
+            control_only: false,
         });
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));
@@ -799,6 +803,22 @@ impl Projection {
         self.append(turn_key(turn), row, out);
     }
 
+    /// Fork: Node's `/goal X` control turn: its header carries `executionKind: "controlOnly"`, which the App shows
+    /// without a work footer.
+    fn control_only(&mut self, turn: &str, out: &mut Vec<Value>) {
+        let Some(live) = self.turn.as_mut().filter(|live| live.id == turn) else {
+            return;
+        };
+        live.control_only = true;
+        self.upsert(
+            &turn_key(turn),
+            |row| {
+                row.insert("executionKind".into(), json!("controlOnly"));
+            },
+            out,
+        );
+    }
+
     fn finish_turn(
         &mut self,
         turn: &str,
@@ -807,6 +827,9 @@ impl Projection {
         now: u64,
         out: &mut Vec<Value>,
     ) {
+        // A control turn made no request: the usage the kernel reports is an earlier response's.
+        let control_only = self.turn.as_ref().is_some_and(|live| live.control_only);
+        let usage = usage.filter(|_| !control_only);
         if let Some(usage) = usage {
             self.total += *usage;
         }

@@ -387,6 +387,11 @@ async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
             .iter()
             .any(|event| matches!(event, KernelEvent::StreamDelta { .. }))
     );
+    assert!(
+        turns[..first_finish]
+            .iter()
+            .any(|event| matches!(event, KernelEvent::TurnControlOnly { .. }))
+    );
     let started = turns
         .iter()
         .filter(|event| matches!(event, KernelEvent::TurnStarted { .. }))
@@ -570,4 +575,56 @@ fn a_restored_goal_summarizes_its_objective() {
         fallback_summary("  tests \n pass "),
         Some("tests pass".to_owned())
     );
+}
+
+/// Fork (desktop App): a goal set after the first input asks the title model for its summary only
+/// (Node `goal_summary_title`); the session title stays the first input's.
+#[tokio::test]
+async fn a_later_desktop_goal_asks_for_its_summary_only() {
+    use rust_cli_kernel_api::model::QuerySource;
+    use rust_cli_kernel_api::side_request::SideSource;
+    let title_model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["{\"title\":\"Seed chat\"}"]),
+        text_response(&["{\"title\":\"Green test suite\"}"]),
+    ]));
+    let model = Arc::new(ScriptedModel::new(
+        (0..2)
+            .map(|index| text_response(&[&format!("reply {index}")]))
+            .collect(),
+    ));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = Evaluator::with(Vec::new());
+    setup.desktop_goals = true;
+    setup.titles = Some(crate::TitleModel {
+        model: title_model.clone(),
+        directory: None,
+        node_prompt: true,
+    });
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the seed conversation please"))
+        .await;
+    until(
+        &mut events,
+        |event| matches!(event, KernelEvent::TitleChanged { title } if title == "Seed chat"),
+    )
+    .await;
+    built
+        .session
+        .send(submit("c2", "/goal make the whole test suite pass"))
+        .await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::GoalChanged { goal: Some(goal) }
+            if goal.summary_title.as_deref() == Some("Green test suite"))
+    })
+    .await;
+    let requests = title_model.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].source,
+        QuerySource::Side(SideSource::GoalSummaryTitle)
+    );
+    assert_eq!(built.session.view().await.unwrap().meta.title, "Seed chat");
 }

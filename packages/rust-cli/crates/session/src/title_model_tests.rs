@@ -54,6 +54,7 @@ async fn the_request_uses_the_title_prompt_and_node_auxiliary_options() {
             "  read the   Node config files  ",
             (&FixedClock(7_000), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     assert_eq!(generated.title.as_deref(), Some("Config files"));
@@ -109,6 +110,7 @@ async fn without_a_directory_the_output_cap_is_5000() {
             "trust the project hooks",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     assert_eq!(generated.title.as_deref(), Some("Hook trust"));
@@ -139,6 +141,7 @@ async fn a_catalog_cap_above_5000_hands_5000_to_the_provider_patch() {
             "trust the project hooks",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     let request = &model.requests()[0];
@@ -169,6 +172,7 @@ async fn title_usage(started: Usage, reported: Usage) -> Option<Usage> {
             "trust the project hooks",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await
         .call
@@ -225,6 +229,7 @@ async fn the_node_prompt_sends_the_input_as_the_user_message() {
             "  trust   the project hooks ",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     assert_eq!(generated.title.as_deref(), Some("Hook trust"));

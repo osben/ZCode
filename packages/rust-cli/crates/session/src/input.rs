@@ -42,13 +42,17 @@ impl Actor {
             origin: UserOrigin::Human,
         });
         let turn = self.deps.ids.turn();
+        // `/goal` 是内置的本地命令：消息按 actor 现在的目标算好，不经 skill 展开（goal.md §2.1）。
+        let goal = crate::goal::command(&text).map(|args| self.goal_inputs(args, prompt.clone()));
         self.log.append(KernelEvent::TurnStarted {
             turn: turn.clone(),
             command: Some(command.clone()),
         });
+        if self.deps.desktop_goals && goal.as_ref().is_some_and(|inputs| !inputs.query) {
+            self.log
+                .append(KernelEvent::TurnControlOnly { turn: turn.clone() });
+        }
         let hook = self.user_prompt_submit(&text);
-        // `/goal` 是内置的本地命令：消息按 actor 现在的目标算好，不经 skill 展开（goal.md §2.1）。
-        let goal = crate::goal::command(&text).map(|args| self.goal_inputs(args, prompt.clone()));
         let (opening, request) = self.open_main_turn(turn);
         let hooks = self.deps.hooks.clone();
         let runner = self.deps.runner.clone();

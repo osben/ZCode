@@ -1108,3 +1108,32 @@ fn the_turn_header_sums_the_output_tokens_of_every_response() {
     assert_eq!(finished[0]["row"]["kind"], "turnHeader");
     assert_eq!(finished[0]["row"]["outputTokens"], 28);
 }
+
+/// Fork: Node's `/goal X` control turn makes no request: its header says `controlOnly` (the App shows no work
+/// footer) and the earlier response's usage the kernel reports with it is not counted again.
+#[test]
+fn a_control_turn_header_is_control_only_and_counts_no_usage() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let marked = feed.apply(KernelEvent::TurnControlOnly {
+        turn: TurnId::new("turn_1"),
+    });
+    assert_eq!(marked[0]["row"]["kind"], "turnHeader");
+    assert_eq!(marked[0]["row"]["executionKind"], "controlOnly");
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: Some(Usage {
+            output_tokens: 8,
+            ..Usage::default()
+        }),
+    });
+    assert_eq!(finished[0]["row"]["kind"], "turnHeader");
+    assert_eq!(finished[0]["row"]["executionKind"], "controlOnly");
+    assert_eq!(finished[0]["row"].get("outputTokens"), None);
+    let snapshot = feed.projection.snapshot(9, "epoch-1");
+    assert_eq!(snapshot["usage"]["cumulative"]["outputTokens"], 0);
+}
