@@ -545,6 +545,7 @@ async fn the_view_carries_the_subagents_context_and_speed() {
             used_tokens: 1_000,
             max_tokens: 10_000,
             compact_at: None,
+            window_tokens: None,
         })
     );
     assert_eq!(view.context_notice, ContextNotice::Used { percent: 1 });

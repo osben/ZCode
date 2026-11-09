@@ -211,3 +211,29 @@ async fn recently_touched_files_are_reread_with_the_read_tool() {
         "<system-reminder>\nCalled the Read tool with the following input: {\"file_path\":\"/Users/dev/project/b.rs\"}\nResult of calling the Read tool:\n     1\tfn main() {}\n</system-reminder>"
     );
 }
+
+#[tokio::test]
+async fn manual_compact_summarizes_every_round_without_a_tail() {
+    let runner = ScriptedRunner::new(vec![summary("S")]);
+    let ports = ports(runner.clone(), no_tools());
+    let history = vec![
+        human("u1", "first"),
+        reply("a1", "one", None),
+        human("u2", "second"),
+        reply("a2", "two", None),
+    ];
+    let result = Engine { ports: &ports }
+        .run(
+            &request(history, CompactTrigger::Manual),
+            true,
+            &CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    // Node `selectCompactEntries` keeps no recent round for a manual compact.
+    assert_eq!(result.boundary.preserved, None);
+    let sent = runner.requests();
+    let ids: Vec<&str> = sent[0].messages.iter().map(|m| m.id().as_str()).collect();
+    assert_eq!(&ids[..4], ["u1", "a1", "u2", "a2"]);
+}

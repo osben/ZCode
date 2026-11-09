@@ -56,6 +56,5 @@ Each path awaits the mirror before its follow-up write, so the snapshot resync
   `draft` summary writes no row.
 - E2E: `conversation-session-goal`, `-goal-timeline`, `-goal-interruptions` and
   `context-window-cold-resume` pass on the Node agent; the three goal specs also pass on
-  the Rust agent. `conversation-session-v4-vertical-slice` still fails on both agents at
-  its refresh-restore step, which this change does not address (it failed in every fork
-  run before it as well).
+  the Rust agent. `conversation-session-v4-vertical-slice` passes on both agents once the
+  pane restore precedence fix (`specs/fork-pane-session-restore-precedence.md`) is in.

@@ -52,6 +52,7 @@ fn main_app(lang: Lang) -> App {
             used_tokens: 66_600,
             max_tokens: 180_000,
             compact_at: None,
+            window_tokens: None,
         },
     );
     event(
@@ -117,6 +118,7 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
             used_tokens: 9_000,
             max_tokens: 45_000,
             compact_at: None,
+            window_tokens: None,
         }),
         context_notice: ContextNotice::Hidden,
         output_speed: stats.then_some(OutputSpeed {

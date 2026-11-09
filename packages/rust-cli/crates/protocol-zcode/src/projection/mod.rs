@@ -715,11 +715,13 @@ impl Projection {
                 used_tokens,
                 max_tokens,
                 compact_at,
+                window_tokens,
             } => {
                 self.context = Some(rust_cli_kernel_api::compaction::ContextOccupancy {
                     used_tokens: *used_tokens,
                     max_tokens: *max_tokens,
                     compact_at: *compact_at,
+                    window_tokens: *window_tokens,
                 });
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
             }

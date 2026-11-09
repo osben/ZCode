@@ -121,12 +121,14 @@ impl Actor {
             used_tokens,
             max_tokens,
             compact_at,
+            window_tokens,
         }) = self.context_occupancy()
         {
             self.log.append(KernelEvent::ContextUsage {
                 used_tokens,
                 max_tokens,
                 compact_at,
+                window_tokens,
             });
         }
     }

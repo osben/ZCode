@@ -129,6 +129,10 @@ pub struct ContextOccupancy {
     /// （不会主动压缩）时为 None。serde 缺省 None。
     #[serde(default)]
     pub compact_at: Option<u64>,
+    /// Fork: the model's window before the summary reserve (Node `usage.contextWindow.maxTokens`);
+    /// None when the model is unknown. Only the App protocol reads it; serde default None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_tokens: Option<u64>,
 }
 
 impl ContextOccupancy {

@@ -155,6 +155,20 @@ impl CompactConfig {
             .and_then(|limits| limits.limits(selection));
         ModelFacts::resolve(selection, limits)
     }
+
+    /// Fork: the model's own window as Node publishes it (`usage.contextWindow.maxTokens`): the
+    /// configured or card window with the explicit override, before the summary reserve. None when
+    /// neither the model limits nor the card know the model; Node then publishes no context window
+    /// rather than the 200,000 fallback.
+    pub fn model_window(&self, selection: &ModelSelection) -> Option<u64> {
+        let limits = self
+            .limits
+            .as_ref()
+            .and_then(|limits| limits.limits(selection));
+        let configured = limits.is_some();
+        let facts = ModelFacts::resolve(selection, limits);
+        (configured || facts.recognized).then(|| window::window(&facts, &self.thresholds()).window)
+    }
 }
 
 pub struct Compaction {
@@ -282,6 +296,7 @@ impl Compactor for Compaction {
             used_tokens: Self::tokens(history),
             max_tokens: window::effective(&facts, &thresholds),
             compact_at: window::compact_at(&facts, &thresholds, self.config.auto),
+            window_tokens: self.config.model_window(selection),
         })
     }
 

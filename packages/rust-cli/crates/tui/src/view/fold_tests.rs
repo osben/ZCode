@@ -306,6 +306,7 @@ fn a_compaction_is_one_row_with_its_token_arrow() {
             used_tokens: 7_900,
             max_tokens: 200_000,
             compact_at: Some(160_000),
+            window_tokens: None,
         });
     let running = bodies(&feed.view);
     assert_eq!(

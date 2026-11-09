@@ -341,6 +341,7 @@ impl rust_cli_kernel_api::compaction::Compactor for ContextFake {
             used_tokens: history.len() as u64 * 1_000,
             max_tokens: 10_000,
             compact_at: None,
+            window_tokens: None,
         })
     }
 

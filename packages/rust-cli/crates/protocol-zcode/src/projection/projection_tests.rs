@@ -460,6 +460,7 @@ fn the_revision_comes_from_the_events_only() {
                 used_tokens: 5,
                 max_tokens: 10,
                 compact_at: Some(8),
+                window_tokens: Some(12),
             },
         ),
         0,
@@ -470,6 +471,26 @@ fn the_revision_comes_from_the_events_only() {
         deltas[0]["patch"]["usage"]["contextWindow"]["autoCompactThresholdTokens"],
         8
     );
+    // Fork: `maxTokens` is the model window (Node), not the window minus the summary reserve.
+    assert_eq!(
+        deltas[0]["patch"]["usage"]["contextWindow"]["maxTokens"],
+        12
+    );
+    // Fork: an unknown model publishes no context window (Node), not the 200,000 fallback.
+    let deltas = projection.apply(
+        &event(
+            3,
+            4,
+            KernelEvent::ContextUsage {
+                used_tokens: 5,
+                max_tokens: 10,
+                compact_at: Some(8),
+                window_tokens: None,
+            },
+        ),
+        0,
+    );
+    assert!(deltas[0]["patch"]["usage"]["contextWindow"].is_null());
     assert_eq!(projection.revision(), 4);
     let changed = projection.set_followup(Followup::Guide);
     assert_eq!(changed["patch"]["config"]["followupMode"], "guide");

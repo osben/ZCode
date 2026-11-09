@@ -110,6 +110,7 @@ fn appending_takes_the_new_context_and_speed() {
         used_tokens: 4_500,
         max_tokens: 9_000,
         compact_at: None,
+        window_tokens: None,
     });
     next.context_notice = ContextNotice::UntilAutoCompact { percent: 12 };
     let speed = OutputSpeed {

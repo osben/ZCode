@@ -232,11 +232,13 @@ impl Transcript {
                 used_tokens,
                 max_tokens,
                 compact_at,
+                window_tokens,
             } => {
                 self.occupancy = Some(rust_cli_kernel_api::compaction::ContextOccupancy {
                     used_tokens,
                     max_tokens,
                     compact_at,
+                    window_tokens,
                 });
                 if let Some((id, true)) = self.compact {
                     self.compact = None;

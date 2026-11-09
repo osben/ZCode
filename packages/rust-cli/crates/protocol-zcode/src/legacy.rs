@@ -63,10 +63,9 @@ pub async fn read(server: &Server, params: &Value) -> Result<Value, RpcError> {
     if let Some(level) = &view.selection.reasoning {
         current["options"] = json!({"reasoningLevel": level});
     }
-    let (used, size) = view
-        .context_usage
-        .as_ref()
-        .map_or((0, 0), |usage| (usage.used_tokens, usage.max_tokens));
+    let (used, size) = view.context_usage.as_ref().map_or((0, 0), |usage| {
+        (usage.used_tokens, usage.window_tokens.unwrap_or(0))
+    });
     Ok(json!({
         "protocol": {"name": "ZCode Protocol", "version": 1},
         "session": {
