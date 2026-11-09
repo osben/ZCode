@@ -114,6 +114,9 @@ pub struct CompactConfig {
     /// 模型上限查询（compact.md §2，修复线 F61）：窗口与输出上限的唯一来源，入口在两种模式下都接上（平台层、显式
     /// 覆盖的内置规则）。没有时（测试）按卡片与默认窗口。
     pub limits: Option<Arc<dyn ModelLimits>>,
+    /// Fork: the pre-request blocking limit applies (compact.md §2.2). The app-server (`node_desktop`) turns it off:
+    /// Node sends the request and lets the provider answer (specs/fork-rust-agent-parity.md, "Context blocking limit").
+    pub blocking: bool,
 }
 
 impl Default for CompactConfig {
@@ -124,6 +127,7 @@ impl Default for CompactConfig {
             thresholds: Thresholds::default(),
             at: AutoCompactAt::default(),
             limits: None,
+            blocking: true,
         }
     }
 }
@@ -311,6 +315,9 @@ impl Compactor for Compaction {
         selection: &ModelSelection,
         failure: Option<&str>,
     ) -> Option<String> {
+        if !self.config.blocking {
+            return None;
+        }
         let facts = self.config.facts(selection);
         let thresholds = &self.config.thresholds();
         // 不拦的情形先判断，不为它数 token。

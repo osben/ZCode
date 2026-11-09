@@ -124,6 +124,7 @@ pub(crate) fn compact(
         },
         at: AutoCompactAt::default(),
         limits: Some(limits),
+        blocking: true,
     }
 }
 

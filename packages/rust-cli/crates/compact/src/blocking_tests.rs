@@ -96,3 +96,21 @@ fn the_compactor_blocks_at_the_line() {
             .is_some()
     );
 }
+
+/// Fork: the desktop app-server (`blocking: false`) never blocks, past the line too (specs/fork-rust-agent-parity.md).
+#[test]
+fn the_desktop_never_blocks() {
+    let runner = ScriptedRunner::new(Vec::new());
+    let desktop = Compaction::new(
+        ports(runner, no_tools()),
+        CompactConfig {
+            blocking: false,
+            ..CompactConfig::default()
+        },
+    );
+    let model = selection(rust_cli_base::models::GLM_5);
+    assert_eq!(
+        desktop.blocking_limit(&history(500_000), &model, None),
+        None
+    );
+}
