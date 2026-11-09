@@ -130,6 +130,7 @@ import {
   reconcileConversationTelemetryWorkspaceScopes,
 } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
 import { installConversationTelemetryParityE2EBridge } from "@/v4/telemetry/conversationTelemetryParityE2E.js";
+import { hasPersistedPaneSession } from "@/v4/usePaneSessionPersistence.js";
 import { useSourceServerUpdateNotifications } from "@/root/sourceServerUpdateNotifications.js";
 import type {
   DeviceAdditionResult,
@@ -928,6 +929,8 @@ function RootInner({
             .getState()
             .getWorkspaceState(tab.workspacePath, tab.workspaceIdentity);
           if (workspace.activeTaskId || workspace.draftProjectId !== undefined) continue;
+          // The pane restores its persisted session; a stale draft intent must not preempt it.
+          if (hasPersistedPaneSession(tab.workspacePath, tab.workspaceIdentity)) continue;
           const persistedScope = readComposerWorkspaceScope(
             tab.workspacePath,
             tab.workspaceIdentity,

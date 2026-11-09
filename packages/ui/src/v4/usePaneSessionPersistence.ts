@@ -51,6 +51,18 @@ export function readPersistedPaneSession(workspaceKey: string): PersistedPaneSes
   }
 }
 
+/**
+ * Fork: a workspace whose pane was showing a session restores that session on reload or startup.
+ * The remembered new-task draft intent for the same workspace is then stale, and restoring it
+ * would start a draft, bump `draftFocusVersion`, and cancel the session restore.
+ */
+export function hasPersistedPaneSession(
+  workspacePath: string,
+  workspaceIdentity?: string,
+): boolean {
+  return readPersistedPaneSession(workspaceIdentity?.trim() || workspacePath) !== null;
+}
+
 export function persistPaneSession(
   workspaceKey: string,
   sessionId: string | null,

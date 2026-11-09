@@ -289,6 +289,7 @@
   "packages/ui/test/openTaskDraftIntent.test.ts",
   "packages/ui/test/outputStylesEditorModel.test.ts",
   "packages/ui/test/outputStylesSection.test.ts",
+  "packages/ui/test/paneSessionDraftIntentPrecedence.test.ts",
   "packages/ui/test/pendingReservationGate.test.ts",
   "packages/ui/test/pickerFocus.test.ts",
   "packages/ui/test/pluginDetailHeaderLayout.test.ts",

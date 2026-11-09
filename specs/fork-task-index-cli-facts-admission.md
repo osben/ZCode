@@ -54,6 +54,8 @@ Each path awaits the mirror before its follow-up write, so the snapshot resync
   the same title, then `completed`, leaves the row with `cli_created_at` set and the
   project tree lists it; a `draft` → `completed` sequence does the same; an untouched
   `draft` summary writes no row.
-- E2E: `conversation-session-goal`, `-goal-timeline`, `-goal-interruptions`,
-  `conversation-session-v4-vertical-slice`, `context-window-cold-resume` pass on the
-  Node and Rust agents.
+- E2E: `conversation-session-goal`, `-goal-timeline`, `-goal-interruptions` and
+  `context-window-cold-resume` pass on the Node agent; the three goal specs also pass on
+  the Rust agent. `conversation-session-v4-vertical-slice` still fails on both agents at
+  its refresh-restore step, which this change does not address (it failed in every fork
+  run before it as well).
