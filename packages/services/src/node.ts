@@ -138,6 +138,8 @@ export {
   createSettingService,
   createSettingServiceWithMigrations,
 } from "./setting/settingService.js";
+// Fork: raw stored sidecar values (no materialized defaults) for Main's agent runtime selection.
+export { readStoredForkSettings } from "./setting/forkSettingsSidecar.js";
 export { createCredentialService } from "./credential/credentialService.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";

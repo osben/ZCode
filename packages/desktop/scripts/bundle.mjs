@@ -13,7 +13,8 @@ import process from "node:process";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectRuntimeModuleClosureEntries } from "./runtime-dependency-closure.mjs";
-import { resolveDesktopProductIdentity } from "./desktop-product-identity.mjs";
+// Fork: the wrapper adds the ZCode Preview RS identity (specs/fork-preview-rs-identity.md).
+import { resolveForkDesktopProductIdentity } from "./fork-desktop-product-identity.mjs";
 import {
   findDesktopNativePackageViolations,
   isTargetTranscribePlatformPackage,
@@ -46,7 +47,7 @@ const DEFAULT_TARGET_OS = "mac";
 const DEFAULT_TARGET_ARCH = "arm64";
 const desktopDistDir = process.env.ZCODE_DESKTOP_DIST_DIR || "dist";
 const desktopDistRoot = resolve(desktopRoot, desktopDistDir);
-const desktopProductIdentity = resolveDesktopProductIdentity(process.env);
+const desktopProductIdentity = resolveForkDesktopProductIdentity(process.env);
 
 const osAliasMap = new Map([
   ["mac", "mac"],

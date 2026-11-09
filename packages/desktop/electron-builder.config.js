@@ -18,10 +18,9 @@ import {
 import { cleanupPackagedSourcemaps } from "./scripts/packaged-sourcemap-cleanup.mjs";
 import { pruneIncompatiblePlatformPackages } from "./scripts/packaged-platform-dependency-prune.mjs";
 import { getTargetPlatform } from "./scripts/target-platform.mjs";
-import {
-  resolveDesktopArtifactSuffix,
-  resolveDesktopProductIdentity,
-} from "./scripts/desktop-product-identity.mjs";
+import { resolveDesktopArtifactSuffix } from "./scripts/desktop-product-identity.mjs";
+// Fork: the wrapper adds the ZCode Preview RS identity (specs/fork-preview-rs-identity.md).
+import { resolveForkDesktopProductIdentity } from "./scripts/fork-desktop-product-identity.mjs";
 import { createWindowsPowerShellSecurityArgs } from "./scripts/powershell-command.mjs";
 import { writeWindowsUpdatePublisher } from "./scripts/windows-update-publisher.mjs";
 import {
@@ -54,7 +53,7 @@ const targetPlatform = getTargetPlatform();
 const shouldPackageWindowsBrowserImportHelper =
   targetPlatform.os === "win32" && process.env.ZCODE_ENABLE_WINDOWS_BROWSER_IMPORT === "1";
 const builtinProviderConfig = await loadBuiltinProviderConfig();
-const desktopProductIdentity = resolveDesktopProductIdentity({
+const desktopProductIdentity = resolveForkDesktopProductIdentity({
   ...process.env,
   ZCODE_ENV: builtinProviderConfig.environment,
 });

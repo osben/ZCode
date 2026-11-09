@@ -43,6 +43,32 @@ import {
   isDesktopLocalDevelopmentRuntime,
   isElectronAppPackaged,
 } from "./desktopElectronApp.js";
+import {
+  FORK_PREVIEW_RS_IDENTITY,
+  type ForkDefaultAgentRuntime,
+  type ForkProductVariant,
+} from "../../scripts/fork-desktop-product-identity.mjs";
+
+// Fork: compile-time product variant (specs/fork-preview-rs-identity.md). tsup injects it; bundles
+// without the define (tests) are not RS.
+declare const __ZCODE_FORK_PRODUCT_VARIANT__: string | undefined;
+export const FORK_PRODUCT_VARIANT: ForkProductVariant | null =
+  typeof __ZCODE_FORK_PRODUCT_VARIANT__ !== "undefined" && __ZCODE_FORK_PRODUCT_VARIANT__ === "rs"
+    ? "rs"
+    : null;
+const isForkPreviewRsProduct = FORK_PRODUCT_VARIANT === "rs";
+// The RS app needs its own userData (and so its own single-instance lock) to run beside ZCode Preview.
+const forkPreviewApplicationName = isForkPreviewRsProduct
+  ? FORK_PREVIEW_RS_IDENTITY.productName
+  : "ZCode Preview";
+// Two apps on different versions must not share one helper install (downgrade protection).
+const forkPreviewCuaHelperInstallVariant = isForkPreviewRsProduct
+  ? FORK_PREVIEW_RS_IDENTITY.cuaHelperInstallVariant
+  : "preview";
+/** Agent runtime when neither env nor the fork settings sidecar chooses one. */
+export const forkBuildDefaultAgentRuntime: ForkDefaultAgentRuntime = isForkPreviewRsProduct
+  ? FORK_PREVIEW_RS_IDENTITY.defaultAgentRuntime
+  : "node";
 
 declare const __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__: Readonly<Record<string, string>> | undefined;
 
@@ -71,7 +97,11 @@ function isTruthyRuntimeEnvOverride(name: string): boolean {
 // defaults for normal desktop/remote-control paths.
 export const runtimeApplicationName =
   readRuntimeEnvOverride("ZCODE_DESKTOP_APPLICATION_NAME") ??
-  (isLocalDevelopmentRuntime ? "ZCode Dev" : isPreviewPackagedRuntime ? "ZCode Preview" : "ZCode");
+  (isLocalDevelopmentRuntime
+    ? "ZCode Dev"
+    : isPreviewPackagedRuntime
+      ? forkPreviewApplicationName
+      : "ZCode");
 // Electron's app.getPath("home") does not necessarily follow a HOME override in the test process.
 // E2E's default workspace depends on the home path, so provide an explicit override to avoid writing
 // tests into the developer's real ~/ZCodeProject.
@@ -684,7 +714,9 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     // Preview and production share tasks, configuration, and credentials, but Helpers from different
     // versions must not overwrite one another or trigger downgrade protection. Isolate only the
     // computer-use runtime components; do not rewrite business data roots ZCODE_HOME / ZCODE_DATA_BASE_DIR.
-    ...(isPreviewPackagedRuntime ? { ZCODE_CUA_HELPER_INSTALL_VARIANT: "preview" } : {}),
+    ...(isPreviewPackagedRuntime
+      ? { ZCODE_CUA_HELPER_INSTALL_VARIANT: forkPreviewCuaHelperInstallVariant }
+      : {}),
     // Local Dynamic Workflow rollout override: written after Main decides; packaged production gets
     // an empty object (the inherited value was removed above).
     ...dynamicWorkflowModeHostEnv,
