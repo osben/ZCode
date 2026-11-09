@@ -66,10 +66,12 @@ async function isExecutable(path: string): Promise<boolean> {
   }
 }
 
-/** Pure precedence: shell env > stored setting > default; then binary availability. */
+/** Pure precedence: shell env > stored setting > build default; then binary availability. */
 export async function resolveForkAgentRuntimeSelection(options: {
   envValue: string | undefined;
   storedSetting: unknown;
+  /** The build's default runtime: "rust" for ZCode Preview RS, "node" otherwise. */
+  buildDefault?: ForkAgentRuntime;
   binaryCandidates: string[];
   isUsable?: (path: string) => Promise<boolean>;
 }): Promise<ForkAgentRuntimeSelection> {
@@ -81,7 +83,7 @@ export async function resolveForkAgentRuntimeSelection(options: {
     ? [envParsed.data, "env"]
     : settingParsed.success
       ? [settingParsed.data, "setting"]
-      : ["node", "default"];
+      : [options.buildDefault ?? "node", "default"];
   const base = { selected, source, ...(ignoredEnvValue ? { ignoredEnvValue } : {}) };
   if (selected === "node") return { ...base, effective: "node" };
   const isUsable = options.isUsable ?? isExecutable;
@@ -113,6 +115,7 @@ let latchedValue: ForkAgentRuntimeSelection | undefined;
 /** Resolve once per process; later calls return the same decision (restart to change it). */
 export function primeForkAgentRuntimeSelection(options: {
   readStoredSetting: () => Promise<unknown>;
+  buildDefault?: ForkAgentRuntime;
   logger: SelectionLogger;
   isPackaged: boolean;
   env?: NodeJS.ProcessEnv;
@@ -135,6 +138,7 @@ export function primeForkAgentRuntimeSelection(options: {
     const selection = await resolveForkAgentRuntimeSelection({
       envValue: env[FORK_AGENT_RUNTIME_ENV],
       storedSetting,
+      buildDefault: options.buildDefault,
       binaryCandidates: resolveRustAgentBinaryCandidates({
         explicitPath: env[FORK_RUST_AGENT_PATH_ENV]?.trim() || undefined,
         isPackaged: options.isPackaged,

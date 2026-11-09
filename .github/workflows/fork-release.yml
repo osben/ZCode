@@ -41,7 +41,13 @@ jobs:
           echo "version=${next}" >> "$GITHUB_OUTPUT"
 
   build-macos-arm64:
-    name: Build macOS arm64 (dmg + zip)
+    name: Build macOS arm64 (dmg + zip, ${{ matrix.variant }})
+    strategy:
+      fail-fast: true
+      # Fork: two apps per release (specs/fork-preview-rs-identity.md). "preview" is ZCode Preview
+      # (Node agent by default); "preview-rs" is ZCode Preview RS (own app id, Rust agent by default).
+      matrix:
+        variant: [preview, preview-rs]
     needs: resolve-version
     runs-on: macos-latest
     timeout-minutes: 120
@@ -60,6 +66,7 @@ jobs:
       # Keep the "ZCode Preview" identity so releases upgrade existing fork installs in place and
       # stay side-by-side with a regular ZCode.app; identity is independent of backend environment.
       ZCODE_PREVIEW_IDENTITY: "1"
+      ZCODE_FORK_RS_IDENTITY: ${{ matrix.variant == 'preview-rs' && '1' || '0' }}
       # Auto-update stays compile-time off in fork releases (scripts/build-time-config.mjs reads
       # ZCODE_AUTO_UPDATE): enabled, the updater would query the upstream release manifest and
       # offer official Z.ai builds over the fork. Preview flavor already blocks the updater at
@@ -94,8 +101,8 @@ jobs:
         run: pnpm --filter @zcode/desktop build
 
       # Fork: build the zcode-rs agent and stage it with its licenses as <resources>/zcode-rs
-      # (specs/fork-agent-runtime-selection.md, "Packaging"). The default runtime stays node; the
-      # binary is what the agent runtime setting switches to.
+      # (specs/fork-agent-runtime-selection.md, "Packaging"). ZCode Preview defaults to node; ZCode
+      # Preview RS defaults to rust (specs/fork-preview-rs-identity.md).
       - name: Install pinned Rust toolchain
         working-directory: packages/rust-cli
         shell: bash
@@ -151,7 +158,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-macos-arm64
+          name: dist-macos-arm64-${{ matrix.variant }}
           path: |
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip
@@ -159,7 +166,13 @@ jobs:
           if-no-files-found: error
 
   build-windows-x64:
-    name: Build Windows x64 (nsis)
+    name: Build Windows x64 (nsis, ${{ matrix.variant }})
+    strategy:
+      fail-fast: true
+      # Fork: two apps per release (specs/fork-preview-rs-identity.md). "preview" is ZCode Preview
+      # (Node agent by default); "preview-rs" is ZCode Preview RS (own app id, Rust agent by default).
+      matrix:
+        variant: [preview, preview-rs]
     needs: resolve-version
     runs-on: windows-latest
     timeout-minutes: 120
@@ -170,6 +183,7 @@ jobs:
       # Same rationale as build-macos-arm64: explicit production backend environment.
       ZCODE_ENV: production
       ZCODE_PREVIEW_IDENTITY: "1"
+      ZCODE_FORK_RS_IDENTITY: ${{ matrix.variant == 'preview-rs' && '1' || '0' }}
       # Same auto-update kill switch as build-macos-arm64; see the comment there.
       ZCODE_AUTO_UPDATE: "0"
       # Same self-hosted remote-control defaults as build-macos-arm64; see the comment there.
@@ -196,8 +210,8 @@ jobs:
         run: pnpm --filter @zcode/desktop build
 
       # Fork: build the zcode-rs agent and stage it with its licenses as <resources>/zcode-rs
-      # (specs/fork-agent-runtime-selection.md, "Packaging"). The default runtime stays node; the
-      # binary is what the agent runtime setting switches to.
+      # (specs/fork-agent-runtime-selection.md, "Packaging"). ZCode Preview defaults to node; ZCode
+      # Preview RS defaults to rust (specs/fork-preview-rs-identity.md).
       - name: Install pinned Rust toolchain
         working-directory: packages/rust-cli
         shell: bash
@@ -251,7 +265,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-windows-x64
+          name: dist-windows-x64-${{ matrix.variant }}
           path: |
             packages/desktop/dist/*.exe
           retention-days: 7
@@ -289,5 +303,5 @@ jobs:
           gh release create "v${VERSION}" \
             --target "$GITHUB_SHA" \
             --title "ZCode ${VERSION}" \
-            --notes "Unsigned fork build (upstream base ${VERSION%%-fork.*}). macOS arm64 + Windows x64. On macOS Gatekeeper may block the first launch; run \`xattr -cr \"/Applications/ZCode Preview.app\"\` to allow it." \
+            --notes "Unsigned fork build (upstream base ${VERSION%%-fork.*}). macOS arm64 + Windows x64. Two apps: ZCode Preview (Node agent) and ZCode Preview RS (Rust agent by default), installable side by side. On macOS Gatekeeper may block the first launch; run \`xattr -cr \"/Applications/ZCode Preview.app\"\` (or \`\"/Applications/ZCode Preview RS.app\"\`) to allow it." \
             release-assets/*

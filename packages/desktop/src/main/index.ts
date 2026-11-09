@@ -57,6 +57,7 @@ import { homedir, hostname } from "node:os";
 import {
   createCredentialService,
   createSettingService,
+  readStoredForkSettings,
   createTelemetryCore,
   createTelemetryMarketingParamsLoader,
   createTelemetryUserIdLoader,
@@ -169,7 +170,7 @@ import {
   updateZCodeStdioTapDevMenuState,
 } from "./desktopApplicationMenu.js";
 import { applyAppIcon } from "./desktopWindowChrome.js";
-import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
+import { resolveForkWindowsAppUserModelId } from "../../scripts/fork-desktop-product-identity.mjs";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
 import { maybeBlockStartupForForceUpdate } from "./forceUpdateGuard.js";
@@ -201,6 +202,8 @@ import {
   resolveRemoteAssetDirs,
   resolveZCodeEndpointEnvBaseOrigin,
   desktopRuntimeEnv,
+  FORK_PRODUCT_VARIANT,
+  forkBuildDefaultAgentRuntime,
   runtimeApplicationName,
   runtimeHomePath,
   runtimeSessionDataPath,
@@ -812,7 +815,10 @@ function awaitFirstHostSpawnDecision(): Promise<void> {
   firstHostSpawnDecisionPromise = (async () => {
     // Fork: the agent runtime is frozen per app process before the first Host fork (specs/fork-agent-runtime-selection.md).
     await primeForkAgentRuntimeSelection({
-      readStoredSetting: async () => (await mainSettingService.get()).agentRuntime,
+      // The raw stored value: the effective settings view materializes "node", which would hide the
+      // build default of the RS app (specs/fork-preview-rs-identity.md).
+      readStoredSetting: async () => (await readStoredForkSettings()).agentRuntime,
+      buildDefault: forkBuildDefaultAgentRuntime,
       logger,
       isPackaged: isElectronAppPackaged(),
     });
@@ -2605,7 +2611,9 @@ app.whenReady().then(async () => {
     // Packaged builds must use the same AUMID as the NSIS shortcut, or the Shell treats them as different applications.
     // Use build-time product identity rather than the user's machine environment; keep development identity separate.
     app.setAppUserModelId(
-      resolveWindowsAppUserModelIdForFlavor(ZCODE_PRODUCT_FLAVOR, { isPackaged: app.isPackaged }),
+      resolveForkWindowsAppUserModelId(ZCODE_PRODUCT_FLAVOR, FORK_PRODUCT_VARIANT, {
+        isPackaged: app.isPackaged,
+      }),
     );
   }
 

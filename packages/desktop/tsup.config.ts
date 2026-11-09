@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { defineConfig } from "tsup";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
+import { resolveForkProductVariantDefine } from "./scripts/fork-desktop-product-identity.mjs";
 const { copyGenUiRuntimeAssets } = await import(
   pathToFileURL(resolve(import.meta.dirname, "scripts/gen-ui-runtime-assets.mjs")).href
 );
@@ -70,7 +71,14 @@ const env = loadEnvFiles();
 const { environment: zcodeEnv } = await loadBuiltinProviderConfig();
 // Package identity and backend environment are independent: ZCODE_PREVIEW_IDENTITY=1 lets a production-backend build run as ZCode Preview.
 const zcodeProductFlavor = resolveDesktopProductFlavor({ ...process.env, ZCODE_ENV: zcodeEnv });
-console.log(`[tsup] ZCODE_ENV=${zcodeEnv} ZCODE_PRODUCT_FLAVOR=${zcodeProductFlavor}`);
+// Fork: ZCODE_FORK_RS_IDENTITY=1 builds ZCode Preview RS (specs/fork-preview-rs-identity.md).
+const zcodeForkProductVariant = resolveForkProductVariantDefine({
+  ...process.env,
+  ZCODE_ENV: zcodeEnv,
+});
+console.log(
+  `[tsup] ZCODE_ENV=${zcodeEnv} ZCODE_PRODUCT_FLAVOR=${zcodeProductFlavor} ZCODE_FORK_PRODUCT_VARIANT=${zcodeForkProductVariant || "none"}`,
+);
 
 function parseCsvEnv(value: string | undefined): string[] {
   return (value ?? "")
@@ -197,6 +205,7 @@ function createSharedDefines() {
     __ZCODE_BUILD_TIME__: JSON.stringify(buildMetadata.buildTime),
     __ZCODE_ENV__: JSON.stringify(zcodeEnv),
     __ZCODE_PRODUCT_FLAVOR__: JSON.stringify(zcodeProductFlavor),
+    __ZCODE_FORK_PRODUCT_VARIANT__: JSON.stringify(zcodeForkProductVariant),
     ...buildTimeConfigDefines,
     // Computer Use Helper build identity — helperInstaller reads this to choose which Helper bundle to download.
     // If missing, the installer throws "Packaged ZCode is missing its embedded Computer Use Helper build identity".
