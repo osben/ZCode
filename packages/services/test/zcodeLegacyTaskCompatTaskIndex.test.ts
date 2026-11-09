@@ -897,6 +897,62 @@ describe("ZCode legacy task compat task index", () => {
     ).rejects.toThrow("workspace mismatch");
   });
 
+  // specs/fork-task-index-cli-facts-admission.md: the project tree lists only rows admitted with CLI facts.
+  describe("CLI-facts admission from sessions-index summaries", () => {
+    function summary(phase: SessionSummary["phase"], title: string): SessionSummary {
+      return {
+        sessionId: "goal-task",
+        workspaceId: "/repo",
+        title,
+        phase,
+        sessionEnded: phase === "completedSuccess" || phase === "error",
+        hasBackgroundWork: false,
+        lastActivityAt: 100,
+        createdAt: 1,
+      };
+    }
+
+    function cliCreatedAt(): unknown {
+      const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
+      try {
+        const row = rawDatabase
+          .prepare("SELECT cli_created_at FROM tasks WHERE workspace_key = ? AND task_id = ?")
+          .get("/repo", "goal-task") as { cli_created_at: unknown } | undefined;
+        return row ? row.cli_created_at : "missing";
+      } finally {
+        rawDatabase.close();
+      }
+    }
+
+    it("admits a session titled while still draft once it runs and completes", async () => {
+      const { indexFrameEmitter, service } = createService();
+      await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await flushMicrotasks();
+      fireIndexUpsert(indexFrameEmitter, summary("draft", "Ship the goal"));
+      fireIndexUpsert(indexFrameEmitter, summary("running", "Ship the goal"));
+      fireIndexUpsert(indexFrameEmitter, summary("completedSuccess", "Ship the goal"));
+      await vi.waitFor(() => expect(typeof cliCreatedAt()).toBe("number"));
+    });
+
+    it("admits a session that goes from draft straight to a terminal phase", async () => {
+      const { indexFrameEmitter, service } = createService();
+      await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await flushMicrotasks();
+      fireIndexUpsert(indexFrameEmitter, summary("draft", "Ship the goal"));
+      fireIndexUpsert(indexFrameEmitter, summary("completedSuccess", "Ship the goal"));
+      await vi.waitFor(() => expect(typeof cliCreatedAt()).toBe("number"));
+    });
+
+    it("keeps an untouched draft out of the task index", async () => {
+      const { indexFrameEmitter, service } = createService();
+      await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await flushMicrotasks();
+      fireIndexUpsert(indexFrameEmitter, summary("draft", ""));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(cliCreatedAt()).toBe("missing");
+    });
+  });
+
   it("exposes task ready only after the indexed session returns to an input-ready phase", async () => {
     const { indexFrameEmitter, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });

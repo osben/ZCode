@@ -610,17 +610,19 @@ export function createZCodeTaskIndexSyncer(
     });
     // updatedAt comes from the CLI summary: Host receive time must not reorder history (I6).
     const updatedAt = summary.lastActivityAt;
-    void taskIndexRepo
-      .applyAgentPatch({
-        workspacePath: target.workspacePath,
-        workspaceIdentity: target.workspaceIdentity,
-        taskId: target.sessionId,
-        // sessions-index summaries do not include lastError details for error states. Let the subsequent snapshot write the authoritative value
-        // (a patch without the lastError key preserves the current value); completed retains the legacy behavior of clearing it.
-        patch: failed
-          ? { status: "error", updatedAt }
-          : { status: "completed", lastError: undefined, updatedAt },
-      })
+    void mirrorSummaryOrWarn(target, summary)
+      .then(() =>
+        taskIndexRepo.applyAgentPatch({
+          workspacePath: target.workspacePath,
+          workspaceIdentity: target.workspaceIdentity,
+          taskId: target.sessionId,
+          // sessions-index summaries do not include lastError details for error states. Let the subsequent snapshot write the authoritative value
+          // (a patch without the lastError key preserves the current value); completed retains the legacy behavior of clearing it.
+          patch: failed
+            ? { status: "error", updatedAt }
+            : { status: "completed", lastError: undefined, updatedAt },
+        }),
+      )
       .then((meta) => {
         if (meta) {
           // Previously only SQLite was updated, with no broadcast; the UI listening for workspace_task_list_changed received no notice,
@@ -688,6 +690,47 @@ export function createZCodeTaskIndexSyncer(
   }
 
   /**
+   * Upstream taskFacts.ingest: applyCliFacts is the single CLI-facts writer and the only path that admits a row into the
+   * project tree (specs/fork-task-index-cli-facts-admission.md). Fork children are admitted by admitForkChild, whose claim
+   * must precede applyCliFacts.
+   */
+  function mirrorSummary(
+    target: ZCodeAgentSessionTarget,
+    summary: SessionSummary,
+  ): Promise<ZCodeTaskMeta | null> {
+    if (isForkAdmissionCandidate(summary)) return Promise.resolve(null);
+    const lastOutcome = summary.lastOutcome;
+    return taskIndexRepo.applyCliFacts({
+      meta: {
+        taskId: summary.sessionId,
+        traceId: generateTraceId(summary.sessionId),
+        title: summary.title,
+        ...(summary.titleUpdatedAt !== undefined ? { titleUpdatedAt: summary.titleUpdatedAt } : {}),
+        workspacePath: target.workspacePath,
+        workspaceIdentity: target.workspaceIdentity,
+        createdAt: summary.createdAt,
+        updatedAt: summary.lastActivityAt,
+        mode: "default",
+        provider: ZCODE_AGENT_PROVIDER,
+        ...(summary.parentSessionId ? { forkedFromTaskId: summary.parentSessionId } : {}),
+        ...(lastOutcome ? { status: lastOutcome === "error" ? "error" : "completed" } : {}),
+      },
+      titleSource: summary.titleSource,
+      lastOutcome,
+    });
+  }
+
+  function mirrorSummaryOrWarn(
+    target: ZCodeAgentSessionTarget,
+    summary: SessionSummary,
+  ): Promise<ZCodeTaskMeta | null> {
+    return mirrorSummary(target, summary).catch((error) => {
+      logger.warn(undefined, `Could not mirror CLI facts taskId=${target.sessionId}`, error);
+      return null;
+    });
+  }
+
+  /**
    * Title change → patch the SQLite title only; fetch a full snapshot if the row is missing (matching legacy first_input semantics).
    * The patch deliberately carries no updatedAt: a rename or title echo is not session activity, so the row keeps its CLI order (I6).
    */
@@ -696,42 +739,20 @@ export function createZCodeTaskIndexSyncer(
     title: string,
     summary: SessionSummary,
   ): void {
-    void taskIndexRepo
-      .applyAgentPatch({
-        workspacePath: target.workspacePath,
-        workspaceIdentity: target.workspaceIdentity,
-        taskId: target.sessionId,
-        patch: { title },
-      })
-      .then(async (meta) => {
+    void mirrorSummaryOrWarn(target, summary)
+      .then((mirrored) =>
+        taskIndexRepo
+          .applyAgentPatch({
+            workspacePath: target.workspacePath,
+            workspaceIdentity: target.workspaceIdentity,
+            taskId: target.sessionId,
+            patch: { title },
+          })
+          .then((patched) => patched ?? mirrored),
+      )
+      .then((meta) => {
         if (meta) {
-          // Title recency is a CLI fact; applyCliFacts is its only writer on admitted rows (docs/ui/task-title-authority.md).
-          // applyAgentPatch above keeps its own write for the title text, so the recency is persisted through the CLI-facts path.
-          const persisted =
-            summary.titleUpdatedAt === undefined
-              ? meta
-              : await taskIndexRepo.applyCliFacts({
-                  meta: {
-                    taskId: summary.sessionId,
-                    traceId: generateTraceId(summary.sessionId),
-                    title,
-                    workspacePath: target.workspacePath,
-                    workspaceIdentity: target.workspaceIdentity,
-                    createdAt: summary.createdAt,
-                    updatedAt: summary.lastActivityAt,
-                    mode: "default",
-                    provider: ZCODE_AGENT_PROVIDER,
-                    titleUpdatedAt: summary.titleUpdatedAt,
-                  },
-                  titleSource: summary.titleSource,
-                });
-          // Title changes (first message/automatic title generation) are unrelated to ownership and occur for every task.
-          // Use a dedicated reason to avoid reloading global membership whenever the initial or terminal title is persisted.
-          emitWorkspaceTaskListChanged(
-            broadcastTargetFrom(target),
-            persisted,
-            "task_title_changed",
-          );
+          emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_title_changed");
         } else {
           // Draft sessions do not pre-write placeholder rows. If the first title (legacy first_input) arrives before any
           // snapshot upsert, fetch a full snapshot rather than relying on an empty session placeholder.
@@ -809,14 +830,28 @@ export function createZCodeTaskIndexSyncer(
       // A V4 prewarmed session promoted from draft, or a new session first seen in an online delta,
       // does not pass through zcodeSessionService.createSession. This is the earliest new-task boundary and does not depend on title timing;
       // fetch a snapshot immediately to write the task row and minimum grouped-root sort_order, preventing an unsequenced node from landing at the end.
-      void resyncTaskIndexRowFromAgent(target, "session.became-visible", {
-        moveGroupedTaskToTop: true,
-      });
+      // The mirror admits the row before the snapshot write places it at the grouped top.
+      void mirrorSummaryOrWarn(target, next)
+        .then((meta) => {
+          if (meta) emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_created");
+          return resyncTaskIndexRowFromAgent(target, "session.became-visible", {
+            moveGroupedTaskToTop: true,
+          });
+        })
+        .catch((error) =>
+          logger.warn(
+            undefined,
+            `Could not index visible session taskId=${target.sessionId}`,
+            error,
+          ),
+        );
       return;
     }
     const title = next.title.trim();
     if (title && (previous === undefined || previous.title !== next.title)) {
       applyTitleChange(target, title, next);
+    } else {
+      void mirrorSummaryOrWarn(target, next);
     }
   }
 
