@@ -301,9 +301,11 @@ impl Tool for AgentTool {
             // 还有在跑的后台子代理（交互模式）：转成后台、停放，父调用回“已启动”（`async_launched`）。
             return Ok(launched_output(&entry));
         }
-        match (finished.ending, finished.failure(self.core.node_desktop)) {
+        match (finished.ending, finished.error) {
             (Ending::Killed, _) => Err(ToolError::Cancelled),
-            (_, Some(message)) => Err(ToolError::Failed { message }),
+            (_, Some(error)) => Err(ToolError::Failed {
+                message: error.to_string(),
+            }),
             (_, None) => {
                 let trailer = !entry.definition.one_shot();
                 let text = report::handback(entry.agent.as_str(), &finished.report, trailer);

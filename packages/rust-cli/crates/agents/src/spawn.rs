@@ -196,9 +196,11 @@ pub(crate) struct Finished {
 }
 
 impl Finished {
-    /// The failure reason after `failed: ` in the notification and the tool result. Fork (node_desktop): Node passes
-    /// the provider's own message for a rate limit or an overload, without Rust's `rate limited: ` / `model
-    /// overloaded: ` prefix (Node `completion-notification.ts` `failureReason`; specs/fork-rust-agent-parity.md).
+    /// The failure reason after `failed: ` in a background agent's notification. Fork (node_desktop): Node's
+    /// background runner passes the provider's own message for a rate limit or an overload, without Rust's
+    /// `rate limited: ` / `model overloaded: ` prefix (`runner.ts` `selectExecutionErrorMessage`,
+    /// `completion-notification.ts` `failureReason`; specs/fork-rust-agent-parity.md). A foreground Agent call
+    /// keeps the formatted error.
     pub(crate) fn failure(&self, node_desktop: bool) -> Option<String> {
         use rust_cli_kernel_api::model::ModelError;
         self.error.as_ref().map(|error| match error {
