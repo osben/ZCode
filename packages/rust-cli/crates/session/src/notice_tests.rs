@@ -128,6 +128,7 @@ pub(crate) async fn session_with_drain(
             child_live: None,
             title_pending: true,
             goal_target: None,
+            goal_verifications: Vec::new(),
         },
         Opened::Loaded,
     )

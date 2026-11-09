@@ -235,6 +235,10 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
             crate::goal_target::save(ctx, goal, *seen_at_ms)
         }
         Fact::GoalTargetCleared => sessions::clear_target(ctx.conn, ctx.session).storage(),
+        Fact::GoalVerificationRecorded {
+            verification,
+            at_ms,
+        } => crate::goal_verify::save(ctx, verification, *at_ms),
         Fact::PermissionRulesAdded { behavior, rules } => {
             crate::project_rules::add(ctx, *behavior, rules)
         }

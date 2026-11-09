@@ -177,6 +177,8 @@ pub(crate) struct Setup {
     pub title_pending: bool,
     /// Fork: the stored goal row (`SessionState::goal_target`); none by default.
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork: the stored goal verification steps; none by default.
+    pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
 }
 
 impl Setup {
@@ -218,6 +220,7 @@ impl Setup {
             child_live: None,
             title_pending: true,
             goal_target: None,
+            goal_verifications: Vec::new(),
         }
     }
 
@@ -321,6 +324,7 @@ impl Setup {
                 child_live: self.child_live,
                 title_pending: self.title_pending,
                 goal_target: self.goal_target,
+                goal_verifications: self.goal_verifications,
             },
             self.opened,
         );

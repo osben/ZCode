@@ -150,6 +150,7 @@ fn spawn(
             child_live: None,
             title_pending: true,
             goal_target: None,
+            goal_verifications: Vec::new(),
         },
         Opened::Created,
     )

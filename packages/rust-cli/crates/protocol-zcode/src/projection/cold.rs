@@ -97,6 +97,14 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                     .iter()
                     .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
                 projection.message(message, at, 0, &mut out);
+                // Fork: the stored goal verifications that followed this message (projection/goal_verify.rs).
+                if let Some(goal) = &view.goal {
+                    for item in goal.verifications.iter().filter(|item| {
+                        item.anchor_message.as_deref() == Some(assistant.id.as_str())
+                    }) {
+                        projection.verified(&goal.target, item, &mut out);
+                    }
+                }
             }
             Message::System(SystemMessage::Interrupted { .. }) => interrupted = true,
             // Fork: a stored compaction shows as its timeline marker (projection/markers.rs).
@@ -105,6 +113,15 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             }
             // 附件不投成行（P1）。
             Message::Attachment(_) => {}
+        }
+    }
+    // Fork: a verification whose anchor message is not in the active history shows at the end.
+    if let Some(goal) = &view.goal {
+        for item in &goal.verifications {
+            let key = format!("goal_verify:{}_{}", goal.target, item.iteration);
+            if !projection.index.contains_key(&key) {
+                projection.verified(&goal.target, item, &mut out);
+            }
         }
     }
     if projection.turn.is_some() {

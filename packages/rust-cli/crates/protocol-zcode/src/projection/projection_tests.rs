@@ -19,6 +19,8 @@ use super::*;
 mod background_result;
 #[path = "background_shells_tests.rs"]
 mod background_shells;
+#[path = "goal_verify_tests.rs"]
+mod goal_verify;
 #[path = "subagent_rows_tests.rs"]
 mod subagent_rows;
 
@@ -968,6 +970,7 @@ fn goal_changes_are_the_snapshot_goal_and_its_actions() {
         time_used_seconds: 3,
         active_run_started_at_ms: (status == GoalPhase::Active).then_some(1_000),
         summary_title: Some("Pass the tests".into()),
+        verifications: Vec::new(),
     };
     let deltas = feed.apply(KernelEvent::GoalChanged {
         goal: Some(goal(GoalPhase::Active)),

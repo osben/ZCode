@@ -277,7 +277,8 @@ impl Actor {
         RunView {
             plan_flags: self.plan_flags,
             selection: Some(self.selection.clone()),
-            goal: self.goal.condition(),
+            // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
+            goal: self.goal.condition().filter(|_| !self.deps.desktop_goals),
             ..RunView::new(self.mode(), self.meta.workspace.clone())
         }
     }
@@ -395,6 +396,7 @@ impl Actor {
             TurnOutcome::Success | TurnOutcome::HookStopped | TurnOutcome::StopHookPrevented
         );
         let turn = running.turn.clone();
+        let anchor_turn = running.turn.clone();
         self.log.append(KernelEvent::TurnFinished {
             turn: running.turn,
             outcome,
@@ -403,7 +405,12 @@ impl Actor {
         self.turn_duration(turn, running.timing, interrupted).await;
         self.goal_touched = true;
         self.after_turn(completed);
+        // The `/goal X` control turn: its continuation is the first, unverified one (Node `verifyBeforeFirstContinue`).
+        let control = self.goal.continue_after_set;
         if self.continue_goal_after_set(completed).await {
+            return;
+        }
+        if !control && completed && self.verify_goal_after_turn(anchor_turn).await {
             return;
         }
         self.start_next().await;

@@ -33,6 +33,7 @@ mod stop_hooks;
 mod texts;
 
 pub use deferred::step_tool_search;
+/// Fork (desktop App): the transcript the goal completion verifier reads (as the stop-time `/goal` evaluation).
 pub use limits::{RequestLimits, ThinkingTokens};
 
 /// `/context` 的消息估算（docs/specs/rust-cli/context-usage.md §3 i）：与主循环相同的规范化（对话中间的
@@ -63,7 +64,8 @@ use rust_cli_kernel_api::env::Operations;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::ids::{AgentId, RunId, SessionId};
-use rust_cli_kernel_api::model::ModelPort;
+use rust_cli_kernel_api::message::Message;
+use rust_cli_kernel_api::model::{ApiMessage, ModelPort, ModelSelection};
 use rust_cli_kernel_api::orchestration::{
     Compactor, ContextBuilder, HookRunner, QueryError, QueryRequest, QueryRunner, QueryStop,
     RunSink, RunView, ToolExecutor, ToolRegistry,
@@ -169,5 +171,14 @@ impl QueryRunner for QueryLoop {
     ) -> Result<QueryStop, QueryError> {
         let scope = Arc::new(RunScope::new(&request, sink, self.parts.clone(), abort));
         run::run(scope, request).await
+    }
+
+    fn transcript(
+        &self,
+        history: &[Message],
+        selection: &ModelSelection,
+        mid_system: Option<bool>,
+    ) -> Vec<ApiMessage> {
+        goal::transcript(history, selection, mid_system)
     }
 }

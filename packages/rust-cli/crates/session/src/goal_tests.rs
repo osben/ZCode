@@ -292,9 +292,9 @@ fn finished_goals_are_not_restored_and_stale_verdicts_are_ignored() {
         status(r#"{"met":false,"sentinel":true,"condition":"a"}"#),
         status(r#"{"met":true,"condition":"a"}"#),
     ];
-    assert_eq!(Goals::restore(&done, 5, None).condition(), None);
+    assert_eq!(Goals::restore(&done, 5, None, &[]).condition(), None);
     let failed = [status(r#"{"met":false,"failed":true,"condition":"a"}"#)];
-    assert_eq!(Goals::restore(&failed, 5, None).condition(), None);
+    assert_eq!(Goals::restore(&failed, 5, None, &[]).condition(), None);
     let mut goals = Goals::default();
     goals.observe(
         &status(r#"{"met":false,"sentinel":true,"condition":"a"}"#),
@@ -331,15 +331,18 @@ fn finished_goals_are_not_restored_and_stale_verdicts_are_ignored() {
     assert_eq!(view.tokens, 7);
 }
 
-/// Fork (desktop App): a goal set from the App reads Node's continuation prompt, is evaluated by
-/// this kernel, and reports each change as `KernelEvent::GoalChanged`.
+/// Fork (desktop App): a goal set from the App reads Node's continuation prompt, is checked by the completion
+/// verifier (not the stop hook), and reports each change as `KernelEvent::GoalChanged`.
+/// The model replies in order; a desktop goal's completion verification is one of them
+/// (specs/fork-rust-goal-verifier.md).
 async fn desktop(
-    responses: usize,
+    replies: &[&str],
     evaluator: Arc<Evaluator>,
 ) -> (crate::test_support::Built, Arc<ScriptedModel>) {
     let model = Arc::new(ScriptedModel::new(
-        (0..responses)
-            .map(|index| text_response(&[&format!("reply {index}")]))
+        replies
+            .iter()
+            .map(|reply| text_response(&[reply]))
             .collect(),
     ));
     let mut setup = Setup::new(model.clone());
@@ -367,6 +370,13 @@ async fn desktop_goal_turns(session: &crate::Session, id: &str, text: &str) -> V
     seen
 }
 
+const PASSED: &str = r#"{"passed": true, "reason": "All done."}"#;
+const NOT_MET: &str = r#"{"passed": false, "reason": "Tests still fail."}"#;
+
+fn is_goal(event: &KernelEvent, phase: rust_cli_kernel_api::goal::GoalPhase) -> bool {
+    matches!(event, KernelEvent::GoalChanged { goal: Some(goal) } if goal.status == phase)
+}
+
 fn goal_command(id: &str, command: Command) -> CommandEnvelope {
     CommandEnvelope {
         id: CommandId::new(id),
@@ -377,9 +387,12 @@ fn goal_command(id: &str, command: Command) -> CommandEnvelope {
 #[tokio::test]
 async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
     use rust_cli_kernel_api::goal::GoalPhase;
-    let (built, model) = desktop(1, Evaluator::with(Vec::new())).await;
+    let evaluator = Evaluator::with(Vec::new());
+    let (built, model) = desktop(&["reply 0", PASSED], evaluator.clone()).await;
     let mut events = built.session.subscribe(Some(0));
+    let mut live = built.session.subscribe(None);
     let turns = desktop_goal_turns(&built.session, "c1", "/goal tests pass").await;
+    until(&mut live, |event| is_goal(event, GoalPhase::Verified)).await;
     // The control turn streams nothing; only the continuation turn calls the model.
     let first_finish = turns.iter().position(finished).unwrap();
     assert!(
@@ -397,7 +410,9 @@ async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
         .filter(|event| matches!(event, KernelEvent::TurnStarted { .. }))
         .count();
     assert_eq!(started, 2);
-    assert_eq!(model.requests().len(), 1);
+    // The continuation turn and its verification; the stop hook never evaluates a desktop goal.
+    assert_eq!(model.requests().len(), 2);
+    assert!(evaluator.conditions.lock().unwrap().is_empty());
     let view = built.session.view().await.unwrap();
     let shown = shorten(&view.messages);
     let kinds: Vec<&str> = shown.iter().map(|(kind, _)| kind.as_str()).collect();
@@ -432,12 +447,13 @@ async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
             phases.push(goal.map(|goal| goal.status));
         }
     }
-    // Set, then summarized (no title model: Node's fallback, the objective), then verified.
+    // Set, then summarized (no title model: Node's fallback, the objective), verifying, then verified.
     assert_eq!(
         phases,
         [
             Some(GoalPhase::Active),
             Some(GoalPhase::Active),
+            Some(GoalPhase::Verifying),
             Some(GoalPhase::Verified)
         ]
     );
@@ -447,16 +463,19 @@ async fn a_desktop_goal_reads_the_node_continuation_and_ends_verified() {
 #[tokio::test]
 async fn a_desktop_goal_pauses_and_resumes_with_a_continuation_turn() {
     use rust_cli_kernel_api::goal::GoalPhase;
-    // The first evaluation fails (the goal stays active, the turn ends); the resumed one is met.
-    let failed = StopVerdict::Failed {
-        message: "no verdict".to_owned(),
-    };
-    let (built, model) = desktop(2, Evaluator::with(vec![failed])).await;
+    // The first verification is not met and names no next action (the session idles); the resumed one is met.
+    let (built, model) = desktop(
+        &["reply 0", NOT_MET, "reply 1", PASSED],
+        Evaluator::with(Vec::new()),
+    )
+    .await;
+    let mut live = built.session.subscribe(None);
     desktop_goal_turns(&built.session, "c1", "/goal tests pass").await;
+    until(&mut live, |event| is_goal(event, GoalPhase::NotSatisfied)).await;
     let active = built.session.view().await.unwrap().goal.unwrap();
-    assert_eq!(active.status, GoalPhase::Active);
+    assert_eq!(active.status, GoalPhase::NotSatisfied);
     assert!(active.active_run_started_at_ms.is_some());
-    // Resuming an active goal is a no-op.
+    // Resuming a goal that is not paused is a no-op.
     assert!(matches!(
         built
             .session
@@ -464,7 +483,7 @@ async fn a_desktop_goal_pauses_and_resumes_with_a_continuation_turn() {
             .await,
         Ack::Accepted { .. }
     ));
-    assert_eq!(model.requests().len(), 1);
+    assert_eq!(model.requests().len(), 2);
     assert!(matches!(
         built
             .session
@@ -489,11 +508,11 @@ async fn a_desktop_goal_pauses_and_resumes_with_a_continuation_turn() {
             .await,
         Ack::Accepted { .. }
     ));
-    until(&mut events, finished).await;
+    until(&mut events, |event| is_goal(event, GoalPhase::Verified)).await;
     let requests = model.requests();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 4);
     assert!(
-        format!("{:?}", requests[1].messages)
+        format!("{:?}", requests[2].messages)
             .contains("Continue working toward the active session goal.")
     );
     let done = built.session.view().await.unwrap();
@@ -512,7 +531,7 @@ fn a_paused_goal_is_restored_paused_and_not_evaluated() {
         status(r#"{"met":false,"sentinel":true,"condition":"a"}"#),
         status(r#"{"met":false,"condition":"a","paused":true}"#),
     ];
-    let goals = Goals::restore(&paused, 5, None);
+    let goals = Goals::restore(&paused, 5, None, &[]);
     assert_eq!(goals.condition(), None);
     assert_eq!(
         goals.state().map(|goal| goal.status),
@@ -568,6 +587,7 @@ fn a_restored_goal_summarizes_its_objective() {
         ))],
         0,
         None,
+        &[],
     );
     let summary = goals.state().unwrap().summary_title.unwrap();
     assert_eq!(summary.chars().count(), 100);
@@ -639,6 +659,7 @@ fn stored_goal(target: &str, summary: &str, seconds: u64) -> rust_cli_kernel_api
         time_used_seconds: seconds,
         active_run_started_at_ms: None,
         summary_title: Some(summary.to_owned()),
+        verifications: Vec::new(),
     }
 }
 
@@ -649,7 +670,7 @@ fn a_restored_goal_reads_its_stored_row() {
     use rust_cli_kernel_api::goal::GoalPhase;
     let set = status(r#"{"met":false,"sentinel":true,"condition":"a"}"#);
     let stored = stored_goal("msg_status", "Short a", 42);
-    let goals = Goals::restore(std::slice::from_ref(&set), 5_000, Some(&stored));
+    let goals = Goals::restore(std::slice::from_ref(&set), 5_000, Some(&stored), &[]);
     let state = goals.state().unwrap();
     assert_eq!(
         (state.summary_title.as_deref(), state.time_used_seconds),
@@ -658,7 +679,7 @@ fn a_restored_goal_reads_its_stored_row() {
     assert_eq!(state.active_run_started_at_ms, Some(5_000));
 
     let other = stored_goal("msg_other", "Other", 42);
-    let state = Goals::restore(std::slice::from_ref(&set), 5_000, Some(&other))
+    let state = Goals::restore(std::slice::from_ref(&set), 5_000, Some(&other), &[])
         .state()
         .unwrap();
     assert_eq!(
@@ -671,7 +692,7 @@ fn a_restored_goal_reads_its_stored_row() {
     if let Message::Attachment(attachment) = &mut met {
         attachment.id = MessageId::new("msg_met");
     }
-    let goals = Goals::restore(&[set.clone(), met.clone()], 5_000, Some(&stored));
+    let goals = Goals::restore(&[set.clone(), met.clone()], 5_000, Some(&stored), &[]);
     assert_eq!(goals.condition(), None);
     let state = goals.state().unwrap();
     assert_eq!(
@@ -680,7 +701,11 @@ fn a_restored_goal_reads_its_stored_row() {
     );
     assert_eq!(state.active_run_started_at_ms, None);
     // Without a row (an older Rust session) a finished goal is not shown, as before.
-    assert!(Goals::restore(&[set, met], 5_000, None).state().is_none());
+    assert!(
+        Goals::restore(&[set, met], 5_000, None, &[])
+            .state()
+            .is_none()
+    );
 }
 
 /// Fork (desktop App): the actor writes the goal row when the goal changes (set, summarized, verified), and a reopened

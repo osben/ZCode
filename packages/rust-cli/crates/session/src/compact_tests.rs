@@ -201,6 +201,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             child_live: None,
             title_pending: true,
             goal_target: None,
+            goal_verifications: Vec::new(),
         },
         Opened::Loaded,
     );

@@ -56,6 +56,7 @@ pub fn load(
         meta: meta(&row),
         // Fork: Node `isAutoTitlePending` (specs/fork-rust-agent-parity.md, first-input title timing).
         goal_target: crate::goal_target::load(conn, session)?,
+        goal_verifications: crate::goal_verify::load(conn, session)?,
         title_pending: matches!(
             row.title_source.as_deref().unwrap_or("first_input"),
             "default" | "first_input"

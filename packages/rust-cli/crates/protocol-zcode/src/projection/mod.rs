@@ -9,6 +9,7 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod goal_verify;
 mod kinds;
 mod markers;
 mod plans;
@@ -126,6 +127,8 @@ pub struct Projection {
     compacting: bool,
     /// Fork: compaction markers so far; the running one is `compact:<count>` (projection/markers.rs).
     compactions: u64,
+    /// Fork: the start time of the running goal completion verification (projection/goal_verify.rs).
+    goal_verifier: Option<u64>,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
@@ -242,6 +245,7 @@ impl Projection {
             created_at: view.meta.created_at_ms,
             compacting: false,
             compactions: 0,
+            goal_verifier: None,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
@@ -359,6 +363,7 @@ impl Projection {
             self.phase,
             self.followup,
             !self.auto_drain && self.has_queue(),
+            self.goal_verifier.is_some(),
         )
     }
 
@@ -461,7 +466,12 @@ impl Projection {
     }
 
     fn control(&self) -> Value {
-        state::control(self.phase, self.active.as_ref(), self.error.as_ref())
+        state::control(
+            self.phase,
+            self.active.as_ref(),
+            self.error.as_ref(),
+            self.goal_verifier,
+        )
     }
 
     /// Fork: the session actions for the current phase, compaction and goal.
@@ -470,7 +480,7 @@ impl Projection {
         state::availability(self.phase, self.compacting, goal["status"].as_str())
     }
 
-    /// Fork: the snapshot `goal` (Node `goalStateSchema`); this kernel keeps no verifier records.
+    /// Fork: the snapshot `goal` (Node `goalStateSchema`).
     fn goal_json(&self) -> Value {
         let Some(goal) = &self.goal else {
             return Value::Null;
@@ -484,7 +494,7 @@ impl Projection {
             "activeRunStartedAtMs": goal.active_run_started_at_ms,
             "status": status,
             "iteration": goal.iteration,
-            "verifications": [],
+            "verifications": self.verifications_json(goal),
             "iterations": [],
         })
     }
@@ -682,6 +692,10 @@ impl Projection {
             KernelEvent::PlanTransition { tool_call, enabled } => {
                 self.plan_transition = Some((tool_call.clone(), *enabled));
                 patch.insert("config".into(), self.config());
+            }
+            KernelEvent::GoalVerification { verification, .. } => {
+                self.goal_verification(verification, now, seq, &mut out);
+                self.phase_patch(&mut patch);
             }
             KernelEvent::GoalChanged { goal } => {
                 self.goal.clone_from(goal);

@@ -291,6 +291,7 @@ async fn asking_session_with(
             child_live: None,
             title_pending: true,
             goal_target: None,
+            goal_verifications: Vec::new(),
         },
         Opened::Created,
     );

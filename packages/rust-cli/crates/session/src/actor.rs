@@ -98,6 +98,8 @@ pub(crate) enum JobDone {
     Rewind(Box<crate::rewind::Finished>),
     /// Fork: the per-turn summary rewind (`Command::RewindTurnFiles`).
     TurnFilesRewound(Box<crate::rewind::TurnRewound>),
+    /// Fork (desktop App): a goal completion verification (goal_verify.rs).
+    GoalVerified(Box<crate::goal_verify::Outcome>),
 }
 
 pub(crate) struct Job {
@@ -222,6 +224,8 @@ pub(crate) struct Actor {
     pub(crate) goal_written: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): a turn ended; the next sync writes the row again (its last-seen time).
     pub(crate) goal_touched: bool,
+    /// Fork (desktop App): the running goal completion verification (its job is `job`).
+    pub(crate) goal_verify: Option<crate::goal_verify::Pending>,
     /// 回合或压缩在跑时到达的本地命令记录（修复线 L-A，local_record.rs）：收尾后按到达顺序提交。
     pub(crate) held_records: Vec<rust_cli_kernel_api::user_command::LocalCommandRecord>,
     seen: HashSet<CommandId>,
@@ -288,6 +292,7 @@ impl Actor {
             &state.messages,
             deps.clock.now_ms(),
             state.goal_target.as_ref(),
+            &state.goal_verifications,
         );
         let goal_written = goal.state().map(crate::goal::stored_form);
         let mut actor = Self {
@@ -315,6 +320,7 @@ impl Actor {
             goal,
             goal_written,
             goal_touched: false,
+            goal_verify: None,
             held_records: Vec::new(),
             seen: HashSet::new(),
             resume_pending,
@@ -707,6 +713,13 @@ impl Actor {
             Ok(JobDone::Startup(outcome)) => self.finish_startup(*outcome).await,
             Ok(JobDone::Rewind(finished)) => self.finish_rewind(*finished).await,
             Ok(JobDone::TurnFilesRewound(finished)) => self.finish_turn_rewind(*finished).await,
+            Ok(JobDone::GoalVerified(outcome)) => {
+                self.finish_goal_verification(Some(*outcome)).await
+            }
+            Err(error) if self.goal_verify.is_some() => {
+                tracing::warn!(%error, "the goal verification job ended without a result");
+                self.finish_goal_verification(None).await;
+            }
             Err(error) => {
                 tracing::warn!(%error, "a session job ended without a result");
                 self.start_next().await;

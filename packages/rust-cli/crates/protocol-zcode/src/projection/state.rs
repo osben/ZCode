@@ -50,9 +50,15 @@ pub struct LastError {
     pub at: u64,
 }
 
-pub fn control(phase: Phase, active: Option<&ActiveWork>, error: Option<&LastError>) -> Value {
+/// `verifier`: the start time of a running goal completion verification (Node `activeWorks` kind `goalVerifier`).
+pub fn control(
+    phase: Phase,
+    active: Option<&ActiveWork>,
+    error: Option<&LastError>,
+    verifier: Option<u64>,
+) -> Value {
     let running = phase == Phase::Running;
-    let works: Vec<Value> = active
+    let mut works: Vec<Value> = active
         .filter(|_| running)
         .map(|work| {
             let mut value = json!({
@@ -67,12 +73,22 @@ pub fn control(phase: Phase, active: Option<&ActiveWork>, error: Option<&LastErr
         })
         .into_iter()
         .collect();
+    let primary = !works.is_empty();
+    if let Some(started_at) = verifier.filter(|_| running) {
+        works.push(json!({"kind": "goalVerifier", "startedAt": started_at}));
+    }
+    let target = match (running, primary, verifier.is_some()) {
+        (false, _, _) => "unknown",
+        (true, true, true) => "mixed",
+        (true, false, true) => "goalVerifier",
+        (true, _, false) => "assistant",
+    };
     json!({
         "phase": phase.name(),
         "sessionEnded": phase.ended(),
         "canStop": running,
         "stopState": if running { "stoppable" } else { "idle" },
-        "stopTargetKind": if running { "assistant" } else { "unknown" },
+        "stopTargetKind": target,
         "activeWorks": works,
         "lastError": error.map(|error| json!({
             "code": "fault.turn.failed",
@@ -161,7 +177,12 @@ impl Followup {
 
 /// `held`: a paused queue still holds items (Node's `computeInputRouting`: after a finished turn new input needs the
 /// client's clear/keep choice, `heldQueueInputRequiresChoice`).
-pub fn input_routing(phase: Phase, followup: Followup, held: bool) -> Value {
+/// `verifying`: a goal completion verification runs (Node `goalVerifierAcceptsFutureInput`: it is not a steerable
+/// turn, so input queues in guide mode too).
+pub fn input_routing(phase: Phase, followup: Followup, held: bool, verifying: bool) -> Value {
+    if verifying {
+        return json!({"mode": "enqueue", "reasonCode": "goalVerifierAcceptsFutureInput"});
+    }
     if held && matches!(phase, Phase::CompletedSuccess | Phase::CompletedInterrupted) {
         return json!({"mode": "choice", "reasonCode": "heldQueueInputRequiresChoice"});
     }

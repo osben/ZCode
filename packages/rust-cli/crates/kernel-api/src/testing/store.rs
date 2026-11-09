@@ -258,6 +258,17 @@ impl SessionStore for MemoryStore {
             Fact::GoalTargetCleared => Some(None),
             _ => None,
         });
+        let goal_verifications =
+            crate::goal::latest_steps(facts.iter().filter_map(|fact| match fact {
+                Fact::GoalVerificationRecorded {
+                    verification,
+                    at_ms,
+                } => Some(crate::goal::RecordedVerification {
+                    verification: verification.clone(),
+                    at_ms: *at_ms,
+                }),
+                _ => None,
+            }));
         let mut meta = meta.clone();
         if let Some(title) = title {
             meta.title = title;
@@ -285,6 +296,7 @@ impl SessionStore for MemoryStore {
             last_turn_failed: last_turn_failed(facts),
             title_pending,
             goal_target: goal_target.flatten(),
+            goal_verifications,
         })
     }
 

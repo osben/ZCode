@@ -23,6 +23,8 @@ mod fork;
 mod fork_input;
 mod goal;
 mod goal_desktop;
+mod goal_verify;
+mod goal_verify_text;
 mod hooks;
 mod inbox;
 mod input;
@@ -202,6 +204,8 @@ pub struct SessionState {
     pub title_pending: bool,
     /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
+    pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
 }
 
 impl SessionState {
@@ -226,6 +230,7 @@ impl SessionState {
             child_live: None,
             title_pending: true,
             goal_target: None,
+            goal_verifications: Vec::new(),
         }
     }
 
@@ -257,6 +262,7 @@ impl SessionState {
             child_live: None,
             title_pending: loaded.title_pending,
             goal_target: loaded.goal_target,
+            goal_verifications: loaded.goal_verifications,
         }
     }
 }

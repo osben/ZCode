@@ -122,6 +122,15 @@ pub(crate) fn report_message(text: &str) -> Message {
 
 #[async_trait]
 impl QueryRunner for FakeRunner {
+    fn transcript(
+        &self,
+        _history: &[rust_cli_kernel_api::message::Message],
+        _selection: &rust_cli_kernel_api::model::ModelSelection,
+        _mid_system: Option<bool>,
+    ) -> Vec<rust_cli_kernel_api::model::ApiMessage> {
+        Vec::new()
+    }
+
     async fn run(
         &self,
         request: QueryRequest,
@@ -236,6 +245,15 @@ pub(crate) fn tool_context(session: &SessionId, run: &RunId) -> ToolUseContext {
 
 #[async_trait]
 impl QueryRunner for ParentRunner {
+    fn transcript(
+        &self,
+        _history: &[rust_cli_kernel_api::message::Message],
+        _selection: &rust_cli_kernel_api::model::ModelSelection,
+        _mid_system: Option<bool>,
+    ) -> Vec<rust_cli_kernel_api::model::ApiMessage> {
+        Vec::new()
+    }
+
     async fn run(
         &self,
         request: QueryRequest,

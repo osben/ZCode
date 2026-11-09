@@ -18,6 +18,7 @@ mod fork_usage_query;
 mod fork_usage_rollup;
 mod frontend_records;
 mod goal_target;
+mod goal_verify;
 mod ids;
 mod load;
 mod node_checkpoints;
@@ -544,6 +545,10 @@ mod title_tests;
 #[cfg(test)]
 #[path = "goal_target_tests.rs"]
 mod goal_target_tests;
+
+#[cfg(test)]
+#[path = "goal_verify_tests.rs"]
+mod goal_verify_tests;
 
 #[cfg(test)]
 #[path = "user_image_tests.rs"]

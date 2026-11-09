@@ -15,6 +15,7 @@ fn goal(target: &str, status: GoalPhase, running: Option<u64>) -> GoalState {
         time_used_seconds: 30,
         active_run_started_at_ms: running,
         summary_title: Some("Green suite".to_owned()),
+        verifications: Vec::new(),
     }
 }
 

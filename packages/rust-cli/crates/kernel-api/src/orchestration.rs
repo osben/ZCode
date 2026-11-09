@@ -207,6 +207,16 @@ pub trait QueryRunner: Send + Sync {
         sink: Arc<dyn RunSink>,
         abort: Abort,
     ) -> Result<QueryStop, QueryError>;
+
+    /// The active history as the main loop sends it to `selection` (normalized, mid-conversation system turns per
+    /// the model's capability `mid_system`), for side requests that send the conversation outside a run (the desktop
+    /// goal verifier, specs/fork-rust-goal-verifier.md).
+    fn transcript(
+        &self,
+        history: &[Message],
+        selection: &ModelSelection,
+        mid_system: Option<bool>,
+    ) -> Vec<crate::model::ApiMessage>;
 }
 
 /// 组装一次模型请求的上下文所需的输入。

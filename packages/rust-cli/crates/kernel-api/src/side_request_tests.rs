@@ -12,7 +12,8 @@ fn every_source_is_listed_and_reads_back() {
             | SideSource::HookPrompt
             | SideSource::WebFetch
             | SideSource::WebSearch
-            | SideSource::GoalSummaryTitle => {}
+            | SideSource::GoalSummaryTitle
+            | SideSource::GoalVerification => {}
         }
         assert_eq!(SideSource::from_wire(source.as_wire()), Some(source));
     }

@@ -18,7 +18,8 @@ fn to_i64(value: u64) -> i64 {
 /// goal is `complete`.
 fn status(phase: GoalPhase) -> &'static str {
     match phase {
-        GoalPhase::Active => "active",
+        // Node keeps `active` while verifying and after a not-satisfied verdict.
+        GoalPhase::Active | GoalPhase::Verifying | GoalPhase::NotSatisfied => "active",
         GoalPhase::Paused => "paused",
         GoalPhase::Verified | GoalPhase::Failed => "complete",
     }
@@ -66,5 +67,6 @@ pub(crate) fn load(
             .unwrap_or(0),
         active_run_started_at_ms: None,
         summary_title: target.summary_title,
+        verifications: Vec::new(),
     }))
 }
