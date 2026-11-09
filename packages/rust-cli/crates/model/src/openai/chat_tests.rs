@@ -38,7 +38,8 @@ fn a_conversation_encodes_in_the_node_order() {
         concat!(
             r#"{"model":"<model>","messages":["#,
             r#"{"role":"system","content":"You are ZCode."},"#,
-            r#"{"role":"user","content":[{"type":"text","text":"<system-reminder>ctx</system-reminder>"},{"type":"text","text":"read a.png"},{"type":"text","text":"<system-reminder>\n# Environment\n</system-reminder>"}]},"#,
+            r#"{"role":"user","content":[{"type":"text","text":"<system-reminder>ctx</system-reminder>"},{"type":"text","text":"read a.png"}]},"#,
+            r#"{"role":"user","content":"<system-reminder>\n# Environment\n</system-reminder>"},"#,
             r#"{"role":"assistant","content":null,"reasoning_content":"need the file","tool_calls":[{"id":"toolu_1","type":"function","function":{"name":"Read","arguments":"{\"file_path\":\"a.png\"}"}}]},"#,
             r#"{"role":"tool","tool_call_id":"toolu_1","content":"line 1\nline 2"},"#,
             r#"{"role":"user","content":[{"type":"text","text":"<system-reminder>\nlate note\n</system-reminder>"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},{"type":"text","text":"thanks"}]},"#,

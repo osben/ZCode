@@ -81,6 +81,7 @@ fn model_shape(
             ),
             turn_effort: effort.filter(|_| shape.is_some_and(|shape| shape.per_turn_effort)),
             skip_cache_write: false,
+            separate_user_messages: capabilities.is_some_and(|found| found.separate_user_messages),
         },
     }
 }

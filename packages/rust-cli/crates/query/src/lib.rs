@@ -51,6 +51,8 @@ pub fn api_messages<'a>(
         turn_effort: None,
         // 缓存断点与主循环相同（摘要请求才前移一条，compact.md）。
         skip_cache_write: false,
+        // Fork: the `/context` estimate keeps the merged layout (token counts barely differ).
+        separate_user_messages: false,
     };
     normalize::normalize(messages, &options)
 }

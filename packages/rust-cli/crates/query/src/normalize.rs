@@ -36,6 +36,10 @@ pub(crate) struct NormalizeOptions {
     pub turn_effort: Option<String>,
     /// 摘要请求不写缓存：断点往前挪一条（[`skip_write_marker`]）。
     pub skip_cache_write: bool,
+    /// Fork: OpenAI-compatible protocols (`ModelCapabilities::separate_user_messages`). Every user message, reminder and
+    /// media attachment becomes its own message: no adjacent-user merge and no reminder fold into tool results, like
+    /// Node when `foldRemindersIntoToolResults` is off.
+    pub separate_user_messages: bool,
 }
 
 fn message(role: ApiRole, content: Vec<ApiContent>) -> ApiMessage {
@@ -146,6 +150,8 @@ fn merge_user(into: &mut Vec<ApiContent>, next: Vec<ApiContent>) {
 
 struct Builder {
     out: Vec<ApiMessage>,
+    /// [`NormalizeOptions::separate_user_messages`].
+    separate: bool,
     folded: Vec<String>,
     /// 已发出的 tool_use 的工具名：提醒并进工具结果时按它推结果的形式（`array_result`）。
     tool_names: HashMap<ToolUseId, String>,
@@ -158,7 +164,9 @@ impl Builder {
 
     fn push_user(&mut self, content: Vec<ApiContent>) {
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => merge_user(&mut last.content, content),
+            Some(last) if last.role == ApiRole::User && !self.separate => {
+                merge_user(&mut last.content, content);
+            }
             _ => self.out.push(message(ApiRole::User, content)),
         }
     }
@@ -170,7 +178,7 @@ impl Builder {
     /// 应把它并进工具结果的字符串、缓存断点落在工具结果上，所以 GLM 等没有卡片的模型每个工具轮的请求形状都不对。
     fn push_reminder(&mut self, value: String) {
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => {
+            Some(last) if last.role == ApiRole::User && !self.separate => {
                 let names = &self.tool_names;
                 let array_form = |id: &ToolUseId, is_error: bool| {
                     names
@@ -192,7 +200,7 @@ impl Builder {
     fn push_media(&mut self, value: String, blocks: Vec<ContentBlock>) {
         let blocks = plain(blocks);
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => {
+            Some(last) if last.role == ApiRole::User && !self.separate => {
                 last.content.push(text(value));
                 last.content.extend(blocks);
                 tool_results_first(&mut last.content);
@@ -311,6 +319,7 @@ pub(crate) fn normalize<'a>(
 ) -> Vec<ApiMessage> {
     let mut builder = Builder {
         out: Vec::new(),
+        separate: options.separate_user_messages,
         folded: Vec::new(),
         tool_names: HashMap::new(),
     };

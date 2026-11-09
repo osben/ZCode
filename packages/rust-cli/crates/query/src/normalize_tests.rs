@@ -12,11 +12,13 @@ const ON: NormalizeOptions = NormalizeOptions {
     system_turns: true,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 const OFF: NormalizeOptions = NormalizeOptions {
     system_turns: false,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 
 fn text(value: &str) -> ContentBlock {
@@ -212,6 +214,7 @@ fn the_turn_effort_rides_on_the_system_turn_after_the_first_prompt() {
         system_turns: true,
         turn_effort: Some("medium".to_owned()),
         skip_cache_write: false,
+        separate_user_messages: false,
     };
     let messages = [
         human("u1", "a"),
@@ -270,6 +273,7 @@ fn marked(api: &[ApiMessage]) -> Vec<(usize, usize)> {
 fn a_summary_request_marks_the_message_before_the_last() {
     let options = NormalizeOptions {
         skip_cache_write: true,
+        separate_user_messages: false,
         ..ON
     };
     let call = ContentBlock::ToolUse {
@@ -693,5 +697,85 @@ fn attached_files_expand_into_reminders_and_images() {
                 3
             )),
         ]
+    );
+}
+
+const SEPARATE: NormalizeOptions = NormalizeOptions {
+    system_turns: false,
+    turn_effort: None,
+    skip_cache_write: false,
+    separate_user_messages: true,
+};
+
+fn one_text(message: &ApiMessage) -> &str {
+    assert_eq!(message.role, ApiRole::User);
+    assert_eq!(message.content.len(), 1, "{message:?}");
+    match &message.content[0].block {
+        ContentBlock::Text { text } => text,
+        other => panic!("not text: {other:?}"),
+    }
+}
+
+/// Fork: OpenAI-compatible protocols send every reminder and prompt as its own user message, reminders before the
+/// prompt they were hoisted over (Node without `foldRemindersIntoToolResults`). A fork notice therefore comes before
+/// the child prompt.
+#[test]
+fn separate_user_messages_keep_each_reminder_and_prompt_apart() {
+    let messages = [
+        human("u1", "parent"),
+        attachment("a1", "environment", "# Environment"),
+        attachment("a2", "date", "Today's date is 2026-10-17."),
+        assistant("m1", vec![text("reply")]),
+        human("u2", "child"),
+        attachment("a3", "fork_notice", "This session was forked."),
+    ];
+    let api = normalize(&messages, &SEPARATE);
+    let roles: Vec<_> = api.iter().map(|message| message.role).collect();
+    assert_eq!(
+        roles,
+        [
+            ApiRole::User,
+            ApiRole::User,
+            ApiRole::User,
+            ApiRole::Assistant,
+            ApiRole::User,
+            ApiRole::User
+        ]
+    );
+    assert_eq!(
+        one_text(&api[0]),
+        "<system-reminder>\n# Environment\n</system-reminder>"
+    );
+    assert_eq!(
+        one_text(&api[1]),
+        "<system-reminder>\nToday's date is 2026-10-17.\n</system-reminder>"
+    );
+    assert_eq!(one_text(&api[2]), "parent");
+    assert_eq!(
+        one_text(&api[4]),
+        "<system-reminder>\nThis session was forked.\n</system-reminder>"
+    );
+    assert_eq!(one_text(&api[5]), "child");
+}
+
+/// Fork: with separate user messages a reminder after a tool result is its own user message, not folded into the
+/// result string.
+#[test]
+fn separate_user_messages_leave_tool_results_unfolded() {
+    let messages = read_then(
+        "1\talpha",
+        "Read",
+        vec![attachment(
+            "a1",
+            "total_tokens_reminder",
+            "<total_tokens>9 tokens left</total_tokens>",
+        )],
+    );
+    let api = normalize(&messages, &SEPARATE);
+    assert_eq!(api.len(), 4);
+    assert_eq!(result_texts(&api[2]), ["1\talpha"]);
+    assert_eq!(
+        one_text(&api[3]),
+        "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
     );
 }

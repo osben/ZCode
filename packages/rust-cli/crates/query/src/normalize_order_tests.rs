@@ -13,6 +13,7 @@ const OPTIONS: NormalizeOptions = NormalizeOptions {
     system_turns: true,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 
 fn text(value: &str) -> ContentBlock {

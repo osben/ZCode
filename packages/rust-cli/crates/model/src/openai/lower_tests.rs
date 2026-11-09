@@ -112,9 +112,10 @@ fn messages_lower_to_protocol_neutral_items() {
             Item::User(vec![
                 Part::Text("<system-reminder>ctx</system-reminder>".to_owned()),
                 Part::Text("read a.png".to_owned()),
-                // 中途的 system 消息并进它之前的 user 回合（在 assistant 之前写出）。
-                reminder("# Environment"),
             ]),
+            // Fork: the mid-conversation system message is its own user message (written before the assistant);
+            // adjacent user messages are not merged on the OpenAI protocols.
+            Item::User(vec![reminder("# Environment")]),
             Item::Assistant {
                 text: String::new(),
                 reasoning: "need the file".to_owned(),

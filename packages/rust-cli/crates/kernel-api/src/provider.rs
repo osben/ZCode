@@ -128,6 +128,10 @@ pub struct ModelCapabilities {
     pub supports_native_web_search: bool,
     /// `supportsMidConversationSystem`：对话中间的 `role: system` 消息。
     pub supports_mid_conversation_system: bool,
+    /// Fork: every user message and reminder is its own request message (no adjacent-user merge, no reminder fold into
+    /// tool results). Node sets `requestCapabilities.foldRemindersIntoToolResults` only for Anthropic Messages, so this
+    /// is true on the OpenAI-compatible protocols.
+    pub separate_user_messages: bool,
     /// `supportsJsonSchemaOutput`。
     pub supports_json_schema_output: bool,
     /// `requiresMfjsToolSchema`。
@@ -158,6 +162,7 @@ impl Default for ModelCapabilities {
             supports_tool_call: true,
             supports_native_web_search: false,
             supports_mid_conversation_system: false,
+            separate_user_messages: false,
             supports_json_schema_output: false,
             requires_mfjs_tool_schema: false,
             supports_image: false,

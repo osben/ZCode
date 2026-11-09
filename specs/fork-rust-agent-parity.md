@@ -169,7 +169,13 @@ Context window in the App projection: Node publishes the model's own window as `
 
 Manual compaction scope: Node `selectCompactEntries` keeps recent rounds verbatim only for automatic and reactive compaction (`shouldPreserveRecent`); a manual `/compact` summarizes every round and writes no preserved segment. The Rust compaction ladder started at one kept round for every trigger, so a manual summary request left out the last reply and the boundary kept it verbatim. The ladder now starts at zero kept rounds for `CompactTrigger::Manual` (`compact/src/engine.rs`); the prompt-too-long steps are unchanged. Spec: `context-window-cold-resume` (the manual compact fixture matches the last reply).
 
-Known gap, `v4-fork` on the Rust agent: the forked child's request carries the fork notice, but not in Node's shape. The Rust request normalization (`query/src/normalize.rs` hoist plus user-message merge, and `model/src/openai/lower.rs`) folds the notice and the next prompt into one user message whose content is an array, with the notice after the prompt. Node sends every reminder as its own user message with string content, with the notice before the prompt. The spec reads `message.content` as a string and fails. Matching Node means changing how the Rust normalization merges adjacent user messages for every protocol, so it is a follow-up, not part of this gate.
+User-message layout on OpenAI-compatible protocols: Node folds reminders into tool results and merges adjacent user content only on Anthropic Messages (`resolveModelRequestCapabilities` `foldRemindersIntoToolResults`, `provider-request-messages.ts` `mergesAdjacentUserContent`). On OpenAI Chat Completions and Responses every user entry is its own user message, and each reminder is a separate string message in session order, so the fork notice comes before the child prompt. The Rust agent used to merge on every protocol and, for GLM, always used mid-conversation system turns (upstream F121), which on OpenAI lowering put the folded reminders after the prompt in the same array message. Now:
+
+- `ModelCapabilities.separate_user_messages` (platform catalog and site rules: true unless the protocol is Anthropic Messages) sets `NormalizeOptions.separate_user_messages`: `query/src/normalize.rs` then pushes every user message, reminder and media attachment as its own message, with no newline join and no tool-result fold;
+- `model/src/openai/lower.rs` never merges adjacent user items (Node's OpenAI path has no merge);
+- the F121 GLM forcing of `supports_mid_conversation_system` applies to Anthropic Messages only, like the F121 reasoning patch; on OpenAI protocols GLM follows its configuration, as on Node.
+
+Anthropic Messages requests are unchanged. Spec: `v4-fork`.
 
 The default runtime stays `node`, so specs outside the gate keep their Node behaviour; the matrix lists the gaps that remain.
 
