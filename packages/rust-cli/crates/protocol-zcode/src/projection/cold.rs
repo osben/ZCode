@@ -67,6 +67,12 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 if INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str()) {
                     interrupted = true;
                 }
+                // Fork: a notification merged into this turn still settles the calls it names (background_result.rs).
+                if super::rows::is_task_notification(&user.origin) {
+                    let text = super::text_of(&user.content);
+                    projection.remember_notified(&text);
+                    projection.settle_notified_tools(&text, at, &mut out);
+                }
                 // 工具结果：给对应的工具行结果。
                 for block in &user.content {
                     if let ContentBlock::ToolResult {

@@ -86,6 +86,73 @@ fn subagent_result(text: &str, summary: &str) -> Option<Value> {
     }
 }
 
+/// One `<task-notification>` block that names its tool call (Node `ZCodeParsedBackgroundTaskNotification`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotifiedTool {
+    pub tool_use: String,
+    pub status: Option<String>,
+    pub error: Option<String>,
+    pub result: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// Node `readTaskNotificationTag`: the trimmed, XML-decoded tag text; `None` when empty.
+fn tag(block: &str, name: &str) -> Option<String> {
+    let value = between(block, &format!("<{name}>"), &format!("</{name}>"))?.trim();
+    (!value.is_empty()).then(|| decode(value))
+}
+
+/// Node `decodeTaskNotificationXmlText`.
+fn decode(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// Node `parseZCodeBackgroundTaskNotifications`: every block of a notification message that names a
+/// `<tool-use-id>`, with tags read inside that block only. The single-notification `subagentResult`
+/// (`origin_meta`) gives the status and error only when the message holds exactly one block; a
+/// merged message reads each block's own `<status>` / `<error>`. `text` must be a task-notification
+/// message.
+pub fn notified_tools(text: &str) -> Vec<NotifiedTool> {
+    const OPEN: &str = "<task-notification>";
+    // Node also requires the text to start with the envelope; the kernel wraps each one in a
+    // `<system-reminder>` with a preamble, and callers pass only task-notification messages.
+    let blocks: Vec<&str> = text
+        .split(OPEN)
+        .skip(1)
+        .map(|block| block.split("</task-notification>").next().unwrap_or(block))
+        .collect();
+    let single = match blocks.as_slice() {
+        [block] => origin_meta(block).and_then(|meta| meta.get("subagentResult").cloned()),
+        _ => None,
+    };
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let tool_use = tag(block, "tool-use-id")?;
+            let (status, error) = match &single {
+                Some(result) => (
+                    result["status"].as_str().map(str::to_owned),
+                    // The reason is read from the envelope summary; Node keeps it unescaped in `originMeta`.
+                    result["error"].as_str().map(decode),
+                ),
+                None => (tag(block, "status"), tag(block, "error")),
+            };
+            Some(NotifiedTool {
+                tool_use,
+                status,
+                error,
+                result: tag(block, "result"),
+                summary: tag(block, "summary"),
+            })
+        })
+        .collect()
+}
+
 /// Node `MAX_BACKGROUND_RESULT_TITLES`: a batch header names this many tasks, then `+N`.
 const MAX_TITLES: usize = 3;
 

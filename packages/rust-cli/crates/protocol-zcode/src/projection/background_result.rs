@@ -8,10 +8,10 @@
 use rust_cli_kernel_api::message::ContentBlock;
 use serde_json::{Value, json};
 
-use super::{Projection, turn_key};
+use super::{Projection, ToolStatus, tool_key, turn_key};
 
 pub(super) use rust_cli_kernel_api::background_origin::{
-    batch_meta, notified_statuses, origin_meta,
+    batch_meta, notified_statuses, notified_tools, origin_meta,
 };
 
 impl Projection {
@@ -49,5 +49,50 @@ impl Projection {
             },
             out,
         );
+    }
+
+    /// Node `applyBackgroundTaskNotificationBlock`: each notification block settles the tool call it
+    /// names, so a merged batch gives every Agent card its own terminal state, not the launch
+    /// acknowledgement's `success`. Calls outside the view are skipped.
+    pub(super) fn settle_notified_tools(&mut self, text: &str, now: u64, out: &mut Vec<Value>) {
+        for notified in notified_tools(text) {
+            let status = match notified.status.as_deref() {
+                Some("failed" | "lost") => ToolStatus::Error,
+                Some("stopped" | "killed") => ToolStatus::Cancelled,
+                _ => ToolStatus::Success,
+            };
+            let content = notified
+                .result
+                .clone()
+                .or_else(|| notified.summary.clone())
+                .or_else(|| notified.error.clone());
+            let error = (status == ToolStatus::Error).then(|| {
+                let message = notified
+                    .error
+                    .clone()
+                    .or_else(|| content.clone())
+                    .unwrap_or_else(|| "Background task failed.".to_owned());
+                json!({"code": "fault.runtime.backgroundTaskFailed", "message": message})
+            });
+            self.upsert(
+                &tool_key(&notified.tool_use),
+                |row| {
+                    row.insert("status".into(), json!(status.as_str()));
+                    if let Some(content) = content {
+                        row.insert("output".into(), json!({"text": content}));
+                    }
+                    row.insert("endedAt".into(), json!(now));
+                    match error {
+                        Some(error) => {
+                            row.insert("error".into(), error);
+                        }
+                        None => {
+                            row.remove("error");
+                        }
+                    }
+                },
+                out,
+            );
+        }
     }
 }

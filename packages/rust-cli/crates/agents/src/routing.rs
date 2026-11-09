@@ -141,7 +141,7 @@ fn notice_of(
 
 /// 一次运行结束（§5.1 第 3、4 条）：停放、带着遗留通知续跑，或结束并送出自己的通知。
 pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Settle {
-    let error = finished.error.as_ref().map(ToString::to_string);
+    let error = finished.failure(core.node_desktop);
     // 命令保活（§5.2 第 5 条）：锁外先问执行环境，锁里再去掉已经交给它的。命令恰好在收尾时结束也不丢不重：通知在锁里的
     // 判断之前交出 → 在邮箱里（续跑）或已在工具边界并入（记在 `delivered`，不算）；之后交出 → 它已停放（续跑）。
     let listed = match core.live.get(id) {
