@@ -19,7 +19,8 @@ use rust_cli_kernel_api::hooks::HookOutcome;
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
 use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::session_api::{Delivery, QueuedInput};
+use rust_cli_kernel_api::session_api::{Delivery, QueuedInput, QueuedKind};
+use rust_cli_kernel_api::store::{AdmittedInput, InputDelivery};
 
 use crate::lane::Waiting;
 
@@ -53,6 +54,8 @@ pub(crate) struct Queued {
     pub(crate) screening: Screening,
     /// 在 next 通道里：插话，与 SessionStart 给的首条输入；其余是 later。
     lane: bool,
+    /// Fork: the input has a `session_input` ledger row (a submitted input; not the SessionStart hook's first input).
+    ledger: bool,
 }
 
 impl Queued {
@@ -114,10 +117,49 @@ pub(crate) fn is_slash(text: &str) -> bool {
     text.trim().starts_with('/')
 }
 
+/// Fork: a change of a queued input for Node's `session_input` ledger (specs/fork-rust-agent-parity.md, Input ledger).
+/// The inbox journals it where the input enters or leaves; the actor writes the journal ([`Inbox::take_journal`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LedgerChange {
+    Admitted(AdmittedInput),
+    Promoted(CommandId),
+    Cancelled(CommandId, &'static str),
+}
+
+/// Fork: why [`Inbox::remove_input`] took an input out of the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Left {
+    /// Into the running turn (absorbed at a tool boundary).
+    Promoted,
+    /// Without a turn, with the ledger reason.
+    Cancelled(&'static str),
+}
+
+/// The ledger row of a queued input.
+fn admitted(queued: &Queued) -> AdmittedInput {
+    // Node's queue item kinds; a bash-mode or content input is typed text there.
+    let kind = match (&queued.kind, queued.input.kind) {
+        (InputKind::Compact, _) | (_, QueuedKind::Compact) => "compact",
+        (_, QueuedKind::Goal) => "sendGoalCommand",
+        _ => "sendText",
+    };
+    AdmittedInput {
+        command: queued.input.command.clone(),
+        kind: kind.to_owned(),
+        delivery: match queued.input.delivery {
+            Delivery::Steer => InputDelivery::Guide,
+            _ => InputDelivery::Queue,
+        },
+        text: queued.input.text.clone(),
+    }
+}
+
 /// 会话 actor 的输入调度：只在 actor 里经 `&mut` 访问。
 #[derive(Debug, Default)]
 pub(crate) struct Inbox {
     items: VecDeque<Item>,
+    /// Fork: ledger changes not written yet, in order.
+    journal: Vec<LedgerChange>,
     /// 下一条通知的 [`NoticeKey`]。
     next_key: u64,
     /// Fork: the drain is paused (`Command::HoldQueue`, Node `setAutoDrain` with `autoDrain: false`):
@@ -129,12 +171,32 @@ impl Inbox {
     /// 运行中到达的输入：插话（`Steer`）进通道，其余是 later。
     pub(crate) fn push_input(&mut self, input: QueuedInput, kind: InputKind) {
         let lane = input.delivery == Delivery::Steer;
-        self.items.push_back(Item::Input(Queued {
+        let queued = Queued {
             input,
             kind,
             screening: Screening::Unscreened,
             lane,
-        }));
+            ledger: true,
+        };
+        self.journal.push(LedgerChange::Admitted(admitted(&queued)));
+        self.items.push_back(Item::Input(queued));
+    }
+
+    /// Fork: the ledger changes since the last call, in order.
+    pub(crate) fn take_journal(&mut self) -> Vec<LedgerChange> {
+        std::mem::take(&mut self.journal)
+    }
+
+    /// Fork: journal an input leaving the queue.
+    fn left(&mut self, queued: &Queued, how: Left) {
+        if !queued.ledger {
+            return;
+        }
+        let command = queued.input.command.clone();
+        self.journal.push(match how {
+            Left::Promoted => LedgerChange::Promoted(command),
+            Left::Cancelled(reason) => LedgerChange::Cancelled(command, reason),
+        });
     }
 
     /// SessionStart 给的首条输入：排在最前（通道与队列的头部），回合结束后先开它（hooks.rs）。
@@ -144,6 +206,7 @@ impl Inbox {
             kind: InputKind::Text,
             screening: Screening::Unscreened,
             lane: true,
+            ledger: false,
         }));
     }
 
@@ -197,12 +260,15 @@ impl Inbox {
     }
 
     /// 去掉一条输入（并入、丢弃、成批取走）。
-    pub(crate) fn remove_input(&mut self, command: &CommandId) -> Option<Queued> {
+    pub(crate) fn remove_input(&mut self, command: &CommandId, how: Left) -> Option<Queued> {
         let at = self.items.iter().position(
             |item| matches!(item, Item::Input(queued) if queued.input.command == *command),
         )?;
         match self.items.remove(at) {
-            Some(Item::Input(queued)) => Some(queued),
+            Some(Item::Input(queued)) => {
+                self.left(&queued, how);
+                Some(queued)
+            }
             Some(Item::Notice(_)) | None => None,
         }
     }
@@ -220,6 +286,9 @@ impl Inbox {
                 && !matches!(queued.kind, InputKind::Compact)
             {
                 queued.input.text = text;
+                if queued.ledger {
+                    self.journal.push(LedgerChange::Admitted(admitted(queued)));
+                }
                 return true;
             }
         }
@@ -385,7 +454,11 @@ impl Inbox {
     /// 取走通道头上的项。
     pub(crate) fn pop_lane_front(&mut self) -> Option<Item> {
         let at = self.items.iter().position(Item::in_lane)?;
-        self.items.remove(at)
+        let item = self.items.remove(at)?;
+        if let Item::Input(queued) = &item {
+            self.left(queued, Left::Promoted);
+        }
+        Some(item)
     }
 
     /// 取走第一条 later 输入（通道为空时，优先级 `later`）。
@@ -395,7 +468,10 @@ impl Inbox {
             .iter()
             .position(|item| matches!(item, Item::Input(queued) if !queued.lane))?;
         match self.items.remove(at) {
-            Some(Item::Input(queued)) => Some(queued),
+            Some(Item::Input(queued)) => {
+                self.left(&queued, Left::Promoted);
+                Some(queued)
+            }
             Some(Item::Notice(_)) | None => None,
         }
     }
@@ -418,7 +494,10 @@ impl Inbox {
             Item::Input(_) | Item::Notice(_) => return None,
         }
         match self.items.remove(at) {
-            Some(Item::Input(queued)) => Some(queued),
+            Some(Item::Input(queued)) => {
+                self.left(&queued, Left::Promoted);
+                Some(queued)
+            }
             Some(Item::Notice(_)) | None => None,
         }
     }

@@ -57,11 +57,46 @@ fn inputs_and_the_lane_are_projections_in_arrival_order() {
     assert_eq!(commands(&inbox), ["start", "q1", "s1"]);
     assert_eq!(lane(&inbox), ["start", "n1", "s1"]);
     // 去掉一条输入，两个投影里一起没了。
-    assert!(inbox.remove_input(&CommandId::new("s1")).is_some());
+    assert!(
+        inbox
+            .remove_input(&CommandId::new("s1"), Left::Cancelled("user_removed"))
+            .is_some()
+    );
     assert_eq!(commands(&inbox), ["start", "q1"]);
     assert_eq!(lane(&inbox), ["start", "n1"]);
     // SessionStart 的首条输入在通道里。
     assert!(inbox.has_lane_input());
+    // Fork: the ledger journal has the submitted inputs only, never the SessionStart input.
+    let journal: Vec<String> = inbox
+        .take_journal()
+        .into_iter()
+        .map(|change| match change {
+            LedgerChange::Admitted(input) => {
+                format!("admitted {} {:?}", input.command.as_str(), input.delivery)
+            }
+            LedgerChange::Promoted(command) => format!("promoted {}", command.as_str()),
+            LedgerChange::Cancelled(command, reason) => {
+                format!("cancelled {} {reason}", command.as_str())
+            }
+        })
+        .collect();
+    assert_eq!(
+        journal,
+        [
+            "admitted q1 Queue",
+            "admitted s1 Guide",
+            "cancelled s1 user_removed"
+        ]
+    );
+    let Some(Item::Input(start)) = inbox.pop_lane_front() else {
+        panic!("the SessionStart input heads the lane");
+    };
+    assert_eq!(start.input.command.as_str(), "start");
+    assert!(inbox.pop_later().is_some());
+    assert_eq!(
+        inbox.take_journal(),
+        [LedgerChange::Promoted(CommandId::new("q1"))]
+    );
 }
 
 #[test]

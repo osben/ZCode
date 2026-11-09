@@ -28,6 +28,7 @@ mod goal_verify_text;
 mod hooks;
 mod inbox;
 mod input;
+mod input_ledger;
 #[cfg(test)]
 mod input_tests;
 mod lane;

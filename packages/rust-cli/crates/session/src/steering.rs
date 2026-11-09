@@ -114,11 +114,13 @@ impl Actor {
             }
             match fate {
                 Fate::Absorbed => {
-                    self.inbox.remove_input(&command);
+                    self.inbox
+                        .remove_input(&command, crate::inbox::Left::Promoted);
                     absorbed.push(command);
                 }
                 Fate::Dropped(notice) => {
-                    self.inbox.remove_input(&command);
+                    self.inbox
+                        .remove_input(&command, crate::inbox::Left::Cancelled("hook_blocked"));
                     // 只供显示，排在本次工具边界的 queued_command 之前（先给出 notices）。
                     if let Some(text) = notice {
                         self.log.append(KernelEvent::SystemNotice {

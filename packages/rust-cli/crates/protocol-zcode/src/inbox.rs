@@ -8,7 +8,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use rust_cli_kernel_api::ids::SessionId;
-use rust_cli_kernel_api::store::FrontendRecord;
+use rust_cli_kernel_api::store::{FrontendRecord, SettledInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -151,6 +151,38 @@ pub fn fact(ack: &Ack) -> FrontendRecord {
         key: format!("v4_command_fact:{FACT_SOURCE}:{}", ack.command_id),
         data: json!({"source": FACT_SOURCE, "ack": ack.to_value()}),
     }
+}
+
+/// Fork: the ACK of a queued input that left the `session_input` ledger without a turn (Node
+/// `loadPersistentCommandFacts`, specs/fork-rust-agent-parity.md, Input ledger).
+pub fn settled_input_ack(command: &str, row: &SettledInput) -> Ack {
+    let reason = row.reason.as_deref();
+    if row.status == "discarded" && reason == Some("session_resumed") {
+        let mut ack = Ack::refused(
+            command,
+            Status::Failed,
+            "fault.command.inputDiscardedOnRestart",
+            "Input was discarded when the CLI restarted; confirm before resending.",
+            0,
+        );
+        // The App settles a discarded `queue`/`guide` input silently; only a `startNow` one asks to resend.
+        ack.result = Some(json!({"type": "inputDisposition", "delivery": row.delivery}));
+        return ack;
+    }
+    let code = reason
+        .filter(|reason| {
+            ["fault.", "proto.", "guard."]
+                .iter()
+                .any(|prefix| reason.starts_with(prefix))
+        })
+        .unwrap_or("fault.command.inputCancelled");
+    Ack::refused(
+        command,
+        Status::Failed,
+        code,
+        "Input was cancelled before it entered the transcript.",
+        0,
+    )
 }
 
 /// 从落库的命令事实里找一个命令的 ACK（Node 也写 `child` 来源）。

@@ -198,7 +198,11 @@ impl Actor {
     /// 跟着条目一起去掉）。判断与出队在 actor 的一次处理里：开回合、成批与工具边界的结局（`settle_steering`）也都在
     /// actor 里出队，所以一条输入要么取回、要么发出，不会两样都有。
     pub(crate) fn dequeue(&mut self, command: &CommandId) -> rust_cli_kernel_api::session_api::Ack {
-        if self.inbox.remove_input(command).is_none() {
+        if self
+            .inbox
+            .remove_input(command, crate::inbox::Left::Cancelled("user_removed"))
+            .is_none()
+        {
             return crate::actor::rejected(ALREADY_SENT);
         }
         self.emit_queue();

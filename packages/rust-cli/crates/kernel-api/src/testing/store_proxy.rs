@@ -192,4 +192,12 @@ impl<H: StoreHooks> StoreQueries for StoreProxy<H> {
     ) -> Result<Vec<FrontendRecord>, StoreError> {
         self.inner.records(session, kind).await
     }
+
+    async fn settled_input(
+        &self,
+        session: &SessionId,
+        command: &crate::ids::CommandId,
+    ) -> Result<Option<crate::store::SettledInput>, StoreError> {
+        self.inner.settled_input(session, command).await
+    }
 }
