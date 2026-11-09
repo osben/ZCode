@@ -79,4 +79,13 @@ impl QueryRunner for Tracked {
         };
         self.inner.run(request, sink, abort).await
     }
+
+    fn transcript(
+        &self,
+        history: &[rust_cli_kernel_api::message::Message],
+        selection: &ModelSelection,
+        mid_system: Option<bool>,
+    ) -> Vec<rust_cli_kernel_api::model::ApiMessage> {
+        self.inner.transcript(history, selection, mid_system)
+    }
 }

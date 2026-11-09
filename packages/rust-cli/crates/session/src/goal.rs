@@ -5,13 +5,16 @@
 //!   从活动历史恢复；
 //! - 判定（§4）：主循环报告评估结果，这里提交反馈与 `goal_status`。
 
-use rust_cli_kernel_api::goal::{self, ActiveGoal, GoalPhase, GoalState, GoalStatus, GoalView};
+use rust_cli_kernel_api::goal::{
+    self, ActiveGoal, GoalPhase, GoalState, GoalStatus, GoalView, RecordedVerification,
+    VERIFICATIONS_RETAINED, VerificationItem,
+};
 use rust_cli_kernel_api::hooks::StopVerdict;
 use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{
     AttachmentMessage, ContentBlock, Message, UserMessage, UserOrigin,
 };
-use rust_cli_kernel_api::store::StoreError;
+use rust_cli_kernel_api::store::{Fact, StoreError};
 use rust_cli_kernel_api::user_command::{self, LOCAL_COMMAND_SOURCE};
 use rust_cli_prompts::texts::render;
 
@@ -52,7 +55,7 @@ pub(crate) struct Goals {
     finished: Option<GoalState>,
     /// Fork (desktop App): a goal was set in the running control turn; its continuation turn starts
     /// once that turn completes (Node `continueGoalAfterChange`).
-    continue_after_set: bool,
+    pub(crate) continue_after_set: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +74,22 @@ struct Active {
     running_since: Option<u64>,
     /// Fork (desktop App): Node `target.summaryTitle`; in memory only (a cold load uses the fallback).
     summary_title: Option<String>,
+    /// Fork (desktop App): a completion verification runs (specs/fork-rust-goal-verifier.md).
+    verifying: bool,
+    /// Fork (desktop App): the last verification found the goal not complete, until the next turn or control.
+    not_satisfied: bool,
+    /// Fork (desktop App): the iteration of the last verification started (0: none yet).
+    verified_iteration: u32,
+    /// Fork (desktop App): the finished verifications, the last [`VERIFICATIONS_RETAINED`].
+    verifications: Vec<VerificationItem>,
+}
+
+/// Fork (desktop App): the goal as its `session_target` row stores it (the evaluation count is not stored).
+pub(crate) fn stored_form(goal: GoalState) -> GoalState {
+    GoalState {
+        iteration: 0,
+        ..goal
+    }
 }
 
 /// Node `fallbackGoalSummaryTitle`: the normalized objective, at most 100 characters.
@@ -100,6 +119,10 @@ impl Active {
             used_ms: 0,
             running_since: Some(now_ms),
             summary_title: None,
+            verifying: false,
+            not_satisfied: false,
+            verified_iteration: 0,
+            verifications: Vec::new(),
         }
     }
 
@@ -115,11 +138,50 @@ impl Active {
             target: self.target.clone(),
             objective: self.condition.clone(),
             status,
-            iteration: self.iterations,
+            // The desktop goal shows its last verification's iteration (Node `goalIteration`).
+            iteration: if self.verified_iteration > 0 {
+                self.verified_iteration
+            } else {
+                self.iterations
+            },
             time_used_seconds: self.used_ms / 1000,
             active_run_started_at_ms: self.running_since,
             summary_title: self.summary_title.clone(),
+            verifications: self.verifications.clone(),
         }
+    }
+
+    /// The live status of a goal that is not finished.
+    fn phase(&self) -> GoalPhase {
+        if self.paused {
+            GoalPhase::Paused
+        } else if self.verifying {
+            GoalPhase::Verifying
+        } else if self.not_satisfied {
+            GoalPhase::NotSatisfied
+        } else {
+            GoalPhase::Active
+        }
+    }
+
+    /// Restores the stored verifications of this goal (a cold load).
+    fn restore_verifications(&mut self, steps: &[RecordedVerification]) {
+        let mine = steps
+            .iter()
+            .filter(|step| !self.target.is_empty() && step.verification.target_id == self.target);
+        for step in mine {
+            self.verified_iteration = self
+                .verified_iteration
+                .max(step.verification.goal_iteration);
+            if let Some(item) = step.verification.item(step.at_ms) {
+                self.verifications.push(item);
+            }
+        }
+        let extra = self
+            .verifications
+            .len()
+            .saturating_sub(VERIFICATIONS_RETAINED);
+        self.verifications.drain(..extra);
     }
 }
 
@@ -134,35 +196,66 @@ fn status_of(message: &Message) -> Option<GoalStatus> {
 
 impl Goals {
     /// 冷加载：最后一条 `goal_status` 既不是达成也不是失败时，它的条件重新生效，从 0 轮算起。
-    pub(crate) fn restore(messages: &[Message], now_ms: u64) -> Self {
-        let last = messages.iter().rev().find_map(status_of);
-        let active = last
-            .filter(|status| !status.met && !status.failed && !status.condition.is_empty())
-            .map(|status| {
-                // Fork: the target is the attachment that set this condition; a paused goal stays paused.
-                let target = messages
-                    .iter()
-                    .rev()
-                    .find(|message| {
-                        status_of(message).is_some_and(|set| {
-                            set.sentinel && !set.met && set.condition == status.condition
-                        })
-                    })
-                    .map(|message| message.id().as_str().to_owned())
-                    .unwrap_or_default();
-                let mut active = Active::new(status.condition, target, 0, now_ms);
-                active.summary_title = fallback_summary(&active.condition);
-                if status.paused == Some(true) {
-                    active.paused = true;
-                    active.running_since = None;
+    ///
+    /// Fork (desktop App): `stored` is the goal's `session_target` row; when it is the same target it fills the
+    /// summary title and the time used, and a met or impossible last goal is shown again (Node reads the row).
+    pub(crate) fn restore(
+        messages: &[Message],
+        now_ms: u64,
+        stored: Option<&GoalState>,
+        steps: &[RecordedVerification],
+    ) -> Self {
+        let Some(last) = messages
+            .iter()
+            .rev()
+            .find_map(status_of)
+            .filter(|status| !status.condition.is_empty())
+        else {
+            return Self::default();
+        };
+        // Fork: the target is the attachment that set this condition.
+        let target = messages
+            .iter()
+            .rev()
+            .find(|message| {
+                status_of(message)
+                    .is_some_and(|set| set.sentinel && !set.met && set.condition == last.condition)
+            })
+            .map(|message| message.id().as_str().to_owned())
+            .unwrap_or_default();
+        let stored = stored.filter(|stored| !target.is_empty() && stored.target == target);
+        let mut active = Active::new(last.condition.clone(), target, 0, now_ms);
+        active.summary_title = stored
+            .and_then(|stored| stored.summary_title.clone())
+            .or_else(|| fallback_summary(&active.condition));
+        active.used_ms = stored.map_or(0, |stored| stored.time_used_seconds * 1000);
+        active.restore_verifications(steps);
+        if last.met || last.failed {
+            let finished = stored.is_some().then(|| {
+                active.running_since = None;
+                let phase = if last.met {
+                    GoalPhase::Verified
+                } else {
+                    GoalPhase::Failed
+                };
+                GoalState {
+                    iteration: last.iterations.unwrap_or(0),
+                    ..active.state(phase)
                 }
-                active
             });
+            return Self {
+                finished,
+                ..Self::default()
+            };
+        }
+        // A paused goal stays paused.
+        if last.paused == Some(true) {
+            active.paused = true;
+            active.running_since = None;
+        }
         Self {
-            active,
-            output_tokens: 0,
-            finished: None,
-            continue_after_set: false,
+            active: Some(active),
+            ..Self::default()
         }
     }
 
@@ -198,10 +291,98 @@ impl Goals {
     /// Fork (desktop App): the goal as the App shows it (Node snapshot `goal`).
     pub(crate) fn state(&self) -> Option<GoalState> {
         match &self.active {
-            Some(active) if active.paused => Some(active.state(GoalPhase::Paused)),
-            Some(active) => Some(active.state(GoalPhase::Active)),
+            Some(active) => Some(active.state(active.phase())),
             None => self.finished.clone(),
         }
+    }
+
+    /// Fork (desktop App): a completion verification starts for the active, unpaused goal: its target, iteration and
+    /// the prompt's goal facts (`objective`, tokens used, time used).
+    pub(crate) fn verification_start(
+        &mut self,
+        now_ms: u64,
+    ) -> Option<(String, u32, String, u64, u64)> {
+        let tokens = self.output_tokens;
+        let active = self.active.as_mut().filter(|active| !active.paused)?;
+        active.verifying = true;
+        active.not_satisfied = false;
+        active.verified_iteration += 1;
+        let running = active
+            .running_since
+            .map_or(0, |since| now_ms.saturating_sub(since));
+        Some((
+            active.target.clone(),
+            active.verified_iteration,
+            active.condition.clone(),
+            tokens - active.tokens_at_start,
+            (active.used_ms + running) / 1000,
+        ))
+    }
+
+    /// Fork (desktop App): the verification of goal `target` ended with `item` (None: cancelled).
+    pub(crate) fn verification_end(&mut self, target: &str, item: Option<VerificationItem>) {
+        let Some(active) = self
+            .active
+            .as_mut()
+            .filter(|active| active.target == target)
+        else {
+            return;
+        };
+        active.verifying = false;
+        active.not_satisfied = item
+            .as_ref()
+            .is_some_and(|item| item.outcome == goal::VerificationOutcome::NotSatisfied);
+        if let Some(item) = item {
+            active.verifications.push(item);
+            let extra = active
+                .verifications
+                .len()
+                .saturating_sub(VERIFICATIONS_RETAINED);
+            active.verifications.drain(..extra);
+        }
+    }
+
+    /// Fork (desktop App): the goal's continuation turn starts after a not-satisfied verdict (Node `run_started`
+    /// projects the goal `active` again).
+    pub(crate) fn continuation_started(&mut self) {
+        if let Some(active) = &mut self.active {
+            active.not_satisfied = false;
+        }
+    }
+
+    /// Fork (desktop App): the `goal_status` a verdict commits for the active goal `target`: met when it passed, else not
+    /// met with the reason.
+    pub(crate) fn verdict_status(
+        &self,
+        target: &str,
+        passed: bool,
+        reason: &str,
+        now_ms: u64,
+    ) -> Option<GoalStatus> {
+        let active = self
+            .active
+            .as_ref()
+            .filter(|active| active.target == target)?;
+        let reason = Some(reason.to_owned()).filter(|reason| !reason.is_empty());
+        Some(if passed {
+            GoalStatus {
+                met: true,
+                sentinel: false,
+                failed: false,
+                condition: active.condition.clone(),
+                reason,
+                iterations: Some(active.iterations + 1),
+                duration_ms: Some(now_ms.saturating_sub(active.set_at_ms)),
+                tokens: Some(self.output_tokens - active.tokens_at_start),
+                paused: None,
+            }
+        } else {
+            GoalStatus {
+                reason,
+                sentinel: false,
+                ..sentinel(false, &active.condition)
+            }
+        })
     }
 
     /// Fork (desktop App): the pause (`true`) or resume (`false`) status to commit; None when the
@@ -273,6 +454,7 @@ impl Goals {
                 active.running_since = Some(now_ms);
             }
             active.paused = pause;
+            active.not_satisfied = false;
         } else if status.met || status.failed {
             active.settle(now_ms);
             let phase = if status.met {
@@ -376,7 +558,7 @@ fn sentinel(met: bool, condition: &str) -> GoalStatus {
 }
 
 impl Actor {
-    fn status_message(&self, status: &GoalStatus) -> Message {
+    pub(crate) fn status_message(&self, status: &GoalStatus) -> Message {
         Message::Attachment(AttachmentMessage {
             id: self.deps.ids.message(),
             source: goal::STATUS_SOURCE.to_owned(),
@@ -521,6 +703,30 @@ impl Actor {
         }
     }
 
+    /// Fork (desktop App): writes the goal's `session_target` row when the goal changed since the last write, or a turn
+    /// ended while it runs (the single write path, called once per actor loop iteration).
+    pub(crate) async fn goal_target_sync(&mut self) {
+        if !self.deps.desktop_goals {
+            return;
+        }
+        let goal = self.goal.state().map(stored_form);
+        let touched = std::mem::take(&mut self.goal_touched) && goal.is_some();
+        if goal == self.goal_written && !touched {
+            return;
+        }
+        let fact = match &goal {
+            Some(goal) => Fact::GoalTargetSaved {
+                goal: goal.clone(),
+                seen_at_ms: self.deps.clock.now_ms(),
+            },
+            None => Fact::GoalTargetCleared,
+        };
+        if let Err(reason) = self.commit(None, vec![fact]).await {
+            tracing::warn!(%reason, "the goal row was not stored");
+        }
+        self.goal_written = goal;
+    }
+
     /// Fork (desktop App): the goal state for the session view (Node snapshot `goal`).
     pub(crate) fn goal_state(&self) -> Option<GoalState> {
         self.deps.desktop_goals.then(|| self.goal.state()).flatten()
@@ -541,8 +747,30 @@ impl Actor {
         if let Some(running) = &self.running {
             running.abort.abort(AbortReason::User);
             self.cancel_turn_asks();
+        } else if self.goal_verify.is_some()
+            && let Some(cancel) = self.job.as_ref().and_then(|job| job.cancel.as_ref())
+        {
+            // Fork: pausing during a completion verification cancels it (Node aborts the verifier).
+            cancel.cancel();
         }
         accepted()
+    }
+
+    /// Fork (desktop App): Node `pauseActiveTargetForCancellation`: a cancelled turn (Stop, or the preemption of
+    /// `sendQueuedNow`) pauses the active goal. Not while closing or shutting down: that turn is not the user's stop.
+    pub(crate) async fn pause_goal_after_cancel(&mut self) {
+        if !self.deps.desktop_goals || self.closing.is_some() || self.shutting_down {
+            return;
+        }
+        let Some(status) = self.goal.control(true) else {
+            return;
+        };
+        if let Err(error) = self
+            .record(vec![self.status_message(&status)], Vec::new())
+            .await
+        {
+            tracing::warn!(%error, "the paused goal was not stored");
+        }
     }
 
     /// Fork (desktop App): Node `resumeGoal`: refused while a turn runs or with plan on; a paused

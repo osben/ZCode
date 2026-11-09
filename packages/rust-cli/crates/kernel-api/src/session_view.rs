@@ -33,6 +33,7 @@ impl SessionView {
             commands: Default::default(),
             turn_files: Default::default(),
             goal: None,
+            message_models: Default::default(),
         }
     }
 }

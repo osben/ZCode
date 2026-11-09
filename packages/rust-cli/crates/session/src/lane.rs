@@ -309,6 +309,16 @@ impl Actor {
         }
     }
 
+    /// Fork (desktop App): [`Self::start_next`] would start a turn (a lane notice, an input not held, a due cron fire
+    /// already taken); the goal verifier yields to it (Node `yieldToPendingCommands`).
+    pub(crate) fn has_next_input(&self) -> bool {
+        let notice = self
+            .inbox
+            .lane()
+            .any(|item| matches!(item, LaneItem::Notice(notice) if !notice.waiting.passive()));
+        notice || (!self.inbox.held() && self.inbox.has_inputs()) || !self.cron_fires.is_empty()
+    }
+
     /// 一条文字输入开的回合，连同与它成批的后续输入。
     fn human_turn(&mut self, queued: Queued) -> TurnInput {
         let command = queued.input.command.clone();

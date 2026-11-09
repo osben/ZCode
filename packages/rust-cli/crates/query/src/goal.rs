@@ -22,7 +22,7 @@ pub(crate) fn due(scope: &RunScope, source: &QuerySource, goal: Option<String>) 
 
 /// 评估的对话记录：活动历史按发给模型的规则 normalize（对话中间的 system 消息照模型能力），不带每轮
 /// effort，不含 user context。
-fn transcript(
+pub fn transcript(
     history: &[Message],
     selection: &ModelSelection,
     configured: Option<bool>,

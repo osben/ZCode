@@ -9,8 +9,10 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod goal_verify;
 mod kinds;
 mod markers;
+mod model_change;
 mod plans;
 mod rows;
 pub(crate) mod rows_range;
@@ -19,7 +21,9 @@ mod subagent_rows;
 
 use std::collections::HashMap;
 
-use rust_cli_kernel_api::message::{ContentBlock, Usage, text_of as text_of_result};
+use rust_cli_kernel_api::message::{
+    CompactTrigger, ContentBlock, Usage, text_of as text_of_result,
+};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
@@ -119,13 +123,22 @@ pub struct Projection {
     /// Fork: the queue drains on its own (`setAutoDrain`); the kernel's hold is set by the same command.
     auto_drain: bool,
     /// Fork: why the queue is paused (`queue.pauseReason`): `manual` after `setAutoDrain(false)`, `stopped` after a
-    /// user stop held it (specs/stop-queue-hold.md).
+    /// user stop held it (specs/stop-queue-hold.md), `error` after a failed turn held it.
     pause_reason: Option<&'static str>,
     created_at: u64,
     /// Fork: a compaction is running (row actions are withheld, like Node's `compact` active work).
     compacting: bool,
+    /// Fork: the running turn is a manual `/compact`; its failure does not pause the queue (Node pauses on a
+    /// main turn error only).
+    compact_turn: bool,
     /// Fork: compaction markers so far; the running one is `compact:<count>` (projection/markers.rs).
     compactions: u64,
+    /// Fork: the provider and model of the last started turn (Node `lastTurnModel`, projection/model_change.rs).
+    last_turn_model: Option<(String, String)>,
+    /// Fork: the start time of the running goal completion verification (projection/goal_verify.rs).
+    goal_verifier: Option<u64>,
+    /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
+    goal_verifier_failed: bool,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
@@ -153,6 +166,16 @@ pub(crate) fn text_of(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Node's queued goal text: the typed `/goal X`, or `/goal ` before the objective when the text lost its command.
+fn queued_goal_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.starts_with("/goal") {
+        trimmed.to_owned()
+    } else {
+        format!("/goal {trimmed}")
+    }
 }
 
 fn turn_key(turn: &str) -> String {
@@ -241,7 +264,11 @@ impl Projection {
             denied: std::collections::HashSet::new(),
             created_at: view.meta.created_at_ms,
             compacting: false,
+            compact_turn: false,
             compactions: 0,
+            last_turn_model: None,
+            goal_verifier: None,
+            goal_verifier_failed: false,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
@@ -359,6 +386,7 @@ impl Projection {
             self.phase,
             self.followup,
             !self.auto_drain && self.has_queue(),
+            self.goal_verifier.is_some(),
         )
     }
 
@@ -461,7 +489,16 @@ impl Projection {
     }
 
     fn control(&self) -> Value {
-        state::control(self.phase, self.active.as_ref(), self.error.as_ref())
+        let mut control = state::control(
+            self.phase,
+            self.active.as_ref(),
+            self.error.as_ref(),
+            self.goal_verifier,
+        );
+        if self.goal_verifier_failed && self.phase == Phase::Error {
+            control["sessionEnded"] = json!(false);
+        }
+        control
     }
 
     /// Fork: the session actions for the current phase, compaction and goal.
@@ -470,7 +507,7 @@ impl Projection {
         state::availability(self.phase, self.compacting, goal["status"].as_str())
     }
 
-    /// Fork: the snapshot `goal` (Node `goalStateSchema`); this kernel keeps no verifier records.
+    /// Fork: the snapshot `goal` (Node `goalStateSchema`).
     fn goal_json(&self) -> Value {
         let Some(goal) = &self.goal else {
             return Value::Null;
@@ -484,7 +521,7 @@ impl Projection {
             "activeRunStartedAtMs": goal.active_run_started_at_ms,
             "status": status,
             "iteration": goal.iteration,
-            "verifications": [],
+            "verifications": self.verifications_json(goal),
             "iterations": [],
         })
     }
@@ -503,9 +540,13 @@ impl Projection {
         let seq = event.seq;
         match &event.event {
             KernelEvent::TurnStarted { turn, command } => {
+                self.goal_verifier_failed = false;
+                self.compact_turn = false;
+                let selection = Some(self.selection.clone());
                 self.start_turn(
                     turn.as_str(),
                     command.as_ref().map(|c| c.as_str().to_owned()),
+                    selection,
                     now,
                     seq,
                     &mut out,
@@ -639,8 +680,31 @@ impl Projection {
                 outcome,
                 usage,
             } => {
+                // Fork: a compaction still running when its turn ends was stopped with it; Node settles its
+                // marker as `cancelled` (an interrupted compaction) and drops the compact work.
+                if self.compacting {
+                    self.compacting = false;
+                    let status = if matches!(outcome, TurnOutcome::Interrupted) {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    self.compact_settled(status, &mut out);
+                    patch.insert("availability".into(), self.availability());
+                }
+                // Fork: the session actor held the waiting inputs after a failed main turn (Node `onTurnError`).
+                let paused = matches!(outcome, TurnOutcome::Failed { .. })
+                    && !std::mem::take(&mut self.compact_turn)
+                    && self.auto_drain
+                    && self.has_queue();
                 self.finish_turn(turn.as_str(), outcome, usage.as_ref(), now, &mut out);
                 self.phase_patch(&mut patch);
+                if paused {
+                    self.auto_drain = false;
+                    self.pause_reason = Some("error");
+                    patch.insert("queue".into(), self.queue_state());
+                    patch.insert("inputRouting".into(), self.input_routing());
+                }
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
                 if !self.pending.is_empty() {
                     self.pending.clear();
@@ -683,6 +747,10 @@ impl Projection {
                 self.plan_transition = Some((tool_call.clone(), *enabled));
                 patch.insert("config".into(), self.config());
             }
+            KernelEvent::GoalVerification { verification, .. } => {
+                self.goal_verification(verification, now, seq, &mut out);
+                self.phase_patch(&mut patch);
+            }
             KernelEvent::GoalChanged { goal } => {
                 self.goal.clone_from(goal);
                 patch.insert("goal".into(), self.goal_json());
@@ -691,6 +759,7 @@ impl Projection {
             // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
             KernelEvent::CompactStarted { trigger } => {
                 self.compacting = true;
+                self.compact_turn |= matches!(trigger, CompactTrigger::Manual);
                 self.compact_started(*trigger, now, seq, &mut out);
                 patch.insert("availability".into(), self.availability());
             }
@@ -703,6 +772,16 @@ impl Projection {
                 self.compacting = false;
                 self.compact_settled("failed", &mut out);
                 patch.insert("availability".into(), self.availability());
+            }
+            KernelEvent::CompactSkipped { trigger } => {
+                // A `/compact` announces its marker first; a skipped one settles it as `noop`.
+                if self.compacting {
+                    self.compacting = false;
+                    self.compact_settled("noop", &mut out);
+                    patch.insert("availability".into(), self.availability());
+                } else {
+                    self.compact_skipped(*trigger, now, seq, &mut out);
+                }
             }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
@@ -758,6 +837,7 @@ impl Projection {
                 KernelEvent::CompactStarted { .. }
                     | KernelEvent::CompactDone { .. }
                     | KernelEvent::CompactFailed { .. }
+                    | KernelEvent::CompactSkipped { .. }
             );
         if structural {
             self.refresh_actions(&mut out);
@@ -777,6 +857,7 @@ impl Projection {
         &mut self,
         turn: &str,
         command: Option<String>,
+        selection: Option<ModelSelection>,
         now: u64,
         seq: u64,
         out: &mut Vec<Value>,
@@ -799,6 +880,7 @@ impl Projection {
             output_tokens: None,
             control_only: false,
         });
+        self.model_change(turn, selection, now, seq, out);
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));
         row.insert("executionKind".into(), json!("agent"));
@@ -1046,16 +1128,12 @@ impl Projection {
             .map(|item| {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
+                let goal_text = queued_goal_text(&item.text);
                 // Fork: kind and the frozen execution state come from the kernel's item (one owner).
                 let (kind, text) = match item.kind {
                     QueuedKind::Text => ("sendText", item.text.as_str()),
-                    QueuedKind::Goal => (
-                        "sendGoalCommand",
-                        item.text
-                            .trim_start()
-                            .strip_prefix("/goal")
-                            .map_or(item.text.as_str(), str::trim),
-                    ),
+                    // Node's queue item shows the typed `/goal X` (publisher `displayText`).
+                    QueuedKind::Goal => ("sendGoalCommand", goal_text.as_str()),
                     QueuedKind::Compact => ("compact", "/compact"),
                 };
                 let mut value = json!({

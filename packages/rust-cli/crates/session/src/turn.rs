@@ -243,6 +243,9 @@ impl Actor {
                 self.log
                     .append(KernelEvent::CompactFailed { trigger, message });
             }
+            SinkRequest::CompactSkipped(trigger) => {
+                self.log.append(KernelEvent::CompactSkipped { trigger });
+            }
             SinkRequest::SetPlan {
                 enabled,
                 tool_call,
@@ -277,7 +280,8 @@ impl Actor {
         RunView {
             plan_flags: self.plan_flags,
             selection: Some(self.selection.clone()),
-            goal: self.goal.condition(),
+            // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
+            goal: self.goal.condition().filter(|_| !self.deps.desktop_goals),
             ..RunView::new(self.mode(), self.meta.workspace.clone())
         }
     }
@@ -394,15 +398,38 @@ impl Actor {
             outcome,
             TurnOutcome::Success | TurnOutcome::HookStopped | TurnOutcome::StopHookPrevented
         );
+        let failed = matches!(outcome, TurnOutcome::Failed { .. });
+        // A compaction turn has no run (`start_compaction`); only main-loop turns pause the queue.
+        let main_loop = running.run.is_some();
         let turn = running.turn.clone();
+        let anchor_turn = running.turn.clone();
         self.log.append(KernelEvent::TurnFinished {
             turn: running.turn,
             outcome,
             usage,
         });
         self.turn_duration(turn, running.timing, interrupted).await;
+        self.goal_touched = true;
         self.after_turn(completed);
+        if interrupted {
+            self.pause_goal_after_cancel().await;
+        }
+        // Fork: Node core pauses the queue on a turn error (`queueAutoDrain = false`), so the waiting inputs stay
+        // queued until the user continues (`setAutoDrain`); the projection shows `pauseReason: "error"`.
+        if failed
+            && main_loop
+            && self.deps.error_holds_queue
+            && self.inbox.has_inputs()
+            && self.inbox.set_held(true)
+        {
+            self.emit_queue();
+        }
+        // The `/goal X` control turn: its continuation is the first, unverified one (Node `verifyBeforeFirstContinue`).
+        let control = self.goal.continue_after_set;
         if self.continue_goal_after_set(completed).await {
+            return;
+        }
+        if !control && completed && self.verify_goal_after_turn(anchor_turn).await {
             return;
         }
         self.start_next().await;
@@ -482,3 +509,7 @@ pub(crate) fn kernel_event(
 #[cfg(test)]
 #[path = "write_failure_tests.rs"]
 mod write_failure_tests;
+
+#[cfg(test)]
+#[path = "error_hold_tests.rs"]
+mod error_hold_tests;

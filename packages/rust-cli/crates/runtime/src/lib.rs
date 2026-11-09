@@ -148,6 +148,8 @@ pub struct LocalKernel {
     desktop_goals: bool,
     /// Fork: `/fork` while a turn runs, like the Node desktop agent ([`Extensions::node_desktop`]).
     fork_while_running: bool,
+    /// Fork: a failed turn holds the queue, like the Node desktop agent ([`Extensions::node_desktop`]).
+    error_holds_queue: bool,
 }
 
 impl LocalKernel {
@@ -313,6 +315,7 @@ impl LocalKernel {
             one_input_per_turn: extensions.node_desktop,
             desktop_goals: extensions.node_desktop,
             fork_while_running: extensions.node_desktop,
+            error_holds_queue: extensions.node_desktop,
         }
     }
 

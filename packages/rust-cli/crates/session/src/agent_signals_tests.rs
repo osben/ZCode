@@ -108,6 +108,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             one_input_per_turn: false,
             desktop_goals: false,
             fork_while_running: false,
+            error_holds_queue: false,
         },
         SessionState {
             commands: Default::default(),
@@ -121,6 +122,10 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             turn: None,
             last_turn_failed: false,
             child_live: None,
+            title_pending: true,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Loaded,
     );

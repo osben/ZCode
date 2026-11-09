@@ -96,6 +96,26 @@ async fn the_assistant_records_the_requested_catalog_model() {
         models,
         vec![(json!("p2"), json!("m2")), (json!("p"), json!("m"))]
     );
+    // Fork: a cold load reads them back for the model switch divider.
+    let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
+    let read: Vec<_> = loaded
+        .message_models
+        .iter()
+        .map(|(id, selection)| {
+            (
+                id.as_str().to_owned(),
+                selection.provider.clone(),
+                selection.model.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("msg_a1".to_owned(), "p2".to_owned(), "m2".to_owned()),
+            ("msg_a2".to_owned(), "p".to_owned(), "m".to_owned())
+        ]
+    );
 }
 
 /// 回合结束写会话的 `lastOutcome`（Node `persistDurableSessionEvent` 的三个值）与 `time_updated`。

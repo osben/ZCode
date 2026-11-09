@@ -114,6 +114,11 @@ pub struct CompactConfig {
     /// 模型上限查询（compact.md §2，修复线 F61）：窗口与输出上限的唯一来源，入口在两种模式下都接上（平台层、显式
     /// 覆盖的内置规则）。没有时（测试）按卡片与默认窗口。
     pub limits: Option<Arc<dyn ModelLimits>>,
+    /// Fork: the pre-request blocking limit applies (compact.md §2.2). The app-server (`node_desktop`) turns it off:
+    /// Node sends the request and lets the provider answer (specs/fork-rust-agent-parity.md, "Context blocking limit").
+    /// Without it an automatic compaction never summarizes everything, and too little history is a skipped
+    /// compaction (`CompactProgress::skipped`) instead of a failure, like Node.
+    pub blocking: bool,
 }
 
 impl Default for CompactConfig {
@@ -124,6 +129,7 @@ impl Default for CompactConfig {
             thresholds: Thresholds::default(),
             at: AutoCompactAt::default(),
             limits: None,
+            blocking: true,
         }
     }
 }
@@ -155,6 +161,9 @@ pub struct Compaction {
     ports: CompactPorts,
     config: CompactConfig,
 }
+
+/// Fork: Node's text for a skipped compaction (`compactActiveConversation`).
+const UP_TO_DATE: &str = "Context is up to date; no compression needed";
 
 fn failed(failure: &Failure) -> OrchestrationError {
     OrchestrationError::Failed {
@@ -213,8 +222,10 @@ impl Compaction {
         }
         request.trigger = CompactTrigger::Auto;
         // 阈值触发只在达到阻塞线时许“全部摘要”（compact.md §3.1）。
-        let blocked =
-            window::level(tokens, &facts, &self.config.thresholds()) == window::Level::Blocked;
+        // Fork: the desktop has no blocking limit, so it never summarizes everything either, like Node
+        // (specs/fork-rust-agent-parity.md, "Context blocking limit").
+        let blocked = self.config.blocking
+            && window::level(tokens, &facts, &self.config.thresholds()) == window::Level::Blocked;
         match self.run(&request, blocked, cancel, progress).await {
             Ok(result) => {
                 *tracking = CompactTracking {
@@ -229,6 +240,13 @@ impl Compaction {
             }
             // 被 PreCompact hook 拦下不算失败，照常发请求。
             Err(Failure::Blocked(_)) => AutoCompactOutcome::NotNeeded,
+            // Fork: on the desktop too little history is Node's `skipped` compaction: a marker, not a failure.
+            Err(Failure::NotEnough) if !self.config.blocking => {
+                if let Some(progress) = progress {
+                    progress.skipped(request.trigger).await;
+                }
+                AutoCompactOutcome::NotNeeded
+            }
             Err(failure) => {
                 tracking.consecutive_failures += 1;
                 AutoCompactOutcome::Failed {
@@ -311,6 +329,9 @@ impl Compactor for Compaction {
         selection: &ModelSelection,
         failure: Option<&str>,
     ) -> Option<String> {
+        if !self.config.blocking {
+            return None;
+        }
         let facts = self.config.facts(selection);
         let thresholds = &self.config.thresholds();
         // 不拦的情形先判断，不为它数 token。
@@ -332,9 +353,13 @@ impl Compactor for Compaction {
             });
         }
         // 手动与反应式压缩许“全部摘要”（没有媒体超限错误时）。
-        self.run(&request, true, &cancel, None)
-            .await
-            .map_err(|f| failed(&f))
+        match self.run(&request, true, &cancel, None).await {
+            // Fork: on the desktop a `/compact` with too little history is Node's healthy no-op, not a failure.
+            Err(Failure::NotEnough) if !self.config.blocking => Err(OrchestrationError::Skipped {
+                message: UP_TO_DATE.to_owned(),
+            }),
+            result => result.map_err(|f| failed(&f)),
+        }
     }
 }
 

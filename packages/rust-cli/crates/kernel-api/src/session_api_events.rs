@@ -220,6 +220,11 @@ pub enum KernelEvent {
         trigger: CompactTrigger,
         message: String,
     },
+    /// Fork (desktop): the compaction had too little history to summarize and did nothing (Node `skipped`, shown as
+    /// "Context is up to date; no compression needed").
+    CompactSkipped {
+        trigger: CompactTrigger,
+    },
     /// 历史被改写（rewind、编辑重发）；前端丢弃旧视图后重新取快照。
     HistoryRewritten {
         generation: u64,
@@ -247,6 +252,12 @@ pub enum KernelEvent {
     /// state after the change (Node `TargetChanged`, projected as the snapshot `goal`).
     GoalChanged {
         goal: Option<crate::goal::GoalState>,
+    },
+    /// Fork: a step of a desktop goal completion verification (Node `TargetCompletionVerification`), for the
+    /// `goalVerify` timeline marker (specs/fork-rust-goal-verifier.md).
+    GoalVerification {
+        verification: crate::goal::GoalVerification,
+        at_ms: u64,
     },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。

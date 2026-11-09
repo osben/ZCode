@@ -98,6 +98,8 @@ pub(crate) enum JobDone {
     Rewind(Box<crate::rewind::Finished>),
     /// Fork: the per-turn summary rewind (`Command::RewindTurnFiles`).
     TurnFilesRewound(Box<crate::rewind::TurnRewound>),
+    /// Fork (desktop App): a goal completion verification (goal_verify.rs).
+    GoalVerified(Box<crate::goal_verify::Outcome>),
 }
 
 pub(crate) struct Job {
@@ -184,6 +186,9 @@ pub(crate) struct Actor {
     /// Fork: the command that submitted each typed user message, loaded with the session and extended by
     /// [`Self::commit`]; only [`Self::view`] reads it (cold rows' `sourceCommandId`).
     pub(crate) commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: the model of each assistant message, loaded with the session and extended by [`Self::commit`]; only
+    /// [`Self::view`] reads it (the cold model switch divider).
+    pub(crate) message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
     pub(crate) selection: ModelSelection,
     /// 执行状态：权限模式 × plan 开关（修复线 F20，shell-permissions.md §4.6）。判决用的模式是 [`Self::mode`]。
     pub(crate) execution: rust_cli_kernel_api::permission::ExecutionState,
@@ -218,6 +223,12 @@ pub(crate) struct Actor {
     pub(crate) naming: Option<crate::rename::NameJob>,
     /// `/goal` 的目标（goal.rs）：提交 `goal_status` 后才改，冷加载从活动历史恢复。
     pub(crate) goal: crate::goal::Goals,
+    /// Fork (desktop App): the goal row last written to the store (`crate::goal::stored_form`).
+    pub(crate) goal_written: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork (desktop App): a turn ended; the next sync writes the row again (its last-seen time).
+    pub(crate) goal_touched: bool,
+    /// Fork (desktop App): the running goal completion verification (its job is `job`).
+    pub(crate) goal_verify: Option<crate::goal_verify::Pending>,
     /// 回合或压缩在跑时到达的本地命令记录（修复线 L-A，local_record.rs）：收尾后按到达顺序提交。
     pub(crate) held_records: Vec<rust_cli_kernel_api::user_command::LocalCommandRecord>,
     seen: HashSet<CommandId>,
@@ -280,7 +291,13 @@ impl Actor {
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
         let start = state.start;
         let child_live = state.child_live;
-        let goal = crate::goal::Goals::restore(&state.messages, deps.clock.now_ms());
+        let goal = crate::goal::Goals::restore(
+            &state.messages,
+            deps.clock.now_ms(),
+            state.goal_target.as_ref(),
+            &state.goal_verifications,
+        );
+        let goal_written = goal.state().map(crate::goal::stored_form);
         let mut actor = Self {
             deps,
             log,
@@ -288,6 +305,7 @@ impl Actor {
             messages: state.messages,
             earlier: state.earlier,
             commands: state.commands,
+            message_models: state.message_models,
             selection: state.selection,
             execution: state.mode,
             plan_flags: Default::default(),
@@ -300,10 +318,13 @@ impl Actor {
             turn_files: std::collections::HashMap::new(),
             ledger: RunLedger::new(state.turn),
             generation: 0,
-            titles: TitleState::default(),
+            titles: TitleState::new(state.title_pending),
             loop_ticks: Default::default(),
             naming: None,
             goal,
+            goal_written,
+            goal_touched: false,
+            goal_verify: None,
             held_records: Vec::new(),
             seen: HashSet::new(),
             resume_pending,
@@ -503,6 +524,7 @@ impl Actor {
             }
             // 登记里的状态只看 actor 自己的状态，变化时才写（cross-session.md §2.1）。
             self.peer_status(self.status_now()).await;
+            self.goal_target_sync().await;
         }
     }
 
@@ -695,6 +717,13 @@ impl Actor {
             Ok(JobDone::Startup(outcome)) => self.finish_startup(*outcome).await,
             Ok(JobDone::Rewind(finished)) => self.finish_rewind(*finished).await,
             Ok(JobDone::TurnFilesRewound(finished)) => self.finish_turn_rewind(*finished).await,
+            Ok(JobDone::GoalVerified(outcome)) => {
+                self.finish_goal_verification(Some(*outcome)).await
+            }
+            Err(error) if self.goal_verify.is_some() => {
+                tracing::warn!(%error, "the goal verification job ended without a result");
+                self.finish_goal_verification(None).await;
+            }
             Err(error) => {
                 tracing::warn!(%error, "a session job ended without a result");
                 self.start_next().await;
@@ -727,6 +756,7 @@ impl Actor {
             context_notice: self.context_notice().unwrap_or_default(),
             output_speed: self.output_speed,
             commands: self.commands.clone(),
+            message_models: self.message_models.clone(),
             // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
             turn_files: self
                 .turn_files

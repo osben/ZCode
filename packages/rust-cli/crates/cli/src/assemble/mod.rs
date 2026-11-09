@@ -580,7 +580,9 @@ pub(crate) async fn kernel(
     let layout = env_assembly::layout(&opened.deployment, &opened.primary_paths);
     context.memory_dir = options::memory_dir(primary, &layout, &opened.paths, workspace, env).await;
     // 压缩的上限两种模式都接（显式覆盖按内置规则，修复线 F61：以前显式覆盖时是“没有目录”，按 200,000）。
-    let compact = options::compact(env, facts.controller.max_output_tokens, model_limits);
+    let mut compact = options::compact(env, facts.controller.max_output_tokens, model_limits);
+    // Fork: the desktop app-server has no pre-request blocking limit, like Node (specs/fork-rust-agent-parity.md).
+    compact.blocking = !spec.node_desktop;
     // 所有模式都按配置的位置压缩；设置页与 `/autocompact` 写回后换掉的就是内核读的这一份（compact.md §2.3）。
     compact.at.set(config.compact_at);
     let compact_at = compact.at.clone();

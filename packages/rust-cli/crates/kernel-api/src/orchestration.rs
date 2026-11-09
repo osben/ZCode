@@ -183,6 +183,10 @@ pub trait RunSink: Interactions + SessionOps {
     /// 输出端什么都不做。
     async fn compact_failed(&self, trigger: CompactTrigger, message: String);
 
+    /// Fork (desktop): the compaction had nothing to summarize ([`crate::compaction::CompactProgress::skipped`]).
+    /// Default: nothing.
+    async fn compact_skipped(&self, _trigger: CompactTrigger) {}
+
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序
     /// （L18，docs/specs/rust-cli/query.md §4、§5）。取走即属于当前回合；本回合已中止时插话不取，继续排队。顶层会话的
     /// 通知由会话 actor 在回合结束后开新回合；子代理收到它派生的后台子代理的通知（agents.md §5.1）。工作线 F134 以前
@@ -207,6 +211,16 @@ pub trait QueryRunner: Send + Sync {
         sink: Arc<dyn RunSink>,
         abort: Abort,
     ) -> Result<QueryStop, QueryError>;
+
+    /// The active history as the main loop sends it to `selection` (normalized, mid-conversation system turns per
+    /// the model's capability `mid_system`), for side requests that send the conversation outside a run (the desktop
+    /// goal verifier, specs/fork-rust-goal-verifier.md).
+    fn transcript(
+        &self,
+        history: &[Message],
+        selection: &ModelSelection,
+        mid_system: Option<bool>,
+    ) -> Vec<crate::model::ApiMessage>;
 }
 
 /// 组装一次模型请求的上下文所需的输入。
@@ -287,6 +301,10 @@ pub enum OrchestrationError {
     /// 会话已经关闭（会话 actor 收不下请求了；工作线 F130，以前各处写 `Failed { "the session is closed" }`）。
     #[error("the session is closed")]
     Closed,
+    /// Fork: the request had nothing to do and is not a failure: a desktop compaction with too little history, Node's
+    /// `skipped` compaction (specs/fork-rust-agent-parity.md, Compact timeline markers). `message` is Node's text.
+    #[error("{message}")]
+    Skipped { message: String },
 }
 
 #[async_trait]

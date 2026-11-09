@@ -105,6 +105,7 @@ impl Projection {
                 let text = text_of(&user.content);
                 self.remember_notified(&text);
                 self.background_result(&user.content, out);
+                self.settle_notified_tools(&text, now, out);
             }
             Message::Assistant(assistant) => {
                 // Fork: the turn header sums the output tokens of every model response in the turn, like Node's

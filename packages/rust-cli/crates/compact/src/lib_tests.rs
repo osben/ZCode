@@ -349,6 +349,13 @@ impl CompactProgress for Recorded {
             .unwrap_or_else(PoisonError::into_inner)
             .push(format!("failed {trigger:?}: {message}"));
     }
+
+    async fn skipped(&self, trigger: CompactTrigger) {
+        self.said
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(format!("skipped {trigger:?}"));
+    }
 }
 
 async fn progress_of(
@@ -417,4 +424,72 @@ async fn auto_compaction_says_it_failed_only_after_it_started() {
     };
     let (_, said) = progress_of(Vec::new(), history(70_000), open).await;
     assert!(said.is_empty(), "{said:?}");
+}
+
+/// Fork: on the desktop (`blocking: false`) an automatic compaction with too little history is Node's `skipped`
+/// compaction: no summary request even at the blocking line, no failure counted, and the progress says skipped
+/// (specs/fork-rust-agent-parity.md, "Compact timeline markers").
+#[tokio::test]
+async fn the_desktop_skips_a_compaction_with_too_little_history() {
+    let runner = ScriptedRunner::new(vec![summary()]);
+    let desktop = CompactConfig {
+        blocking: false,
+        ..config()
+    };
+    let compaction = Compaction::new(ports(runner.clone(), no_tools()), desktop);
+    let progress = Recorded {
+        runner: runner.clone(),
+        said: Mutex::default(),
+    };
+    let mut tracking = CompactTracking::default();
+    let outcome = compaction
+        .auto_compact_with(
+            request(one_round(977_000), CompactTrigger::Auto),
+            &mut tracking,
+            CancellationToken::new(),
+            &progress,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome, AutoCompactOutcome::NotNeeded);
+    assert!(runner.requests().is_empty());
+    assert_eq!(tracking.consecutive_failures, 0);
+    let said = progress
+        .said
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(said, ["skipped Auto"]);
+}
+
+/// Fork: a desktop `/compact` with too little history is skipped with Node's text; the TUI keeps the failure.
+#[tokio::test]
+async fn a_desktop_manual_compaction_with_too_little_history_is_skipped() {
+    for (blocking, skipped) in [(false, true), (true, false)] {
+        let runner = ScriptedRunner::new(vec![summary()]);
+        let compaction = Compaction::new(
+            ports(runner.clone(), no_tools()),
+            CompactConfig {
+                blocking,
+                ..config()
+            },
+        );
+        let error = compaction
+            .compact(
+                request(vec![human("u1", "first")], CompactTrigger::Manual),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(runner.requests().is_empty());
+        if skipped {
+            assert_eq!(
+                error,
+                rust_cli_kernel_api::orchestration::OrchestrationError::Skipped {
+                    message: "Context is up to date; no compression needed".to_owned()
+                }
+            );
+        } else {
+            assert_eq!(error.to_string(), "Not enough messages to compact.");
+        }
+    }
 }

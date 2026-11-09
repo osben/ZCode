@@ -276,6 +276,7 @@ async fn asking_session_with(
             one_input_per_turn: false,
             desktop_goals: false,
             fork_while_running: false,
+            error_holds_queue: false,
         },
         SessionState {
             commands: Default::default(),
@@ -289,6 +290,10 @@ async fn asking_session_with(
             turn: None,
             last_turn_failed: false,
             child_live: None,
+            title_pending: true,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Created,
     );

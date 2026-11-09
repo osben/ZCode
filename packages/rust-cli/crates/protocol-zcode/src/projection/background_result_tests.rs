@@ -1,7 +1,9 @@
 //! Fork: the background result turn header (projection/background_result.rs).
 
-use rust_cli_kernel_api::ids::{MessageId, TurnId};
-use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
+use rust_cli_kernel_api::ids::{MessageId, ToolUseId, TurnId};
+use rust_cli_kernel_api::message::{
+    ContentBlock, Message, ToolResultContent, UserMessage, UserOrigin,
+};
 use rust_cli_kernel_api::session_api::KernelEvent;
 use serde_json::json;
 
@@ -275,4 +277,147 @@ fn one_notification_message_with_two_blocks_is_one_batch_header() {
         .collect();
     assert_eq!(cold.len(), 2);
     assert_eq!(cold[1]["originMeta"]["title"], "First · Second");
+}
+
+fn agent_block(task: &str, call: &str, status: &str, summary: &str) -> ContentBlock {
+    ContentBlock::Text {
+        text: format!(
+            "<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>\n<task-id>{task}</task-id>\n<tool-use-id>{call}</tool-use-id>\n<output-file>/o/{task}</output-file>\n<status>{status}</status>\n<summary>{summary}</summary>\n</task-notification>\n</system-reminder>"
+        ),
+    }
+}
+
+fn notifications(id: &str, blocks: Vec<ContentBlock>) -> Message {
+    Message::User(UserMessage {
+        id: MessageId::new(id),
+        content: blocks,
+        origin: UserOrigin::Meta {
+            source: "task-notification".into(),
+        },
+    })
+}
+
+fn agent_calls(ids: &[&str]) -> Message {
+    assistant(
+        "msg_a1",
+        ids.iter()
+            .map(|id| ContentBlock::ToolUse {
+                id: ToolUseId::new(*id),
+                name: "Agent".into(),
+                input: json!({"description": id, "run_in_background": true}),
+            })
+            .collect(),
+    )
+}
+
+/// Node `applyBackgroundTaskNotificationBlock`: in a merged batch each block settles its own Agent
+/// card from the in-block status, not the launch acknowledgement's `success`.
+#[test]
+fn a_merged_notification_batch_settles_each_agent_card() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: agent_calls(&["call_1", "call_2", "call_3"]),
+    });
+    for id in ["call_1", "call_2", "call_3"] {
+        feed.apply(KernelEvent::ToolDone {
+            tool_use: ToolUseId::new(id),
+            output: rust_cli_kernel_api::tool::ToolOutput {
+                content: vec![ToolResultContent::Text {
+                    text: "Async agent launched".into(),
+                }],
+                is_error: false,
+                display: serde_json::Value::Null,
+            },
+        });
+    }
+    assert_eq!(
+        row_of(&feed.projection, "toolCall", "call_1")["status"],
+        "success"
+    );
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_n"),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: notifications(
+            "msg_n",
+            vec![
+                agent_block(
+                    "a1",
+                    "call_1",
+                    "failed",
+                    "Agent \"one\" failed: rate limited",
+                ),
+                agent_block("a2", "call_2", "completed", "Agent \"two\" finished"),
+                agent_block("a3", "call_3", "killed", "Agent \"three\" was stopped"),
+            ],
+        ),
+    });
+    let failed = row_of(&feed.projection, "toolCall", "call_1");
+    assert_eq!(failed["status"], "error");
+    assert_eq!(
+        failed["output"]["text"],
+        "Agent \"one\" failed: rate limited"
+    );
+    assert_eq!(
+        failed["error"],
+        json!({"code": "fault.runtime.backgroundTaskFailed", "message": "Agent \"one\" failed: rate limited"})
+    );
+    let completed = row_of(&feed.projection, "toolCall", "call_2");
+    assert_eq!(completed["status"], "success");
+    assert!(completed.get("error").is_none());
+    assert_eq!(
+        row_of(&feed.projection, "toolCall", "call_3")["status"],
+        "cancelled"
+    );
+}
+
+/// One notification reads its status and error from `subagentResult`, and the cold read settles the
+/// card the same way.
+#[test]
+fn a_single_failed_notification_settles_its_card_live_and_cold() {
+    let failed = || {
+        notifications(
+            "msg_n",
+            vec![agent_block(
+                "a1",
+                "call_1",
+                "failed",
+                "Agent \"one\" failed: provider &amp; quota",
+            )],
+        )
+    };
+    let projection = Projection::from_view(
+        &view(vec![
+            user("msg_u1", "start it"),
+            agent_calls(&["call_1"]),
+            Message::User(UserMessage {
+                id: MessageId::new("msg_r1"),
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: ToolUseId::new("call_1"),
+                    content: vec![ToolResultContent::Text {
+                        text: "Async agent launched".into(),
+                    }],
+                    is_error: false,
+                }],
+                origin: UserOrigin::ToolResult {
+                    assistant: MessageId::new("msg_a1"),
+                },
+            }),
+            failed(),
+        ]),
+        Followup::Queue,
+        Vec::new(),
+    );
+    let row = row_of(&projection, "toolCall", "call_1");
+    assert_eq!(row["status"], "error");
+    assert_eq!(row["error"]["message"], "provider & quota");
+    assert_eq!(
+        row["output"]["text"],
+        "Agent \"one\" failed: provider & quota"
+    );
 }

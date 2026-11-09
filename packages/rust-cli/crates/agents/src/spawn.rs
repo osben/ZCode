@@ -195,6 +195,23 @@ pub(crate) struct Finished {
     pub(crate) error: Option<QueryError>,
 }
 
+impl Finished {
+    /// The failure reason after `failed: ` in a background agent's notification. Fork (node_desktop): Node's
+    /// background runner passes the provider's own message for a rate limit or an overload, without Rust's
+    /// `rate limited: ` / `model overloaded: ` prefix (`runner.ts` `selectExecutionErrorMessage`,
+    /// `completion-notification.ts` `failureReason`; specs/fork-rust-agent-parity.md). A foreground Agent call
+    /// keeps the formatted error.
+    pub(crate) fn failure(&self, node_desktop: bool) -> Option<String> {
+        use rust_cli_kernel_api::model::ModelError;
+        self.error.as_ref().map(|error| match error {
+            QueryError::Model(
+                ModelError::RateLimited { message, .. } | ModelError::Overloaded { message },
+            ) if node_desktop => message.clone(),
+            error => error.to_string(),
+        })
+    }
+}
+
 fn abort_of(agent: &LiveAgent) -> Abort {
     match &agent.state {
         AgentState::Running { abort, .. } => abort.clone(),

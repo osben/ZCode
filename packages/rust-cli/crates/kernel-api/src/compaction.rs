@@ -162,6 +162,10 @@ pub fn used_percent(used_tokens: u64, window: u64) -> u64 {
 pub trait CompactProgress: Send + Sync {
     async fn started(&self, trigger: CompactTrigger);
     async fn failed(&self, trigger: CompactTrigger, message: String);
+
+    /// Fork (desktop): an automatic compaction found too little history to summarize and did nothing, like Node's
+    /// `skipped` compaction (specs/fork-rust-agent-parity.md, "Compact timeline markers"). Default: nothing.
+    async fn skipped(&self, _trigger: CompactTrigger) {}
 }
 
 #[async_trait]

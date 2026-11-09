@@ -23,6 +23,8 @@ mod fork;
 mod fork_input;
 mod goal;
 mod goal_desktop;
+mod goal_verify;
+mod goal_verify_text;
 mod hooks;
 mod inbox;
 mod input;
@@ -153,6 +155,10 @@ pub struct SessionDeps {
     /// desktop agent; the copy stops at that turn, so the running turn and the queue stay in the parent. The
     /// app-server turns it on.
     pub fork_while_running: bool,
+    /// Fork: a failed main-loop turn holds the queued inputs instead of starting the next one, like the Node
+    /// desktop agent (`queueAutoDrain = false` on a turn error; specs/fork-rust-agent-parity.md). The app-server
+    /// turns it on.
+    pub error_holds_queue: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。
@@ -198,6 +204,15 @@ pub struct SessionState {
     /// Fork (node_desktop): the live run of the subagent this child session belongs to, taken before the cold load
     /// (crate::child_live). None for every other session.
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
+    /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
+    pub title_pending: bool,
+    /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
+    pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
+    pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
+    /// Fork: the model of each assistant message (cold load: `LoadedSession.message_models`).
+    pub message_models:
+        std::collections::BTreeMap<rust_cli_kernel_api::ids::MessageId, ModelSelection>,
 }
 
 impl SessionState {
@@ -220,6 +235,10 @@ impl SessionState {
             last_turn_failed: false,
             commands: Default::default(),
             child_live: None,
+            title_pending: true,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
         }
     }
 
@@ -249,6 +268,10 @@ impl SessionState {
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
+            title_pending: loaded.title_pending,
+            goal_target: loaded.goal_target,
+            goal_verifications: loaded.goal_verifications,
+            message_models: loaded.message_models,
         }
     }
 }

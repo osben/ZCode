@@ -304,3 +304,25 @@ fn the_ssh_entry_is_read_only_when_declarations_are_accepted() {
     assert_eq!(ssh_assumption(TestDeclarations::Ignored, &vars), None);
     assert_eq!(ssh_assumption(TestDeclarations::Accepted, &env(&[])), None);
 }
+
+/// Fork: Node's `ZCODE_MODEL_RETRY_MAX_RETRIES` sets the retry count; an invalid value keeps the default.
+#[test]
+fn the_model_retry_count_follows_the_node_variable() {
+    let name = rust_cli_base::names::env::ZCODE_MODEL_RETRY_MAX_RETRIES;
+    let default = RetryPolicy::default().max_retries;
+    assert_eq!(model_retry(&env(&[])).max_retries, default);
+    assert_eq!(model_retry(&env(&[(name, "0")])).max_retries, 0);
+    assert_eq!(model_retry(&env(&[(name, " 3 ")])).max_retries, 3);
+    assert_eq!(model_retry(&env(&[(name, "2.7")])).max_retries, 2);
+    for invalid in ["", "-1", "abc", "inf"] {
+        assert_eq!(
+            model_retry(&env(&[(name, invalid)])).max_retries,
+            default,
+            "{invalid}"
+        );
+    }
+    assert_eq!(
+        model_retry(&env(&[(name, "0")])).base_delay,
+        RetryPolicy::default().base_delay
+    );
+}

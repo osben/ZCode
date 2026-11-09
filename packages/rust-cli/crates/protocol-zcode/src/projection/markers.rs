@@ -1,7 +1,8 @@
 //! Fork: compaction timeline markers, like Node's `onCompactLifecycle` (bootstrap
 //! `zcode-protocol-v4/product-projection.ts`; specs/fork-rust-agent-parity.md). One `timelineMarker` row per
-//! compaction, in the `assistantWork` lane of the current (or latest) turn: `running` when it starts, then `success`
-//! or `failed`. A cold projection shows each stored compact boundary as a `success` marker.
+//! compaction, in the `assistantWork` lane of the current (or latest) turn: `running` when it starts, then `success`,
+//! `failed`, or `cancelled` when its turn ends first. A skipped compaction (too little history) is one `noop` row.
+//! A cold projection shows each stored compact boundary as a `success` marker.
 
 use rust_cli_kernel_api::message::CompactTrigger;
 use serde_json::{Value, json};
@@ -85,6 +86,17 @@ impl Projection {
             },
             out,
         );
+    }
+
+    /// Node `skipped`: one settled `noop` row, no compact work.
+    pub(super) fn compact_skipped(
+        &mut self,
+        trigger: CompactTrigger,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) {
+        self.append_compact_marker(trigger, "noop", None, now, seq, out);
     }
 
     /// A stored compact boundary (cold projection).

@@ -5,6 +5,7 @@
 //! inbox), so every kind maps to one kernel command and the queue projection follows `QueueChanged`.
 
 use futures_util::StreamExt;
+use rust_cli_kernel_api::goal::{GoalPhase, VerificationStatus};
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, Delivery, KernelEvent};
 use rust_cli_protocol_core::sessions::Bridged;
@@ -207,7 +208,12 @@ async fn settle_running_turn(live: &Bridged<Live>, envelope: &Envelope) -> Resul
         .view()
         .await
         .map_err(|error| error.to_string())?;
-    if !view.running {
+    // A goal completion verification is foreground work too: Node preempts the verifier (specs/fork-rust-goal-verifier.md §1.8).
+    let verifying = view
+        .goal
+        .as_ref()
+        .is_some_and(|goal| goal.status == GoalPhase::Verifying);
+    if !view.running && !verifying {
         return Ok(());
     }
     let mut events = live.handle.subscribe(Some(view.last_seq));
@@ -218,8 +224,14 @@ async fn settle_running_turn(live: &Bridged<Live>, envelope: &Envelope) -> Resul
         return Err(reason);
     }
     while let Some(event) = events.next().await {
-        if matches!(event.event, KernelEvent::TurnFinished { .. }) {
-            return Ok(());
+        match &event.event {
+            KernelEvent::TurnFinished { .. } => return Ok(()),
+            KernelEvent::GoalVerification { verification, .. }
+                if !view.running && verification.status != VerificationStatus::Started =>
+            {
+                return Ok(());
+            }
+            _ => {}
         }
     }
     Err("the session ended before the running turn stopped".to_owned())

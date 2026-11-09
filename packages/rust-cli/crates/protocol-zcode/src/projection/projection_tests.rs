@@ -19,6 +19,10 @@ use super::*;
 mod background_result;
 #[path = "background_shells_tests.rs"]
 mod background_shells;
+#[path = "goal_verify_tests.rs"]
+mod goal_verify;
+#[path = "model_change_tests.rs"]
+mod model_change;
 #[path = "subagent_rows_tests.rs"]
 mod subagent_rows;
 
@@ -785,6 +789,99 @@ fn a_compaction_is_one_marker_row_from_running_to_success() {
     );
 }
 
+/// Fork: a compaction still running when its turn is stopped settles as `cancelled` and its work ends, like Node's
+/// interrupted compaction; before, the marker stayed `Compressing context` and the row actions stayed withheld.
+#[test]
+fn a_compaction_stopped_with_its_turn_is_cancelled() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_2"),
+        command: None,
+    });
+    let started = feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Auto,
+    });
+    let row = started
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .unwrap()["row"]["rowId"]
+        .clone();
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_2"),
+        outcome: TurnOutcome::Interrupted,
+        usage: None,
+    });
+    let settled = finished
+        .iter()
+        .find(|delta| delta["op"] == "row.upserted" && delta["row"]["rowId"] == row)
+        .unwrap();
+    assert_eq!(settled["row"]["marker"]["status"], "cancelled");
+    assert!(
+        finished
+            .iter()
+            .any(|delta| delta["patch"]["availability"]["compact"]["allowed"] == true),
+        "{finished:?}"
+    );
+}
+
+/// Fork: a skipped compaction (too little history on the desktop) is one settled `noop` row (Node `skipped`).
+#[test]
+fn a_skipped_compaction_is_a_noop_row() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    let skipped = feed.apply(KernelEvent::CompactSkipped {
+        trigger: CompactTrigger::Auto,
+    });
+    let appended = skipped
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .unwrap();
+    assert_eq!(
+        appended["row"]["marker"],
+        json!({"type": "compact", "origin": "auto", "status": "noop"})
+    );
+}
+
+/// Fork: a skipped `/compact` settles its announced marker as `noop` (one row); its turn then completes without
+/// changing it, and the row actions come back.
+#[test]
+fn a_skipped_manual_compaction_settles_its_marker_as_noop() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: Some(CommandId::new("cmd_compact")),
+    });
+    feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Manual,
+    });
+    let skipped = feed.apply(KernelEvent::CompactSkipped {
+        trigger: CompactTrigger::Manual,
+    });
+    assert!(!skipped.iter().any(|delta| delta["op"] == "row.appended"));
+    let availability = skipped
+        .iter()
+        .find_map(|delta| delta["patch"].get("availability"))
+        .unwrap();
+    assert_eq!(availability["compact"]["allowed"], true);
+    feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    let markers: Vec<_> = feed
+        .projection
+        .rows
+        .iter()
+        .filter(|row| row["kind"] == "timelineMarker")
+        .collect();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0]["marker"]["status"], "noop");
+}
+
 #[test]
 fn a_cold_projection_shows_stored_compactions() {
     use rust_cli_kernel_api::message::{CompactBoundary, CompactTrigger, SystemMessage};
@@ -877,6 +974,71 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     assert_eq!(resumed["patch"]["inputRouting"]["mode"], "startNow");
 }
 
+/// Fork: a failed turn with waiting inputs pauses the queue with `pauseReason: "error"` (Node `onTurnError`); a failed
+/// manual `/compact` turn and a failed turn with an empty queue do not.
+#[test]
+fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let queued = || KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            command: CommandId::new("c2"),
+            text: "later".into(),
+            delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
+        }],
+    };
+    let failed = |turn: &str| KernelEvent::TurnFinished {
+        turn: TurnId::new(turn),
+        outcome: TurnOutcome::Failed {
+            message: "upstream 500".into(),
+        },
+        usage: None,
+    };
+    let queue_of = |deltas: &[Value]| {
+        deltas
+            .iter()
+            .find_map(|delta| delta["patch"].get("queue").cloned())
+    };
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.apply(queued());
+    let deltas = feed.apply(failed("turn_1"));
+    let queue = queue_of(&deltas).expect("the failed turn patches the queue");
+    assert_eq!(queue["autoDrain"], false);
+    assert_eq!(queue["pauseReason"], "error");
+    assert!(!feed.projection.auto_drain());
+    let resumed = feed.projection.set_auto_drain(true);
+    assert!(resumed["patch"]["queue"].get("pauseReason").is_none());
+
+    // A failed manual compaction keeps draining (Node pauses on a main turn error only).
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_2"),
+        command: None,
+    });
+    feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Manual,
+    });
+    feed.apply(KernelEvent::CompactFailed {
+        trigger: CompactTrigger::Manual,
+        message: "no".into(),
+    });
+    feed.apply(failed("turn_2"));
+    assert!(feed.projection.auto_drain());
+
+    // No waiting input: nothing to pause.
+    let mut empty = Feed::new();
+    empty.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    empty.apply(failed("turn_1"));
+    assert!(empty.projection.auto_drain());
+}
+
 /// Fork: the queue item's kind and frozen execution state come from the kernel's item (one owner):
 /// a goal shows its objective, a compaction is `/compact`, and only a frozen state is shown.
 #[test]
@@ -918,7 +1080,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
     assert_eq!(items[0]["mode"], "guarded");
     assert_eq!(items[0]["planEnabled"], true);
     assert_eq!(items[0]["modelSelection"], state::selection(&selection()));
-    assert_eq!(items[1]["text"], "ship it");
+    assert_eq!(items[1]["text"], "/goal ship it");
     assert!(items[1].get("mode").is_none());
     assert_eq!(items[2]["text"], "/compact");
 }
@@ -968,6 +1130,7 @@ fn goal_changes_are_the_snapshot_goal_and_its_actions() {
         time_used_seconds: 3,
         active_run_started_at_ms: (status == GoalPhase::Active).then_some(1_000),
         summary_title: Some("Pass the tests".into()),
+        verifications: Vec::new(),
     };
     let deltas = feed.apply(KernelEvent::GoalChanged {
         goal: Some(goal(GoalPhase::Active)),

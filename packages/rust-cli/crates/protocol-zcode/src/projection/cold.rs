@@ -18,7 +18,12 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     // Fork: the current turn was opened by notifications and no assistant message followed yet, so
     // the next notification is part of the same batch (each notification is its own message).
     let mut notice_batch = false;
-    for message in &view.messages {
+    // Fork: a typed input opens a turn; the stored model of a turn's first reply draws Node's switch divider.
+    let opens_turn = |message: &Message| {
+        matches!(message, Message::User(user) if user.origin == UserOrigin::Human
+            && !INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str()))
+    };
+    for (index, message) in view.messages.iter().enumerate() {
         match message {
             Message::User(user)
                 if user.origin == UserOrigin::Human
@@ -34,7 +39,8 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 let turn = format!("{}:turn:{turns}", user.id.as_str());
                 // Fork: the stored submitting command, so the App settles its pending command after a restart.
                 let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
-                projection.start_turn(&turn, command, at, 0, &mut out);
+                let model = super::model_change::cold_turn_model(view, index, opens_turn);
+                projection.start_turn(&turn, command, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
             }
             Message::User(user)
@@ -47,7 +53,8 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 turns += 1;
                 turn_ended = false;
                 let turn = format!("{}:turn:{turns}", user.id.as_str());
-                projection.start_turn(&turn, None, at, 0, &mut out);
+                let model = super::model_change::cold_turn_model(view, index, opens_turn);
+                projection.start_turn(&turn, None, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
                 notice_batch = true;
             }
@@ -59,6 +66,12 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             Message::User(user) => {
                 if INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str()) {
                     interrupted = true;
+                }
+                // Fork: a notification merged into this turn still settles the calls it names (background_result.rs).
+                if super::rows::is_task_notification(&user.origin) {
+                    let text = super::text_of(&user.content);
+                    projection.remember_notified(&text);
+                    projection.settle_notified_tools(&text, at, &mut out);
                 }
                 // 工具结果：给对应的工具行结果。
                 for block in &user.content {
@@ -97,6 +110,14 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                     .iter()
                     .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
                 projection.message(message, at, 0, &mut out);
+                // Fork: the stored goal verifications that followed this message (projection/goal_verify.rs).
+                if let Some(goal) = &view.goal {
+                    for item in goal.verifications.iter().filter(|item| {
+                        item.anchor_message.as_deref() == Some(assistant.id.as_str())
+                    }) {
+                        projection.verified(&goal.target, item, &mut out);
+                    }
+                }
             }
             Message::System(SystemMessage::Interrupted { .. }) => interrupted = true,
             // Fork: a stored compaction shows as its timeline marker (projection/markers.rs).
@@ -105,6 +126,16 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             }
             // 附件不投成行（P1）。
             Message::Attachment(_) => {}
+        }
+    }
+    projection.seed_turn_model(turns);
+    // Fork: a verification whose anchor message is not in the active history shows at the end.
+    if let Some(goal) = &view.goal {
+        for item in &goal.verifications {
+            let key = format!("goal_verify:{}_{}", goal.target, item.iteration);
+            if !projection.index.contains_key(&key) {
+                projection.verified(&goal.target, item, &mut out);
+            }
         }
     }
     if projection.turn.is_some() {
