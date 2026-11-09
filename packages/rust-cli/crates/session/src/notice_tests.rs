@@ -126,6 +126,7 @@ pub(crate) async fn session_with_drain(
             turn: None,
             last_turn_failed: false,
             child_live: None,
+            title_pending: true,
         },
         Opened::Loaded,
     )

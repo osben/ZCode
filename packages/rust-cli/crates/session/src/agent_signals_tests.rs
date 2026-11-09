@@ -121,6 +121,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             turn: None,
             last_turn_failed: false,
             child_live: None,
+            title_pending: true,
         },
         Opened::Loaded,
     );

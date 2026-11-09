@@ -243,6 +243,10 @@ pub struct LoadedSession {
     /// Fork: the stored `anchor.sourceCommandId` of each typed user message ([`crate::session_api::SessionView::commands`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: the stored title is still automatic (`title_source` `default` or `first_input`, Node
+    /// `isAutoTitlePending`), so a later input may retry the generated title.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub title_pending: bool,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、

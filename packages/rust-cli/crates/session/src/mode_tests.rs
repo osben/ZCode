@@ -148,6 +148,7 @@ fn spawn(
             turn: None,
             last_turn_failed: false,
             child_live: None,
+            title_pending: true,
         },
         Opened::Created,
     )

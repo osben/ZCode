@@ -300,7 +300,7 @@ impl Actor {
             turn_files: std::collections::HashMap::new(),
             ledger: RunLedger::new(state.turn),
             generation: 0,
-            titles: TitleState::default(),
+            titles: TitleState::new(state.title_pending),
             loop_ticks: Default::default(),
             naming: None,
             goal,

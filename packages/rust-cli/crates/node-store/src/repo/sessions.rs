@@ -17,6 +17,8 @@ pub struct SessionRow {
     pub task_type: String,
     pub directory: String,
     pub title: String,
+    /// Node `titleSource`; NULL reads as `first_input` (the CAS guard's `coalesce`).
+    pub title_source: Option<String>,
     pub revert: Option<Value>,
     pub permission: Option<Value>,
     pub time_created: i64,
@@ -83,6 +85,7 @@ fn decode(row: &Row) -> rusqlite::Result<SessionRow> {
             .unwrap_or_else(|| "interactive".into()),
         directory: row.get("directory")?,
         title: row.get("title")?,
+        title_source: nonempty(row.get("title_source")?),
         revert: json_column(row, "revert")?,
         permission: json_column(row, "permission")?,
         time_created: row.get("time_created")?,

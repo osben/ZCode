@@ -198,6 +198,8 @@ pub struct SessionState {
     /// Fork (node_desktop): the live run of the subagent this child session belongs to, taken before the cold load
     /// (crate::child_live). None for every other session.
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
+    /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
+    pub title_pending: bool,
 }
 
 impl SessionState {
@@ -220,6 +222,7 @@ impl SessionState {
             last_turn_failed: false,
             commands: Default::default(),
             child_live: None,
+            title_pending: true,
         }
     }
 
@@ -249,6 +252,7 @@ impl SessionState {
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
+            title_pending: loaded.title_pending,
         }
     }
 }

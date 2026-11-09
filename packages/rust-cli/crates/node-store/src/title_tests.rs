@@ -19,6 +19,9 @@ async fn generated_titles_follow_the_node_source_condition() {
         .await
         .unwrap();
     assert_eq!(row(&test), [json!(""), json!("default"), json!(null)]);
+    // Fork: a cold load reports whether the stored title is still automatic (a later input may retry it).
+    let pending = async || test.store.load(&session).await.unwrap().title_pending;
+    assert!(pending().await);
     test.store
         .commit(
             &session,
@@ -34,6 +37,7 @@ async fn generated_titles_follow_the_node_source_condition() {
             json!(null)
         ]
     );
+    assert!(pending().await);
     let generated = Fact::TitleGenerated {
         title: "Hook trust digest".to_owned(),
         message: Some(MessageId::new("msg_1")),
@@ -43,6 +47,7 @@ async fn generated_titles_follow_the_node_source_condition() {
         .await
         .unwrap();
     assert_eq!(row(&test), ["Hook trust digest", "generated", "msg_1"]);
+    assert!(!pending().await);
     // 改名之后（custom）生成的标题不再写入，整批失败。
     let renamed = Fact::TitleChanged {
         title: "Mine".to_owned(),

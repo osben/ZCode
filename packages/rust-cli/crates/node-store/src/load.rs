@@ -54,6 +54,11 @@ pub fn load(
         mode: execution.map(|state| state.mode),
         plan: execution.is_some_and(|state| state.plan),
         meta: meta(&row),
+        // Fork: Node `isAutoTitlePending` (specs/fork-rust-agent-parity.md, first-input title timing).
+        title_pending: matches!(
+            row.title_source.as_deref().unwrap_or("first_input"),
+            "default" | "first_input"
+        ),
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。

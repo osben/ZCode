@@ -252,6 +252,7 @@ impl SessionStore for MemoryStore {
         let (messages, checkpoints) = replay(facts);
         // 标题与 node-store 的会话行一样取最后一次写入（会话关闭后再打开时 actor 从这里拿标题）。
         let title = last_title(facts);
+        let title_pending = title.is_none();
         let mut meta = meta.clone();
         if let Some(title) = title {
             meta.title = title;
@@ -277,6 +278,7 @@ impl SessionStore for MemoryStore {
                 .get(session)
                 .and_then(|turns| turns.iter().rev().find_map(Clone::clone)),
             last_turn_failed: last_turn_failed(facts),
+            title_pending,
         })
     }
 

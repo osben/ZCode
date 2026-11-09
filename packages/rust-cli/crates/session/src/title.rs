@@ -39,11 +39,21 @@ pub(crate) struct TitleDone {
     result: Result<Generated, TaskError>,
 }
 
+/// Fork: Node desktop titles make a first attempt plus one retry (specs/session-title-polish.md §6.2); the TUI one.
+const NODE_MAX_ATTEMPTS: u8 = 2;
+
 /// 标题生成的状态（actor 的一个字段）。
 #[derive(Default)]
 pub(crate) struct TitleState {
-    /// 本 actor 已经尝试过（每个会话最多一次，Node `sessionTitleGenerationAttempted`）。
-    attempted: bool,
+    /// Title requests this actor started (Node `sessionTitleGenerationAttempts`); a goal summary request is not one.
+    attempts: u8,
+    /// Fork: no more title requests (Node `sessionTitleGenerationSettled`): a generated title was stored or refused,
+    /// the seed message was rewound away, or the title is custom.
+    settled: bool,
+    /// Fork: the stored title is still automatic (`default` / `first_input`, Node `isAutoTitlePending`); a retry needs it.
+    pending: bool,
+    /// Fork: the first human input this actor saw (Node `sessionTitleSeed`), the preferred retry seed.
+    seed: Option<(MessageId, String)>,
     /// 标题来源是 `custom`（本会话里改过名或 hook 改过标题）。
     custom: bool,
     /// 在跑的标题任务。
@@ -72,9 +82,22 @@ struct DeferredTitle {
 }
 
 impl TitleState {
+    pub(crate) fn new(pending: bool) -> Self {
+        Self {
+            pending,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn mark_custom(&mut self) {
         self.custom = true;
+        self.pending = false;
         self.renames += 1;
+    }
+
+    /// A title request runs or waits for its turn (Node `sessionTitleGenerationInFlight`).
+    fn in_flight(&self) -> bool {
+        self.task.is_some() || self.deferred.is_some()
     }
 
     pub(crate) fn renames(&self) -> u64 {
@@ -144,19 +167,17 @@ impl Actor {
             }
             return;
         };
-        let eligible = (first || self.titles.rearmed)
-            && !self.titles.attempted
-            && !self.titles.custom
-            && self.meta.kind == SessionKind::Interactive
-            && self.meta.parent.is_none()
-            && long_enough(&text);
-        if !eligible {
+        if node_titles && goal.is_none() && self.titles.seed.is_none() && !text.trim().is_empty() {
+            self.titles.seed = Some((message.id().clone(), text.clone()));
+        }
+        let Some((prompt, text)) =
+            self.title_seed(message, text, first, node_titles, goal.is_some())
+        else {
             if let Some(target) = goal {
                 self.start_goal_summary(target);
             }
             return;
-        }
-        self.titles.attempted = true;
+        };
         self.titles.rearmed = false;
         // Node starts the title of a `/goal` control turn at once (core `control-only-turn.ts`, no defer flag).
         let deferred = node_titles && crate::goal::command(&text).is_none();
@@ -166,7 +187,7 @@ impl Actor {
             .as_ref()
             .and_then(|running| running.run.clone());
         let title = DeferredTitle {
-            prompt: message.id().clone(),
+            prompt,
             text,
             turn: self.turn_anchor(),
             run,
@@ -180,8 +201,44 @@ impl Actor {
         }
     }
 
-    /// Fork (Node desktop titles): the turn ended; a completed turn starts its deferred first-input title, any other
-    /// leaves the next input eligible (Node: no attempt was made and `turnNumber` stays 0).
+    /// The title request this input starts, with its seed (Node `resolveSessionTitleGenerationMode`): the first input
+    /// of a new session (`first`), or, for Node desktop titles, a retry while the stored title is still automatic. A
+    /// retry's seed is the first input this actor saw when it is long enough, else this input.
+    fn title_seed(
+        &self,
+        message: &Message,
+        text: String,
+        first: bool,
+        node_titles: bool,
+        goal: bool,
+    ) -> Option<(MessageId, String)> {
+        let titles = &self.titles;
+        let max = if node_titles { NODE_MAX_ATTEMPTS } else { 1 };
+        let open = !titles.custom
+            && !titles.settled
+            && !titles.in_flight()
+            && titles.attempts < max
+            && self.meta.kind == SessionKind::Interactive
+            && self.meta.parent.is_none()
+            && long_enough(&text);
+        if !open {
+            return None;
+        }
+        if (first || titles.rearmed) && titles.attempts == 0 {
+            return Some((message.id().clone(), text));
+        }
+        // `/goal` inputs keep their first-turn-only behaviour (their goal summary fallback depends on it).
+        if !node_titles || goal || !titles.pending {
+            return None;
+        }
+        match &titles.seed {
+            Some((prompt, seed)) if long_enough(seed) => Some((prompt.clone(), seed.clone())),
+            _ => Some((message.id().clone(), text)),
+        }
+    }
+
+    /// Fork (Node desktop titles): the turn ended; a completed turn starts its deferred title, any other leaves the
+    /// next input eligible (Node: no request was made and `turnNumber` stays 0).
     pub(crate) fn after_turn(&mut self, completed: bool) {
         let Some(title) = self.titles.deferred.take() else {
             return;
@@ -189,7 +246,6 @@ impl Actor {
         if completed {
             self.start_title(title);
         } else {
-            self.titles.attempted = false;
             self.titles.rearmed = true;
         }
     }
@@ -206,6 +262,20 @@ impl Actor {
             goal,
             source,
         } = title;
+        if source == crate::title_model::SOURCE {
+            // Node re-checks before the request (`resolveSessionTitleGenerationMode` after the turn,
+            // `shouldSkipGeneratedTitleForFirstQueryEdit`): a rename during the deferred turn, or a seed message that was
+            // rewound away, settles without a request. A goal still asks for its summary (Node writes it under a custom
+            // title too).
+            let stale = self.titles.custom
+                || self.titles.settled
+                || !self.messages.iter().any(|message| message.id() == &prompt);
+            if stale && goal.is_none() {
+                self.titles.settled = true;
+                return;
+            }
+            self.titles.attempts += 1;
+        }
         // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
         let selection = self.selection.clone();
         let session = self.meta.id.clone();
@@ -301,6 +371,7 @@ impl Actor {
         // 用户先改了名，或首条输入已被回退掉（Node `isSuppressedByFirstQueryEdit`）：丢弃。
         if self.titles.custom || !self.messages.iter().any(|m| m.id() == &prompt) {
             tracing::debug!("the generated session title was discarded");
+            self.titles.settled = true;
             return;
         }
         let fact = Fact::TitleGenerated {
@@ -310,8 +381,12 @@ impl Actor {
         if let Err(reason) = self.commit(None, vec![fact]).await {
             // 存储里的来源已不允许覆盖（例如另一个进程改了名）。
             tracing::debug!(%reason, "the generated session title was not stored");
+            self.titles.settled = true;
+            self.titles.pending = false;
             return;
         }
+        self.titles.settled = true;
+        self.titles.pending = false;
         self.meta.title.clone_from(&title);
         self.log.append(KernelEvent::TitleChanged { title });
     }

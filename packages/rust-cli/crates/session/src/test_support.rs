@@ -173,6 +173,8 @@ pub(crate) struct Setup {
     pub clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
     /// Fork: the mirrored child run (`SessionState::child_live`); none by default.
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
+    /// Fork: the stored title is still automatic (`SessionState::title_pending`); true by default.
+    pub title_pending: bool,
 }
 
 impl Setup {
@@ -212,6 +214,7 @@ impl Setup {
             root: "/work",
             clock: Arc::new(FixedClock(1_000)),
             child_live: None,
+            title_pending: true,
         }
     }
 
@@ -313,6 +316,7 @@ impl Setup {
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,
+                title_pending: self.title_pending,
             },
             self.opened,
         );
