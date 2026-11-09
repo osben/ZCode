@@ -243,6 +243,9 @@ impl Actor {
                 self.log
                     .append(KernelEvent::CompactFailed { trigger, message });
             }
+            SinkRequest::CompactSkipped(trigger) => {
+                self.log.append(KernelEvent::CompactSkipped { trigger });
+            }
             SinkRequest::SetPlan {
                 enabled,
                 tool_call,

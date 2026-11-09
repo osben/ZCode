@@ -787,6 +787,62 @@ fn a_compaction_is_one_marker_row_from_running_to_success() {
     );
 }
 
+/// Fork: a compaction still running when its turn is stopped settles as `cancelled` and its work ends, like Node's
+/// interrupted compaction; before, the marker stayed `Compressing context` and the row actions stayed withheld.
+#[test]
+fn a_compaction_stopped_with_its_turn_is_cancelled() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_2"),
+        command: None,
+    });
+    let started = feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Auto,
+    });
+    let row = started
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .unwrap()["row"]["rowId"]
+        .clone();
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_2"),
+        outcome: TurnOutcome::Interrupted,
+        usage: None,
+    });
+    let settled = finished
+        .iter()
+        .find(|delta| delta["op"] == "row.upserted" && delta["row"]["rowId"] == row)
+        .unwrap();
+    assert_eq!(settled["row"]["marker"]["status"], "cancelled");
+    assert!(
+        finished
+            .iter()
+            .any(|delta| delta["patch"]["availability"]["compact"]["allowed"] == true),
+        "{finished:?}"
+    );
+}
+
+/// Fork: a skipped compaction (too little history on the desktop) is one settled `noop` row (Node `skipped`).
+#[test]
+fn a_skipped_compaction_is_a_noop_row() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    let skipped = feed.apply(KernelEvent::CompactSkipped {
+        trigger: CompactTrigger::Auto,
+    });
+    let appended = skipped
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .unwrap();
+    assert_eq!(
+        appended["row"]["marker"],
+        json!({"type": "compact", "origin": "auto", "status": "noop"})
+    );
+}
+
 #[test]
 fn a_cold_projection_shows_stored_compactions() {
     use rust_cli_kernel_api::message::{CompactBoundary, CompactTrigger, SystemMessage};
@@ -920,7 +976,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
     assert_eq!(items[0]["mode"], "guarded");
     assert_eq!(items[0]["planEnabled"], true);
     assert_eq!(items[0]["modelSelection"], state::selection(&selection()));
-    assert_eq!(items[1]["text"], "ship it");
+    assert_eq!(items[1]["text"], "/goal ship it");
     assert!(items[1].get("mode").is_none());
     assert_eq!(items[2]["text"], "/compact");
 }

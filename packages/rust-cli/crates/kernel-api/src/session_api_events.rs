@@ -220,6 +220,11 @@ pub enum KernelEvent {
         trigger: CompactTrigger,
         message: String,
     },
+    /// Fork (desktop): the compaction had too little history to summarize and did nothing (Node `skipped`, shown as
+    /// "Context is up to date; no compression needed").
+    CompactSkipped {
+        trigger: CompactTrigger,
+    },
     /// 历史被改写（rewind、编辑重发）；前端丢弃旧视图后重新取快照。
     HistoryRewritten {
         generation: u64,

@@ -183,6 +183,10 @@ pub trait RunSink: Interactions + SessionOps {
     /// 输出端什么都不做。
     async fn compact_failed(&self, trigger: CompactTrigger, message: String);
 
+    /// Fork (desktop): the compaction had nothing to summarize ([`crate::compaction::CompactProgress::skipped`]).
+    /// Default: nothing.
+    async fn compact_skipped(&self, _trigger: CompactTrigger) {}
+
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序
     /// （L18，docs/specs/rust-cli/query.md §4、§5）。取走即属于当前回合；本回合已中止时插话不取，继续排队。顶层会话的
     /// 通知由会话 actor 在回合结束后开新回合；子代理收到它派生的后台子代理的通知（agents.md §5.1）。工作线 F134 以前

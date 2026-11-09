@@ -349,6 +349,13 @@ impl CompactProgress for Recorded {
             .unwrap_or_else(PoisonError::into_inner)
             .push(format!("failed {trigger:?}: {message}"));
     }
+
+    async fn skipped(&self, trigger: CompactTrigger) {
+        self.said
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(format!("skipped {trigger:?}"));
+    }
 }
 
 async fn progress_of(
@@ -417,4 +424,39 @@ async fn auto_compaction_says_it_failed_only_after_it_started() {
     };
     let (_, said) = progress_of(Vec::new(), history(70_000), open).await;
     assert!(said.is_empty(), "{said:?}");
+}
+
+/// Fork: on the desktop (`blocking: false`) an automatic compaction with too little history is Node's `skipped`
+/// compaction: no summary request even at the blocking line, no failure counted, and the progress says skipped
+/// (specs/fork-rust-agent-parity.md, "Compact timeline markers").
+#[tokio::test]
+async fn the_desktop_skips_a_compaction_with_too_little_history() {
+    let runner = ScriptedRunner::new(vec![summary()]);
+    let desktop = CompactConfig {
+        blocking: false,
+        ..config()
+    };
+    let compaction = Compaction::new(ports(runner.clone(), no_tools()), desktop);
+    let progress = Recorded {
+        runner: runner.clone(),
+        said: Mutex::default(),
+    };
+    let mut tracking = CompactTracking::default();
+    let outcome = compaction
+        .auto_compact_with(
+            request(one_round(977_000), CompactTrigger::Auto),
+            &mut tracking,
+            CancellationToken::new(),
+            &progress,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome, AutoCompactOutcome::NotNeeded);
+    assert!(runner.requests().is_empty());
+    assert_eq!(tracking.consecutive_failures, 0);
+    let said = progress
+        .said
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(said, ["skipped Auto"]);
 }

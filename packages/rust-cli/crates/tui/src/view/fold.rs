@@ -272,6 +272,8 @@ impl Transcript {
                     self.edit_compact(id, |compact| compact.status = Compaction::Failed);
                 }
             }
+            // Fork: only the desktop skips a compaction (its config has no blocking limit); the TUI shows no row.
+            KernelEvent::CompactSkipped { .. } => {}
             // 任务清单与每回合的改动只进投影，不加行（tui-display.md §2.2、§2.4）。
             KernelEvent::TasksChanged { tasks } => self.tasks_changed(tasks),
             KernelEvent::FileChanges { turn, files, .. } => self.file_changes(turn, files),

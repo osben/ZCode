@@ -160,6 +160,16 @@ pub(crate) fn text_of(content: &[ContentBlock]) -> String {
         .join("\n")
 }
 
+/// Node's queued goal text: the typed `/goal X`, or `/goal ` before the objective when the text lost its command.
+fn queued_goal_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.starts_with("/goal") {
+        trimmed.to_owned()
+    } else {
+        format!("/goal {trimmed}")
+    }
+}
+
 fn turn_key(turn: &str) -> String {
     format!("turn:{turn}")
 }
@@ -657,6 +667,18 @@ impl Projection {
                 outcome,
                 usage,
             } => {
+                // Fork: a compaction still running when its turn ends was stopped with it; Node settles its
+                // marker as `cancelled` (an interrupted compaction) and drops the compact work.
+                if self.compacting {
+                    self.compacting = false;
+                    let status = if matches!(outcome, TurnOutcome::Interrupted) {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    self.compact_settled(status, &mut out);
+                    patch.insert("availability".into(), self.availability());
+                }
                 self.finish_turn(turn.as_str(), outcome, usage.as_ref(), now, &mut out);
                 self.phase_patch(&mut patch);
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
@@ -726,6 +748,9 @@ impl Projection {
                 self.compact_settled("failed", &mut out);
                 patch.insert("availability".into(), self.availability());
             }
+            KernelEvent::CompactSkipped { trigger } => {
+                self.compact_skipped(*trigger, now, seq, &mut out);
+            }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
                 let before = self.queue_state();
@@ -780,6 +805,7 @@ impl Projection {
                 KernelEvent::CompactStarted { .. }
                     | KernelEvent::CompactDone { .. }
                     | KernelEvent::CompactFailed { .. }
+                    | KernelEvent::CompactSkipped { .. }
             );
         if structural {
             self.refresh_actions(&mut out);
@@ -1068,16 +1094,12 @@ impl Projection {
             .map(|item| {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
+                let goal_text = queued_goal_text(&item.text);
                 // Fork: kind and the frozen execution state come from the kernel's item (one owner).
                 let (kind, text) = match item.kind {
                     QueuedKind::Text => ("sendText", item.text.as_str()),
-                    QueuedKind::Goal => (
-                        "sendGoalCommand",
-                        item.text
-                            .trim_start()
-                            .strip_prefix("/goal")
-                            .map_or(item.text.as_str(), str::trim),
-                    ),
+                    // Node's queue item shows the typed `/goal X` (publisher `displayText`).
+                    QueuedKind::Goal => ("sendGoalCommand", goal_text.as_str()),
                     QueuedKind::Compact => ("compact", "/compact"),
                 };
                 let mut value = json!({

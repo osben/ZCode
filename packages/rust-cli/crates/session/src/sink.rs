@@ -53,6 +53,8 @@ pub(crate) enum SinkRequest {
     CompactStarted(CompactTrigger),
     /// 开始了的压缩失败了（compact.md §4.1）。
     CompactFailed(CompactTrigger, String),
+    /// Fork (desktop): the compaction had nothing to summarize.
+    CompactSkipped(CompactTrigger),
     /// 工具请求打开或关掉 plan 开关（EnterPlanMode / ExitPlanMode，修复线 F20）。
     SetPlan {
         enabled: bool,
@@ -342,6 +344,10 @@ impl RunSink for ActorSink {
             .sender
             .send(SinkRequest::CompactFailed(trigger, message))
             .await;
+    }
+
+    async fn compact_skipped(&self, trigger: CompactTrigger) {
+        let _ = self.sender.send(SinkRequest::CompactSkipped(trigger)).await;
     }
 
     async fn emit(&self, event: QueryEvent) -> bool {

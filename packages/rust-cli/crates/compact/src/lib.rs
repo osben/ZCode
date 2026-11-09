@@ -116,6 +116,8 @@ pub struct CompactConfig {
     pub limits: Option<Arc<dyn ModelLimits>>,
     /// Fork: the pre-request blocking limit applies (compact.md §2.2). The app-server (`node_desktop`) turns it off:
     /// Node sends the request and lets the provider answer (specs/fork-rust-agent-parity.md, "Context blocking limit").
+    /// Without it an automatic compaction never summarizes everything, and too little history is a skipped
+    /// compaction (`CompactProgress::skipped`) instead of a failure, like Node.
     pub blocking: bool,
 }
 
@@ -217,8 +219,10 @@ impl Compaction {
         }
         request.trigger = CompactTrigger::Auto;
         // 阈值触发只在达到阻塞线时许“全部摘要”（compact.md §3.1）。
-        let blocked =
-            window::level(tokens, &facts, &self.config.thresholds()) == window::Level::Blocked;
+        // Fork: the desktop has no blocking limit, so it never summarizes everything either, like Node
+        // (specs/fork-rust-agent-parity.md, "Context blocking limit").
+        let blocked = self.config.blocking
+            && window::level(tokens, &facts, &self.config.thresholds()) == window::Level::Blocked;
         match self.run(&request, blocked, cancel, progress).await {
             Ok(result) => {
                 *tracking = CompactTracking {
@@ -233,6 +237,13 @@ impl Compaction {
             }
             // 被 PreCompact hook 拦下不算失败，照常发请求。
             Err(Failure::Blocked(_)) => AutoCompactOutcome::NotNeeded,
+            // Fork: on the desktop too little history is Node's `skipped` compaction: a marker, not a failure.
+            Err(Failure::NotEnough) if !self.config.blocking => {
+                if let Some(progress) = progress {
+                    progress.skipped(request.trigger).await;
+                }
+                AutoCompactOutcome::NotNeeded
+            }
             Err(failure) => {
                 tracking.consecutive_failures += 1;
                 AutoCompactOutcome::Failed {
