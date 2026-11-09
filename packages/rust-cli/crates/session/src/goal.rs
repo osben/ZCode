@@ -11,7 +11,7 @@ use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{
     AttachmentMessage, ContentBlock, Message, UserMessage, UserOrigin,
 };
-use rust_cli_kernel_api::store::StoreError;
+use rust_cli_kernel_api::store::{Fact, StoreError};
 use rust_cli_kernel_api::user_command::{self, LOCAL_COMMAND_SOURCE};
 use rust_cli_prompts::texts::render;
 
@@ -71,6 +71,14 @@ struct Active {
     running_since: Option<u64>,
     /// Fork (desktop App): Node `target.summaryTitle`; in memory only (a cold load uses the fallback).
     summary_title: Option<String>,
+}
+
+/// Fork (desktop App): the goal as its `session_target` row stores it (the evaluation count is not stored).
+pub(crate) fn stored_form(goal: GoalState) -> GoalState {
+    GoalState {
+        iteration: 0,
+        ..goal
+    }
 }
 
 /// Node `fallbackGoalSummaryTitle`: the normalized objective, at most 100 characters.
@@ -134,35 +142,60 @@ fn status_of(message: &Message) -> Option<GoalStatus> {
 
 impl Goals {
     /// 冷加载：最后一条 `goal_status` 既不是达成也不是失败时，它的条件重新生效，从 0 轮算起。
-    pub(crate) fn restore(messages: &[Message], now_ms: u64) -> Self {
-        let last = messages.iter().rev().find_map(status_of);
-        let active = last
-            .filter(|status| !status.met && !status.failed && !status.condition.is_empty())
-            .map(|status| {
-                // Fork: the target is the attachment that set this condition; a paused goal stays paused.
-                let target = messages
-                    .iter()
-                    .rev()
-                    .find(|message| {
-                        status_of(message).is_some_and(|set| {
-                            set.sentinel && !set.met && set.condition == status.condition
-                        })
-                    })
-                    .map(|message| message.id().as_str().to_owned())
-                    .unwrap_or_default();
-                let mut active = Active::new(status.condition, target, 0, now_ms);
-                active.summary_title = fallback_summary(&active.condition);
-                if status.paused == Some(true) {
-                    active.paused = true;
-                    active.running_since = None;
+    ///
+    /// Fork (desktop App): `stored` is the goal's `session_target` row; when it is the same target it fills the
+    /// summary title and the time used, and a met or impossible last goal is shown again (Node reads the row).
+    pub(crate) fn restore(messages: &[Message], now_ms: u64, stored: Option<&GoalState>) -> Self {
+        let Some(last) = messages
+            .iter()
+            .rev()
+            .find_map(status_of)
+            .filter(|status| !status.condition.is_empty())
+        else {
+            return Self::default();
+        };
+        // Fork: the target is the attachment that set this condition.
+        let target = messages
+            .iter()
+            .rev()
+            .find(|message| {
+                status_of(message)
+                    .is_some_and(|set| set.sentinel && !set.met && set.condition == last.condition)
+            })
+            .map(|message| message.id().as_str().to_owned())
+            .unwrap_or_default();
+        let stored = stored.filter(|stored| !target.is_empty() && stored.target == target);
+        let mut active = Active::new(last.condition.clone(), target, 0, now_ms);
+        active.summary_title = stored
+            .and_then(|stored| stored.summary_title.clone())
+            .or_else(|| fallback_summary(&active.condition));
+        active.used_ms = stored.map_or(0, |stored| stored.time_used_seconds * 1000);
+        if last.met || last.failed {
+            let finished = stored.is_some().then(|| {
+                active.running_since = None;
+                let phase = if last.met {
+                    GoalPhase::Verified
+                } else {
+                    GoalPhase::Failed
+                };
+                GoalState {
+                    iteration: last.iterations.unwrap_or(0),
+                    ..active.state(phase)
                 }
-                active
             });
+            return Self {
+                finished,
+                ..Self::default()
+            };
+        }
+        // A paused goal stays paused.
+        if last.paused == Some(true) {
+            active.paused = true;
+            active.running_since = None;
+        }
         Self {
-            active,
-            output_tokens: 0,
-            finished: None,
-            continue_after_set: false,
+            active: Some(active),
+            ..Self::default()
         }
     }
 
@@ -519,6 +552,30 @@ impl Actor {
             self.log
                 .append(rust_cli_kernel_api::session_api::KernelEvent::GoalChanged { goal: after });
         }
+    }
+
+    /// Fork (desktop App): writes the goal's `session_target` row when the goal changed since the last write, or a turn
+    /// ended while it runs (the single write path, called once per actor loop iteration).
+    pub(crate) async fn goal_target_sync(&mut self) {
+        if !self.deps.desktop_goals {
+            return;
+        }
+        let goal = self.goal.state().map(stored_form);
+        let touched = std::mem::take(&mut self.goal_touched) && goal.is_some();
+        if goal == self.goal_written && !touched {
+            return;
+        }
+        let fact = match &goal {
+            Some(goal) => Fact::GoalTargetSaved {
+                goal: goal.clone(),
+                seen_at_ms: self.deps.clock.now_ms(),
+            },
+            None => Fact::GoalTargetCleared,
+        };
+        if let Err(reason) = self.commit(None, vec![fact]).await {
+            tracing::warn!(%reason, "the goal row was not stored");
+        }
+        self.goal_written = goal;
     }
 
     /// Fork (desktop App): the goal state for the session view (Node snapshot `goal`).

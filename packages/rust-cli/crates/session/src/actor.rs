@@ -218,6 +218,10 @@ pub(crate) struct Actor {
     pub(crate) naming: Option<crate::rename::NameJob>,
     /// `/goal` 的目标（goal.rs）：提交 `goal_status` 后才改，冷加载从活动历史恢复。
     pub(crate) goal: crate::goal::Goals,
+    /// Fork (desktop App): the goal row last written to the store (`crate::goal::stored_form`).
+    pub(crate) goal_written: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork (desktop App): a turn ended; the next sync writes the row again (its last-seen time).
+    pub(crate) goal_touched: bool,
     /// 回合或压缩在跑时到达的本地命令记录（修复线 L-A，local_record.rs）：收尾后按到达顺序提交。
     pub(crate) held_records: Vec<rust_cli_kernel_api::user_command::LocalCommandRecord>,
     seen: HashSet<CommandId>,
@@ -280,7 +284,12 @@ impl Actor {
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
         let start = state.start;
         let child_live = state.child_live;
-        let goal = crate::goal::Goals::restore(&state.messages, deps.clock.now_ms());
+        let goal = crate::goal::Goals::restore(
+            &state.messages,
+            deps.clock.now_ms(),
+            state.goal_target.as_ref(),
+        );
+        let goal_written = goal.state().map(crate::goal::stored_form);
         let mut actor = Self {
             deps,
             log,
@@ -304,6 +313,8 @@ impl Actor {
             loop_ticks: Default::default(),
             naming: None,
             goal,
+            goal_written,
+            goal_touched: false,
             held_records: Vec::new(),
             seen: HashSet::new(),
             resume_pending,
@@ -503,6 +514,7 @@ impl Actor {
             }
             // 登记里的状态只看 actor 自己的状态，变化时才写（cross-session.md §2.1）。
             self.peer_status(self.status_now()).await;
+            self.goal_target_sync().await;
         }
     }
 

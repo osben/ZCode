@@ -200,6 +200,8 @@ pub struct SessionState {
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
     /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
     pub title_pending: bool,
+    /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
+    pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
 }
 
 impl SessionState {
@@ -223,6 +225,7 @@ impl SessionState {
             commands: Default::default(),
             child_live: None,
             title_pending: true,
+            goal_target: None,
         }
     }
 
@@ -253,6 +256,7 @@ impl SessionState {
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
             title_pending: loaded.title_pending,
+            goal_target: loaded.goal_target,
         }
     }
 }

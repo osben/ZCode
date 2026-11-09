@@ -175,6 +175,8 @@ pub(crate) struct Setup {
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
     /// Fork: the stored title is still automatic (`SessionState::title_pending`); true by default.
     pub title_pending: bool,
+    /// Fork: the stored goal row (`SessionState::goal_target`); none by default.
+    pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
 }
 
 impl Setup {
@@ -215,6 +217,7 @@ impl Setup {
             clock: Arc::new(FixedClock(1_000)),
             child_live: None,
             title_pending: true,
+            goal_target: None,
         }
     }
 
@@ -317,6 +320,7 @@ impl Setup {
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,
                 title_pending: self.title_pending,
+                goal_target: self.goal_target,
             },
             self.opened,
         );

@@ -149,6 +149,7 @@ fn spawn(
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            goal_target: None,
         },
         Opened::Created,
     )

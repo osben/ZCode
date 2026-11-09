@@ -395,3 +395,89 @@ pub fn insert_target(conn: &Connection, session: &str, target: &Target) -> rusql
     )?;
     Ok(())
 }
+
+/// Fork (desktop App): the goal row as Node writes it (`setSessionTarget`, `startSessionTargetRun`,
+/// `updateSessionTargetSummaryTitle`, `finishSessionTargetRun`): one upsert. A new target id resets the creation time;
+/// tokens and the budget are left as stored (this kernel does not account them).
+pub struct SavedTarget<'a> {
+    pub target_id: &'a str,
+    pub objective: &'a str,
+    pub summary_title: Option<&'a str>,
+    pub status: &'a str,
+    pub time_used_seconds: i64,
+    /// The running stretch's start and the write time; both NULL when no stretch runs.
+    pub active_run: Option<(i64, i64)>,
+    pub now: i64,
+}
+
+pub fn save_target(
+    conn: &Connection,
+    session: &str,
+    target: &SavedTarget<'_>,
+) -> rusqlite::Result<()> {
+    let (started, seen) = target.active_run.unzip();
+    conn.prepare_cached(
+        "insert into session_target (
+               session_id, target_id, objective, summary_title, status, token_budget, tokens_used,
+               time_used_seconds, active_input_id, active_run_started_at, active_run_last_seen_at,
+               time_created, time_updated
+             ) values (?1, ?2, ?3, ?4, ?5, null, 0, ?6, ?7, ?8, ?9, ?10, ?10)
+             on conflict(session_id) do update set
+               time_created = case when session_target.target_id = excluded.target_id
+                 then session_target.time_created else excluded.time_created end,
+               tokens_used = case when session_target.target_id = excluded.target_id
+                 then session_target.tokens_used else 0 end,
+               token_budget = case when session_target.target_id = excluded.target_id
+                 then session_target.token_budget else null end,
+               target_id = excluded.target_id,
+               objective = excluded.objective,
+               summary_title = excluded.summary_title,
+               status = excluded.status,
+               time_used_seconds = excluded.time_used_seconds,
+               active_input_id = excluded.active_input_id,
+               active_run_started_at = excluded.active_run_started_at,
+               active_run_last_seen_at = excluded.active_run_last_seen_at,
+               time_updated = max(session_target.time_updated, excluded.time_updated)",
+    )?
+    .execute(params![
+        session,
+        target.target_id,
+        target.objective,
+        target.summary_title,
+        target.status,
+        target.time_used_seconds,
+        started.map(|_| target.target_id),
+        started,
+        seen,
+        target.now
+    ])?;
+    Ok(())
+}
+
+/// Node `clearSessionTarget`.
+pub fn clear_target(conn: &Connection, session: &str) -> rusqlite::Result<()> {
+    conn.prepare_cached("delete from session_target where session_id = ?")?
+        .execute([session])?;
+    Ok(())
+}
+
+/// The goal row with its running stretch (`active_run_started_at`, `active_run_last_seen_at`).
+pub struct StoredTarget {
+    pub target: Target,
+    pub active_run: Option<(i64, Option<i64>)>,
+}
+
+pub fn stored_target(conn: &Connection, session: &str) -> rusqlite::Result<Option<StoredTarget>> {
+    let Some(target) = target(conn, session)? else {
+        return Ok(None);
+    };
+    let (started, seen): (Option<i64>, Option<i64>) = conn.query_row(
+        "select active_run_started_at, active_run_last_seen_at from session_target where session_id = ?",
+        [session],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    Ok(Some(StoredTarget {
+        target,
+        active_run: started.map(|started| (started, seen)),
+    }))
+}
