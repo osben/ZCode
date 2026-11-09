@@ -87,6 +87,7 @@ impl Projection {
                 json!({"type": "goalVerify", "iteration": iteration, "outcome": "running"});
             self.put_verify_marker(key, &turn, marker, now, seq, out);
             self.goal_verifier = Some(now);
+            self.goal_verifier_failed = false;
             self.phase = Phase::Running;
             self.error = None;
             return;
@@ -109,6 +110,7 @@ impl Projection {
         }
         self.put_verify_marker(key, &turn, marker, now, seq, out);
         if self.goal_verifier.take().is_some() {
+            self.goal_verifier_failed = step.status == VerificationStatus::FailedClosed;
             self.phase = match step.status {
                 VerificationStatus::Cancelled => Phase::CompletedInterrupted,
                 VerificationStatus::FailedClosed => Phase::Error,

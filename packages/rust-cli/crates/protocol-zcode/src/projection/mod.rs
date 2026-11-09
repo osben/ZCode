@@ -129,6 +129,8 @@ pub struct Projection {
     compactions: u64,
     /// Fork: the start time of the running goal completion verification (projection/goal_verify.rs).
     goal_verifier: Option<u64>,
+    /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
+    goal_verifier_failed: bool,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
@@ -246,6 +248,7 @@ impl Projection {
             compacting: false,
             compactions: 0,
             goal_verifier: None,
+            goal_verifier_failed: false,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
@@ -466,12 +469,16 @@ impl Projection {
     }
 
     fn control(&self) -> Value {
-        state::control(
+        let mut control = state::control(
             self.phase,
             self.active.as_ref(),
             self.error.as_ref(),
             self.goal_verifier,
-        )
+        );
+        if self.goal_verifier_failed && self.phase == Phase::Error {
+            control["sessionEnded"] = json!(false);
+        }
+        control
     }
 
     /// Fork: the session actions for the current phase, compaction and goal.
@@ -513,6 +520,7 @@ impl Projection {
         let seq = event.seq;
         match &event.event {
             KernelEvent::TurnStarted { turn, command } => {
+                self.goal_verifier_failed = false;
                 self.start_turn(
                     turn.as_str(),
                     command.as_ref().map(|c| c.as_str().to_owned()),

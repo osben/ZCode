@@ -214,3 +214,29 @@ async fn plan_mode_skips_the_verification() {
             .any(|message| matches!(message, Message::Assistant(_)))
     );
 }
+
+/// Stop while verifying with queued input (the app-server holds the queue first, specs/stop-queue-hold.md): the goal
+/// pauses and the queued input stays queued.
+#[tokio::test]
+async fn a_stopped_verification_keeps_queued_input_held() {
+    let gate = Arc::new(Notify::new());
+    let model = Arc::new(
+        ScriptedModel::new(vec![text_response(&["reply 0"]), text_response(&[NOT_MET])])
+            .gated_at(1, gate),
+    );
+    let built = desktop(model.clone()).await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", "/goal tests pass")).await;
+    until(&mut events, |event| is_goal(event, GoalPhase::Verifying)).await;
+    built.session.send(submit("c2", "also check lint")).await;
+    built
+        .session
+        .send(command("c3", Command::HoldQueue { held: true }))
+        .await;
+    built.session.send(command("c4", Command::Interrupt)).await;
+    until(&mut events, |event| is_goal(event, GoalPhase::Paused)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(model.requests().len(), 2);
+    let view = built.session.view().await.unwrap();
+    assert_eq!(view.queue.len(), 1);
+}

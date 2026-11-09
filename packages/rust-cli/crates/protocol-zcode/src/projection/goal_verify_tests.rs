@@ -146,6 +146,24 @@ fn a_cancelled_verification_is_a_failed_marker_and_an_interrupted_session() {
     );
 }
 
+/// A failed verification request leaves Node's phase `error` without ending the session.
+#[test]
+fn a_failed_verification_request_is_an_error_phase_that_does_not_end_the_session() {
+    let mut feed = Feed::new();
+    finished_turn(&mut feed, 1);
+    feed.apply(step(VerificationStatus::Started, None));
+    let deltas = feed.apply(step(
+        VerificationStatus::FailedClosed,
+        Some((true, "Completion verifier request failed: busy")),
+    ));
+    assert_eq!(deltas[0]["row"]["marker"]["outcome"], "failed");
+    let control = &patch_of(&deltas)["control"];
+    assert_eq!(
+        (control["phase"].clone(), control["sessionEnded"].clone()),
+        (json!("error"), json!(false))
+    );
+}
+
 #[test]
 fn a_cold_projection_places_stored_verifications_after_their_anchor() {
     let mut session = view(vec![
