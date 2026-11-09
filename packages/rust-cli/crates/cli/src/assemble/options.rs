@@ -11,7 +11,7 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::provider::ModelLimits;
 use rust_cli_model::{
-    BYTE_IDLE_MAX, BYTE_IDLE_MIN, ByteIdle, EVENT_IDLE_FLOOR, STALL_NOTICE, StreamIdle,
+    BYTE_IDLE_MAX, BYTE_IDLE_MIN, ByteIdle, EVENT_IDLE_FLOOR, RetryPolicy, STALL_NOTICE, StreamIdle,
 };
 use rust_cli_paths::StoragePaths;
 use rust_cli_runtime::{AutoCompactAt, CompactConfig, CompactThresholds};
@@ -268,6 +268,24 @@ pub(crate) fn assumptions(declarations: TestDeclarations, env: &EnvSnapshot) -> 
                 .text(rust_cli_base::names::env::_ZCODE_ASSUME_RULE_MODEL)
                 .map(str::to_owned),
         },
+    }
+}
+
+/// Fork: the model retry count from `ZCODE_MODEL_RETRY_MAX_RETRIES`, like Node `retry-policy.ts`
+/// `parseNonNegativeInteger`: a finite, non-negative number (a fraction is floored) replaces the default
+/// retry count; an empty or invalid value keeps the default (specs/fork-rust-agent-parity.md).
+pub(crate) fn model_retry(snapshot: &EnvSnapshot) -> RetryPolicy {
+    let default = RetryPolicy::default();
+    let max_retries = snapshot
+        .text(rust_cli_base::names::env::ZCODE_MODEL_RETRY_MAX_RETRIES)
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map_or(default.max_retries, |value| {
+            value.floor().min(f64::from(u32::MAX)) as u32
+        });
+    RetryPolicy {
+        max_retries,
+        ..default
     }
 }
 
