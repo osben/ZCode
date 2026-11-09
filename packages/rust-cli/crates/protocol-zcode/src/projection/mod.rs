@@ -12,6 +12,7 @@ pub mod elicitation;
 mod goal_verify;
 mod kinds;
 mod markers;
+mod model_change;
 mod plans;
 mod rows;
 pub(crate) mod rows_range;
@@ -127,6 +128,8 @@ pub struct Projection {
     compacting: bool,
     /// Fork: compaction markers so far; the running one is `compact:<count>` (projection/markers.rs).
     compactions: u64,
+    /// Fork: the provider and model of the last started turn (Node `lastTurnModel`, projection/model_change.rs).
+    last_turn_model: Option<(String, String)>,
     /// Fork: the start time of the running goal completion verification (projection/goal_verify.rs).
     goal_verifier: Option<u64>,
     /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
@@ -257,6 +260,7 @@ impl Projection {
             created_at: view.meta.created_at_ms,
             compacting: false,
             compactions: 0,
+            last_turn_model: None,
             goal_verifier: None,
             goal_verifier_failed: false,
             catalog: std::sync::Arc::from(Vec::new()),
@@ -847,6 +851,7 @@ impl Projection {
             output_tokens: None,
             control_only: false,
         });
+        self.model_change(turn, now, seq, out);
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));
         row.insert("executionKind".into(), json!("agent"));
