@@ -398,6 +398,9 @@ impl Actor {
             outcome,
             TurnOutcome::Success | TurnOutcome::HookStopped | TurnOutcome::StopHookPrevented
         );
+        let failed = matches!(outcome, TurnOutcome::Failed { .. });
+        // A compaction turn has no run (`start_compaction`); only main-loop turns pause the queue.
+        let main_loop = running.run.is_some();
         let turn = running.turn.clone();
         let anchor_turn = running.turn.clone();
         self.log.append(KernelEvent::TurnFinished {
@@ -410,6 +413,16 @@ impl Actor {
         self.after_turn(completed);
         if interrupted {
             self.pause_goal_after_cancel().await;
+        }
+        // Fork: Node core pauses the queue on a turn error (`queueAutoDrain = false`), so the waiting inputs stay
+        // queued until the user continues (`setAutoDrain`); the projection shows `pauseReason: "error"`.
+        if failed
+            && main_loop
+            && self.deps.error_holds_queue
+            && self.inbox.has_inputs()
+            && self.inbox.set_held(true)
+        {
+            self.emit_queue();
         }
         // The `/goal X` control turn: its continuation is the first, unverified one (Node `verifyBeforeFirstContinue`).
         let control = self.goal.continue_after_set;
@@ -496,3 +509,7 @@ pub(crate) fn kernel_event(
 #[cfg(test)]
 #[path = "write_failure_tests.rs"]
 mod write_failure_tests;
+
+#[cfg(test)]
+#[path = "error_hold_tests.rs"]
+mod error_hold_tests;

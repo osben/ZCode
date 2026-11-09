@@ -280,6 +280,7 @@ impl LocalKernel {
             one_input_per_turn: self.one_input_per_turn,
             desktop_goals: self.desktop_goals,
             fork_while_running: self.fork_while_running,
+            error_holds_queue: self.error_holds_queue,
         };
         let session = Arc::new(Session::spawn(deps, state, opened));
         tracing::info!(event = "session.open", session = %id, opened = ?opened, "session opened");

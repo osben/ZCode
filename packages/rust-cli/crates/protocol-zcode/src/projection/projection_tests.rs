@@ -974,6 +974,71 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     assert_eq!(resumed["patch"]["inputRouting"]["mode"], "startNow");
 }
 
+/// Fork: a failed turn with waiting inputs pauses the queue with `pauseReason: "error"` (Node `onTurnError`); a failed
+/// manual `/compact` turn and a failed turn with an empty queue do not.
+#[test]
+fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let queued = || KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            command: CommandId::new("c2"),
+            text: "later".into(),
+            delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
+        }],
+    };
+    let failed = |turn: &str| KernelEvent::TurnFinished {
+        turn: TurnId::new(turn),
+        outcome: TurnOutcome::Failed {
+            message: "upstream 500".into(),
+        },
+        usage: None,
+    };
+    let queue_of = |deltas: &[Value]| {
+        deltas
+            .iter()
+            .find_map(|delta| delta["patch"].get("queue").cloned())
+    };
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.apply(queued());
+    let deltas = feed.apply(failed("turn_1"));
+    let queue = queue_of(&deltas).expect("the failed turn patches the queue");
+    assert_eq!(queue["autoDrain"], false);
+    assert_eq!(queue["pauseReason"], "error");
+    assert!(!feed.projection.auto_drain());
+    let resumed = feed.projection.set_auto_drain(true);
+    assert!(resumed["patch"]["queue"].get("pauseReason").is_none());
+
+    // A failed manual compaction keeps draining (Node pauses on a main turn error only).
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_2"),
+        command: None,
+    });
+    feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Manual,
+    });
+    feed.apply(KernelEvent::CompactFailed {
+        trigger: CompactTrigger::Manual,
+        message: "no".into(),
+    });
+    feed.apply(failed("turn_2"));
+    assert!(feed.projection.auto_drain());
+
+    // No waiting input: nothing to pause.
+    let mut empty = Feed::new();
+    empty.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    empty.apply(failed("turn_1"));
+    assert!(empty.projection.auto_drain());
+}
+
 /// Fork: the queue item's kind and frozen execution state come from the kernel's item (one owner):
 /// a goal shows its objective, a compaction is `/compact`, and only a frozen state is shown.
 #[test]

@@ -155,6 +155,10 @@ pub struct SessionDeps {
     /// desktop agent; the copy stops at that turn, so the running turn and the queue stay in the parent. The
     /// app-server turns it on.
     pub fork_while_running: bool,
+    /// Fork: a failed main-loop turn holds the queued inputs instead of starting the next one, like the Node
+    /// desktop agent (`queueAutoDrain = false` on a turn error; specs/fork-rust-agent-parity.md). The app-server
+    /// turns it on.
+    pub error_holds_queue: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。

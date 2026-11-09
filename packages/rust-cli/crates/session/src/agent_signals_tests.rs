@@ -108,6 +108,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             one_input_per_turn: false,
             desktop_goals: false,
             fork_while_running: false,
+            error_holds_queue: false,
         },
         SessionState {
             commands: Default::default(),

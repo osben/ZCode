@@ -21,7 +21,9 @@ mod subagent_rows;
 
 use std::collections::HashMap;
 
-use rust_cli_kernel_api::message::{ContentBlock, Usage, text_of as text_of_result};
+use rust_cli_kernel_api::message::{
+    CompactTrigger, ContentBlock, Usage, text_of as text_of_result,
+};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
@@ -121,11 +123,14 @@ pub struct Projection {
     /// Fork: the queue drains on its own (`setAutoDrain`); the kernel's hold is set by the same command.
     auto_drain: bool,
     /// Fork: why the queue is paused (`queue.pauseReason`): `manual` after `setAutoDrain(false)`, `stopped` after a
-    /// user stop held it (specs/stop-queue-hold.md).
+    /// user stop held it (specs/stop-queue-hold.md), `error` after a failed turn held it.
     pause_reason: Option<&'static str>,
     created_at: u64,
     /// Fork: a compaction is running (row actions are withheld, like Node's `compact` active work).
     compacting: bool,
+    /// Fork: the running turn is a manual `/compact`; its failure does not pause the queue (Node pauses on a
+    /// main turn error only).
+    compact_turn: bool,
     /// Fork: compaction markers so far; the running one is `compact:<count>` (projection/markers.rs).
     compactions: u64,
     /// Fork: the provider and model of the last started turn (Node `lastTurnModel`, projection/model_change.rs).
@@ -259,6 +264,7 @@ impl Projection {
             denied: std::collections::HashSet::new(),
             created_at: view.meta.created_at_ms,
             compacting: false,
+            compact_turn: false,
             compactions: 0,
             last_turn_model: None,
             goal_verifier: None,
@@ -535,6 +541,7 @@ impl Projection {
         match &event.event {
             KernelEvent::TurnStarted { turn, command } => {
                 self.goal_verifier_failed = false;
+                self.compact_turn = false;
                 let selection = Some(self.selection.clone());
                 self.start_turn(
                     turn.as_str(),
@@ -685,8 +692,19 @@ impl Projection {
                     self.compact_settled(status, &mut out);
                     patch.insert("availability".into(), self.availability());
                 }
+                // Fork: the session actor held the waiting inputs after a failed main turn (Node `onTurnError`).
+                let paused = matches!(outcome, TurnOutcome::Failed { .. })
+                    && !std::mem::take(&mut self.compact_turn)
+                    && self.auto_drain
+                    && self.has_queue();
                 self.finish_turn(turn.as_str(), outcome, usage.as_ref(), now, &mut out);
                 self.phase_patch(&mut patch);
+                if paused {
+                    self.auto_drain = false;
+                    self.pause_reason = Some("error");
+                    patch.insert("queue".into(), self.queue_state());
+                    patch.insert("inputRouting".into(), self.input_routing());
+                }
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
                 if !self.pending.is_empty() {
                     self.pending.clear();
@@ -741,6 +759,7 @@ impl Projection {
             // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
             KernelEvent::CompactStarted { trigger } => {
                 self.compacting = true;
+                self.compact_turn |= matches!(trigger, CompactTrigger::Manual);
                 self.compact_started(*trigger, now, seq, &mut out);
                 patch.insert("availability".into(), self.availability());
             }

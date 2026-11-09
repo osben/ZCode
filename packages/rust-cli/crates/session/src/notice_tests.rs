@@ -113,6 +113,7 @@ pub(crate) async fn session_with_drain(
             one_input_per_turn,
             desktop_goals: false,
             fork_while_running: false,
+            error_holds_queue: false,
         },
         SessionState {
             commands: Default::default(),
