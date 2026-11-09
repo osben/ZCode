@@ -237,3 +237,31 @@ async fn manual_compact_summarizes_every_round_without_a_tail() {
     let ids: Vec<&str> = sent[0].messages.iter().map(|m| m.id().as_str()).collect();
     assert_eq!(&ids[..4], ["u1", "a1", "u2", "a2"]);
 }
+
+/// Fork: the initial token gap seeds extra kept rounds for automatic compaction only; a manual
+/// `/compact` with a gap still summarizes every round.
+#[tokio::test]
+async fn manual_compact_with_an_initial_gap_keeps_no_tail() {
+    let runner = ScriptedRunner::new(vec![summary("S")]);
+    let ports = ports(runner.clone(), no_tools());
+    let history = vec![
+        human("u1", "first"),
+        reply("a1", "one", None),
+        human("u2", "second"),
+        reply("a2", "two", None),
+        human("u3", "third"),
+        reply("a3", "three", None),
+        human("u4", "fourth"),
+        reply("a4", "four", None),
+    ];
+    let mut compact = request(history, CompactTrigger::Manual);
+    compact.initial_token_gap = Some(1_000_000);
+    let result = Engine { ports: &ports }
+        .run(&compact, true, &CancellationToken::new(), None)
+        .await
+        .unwrap();
+    assert_eq!(result.boundary.preserved, None);
+    let sent = runner.requests();
+    let ids: Vec<&str> = sent[0].messages.iter().map(|m| m.id().as_str()).collect();
+    assert_eq!(&ids[..8], ["u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4"]);
+}

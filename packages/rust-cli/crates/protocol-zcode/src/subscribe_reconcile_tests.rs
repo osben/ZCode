@@ -91,3 +91,34 @@ fn title_sources_normalize_like_node() {
         assert_eq!(entry["titleSource"], json!(wire));
     }
 }
+
+/// Fork: a cold sessions-index row carries the stored creation time and the persisted outcome, so the
+/// Host's CLI-facts mirror does not overwrite them with the last update and a synthetic `completed`.
+#[test]
+fn a_cold_row_reports_the_stored_creation_and_outcome() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::panels::WorkspaceSession;
+    use rust_cli_kernel_api::store::SessionSummary;
+
+    let session = |outcome: Option<&str>, created_at_ms: u64| WorkspaceSession {
+        summary: SessionSummary {
+            id: SessionId::new("sess_1"),
+            title: "Fix the bug".to_owned(),
+            updated_at_ms: 3_000,
+            created_at_ms,
+            last_outcome: outcome.map(str::to_owned),
+        },
+        activity: None,
+        last_reply: None,
+    };
+    let failed = super::cold_row("/work/a", &session(Some("error"), 1_000));
+    assert_eq!(failed["createdAt"], json!(1_000));
+    assert_eq!(failed["lastActivityAt"], json!(3_000));
+    assert_eq!(failed["lastOutcome"], json!("error"));
+    assert_eq!(failed["phase"], json!("error"));
+    let interrupted = super::cold_row("/work/a", &session(Some("interrupted"), 1_000));
+    assert_eq!(interrupted["lastOutcome"], json!("interrupted"));
+    let unfinished = super::cold_row("/work/a", &session(None, 0));
+    assert!(unfinished.get("lastOutcome").is_none());
+    assert_eq!(unfinished["createdAt"], json!(3_000));
+}

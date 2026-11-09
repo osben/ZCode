@@ -473,6 +473,9 @@ async function flushMicrotasks(times = 5): Promise<void> {
 
 const compatIndexFrameSeqByEmitter = new WeakMap<Emitter<SessionsIndexTopicWireFrame>, number>();
 
+/** Sessions of the next initial sessions-index snapshot (reset after each test that sets them). */
+let initialIndexSessions: SessionSummary[] = [];
+
 function fireIndexSnapshot(indexFrameEmitter: Emitter<SessionsIndexTopicWireFrame>): void {
   const seq = 100;
   compatIndexFrameSeqByEmitter.set(indexFrameEmitter, seq);
@@ -488,7 +491,7 @@ function fireIndexSnapshot(indexFrameEmitter: Emitter<SessionsIndexTopicWireFram
         protocolVersion: 1,
         workspaceId: "/repo",
         logEpoch: "epoch-compat",
-        sessions: [],
+        sessions: initialIndexSessions,
       },
     },
   };
@@ -899,9 +902,13 @@ describe("ZCode legacy task compat task index", () => {
 
   // specs/fork-task-index-cli-facts-admission.md: the project tree lists only rows admitted with CLI facts.
   describe("CLI-facts admission from sessions-index summaries", () => {
-    function summary(phase: SessionSummary["phase"], title: string): SessionSummary {
+    function summary(
+      phase: SessionSummary["phase"],
+      title: string,
+      sessionId = "goal-task",
+    ): SessionSummary {
       return {
-        sessionId: "goal-task",
+        sessionId,
         workspaceId: "/repo",
         title,
         phase,
@@ -912,12 +919,12 @@ describe("ZCode legacy task compat task index", () => {
       };
     }
 
-    function cliCreatedAt(): unknown {
+    function cliCreatedAt(taskId = "goal-task"): unknown {
       const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
       try {
         const row = rawDatabase
           .prepare("SELECT cli_created_at FROM tasks WHERE workspace_key = ? AND task_id = ?")
-          .get("/repo", "goal-task") as { cli_created_at: unknown } | undefined;
+          .get("/repo", taskId) as { cli_created_at: unknown } | undefined;
         return row ? row.cli_created_at : "missing";
       } finally {
         rawDatabase.close();
@@ -948,8 +955,22 @@ describe("ZCode legacy task compat task index", () => {
       await service.createTask({ workspacePath: "/repo", provider: "glm" });
       await flushMicrotasks();
       fireIndexUpsert(indexFrameEmitter, summary("draft", ""));
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // A sentinel session delivered right after the draft is admitted through the same path; once
+      // its row exists, any admission of the draft would have been written too.
+      fireIndexUpsert(indexFrameEmitter, summary("running", "Sentinel", "sentinel-task"));
+      await vi.waitFor(() => expect(typeof cliCreatedAt("sentinel-task")).toBe("number"));
       expect(cliCreatedAt()).toBe("missing");
+    });
+
+    it("admits existing sessions from the initial snapshot", async () => {
+      initialIndexSessions = [summary("completedSuccess", "Earlier task", "earlier-task")];
+      try {
+        const { service } = createService();
+        await service.createTask({ workspacePath: "/repo", provider: "glm" });
+        await vi.waitFor(() => expect(typeof cliCreatedAt("earlier-task")).toBe("number"));
+      } finally {
+        initialIndexSessions = [];
+      }
     });
   });
 

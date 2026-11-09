@@ -26,10 +26,15 @@ so every task starts from a project-scoped draft.
 
 ## Product rule
 
-A workspace whose pane has a persisted session restores that session. The remembered
-draft intent for the same workspace key (`workspaceIdentity?.trim() || workspacePath`) is
-skipped. A pane that was on a draft has no persisted session (the persistence effect
-writes `null`), so its draft intent is restored as before.
+A workspace whose pane will restore its persisted session restores that session, and the
+remembered draft intent for the same workspace key (`workspaceIdentity?.trim() ||
+workspacePath`) is skipped. The pane restores only for the active tab, and only on a
+renderer reload or a desktop startup restore (`tab.restorePaneSession`); the skip uses the
+same eligibility (`willRestorePersistedPaneSession`). Inactive tabs, and a pane that was on a
+draft (the persistence effect writes `null`), restore their draft intent as before.
+
+A persisted session that no longer exists is dropped by the pane lookup, which falls back to
+an unscoped draft; the remembered project scope is not re-applied in that case.
 
 ## Owners and event order
 
@@ -39,7 +44,8 @@ renderer reload
      -> restoreWorkspaceTabs
      -> restoreDraftIntents, per workspace tab:
           activeTaskId or draftProjectId set   -> skip
-          hasPersistedPaneSession(workspace)   -> skip (pane owns the restore)
+          willRestorePersistedPaneSession     -> skip (pane owns the restore)
+            (active tab, reload or startup restore, stored session)
           remembered scope                     -> startDraft (draftFocusVersion++)
   -> WorkspaceShellLayout mounts
      -> usePaneSessionPersistence restore effect
@@ -49,7 +55,8 @@ renderer reload
 ## Acceptance
 
 - Unit (fork manifest, `packages/ui/test/paneSessionDraftIntentPrecedence.test.ts`):
-  `hasPersistedPaneSession` reads the identity key, falls back to the path, and is false
-  after the pane returns to a draft.
+  `willRestorePersistedPaneSession` reads the identity key, falls back to the path, is false
+  after the pane returns to a draft, and is true only for the active tab on a reload or a
+  startup restore.
 - E2E: `conversation-session-v4-vertical-slice` restores the streaming session after
   `browser.refresh()` on the Node agent.

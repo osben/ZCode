@@ -361,6 +361,13 @@ pub struct SessionSummary {
     pub id: SessionId,
     pub title: String,
     pub updated_at_ms: u64,
+    /// Fork: the creation time and the persisted outcome of the last turn (Node `session.last_outcome`).
+    /// A cold sessions-index row must not report its last update as its creation, or every session as
+    /// completed, because the Host stores those facts as authoritative.
+    #[serde(default)]
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

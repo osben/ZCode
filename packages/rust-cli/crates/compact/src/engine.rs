@@ -236,11 +236,13 @@ impl Engine<'_> {
             .collect();
         // Fork: like Node `selectCompactEntries`, a manual `/compact` summarizes every round and keeps no
         // tail; only automatic and reactive compaction start by keeping the last round verbatim.
-        let mut keep =
-            usize::from(request.trigger != rust_cli_kernel_api::message::CompactTrigger::Manual);
+        let manual = request.trigger == rust_cli_kernel_api::message::CompactTrigger::Manual;
+        let mut keep = usize::from(!manual);
         // 播种（有初始差且组数 > 3）：差减去最后一组仍 > 0 时，按剩下的差多保留几组。
+        // A manual compact keeps no tail, so it is not seeded either.
         if let Some(gap) = request.initial_token_gap
             && total > SEED_MIN_GROUPS
+            && !manual
         {
             let remaining = gap.saturating_sub(group_tokens[total - 1]);
             if remaining > 0 {

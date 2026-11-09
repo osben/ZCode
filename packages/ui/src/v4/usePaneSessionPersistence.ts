@@ -52,15 +52,23 @@ export function readPersistedPaneSession(workspaceKey: string): PersistedPaneSes
 }
 
 /**
- * Fork: a workspace whose pane was showing a session restores that session on reload or startup.
- * The remembered new-task draft intent for the same workspace is then stale, and restoring it
- * would start a draft, bump `draftFocusVersion`, and cancel the session restore.
+ * Fork: whether the pane restore below will reopen this workspace's persisted session. Only the
+ * active tab restores, on a renderer reload or a desktop startup restore (`shouldRestorePersistedPaneSession`).
+ * The remembered new-task draft intent for that workspace is then stale: restoring it would start a
+ * draft, bump `draftFocusVersion`, and cancel the session restore. Every other tab keeps its draft intent.
  */
-export function hasPersistedPaneSession(
-  workspacePath: string,
-  workspaceIdentity?: string,
-): boolean {
-  return readPersistedPaneSession(workspaceIdentity?.trim() || workspacePath) !== null;
+export function willRestorePersistedPaneSession(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  active: boolean;
+  rendererReload: boolean;
+  restoreOnStartup: boolean;
+}): boolean {
+  return (
+    params.active &&
+    (params.rendererReload || params.restoreOnStartup) &&
+    readPersistedPaneSession(params.workspaceIdentity?.trim() || params.workspacePath) !== null
+  );
 }
 
 export function persistPaneSession(

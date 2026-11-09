@@ -27,7 +27,18 @@ snapshot paths write only organization columns. The row stayed invisible, and
    the fork claim must precede `applyCliFacts`. The generic mirror skips them.
 4. Prepared sessions (`worktreePreparation` / `submissionPreparation`) keep their
    reservation seeding.
-5. The mirrored meta follows upstream `taskFacts.ingest`: title, `titleUpdatedAt`,
+5. The first sessions-index snapshot (the silent baseline) admits existing non-draft
+   sessions through the same mirror, like upstream; it does not broadcast or replay
+   terminal events.
+6. Summary-driven writes for one task run in arrival order
+   (`serializeSummaryWrite`): a handler's follow-up `applyAgentPatch` writes the same
+   title/status/updatedAt as the CLI facts, so it must not land after the next
+   summary's facts.
+7. Cold rows from the Rust agent (stored sessions with no live projection) carry the
+   stored `createdAt` and the persisted `lastOutcome` (`session.last_outcome`), and omit
+   `lastOutcome` when no turn finished. The mirror stores them as authoritative, so a
+   synthetic `completed` or `createdAt = lastActivityAt` would corrupt the row.
+8. The mirrored meta follows upstream `taskFacts.ingest`: title, `titleUpdatedAt`,
    `createdAt`, `updatedAt = lastActivityAt`, `forkedFromTaskId`, `status` from
    `lastOutcome`, and `titleSource` / `lastOutcome` as CLI facts. `updated_at` stays
    CLI time (docs/ui/task-title-authority.md).
@@ -53,7 +64,8 @@ Each path awaits the mirror before its follow-up write, so the snapshot resync
 - Unit (fork manifest): a summary that is `draft` with a title, then `running` with
   the same title, then `completed`, leaves the row with `cli_created_at` set and the
   project tree lists it; a `draft` → `completed` sequence does the same; an untouched
-  `draft` summary writes no row.
+  `draft` summary writes no row; a non-draft session in the initial snapshot is
+  admitted. Rust unit test: a cold row reports the stored creation time and outcome.
 - E2E: `conversation-session-goal`, `-goal-timeline`, `-goal-interruptions` and
   `context-window-cold-resume` pass on the Node agent; the three goal specs also pass on
   the Rust agent. `conversation-session-v4-vertical-slice` passes on both agents once the

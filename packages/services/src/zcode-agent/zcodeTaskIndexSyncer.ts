@@ -610,8 +610,8 @@ export function createZCodeTaskIndexSyncer(
     });
     // updatedAt comes from the CLI summary: Host receive time must not reorder history (I6).
     const updatedAt = summary.lastActivityAt;
-    void mirrorSummaryOrWarn(target, summary)
-      .then(() =>
+    void serializeSummaryWrite(target, () =>
+      mirrorSummaryOrWarn(target, summary).then(() =>
         taskIndexRepo.applyAgentPatch({
           workspacePath: target.workspacePath,
           workspaceIdentity: target.workspaceIdentity,
@@ -622,7 +622,8 @@ export function createZCodeTaskIndexSyncer(
             ? { status: "error", updatedAt }
             : { status: "completed", lastError: undefined, updatedAt },
         }),
-      )
+      ),
+    )
       .then((meta) => {
         if (meta) {
           // Previously only SQLite was updated, with no broadcast; the UI listening for workspace_task_list_changed received no notice,
@@ -720,6 +721,26 @@ export function createZCodeTaskIndexSyncer(
     });
   }
 
+  // Summary-driven writes for one task run in arrival order. A handler's follow-up patch writes the same
+  // title/status/updatedAt as the CLI facts, so it must not land after the next summary's facts.
+  const summaryWrites = new Map<string, Promise<void>>();
+  function serializeSummaryWrite<T>(
+    target: ZCodeAgentSessionTarget,
+    write: () => Promise<T>,
+  ): Promise<T> {
+    const key = JSON.stringify([resolveWorkspaceKey(target), target.sessionId]);
+    const next = (summaryWrites.get(key) ?? Promise.resolve()).then(write);
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    summaryWrites.set(key, settled);
+    void settled.then(() => {
+      if (summaryWrites.get(key) === settled) summaryWrites.delete(key);
+    });
+    return next;
+  }
+
   function mirrorSummaryOrWarn(
     target: ZCodeAgentSessionTarget,
     summary: SessionSummary,
@@ -739,8 +760,8 @@ export function createZCodeTaskIndexSyncer(
     title: string,
     summary: SessionSummary,
   ): void {
-    void mirrorSummaryOrWarn(target, summary)
-      .then((mirrored) =>
+    void serializeSummaryWrite(target, () =>
+      mirrorSummaryOrWarn(target, summary).then((mirrored) =>
         taskIndexRepo
           .applyAgentPatch({
             workspacePath: target.workspacePath,
@@ -749,7 +770,8 @@ export function createZCodeTaskIndexSyncer(
             patch: { title },
           })
           .then((patched) => patched ?? mirrored),
-      )
+      ),
+    )
       .then((meta) => {
         if (meta) {
           emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_title_changed");
@@ -831,7 +853,7 @@ export function createZCodeTaskIndexSyncer(
       // does not pass through zcodeSessionService.createSession. This is the earliest new-task boundary and does not depend on title timing;
       // fetch a snapshot immediately to write the task row and minimum grouped-root sort_order, preventing an unsequenced node from landing at the end.
       // The mirror admits the row before the snapshot write places it at the grouped top.
-      void mirrorSummaryOrWarn(target, next)
+      void serializeSummaryWrite(target, () => mirrorSummaryOrWarn(target, next))
         .then((meta) => {
           if (meta) emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_created");
           return resyncTaskIndexRowFromAgent(target, "session.became-visible", {
@@ -851,7 +873,7 @@ export function createZCodeTaskIndexSyncer(
     if (title && (previous === undefined || previous.title !== next.title)) {
       applyTitleChange(target, title, next);
     } else {
-      void mirrorSummaryOrWarn(target, next);
+      void serializeSummaryWrite(target, () => mirrorSummaryOrWarn(target, next));
     }
   }
 
@@ -878,8 +900,14 @@ export function createZCodeTaskIndexSyncer(
       const results = await Promise.allSettled(
         batch.map((summary) => {
           const meta = buildBaselineMetaFromSummary(state.target, summary);
-          if (!isForkAdmissionCandidate(summary)) return taskIndexRepo.seedTaskMetaIfMissing(meta);
-          return taskIndexRepo.admitForkSummary({ meta, titleSource: summary.titleSource });
+          if (isForkAdmissionCandidate(summary))
+            return taskIndexRepo.admitForkSummary({ meta, titleSource: summary.titleSource });
+          if (summary.phase === "draft") return taskIndexRepo.seedTaskMetaIfMissing(meta);
+          // Like upstream taskFacts.ingest: an existing non-draft session is admitted with its CLI facts,
+          // so a fresh task index lists it without waiting for a later summary.
+          return serializeSummaryWrite(sessionTargetFrom(state.target, summary.sessionId), () =>
+            mirrorSummary(sessionTargetFrom(state.target, summary.sessionId), summary),
+          );
         }),
       );
       for (const result of results) {

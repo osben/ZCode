@@ -242,7 +242,7 @@ fn the_occupancy_carries_the_model_window_for_known_models_only() {
     let carded = compaction
         .context_usage(&history(10), &selection(OPUS_5_5))
         .unwrap();
-    assert!(carded.window_tokens.is_some());
+    assert_eq!(carded.window_tokens, Some(1_000_000));
     let unknown = compaction
         .context_usage(&history(10), &selection("unknown-model"))
         .unwrap();

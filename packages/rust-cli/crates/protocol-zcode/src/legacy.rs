@@ -63,8 +63,13 @@ pub async fn read(server: &Server, params: &Value) -> Result<Value, RpcError> {
     if let Some(level) = &view.selection.reasoning {
         current["options"] = json!({"reasoningLevel": level});
     }
+    // The legacy `contextWindow` is a number: the model's own window, or the effective window when
+    // the model is unknown.
     let (used, size) = view.context_usage.as_ref().map_or((0, 0), |usage| {
-        (usage.used_tokens, usage.window_tokens.unwrap_or(0))
+        (
+            usage.used_tokens,
+            usage.window_tokens.unwrap_or(usage.max_tokens),
+        )
     });
     Ok(json!({
         "protocol": {"name": "ZCode Protocol", "version": 1},
