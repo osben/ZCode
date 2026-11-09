@@ -48,6 +48,7 @@ pub fn load(
         });
     let loaded = LoadedSession {
         commands: commands(&records),
+        message_models: message_models(&records),
         messages: crate::hydrate::hydrate(&active),
         earlier: crate::hydrate::hydrate(&earlier),
         model,
@@ -84,6 +85,41 @@ fn commands(records: &[messages::WithParts]) -> std::collections::BTreeMap<Messa
         .filter_map(|record| {
             let command = record.info["anchor"]["sourceCommandId"].as_str()?;
             (!command.is_empty()).then(|| (MessageId::new(record.id()), CommandId::new(command)))
+        })
+        .collect()
+}
+
+/// Fork: Node's highspeed card providers (`packages/shared/src/highspeed.ts`): a single turn's execution model, not the
+/// session's, so cold resume does not read it as a switch (Node `sessionModelSelectionOfHydratedMessage`).
+const HIGHSPEED_PROVIDERS: [&str; 2] = [
+    "account:zai-highspeed-card",
+    "account:bigmodel-highspeed-card",
+];
+
+/// Fork: the stored model of each assistant message, read like Node `assistantModelSelectionOf` (not a timeline event,
+/// both ids present, highspeed providers left out), for the cold model switch divider.
+fn message_models(
+    records: &[messages::WithParts],
+) -> std::collections::BTreeMap<MessageId, ModelSelection> {
+    records
+        .iter()
+        .filter(|record| record.info["role"] == "assistant")
+        .filter(|record| record.info["semantics"]["kind"] != "timeline_event")
+        .filter_map(|record| {
+            let provider = record.info["providerId"]
+                .as_str()
+                .filter(|id| !id.is_empty())?;
+            let model = record.info["modelId"]
+                .as_str()
+                .filter(|id| !id.is_empty())?;
+            if HIGHSPEED_PROVIDERS.contains(&provider) {
+                return None;
+            }
+            let selection = ModelSelection {
+                reasoning: record.info["reasoningLevel"].as_str().map(str::to_owned),
+                ..ModelSelection::new(provider.to_owned(), model.to_owned())
+            };
+            Some((MessageId::new(record.id()), selection))
         })
         .collect()
 }

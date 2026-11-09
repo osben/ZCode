@@ -115,6 +115,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         title_pending: true,
         goal_target: None,
         goal_verifications: Vec::new(),
+        message_models: Default::default(),
     };
     round_trip(&loaded);
     // 没有这些字段的旧结果也能读，读出来是空清单。

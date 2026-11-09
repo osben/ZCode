@@ -390,6 +390,10 @@ pub struct SessionView {
     /// desktop App.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<crate::goal::GoalState>,
+    /// Fork: the model each assistant message ran on (stored, or recorded at commit), so a cold projection draws Node's
+    /// model switch dividers between turns. Empty when unknown.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
 }
 
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).

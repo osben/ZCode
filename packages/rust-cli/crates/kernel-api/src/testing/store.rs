@@ -297,6 +297,7 @@ impl SessionStore for MemoryStore {
             title_pending,
             goal_target: goal_target.flatten(),
             goal_verifications,
+            message_models: Default::default(),
         })
     }
 

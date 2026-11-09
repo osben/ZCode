@@ -268,6 +268,10 @@ pub struct LoadedSession {
     /// Fork (desktop App): the stored goal verification steps, the latest step per target and iteration, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub goal_verifications: Vec<crate::goal::RecordedVerification>,
+    /// Fork: the stored model of each assistant message (Node `providerId`, `modelId`, `reasoningLevel`), for the
+    /// cold model switch divider ([`crate::session_api::SessionView::message_models`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、

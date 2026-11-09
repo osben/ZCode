@@ -7,7 +7,7 @@ use crate::actor::Actor;
 use rust_cli_kernel_api::compaction::{ContextNotice, ContextOccupancy};
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::message::{CompactTrigger, Message, SystemMessage};
-use rust_cli_kernel_api::orchestration::{CompactRequest, QueryStop, RunSink};
+use rust_cli_kernel_api::orchestration::{CompactRequest, OrchestrationError, QueryStop, RunSink};
 use rust_cli_kernel_api::session_api::KernelEvent;
 use rust_cli_kernel_api::user_command::{LocalCommandOutput, LocalCommandRecord, dim};
 
@@ -82,6 +82,17 @@ impl Actor {
                     Ok(QueryStop::Completed)
                 }
                 Err(_) if signal.is_aborted() => Ok(QueryStop::Aborted),
+                // Fork: the desktop's skipped compaction (too little history) completes the turn, like Node.
+                Err(OrchestrationError::Skipped { message }) => {
+                    sink.compact_skipped(CompactTrigger::Manual).await;
+                    let record = compact_record(&args, LocalCommandOutput::Stdout(message));
+                    sink.commit_messages(crate::local_record::record_messages(
+                        ids.as_ref(),
+                        &record,
+                    ))
+                    .await?;
+                    Ok(QueryStop::Completed)
+                }
                 // 失败原因是给用户的原文（例如 `Not enough messages to compact.`）。
                 Err(error) => {
                     let message = error.to_string();

@@ -292,6 +292,7 @@ async fn asking_session_with(
             title_pending: true,
             goal_target: None,
             goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Created,
     );

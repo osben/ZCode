@@ -535,9 +535,11 @@ impl Projection {
         match &event.event {
             KernelEvent::TurnStarted { turn, command } => {
                 self.goal_verifier_failed = false;
+                let selection = Some(self.selection.clone());
                 self.start_turn(
                     turn.as_str(),
                     command.as_ref().map(|c| c.as_str().to_owned()),
+                    selection,
                     now,
                     seq,
                     &mut out,
@@ -753,7 +755,14 @@ impl Projection {
                 patch.insert("availability".into(), self.availability());
             }
             KernelEvent::CompactSkipped { trigger } => {
-                self.compact_skipped(*trigger, now, seq, &mut out);
+                // A `/compact` announces its marker first; a skipped one settles it as `noop`.
+                if self.compacting {
+                    self.compacting = false;
+                    self.compact_settled("noop", &mut out);
+                    patch.insert("availability".into(), self.availability());
+                } else {
+                    self.compact_skipped(*trigger, now, seq, &mut out);
+                }
             }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
@@ -829,6 +838,7 @@ impl Projection {
         &mut self,
         turn: &str,
         command: Option<String>,
+        selection: Option<ModelSelection>,
         now: u64,
         seq: u64,
         out: &mut Vec<Value>,
@@ -851,7 +861,7 @@ impl Projection {
             output_tokens: None,
             control_only: false,
         });
-        self.model_change(turn, now, seq, out);
+        self.model_change(turn, selection, now, seq, out);
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));
         row.insert("executionKind".into(), json!("agent"));

@@ -206,6 +206,9 @@ pub struct SessionState {
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
     pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
+    /// Fork: the model of each assistant message (cold load: `LoadedSession.message_models`).
+    pub message_models:
+        std::collections::BTreeMap<rust_cli_kernel_api::ids::MessageId, ModelSelection>,
 }
 
 impl SessionState {
@@ -231,6 +234,7 @@ impl SessionState {
             title_pending: true,
             goal_target: None,
             goal_verifications: Vec::new(),
+            message_models: Default::default(),
         }
     }
 
@@ -263,6 +267,7 @@ impl SessionState {
             title_pending: loaded.title_pending,
             goal_target: loaded.goal_target,
             goal_verifications: loaded.goal_verifications,
+            message_models: loaded.message_models,
         }
     }
 }

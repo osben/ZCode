@@ -129,6 +129,7 @@ pub(crate) async fn session_with_drain(
             title_pending: true,
             goal_target: None,
             goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Loaded,
     )

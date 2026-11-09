@@ -325,6 +325,7 @@ impl Setup {
                 title_pending: self.title_pending,
                 goal_target: self.goal_target,
                 goal_verifications: self.goal_verifications,
+                message_models: Default::default(),
             },
             self.opened,
         );

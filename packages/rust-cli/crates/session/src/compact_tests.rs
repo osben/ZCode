@@ -27,6 +27,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Opened, Session, SessionDeps, SessionState};
 
+/// Fork: the desktop compactor's skipped text; the fake answers it with `OrchestrationError::Skipped`.
+const UP_TO_DATE: &str = "Context is up to date; no compression needed";
+
 /// 成功时给出固定的结果；`fail` 时以固定的原文失败。
 struct FakeCompactor {
     fail: Option<String>,
@@ -78,6 +81,11 @@ impl Compactor for FakeCompactor {
         _cancel: CancellationToken,
     ) -> Result<CompactResult, OrchestrationError> {
         if let Some(message) = &self.fail {
+            if message == UP_TO_DATE {
+                return Err(OrchestrationError::Skipped {
+                    message: message.clone(),
+                });
+            }
             return Err(OrchestrationError::Failed {
                 message: message.clone(),
             });
@@ -202,6 +210,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             title_pending: true,
             goal_target: None,
             goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Loaded,
     );
@@ -352,6 +361,33 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
     assert_eq!(
         record_texts(&view.messages)[2],
         "<local-command-stderr>Not enough messages to compact.</local-command-stderr>"
+    );
+}
+
+/// Fork: a desktop `/compact` with too little history is Node's skipped compaction: `CompactSkipped`, a completed
+/// turn, and the stdout record with Node's text.
+#[tokio::test]
+async fn a_skipped_compaction_completes_the_turn() {
+    let (_scope, _store, session) = session(Some(UP_TO_DATE)).await;
+    assert!(matches!(
+        session.send(compact()).await,
+        Ack::Accepted { .. }
+    ));
+    let events = events_until_finished(&session).await;
+    assert!(events.contains(&KernelEvent::CompactSkipped {
+        trigger: CompactTrigger::Manual
+    }));
+    assert!(matches!(
+        events.last(),
+        Some(KernelEvent::TurnFinished {
+            outcome: TurnOutcome::Success,
+            ..
+        })
+    ));
+    let view = session.view().await.unwrap();
+    assert_eq!(
+        record_texts(&view.messages)[2],
+        format!("<local-command-stdout>{UP_TO_DATE}</local-command-stdout>")
     );
 }
 

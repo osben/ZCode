@@ -301,6 +301,10 @@ pub enum OrchestrationError {
     /// 会话已经关闭（会话 actor 收不下请求了；工作线 F130，以前各处写 `Failed { "the session is closed" }`）。
     #[error("the session is closed")]
     Closed,
+    /// Fork: the request had nothing to do and is not a failure: a desktop compaction with too little history, Node's
+    /// `skipped` compaction (specs/fork-rust-agent-parity.md, Compact timeline markers). `message` is Node's text.
+    #[error("{message}")]
+    Skipped { message: String },
 }
 
 #[async_trait]

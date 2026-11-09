@@ -845,6 +845,43 @@ fn a_skipped_compaction_is_a_noop_row() {
     );
 }
 
+/// Fork: a skipped `/compact` settles its announced marker as `noop` (one row); its turn then completes without
+/// changing it, and the row actions come back.
+#[test]
+fn a_skipped_manual_compaction_settles_its_marker_as_noop() {
+    use rust_cli_kernel_api::message::CompactTrigger;
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: Some(CommandId::new("cmd_compact")),
+    });
+    feed.apply(KernelEvent::CompactStarted {
+        trigger: CompactTrigger::Manual,
+    });
+    let skipped = feed.apply(KernelEvent::CompactSkipped {
+        trigger: CompactTrigger::Manual,
+    });
+    assert!(!skipped.iter().any(|delta| delta["op"] == "row.appended"));
+    let availability = skipped
+        .iter()
+        .find_map(|delta| delta["patch"].get("availability"))
+        .unwrap();
+    assert_eq!(availability["compact"]["allowed"], true);
+    feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    let markers: Vec<_> = feed
+        .projection
+        .rows
+        .iter()
+        .filter(|row| row["kind"] == "timelineMarker")
+        .collect();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0]["marker"]["status"], "noop");
+}
+
 #[test]
 fn a_cold_projection_shows_stored_compactions() {
     use rust_cli_kernel_api::message::{CompactBoundary, CompactTrigger, SystemMessage};

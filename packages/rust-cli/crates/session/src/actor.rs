@@ -186,6 +186,9 @@ pub(crate) struct Actor {
     /// Fork: the command that submitted each typed user message, loaded with the session and extended by
     /// [`Self::commit`]; only [`Self::view`] reads it (cold rows' `sourceCommandId`).
     pub(crate) commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: the model of each assistant message, loaded with the session and extended by [`Self::commit`]; only
+    /// [`Self::view`] reads it (the cold model switch divider).
+    pub(crate) message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
     pub(crate) selection: ModelSelection,
     /// 执行状态：权限模式 × plan 开关（修复线 F20，shell-permissions.md §4.6）。判决用的模式是 [`Self::mode`]。
     pub(crate) execution: rust_cli_kernel_api::permission::ExecutionState,
@@ -302,6 +305,7 @@ impl Actor {
             messages: state.messages,
             earlier: state.earlier,
             commands: state.commands,
+            message_models: state.message_models,
             selection: state.selection,
             execution: state.mode,
             plan_flags: Default::default(),
@@ -752,6 +756,7 @@ impl Actor {
             context_notice: self.context_notice().unwrap_or_default(),
             output_speed: self.output_speed,
             commands: self.commands.clone(),
+            message_models: self.message_models.clone(),
             // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
             turn_files: self
                 .turn_files

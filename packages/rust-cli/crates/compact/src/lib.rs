@@ -162,6 +162,9 @@ pub struct Compaction {
     config: CompactConfig,
 }
 
+/// Fork: Node's text for a skipped compaction (`compactActiveConversation`).
+const UP_TO_DATE: &str = "Context is up to date; no compression needed";
+
 fn failed(failure: &Failure) -> OrchestrationError {
     OrchestrationError::Failed {
         message: failure.to_string(),
@@ -350,9 +353,13 @@ impl Compactor for Compaction {
             });
         }
         // 手动与反应式压缩许“全部摘要”（没有媒体超限错误时）。
-        self.run(&request, true, &cancel, None)
-            .await
-            .map_err(|f| failed(&f))
+        match self.run(&request, true, &cancel, None).await {
+            // Fork: on the desktop a `/compact` with too little history is Node's healthy no-op, not a failure.
+            Err(Failure::NotEnough) if !self.config.blocking => Err(OrchestrationError::Skipped {
+                message: UP_TO_DATE.to_owned(),
+            }),
+            result => result.map_err(|f| failed(&f)),
+        }
     }
 }
 
