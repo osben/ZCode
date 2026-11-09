@@ -146,6 +146,8 @@ impl Actor {
                 command,
                 text,
                 delivery: Delivery::Queue,
+                kind: Default::default(),
+                execution: None,
             });
             self.emit_queue();
         }

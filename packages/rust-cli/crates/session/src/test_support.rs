@@ -155,6 +155,12 @@ pub(crate) struct Setup {
     pub peers: crate::PeerDeps,
     /// 父会话关闭之后的询问入口（detached_tests.rs）；缺省没有。
     pub detached: Option<Arc<crate::DetachedAsks>>,
+    /// Fork: `SessionDeps::one_input_per_turn`; off by default.
+    pub one_input_per_turn: bool,
+    /// Fork: `SessionDeps::desktop_goals`; off by default.
+    pub desktop_goals: bool,
+    /// Fork: `SessionDeps::fork_while_running`; off by default.
+    pub fork_while_running: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -165,6 +171,8 @@ pub(crate) struct Setup {
     pub root: &'static str,
     /// 会话 actor 的时钟（回合结束那一行的用时，duration_tests.rs 拨动它）；缺省固定在 1000。
     pub clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+    /// Fork: the mirrored child run (`SessionState::child_live`); none by default.
+    pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
 }
 
 impl Setup {
@@ -195,11 +203,15 @@ impl Setup {
             last_turn_failed: false,
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
+            desktop_goals: false,
+            fork_while_running: false,
             store: None,
             store_hooks: None,
             machines: None,
             root: "/work",
             clock: Arc::new(FixedClock(1_000)),
+            child_live: None,
         }
     }
 
@@ -285,6 +297,9 @@ impl Setup {
                 directory_rules: self.directory_rules,
                 peers: self.peers,
                 detached: self.detached,
+                one_input_per_turn: self.one_input_per_turn,
+                desktop_goals: self.desktop_goals,
+                fork_while_running: self.fork_while_running,
             },
             SessionState {
                 commands: Default::default(),
@@ -297,6 +312,7 @@ impl Setup {
                 start: self.start,
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
+                child_live: self.child_live,
             },
             self.opened,
         );

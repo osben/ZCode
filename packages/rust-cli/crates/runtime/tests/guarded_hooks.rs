@@ -54,6 +54,7 @@ mod guarded_hooks {
 
     fn finished() -> CommandEvent {
         CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Completed,
             exit_code: Some(0),
             timed_out: false,
@@ -209,6 +210,7 @@ mod guarded_hooks {
                 InteractionRequest::Permission {
                     message,
                     suggestions,
+                    once,
                     ..
                 },
         } = first
@@ -222,6 +224,8 @@ mod guarded_hooks {
         assert_eq!(message, GUARDED_ASK);
         // 只批准这一次：没有“总是允许”。
         assert!(suggestions.is_empty(), "{suggestions:?}");
+        // The App projects a single-use ask (Node `approvalMode: "user-once"`).
+        assert!(once);
         let answer = session
             .send(CommandEnvelope {
                 id: CommandId::new("c2"),

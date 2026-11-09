@@ -328,6 +328,7 @@ async fn tools(store: &NodeStore) -> Result<SessionId> {
             media_type: "image/png".into(),
             data: "iVBORw0KGgo=".into(),
         },
+        name: None,
     };
     let facts = vec![
         user_with(

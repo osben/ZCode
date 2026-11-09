@@ -18,7 +18,12 @@ impl Actor {
             return;
         }
         let mut files = Vec::new();
+        let turn_input = settled
+            .first()
+            .map(|(checkpoint, _)| checkpoint.prompt.clone());
         for (checkpoint, change) in settled {
+            // Fork: the per-turn summary the view serves (and a cold projection rebuilds from).
+            self.turn_files_settled(&checkpoint.prompt, &change);
             self.checkpoints.push(checkpoint);
             files.push(change);
         }
@@ -26,6 +31,7 @@ impl Actor {
             turn,
             files,
             rewindable: true,
+            turn_input,
         });
     }
 }

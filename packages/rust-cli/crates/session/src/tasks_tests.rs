@@ -639,3 +639,35 @@ async fn closing_does_not_wait_for_a_reconnecting_machine() {
     .await
     .expect("closing does not wait for a reconnecting machine");
 }
+
+/// Fork: the desktop background Bash detail reads the output file's tail with the ledger's status; a missing
+/// file is `ENOENT` (Node `readBackgroundBashOutput`).
+#[tokio::test]
+async fn the_bash_output_window_reads_the_output_file() {
+    use rust_cli_kernel_api::panels::BashOutputRead;
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let Some(BashOutputRead::Window {
+        status,
+        text,
+        truncated,
+        path,
+    }) = built.session.background_bash_output("b1").await.unwrap()
+    else {
+        panic!("expected a window");
+    };
+    assert_eq!(status, Some(BackgroundStatus::Running));
+    assert!(
+        text.starts_with("line 1\n") && text.ends_with("line 45"),
+        "{text}"
+    );
+    assert!(!truncated);
+    assert!(path.as_str().ends_with("/b1.output"), "{path:?}");
+    assert_eq!(
+        built.session.background_bash_output("b3").await.unwrap(),
+        Some(BashOutputRead::ReadFailed {
+            code: Some("ENOENT".to_owned())
+        })
+    );
+}

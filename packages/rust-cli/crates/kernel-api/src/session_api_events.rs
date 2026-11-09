@@ -46,6 +46,55 @@ pub struct QueuedInput {
     pub command: CommandId,
     pub text: String,
     pub delivery: Delivery,
+    /// Fork: what the queued item does when it drains (the App's queue item `kind`).
+    #[serde(default, skip_serializing_if = "QueuedKind::is_text")]
+    pub kind: QueuedKind,
+    /// Fork: the execution state frozen when the input was submitted (Node's queued intent
+    /// `mode`/`planEnabled`/`modelSelection`). The session applies it when the item starts its turn;
+    /// `None` keeps the session's state (TUI inputs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<InputExecution>,
+}
+
+impl QueuedInput {
+    /// A plain text input without a frozen execution state.
+    pub fn text(command: CommandId, text: String, delivery: Delivery) -> Self {
+        Self {
+            command,
+            text,
+            delivery,
+            kind: QueuedKind::Text,
+            execution: None,
+        }
+    }
+}
+
+/// Fork: the kind of a queued input (Node's queue item `kind`: `sendText`, `sendGoalCommand`, `compact`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueuedKind {
+    /// A user input that opens a turn.
+    #[default]
+    Text,
+    /// A `/goal <objective>` input: drains like text (the goal command is read from the text).
+    Goal,
+    /// A manual compaction queued behind the running turn; it is not a user message.
+    Compact,
+}
+
+impl QueuedKind {
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::Text)
+    }
+}
+
+/// Fork: the execution state an input was submitted with (Node's Submission `mode`, `planEnabled`,
+/// `modelSelection`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputExecution {
+    pub state: crate::permission::ExecutionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<ModelSelection>,
 }
 
 /// 只供显示的系统提示的级别（informational system 消息的 `level`）。
@@ -82,6 +131,11 @@ pub enum KernelEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<CommandId>,
     },
+    /// Fork (desktop App): the turn that just started makes no model call, like Node's `/goal X` control turn
+    /// (`executionKind: "controlOnly"`): the App shows no work footer for it.
+    TurnControlOnly {
+        turn: TurnId,
+    },
     TurnFinished {
         turn: TurnId,
         outcome: TurnOutcome,
@@ -116,6 +170,11 @@ pub enum KernelEvent {
         turn: TurnId,
         files: Vec<FileChange>,
         rewindable: bool,
+        /// Fork: the message that opened the turn (the checkpoints' `prompt`), typed or
+        /// model-only. The desktop's per-turn file queries address the turn by it; a turn opened
+        /// by a background task notification has no typed user row to take it from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_input: Option<MessageId>,
     },
     InteractionAsked {
         interaction: InteractionId,
@@ -164,6 +223,30 @@ pub enum KernelEvent {
     /// 历史被改写（rewind、编辑重发）；前端丢弃旧视图后重新取快照。
     HistoryRewritten {
         generation: u64,
+    },
+    /// Fork: the checkpoints of the turn opened by `turn_input` were all restored
+    /// ([`crate::session_api::Command::RewindTurnFiles`]); the turn header's file summary flips to
+    /// reverted and stops offering the rewind-files action.
+    TurnFilesReverted {
+        turn_input: MessageId,
+    },
+    /// Fork: full access was granted from the permission ask `interaction`
+    /// ([`crate::session_api::Command::GrantFullAccess`]), right after the mode change. The desktop
+    /// composer adopts the session mode once per grant (Node `config.permissionGrant`).
+    PermissionGranted {
+        interaction: String,
+    },
+    /// Fork: a plan tool (EnterPlanMode / ExitPlanMode call `tool_call`) set the plan switch to
+    /// `enabled`, right after the plan change. The desktop composer adopts the plan switch once per
+    /// transition (Node `config.planTransition`).
+    PlanTransition {
+        tool_call: String,
+        enabled: bool,
+    },
+    /// Fork: the desktop goal changed (set, paused, resumed, evaluated, cleared); `goal` is the
+    /// state after the change (Node `TargetChanged`, projected as the snapshot `goal`).
+    GoalChanged {
+        goal: Option<crate::goal::GoalState>,
     },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。

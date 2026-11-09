@@ -9,7 +9,9 @@ fn write(path: &str, before: Option<&str>, after: &str) -> Artifact {
             existed_before: before.is_some(),
             before_content: before.map(str::to_owned),
             after_content: Some(after.into()),
+            structured_patch: Vec::new(),
         }],
+        tool_name: None,
     }
 }
 

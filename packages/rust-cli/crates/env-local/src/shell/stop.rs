@@ -64,7 +64,11 @@ impl Shells {
             }) => {
                 let shell = state.sessions.entry(request.session.clone()).or_default();
                 let operation = shell.background.remove(&request.task);
-                shell.stopped.insert(request.task.clone());
+                // Fork (node_desktop): the stopped command still records its killed notice so the parent wakes
+                // like Node's `<status>killed</status>` notification.
+                if !request.notify_stop {
+                    shell.stopped.insert(request.task.clone());
+                }
                 if let Some(running) = operation.and_then(|op| state.commands.get(&op)) {
                     running.cancel.cancel();
                 }

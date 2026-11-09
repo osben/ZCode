@@ -328,6 +328,7 @@ impl Tool for AskUserQuestionTool {
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
         let request = InteractionRequest::Question {
+            origin: None,
             tool_use: context.tool_use.clone(),
             questions: input.get("questions").cloned().unwrap_or(Value::Null),
         };

@@ -20,6 +20,7 @@ fn status(met: bool, failed: bool) -> GoalStatus {
         iterations: (met || failed).then_some(2),
         duration_ms: (met || failed).then_some(65_000),
         tokens: (met || failed).then_some(1_234),
+        paused: None,
     }
 }
 

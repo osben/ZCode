@@ -1,0 +1,19 @@
+# Third-party crates in zcode-rs The `zcode-rs` agent links the Rust crates below. Vendored C and
+C++ sources are listed in `VENDORED-THIRD-PARTY-NOTICES.txt` next to this file.
+
+{{#each licenses}}
+  ##
+  {{name}}
+
+  Used by:
+  {{#each used_by}}
+    -
+    {{crate.name}}
+    {{crate.version}}
+  {{/each}}
+
+  ```
+  {{{text}}}
+  ```
+
+{{/each}}

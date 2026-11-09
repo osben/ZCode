@@ -31,6 +31,8 @@ impl SessionView {
             context_notice: crate::compaction::ContextNotice::default(),
             output_speed: None,
             commands: Default::default(),
+            turn_files: Default::default(),
+            goal: None,
         }
     }
 }

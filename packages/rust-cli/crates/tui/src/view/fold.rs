@@ -275,6 +275,13 @@ impl Transcript {
             // 任务清单与每回合的改动只进投影，不加行（tui-display.md §2.2、§2.4）。
             KernelEvent::TasksChanged { tasks } => self.tasks_changed(tasks),
             KernelEvent::FileChanges { turn, files, .. } => self.file_changes(turn, files),
+            // Fork: the App's per-turn summary rewind flips the turn header's state; the TUI's own
+            // per-turn display reads `FileChanges` and does not change on restore.
+            KernelEvent::TurnFilesReverted { .. }
+            | KernelEvent::PermissionGranted { .. }
+            | KernelEvent::PlanTransition { .. }
+            | KernelEvent::GoalChanged { .. }
+            | KernelEvent::TurnControlOnly { .. } => {}
             // HistoryRewritten 由 runner 处理（丢弃视图后重新 view()）；后台任务的快照由 runner 在
             // BackgroundWork 之后重取（tui-display.md §1）；其余不显示（tui.md §9）。
             KernelEvent::WorkspaceChanged { workspace } => self.workspace = workspace,

@@ -151,6 +151,16 @@ pub async fn remove_optional(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Fork: remove a directory tree; a missing directory is not an error (session erase, Node
+/// `rm(target, { recursive: true, force: true })`).
+pub async fn remove_dir_all_optional(path: &Path) -> io::Result<()> {
+    match tokio::fs::remove_dir_all(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// 在文件末尾追加 `bytes`（按需建父目录与文件）。只给"一个写者、按顺序追加"的日志类文件用
 /// （例如 TUI 输入历史）；调用方保证同一个文件只有一个写者。
 pub async fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {

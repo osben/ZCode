@@ -13,6 +13,7 @@ use crate::DetachedAsks;
 
 fn question() -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".to_owned(),
@@ -21,6 +22,7 @@ fn question() -> InteractionRequest {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: Some("Explore".to_owned()),
+        once: false,
     }
 }
 

@@ -18,6 +18,7 @@ use std::collections::VecDeque;
 use rust_cli_kernel_api::hooks::HookOutcome;
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
 use rust_cli_kernel_api::message::ContentBlock;
+use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{Delivery, QueuedInput};
 
 use crate::lane::Waiting;
@@ -31,6 +32,8 @@ pub(crate) enum InputKind {
     Bash(String),
     /// 带内容块的输入（粘贴的图片）。
     Content(Vec<ContentBlock>),
+    /// Fork: a manual compaction queued behind the running turn (`Command::SubmitWith`).
+    Compact,
 }
 
 /// 并入点的筛查（steering.rs）。
@@ -117,6 +120,9 @@ pub(crate) struct Inbox {
     items: VecDeque<Item>,
     /// 下一条通知的 [`NoticeKey`]。
     next_key: u64,
+    /// Fork: the drain is paused (`Command::HoldQueue`, Node `setAutoDrain` with `autoDrain: false`):
+    /// turn ends do not start queued inputs until it is released.
+    held: bool,
 }
 
 impl Inbox {
@@ -199,6 +205,99 @@ impl Inbox {
             Some(Item::Input(queued)) => Some(queued),
             Some(Item::Notice(_)) | None => None,
         }
+    }
+
+    /// Fork: replace the text of a still-queued input in place (Node `editQueueItem`, kernel
+    /// `EditQueued`) — the input keeps its position, delivery and screening. `false` when it is no
+    /// longer queued (already started or merged into a turn), the same miss as `remove_input`.
+    /// For bash-mode and content-block inputs this rewrites the display text only; their turn input
+    /// comes from the kind, and the App's queue panel only edits typed text inputs.
+    pub(crate) fn edit_input(&mut self, command: &CommandId, text: String) -> bool {
+        for item in &mut self.items {
+            if let Item::Input(queued) = item
+                && queued.input.command == *command
+                // A queued compaction has no text to edit (Node `queueEdit` refuses maintenance items).
+                && !matches!(queued.kind, InputKind::Compact)
+            {
+                queued.input.text = text;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Fork: a compaction is already queued (Node `compactOperationLock`).
+    pub(crate) fn has_compact(&self) -> bool {
+        self.items.iter().any(
+            |item| matches!(item, Item::Input(queued) if matches!(queued.kind, InputKind::Compact)),
+        )
+    }
+
+    /// Fork: full access rewrites the frozen permission mode of every queued input that carries one,
+    /// keeping its plan switch (Node's `fullAccess` rewrites the queued intents). `true` when one changed.
+    pub(crate) fn set_queued_mode(&mut self, mode: PermissionMode) -> bool {
+        let mut changed = false;
+        for item in &mut self.items {
+            if let Item::Input(queued) = item
+                && let Some(execution) = &mut queued.input.execution
+                && execution.state.mode != mode
+            {
+                execution.state = execution.state.with_mode(mode);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Fork: move a queued input before another queued input, or to the end of the queue when `before`
+    /// is `None` (Node `reorderQueueItem`, kernel `ReorderQueued`). `false` — leaving everything
+    /// unchanged — when either input is no longer queued (a `before` equal to the moved input counts as
+    /// a miss: it is not there once the moved one is taken out).
+    pub(crate) fn reorder_input(
+        &mut self,
+        command: &CommandId,
+        before: Option<&CommandId>,
+    ) -> bool {
+        let Some(at) = self.items.iter().position(
+            |item| matches!(item, Item::Input(queued) if queued.input.command == *command),
+        ) else {
+            return false;
+        };
+        let Some(Item::Input(moved)) = self.items.remove(at) else {
+            return false;
+        };
+        let target = before.and_then(|before| {
+            self.items.iter().position(
+                |item| matches!(item, Item::Input(queued) if queued.input.command == *before),
+            )
+        });
+        match target {
+            // The position is taken after the removal, so the moved input lands right before the target.
+            Some(target) => {
+                self.items.insert(target, Item::Input(moved));
+                true
+            }
+            None if before.is_none() => {
+                self.items.push_back(Item::Input(moved));
+                true
+            }
+            // The anchor is gone: put the input back where it was.
+            None => {
+                self.items.insert(at, Item::Input(moved));
+                false
+            }
+        }
+    }
+
+    /// Fork: the queue is held (`Command::HoldQueue`, Node `setAutoDrain`): turn ends do not start
+    /// queued inputs.
+    pub(crate) fn held(&self) -> bool {
+        self.held
+    }
+
+    /// Fork: set the hold; returns whether it changed (the actor emits `QueueChanged` on a change).
+    pub(crate) fn set_held(&mut self, held: bool) -> bool {
+        std::mem::replace(&mut self.held, held) != held
     }
 
     /// 并入点筛查后留下（`Fate::Waits`）。

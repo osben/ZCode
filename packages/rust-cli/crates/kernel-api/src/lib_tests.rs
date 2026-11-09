@@ -223,6 +223,7 @@ fn attachment_blocks_live_in_data() {
             media_type: "image/png".to_owned(),
             data: "iVBORw0KGgo=".to_owned(),
         },
+        name: None,
     };
     let attachment = |data: serde_json::Value| AttachmentMessage {
         id: MessageId::new("m"),
@@ -477,6 +478,7 @@ fn question_and_plan_answers_have_a_stable_shape() {
             session: SessionId::new("s1"),
             title: String::new(),
             request: InteractionRequest::Question {
+                origin: None,
                 tool_use: ToolUseId::new("tu1"),
                 questions: json!([]),
             },

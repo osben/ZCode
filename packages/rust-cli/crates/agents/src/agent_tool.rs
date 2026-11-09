@@ -108,7 +108,11 @@ impl Tool for AgentTool {
         {
             return fork.input_schema.clone();
         }
-        rust_cli_prompts::definition(NAME).schema.clone()
+        let schema = &rust_cli_prompts::definition(NAME).schema;
+        if self.core.node_desktop {
+            return crate::desktop_prompt::input_schema(schema);
+        }
+        schema.clone()
     }
 
     /// Agent 的 schema 是宽松对象（agents.md §2，修复线 F51）：schema 外的键（例如删掉的 `model`，F51b 删掉的
@@ -123,7 +127,11 @@ impl Tool for AgentTool {
         {
             return fork.description.clone();
         }
-        rust_cli_prompts::definition(NAME).description.clone()
+        let description = &rust_cli_prompts::definition(NAME).description;
+        if self.core.node_desktop {
+            return crate::desktop_prompt::description(description);
+        }
+        description.clone()
     }
 
     /// 权限交给子代理自己的工具，Agent 本身算只读。
@@ -182,8 +190,11 @@ impl Tool for AgentTool {
         // 子代理里派生时同样按参数（以前总在前台：子会话没有 actor 接收通知）。嵌套的后台子代理的
         // 通知送给派生它的子代理（owner），由 `routing` 投递（agents.md §5.1）。fork 打开时一律在后台（对照实现
         // 同样，修复线 L-A）。
-        let background =
-            self.core.fork || input.run_in_background.unwrap_or(true) || definition.background;
+        // Fork (node_desktop): Node runs an Agent call in the background only on
+        // `run_in_background: true`; zcode-rs defaults to the background.
+        let background = self.core.fork
+            || input.run_in_background.unwrap_or(!self.core.node_desktop)
+            || definition.background;
         let fork = definition.agent_type == crate::fork::FORK && self.core.fork;
         // fork 继承父会话已提交的对话（agents.md §8.1.2）；会话 actor 是它的 owner。
         let inherited = if fork {
@@ -218,6 +229,7 @@ impl Tool for AgentTool {
             owner,
             depth,
             tool_use: Some(context.tool_use.clone()),
+            stopped_by_user: false,
             description: input.description.clone(),
             // fork 总用父运行的模型与档位（`effort` 参数忽略）。
             selection: if fork {
@@ -264,6 +276,11 @@ impl Tool for AgentTool {
             spawn::background(core, entry, opening);
             return Ok(output);
         }
+        // Fork: the foreground child is announced before its first model response, so the
+        // desktop shows it while it waits (the child's own progress starts with that response).
+        let _ = progress.try_send(ToolProgress {
+            data: serde_json::json!({ "agentId": entry.agent }),
+        });
         let parent = Parent {
             session: context.session.clone(),
             asks: context.interactions.clone(),

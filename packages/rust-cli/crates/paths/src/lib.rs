@@ -238,6 +238,12 @@ impl StoragePaths {
         &self.artifacts
     }
 
+    /// Fork: the storage root itself; per-session directories live under `<root>/cli/` (session
+    /// erase, Node `storageRoot`).
+    pub fn root(&self) -> &StoragePath {
+        &self.root
+    }
+
     /// 自动记忆目录。`project` 是项目的规范路径（git 根，不在仓库里时用项目根），
     /// 由调用方从执行环境的事实算好。
     pub fn memory_dir(&self, project: &str) -> StoragePath {

@@ -132,6 +132,9 @@ fn spawn(
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
+            desktop_goals: false,
+            fork_while_running: false,
         },
         SessionState {
             commands: Default::default(),
@@ -144,6 +147,7 @@ fn spawn(
             start: StartSource::Startup,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
         },
         Opened::Created,
     )

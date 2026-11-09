@@ -121,6 +121,8 @@ pub(crate) enum Ending {
     Killed,
     /// 停放时被 TaskStop 停止（`killedBy` 缺省为 `"user"`，通知带最后的报告与用量）。
     KilledParked,
+    /// Fork: a running agent stopped by the user from the desktop (Node `stoppedBy: "user"`); no usage, like `Killed`.
+    KilledByUser,
 }
 
 impl Ending {
@@ -128,7 +130,7 @@ impl Ending {
         match self {
             Self::Completed => BackgroundStatus::Completed,
             Self::Failed => BackgroundStatus::Failed,
-            Self::Killed | Self::KilledParked => BackgroundStatus::Killed,
+            Self::Killed | Self::KilledParked | Self::KilledByUser => BackgroundStatus::Killed,
         }
     }
 
@@ -143,7 +145,7 @@ impl Ending {
                     .unwrap_or("Unknown error")
             ),
             Self::Killed => "was stopped by ZCode".to_owned(),
-            Self::KilledParked => "was stopped by user".to_owned(),
+            Self::KilledParked | Self::KilledByUser => "was stopped by user".to_owned(),
         }
     }
 }

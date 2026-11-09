@@ -10,7 +10,7 @@ use rust_cli_kernel_api::store::{Fact, SessionStore};
 use serde_json::json;
 use tokio::sync::Notify;
 
-use crate::test_support::{harness, text};
+use crate::test_support::{desktop_harness, harness, text};
 
 #[tokio::test]
 async fn a_foreground_agent_runs_in_a_child_session_and_hands_back_its_report() {
@@ -430,4 +430,152 @@ async fn legacy_names_find_the_current_tools() {
     }
     let listed = harness.call("sess_parent", "ListPeers", json!({})).await;
     assert!(!listed.is_error, "{}", text(&listed));
+}
+
+/// Fork (node_desktop): like Node, an Agent call without `run_in_background` runs in the
+/// foreground, and the child is announced (`agentId`, no event yet) before its first response.
+#[tokio::test]
+async fn a_desktop_agent_call_runs_in_the_foreground_by_default() {
+    let harness = desktop_harness();
+    let (output, progress) = harness
+        .call_with_progress(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Find", "prompt": "List.", "subagent_type": "Explore"}),
+        )
+        .await;
+    assert!(
+        text(&output).ends_with("The report follows:\n  Hello from the subagent."),
+        "{}",
+        text(&output)
+    );
+    assert_eq!(output.display["agent"]["status"], "completed");
+    assert_eq!(progress[0], json!({"agentId": "agent_1"}));
+    // Asking for the background still launches it.
+    let launched = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Find", "prompt": "List.", "subagent_type": "Explore", "run_in_background": true}),
+        )
+        .await;
+    assert!(text(&launched).starts_with("Async agent launched successfully."));
+}
+
+#[tokio::test]
+async fn a_desktop_send_message_resume_reads_node_wording() {
+    let harness = desktop_harness();
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Find", "prompt": "List."}),
+        )
+        .await;
+    let resumed = text(
+        &harness
+            .call(
+                "sess_parent",
+                "SendMessage",
+                json!({"to": "agent_1", "message": "Go on."}),
+            )
+            .await,
+    );
+    assert_eq!(
+        resumed,
+        "Agent \"agent_1\" was stopped (completed); resumed it in the background with your message. You'll be notified when it finishes."
+    );
+}
+
+#[tokio::test]
+async fn a_desktop_user_stop_of_a_resumed_agent_names_the_send_message_call() {
+    let gate = Arc::new(Notify::new());
+    let harness = crate::test_support::desktop_harness_gated(Some(gate.clone()));
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&parent);
+    // A background launch that the gate holds, stopped by the model: the agent is finished.
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Long job", "prompt": "Work.", "run_in_background": true}),
+        )
+        .await;
+    harness.started(1).await;
+    harness
+        .call("sess_parent", "TaskStop", json!({"task_id": "agent_1"}))
+        .await;
+    let Some(AgentSignal::Notice(_)) = stream.next().await else {
+        panic!("expected the TaskStop notice");
+    };
+    harness
+        .call_as(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Go on."}),
+            Some("toolu_send"),
+        )
+        .await;
+    harness.started(2).await;
+    let operation = rust_cli_kernel_api::testing::tool_use_context().operation;
+    signals
+        .stop_task(&parent, "agent_1", operation)
+        .await
+        .unwrap();
+    let Some(AgentSignal::Notice(notice)) = stream.next().await else {
+        panic!("expected the user stop notice");
+    };
+    assert!(
+        notice
+            .text
+            .contains("<tool-use-id>toolu_send</tool-use-id>"),
+        "{}",
+        notice.text
+    );
+    assert!(
+        notice.text.contains("<status>killed</status>"),
+        "{}",
+        notice.text
+    );
+    assert!(
+        notice
+            .text
+            .contains("<summary>Agent \"Long job\" was stopped by user</summary>"),
+        "{}",
+        notice.text
+    );
+}
+
+/// Fork (node_desktop): the model's TaskStop of a running agent returns after the agent has stopped, so its
+/// `was stopped by ZCode` notice is already there for the same model request as the tool result (Node).
+#[tokio::test]
+async fn a_desktop_task_stop_returns_after_the_agent_notice() {
+    use futures_util::FutureExt as _;
+    let gate = Arc::new(Notify::new());
+    let harness = crate::test_support::desktop_harness_gated(Some(gate.clone()));
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&parent);
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Long job", "prompt": "Work.", "run_in_background": true}),
+        )
+        .await;
+    harness.started(1).await;
+    harness
+        .call("sess_parent", "TaskStop", json!({"task_id": "agent_1"}))
+        .await;
+    let Some(Some(AgentSignal::Notice(notice))) = stream.next().now_or_never() else {
+        panic!("the notice was not delivered before TaskStop returned");
+    };
+    assert!(
+        notice
+            .text
+            .contains("<summary>Agent \"Long job\" was stopped by ZCode</summary>"),
+        "{}",
+        notice.text
+    );
 }

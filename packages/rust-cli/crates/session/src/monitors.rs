@@ -237,6 +237,7 @@ impl Actor {
         let request = BackgroundTask {
             session: self.meta.id.clone(),
             task: armed.task.clone(),
+            notify_stop: false,
         };
         if let Err(error) = self
             .monitor_machine(armed)
@@ -259,6 +260,7 @@ impl Actor {
         let key = BackgroundTask {
             session: self.meta.id.clone(),
             task: task.clone(),
+            notify_stop: false,
         };
         let pending = matches!(
             machine.background().background_command(key).await,

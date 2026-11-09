@@ -8,7 +8,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::session_api::{SequencedEvent, SessionView};
+use rust_cli_kernel_api::session_api::{KernelEvent, SequencedEvent, SessionHandle, SessionView};
 use rust_cli_protocol_core::delivery::TopicLog;
 use rust_cli_protocol_core::sessions::SessionSink;
 use serde_json::{Value, json};
@@ -28,6 +28,12 @@ struct State {
     summary: Option<Value>,
     /// Fork: `submissionPreparation` while a durable first submission is still preparing.
     preparation: Option<Value>,
+    /// Fork: events up to this seq are already in the view the projection was rebuilt from.
+    skip_through: u64,
+    /// Fork: the subagent table watcher ([`Live::watch_subagents`]).
+    watcher: Option<rust_cli_base::Task<()>>,
+    /// Fork: an event that can change the background ledger was projected; the next flush re-reads it.
+    shells_dirty: bool,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -42,15 +48,25 @@ pub struct Live {
     session: String,
     workspace: String,
     created_at: u64,
+    /// Fork: reads the view again after the history is rewritten.
+    handle: Arc<dyn SessionHandle>,
     state: Mutex<State>,
+    /// Fork: counts finished rebuilds, so a command that rewrites the history can wait for the projection to be
+    /// rebuilt before it submits more input (see [`Self::rebuilds`]).
+    rebuilds: tokio::sync::watch::Sender<u64>,
+    /// Fork: the queue items a `sendQueuedNow` is promoting (Node `reserveQueueItem`): a second promotion of the
+    /// same item is refused instead of preempting the turn the first one started.
+    promotions: crate::reservations::Reservations,
 }
 
 impl Live {
     pub fn new(
         context: Arc<Context>,
         topics: Arc<Topics>,
+        handle: Arc<dyn SessionHandle>,
         view: &SessionView,
         followup: Followup,
+        catalog: Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     ) -> Self {
         let levels = view.selection.reasoning.iter().cloned().collect();
         let epoch = context.fresh("epoch");
@@ -59,19 +75,45 @@ impl Live {
             session: view.meta.id.as_str().to_owned(),
             workspace: view.meta.workspace.root.as_str().to_owned(),
             created_at: view.meta.created_at_ms,
+            handle,
             state: Mutex::new(State {
-                projection: Projection::from_view(view, followup, levels),
-                log: TopicLog::new(epoch),
+                projection: Projection::from_view(view, followup, levels).with_catalog(catalog),
+                log: TopicLog::with_base(epoch, view.last_seq),
                 summary: None,
                 preparation: None,
+                skip_through: view.last_seq,
+                watcher: None,
+                shells_dirty: false,
             }),
             context,
             topics,
+            rebuilds: tokio::sync::watch::Sender::new(0),
+            promotions: crate::reservations::Reservations::default(),
         }
+    }
+
+    /// Fork: reserves a queue item for one promotion; `None` while another promotion holds it.
+    pub fn reserve_promotion(&self, item: &str) -> Option<crate::reservations::Reservation<'_>> {
+        self.promotions.reserve(item)
+    }
+
+    /// Fork: a receiver of the rebuild count. The rebuild reads the session view when the pump reaches
+    /// `HistoryRewritten` and skips every event the view already holds; input submitted before that read lands in
+    /// the view only once its turn ends, so its turn's events would be skipped and its rows never shown. Commands
+    /// that rewind and then submit wait for the next rebuild between the two.
+    pub fn rebuilds(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.rebuilds.subscribe()
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock_unpoisoned()
+    }
+
+    /// The current snapshot, for tests.
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> Value {
+        let state = self.state();
+        state.projection.snapshot(0, state.log.epoch())
     }
 
     pub fn topic(&self) -> String {
@@ -143,6 +185,55 @@ impl Live {
         self.state().projection.deny(tool_use.as_str());
     }
 
+    /// Fork: see [`crate::projection::Projection::current_config`].
+    pub fn current_config(
+        &self,
+    ) -> (
+        rust_cli_kernel_api::model::ModelSelection,
+        rust_cli_kernel_api::permission::PermissionMode,
+        bool,
+    ) {
+        self.state().projection.current_config()
+    }
+
+    /// Fork: see [`Projection::row_target`].
+    pub fn row_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+        action: crate::projection::RowAction,
+    ) -> Result<crate::projection::RowTarget, crate::projection::TargetMiss> {
+        self.state().projection.row_target(row_id, entity, action)
+    }
+
+    /// Fork: the `v4/conversation/plans` catalog with the topic position it was read at.
+    /// Fork: the terminal status the notification of background command `task` reported.
+    pub fn notified_status(&self, task: &str) -> Option<String> {
+        self.state()
+            .projection
+            .notified_status(task)
+            .map(str::to_owned)
+    }
+
+    pub fn plans(&self) -> Value {
+        let state = self.state();
+        json!({"plans": state.projection.plans(), "atSeq": state.log.seq(),
+            "atLogEpoch": state.log.epoch()})
+    }
+
+    /// Fork: one `v4/conversation/rowsRange` page with the topic position it was read at.
+    pub fn rows_range(&self, before: Option<u64>, limit: usize) -> Value {
+        let state = self.state();
+        let (rows, more) = state.projection.rows_range(before, limit);
+        crate::projection::rows_range::result(
+            rows,
+            more,
+            state.log.seq(),
+            state.projection.revision(),
+            state.log.epoch(),
+        )
+    }
+
     pub fn followup(&self) -> Followup {
         self.state().projection.followup()
     }
@@ -162,6 +253,95 @@ impl Live {
             self.collect(&mut state)
         };
         self.write(outgoing).await;
+    }
+
+    /// Fork: see [`crate::projection::Projection::auto_drain`].
+    pub fn auto_drain(&self) -> bool {
+        self.state().projection.auto_drain()
+    }
+
+    /// Fork: see [`crate::projection::Projection::has_queue`].
+    pub fn has_queue(&self) -> bool {
+        self.state().projection.has_queue()
+    }
+
+    /// Fork: a user stop held the queue: record the queue patch and send it.
+    pub async fn hold_for_stop(&self) {
+        let outgoing = {
+            let mut state = self.state();
+            let delta = state.projection.hold_for_stop();
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: `setAutoDrain` was accepted: record the queue patch and send it.
+    pub async fn set_auto_drain(&self, auto_drain: bool) {
+        let outgoing = {
+            let mut state = self.state();
+            let delta = state.projection.set_auto_drain(auto_drain);
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: the kernel's subagent table changed: settle ended children and publish the `subagents` manifest
+    /// (projection/subagent_rows.rs). In the session's pump task, so it is ordered with the session's events.
+    pub async fn subagents_changed(&self) {
+        let entries = match self.handle.subagents().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(event = "protocol.subagents.read_failed", error = %error, "reading the subagent table failed");
+                return;
+            }
+        };
+        let now = self.context.now();
+        let outgoing = {
+            let mut state = self.state();
+            let deltas = state.projection.subagent_table(&entries, now);
+            if deltas.is_empty() {
+                return;
+            }
+            state.log.record(deltas);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: re-read the kernel's background ledger and publish the running shell commands as
+    /// `backgroundWorks` (projection/background_shells.rs). In the session's pump task.
+    pub async fn shells_changed(&self) {
+        let outgoing = {
+            let deltas = self.shell_deltas().await;
+            if deltas.is_empty() {
+                return;
+            }
+            let mut state = self.state();
+            state.log.record(deltas);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    async fn shell_deltas(&self) -> Vec<Value> {
+        let entries = match self.handle.background_tasks().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(event = "protocol.background.read_failed", error = %error, "reading the background tasks failed");
+                return Vec::new();
+            }
+        };
+        let now = self.context.now();
+        self.state().projection.shell_table(&entries, now)
+    }
+
+    /// Fork: the watcher of the kernel's subagent table; it ends with this session.
+    pub fn watch_subagents(&self, watcher: rust_cli_base::Task<()>) {
+        if let Some(previous) = self.state().watcher.replace(watcher) {
+            previous.abort();
+        }
     }
 
     /// 会话列表的当前行。
@@ -221,6 +401,42 @@ impl Live {
         self.publish_summary().await;
     }
 
+    /// Fork: the history was rewritten (rewind, edit, retry). Like the TUI, the projection is rebuilt from a fresh
+    /// view; every started subscription gets a new snapshot, and events already in that view are skipped. In the
+    /// session's pump task, so no event of this session is projected meanwhile.
+    async fn rebuild(&self) {
+        let view = match self.handle.view().await {
+            Ok(view) => view,
+            Err(error) => {
+                tracing::warn!(event = "protocol.projection.rebuild_failed", error = %error, "reading the rewritten session failed");
+                self.rebuilds.send_modify(|count| *count += 1);
+                return;
+            }
+        };
+        let started: Vec<String> = {
+            let mut state = self.state();
+            state.projection = state.projection.rebuilt(&view);
+            state.skip_through = view.last_seq;
+            // The ids are collected first: restarting needs `state.log` mutably.
+            #[allow(clippy::needless_collect)]
+            let ids: Vec<String> = state
+                .log
+                .subscribers()
+                .iter()
+                .map(|subscriber| subscriber.subscription.clone())
+                .collect();
+            ids.into_iter().filter(|id| state.log.restart(id)).collect()
+        };
+        for subscription in started {
+            self.start(&subscription, Purpose::Recovery).await;
+        }
+        self.publish_summary().await;
+        // Fork: the rebuilt projection starts without background works; re-read both tables.
+        self.subagents_changed().await;
+        self.shells_changed().await;
+        self.rebuilds.send_modify(|count| *count += 1);
+    }
+
     /// 待发的增量与变了的会话列表行（阶段、标题、待回答的询问或预览变了才发，活动时间不算）。
     fn collect(&self, state: &mut State) -> Outgoing {
         let frames = state
@@ -267,16 +483,61 @@ impl Live {
     }
 }
 
+impl Drop for Live {
+    fn drop(&mut self) {
+        if let Some(watcher) = self.state().watcher.take() {
+            watcher.abort();
+        }
+    }
+}
+
+/// Fork: forwards the kernel's subagent table changes to the session's pump task while the session is open.
+pub(crate) async fn watch_subagents(
+    mut changes: futures_util::stream::BoxStream<'static, ()>,
+    live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,
+) {
+    use futures_util::StreamExt;
+    while changes.next().await.is_some() {
+        let Some(bridged) = live.upgrade() else {
+            return;
+        };
+        let sink = bridged.sink.clone();
+        bridged.run(Box::pin(async move { sink.subagents_changed().await }));
+    }
+}
+
 #[async_trait]
 impl SessionSink for Live {
     async fn event(&self, event: SequencedEvent) {
+        if event.seq <= self.state().skip_through {
+            return;
+        }
+        if matches!(event.event, KernelEvent::HistoryRewritten { .. }) {
+            self.rebuild().await;
+            return;
+        }
         let now = self.context.now();
         let mut state = self.state();
+        // Fork: a Bash result (a command went to the background), a background notification (one ended) or a
+        // turn end can change the background ledger.
+        if matches!(
+            event.event,
+            KernelEvent::ToolDone { .. }
+                | KernelEvent::BackgroundWork { .. }
+                | KernelEvent::TurnFinished { .. }
+        ) {
+            state.shells_dirty = true;
+        }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
     }
 
     async fn flush(&self) {
+        let refresh = std::mem::take(&mut self.state().shells_dirty);
+        if refresh {
+            let deltas = self.shell_deltas().await;
+            self.state().log.record(deltas);
+        }
         let outgoing = {
             let mut state = self.state();
             self.collect(&mut state)

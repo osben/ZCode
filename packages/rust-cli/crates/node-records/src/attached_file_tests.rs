@@ -129,3 +129,26 @@ fn a_stored_image_has_nodes_artifact_shape() {
         })
     );
 }
+
+#[test]
+fn a_path_reference_keeps_its_note_like_node() {
+    let mut original = file(AttachedBody::PathReference {
+        text: "Attached application/octet-stream: /p/a.zip\nThe file was sent by local path because x.\nUse tools."
+            .into(),
+    });
+    original.name = "a.zip".into();
+    original.reference = Some("/p/a.zip".into());
+    let stored = part("prt_1".into(), ("sess", "msg"), &original);
+    assert_eq!(stored["mime"], "application/octet-stream");
+    assert_eq!(stored["url"], "/p/a.zip");
+    assert_eq!(stored["source"]["path"], "/p/a.zip");
+    assert_eq!(stored["metadata"]["storageKind"], "local_ref");
+    assert_eq!(stored["metadata"]["recoverability"], "metadata_only");
+    assert_eq!(
+        stored["metadata"]["pathReferenceText"],
+        "Attached application/octet-stream: /p/a.zip\nThe file was sent by local path because x.\nUse tools."
+    );
+    let back = from_part(&stored).unwrap();
+    assert_eq!(back.body, original.body);
+    assert_eq!(back.reference, original.reference);
+}

@@ -168,6 +168,37 @@ async fn keep_planning_rejects_with_the_feedback_and_keeps_the_mode() {
     assert!(interactions.plans().is_empty());
 }
 
+/// Node's `withPlanExitDeniedTurnStop`: a bare decline ends the turn, feedback does not.
+#[tokio::test]
+async fn a_decline_without_feedback_ends_the_turn() {
+    let cases = [
+        (PlanApprovalAnswer::KeepPlanning { feedback: None }, true),
+        (
+            PlanApprovalAnswer::KeepPlanning {
+                feedback: Some("add tests".to_owned()),
+            },
+            false,
+        ),
+    ];
+    for (answer, stops) in cases {
+        let interactions = Arc::new(ScriptedInteractions::new([
+            rust_cli_kernel_api::orchestration::Answer::from(answer),
+        ]));
+        let tool = ExitPlanModeTool::new(true);
+        let (progress, _) = mpsc::channel(1);
+        let called = tool
+            .call_with_messages(
+                json!({}),
+                plan_context(interactions.clone(), &[]).build(),
+                progress,
+            )
+            .await
+            .unwrap();
+        assert!(called.output.is_error);
+        assert_eq!(called.stop_turn, stops);
+    }
+}
+
 #[tokio::test]
 async fn exit_outside_plan_mode_is_invalid() {
     let tool = ExitPlanModeTool::new(true);

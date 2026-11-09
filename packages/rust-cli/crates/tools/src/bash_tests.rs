@@ -33,6 +33,10 @@ struct Scripted {
     released: Arc<Notify>,
     /// 为 true 时输出之后是 `Backgrounded`（到了超时、转到后台），之后没有终态。
     backgrounded: bool,
+    /// Fork (node_desktop): the file size seen at settlement; None keeps it at the streamed
+    /// length. A value below the streamed bytes simulates the settlement read failing (the
+    /// output file was deleted mid-run).
+    settled_bytes: Option<u64>,
 }
 
 impl Scripted {
@@ -73,6 +77,7 @@ impl Commands for Scripted {
             }),
         ];
         let finished = CommandEvent::Finished {
+            output_unreadable: None,
             outcome: if self.hold || self.output_limit.is_some() {
                 Outcome::Cancelled
             } else {
@@ -81,7 +86,7 @@ impl Commands for Scripted {
             exit_code: Some(self.exit_code),
             timed_out: false,
             cwd_reset: None,
-            output_bytes: self.output.len() as u64,
+            output_bytes: self.settled_bytes.unwrap_or(self.output.len() as u64),
             output_limit: self.output_limit.clone(),
         };
         if self.backgrounded {
@@ -632,6 +637,122 @@ fn streaming_input_keeps_the_configured_timeouts() {
     let description = tool.description(&context);
     assert!(description.contains("default 2000000, max 8000000 for a foreground command."));
     assert!(description.contains("(default 2000000, max 8000000); at that limit"));
+}
+
+// Fork (node_desktop): the desktop agent's Bash semantics — the task id is the model's
+// tool-call id (the environment derives the Node adapter's output layout from it), the result
+// text falls back to Node's unavailable note when the settlement read fails, the kill result
+// keeps Node's 5GB note, and the success carries the bash_output display.
+
+async fn call_desktop(
+    env: Arc<Scripted>,
+    input: Value,
+    tool_use: &str,
+) -> Result<ToolOutput, ToolError> {
+    let (progress, _updates) = mpsc::channel(8);
+    let mut context = context(env, None);
+    context.tool_use = ToolUseId::new(tool_use);
+    BashTool::new(BashSettings {
+        node_desktop: true,
+        ..BashSettings::default()
+    })
+    .call(input, context, progress)
+    .await
+}
+
+#[tokio::test]
+async fn desktop_commands_derive_the_task_id_from_the_tool_call() {
+    let env = Arc::new(Scripted {
+        output: b"hi\n".to_vec(),
+        ..Scripted::default()
+    });
+    call_desktop(
+        env.clone(),
+        json!({"command": "echo hi"}),
+        "toolu_bdo_small",
+    )
+    .await
+    .unwrap();
+    let start = env.started.lock().unwrap()[0].clone();
+    assert_eq!(start.task, output::desktop_task_id("toolu_bdo_small"));
+    assert_eq!(start.task.as_str(), "toolu_bdo_small");
+}
+
+#[tokio::test]
+async fn a_failed_settlement_read_reports_nodes_unavailable_text() {
+    // The environment saw a smaller file at settlement than it streamed: the settlement read
+    // failed (the file was deleted mid-run), so Node's unavailable note replaces the output.
+    let env = Arc::new(Scripted {
+        output: b"BDO_READ_FAILURE_READY".to_vec(),
+        settled_bytes: Some(0),
+        ..Scripted::default()
+    });
+    let output = call_desktop(
+        env,
+        json!({"command": "node writer.cjs read-failure"}),
+        "toolu_bdo_read_failure",
+    )
+    .await
+    .unwrap();
+    let text = text_of(&output);
+    assert!(
+        text.starts_with("<bash output unavailable: output file /t/b.output could not be read ("),
+        "{text}"
+    );
+    assert!(text.ends_with(").>"), "{text}");
+    assert!(!output.is_error);
+}
+
+#[tokio::test]
+async fn the_desktop_kill_result_carries_the_5gb_note() {
+    let env = Arc::new(Scripted {
+        output: vec![b'x'; 30_000],
+        exit_code: 137,
+        output_limit: Some("Command killed: output file exceeded 5GB".to_owned()),
+        ..Scripted::default()
+    });
+    let failed = call_desktop(
+        env,
+        json!({"command": "node writer.cjs limit"}),
+        "toolu_bdo_limit",
+    )
+    .await;
+    assert_eq!(
+        failed,
+        Err(ToolError::Failed {
+            message: format!(
+                "Exit code 137\nCommand killed: output file exceeded 5GB\n{}",
+                "x".repeat(30_000)
+            )
+        })
+    );
+}
+
+#[tokio::test]
+async fn desktop_success_carries_the_bash_output_display() {
+    // Like Node's `createBashResultDisplay`: an output that fit inline has no display.
+    let env = Arc::new(Scripted {
+        output: b"  padded \n".to_vec(),
+        ..Scripted::default()
+    });
+    let output = call_desktop(env, json!({"command": "echo padded"}), "toolu_bdo_small")
+        .await
+        .unwrap();
+    assert_eq!(text_of(&output), "  padded");
+    assert_eq!(output.display, Value::Null);
+
+    let big = vec![b'x'; INLINE_LIMIT + 10];
+    let env = Arc::new(Scripted {
+        output: big,
+        ..Scripted::default()
+    });
+    let output = call_desktop(env, json!({"command": "yes x"}), "toolu_bdo_large")
+        .await
+        .unwrap();
+    assert_eq!(output.display["truncated"], json!(true));
+    assert_eq!(output.display["output"], "x".repeat(INLINE_LIMIT));
+    assert_eq!(output.display["outputPath"], "/t/b.output");
+    assert!(text_of(&output).contains("Full output saved to: /t/b.output"));
 }
 
 #[path = "bash_timeout_tests.rs"]

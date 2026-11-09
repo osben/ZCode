@@ -112,7 +112,7 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
                 owner,
                 file,
             ),
-            ContentBlock::Image { source } => {
+            ContentBlock::Image { source, .. } => {
                 crate::tool_content::file_part(part_id(ctx.now, &(ctx.uuid)()), owner, source)
             }
             _ => continue,

@@ -162,54 +162,135 @@ pub async fn flow(server: &Server, params: &Value) -> Result<Reply, RpcError> {
 }
 
 /// 会话列表对账：按 sessionIds 回存在与否、标题与时间。
+///
+/// Fork: like Node `reconcileSessions`, the stored row decides `exists` / `deleted` (soft-deleted
+/// rows stay `exists: true, deleted: true`, so the App's task index records the delete), and a
+/// row from another workspace answers `exists: false`. A live session keeps its projection's
+/// title and activity. Stores without the row read keep the older live/snapshot answer.
 pub async fn reconcile(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     let workspace = params["workspaceId"].as_str().unwrap_or_default();
-    let ids: Vec<&str> = params["sessionIds"]
+    let mut ids: Vec<&str> = Vec::new();
+    for id in params["sessionIds"]
         .as_array()
-        .map(|ids| ids.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+        .map(|ids| ids.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        // Node dedupes with `new Set(sessionIds)`.
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let queries = server.kernel.queries();
     let mut sessions = Vec::new();
     for id in ids {
         let session = SessionId::new(id);
-        let row = match server.bridge.get(&session) {
-            Some(live) => Some(live.sink.summary()),
-            None => match server.kernel.session_snapshot(&session).await {
-                Ok(view) => Some(
-                    Summary {
-                        session: id,
-                        workspace,
-                        title: &view.meta.title,
-                        phase: Phase::CompletedSuccess,
-                        created_at: view.meta.created_at_ms,
-                        activity_at: view.meta.created_at_ms,
-                        last_reply: None,
-                        permissions: 0,
-                    }
-                    .to_value(),
-                ),
-                Err(_) => None,
-            },
-        };
-        sessions.push(match row {
-            Some(row) => {
-                let mut entry = json!({
-                    "sessionId": id,
-                    "exists": true,
-                    "deleted": false,
-                    "title": row["title"],
-                    "titleSource": row["titleSource"],
-                    "createdAt": row["createdAt"],
-                    "updatedAt": row["lastActivityAt"],
-                });
-                if let Some(outcome) = row.get("lastOutcome") {
-                    entry["lastOutcome"] = outcome.clone();
+        let live = server.bridge.get(&session).map(|live| live.sink.summary());
+        let entry = match queries.reconcile_row(&session).await {
+            Ok(row) => stored_entry(id, workspace, row.as_ref(), live.as_ref()),
+            Err(_) => {
+                let row = match live {
+                    Some(row) => Some(row),
+                    None => match server.kernel.session_snapshot(&session).await {
+                        Ok(view) => Some(
+                            Summary {
+                                session: id,
+                                workspace,
+                                title: &view.meta.title,
+                                phase: Phase::CompletedSuccess,
+                                created_at: view.meta.created_at_ms,
+                                activity_at: view.meta.created_at_ms,
+                                last_reply: None,
+                                permissions: 0,
+                            }
+                            .to_value(),
+                        ),
+                        Err(_) => None,
+                    },
+                };
+                match row {
+                    Some(row) => summary_entry(id, false, &row),
+                    None => missing(id),
                 }
-                entry
             }
-            None => json!({"sessionId": id, "exists": false, "deleted": false}),
-        });
+        };
+        sessions.push(entry);
     }
     Ok(Reply::new(json!({"sessions": sessions})))
+}
+
+fn missing(id: &str) -> Value {
+    json!({"sessionId": id, "exists": false, "deleted": false})
+}
+
+fn summary_entry(id: &str, deleted: bool, row: &Value) -> Value {
+    let mut entry = json!({
+        "sessionId": id,
+        "exists": true,
+        "deleted": deleted,
+        "title": row["title"],
+        "titleSource": row["titleSource"],
+        "createdAt": row["createdAt"],
+        "updatedAt": row["lastActivityAt"],
+    });
+    if let Some(outcome) = row.get("lastOutcome").filter(|outcome| !outcome.is_null()) {
+        entry["lastOutcome"] = outcome.clone();
+    }
+    entry
+}
+
+/// Node `normalizeStoredTitleSource`.
+fn title_source(source: Option<&str>) -> &'static str {
+    match source {
+        Some("custom") => "custom",
+        Some("default") => "default",
+        _ => "generated",
+    }
+}
+
+/// Node `reconcileSessions` for one stored row (`StoreQueries::reconcile_row`). The workspace
+/// check is Node's local branch (`directory === workspaceId`, no foreign `workspaceID`); zcode-rs
+/// serves local workspaces only, so the remote-identity branch is not ported.
+pub(crate) fn stored_entry(
+    id: &str,
+    workspace: &str,
+    row: Option<&Value>,
+    live: Option<&Value>,
+) -> Value {
+    let Some(row) = row else {
+        return missing(id);
+    };
+    let same_workspace = row["directory"].as_str() == Some(workspace)
+        && row["workspaceId"]
+            .as_str()
+            .is_none_or(|stored| stored == workspace);
+    if !same_workspace {
+        return missing(id);
+    }
+    let deleted = !row["timeDeleted"].is_null();
+    let title_updated_at = if row["timeTitleUpdated"].is_null() {
+        &row["timeCreated"]
+    } else {
+        &row["timeTitleUpdated"]
+    };
+    if let Some(live) = live {
+        let mut entry = summary_entry(id, deleted, live);
+        entry["titleUpdatedAt"] = title_updated_at.clone();
+        return entry;
+    }
+    let mut entry = json!({
+        "sessionId": id,
+        "exists": true,
+        "deleted": deleted,
+        "title": row["title"],
+        "titleSource": title_source(row["titleSource"].as_str()),
+        "titleUpdatedAt": title_updated_at,
+        "createdAt": row["timeCreated"],
+        "updatedAt": row["timeUpdated"],
+    });
+    if let Some(outcome) = row["lastOutcome"].as_str() {
+        entry["lastOutcome"] = json!(outcome);
+    }
+    entry
 }
 
 /// 新建的会话马上进会话列表（在会话的泵任务里发）。
@@ -232,3 +313,7 @@ fn start_on_pump(
         Box::pin(async {})
     })
 }
+
+#[cfg(test)]
+#[path = "subscribe_reconcile_tests.rs"]
+mod reconcile_tests;

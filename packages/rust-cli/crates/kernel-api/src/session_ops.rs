@@ -69,6 +69,17 @@ pub trait SessionOps: Send + Sync {
     /// 先提交事实再通知前端，返回后新状态已生效（tools-more.md §2.3）。不持有会话状态的输出端返回 `Unsupported`。
     async fn set_plan(&self, enabled: bool) -> Result<(), OrchestrationError>;
 
+    /// Fork: [`Self::set_plan`] from the plan tool call `tool_call`; the session actor also reports
+    /// the transition with the call id (`KernelEvent::PlanTransition`). Other sinks ignore the id.
+    async fn set_plan_from_tool(
+        &self,
+        enabled: bool,
+        tool_call: &str,
+    ) -> Result<(), OrchestrationError> {
+        let _ = tool_call;
+        self.set_plan(enabled).await
+    }
+
     /// 改会话的工作目录（EnterWorktree / ExitWorktree）；owner 是会话 actor，它同时设执行环境的 shell cwd
     /// （tools-more.md §11.4）。前台子代理改的是父会话的；不持有会话的返回 `Unsupported`。
     async fn set_workspace(&self, root: EnvPath) -> Result<(), OrchestrationError>;

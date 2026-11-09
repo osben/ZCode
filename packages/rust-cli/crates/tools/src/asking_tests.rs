@@ -68,6 +68,7 @@ async fn a_cancelled_ask_is_withdrawn() {
     let cancel = CancellationToken::new();
     let context = context(owner.clone(), cancel.clone());
     let request = InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("toolu_1"),
         questions: Value::Null,
     };
@@ -88,6 +89,7 @@ async fn an_answer_of_another_kind_is_none() {
     );
     let context = context(Arc::new(odd), CancellationToken::new());
     let request = InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("toolu_1"),
         questions: Value::Null,
     };

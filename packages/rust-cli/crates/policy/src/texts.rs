@@ -99,6 +99,8 @@ pub fn request_message(tool: &str, reason: Option<&Reason>) -> String {
 }
 
 /// 自动模式的分类器不可用（加后续说明）。
+pub use rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
+
 pub const CLASSIFIER_UNAVAILABLE: &str = "Auto mode could not evaluate this action and is blocking it for safety — run with --debug for details. This is not a judgment that the action is unsafe. This is usually transient — wait briefly and try this action again as-is; don't rewrite it. If it keeps failing, continue with other tasks that don't require this action and come back to it later. Note: reading files, searching code, and other read-only operations do not require the classifier and can still be used.";
 
 /// 分类器拦下（带结尾的说明）。

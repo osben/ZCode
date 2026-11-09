@@ -44,6 +44,27 @@ pub(crate) enum Request {
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
     },
+    /// Fork: a dry-run preview of a code rewind (Node's file rewind preview): the actor only picks
+    /// the same machine groups `Command::Rewind{Code}` would run; artifact reads and the hash check
+    /// happen in the caller's task — nothing is prepared or applied.
+    RewindPreview {
+        target: MessageId,
+        reply: oneshot::Sender<Result<crate::rewind::Preview, String>>,
+    },
+    /// Fork: the files the turn opened by `turn_input` changed (the App's per-turn summary query):
+    /// the actor picks the turn's unrestored checkpoints (or reports the turn already reverted);
+    /// the artifact reads and the per-path summary run in the caller's task.
+    TurnFileChanges {
+        turn_input: MessageId,
+        reply: oneshot::Sender<Result<crate::turn_files::Files, String>>,
+    },
+    /// Fork: a dry-run preview of restoring only that turn's checkpoints (the App's per-turn
+    /// `fileRewindPreview`): the actor picks the machine groups over the turn's own checkpoints;
+    /// reads and the hash check happen in the caller's task.
+    TurnRewindPreview {
+        turn_input: MessageId,
+        reply: oneshot::Sender<Result<crate::rewind::Preview, String>>,
+    },
     Goal {
         reply: oneshot::Sender<rust_cli_kernel_api::goal::GoalView>,
     },
@@ -75,6 +96,8 @@ pub(crate) enum AskScope {
 pub(crate) enum JobDone {
     Startup(Box<rust_cli_kernel_api::hooks::HookOutcome>),
     Rewind(Box<crate::rewind::Finished>),
+    /// Fork: the per-turn summary rewind (`Command::RewindTurnFiles`).
+    TurnFilesRewound(Box<crate::rewind::TurnRewound>),
 }
 
 pub(crate) struct Job {
@@ -115,6 +138,8 @@ enum Next {
     Sink(Option<SinkRequest>),
     Notice(rust_cli_kernel_api::machine_notices::MachineNotice),
     Agent(AgentSignal),
+    /// Fork: a mirrored child-run event; `None` when its live stream ended.
+    ChildLive(Option<rust_cli_kernel_api::agents::ChildLive>),
     Cron,
     Job(Result<JobDone, rust_cli_base::TaskError>),
     Title(crate::title::TitleDone),
@@ -175,6 +200,11 @@ pub(crate) struct Actor {
     pub(crate) job: Option<Job>,
     /// 没有被代码回退撤销的 checkpoint，按写入顺序（spec §4）。
     pub(crate) checkpoints: Vec<WorkspaceCheckpoint>,
+    /// Fork: per-turn file summaries keyed by the typed user message that opened the turn
+    /// (the App's turn header `fileChanges`): updated as checkpoints settle and are restored,
+    /// rebuilt from the stored artifacts on a cold open ([`crate::turn_files`]). Only `view`
+    /// reads it.
+    pub(crate) turn_files: std::collections::HashMap<MessageId, crate::turn_files::TurnFileSummary>,
     /// 提交核心（kernel-api `RunLedger`，与子代理的 sink 同一份，工作线 F130）：当前轮（随每个批次交给存储，node-store.md
     /// §4，修复线 F6；冷加载时取 `LoadedSession.turn`）、工具已结束而结果还没提交的 checkpoint 与子代理关联。只在
     /// [`Self::commit`] 与提交消息时改。
@@ -201,6 +231,8 @@ pub(crate) struct Actor {
     pub(crate) shutting_down: bool,
     stream: Notices,
     agent_stream: AgentStream,
+    /// Fork (node_desktop): the mirrored live run of this child session's subagent (crate::child_live).
+    pub(crate) mirror: crate::child_live::Mirror,
     cron_stream: CronStream,
     /// 跨会话的入站流与状态（peers.rs）。
     peer_stream: crate::watched::Watched<rust_cli_kernel_api::peers::PeerSignal>,
@@ -247,6 +279,7 @@ impl Actor {
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
         let start = state.start;
+        let child_live = state.child_live;
         let goal = crate::goal::Goals::restore(&state.messages, deps.clock.now_ms());
         let mut actor = Self {
             deps,
@@ -264,6 +297,7 @@ impl Actor {
             running: None,
             job: None,
             checkpoints: state.checkpoints,
+            turn_files: std::collections::HashMap::new(),
             ledger: RunLedger::new(state.turn),
             generation: 0,
             titles: TitleState::default(),
@@ -277,6 +311,7 @@ impl Actor {
             shutting_down: false,
             stream,
             agent_stream,
+            mirror: crate::child_live::Mirror::new(child_live),
             cron_stream,
             peer_stream,
             peers: crate::peers::PeerState::default(),
@@ -300,6 +335,104 @@ impl Actor {
     }
 
     /// 有回合或后台工作在跑：新输入排队，回退 / fork 拒绝。
+    /// The user's model choice (`Command::SetModel`, or a submitted input's frozen selection).
+    pub(crate) async fn select_model(
+        &mut self,
+        command: Option<CommandId>,
+        selection: rust_cli_kernel_api::model::ModelSelection,
+    ) -> Result<(), StoreError> {
+        let fact = Fact::ModelSelected {
+            selection: selection.clone(),
+        };
+        self.commit(command, vec![fact]).await?;
+        self.selection = selection.clone();
+        self.log.append(KernelEvent::ModelChanged { selection });
+        // F27：有效窗口随模型变，上下文提示与 footer 的 ctx 按新模型重算（按当前模型算）；修前要等下一条回复。
+        self.context_changed();
+        Ok(())
+    }
+
+    /// Fork: `Command::SubmitWith` (the desktop App's inputs). A compaction is refused while one runs
+    /// (a run-less turn) or is queued; busy, the input is queued with its execution state frozen on it
+    /// (a compaction or goal never steers); idle, the state is applied first and the turn or compaction
+    /// starts. `behind_held` (idle behind a held queue with inputs) queues the input like busy does.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the fields of Command::SubmitWith"
+    )]
+    async fn submit_with(
+        &mut self,
+        id: CommandId,
+        kind: rust_cli_kernel_api::session_api::QueuedKind,
+        text: String,
+        content: Vec<rust_cli_kernel_api::message::ContentBlock>,
+        delivery: rust_cli_kernel_api::session_api::Delivery,
+        execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
+        behind_held: bool,
+    ) -> Ack {
+        use rust_cli_kernel_api::session_api::{COMPACT_LOCKED, Delivery, QueuedKind};
+        let compact = kind == QueuedKind::Compact;
+        if compact {
+            let compacting = self
+                .running
+                .as_ref()
+                .is_some_and(|running| running.run.is_none());
+            if compacting || self.inbox.has_compact() {
+                return rejected(COMPACT_LOCKED);
+            }
+        }
+        if self.busy() || behind_held {
+            let (input_kind, delivery) = match kind {
+                QueuedKind::Compact => (crate::inbox::InputKind::Compact, Delivery::Queue),
+                QueuedKind::Goal => (crate::inbox::InputKind::Text, Delivery::Queue),
+                QueuedKind::Text if !content.is_empty() => {
+                    (crate::inbox::InputKind::Content(content), Delivery::Queue)
+                }
+                QueuedKind::Text => (crate::inbox::InputKind::Text, delivery),
+            };
+            self.inbox.push_input(
+                QueuedInput {
+                    command: id,
+                    text,
+                    delivery,
+                    kind,
+                    execution,
+                },
+                input_kind,
+            );
+            self.emit_queue();
+            return accepted();
+        }
+        if let Some(execution) = execution
+            && let Err(reason) = self.submitted_execution(execution).await
+        {
+            return rejected(reason);
+        }
+        if compact {
+            return match self.start_compaction(id, None) {
+                Ok(()) => accepted(),
+                Err(reason) => rejected(reason),
+            };
+        }
+        let input = if content.is_empty() {
+            TurnInput::Human {
+                command: id,
+                text,
+                screened: None,
+                more: Vec::new(),
+            }
+        } else {
+            TurnInput::Content {
+                command: id,
+                content,
+            }
+        };
+        match self.start_turn(input).await {
+            Ok(()) => accepted(),
+            Err(reason) => rejected(reason),
+        }
+    }
+
     pub(crate) fn busy(&self) -> bool {
         self.running.is_some() || self.job.is_some()
     }
@@ -309,7 +442,7 @@ impl Actor {
         use rust_cli_kernel_api::peers::PeerStatus;
         if !self.pending.is_empty() {
             PeerStatus::Waiting
-        } else if self.busy() {
+        } else if self.busy() || self.mirror.running() {
             PeerStatus::Busy
         } else {
             PeerStatus::Idle
@@ -319,6 +452,9 @@ impl Actor {
     pub(crate) async fn run(mut self, mut requests: mpsc::Receiver<Request>) {
         // 跨会话：绑定为主会话并从库里恢复（cross-session.md §2.2）；在处理第一条命令之前。
         self.peers_open().await;
+        // Fork: on a cold open, rebuild the per-turn file summaries from the stored checkpoints
+        // (the previous process's `FileChanges` events are gone).
+        self.restore_turn_files().await;
         loop {
             // 修复（R1-1）：以前这里在“所有句柄都已释放”（`recv` 返回 None）时退出，但内核的会话表一直持有
             // 句柄，这个分支永远到不了——关闭后 actor 还活着，收到后台通知就自己开回合。现在由 `Request::Close`
@@ -338,6 +474,7 @@ impl Actor {
                 request = sink_request(&mut self.running) => Next::Sink(request),
                 notice = next_notice(&mut self.stream) => Next::Notice(notice),
                 signal = self.agent_stream.next() => Next::Agent(signal),
+                event = crate::child_live::next(&mut self.mirror) => Next::ChildLive(event),
                 () = self.cron_stream.next() => Next::Cron,
                 done = job_done(&mut self.job) => Next::Job(done),
                 done = title_done(&mut self.titles) => Next::Title(done),
@@ -352,6 +489,7 @@ impl Actor {
                 Next::Sink(Some(request)) => self.on_sink(request).await,
                 Next::Notice(notice) => self.on_notice(notice).await,
                 Next::Agent(signal) => self.on_agent_signal(signal).await,
+                Next::ChildLive(event) => self.on_child_live_next(event).await,
                 Next::Cron => self.on_cron_wakeup().await,
                 Next::Job(done) => self.on_job(done).await,
                 Next::Title(done) => self.on_title(done).await,
@@ -372,12 +510,22 @@ impl Actor {
         match request {
             Request::View { reply } => {
                 let _ = reply.send(self.view().await);
+                self.attach_child_live();
             }
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());
             }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());
+            }
+            Request::RewindPreview { target, reply } => {
+                let _ = reply.send(self.rewind_preview(&target));
+            }
+            Request::TurnFileChanges { turn_input, reply } => {
+                let _ = reply.send(Ok(self.turn_files_snapshot(&turn_input)));
+            }
+            Request::TurnRewindPreview { turn_input, reply } => {
+                let _ = reply.send(self.turn_rewind_preview(&turn_input));
             }
             Request::Goal { reply } => {
                 let _ = reply.send(self.goal_view());
@@ -398,10 +546,18 @@ impl Actor {
                     let _ = reply.send(Ack::Duplicate);
                     return;
                 }
+                if self.mirror.running() && crate::child_live::starts_turn(&envelope.command) {
+                    let _ =
+                        reply.send(rejected(rust_cli_kernel_api::session_api::GOAL_ACTIVE_TURN));
+                    return;
+                }
                 // 代码回退的回执要等事务结束（spec §5.1），起名的回执要等名字（titles.md §8.2）。
                 match envelope.command {
                     Command::Rewind { target, scope } => {
                         return self.rewind(envelope.id, target, scope, reply).await;
+                    }
+                    Command::RewindTurnFiles { target } => {
+                        return self.rewind_turn_files(envelope.id, target, reply).await;
                     }
                     Command::GenerateName => return self.generate_name(envelope.id, reply),
                     _ => {}
@@ -423,6 +579,8 @@ impl Actor {
                             command: id,
                             text,
                             delivery,
+                            kind: Default::default(),
+                            execution: None,
                         },
                         crate::inbox::InputKind::Text,
                     );
@@ -449,18 +607,29 @@ impl Actor {
                 interaction,
                 answer,
             } => self.resolve(id, interaction, answer).await,
-            Command::SetModel { selection } => {
-                let fact = Fact::ModelSelected {
-                    selection: selection.clone(),
-                };
-                if let Err(reason) = self.commit(Some(id), vec![fact]).await {
-                    return rejected(reason);
+            Command::SetModel { selection } => match self.select_model(Some(id), selection).await {
+                Ok(()) => accepted(),
+                Err(reason) => rejected(reason),
+            },
+            Command::SubmitWith {
+                kind,
+                text,
+                content,
+                delivery,
+                execution,
+                behind_held,
+            } => {
+                let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
+                self.submit_with(id, kind, text, content, delivery, execution, queue)
+                    .await
+            }
+            Command::PauseGoal => self.pause_goal().await,
+            Command::ResumeGoal => self.resume_goal().await,
+            Command::GrantFullAccess { interaction } => {
+                match self.grant_full_access(id, interaction).await {
+                    Ok(()) => accepted(),
+                    Err(reason) => rejected(reason),
                 }
-                self.selection = selection.clone();
-                self.log.append(KernelEvent::ModelChanged { selection });
-                // F27：有效窗口随模型变，上下文提示与 footer 的 ctx 按新模型重算（按当前模型算）；修前要等下一条回复。
-                self.context_changed();
-                accepted()
             }
             Command::SetMode { mode } => match self.user_mode(id, mode).await {
                 Ok(()) => accepted(),
@@ -493,8 +662,14 @@ impl Actor {
             Command::BackgroundForeground { reason } => self.background_foreground(reason).await,
             Command::StoreResumeSentinel => self.store_resume_sentinel(id).await,
             Command::Dequeue { command } => self.dequeue(&command),
+            // Fork: in-place queue editing (Node queue.ts handlers, specs/fork-rust-agent-parity.md).
+            Command::EditQueued { command, text } => self.edit_queued(&command, text),
+            Command::ReorderQueued { command, before } => {
+                self.reorder_queued(&command, before.as_ref())
+            }
+            Command::HoldQueue { held } => self.hold_queue(held).await,
             // 在 `handle` 里处理（回执要等事务结束或名字）。
-            Command::Rewind { .. } | Command::GenerateName => {
+            Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")
             }
             Command::Bash {
@@ -519,6 +694,7 @@ impl Actor {
         match done {
             Ok(JobDone::Startup(outcome)) => self.finish_startup(*outcome).await,
             Ok(JobDone::Rewind(finished)) => self.finish_rewind(*finished).await,
+            Ok(JobDone::TurnFilesRewound(finished)) => self.finish_turn_rewind(*finished).await,
             Err(error) => {
                 tracing::warn!(%error, "a session job ended without a result");
                 self.start_next().await;
@@ -543,7 +719,7 @@ impl Actor {
             queue: self.inbox.queued(),
             last_seq: self.log.last_seq(),
             revision: self.log.revision(),
-            running: self.running.is_some(),
+            running: self.running.is_some() || self.mirror.running(),
             background: [self.background().await, self.background_agents().await].concat(),
             peer_held: self.peers.views(),
             // 冷加载后不用等下一条回复（F27）：与 `context_changed` 同样两个函数。
@@ -551,6 +727,14 @@ impl Actor {
             context_notice: self.context_notice().unwrap_or_default(),
             output_speed: self.output_speed,
             commands: self.commands.clone(),
+            // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
+            turn_files: self
+                .turn_files
+                .iter()
+                .filter(|(prompt, _)| self.messages.iter().any(|m| m.id() == *prompt))
+                .map(|(prompt, summary)| (prompt.clone(), summary.facts()))
+                .collect(),
+            goal: self.goal_state(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

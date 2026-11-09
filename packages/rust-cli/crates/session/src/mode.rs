@@ -13,7 +13,7 @@
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
-use rust_cli_kernel_api::session_api::KernelEvent;
+use rust_cli_kernel_api::session_api::{InputExecution, KernelEvent};
 use rust_cli_kernel_api::store::{Fact, StoreError};
 
 use crate::actor::Actor;
@@ -25,9 +25,19 @@ impl Actor {
     }
 
     /// 工具开关 plan（EnterPlanMode、ExitPlanMode）：权限模式不变，不写项目的持久模式。
-    pub(crate) async fn change_plan(&mut self, enabled: bool) -> Result<(), StoreError> {
+    /// Fork: `tool_call` (the plan tool's call) is reported after the change (`PlanTransition`).
+    pub(crate) async fn change_plan(
+        &mut self,
+        enabled: bool,
+        tool_call: Option<String>,
+    ) -> Result<(), StoreError> {
         self.apply(None, self.execution.with_plan(enabled), false)
-            .await
+            .await?;
+        if let Some(tool_call) = tool_call {
+            self.log
+                .append(KernelEvent::PlanTransition { tool_call, enabled });
+        }
+        Ok(())
     }
 
     /// 用户切换权限模式（前端的 `SetMode`，shift+tab 与 `/mode`）：同一批写本机项目的持久模式
@@ -53,11 +63,64 @@ impl Actor {
             .await
     }
 
+    /// Fork: an input's frozen execution state (`Command::SubmitWith`) when the input starts its turn:
+    /// the model, then the mode and plan, each only when it differs; the mode is saved as the project
+    /// mode like a user `SetMode`.
+    pub(crate) async fn submitted_execution(
+        &mut self,
+        execution: InputExecution,
+    ) -> Result<(), StoreError> {
+        if let Some(selection) = execution.selection
+            && selection != self.selection
+        {
+            self.select_model(None, selection).await?;
+        }
+        let next = execution.state;
+        if next != self.execution {
+            let save = next.mode != self.execution.mode;
+            self.apply_with(None, next, save, false).await?;
+        }
+        Ok(())
+    }
+
+    /// Fork: the permission dialog's full access (`Command::GrantFullAccess`, Node `fullAccess`): the
+    /// session's permission mode becomes bypass (plan kept, saved like a user `SetMode`) and so does every
+    /// queued input's frozen mode (their plan switches kept).
+    pub(crate) async fn grant_full_access(
+        &mut self,
+        command: CommandId,
+        interaction: String,
+    ) -> Result<(), StoreError> {
+        let mode = PermissionMode::BypassPermissions;
+        if self.execution.mode != mode {
+            self.apply(Some(command), self.execution.with_mode(mode), true)
+                .await?;
+        }
+        if self.inbox.set_queued_mode(mode) {
+            self.emit_queue();
+        }
+        self.log
+            .append(KernelEvent::PermissionGranted { interaction });
+        Ok(())
+    }
+
     async fn apply(
         &mut self,
         command: Option<CommandId>,
         next: ExecutionState,
         save: bool,
+    ) -> Result<(), StoreError> {
+        self.apply_with(command, next, save, true).await
+    }
+
+    /// `start_peers`: peer messages the new mode releases may start a turn at once; an input's own state
+    /// (`submitted_execution`) passes `false` because that input's turn starts next.
+    async fn apply_with(
+        &mut self,
+        command: Option<CommandId>,
+        next: ExecutionState,
+        save: bool,
+        start_peers: bool,
     ) -> Result<(), StoreError> {
         let mut facts = vec![Fact::ExecutionChanged { state: next }];
         if save {
@@ -73,7 +136,7 @@ impl Actor {
             self.log
                 .append(KernelEvent::ModeChanged { mode: next.mode });
             // 模式类别可能变了：扣住的同伴消息重新判断（cross-session.md §1.6）。
-            self.peers_mode_changed(true).await;
+            self.peers_mode_changed(start_peers).await;
         }
         if previous.plan != next.plan {
             self.log

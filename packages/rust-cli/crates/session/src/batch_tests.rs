@@ -148,3 +148,45 @@ async fn a_mention_after_the_first_input_starts_its_own_turn() {
     assert_eq!(requests.len(), 2, "{requests:#?}");
     assert_eq!(last_user_texts(&requests[0]), ["plain one".to_owned()]);
 }
+
+/// Fork: with `one_input_per_turn` (the Node desktop agent) every queued input is its own turn.
+#[tokio::test]
+async fn one_input_per_turn_runs_each_queued_input_alone() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let model = Arc::new(
+        ScriptedModel::new(vec![
+            text_response(&["ok"]),
+            text_response(&["one"]),
+            text_response(&["two"]),
+        ])
+        .gated_at(0, gate.clone()),
+    );
+    let mut setup = Setup::new(model.clone());
+    setup.one_input_per_turn = true;
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built
+        .session
+        .send(queued("c1", "hello", Delivery::Queue))
+        .await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::TurnStarted { .. })
+    })
+    .await;
+    built
+        .session
+        .send(queued("c2", "first queued", Delivery::Queue))
+        .await;
+    built
+        .session
+        .send(queued("c3", "second queued", Delivery::Queue))
+        .await;
+    gate.notify_one();
+    until(&mut events, finished).await;
+    until(&mut events, finished).await;
+    until(&mut events, finished).await;
+    let requests = model.requests().split_off(1);
+    assert_eq!(requests.len(), 2, "{requests:#?}");
+    assert_eq!(last_user_texts(&requests[0]), ["first queued".to_owned()]);
+    assert_eq!(last_user_texts(&requests[1]), ["second queued".to_owned()]);
+}

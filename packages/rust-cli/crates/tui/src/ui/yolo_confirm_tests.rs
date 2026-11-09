@@ -349,6 +349,7 @@ fn confirming_for_an_ask_allows_it_once_then_switches() {
             event: KernelEvent::InteractionAsked {
                 interaction: ask.clone(),
                 request: InteractionRequest::Permission {
+                    origin: None,
                     machine: Default::default(),
                     rule_seed: None,
                     tool_use: rust_cli_kernel_api::ids::ToolUseId::new("tu1"),
@@ -357,6 +358,7 @@ fn confirming_for_an_ask_allows_it_once_then_switches() {
                     message: String::new(),
                     suggestions: Vec::new(),
                     asked_by: None,
+                    once: false,
                 },
             },
         },

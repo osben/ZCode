@@ -148,6 +148,7 @@ fn byte_fields_come_from_the_body() {
     assert_eq!(
         command_event(finished, &body).unwrap(),
         CommandEvent::Finished {
+            output_unreadable: None,
             outcome: Outcome::Cancelled,
             exit_code: Some(137),
             timed_out: false,

@@ -22,7 +22,9 @@ fn status(agent: &LiveAgent) -> SubagentStatus {
         AgentState::Parked { .. } => SubagentStatus::Completed,
         AgentState::Finished(Ending::Completed) => SubagentStatus::Completed,
         AgentState::Finished(Ending::Failed) => SubagentStatus::Failed,
-        AgentState::Finished(Ending::Killed | Ending::KilledParked) => SubagentStatus::Killed,
+        AgentState::Finished(Ending::Killed | Ending::KilledParked | Ending::KilledByUser) => {
+            SubagentStatus::Killed
+        }
     }
 }
 

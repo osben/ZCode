@@ -11,7 +11,8 @@ fn every_source_is_listed_and_reads_back() {
             | SideSource::Rename
             | SideSource::HookPrompt
             | SideSource::WebFetch
-            | SideSource::WebSearch => {}
+            | SideSource::WebSearch
+            | SideSource::GoalSummaryTitle => {}
         }
         assert_eq!(SideSource::from_wire(source.as_wire()), Some(source));
     }
@@ -39,6 +40,11 @@ fn names_are_the_previous_strings() {
             "web_fetch_processing",
         ),
         (SideSource::WebSearch, "web_search_tool", "web_search_tool"),
+        (
+            SideSource::GoalSummaryTitle,
+            "goal_summary_title",
+            "goal_summary_title",
+        ),
     ];
     for (source, wire, node) in table {
         assert_eq!(source.as_wire(), wire);
@@ -67,6 +73,7 @@ fn the_rules_match_the_previous_lists() {
         (SideSource::HookPrompt, true, true),
         (SideSource::WebFetch, true, false),
         (SideSource::WebSearch, true, false),
+        (SideSource::GoalSummaryTitle, false, false),
     ];
     for (source, foreground, quiet) in table {
         assert_eq!(source.foreground(), foreground, "{source:?}");

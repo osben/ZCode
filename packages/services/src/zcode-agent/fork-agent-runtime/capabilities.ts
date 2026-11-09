@@ -17,13 +17,11 @@ export function isForkRustAgentRuntime(env: NodeJS.ProcessEnv = process.env): bo
 export function forkAgentRuntimeHelloOverrides(env: NodeJS.ProcessEnv = process.env): {
   incognitoSession?: false;
   incognitoPromptToggles?: false;
-  independentPlanState?: false;
 } {
   if (!isForkRustAgentRuntime(env)) return {};
   return {
     incognitoSession: false,
     incognitoPromptToggles: false,
-    independentPlanState: false,
   };
 }
 

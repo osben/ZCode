@@ -139,11 +139,20 @@ pub(crate) struct Finish {
     pub output_bytes: u64,
     /// 因输出超过上限被结束时的说明。
     pub output_limit: Option<String>,
+    /// Fork (node_desktop): the OS error code of a failed settlement read of a foreground
+    /// output file (see [`CommandEvent::Finished`]).
+    pub output_unreadable: Option<String>,
+    /// Fork (node_desktop): output files the watcher deletes once it has read them to the end
+    /// (a desktop foreground output that fit inline). Deleting them in the supervisor before
+    /// the terminal state raced the watcher, which reopens the file by path on every read and
+    /// then saw an empty, missing file.
+    pub discard: Vec<PathBuf>,
 }
 
 impl Finish {
     pub(crate) fn event(&self) -> CommandEvent {
         CommandEvent::Finished {
+            output_unreadable: self.output_unreadable.clone(),
             outcome: self.outcome.clone(),
             exit_code: self.exit_code,
             timed_out: self.timed_out,
@@ -232,6 +241,12 @@ pub(crate) struct Shells {
     shared: Arc<Shared>,
     /// 输出文件的上限（生产是 [`OUTPUT_LIMIT`]；测试换成小的）。
     limit: OutputLimit,
+    /// Fork (node_desktop): the root of the Node adapter's temp output layout
+    /// `<root>/<session>/<toolCallId>-stdout.log`. The desktop app resolves Bash output files
+    /// by session and tool call through that layout, so when configured, Bash tool commands
+    /// (foreground and background; desktop task ids are the model's tool-call ids) write their
+    /// merged output there; everything else keeps the CLI layout.
+    bash_outputs: Option<PathBuf>,
 }
 
 fn session_of(context: &OperationContext) -> SessionId {
@@ -239,6 +254,27 @@ fn session_of(context: &OperationContext) -> SessionId {
         Origin::Agent { session, .. } => session.clone(),
         Origin::User { session } => session.clone().unwrap_or_else(|| SessionId::new("user")),
     }
+}
+
+/// Fork (node_desktop): Node's path segment sanitizer (`sanitizePathSegment` in
+/// `execution-utils.ts`): characters outside `[a-zA-Z0-9._-]` become `_`, capped at 120
+/// characters; an empty result becomes `unknown`. The desktop session directory name must
+/// match the desktop app's session id exactly for ids from the safe set.
+fn path_segment(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        return "unknown".to_owned();
+    }
+    cleaned.chars().take(120).collect()
 }
 
 impl Shells {
@@ -273,7 +309,14 @@ impl Shells {
                 notices: signal::channel(0).0,
             }),
             limit: OUTPUT_LIMIT,
+            bash_outputs: None,
         }
+    }
+
+    /// Fork (node_desktop): configure the desktop output root (see [`Shells`]). Only the entry
+    /// crate calls this; commands that already run keep the layout they started with.
+    pub(crate) fn set_bash_outputs(&mut self, root: Option<PathBuf>) {
+        self.bash_outputs = root;
     }
 
     /// 测试用小的上限与间隔（5 GB / 5 s 在测试里不可行）。只有 Unix 的测试用（F66：Windows 上是死代码）。
@@ -339,7 +382,36 @@ impl Shells {
             .map_err(|error| EnvError::Io {
                 message: error.to_string(),
             })?;
-        let dir = self.task_outputs(&session);
+        // Fork (node_desktop): Bash tool commands write to the Node adapter's temp layout when
+        // the desktop root is configured; hook and monitor-socket commands always keep the CLI
+        // layout (they never carry a model tool call).
+        let desktop = self.bash_outputs.as_ref().filter(|_| {
+            matches!(
+                request.kind,
+                CommandKind::Foreground { .. } | CommandKind::Background { .. }
+            )
+        });
+        if let Some(root) = desktop {
+            rust_cli_proc::private::ensure(root)
+                .await
+                .map_err(|error| EnvError::Io {
+                    message: error.to_string(),
+                })?;
+        }
+        let tasks = self.task_outputs(&session);
+        let mut dir = tasks.clone();
+        let mut output = dir.join(format!("{}.output", request.task));
+        let mut cwd_file = dir.join(format!("{}.cwd", request.task));
+        let mut link = None;
+        if let Some(root) = desktop {
+            dir = root.join(path_segment(session.as_str()));
+            output = dir.join(format!("{}-stdout.log", request.task));
+            cwd_file = dir.join(format!("{}.cwd", request.task));
+            // TaskOutput and the session's task listings resolve a task's output through
+            // `<scratch>/<session>/tasks/<task>.output` (`ShellState::outputs`); keep that name
+            // addressable as a symlink to the desktop file.
+            link = Some(tasks.join(format!("{}.output", request.task)));
+        }
         let shell_name = bash.to_string_lossy().into_owned();
         let mut env = environ::project(self.config.env.vars(), Some(&shell_name));
         // 执行器的服务端按客户端实例填的变量（远端执行 F96，remote-exec.md §23.5）：加在投影之后，`None` 是去掉。
@@ -366,7 +438,7 @@ impl Shells {
             _ => None,
         };
         let plan = supervise::Plan {
-            output: dir.join(format!("{}.output", request.task)),
+            output,
             // hook 命令的 stderr 单独写；ws 来源的 monitor 把生命周期写在这里（tools-more.md §19.7）。
             errors: matches!(
                 request.kind,
@@ -375,13 +447,17 @@ impl Shells {
             .then(|| dir.join(format!("{}.stderr", request.task))),
             // 命令来源的 monitor：只有 stdout 是事件流，另写一份；输出文件里 stdout 与 stderr 都在（tools-more.md §19.5）。
             events: command_monitor(&request).then(|| dir.join(format!("{}.events", request.task))),
-            cwd_file: dir.join(format!("{}.cwd", request.task)),
+            cwd_file,
             dir,
             cwd,
             origin,
             env,
             bash,
             prelude,
+            // Fork (node_desktop): this command uses the desktop layout and owns a compatibility
+            // link in the scratch tasks directory.
+            desktop: desktop.is_some(),
+            link,
         };
         if let CommandKind::Socket { socket, .. } = &request.kind {
             let socket = socket.clone();
@@ -595,6 +671,10 @@ impl Shells {
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shell_desktop_tests.rs"]
+mod desktop_tests;
 
 #[cfg(test)]
 #[path = "shell_limit_tests.rs"]

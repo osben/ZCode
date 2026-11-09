@@ -5,9 +5,11 @@ use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
 use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
+use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, SessionHandle,
+    Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, InputExecution,
+    QueuedKind, SessionHandle,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
@@ -37,7 +39,7 @@ struct AppSelectionOptions {
 }
 
 /// App 的模型选择 → 内核的选择。原样留着 JSON（排队项照原样带回去），用时再解。
-fn selection(value: Option<&Value>) -> Option<ModelSelection> {
+pub(crate) fn selection(value: Option<&Value>) -> Option<ModelSelection> {
     let chosen: AppSelection = serde_json::from_value(value?.clone()).ok()?;
     Some(ModelSelection {
         reasoning: chosen.options.reasoning_level,
@@ -67,6 +69,18 @@ struct Input {
     /// Fork: App attachment refs (`attachmentRefSchema`), expanded in [`crate::attachments::content`].
     #[serde(default)]
     attachments: Vec<Value>,
+    /// Fork: the client's answer to a paused queue (`inputRouting.mode = choice`), see [`held_queue_choice`].
+    held_queue_disposition: Option<HeldDisposition>,
+    /// Fork: the queue the client confirmed, as `queueItemId`s; a changed queue makes the confirmation stale.
+    expected_held_queue_item_ids: Option<Vec<String>>,
+}
+
+/// Fork: `heldQueueDisposition` (`command.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum HeldDisposition {
+    ClearQueueAndSend,
+    KeepQueueAndSend,
 }
 
 /// sendText 要的投递（`requestedDelivery`）。
@@ -133,6 +147,9 @@ struct ResolvePayload {
 struct AnswerPayload {
     option_id: Option<String>,
     free_text: Option<String>,
+    /// Fork: the elicitation dialog's answer to a question or plan approval (projection/elicitation.rs).
+    action: Option<String>,
+    content: Option<serde_json::Map<String, Value>>,
 }
 
 /// setFollowupMode 的 payload。
@@ -142,7 +159,7 @@ struct FollowupPayload {
 }
 
 /// 解 payload（已经过 schema，失败只会是 schema 与这里的结构不一致）：解不出时按 payload 不合规拒绝。
-fn payload<P: DeserializeOwned>(envelope: &Envelope) -> Result<P, Box<Ack>> {
+pub(crate) fn payload<P: DeserializeOwned>(envelope: &Envelope) -> Result<P, Box<Ack>> {
     serde_json::from_value(envelope.payload.clone()).map_err(|error| {
         Box::new(Ack::refused(
             &envelope.command_id,
@@ -155,7 +172,7 @@ fn payload<P: DeserializeOwned>(envelope: &Envelope) -> Result<P, Box<Ack>> {
 }
 
 /// 内核的回执 → 命令的 ACK：接受是 `accepted`，重复是同一个标成 duplicate，拒绝按 `refused` 给出。
-fn ack_of(kernel: KernelAck, accepted: Ack, refused: impl FnOnce(String) -> Ack) -> Ack {
+pub(crate) fn ack_of(kernel: KernelAck, accepted: Ack, refused: impl FnOnce(String) -> Ack) -> Ack {
     match kernel {
         KernelAck::Accepted { .. } => accepted,
         KernelAck::Duplicate => inbox::duplicate(&accepted),
@@ -163,7 +180,7 @@ fn ack_of(kernel: KernelAck, accepted: Ack, refused: impl FnOnce(String) -> Ack)
     }
 }
 
-async fn send(handle: &dyn SessionHandle, id: &str, command: Command) -> KernelAck {
+pub(crate) async fn send(handle: &dyn SessionHandle, id: &str, command: Command) -> KernelAck {
     handle
         .send(CommandEnvelope {
             id: CommandId::new(id),
@@ -172,7 +189,8 @@ async fn send(handle: &dyn SessionHandle, id: &str, command: Command) -> KernelA
         .await
 }
 
-fn unsupported(envelope: &Envelope, revision: u64) -> Ack {
+pub(crate) fn unsupported(envelope: &Envelope, revision: u64) -> Ack {
+    tracing::info!(event = "protocol.command.unsupported", kind = %envelope.kind, "command is not supported by this agent");
     Ack::refused(
         &envelope.command_id,
         Status::Rejected,
@@ -200,12 +218,16 @@ pub async fn command(server: &Server, params: Value) -> Result<Value, RpcError> 
         ),
         Ok(()) => decide(server, &envelope).await,
     };
-    if ack.status != Status::Duplicate {
+    // Like Node (`remember: false`), a stale ack is not remembered: a resend of the same command
+    // after the client caught up is decided again instead of replaying the stale verdict.
+    if !matches!(ack.status, Status::Duplicate | Status::Stale) {
         server.remembered.lock_unpoisoned().put(key, ack.clone());
     }
     // 命令事实（G2）：会话命令照 Node 的格式落库；写失败只记日志，ACK 照常回。
+    // Fork: a deleted session has no record store left for its delete fact.
     if let Some(session) = &envelope.session_id
         && ack.is_fact()
+        && envelope.kind != "deleteSession"
         && let Err(error) = server
             .kernel
             .queries()
@@ -245,29 +267,26 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     let (phase, revision) = live.sink.status();
     let handle = live.handle.as_ref();
     match envelope.kind.as_str() {
-        "sendText" => {
-            let ack = send_text(server, handle, &live.sink, envelope, phase, revision).await;
+        "sendText" | "sendGoalCommand" => {
+            let kind = if envelope.kind == "sendGoalCommand" {
+                QueuedKind::Goal
+            } else {
+                QueuedKind::Text
+            };
+            let ack = send_text(server, handle, &live.sink, envelope, kind, phase, revision).await;
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
             }
             ack
         }
-        "stop" => ack_of(
-            send(handle, &envelope.command_id, Command::Interrupt).await,
-            Ack::accepted(&envelope.command_id, revision, None),
-            |reason| {
-                Ack::refused(
-                    &envelope.command_id,
-                    Status::Noop,
-                    "proto.nothingToStop",
-                    reason,
-                    revision,
-                )
-            },
-        ),
+        "stop" => stop(handle, &live.sink, envelope, phase, revision).await,
         "resolveInteraction" => resolve(handle, &live.sink, envelope, revision).await,
         "setFollowupMode" => set_followup(server, handle, &live, envelope).await,
-        _ => unsupported(envelope, revision),
+        // Fork: command kinds ported for desktop parity (specs/fork-rust-agent-parity.md).
+        _ => match crate::fork::commands::decide(server, &live, envelope, phase, revision).await {
+            Some(ack) => ack,
+            None => unsupported(envelope, revision),
+        },
     }
 }
 
@@ -644,9 +663,6 @@ fn input_meta(
             .clone()
             .or_else(|| input.input_origin.clone()),
         text: input.text.clone().unwrap_or_default(),
-        selection: input.model_selection.clone(),
-        mode: input.mode.clone(),
-        plan: input.plan_enabled,
         admitted_at: 0,
         requested,
         admitted,
@@ -654,11 +670,113 @@ fn input_meta(
     }
 }
 
+/// Fork: Node's `applyHeldQueueDisposition`. After a finished turn a paused queue (`autoDrain` off, items
+/// waiting) routes input as `choice`: without a disposition the input is refused
+/// (`heldQueueDispositionRequired`), a queue that changed since the client's confirmation is stale
+/// (`guard.heldQueueConfirmationStale`), `clearQueueAndSend` drops the waiting items and releases the hold, and
+/// `keepQueueAndSend` leaves them. The input itself then starts at once: an idle submit is not held.
+async fn held_queue_choice(
+    handle: &dyn SessionHandle,
+    live: &crate::live::Live,
+    envelope: &Envelope,
+    input: &Input,
+    view: Option<&rust_cli_kernel_api::session_api::SessionView>,
+    phase: Phase,
+    revision: u64,
+) -> Result<(), Box<Ack>> {
+    let command = envelope.command_id.as_str();
+    let queue = view.map(|view| view.queue.as_slice()).unwrap_or_default();
+    let completed = matches!(phase, Phase::CompletedSuccess | Phase::CompletedInterrupted);
+    if !(completed && !queue.is_empty() && !live.auto_drain()) {
+        return Ok(());
+    }
+    let refused = |code: &str, message: &str| {
+        Box::new(Ack::refused(
+            command,
+            Status::Rejected,
+            code,
+            message.to_owned(),
+            revision,
+        ))
+    };
+    let Some(disposition) = input.held_queue_disposition else {
+        return Err(refused(
+            "heldQueueDispositionRequired",
+            "held queue requires heldQueueDisposition (clearQueueAndSend | keepQueueAndSend)",
+        ));
+    };
+    if let Some(expected) = &input.expected_held_queue_item_ids {
+        let current: std::collections::HashSet<String> = queue
+            .iter()
+            .map(|item| format!("queue_{}", item.command.as_str()))
+            .collect();
+        let confirmed: std::collections::HashSet<&String> = expected.iter().collect();
+        let same = confirmed.len() == expected.len()
+            && current.len() == expected.len()
+            && expected.iter().all(|id| current.contains(id));
+        if !same {
+            return Err(refused(
+                "guard.heldQueueConfirmationStale",
+                "paused queue changed after send confirmation opened",
+            ));
+        }
+    }
+    if disposition == HeldDisposition::ClearQueueAndSend {
+        for item in queue {
+            send(
+                handle,
+                &format!("{command}:clear:{}", item.command.as_str()),
+                Command::Dequeue {
+                    command: item.command.clone(),
+                },
+            )
+            .await;
+        }
+        // The Stop's hold protected the cleared items only (Node ISSUE-063): release it after the clear.
+        let release = send(
+            handle,
+            &format!("{command}:release"),
+            Command::HoldQueue { held: false },
+        )
+        .await;
+        if matches!(release, KernelAck::Accepted { .. }) {
+            live.set_auto_drain(true).await;
+        }
+    }
+    Ok(())
+}
+
+/// Fork: the execution state an input was submitted with (Node's Submission), frozen on the kernel's
+/// queued item when it waits; missing parts are the session's current state.
+fn input_execution(
+    input: &Input,
+    view: Option<&rust_cli_kernel_api::session_api::SessionView>,
+) -> Option<InputExecution> {
+    let chosen = selection(input.model_selection.as_ref());
+    let state = mode(input.mode.as_deref(), input.plan_enabled)
+        .map(|(mode, plan)| ExecutionState { mode, plan });
+    if chosen.is_none() && state.is_none() {
+        return None;
+    }
+    let current = view.map_or_else(ExecutionState::default, |view| ExecutionState {
+        mode: view.mode,
+        plan: view.plan,
+    });
+    Some(InputExecution {
+        state: state.unwrap_or(current),
+        selection: chosen,
+    })
+}
+
+/// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
+/// now and queueing, and applies the input's execution state only when its turn starts
+/// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
 async fn send_text(
     server: &Server,
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
     envelope: &Envelope,
+    kind: QueuedKind,
     phase: Phase,
     revision: u64,
 ) -> Ack {
@@ -667,6 +785,16 @@ async fn send_text(
         Err(ack) => return *ack,
     };
     let command = envelope.command_id.as_str();
+    // Fork: Node's `guard.planGoalMutuallyExclusive` (plan cannot create a goal).
+    if kind == QueuedKind::Goal && input.plan_enabled == Some(true) {
+        return Ack::refused(
+            command,
+            Status::Rejected,
+            "guard.planGoalMutuallyExclusive",
+            "plan mode cannot set a goal",
+            revision,
+        );
+    }
     // Checked before any side effect (model or mode change), so a refused input changes nothing.
     let refs = match crate::attachments::parse_refs(&input.attachments) {
         Ok(refs) => refs,
@@ -680,36 +808,22 @@ async fn send_text(
             );
         }
     };
-    // 这次提交带的模型与模式先作用到会话（同 Node：Submission 带完整的选择）。
     let view = handle.view().await.ok();
-    if let Some(chosen) = selection(input.model_selection.as_ref())
-        && view.as_ref().is_none_or(|view| view.selection != chosen)
+    // Fork: checked before the model or mode change, like Node's admission.
+    if let Err(ack) = held_queue_choice(
+        handle,
+        live,
+        envelope,
+        &input,
+        view.as_ref(),
+        phase,
+        revision,
+    )
+    .await
     {
-        send(
-            handle,
-            &format!("{command}:model"),
-            Command::SetModel { selection: chosen },
-        )
-        .await;
+        return *ack;
     }
-    if let Some((permission, plan)) = mode(input.mode.as_deref(), input.plan_enabled) {
-        if view.as_ref().is_none_or(|view| view.mode != permission) {
-            send(
-                handle,
-                &format!("{command}:mode"),
-                Command::SetMode { mode: permission },
-            )
-            .await;
-        }
-        if view.as_ref().is_none_or(|view| view.plan != plan) {
-            send(
-                handle,
-                &format!("{command}:plan"),
-                Command::SetPlan { enabled: plan },
-            )
-            .await;
-        }
-    }
+    let execution = input_execution(&input, view.as_ref());
     let running = phase == Phase::Running;
     let requested = input.requested_delivery;
     let followup = live.followup();
@@ -725,17 +839,24 @@ async fn send_text(
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();
-    let submit = if with_attachments {
-        Command::SubmitContent {
-            content: crate::attachments::content(server, handle.id(), &text, refs).await,
-            delivery,
-        }
+    let content = if with_attachments {
+        crate::attachments::content(server, handle.id(), &text, refs).await
     } else {
-        Command::Submit {
-            text,
-            attachments: Vec::new(),
-            delivery,
-        }
+        Vec::new()
+    };
+    // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
+    let text = if kind == QueuedKind::Goal {
+        format!("/goal {}", text.trim())
+    } else {
+        text
+    };
+    let submit = Command::SubmitWith {
+        kind,
+        text,
+        content,
+        delivery,
+        execution,
+        behind_held: false,
     };
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(
@@ -771,30 +892,40 @@ async fn resolve(
             .find(|(id, _)| id.as_str() == interaction)
             .map(|(_, request)| request)
     });
-    let Some(InteractionRequest::Permission {
-        suggestions,
-        tool_use: tool,
-        ..
-    }) = pending
-    else {
-        return Ack::refused(
-            &envelope.command_id,
-            Status::Noop,
-            "proto.alreadyResolved",
-            "the interaction is no longer pending",
-            revision,
-        );
+    let (suggestions, tool) = match pending {
+        Some(InteractionRequest::Permission {
+            suggestions,
+            tool_use,
+            ..
+        }) => (suggestions, tool_use),
+        Some(request) => {
+            return resolve_elicitation(handle, live, envelope, revision, &resolved, &request)
+                .await;
+        }
+        None => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Noop,
+                "proto.alreadyResolved",
+                "the interaction is no longer pending",
+                revision,
+            );
+        }
     };
-    // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。
+    // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。Fork: queued inputs' frozen modes become yolo
+    // too, plan switches kept (Node `fullAccess`).
     if option == Some("fullAccess") {
-        send(
+        let ack = send(
             handle,
             &format!("{}:mode", envelope.command_id),
-            Command::SetMode {
-                mode: PermissionMode::BypassPermissions,
+            Command::GrantFullAccess {
+                interaction: interaction.to_owned(),
             },
         )
         .await;
+        if !matches!(ack, KernelAck::Accepted { .. }) {
+            tracing::warn!(event = "protocol.full_access.refused", ack = ?ack, "full access was not granted");
+        }
     }
     let answer = match option {
         Some("allowOnce" | "fullAccess") => PermissionAnswer::Allow {
@@ -821,6 +952,53 @@ async fn resolve(
         answer: answer.into(),
     };
     // 与 Node 相同：ACK 不带 result（答案已经进了会话，投影随事件更新）。
+    ack_of(
+        send(handle, &envelope.command_id, command).await,
+        Ack::accepted(&envelope.command_id, revision, None),
+        |reason| {
+            Ack::refused(
+                &envelope.command_id,
+                Status::Noop,
+                "proto.alreadyResolved",
+                reason,
+                revision,
+            )
+        },
+    )
+}
+
+/// Fork: answers a question or plan approval (Node's interaction broker mapping, projection/elicitation.rs).
+async fn resolve_elicitation(
+    handle: &dyn SessionHandle,
+    live: &crate::live::Live,
+    envelope: &Envelope,
+    revision: u64,
+    resolved: &ResolvePayload,
+    request: &InteractionRequest,
+) -> Ack {
+    use crate::projection::elicitation;
+    let action = resolved.answer.action.as_deref();
+    let content = resolved.answer.content.as_ref();
+    let answer: rust_cli_kernel_api::orchestration::Answer = match request {
+        // The caller answers permission asks itself; one reaching here is answered as a question would be.
+        InteractionRequest::Question { questions, .. } => {
+            elicitation::question_answer(questions, action, content).into()
+        }
+        InteractionRequest::Permission { .. } => {
+            elicitation::question_answer(&Value::Null, action, content).into()
+        }
+        InteractionRequest::PlanApproval { .. } => elicitation::plan_answer(
+            action,
+            content,
+            resolved.answer.free_text.as_deref(),
+            live.current_config().1,
+        )
+        .into(),
+    };
+    let command = Command::ResolveInteraction {
+        interaction: InteractionId::new(&resolved.interaction_id),
+        answer,
+    };
     ack_of(
         send(handle, &envelope.command_id, command).await,
         Ack::accepted(&envelope.command_id, revision, None),
@@ -935,4 +1113,49 @@ pub async fn query(server: &Server, params: &Value) -> Result<Value, RpcError> {
         });
     }
     Ok(reply)
+}
+
+/// Fork: Node's stop holds the following queue (specs/stop-queue-hold.md rules 1-4): a stop that will cancel a turn
+/// while inputs are queued and the queue still drains pauses the drain first, so the turn end cannot promote the head
+/// the user just stopped. The hold is written to the kernel before the interrupt (the session actor applies commands in
+/// order), and released again when there was nothing to stop.
+async fn stop(
+    handle: &dyn SessionHandle,
+    sink: &crate::live::Live,
+    envelope: &Envelope,
+    phase: Phase,
+    revision: u64,
+) -> Ack {
+    let id = &envelope.command_id;
+    let held = phase == Phase::Running
+        && sink.has_queue()
+        && sink.auto_drain()
+        && matches!(
+            send(
+                handle,
+                &format!("{id}:hold"),
+                Command::HoldQueue { held: true }
+            )
+            .await,
+            KernelAck::Accepted { .. }
+        );
+    let interrupted = send(handle, id, Command::Interrupt).await;
+    if matches!(interrupted, KernelAck::Accepted { .. }) {
+        if held {
+            sink.hold_for_stop().await;
+        }
+    } else if held
+        && let KernelAck::Rejected { reason } = send(
+            handle,
+            &format!("{id}:release"),
+            Command::HoldQueue { held: false },
+        )
+        .await
+    {
+        tracing::warn!(event = "protocol.stop.release_failed", reason = %reason,
+            "releasing the stop's queue hold failed");
+    }
+    ack_of(interrupted, Ack::accepted(id, revision, None), |reason| {
+        Ack::refused(id, Status::Noop, "proto.nothingToStop", reason, revision)
+    })
 }

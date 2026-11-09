@@ -50,6 +50,7 @@ impl Loop<'_> {
             .filter_map(|block| match block {
                 ContentBlock::Image {
                     source: ImageSource::Base64 { media_type, data },
+                    ..
                 } => Some((media_type.clone(), data.clone())),
                 _ => None,
             })

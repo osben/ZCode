@@ -125,6 +125,13 @@ fn tool_results_first(content: &mut Vec<ApiContent>) {
     *content = results;
 }
 
+/// Fork: a meta notification message with more than one block.
+fn notification_batch(user: &rust_cli_kernel_api::message::UserMessage) -> bool {
+    user.content.len() > 1
+        && matches!(&user.origin, rust_cli_kernel_api::message::UserOrigin::Meta { source }
+            if source == rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION)
+}
+
 /// 相邻 user 消息合并：文本接文本时，前一段末尾补一个换行。
 fn merge_user(into: &mut Vec<ApiContent>, next: Vec<ApiContent>) {
     if let (Some(last), Some(first)) = (into.last_mut(), next.first())
@@ -309,6 +316,14 @@ pub(crate) fn normalize<'a>(
     };
     for item in hoist(messages.into_iter().collect()) {
         match item {
+            // Fork: a notification batch (one message, a text block per notification) reaches the
+            // model like one user message per notification: every block but the last ends with a
+            // newline, as Node sends `persistBackgroundTaskNotificationBatch`'s parts.
+            Message::User(user) if notification_batch(user) => {
+                for block in &user.content {
+                    builder.push_user(plain(vec![block.clone()]));
+                }
+            }
             Message::User(user) => builder.push_user(plain(user.content.clone())),
             // 只供显示的 attachment（如 `max_turns_reached`）文本为空，渲染为空。
             Message::Attachment(attachment) if attachment.text.is_empty() => {}

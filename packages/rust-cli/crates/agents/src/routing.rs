@@ -120,6 +120,10 @@ fn notice_of(
     error: Option<&str>,
     keepalive: bool,
 ) -> Notice {
+    let ending = match ending {
+        Ending::Killed if agent.stopped_by_user => Ending::KilledByUser,
+        other => other,
+    };
     Notice {
         from: agent.agent.clone(),
         status: ending.status(),

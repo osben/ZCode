@@ -122,6 +122,7 @@ fn command_events_and_notices_round_trip() {
         output: path("/tmp/b1.output"),
     });
     round_trip(&CommandEvent::Finished {
+        output_unreadable: None,
         outcome: Outcome::Failed {
             code: Some("timeout".to_owned()),
             message: "Command timed out after 1s".to_owned(),
@@ -133,6 +134,7 @@ fn command_events_and_notices_round_trip() {
         output_limit: None,
     });
     round_trip(&CommandEvent::Finished {
+        output_unreadable: None,
         outcome: Outcome::Cancelled,
         exit_code: Some(137),
         timed_out: false,
@@ -184,6 +186,7 @@ fn background_task_dtos_round_trip() {
     round_trip(&BackgroundTask {
         session: SessionId::new("s1"),
         task: ShellTaskId::new("b0123abcd"),
+        notify_stop: false,
     });
     round_trip(&Some(BackgroundInfo {
         command: "sleep 30".to_owned(),

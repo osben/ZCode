@@ -52,6 +52,19 @@ pub(crate) async fn session_on_machines(
     messages: Vec<Message>,
     clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
 ) -> Session {
+    session_with_drain(scope, registry, model, tools, messages, clock, false).await
+}
+
+/// Fork: [`session_on_machines`] with `SessionDeps::one_input_per_turn` (the Node desktop drain).
+pub(crate) async fn session_with_drain(
+    scope: &TaskScope,
+    registry: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
+    model: Arc<dyn ModelPort>,
+    tools: Vec<Arc<dyn Tool>>,
+    messages: Vec<Message>,
+    clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+    one_input_per_turn: bool,
+) -> Session {
     let store = Arc::new(MemoryStore::default());
     store.create(meta()).await.unwrap();
     let ids = Arc::new(SequentialIds::default());
@@ -97,6 +110,9 @@ pub(crate) async fn session_on_machines(
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn,
+            desktop_goals: false,
+            fork_while_running: false,
         },
         SessionState {
             commands: Default::default(),
@@ -109,6 +125,7 @@ pub(crate) async fn session_on_machines(
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
         },
         Opened::Loaded,
     )

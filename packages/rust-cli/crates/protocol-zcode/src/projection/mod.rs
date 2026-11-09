@@ -3,10 +3,19 @@
 //!
 //! 行：turnHeader（回合）、userInput（真人输入）、assistantText、reasoning、toolCall；其余事件只改状态或忽略（P1）。
 
+mod actions;
+mod background_result;
+mod background_shells;
+mod bash_progress;
 mod cold;
+pub mod elicitation;
 mod kinds;
+mod markers;
+mod plans;
 mod rows;
+pub(crate) mod rows_range;
 pub mod state;
+mod subagent_rows;
 
 use std::collections::HashMap;
 
@@ -14,15 +23,16 @@ use rust_cli_kernel_api::message::{ContentBlock, Usage, text_of as text_of_resul
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    KernelEvent, QueuedInput, SequencedEvent, SessionView, TurnOutcome,
+    FileChange, KernelEvent, QueuedInput, QueuedKind, SequencedEvent, SessionView, TurnOutcome,
 };
 use serde_json::{Map, Value, json};
 
+pub use actions::{RowAction, RowTarget, TargetMiss};
 use kinds::{RowKind, ToolStatus};
 use state::{ActiveWork, Followup, LastError, Phase};
 
-/// 快照里最多带的行（尾部窗口）。
-const WINDOW_ROWS: usize = 200;
+/// Node's `PROTOCOL_V4_LIMITS.snapshotTailWindowRows`: the snapshot's row window; older rows come from `rowsRange`.
+const WINDOW_ROWS: usize = 60;
 
 /// sendText 带来的输入的事实（行与队列项要用）。
 #[derive(Debug, Clone, PartialEq)]
@@ -30,15 +40,29 @@ pub struct InputMeta {
     pub client: String,
     pub origin: Option<String>,
     pub text: String,
-    pub selection: Option<Value>,
-    pub mode: Option<String>,
-    pub plan: Option<bool>,
     pub admitted_at: u64,
     pub requested: &'static str,
     pub admitted: &'static str,
     /// Fork: the `attachments` refs sent with the input; only the queue shows them (a stored input's row reads its
     /// file parts).
     pub attachments: Vec<Value>,
+}
+
+/// Fork: a turn's file changes merged across the turn's `KernelEvent::FileChanges` batches (Node derives the
+/// header summary from one ModelComplete; the kernel reports one event per checkpoint batch). Counts are summed
+/// per path so a path seen again is counted once, like Node's per-turn `fileChanges`.
+#[derive(Debug, Clone, Default)]
+struct TurnFileChanges {
+    /// path → summed (additions, deletions).
+    files: HashMap<String, (u64, u64)>,
+    /// Any of the turn's batches said its checkpoints can be rewound.
+    rewindable: bool,
+    /// Fork: every checkpoint of the turn was restored (`KernelEvent::TurnFilesReverted`); the
+    /// header shows `state: "reverted"` and stops offering the rewind-files action.
+    reverted: bool,
+    /// Fork: the message that opened the turn (`KernelEvent::FileChanges::turn_input`); the
+    /// per-turn file queries' kernel anchor when the turn has no typed user row.
+    anchor: Option<String>,
 }
 
 /// 一个回合里的行。
@@ -50,6 +74,13 @@ struct Turn {
     /// 当前模型响应的序号（流式增量带来；assistant 消息落定时用它找行）。
     response: Option<u32>,
     keys: Vec<String>,
+    /// Fork: `originMeta` of each notification that opened this turn, in arrival order
+    /// (background_result.rs); `None` for one the UI does not title.
+    notified: Vec<Option<Value>>,
+    /// Fork: the output tokens of the turn's model responses so far (`None` before the first one).
+    output_tokens: Option<u64>,
+    /// Fork: the turn makes no model call (`KernelEvent::TurnControlOnly`, Node `executionKind: "controlOnly"`).
+    control_only: bool,
 }
 
 /// 一个会话的投影。
@@ -68,6 +99,13 @@ pub struct Projection {
     selection: ModelSelection,
     mode: PermissionMode,
     plan: bool,
+    /// Fork: the last full-access grant (`config.permissionGrant`), the composer's one-shot
+    /// adoption key; protocol memory like Node's runtime `lastPermissionGrantId`.
+    permission_grant: Option<String>,
+    /// Fork: the last plan tool transition (`config.planTransition`: call id, plan switch).
+    plan_transition: Option<(String, bool)>,
+    /// Fork: the desktop goal (snapshot `goal`), from the view and `KernelEvent::GoalChanged`.
+    goal: Option<rust_cli_kernel_api::goal::GoalState>,
     followup: Followup,
     levels: Vec<String>,
     context: Option<rust_cli_kernel_api::compaction::ContextOccupancy>,
@@ -78,7 +116,24 @@ pub struct Projection {
     inputs: HashMap<String, InputMeta>,
     /// 用户拒绝了的工具调用：结果投成 cancelled。
     denied: std::collections::HashSet<String>,
+    /// Fork: the queue drains on its own (`setAutoDrain`); the kernel's hold is set by the same command.
+    auto_drain: bool,
+    /// Fork: why the queue is paused (`queue.pauseReason`): `manual` after `setAutoDrain(false)`, `stopped` after a
+    /// user stop held it (specs/stop-queue-hold.md).
+    pause_reason: Option<&'static str>,
     created_at: u64,
+    /// Fork: a compaction is running (row actions are withheld, like Node's `compact` active work).
+    compacting: bool,
+    /// Fork: compaction markers so far; the running one is `compact:<count>` (projection/markers.rs).
+    compactions: u64,
+    /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
+    catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
+    /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
+    /// the `canRewindFiles` action (`projection/actions.rs`).
+    turn_file_changes: HashMap<String, TurnFileChanges>,
+    /// Fork: subagent rows and the snapshot `subagents` manifest (projection/subagent_rows.rs).
+    subagents: subagent_rows::Subagents,
+    shells: background_shells::Shells,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -104,6 +159,23 @@ fn turn_key(turn: &str) -> String {
     format!("turn:{turn}")
 }
 
+/// Fork: the turn header's `fileChanges` JSON (`turnHeaderRowSchema.fileChanges`): totals over the
+/// per-path counts and the turn's restore state.
+fn summary_json(changes: &TurnFileChanges) -> Value {
+    let (additions, deletions) = changes
+        .files
+        .values()
+        .fold((0, 0), |(add, del), (file_add, file_del)| {
+            (add + file_add, del + file_del)
+        });
+    json!({
+        "additions": additions,
+        "deletions": deletions,
+        "files": changes.files.len(),
+        "state": if changes.reverted { "reverted" } else { "active" },
+    })
+}
+
 fn block_key(kind: RowKind, turn: &str, response: u32, index: usize) -> String {
     format!("{}:{turn}:{response}:{index}", kind.as_str())
 }
@@ -115,11 +187,37 @@ fn tool_key(tool_use: &str) -> String {
 impl Projection {
     /// 从视图建投影（冷打开或第一次订阅）。`followup` 与 `levels` 是协议自己保存的配置（不在内核里）。
     pub fn from_view(view: &SessionView, followup: Followup, levels: Vec<String>) -> Self {
+        Self::from_view_at(view, followup, levels, 1)
+    }
+
+    /// Fork: the projection of a rewritten history (rewind, edit, retry). Keeps what the protocol remembers outside the
+    /// kernel (follow-up mode, levels, input facts, denials) and keeps row ids increasing.
+    pub fn rebuilt(&self, view: &SessionView) -> Self {
+        let mut projection =
+            Self::from_view_at(view, self.followup, self.levels.clone(), self.next_row);
+        projection.inputs.clone_from(&self.inputs);
+        projection.denied.clone_from(&self.denied);
+        projection.catalog = self.catalog.clone();
+        projection.auto_drain = self.auto_drain;
+        projection.pause_reason = self.pause_reason;
+        projection
+            .permission_grant
+            .clone_from(&self.permission_grant);
+        projection.plan_transition.clone_from(&self.plan_transition);
+        projection
+    }
+
+    fn from_view_at(
+        view: &SessionView,
+        followup: Followup,
+        levels: Vec<String>,
+        first_row: u64,
+    ) -> Self {
         let mut projection = Self {
             session: view.meta.id.as_str().to_owned(),
             rows: Vec::new(),
             index: HashMap::new(),
-            next_row: 1,
+            next_row: first_row,
             revision: view.revision,
             phase: Phase::Draft,
             active: None,
@@ -129,6 +227,9 @@ impl Projection {
             selection: view.selection.clone(),
             mode: view.mode,
             plan: view.plan,
+            permission_grant: None,
+            plan_transition: None,
+            goal: view.goal.clone(),
             followup,
             levels,
             context: view.context_usage,
@@ -139,11 +240,21 @@ impl Projection {
             inputs: HashMap::new(),
             denied: std::collections::HashSet::new(),
             created_at: view.meta.created_at_ms,
+            compacting: false,
+            compactions: 0,
+            catalog: std::sync::Arc::from(Vec::new()),
+            auto_drain: true,
+            pause_reason: None,
+            turn_file_changes: HashMap::new(),
+            subagents: subagent_rows::Subagents::default(),
+            shells: background_shells::Shells::default(),
         };
         cold::rows(&mut projection, view);
+        projection.adopt_turn_files(view);
         for (interaction, request) in &view.pending {
             projection.ask(interaction.as_str(), request, view.meta.created_at_ms);
         }
+        projection.refresh_actions(&mut Vec::new());
         projection
     }
 
@@ -204,18 +315,96 @@ impl Projection {
         self.followup = followup;
         json!({"op": "state.updated", "patch": {
             "config": self.config(),
-            "inputRouting": state::input_routing(self.phase, self.followup),
+            "inputRouting": self.input_routing(),
         }})
     }
 
+    /// Fork: whether the queue drains on its own (`queue.autoDrain`).
+    pub fn auto_drain(&self) -> bool {
+        self.auto_drain
+    }
+
+    /// Fork: `setAutoDrain` was accepted: returns the `state.updated` for the queue.
+    pub fn set_auto_drain(&mut self, auto_drain: bool) -> Value {
+        self.auto_drain = auto_drain;
+        self.pause_reason = (!auto_drain).then_some("manual");
+        self.queue_patch()
+    }
+
+    /// Fork: whether queued inputs wait behind the running turn (a stop would hold them).
+    pub fn has_queue(&self) -> bool {
+        self.queue_state()["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    }
+
+    /// Fork: a user stop cancelled the turn and held the queue (Node's cancelled `TurnComplete` without the preserve
+    /// intent: `autoDrain: false`, `pauseReason: "stopped"`).
+    pub fn hold_for_stop(&mut self) -> Value {
+        self.auto_drain = false;
+        self.pause_reason = Some("stopped");
+        self.queue_patch()
+    }
+
+    /// The queue and the input routing derived from it change together (Node's `queuePatch`).
+    fn queue_patch(&self) -> Value {
+        json!({"op": "state.updated", "patch": {
+            "queue": self.queue_state(),
+            "inputRouting": self.input_routing(),
+        }})
+    }
+
+    fn input_routing(&self) -> Value {
+        state::input_routing(
+            self.phase,
+            self.followup,
+            !self.auto_drain && self.has_queue(),
+        )
+    }
+
+    /// Fork: the model, permission mode and plan switch the projection shows, so a switch command can
+    /// answer `config.unchanged` the way Node does.
+    pub fn current_config(&self) -> (ModelSelection, PermissionMode, bool) {
+        (self.selection.clone(), self.mode, self.plan)
+    }
+
     fn config(&self) -> Value {
-        state::config(
+        let mut config = state::config(
             &self.selection,
             self.mode,
             self.plan,
             self.followup,
-            &self.levels,
-        )
+            &self.thought_levels(),
+        );
+        if let Some(interaction) = &self.permission_grant {
+            config["permissionGrant"] = json!({"interactionId": interaction});
+        }
+        if let Some((tool_call, enabled)) = &self.plan_transition {
+            config["planTransition"] = json!({"toolCallId": tool_call, "planEnabled": enabled});
+        }
+        config
+    }
+
+    /// Fork: uses the model directory for `thoughtLevels` from now on.
+    #[must_use]
+    pub fn with_catalog(
+        mut self,
+        catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
+    ) -> Self {
+        self.catalog = catalog;
+        self
+    }
+
+    /// Fork: the selected model's levels in the directory, like Node `listThoughtLevels`; a model the directory does
+    /// not list keeps the protocol's own levels.
+    fn thought_levels(&self) -> Vec<String> {
+        self.catalog
+            .iter()
+            .find(|entry| rust_cli_kernel_api::model_name::is_entry(&self.selection, entry))
+            .map_or_else(
+                || self.levels.clone(),
+                |entry| entry.reasoning_levels.clone(),
+            )
     }
 
     fn base(
@@ -275,14 +464,36 @@ impl Projection {
         state::control(self.phase, self.active.as_ref(), self.error.as_ref())
     }
 
+    /// Fork: the session actions for the current phase, compaction and goal.
+    fn availability(&self) -> Value {
+        let goal = self.goal_json();
+        state::availability(self.phase, self.compacting, goal["status"].as_str())
+    }
+
+    /// Fork: the snapshot `goal` (Node `goalStateSchema`); this kernel keeps no verifier records.
+    fn goal_json(&self) -> Value {
+        let Some(goal) = &self.goal else {
+            return Value::Null;
+        };
+        let status = serde_json::to_value(goal.status).unwrap_or(Value::Null);
+        json!({
+            "targetId": goal.target,
+            "objective": goal.objective,
+            "summaryTitle": goal.summary_title,
+            "timeUsedSeconds": goal.time_used_seconds,
+            "activeRunStartedAtMs": goal.active_run_started_at_ms,
+            "status": status,
+            "iteration": goal.iteration,
+            "verifications": [],
+            "iterations": [],
+        })
+    }
+
     /// 回合的开始、结束等改变阶段的事件：control、availability 与 inputRouting 一起换。
     fn phase_patch(&self, patch: &mut Map<String, Value>) {
         patch.insert("control".into(), self.control());
-        patch.insert("availability".into(), state::availability());
-        patch.insert(
-            "inputRouting".into(),
-            state::input_routing(self.phase, self.followup),
-        );
+        patch.insert("availability".into(), self.availability());
+        patch.insert("inputRouting".into(), self.input_routing());
     }
 
     /// 一个事件 → 增量（`row.*` 与 `state.updated`）。`now` 是行的时间。
@@ -301,6 +512,7 @@ impl Projection {
                 );
                 self.phase_patch(&mut patch);
             }
+            KernelEvent::TurnControlOnly { turn } => self.control_only(turn.as_str(), &mut out),
             KernelEvent::MessageDone { message } => self.message(message, now, seq, &mut out),
             KernelEvent::StreamDelta {
                 turn,
@@ -330,7 +542,20 @@ impl Projection {
             }
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
-                let status = if self.denied.remove(tool_use.as_str()) {
+                self.remember_shell_title(tool_use.as_str(), &text);
+                // Fork: Node's `buildToolOutput` carries the result display on the row output (all
+                // kinds but `node_repl_images`; the App drops kinds it does not know), so the desktop
+                // renders Bash's `bash_output` window (specs/fork-rust-agent-parity.md).
+                let mut settled = json!({"text": text});
+                if !output.display.is_null() && output.display["kind"] != "node_repl_images" {
+                    settled["display"] = output.display.clone();
+                }
+                // Fork: a plan-mode policy denial is Node's `PermissionDenied` (`settlePermission(.., "cancelled")`):
+                // the row is cancelled without output, not a failed tool. The stored result carries only its text,
+                // so the cold read settles it by the same text.
+                let plan_denied =
+                    output.is_error && text == rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
+                let status = if self.denied.remove(tool_use.as_str()) || plan_denied {
                     ToolStatus::Cancelled
                 } else if output.is_error {
                     ToolStatus::Error
@@ -341,10 +566,25 @@ impl Projection {
                     &tool_key(tool_use.as_str()),
                     |row| {
                         row.insert("status".into(), json!(status.as_str()));
-                        row.insert("output".into(), json!({"text": text}));
-                        row.insert("endedAt".into(), json!(now));
+                        if !plan_denied {
+                            row.insert("output".into(), settled);
+                            row.insert("endedAt".into(), json!(now));
+                        }
                         row.remove("approvalInteractionId");
                     },
+                    &mut out,
+                );
+                let child = match status {
+                    ToolStatus::Cancelled => "cancelled",
+                    ToolStatus::Error => "failed",
+                    _ => "success",
+                };
+                self.subagent_result(
+                    tool_use.as_str(),
+                    &output.display,
+                    child,
+                    now,
+                    seq,
                     &mut out,
                 );
             }
@@ -435,6 +675,35 @@ impl Projection {
                 self.plan = *enabled;
                 patch.insert("config".into(), self.config());
             }
+            KernelEvent::PermissionGranted { interaction } => {
+                self.permission_grant = Some(interaction.clone());
+                patch.insert("config".into(), self.config());
+            }
+            KernelEvent::PlanTransition { tool_call, enabled } => {
+                self.plan_transition = Some((tool_call.clone(), *enabled));
+                patch.insert("config".into(), self.config());
+            }
+            KernelEvent::GoalChanged { goal } => {
+                self.goal.clone_from(goal);
+                patch.insert("goal".into(), self.goal_json());
+                patch.insert("availability".into(), self.availability());
+            }
+            // Fork: only the row actions follow a compaction (specs/fork-rust-agent-parity.md).
+            KernelEvent::CompactStarted { trigger } => {
+                self.compacting = true;
+                self.compact_started(*trigger, now, seq, &mut out);
+                patch.insert("availability".into(), self.availability());
+            }
+            KernelEvent::CompactDone { .. } => {
+                self.compacting = false;
+                self.compact_settled("success", &mut out);
+                patch.insert("availability".into(), self.availability());
+            }
+            KernelEvent::CompactFailed { .. } => {
+                self.compacting = false;
+                self.compact_settled("failed", &mut out);
+                patch.insert("availability".into(), self.availability());
+            }
             KernelEvent::QueueChanged { items } => {
                 // 立即开跑的输入（空闲时提交）在内核里也经过队列：不投成排队项；投出的值没变时不发。
                 let before = self.queue_state();
@@ -442,19 +711,34 @@ impl Projection {
                 let after = self.queue_state();
                 if after != before {
                     patch.insert("queue".into(), after);
+                    patch.insert("inputRouting".into(), self.input_routing());
                 }
+            }
+            KernelEvent::FileChanges {
+                turn,
+                files,
+                rewindable,
+                turn_input,
+            } => self.file_changes(
+                turn.as_str(),
+                files,
+                *rewindable,
+                turn_input.as_ref().map(|input| input.as_str().to_owned()),
+                &mut out,
+            ),
+            KernelEvent::TurnFilesReverted { turn_input } => {
+                self.turn_files_reverted(turn_input.as_str(), &mut out);
+            }
+            KernelEvent::ToolProgress { tool_use, progress } => {
+                self.bash_progress(tool_use.as_str(), &progress.data, &mut out);
+                self.subagent_progress(tool_use.as_str(), &progress.data, now, seq, &mut out);
             }
             // 不改 App 的行与状态的事件（P1）。显式列出：内核加了事件时这里编译失败，要当场决定投不投（审查 E9）。
             KernelEvent::SessionCreated { .. }
-            | KernelEvent::ToolProgress { .. }
-            | KernelEvent::FileChanges { .. }
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
             | KernelEvent::TasksChanged { .. }
             | KernelEvent::BackgroundWork { .. }
-            | KernelEvent::CompactStarted { .. }
-            | KernelEvent::CompactDone { .. }
-            | KernelEvent::CompactFailed { .. }
             | KernelEvent::HistoryRewritten { .. }
             | KernelEvent::ScheduledFire { .. }
             | KernelEvent::SystemNotice { .. }
@@ -463,6 +747,22 @@ impl Projection {
             | KernelEvent::TurnDuration(_)
             | KernelEvent::ModelNotice { .. } => {}
         }
+        if let Some(manifest) = self.materialize_subagents() {
+            patch.insert("subagents".into(), manifest);
+        }
+        // Fork: row actions follow every change except streamed text (specs/fork-rust-agent-parity.md).
+        let structural = !patch.is_empty()
+            || out.iter().any(|delta| delta["op"] != "row.delta")
+            || matches!(
+                event.event,
+                KernelEvent::CompactStarted { .. }
+                    | KernelEvent::CompactDone { .. }
+                    | KernelEvent::CompactFailed { .. }
+            );
+        if structural {
+            self.refresh_actions(&mut out);
+        }
+        self.clear_settled_output_previews(&mut out);
         if event.revision != self.revision {
             self.revision = event.revision;
             patch.insert("revision".into(), json!(self.revision));
@@ -495,6 +795,9 @@ impl Projection {
             started_at: now,
             response: None,
             keys: Vec::new(),
+            notified: Vec::new(),
+            output_tokens: None,
+            control_only: false,
         });
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));
@@ -507,6 +810,22 @@ impl Projection {
         self.append(turn_key(turn), row, out);
     }
 
+    /// Fork: Node's `/goal X` control turn: its header carries `executionKind: "controlOnly"`, which the App shows
+    /// without a work footer.
+    fn control_only(&mut self, turn: &str, out: &mut Vec<Value>) {
+        let Some(live) = self.turn.as_mut().filter(|live| live.id == turn) else {
+            return;
+        };
+        live.control_only = true;
+        self.upsert(
+            &turn_key(turn),
+            |row| {
+                row.insert("executionKind".into(), json!("controlOnly"));
+            },
+            out,
+        );
+    }
+
     fn finish_turn(
         &mut self,
         turn: &str,
@@ -515,6 +834,9 @@ impl Projection {
         now: u64,
         out: &mut Vec<Value>,
     ) {
+        // A control turn made no request: the usage the kernel reports is an earlier response's.
+        let control_only = self.turn.as_ref().is_some_and(|live| live.control_only);
+        let usage = usage.filter(|_| !control_only);
         if let Some(usage) = usage {
             self.total += *usage;
         }
@@ -539,6 +861,7 @@ impl Projection {
         self.phase = phase;
         self.active = None;
         let started = self.turn.as_ref().map_or(now, |turn| turn.started_at);
+        let summed = self.turn.as_ref().and_then(|turn| turn.output_tokens);
         let keys = self.turn.take().map(|turn| turn.keys).unwrap_or_default();
         for key in &keys {
             self.upsert(
@@ -566,12 +889,14 @@ impl Projection {
                             row.insert("endedAt".into(), json!(now));
                         }
                     }
-                    Some(RowKind::TurnHeader | RowKind::UserInput) | None => {}
+                    Some(RowKind::Subagent) => Self::settle_open_subagent(row, now),
+                    Some(RowKind::TurnHeader | RowKind::UserInput | RowKind::TimelineMarker)
+                    | None => {}
                 },
                 out,
             );
         }
-        let output_tokens = usage.map(|usage| usage.output_tokens);
+        let output_tokens = summed.or_else(|| usage.map(|usage| usage.output_tokens));
         self.upsert(
             &turn_key(turn),
             |row| {
@@ -584,6 +909,128 @@ impl Projection {
             },
             out,
         );
+    }
+
+    /// Fork: a checkpoint batch's file changes land on the turn header as the `fileChanges` summary
+    /// (`turnHeaderRowSchema.fileChanges`; Node puts it there from ModelComplete). Counts are summed per path
+    /// across the turn's batches and a path is counted once; an empty batch publishes nothing.
+    fn file_changes(
+        &mut self,
+        turn: &str,
+        files: &[FileChange],
+        rewindable: bool,
+        anchor: Option<String>,
+        out: &mut Vec<Value>,
+    ) {
+        let summary = {
+            let changes = self.turn_file_changes.entry(turn.to_owned()).or_default();
+            changes.rewindable |= rewindable;
+            if changes.anchor.is_none() {
+                changes.anchor = anchor;
+            }
+            for file in files {
+                let counts = changes.files.entry(file.path.clone()).or_insert((0, 0));
+                counts.0 = counts.0.saturating_add(file.additions);
+                counts.1 = counts.1.saturating_add(file.deletions);
+            }
+            if changes.files.is_empty() {
+                return;
+            }
+            summary_json(changes)
+        };
+        self.upsert(
+            &turn_key(turn),
+            |row| {
+                row.insert("fileChanges".into(), summary);
+            },
+            out,
+        );
+    }
+
+    /// Fork: the turn header's `fileChanges` JSON of one turn's merged counts.
+    fn summary_of(&self, turn: &str) -> Option<Value> {
+        self.turn_file_changes.get(turn).map(summary_json)
+    }
+
+    /// Fork: the turn's checkpoints were all restored (`KernelEvent::TurnFilesReverted`): the turn
+    /// header's `fileChanges` state flips to `reverted`, and the next actions recompute drops
+    /// `canRewindFiles` (it is offered only for `state: "active"`).
+    fn turn_files_reverted(&mut self, turn_input: &str, out: &mut Vec<Value>) {
+        let turn = self
+            .rows
+            .iter()
+            .find_map(|row| {
+                (RowKind::of(row) == Some(RowKind::UserInput)
+                    && row["origin"] == "realUser"
+                    && row["entityId"] == turn_input)
+                    .then(|| row["turnId"].as_str().map(str::to_owned))
+                    .flatten()
+            })
+            .or_else(|| {
+                self.turn_file_changes
+                    .iter()
+                    .find(|(_, changes)| changes.anchor.as_deref() == Some(turn_input))
+                    .map(|(turn, _)| turn.clone())
+            });
+        let Some(turn) = turn else {
+            return;
+        };
+        if let Some(changes) = self.turn_file_changes.get_mut(&turn) {
+            changes.reverted = true;
+        }
+        let recomputed = self.summary_of(&turn);
+        self.upsert(
+            &turn_key(&turn),
+            |row| match recomputed {
+                Some(summary) => {
+                    row.insert("fileChanges".into(), summary);
+                }
+                None => {
+                    if let Some(summary) = row.get_mut("fileChanges").and_then(Value::as_object_mut)
+                    {
+                        summary.insert("state".into(), json!("reverted"));
+                    }
+                }
+            },
+            out,
+        );
+    }
+
+    /// Fork: the finished turns' file summaries from the session view (a cold open, or the rebuild
+    /// after a history rewrite): the kernel keeps them per typed user message; the rows need them
+    /// on the turn headers, keyed by the turn ids the cold rows were built with.
+    fn adopt_turn_files(&mut self, view: &SessionView) {
+        for (prompt, facts) in &view.turn_files {
+            let Some(turn) = self.rows.iter().find_map(|row| {
+                (RowKind::of(row) == Some(RowKind::UserInput)
+                    && row["origin"] == "realUser"
+                    && row["entityId"] == prompt.as_str())
+                .then(|| row["turnId"].as_str().map(str::to_owned))
+                .flatten()
+            }) else {
+                continue;
+            };
+            let entry = self.turn_file_changes.entry(turn.clone()).or_default();
+            entry.rewindable = facts.rewindable;
+            entry.reverted = facts.reverted;
+            for file in &facts.files {
+                let counts = entry.files.entry(file.path.clone()).or_insert((0, 0));
+                counts.0 = counts.0.saturating_add(file.additions);
+                counts.1 = counts.1.saturating_add(file.deletions);
+            }
+            if entry.files.is_empty() {
+                continue;
+            }
+            let summary = summary_json(entry);
+            let mut out = Vec::new();
+            self.upsert(
+                &turn_key(&turn),
+                |row| {
+                    row.insert("fileChanges".into(), summary);
+                },
+                &mut out,
+            );
+        }
     }
 
     /// 队列（`queueStateSchema`）：内核的排队输入加上 sendText 时记下的事实。
@@ -599,12 +1046,24 @@ impl Projection {
             .map(|item| {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
+                // Fork: kind and the frozen execution state come from the kernel's item (one owner).
+                let (kind, text) = match item.kind {
+                    QueuedKind::Text => ("sendText", item.text.as_str()),
+                    QueuedKind::Goal => (
+                        "sendGoalCommand",
+                        item.text
+                            .trim_start()
+                            .strip_prefix("/goal")
+                            .map_or(item.text.as_str(), str::trim),
+                    ),
+                    QueuedKind::Compact => ("compact", "/compact"),
+                };
                 let mut value = json!({
                     "sourceCommandId": command,
                     "queueItemId": format!("queue_{command}"),
                     "clientId": meta.map_or("unknown", |meta| meta.client.as_str()),
-                    "kind": "sendText",
-                    "text": item.text,
+                    "kind": kind,
+                    "text": text,
                     // Fork: a queued input is not stored yet; its chips are the refs it was sent with.
                     "attachments": meta.map_or_else(Vec::new, |meta| meta.attachments.clone()),
                     "delivery": {
@@ -616,24 +1075,24 @@ impl Projection {
                     "dispatch": {"state": "queued"},
                     "admittedAt": meta.map_or(self.created_at, |meta| meta.admitted_at),
                 });
-                if let Some(meta) = meta {
-                    if let Some(origin) = &meta.origin {
-                        value["inputOrigin"] = json!(origin);
+                if let Some(origin) = meta.and_then(|meta| meta.origin.as_ref()) {
+                    value["inputOrigin"] = json!(origin);
+                }
+                if let Some(execution) = &item.execution {
+                    if let Some(selection) = &execution.selection {
+                        value["modelSelection"] = state::selection(selection);
                     }
-                    if let Some(selection) = &meta.selection {
-                        value["modelSelection"] = selection.clone();
-                    }
-                    if let Some(mode) = &meta.mode {
-                        value["mode"] = json!(mode);
-                    }
-                    if let Some(plan) = meta.plan {
-                        value["planEnabled"] = json!(plan);
-                    }
+                    value["mode"] = json!(state::mode_name(execution.state.mode));
+                    value["planEnabled"] = json!(execution.state.plan);
                 }
                 value
             })
             .collect();
-        json!({"items": items, "autoDrain": true})
+        let mut queue = json!({"items": items, "autoDrain": self.auto_drain});
+        if let Some(reason) = self.pause_reason.filter(|_| !self.auto_drain) {
+            queue["pauseReason"] = json!(reason);
+        }
+        queue
     }
 
     /// 快照（`conversationSnapshotSchema`）：`seq` 是主题的序号，`epoch` 是主题的代际标识。
@@ -646,8 +1105,8 @@ impl Projection {
             "seq": seq,
             "revision": self.revision,
             "control": self.control(),
-            "availability": state::availability(),
-            "inputRouting": state::input_routing(self.phase, self.followup),
+            "availability": self.availability(),
+            "inputRouting": self.input_routing(),
             "meta": state::meta(&self.title, true),
             "config": self.config(),
             "modelTransition": null,
@@ -655,9 +1114,9 @@ impl Projection {
             "queue": self.queue_state(),
             "pendingInteractions": self.pending,
             "pendingCommands": [],
-            "backgroundWorks": [],
-            "subagents": {"revision": 0, "childSessionIds": [], "running": [], "endedTotal": 0},
-            "goal": null,
+            "backgroundWorks": self.background_works_value(),
+            "subagents": self.subagents.manifest.to_value(),
+            "goal": self.goal_json(),
             "plan": null,
             "workspaceHookAdmission": null,
             "rows": {
@@ -672,3 +1131,7 @@ impl Projection {
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "file_changes_tests.rs"]
+mod file_changes_tests;

@@ -58,6 +58,7 @@
 
 pub mod abort;
 pub mod agents;
+pub mod background_origin;
 pub mod catalog;
 pub mod checkpoint;
 pub mod clock;

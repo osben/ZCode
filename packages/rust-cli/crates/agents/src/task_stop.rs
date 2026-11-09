@@ -87,6 +87,8 @@ pub(crate) struct Caller<'a> {
     pub(crate) agent: Option<&'a AgentId>,
     pub(crate) machine: &'a MachineEnv,
     pub(crate) operation: &'a OperationContext,
+    /// Fork: the user stops it from the desktop (the notification reads `was stopped by user`).
+    pub(crate) by_user: bool,
 }
 
 /// 后台命令所在的会话与机器（R3：TaskStop 按任务所在的机器停，remote-exec.md §20.7.2）。
@@ -102,6 +104,7 @@ impl<'a> Caller<'a> {
             agent: context.agent.as_ref(),
             machine: &context.machine,
             operation: &context.operation,
+            by_user: false,
         }
     }
 }
@@ -181,6 +184,7 @@ impl TaskStopTool {
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: ShellTaskId::new(id),
+                    notify_stop: false,
                 };
                 match machine.background().background_command(key).await {
                     Ok(Some(info)) if info.status == BackgroundStatus::Running => {
@@ -230,6 +234,7 @@ impl TaskStopTool {
             let key = BackgroundTask {
                 session: entry.child.clone(),
                 task,
+                notify_stop: false,
             };
             if let Err(error) = context
                 .machine
@@ -270,9 +275,13 @@ impl TaskStopTool {
     ) -> Result<StoppedTask, ToolError> {
         match self.find(id, context).await {
             Ok(Target::Agent(agent, description)) => {
-                if !self.core.live.stop(&agent)
-                    && let Some(wakes) = routing::stop_parked(&self.core, &agent)
-                {
+                if self.core.live.stop(&agent, context.by_user) {
+                    // Fork (node_desktop): Node's TaskStop returns after the agent has stopped, so its
+                    // `was stopped by ZCode` notification joins the same model request as this tool result.
+                    if self.core.node_desktop && !context.by_user {
+                        self.core.live.left_running(&agent).await;
+                    }
+                } else if let Some(wakes) = routing::stop_parked(&self.core, &agent) {
                     self.stop_commands_of(&agent, context).await;
                     routing::wake(&self.core, wakes).await;
                 }
@@ -284,9 +293,12 @@ impl TaskStopTool {
                 })
             }
             Ok(Target::Command(Found { session, machine })) => {
+                // Fork (node_desktop): the stopped command still records its killed notice (Node).
+                let notify = self.core.node_desktop;
                 let key = BackgroundTask {
                     session: session.clone(),
                     task: ShellTaskId::new(id),
+                    notify_stop: notify,
                 };
                 match machine
                     .background()

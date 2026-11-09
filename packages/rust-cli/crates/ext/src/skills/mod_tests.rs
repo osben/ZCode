@@ -79,3 +79,48 @@ async fn the_listing_hides_model_disabled_and_inactive_conditional_skills() {
         ["- always: Always", "- ts: TS"]
     );
 }
+
+/// `skills/referenceCatalog` entries: file skills only (no built-ins), the frontmatter name
+/// when set, the directory name otherwise, and the `SKILL.md` path of the skill.
+#[tokio::test]
+async fn references_list_file_skills_with_their_skill_md_path() {
+    let dir = format!("{CWD}/.zcode/skills");
+    let env = MemoryEnvironment::new(facts())
+        .with_file(
+            &format!("{dir}/review/SKILL.md"),
+            "---\nname: Code review\ndescription: Reviews\n---\n",
+        )
+        .with_file(
+            &format!("{dir}/plain/SKILL.md"),
+            "---\ndescription: Plain\n---\n",
+        );
+    let env = Arc::new(env);
+    let catalog = SkillCatalog::new(env.clone(), env);
+    let mut references = catalog.references(&workspace()).await;
+    references.sort_by(|a, b| a.path.cmp(&b.path));
+    let summary: Vec<(String, String, String)> = references
+        .into_iter()
+        .map(|reference| {
+            (
+                reference.name,
+                reference.path,
+                serde_json::to_value(reference.scope).unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                "plain".to_owned(),
+                format!("{dir}/plain/SKILL.md"),
+                "\"workspace\"".to_owned()
+            ),
+            (
+                "Code review".to_owned(),
+                format!("{dir}/review/SKILL.md"),
+                "\"workspace\"".to_owned()
+            ),
+        ]
+    );
+}

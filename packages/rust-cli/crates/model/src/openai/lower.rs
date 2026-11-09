@@ -137,7 +137,7 @@ fn user(
     for block in blocks {
         match block {
             ContentBlock::Text { text } => parts.push(Part::Text(text)),
-            ContentBlock::Image { source } => parts.push(Part::Image(data_url(source)?)),
+            ContentBlock::Image { source, .. } => parts.push(Part::Image(data_url(source)?)),
             // Fork: `query::normalize` expands attached files before lowering.
             ContentBlock::File { .. } => {
                 return Err(invalid(

@@ -8,6 +8,12 @@ use serde_json::{Value, json};
 
 use super::{Projection, RowKind, ToolStatus, block_key, state, text_of, tool_key};
 
+/// A background task notification (the session's notification turns and the agents' completion notices).
+pub(super) fn is_task_notification(origin: &UserOrigin) -> bool {
+    matches!(origin, UserOrigin::Meta { source }
+        if source == rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION)
+}
+
 impl Projection {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn stream(
@@ -64,6 +70,8 @@ impl Projection {
                 let text = text_of(&user.content);
                 // Fork: rows stored before attachments were file parts kept the reminders in the model text.
                 let shown = rust_cli_kernel_api::prompt_attachment::display(&text).unwrap_or(text);
+                // Fork: a slash command row shows what the user typed (`/goal <objective>`), like Node.
+                let shown = rust_cli_kernel_api::user_command::display(&shown).unwrap_or(shown);
                 row.insert("text".into(), json!(shown));
                 // Fork: chips come from the stored attachments (live and cold alike), never from the input facts.
                 let chips: Vec<Value> = user
@@ -92,7 +100,27 @@ impl Projection {
                 }
                 self.append(key, row, out);
             }
+            // Fork: a notification that opened the turn titles its header (background_result.rs).
+            Message::User(user) if is_task_notification(&user.origin) => {
+                let text = text_of(&user.content);
+                self.remember_notified(&text);
+                self.background_result(&user.content, out);
+            }
             Message::Assistant(assistant) => {
+                // Fork: the turn header sums the output tokens of every model response in the turn, like Node's
+                // ModelComplete projection; a turn's last response alone undercounts a turn with tool calls.
+                if let (Some(usage), Some(turn)) = (assistant.usage, self.turn.as_mut()) {
+                    let tokens = *turn.output_tokens.get_or_insert(0) + usage.output_tokens;
+                    turn.output_tokens = Some(tokens);
+                    let key = super::turn_key(&turn.id.clone());
+                    self.upsert(
+                        &key,
+                        |row| {
+                            row.insert("outputTokens".into(), json!(tokens));
+                        },
+                        out,
+                    );
+                }
                 let Some(turn) = self.turn.clone() else {
                     return;
                 };
@@ -223,40 +251,77 @@ impl Projection {
         self.append(tool_key(tool_use), row, out);
     }
 
-    /// 登记一个询问（只有权限询问进 pendingInteractions，P1）。返回它所属的工具调用。
+    /// 登记一个询问。返回它所属的工具调用。
+    /// Fork: questions and plan approvals are `userInput` interactions (projection/elicitation.rs).
     pub(super) fn ask(
         &mut self,
         interaction: &str,
         request: &InteractionRequest,
         now: u64,
     ) -> Option<String> {
-        let InteractionRequest::Permission {
-            tool_use,
-            tool,
-            input,
-            message,
-            ..
-        } = request
-        else {
-            return None;
+        let tool_use = request.tool_use().as_str().to_owned();
+        let anchor = self.row_id(&tool_key(&tool_use));
+        let pending = match request {
+            InteractionRequest::Permission {
+                tool,
+                input,
+                message,
+                once,
+                ..
+            } => {
+                let mut payload = json!({
+                    "kind": "permission",
+                    "toolCallId": tool_use,
+                    "toolName": tool,
+                    "summary": message,
+                    "detail": input,
+                    "freeText": true,
+                    "fullAccessOption": state::full_access_option(),
+                    "options": state::permission_options(),
+                });
+                // Node `approvalMode: "user-once"`: only allow once / deny, and no full access.
+                if *once {
+                    payload["options"] = state::single_use_permission_options();
+                    if let Some(payload) = payload.as_object_mut() {
+                        payload.remove("fullAccessOption");
+                    }
+                }
+                json!({
+                    "interactionId": interaction,
+                    "kind": "permission",
+                    "anchorRowId": anchor,
+                    "createdAt": now,
+                    "payload": payload,
+                })
+            }
+            InteractionRequest::Question { questions, .. } => {
+                super::elicitation::question(interaction, anchor, now, &tool_use, questions)
+            }
+            InteractionRequest::PlanApproval { plan, .. } => {
+                super::elicitation::plan_approval(interaction, anchor, now, &tool_use, plan)
+            }
         };
-        let anchor = self.row_id(&tool_key(tool_use.as_str()));
-        self.pending.push(json!({
-            "interactionId": interaction,
-            "kind": "permission",
-            "anchorRowId": anchor,
-            "createdAt": now,
-            "payload": {
-                "kind": "permission",
-                "toolCallId": tool_use.as_str(),
-                "toolName": tool,
-                "summary": message,
-                "detail": input,
-                "freeText": true,
-                "fullAccessOption": state::full_access_option(),
-                "options": state::permission_options(),
-            },
-        }));
-        Some(tool_use.as_str().to_owned())
+        let mut pending = pending;
+        if let Some(origin) = request.origin() {
+            pending["payload"]["origin"] = ask_origin(origin);
+        }
+        self.pending.push(pending);
+        Some(tool_use)
     }
+}
+
+/// Fork: the subagent a delegated ask came from (Node `buildSubagentInteractionOrigin`).
+fn ask_origin(origin: &rust_cli_kernel_api::orchestration::AskOrigin) -> Value {
+    let mut value = json!({
+        "kind": "subagent",
+        "agentId": origin.agent.as_str(),
+        "agentType": origin.agent_type,
+        "childSessionId": origin.child_session.as_str(),
+        "description": origin.description,
+        "parentSessionId": origin.parent_session.as_str(),
+    });
+    if let Some(tool_use) = &origin.parent_tool_use {
+        value["parentToolCallId"] = json!(tool_use.as_str());
+    }
+    value
 }

@@ -7,6 +7,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::agents::ChildLive;
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::{AgentId, MessageId, SessionId};
 use rust_cli_kernel_api::message::{AssistantMessage, ContentBlock, Message};
@@ -141,6 +142,13 @@ impl ChildSink {
         }
     }
 
+    /// Fork (node_desktop): relays this run to the child session's actor (crate::mirror).
+    fn mirror(&self, event: ChildLive) {
+        if let Some(core) = self.core.as_ref().filter(|core| core.node_desktop) {
+            core.mirrors.publish(&self.session, event);
+        }
+    }
+
     fn record(&self) -> std::sync::MutexGuard<'_, Record> {
         self.record.lock_unpoisoned()
     }
@@ -159,6 +167,21 @@ impl ChildSink {
         self.store.commit(&self.session, batch).await?;
         self.record().ledger.committed(turn);
         Ok(())
+    }
+}
+
+impl ChildSink {
+    /// Fork: the subagent behind this sink, as an ask's origin.
+    fn origin(&self) -> Option<rust_cli_kernel_api::orchestration::AskOrigin> {
+        let agent = self.live.get(&self.agent)?;
+        Some(rust_cli_kernel_api::orchestration::AskOrigin {
+            agent: agent.agent.clone(),
+            agent_type: agent.definition.agent_type.clone(),
+            child_session: agent.child.clone(),
+            parent_session: agent.parent.clone(),
+            description: agent.description.clone(),
+            parent_tool_use: agent.tool_use.clone(),
+        })
     }
 }
 
@@ -207,6 +230,8 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: None,
                 machine,
+                once,
+                origin,
             } => InteractionRequest::Permission {
                 machine,
                 tool_use,
@@ -216,8 +241,15 @@ impl Interactions for ChildSink {
                 suggestions,
                 rule_seed,
                 asked_by: Some(self.name.clone()),
+                once,
+                origin,
             },
             other => other,
+        };
+        // Fork: the App shows a delegated ask with the subagent it came from (Node `payload.origin`).
+        let request = match self.origin() {
+            Some(origin) => request.asked_from(origin),
+            None => request,
         };
         // 等用户回答期间列表显示 ` · waiting`（tui-panels.md §1.1）；被取消时 guard 复原。
         let _waiting = Waiting::start(&self.live, &self.agent);
@@ -327,6 +359,7 @@ impl ChildSink {
         self.commit(settled.facts).await?;
         // 提交之后才加版本：只读查看看到新版本时去取，存储里一定已有这条消息（tui-panels.md §1.4）。
         self.live.committed(&self.agent, speed);
+        self.mirror(ChildLive::Committed(message.clone()));
         if let Message::Assistant(assistant) = message {
             let mut record = self.record();
             record.tool_uses += tool_use_blocks(&assistant.content);
@@ -374,6 +407,7 @@ impl RunSink for ChildSink {
         if let Some(doing) = Doing::after(&event) {
             self.live.doing(&self.agent, doing);
         }
+        self.mirror(ChildLive::Event(event.clone()));
         // 进度只给 UI：通道满了就丢，不拖慢子循环。
         if let Some(parent) = &self.parent {
             let data = json!({ "agentId": self.agent, "event": event });

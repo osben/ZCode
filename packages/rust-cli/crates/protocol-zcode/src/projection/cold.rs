@@ -12,6 +12,12 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     let mut out = Vec::new();
     let mut turns = 0u64;
     let mut interrupted = false;
+    // Fork: the last assistant message ended its turn (no tool call waits for a result), so a
+    // notification after it opened a turn of its own instead of joining a tool boundary.
+    let mut turn_ended = true;
+    // Fork: the current turn was opened by notifications and no assistant message followed yet, so
+    // the next notification is part of the same batch (each notification is its own message).
+    let mut notice_batch = false;
     for message in &view.messages {
         match message {
             Message::User(user)
@@ -22,11 +28,32 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                     projection.close_cold_turn(interrupted, at, &mut out);
                 }
                 interrupted = false;
+                notice_batch = false;
                 turns += 1;
+                turn_ended = false;
                 let turn = format!("{}:turn:{turns}", user.id.as_str());
                 // Fork: the stored submitting command, so the App settles its pending command after a restart.
                 let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
                 projection.start_turn(&turn, command, at, 0, &mut out);
+                projection.message(message, at, 0, &mut out);
+            }
+            Message::User(user)
+                if turn_ended && super::rows::is_task_notification(&user.origin) =>
+            {
+                if projection.turn.is_some() {
+                    projection.close_cold_turn(interrupted, at, &mut out);
+                }
+                interrupted = false;
+                turns += 1;
+                turn_ended = false;
+                let turn = format!("{}:turn:{turns}", user.id.as_str());
+                projection.start_turn(&turn, None, at, 0, &mut out);
+                projection.message(message, at, 0, &mut out);
+                notice_batch = true;
+            }
+            Message::User(user)
+                if notice_batch && super::rows::is_task_notification(&user.origin) =>
+            {
                 projection.message(message, at, 0, &mut out);
             }
             Message::User(user) => {
@@ -63,10 +90,21 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                     }
                 }
             }
-            Message::Assistant(_) => projection.message(message, at, 0, &mut out),
+            Message::Assistant(assistant) => {
+                notice_batch = false;
+                turn_ended = !assistant
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
+                projection.message(message, at, 0, &mut out);
+            }
             Message::System(SystemMessage::Interrupted { .. }) => interrupted = true,
-            // 附件与别的 system 消息不投成行（P1）。
-            Message::Attachment(_) | Message::System(_) => {}
+            // Fork: a stored compaction shows as its timeline marker (projection/markers.rs).
+            Message::System(SystemMessage::CompactBoundary(boundary)) => {
+                projection.compacted(boundary.trigger, boundary.pre_tokens, at, &mut out);
+            }
+            // 附件不投成行（P1）。
+            Message::Attachment(_) => {}
         }
     }
     if projection.turn.is_some() {

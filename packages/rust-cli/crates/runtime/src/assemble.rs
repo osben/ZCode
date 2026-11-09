@@ -67,9 +67,10 @@ pub(crate) fn hooks(ports: &Ports, operations: &Operations) -> Arc<HookEngine> {
 
 /// 一个判决链实例：工具注册（Edit / Write 的先读规则）与执行管线共用，会话内“总是允许”的规则因此对两边都生效。规则
 /// 快照由入口层接入配置后替换；“总是允许”落库后从会话存储读回 LocalSettings 层（shell-permissions.md §5）。
-pub(crate) fn gate(ports: &Ports) -> Arc<PolicyGate> {
+pub(crate) fn gate(ports: &Ports, node_desktop: bool) -> Arc<PolicyGate> {
     Arc::new(
         PolicyGate::default()
+            .with_node_plan_mode(node_desktop)
             .with_local_rules(Arc::new(permissions::StoredRules(ports.store.clone()))),
     )
 }
@@ -108,6 +109,8 @@ fn bash_settings(
         background_deadline: traits.non_interactive,
         bash_first_trimmed: ModeClass::of(defaults.mode) == ModeClass::Bypass,
         monitor: extensions.monitor,
+        // Fork (node_desktop): only the app-server runs like the Node desktop agent.
+        node_desktop: extensions.node_desktop,
     }
 }
 
@@ -277,7 +280,7 @@ pub(crate) fn agents(
     ports: &Ports,
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
-    (defaults, traits): (&Defaults, SurfaceTraits),
+    (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
 ) -> Agents {
     Agents::new(
         AgentsPorts {
@@ -307,7 +310,13 @@ pub(crate) fn agents(
             // 修复线 F67：交互界面里后台子代理也能询问（agents.md §4.1.1）。
             background_prompts: traits.interactive,
             // 修复线 L-A：交互会话缺省打开 fork 子代理，`-p` 关；环境变量可以改（agents.md §8.1.1）。
-            fork: defaults.limits.fork_subagent.unwrap_or(traits.interactive),
+            // Fork (node_desktop): the Node desktop agent has no fork subagent (an explicit setting still wins).
+            fork: defaults
+                .limits
+                .fork_subagent
+                .unwrap_or(traits.interactive && !node_desktop),
+            // Fork (node_desktop): Node's TaskOutput only on the app-server's agent.
+            node_desktop,
         },
     )
 }

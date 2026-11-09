@@ -317,6 +317,21 @@ fn bwrap(env: &EnvSnapshot) -> Option<PathBuf> {
         .find(|candidate| present(candidate))
 }
 
+/// Fork (node_desktop): the root of the Node adapter's temp output layout
+/// (`BASH_TEMP_DIRECTORY_PREFIX = "zcode-bash-"`, `mkdtemp` there). The Rust agent uses the
+/// stable uid-suffixed form so the desktop app can find the directory; like today's scratch it is
+/// verified private (0700, this uid) before every command.
+pub(crate) fn desktop_root(temp: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        temp.join(format!("zcode-bash-{}", rust_cli_proc::private::uid()))
+    }
+    #[cfg(windows)]
+    {
+        temp.join("zcode-bash")
+    }
+}
+
 /// 输出文件与进程账本放在本用户私有的临时目录。
 ///
 /// 缺陷修复 R2-1：原来是共享的 `<tmp>/zcode-shell/{sessions,ledger}`，没有 uid，别的用户能读输出、伪造账本

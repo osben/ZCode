@@ -195,6 +195,19 @@ impl SkillCatalog {
             .collect()
     }
 
+    /// Fork (desktop App): the Composer reference catalog (Node `skill-reference-catalog.ts`
+    /// `toResult`): every discovered skill except the bundled ones, in priority order.
+    pub async fn references(
+        &self,
+        workspace: &WorkspaceRef,
+    ) -> Vec<rust_cli_kernel_api::user_command::SkillReference> {
+        self.skills(workspace)
+            .await
+            .iter()
+            .filter_map(|skill| reference(skill))
+            .collect()
+    }
+
     /// 这次会话调用过的 skill（compact.md §3.4）：`history` 是全部历史，最近的在前。
     pub async fn invoked(
         &self,
@@ -235,6 +248,41 @@ impl SkillCatalog {
         let chars = rust_cli_prompts::models::chars_per_token(model);
         listing::entries(&visible, &skills, listing::budget(window, chars))
     }
+}
+
+/// Node `toReferenceCatalogEntry`: plugin skills are `plugin`, project skills `workspace`, the rest
+/// `user`; the name is the frontmatter `name` and the path the `SKILL.md` file.
+fn reference(skill: &Skill) -> Option<rust_cli_kernel_api::user_command::SkillReference> {
+    use rust_cli_kernel_api::user_command::{SkillReference, SkillScope};
+    let (scope, plugin) = match &skill.source {
+        SkillSource::Builtin => return None,
+        SkillSource::Plugin { plugin } => (SkillScope::Plugin, Some(plugin.clone())),
+        SkillSource::Project => (SkillScope::Workspace, None),
+        SkillSource::User | SkillSource::Managed => (SkillScope::User, None),
+    };
+    let fallback = skill.name.rsplit(':').next().unwrap_or(&skill.name);
+    let name = skill
+        .display
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_owned();
+    let separator = if skill.dir.contains('\\') && !skill.dir.contains('/') {
+        '\\'
+    } else {
+        '/'
+    };
+    let path = format!(
+        "{}{separator}SKILL.md",
+        skill.dir.trim_end_matches(['/', '\\'])
+    );
+    Some(SkillReference {
+        name,
+        description: skill.description.clone(),
+        path,
+        scope,
+        plugin,
+    })
 }
 
 #[cfg(test)]

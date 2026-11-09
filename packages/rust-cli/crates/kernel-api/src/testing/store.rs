@@ -676,6 +676,32 @@ impl StoreQueries for MemoryStore {
             })
             .unwrap_or_default())
     }
+
+    /// Fork: `session/subagents` rows for the protocol tests: the parent lookup answers Node's
+    /// session-unavailable error; parts/children stay empty (tests seed the projection directly).
+    async fn subagent_rows(&self, session: &SessionId) -> Result<serde_json::Value, StoreError> {
+        let sessions = self.sessions.lock_unpoisoned();
+        let Some((meta, _)) = sessions.get(session) else {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        };
+        let time_updated = self
+            .updated
+            .lock_unpoisoned()
+            .get(session)
+            .copied()
+            .unwrap_or(meta.created_at_ms);
+        Ok(serde_json::json!({
+            "parent": {"id": session.as_str(), "timeUpdated": time_updated},
+            "parts": [],
+        }))
+    }
+
+    /// Fork: the memory store persists no child rows.
+    async fn subagent_children(&self, _ids: Vec<String>) -> Result<serde_json::Value, StoreError> {
+        Ok(serde_json::json!({"children": []}))
+    }
 }
 
 #[async_trait]

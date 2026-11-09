@@ -14,11 +14,13 @@ mod child;
 mod context;
 mod custom;
 mod definitions;
+mod desktop_prompt;
 mod doing;
 mod fork;
 mod frontmatter;
 mod live;
 mod messaging;
+mod mirror;
 mod monitors;
 mod peer_send;
 mod plugin;
@@ -28,6 +30,7 @@ mod runs;
 mod shell_notices;
 mod signals;
 mod spawn;
+mod task_output;
 mod task_stop;
 mod tasks;
 mod toolset;
@@ -117,6 +120,9 @@ pub struct AgentsConfig {
     pub background_prompts: bool,
     /// fork 子代理（修复线 L-A，agents.md §8.1）：交互会话打开，`-p` 关。打开时 Agent 用 fork 写法、全部在后台。
     pub fork: bool,
+    /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
+    /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
+    pub node_desktop: bool,
 }
 
 impl AgentsPorts {
@@ -137,9 +143,14 @@ pub(crate) struct Core {
     pub(crate) board: TaskBoard,
     /// 子代理里的 Monitor（agents.md §5.3，工作线 F83）。
     pub(crate) monitors: monitors::MonitorBoard,
+    /// Fork (node_desktop): the live child runs for the child sessions' actors (side tabs).
+    pub(crate) mirrors: mirror::Mirrors,
     pub(crate) keep_alive: bool,
     pub(crate) background_prompts: bool,
     pub(crate) fork: bool,
+    /// Fork (node_desktop): an Agent call runs in the foreground unless it asks for the background
+    /// (Node `agent.ts`: `runInBackground: run_in_background === true`).
+    pub(crate) node_desktop: bool,
     /// 主线程的完整注册表（基础工具 + 本 crate 的工具）；子代理从它过滤。弱引用：注册表里的工具持有 Core，
     /// 两者在 [`Agents::new`] 里用 `Arc::new_cyclic` 一次建好，没有“先建后接”的空档。
     registry: Weak<AgentRegistry>,
@@ -237,15 +248,21 @@ impl Agents {
                 live,
                 hub: Hub::default(),
                 monitors: monitors::MonitorBoard::default(),
+                mirrors: mirror::Mirrors::default(),
                 keep_alive: config.keep_alive,
                 background_prompts: config.background_prompts,
                 fork: config.fork,
+                node_desktop: config.node_desktop,
                 registry: registry.clone(),
             });
             let mut own: Vec<Arc<dyn Tool>> = vec![Arc::new(AgentTool { core: core.clone() })];
             own.extend(messaging::tools(&core));
             if !matches!(config.task_tools, TaskTools::Off) {
                 own.extend(tasks::tools(&core, &config.task_tools));
+            }
+            // Fork (node_desktop): only the app-server's agent exposes Node's TaskOutput.
+            if config.node_desktop {
+                own.push(Arc::new(task_output::TaskOutputTool { core: core.clone() }));
             }
             AgentRegistry { base, own, core }
         });
@@ -304,6 +321,13 @@ struct Signals(Arc<Core>);
 impl AgentSignals for Signals {
     fn signals(&self, session: &SessionId) -> BoxStream<'static, AgentSignal> {
         self.0.hub.subscribe(session)
+    }
+
+    fn child_live(
+        &self,
+        session: &SessionId,
+    ) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.0.node_desktop.then(|| self.0.mirrors.feed(session))
     }
 
     async fn ack(&self, session: &SessionId, seq: u64) {
@@ -371,6 +395,7 @@ impl AgentSignals for Signals {
             agent: None,
             machine: &machine,
             operation: &operation,
+            by_user: self.0.node_desktop,
         };
         tool.stop(task, &caller)
             .await

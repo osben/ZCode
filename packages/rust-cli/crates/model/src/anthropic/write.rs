@@ -97,7 +97,7 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
             kind(out, "text");
             text_field(out, "text", text);
         }
-        ContentBlock::Image { source } => {
+        ContentBlock::Image { source, .. } => {
             kind(out, "image");
             key(out, "source", false);
             image_source(out, source)?;

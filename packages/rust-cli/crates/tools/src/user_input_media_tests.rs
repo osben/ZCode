@@ -264,6 +264,7 @@ async fn a_notebook_with_images_keeps_its_blocks_with_each_text_wrapped() {
             media_type: "image/png".to_owned(),
             data: PNG.to_owned(),
         },
+        name: None,
     };
     assert_eq!(
         blocks,

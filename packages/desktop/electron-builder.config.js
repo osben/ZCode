@@ -870,6 +870,17 @@ export default {
       to: "glm",
       filter: ["**/*", "!**/*.map"],
     },
+    ...(existsSync(resolve(desktopPackageRoot, "resources/zcode-rs"))
+      ? [
+          {
+            // Fork: the zcode-rs agent with its licenses, staged by scripts/fork-rust-agent/stage-resources.mjs.
+            // Kept out of resources/glm: findZCodeAgentRuntimeBinary scans that directory.
+            from: "resources/zcode-rs",
+            to: "zcode-rs",
+            filter: ["**/*"],
+          },
+        ]
+      : []),
     {
       // The Agent shell previously relied entirely on the host system PATH, which often omitted the user's rg installation when launched from the GUI.
       // Package ripgrep as a Desktop runtime tool under resources/tools.

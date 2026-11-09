@@ -52,6 +52,7 @@ async fn a_finished_background_command_is_found_until_its_notice_is_acked() {
     let key = BackgroundTask {
         session: SessionId::new("s1"),
         task: start.task.clone(),
+        notify_stop: false,
     };
     let events = fixture.shells.start(context("op_bg"), start).await.unwrap();
     collect(events).await;
@@ -83,4 +84,46 @@ async fn a_finished_background_command_is_found_until_its_notice_is_acked() {
         fixture.shells.stop(&key),
         BackgroundStop::NotFound
     ));
+}
+
+/// Fork (node_desktop): a stop with `notify_stop` still records the command's notice, which reads killed, so the
+/// parent wakes like Node's `<status>killed</status>` task notification.
+#[tokio::test]
+async fn a_stop_that_notifies_records_a_killed_notice() {
+    let fixture = fixture(Vec::new());
+    let mut start = request("sleep 30", &fixture.root, CwdScope::Pinned);
+    start.kind = CommandKind::Background {
+        background: BackgroundCommand {
+            description: "Sleep".to_owned(),
+            tool_use: None,
+            kind: Default::default(),
+        },
+    };
+    let key = BackgroundTask {
+        session: SessionId::new("s1"),
+        task: start.task.clone(),
+        notify_stop: true,
+    };
+    let events = fixture
+        .shells
+        .start(context("op_bg_stop"), start)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.shells.stop(&key),
+        BackgroundStop::Stopped { .. }
+    ));
+    collect(events).await;
+    let notice = fixture
+        .shells
+        .notices(&SessionId::new("s1"), 0)
+        .next()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(notice.task, key.task);
+    assert_eq!(
+        BackgroundStatus::ended(&notice.outcome, notice.exit_code),
+        BackgroundStatus::Killed
+    );
 }

@@ -11,6 +11,10 @@ pub(crate) enum RowKind {
     AssistantText,
     Reasoning,
     ToolCall,
+    /// Fork: timeline markers (compaction).
+    TimelineMarker,
+    /// Fork: a subagent spawned by an Agent call (projection/subagent_rows.rs).
+    Subagent,
 }
 
 impl RowKind {
@@ -21,6 +25,8 @@ impl RowKind {
             Self::AssistantText => "assistantText",
             Self::Reasoning => "reasoning",
             Self::ToolCall => "toolCall",
+            Self::TimelineMarker => "timelineMarker",
+            Self::Subagent => "subagent",
         }
     }
 
@@ -32,6 +38,8 @@ impl RowKind {
             Self::AssistantText,
             Self::Reasoning,
             Self::ToolCall,
+            Self::TimelineMarker,
+            Self::Subagent,
         ]
         .into_iter()
         .find(|kind| row.get("kind").and_then(Value::as_str) == Some(kind.as_str()))

@@ -190,6 +190,7 @@ impl rust_cli_kernel_api::tool::Tool for AskingTool {
             .interactions
             .ask(
                 rust_cli_kernel_api::orchestration::InteractionRequest::Question {
+                    origin: None,
                     tool_use: context.tool_use.clone(),
                     questions: input,
                 },
@@ -272,6 +273,9 @@ async fn asking_session_with(
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
+            desktop_goals: false,
+            fork_while_running: false,
         },
         SessionState {
             commands: Default::default(),
@@ -284,6 +288,7 @@ async fn asking_session_with(
             start: StartSource::Startup,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
         },
         Opened::Created,
     );
@@ -358,6 +363,12 @@ mod steer;
 
 #[path = "dequeue_tests.rs"]
 mod dequeue;
+
+#[path = "submit_with_tests.rs"]
+mod submit_with;
+
+#[path = "queue_edit_tests.rs"]
+mod queue_edit;
 
 #[path = "notice_tests.rs"]
 mod notice;

@@ -19,7 +19,6 @@ describe("forkAgentRuntimeHelloOverrides", () => {
     expect(forkAgentRuntimeHelloOverrides(rust)).toEqual({
       incognitoSession: false,
       incognitoPromptToggles: false,
-      independentPlanState: false,
     });
   });
 });

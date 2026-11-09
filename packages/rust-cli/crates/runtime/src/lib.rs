@@ -142,6 +142,12 @@ pub struct LocalKernel {
     peers: rust_cli_session::PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）：每个会话 actor 共用这一份。
     detached: Arc<rust_cli_session::DetachedAsks>,
+    /// Fork: each queued input runs as its own turn, like the Node desktop agent ([`Extensions::node_desktop`]).
+    one_input_per_turn: bool,
+    /// Fork: goals run like the Node desktop agent ([`Extensions::node_desktop`]).
+    desktop_goals: bool,
+    /// Fork: `/fork` while a turn runs, like the Node desktop agent ([`Extensions::node_desktop`]).
+    fork_while_running: bool,
 }
 
 impl LocalKernel {
@@ -214,7 +220,7 @@ impl LocalKernel {
             extensions.streaming_input,
         );
         let late = Arc::new(late::LateCompactor::default());
-        let gate = assemble::gate(&ports);
+        let gate = assemble::gate(&ports, extensions.node_desktop);
         let base = assemble::base_tools(&ports, &defaults, &extensions, (traits, &gate));
         let ext = assemble::ext(
             &ports,
@@ -249,7 +255,7 @@ impl LocalKernel {
             &ports,
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
-            (&defaults, traits),
+            (&defaults, traits, extensions.node_desktop),
         );
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
@@ -304,6 +310,9 @@ impl LocalKernel {
             closer,
             peers: extensions.peers,
             detached,
+            one_input_per_turn: extensions.node_desktop,
+            desktop_goals: extensions.node_desktop,
+            fork_while_running: extensions.node_desktop,
         }
     }
 

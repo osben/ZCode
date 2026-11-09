@@ -18,6 +18,9 @@ use crate::orchestration::InteractionRequest;
 use crate::permission::PermissionMode;
 use crate::store::{ArtifactRef, SessionFilter, SessionMeta, SessionSummary};
 
+/// Fork: [`Command::SubmitWith`]'s rejection while a compaction runs or is queued (Node `compactOperationLock`).
+pub const COMPACT_LOCKED: &str = "Compact is already running or queued";
+
 /// 运行中提交的输入怎样投递（工具边界吸收排队消息）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +37,86 @@ pub enum RewindScope {
     Conversation,
     Code,
     Both,
+}
+
+/// Fork: what a code rewind to `target` would do, computed without changing anything (Node's file rewind preview).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RewindPreview {
+    /// Files the rewind would restore (or delete) without conflicts.
+    pub safe: Vec<RewindSafeFile>,
+    /// Files the rewind cannot restore, each with why.
+    pub unsafe_files: Vec<RewindUnsafeFile>,
+}
+
+/// A file a code rewind would restore without conflicts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindSafeFile {
+    /// As the checkpoint stores it (absolute).
+    pub path: String,
+    /// True when the file did not exist before and the rewind deletes it.
+    pub delete: bool,
+    /// Checkpoint operations on this path in the rewound range.
+    pub operation_count: u32,
+    /// Distinct tool names that wrote it; empty when the checkpoint records no name.
+    pub tool_names: Vec<String>,
+}
+
+/// A file a code rewind cannot restore, with why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindUnsafeFile {
+    /// As the checkpoint stores it (absolute); the artifact id when the checkpoint cannot be read.
+    pub path: String,
+    pub reason: RewindUnsafeReason,
+    pub operation_count: u32,
+    pub tool_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Why a file cannot be restored by a code rewind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewindUnsafeReason {
+    /// The checkpoint references a snapshot that is gone.
+    CheckpointMissing,
+    /// The checkpoint artifact cannot be parsed.
+    CheckpointUnreadable,
+    /// The file changed on disk after ZCode edited it.
+    ExternalModified,
+    /// Reading the current content failed.
+    FileReadFailed,
+    /// The checkpoint content cannot be turned into a restore plan.
+    UnsupportedCheckpoint,
+}
+
+/// Fork: the files the turn opened by one typed user message changed, answering the App's
+/// per-turn summary query (Node `v4/conversation/fileChanges`): per-path counts with the writes'
+/// diff hunks, plus whether the turn's checkpoints were already restored by a summary rewind.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TurnFileChanges {
+    /// Per path, sorted by path.
+    pub items: Vec<TurnFileItem>,
+    /// True when every checkpoint of the turn was already restored.
+    pub reverted: bool,
+}
+
+/// One path's summary inside [`TurnFileChanges`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnFileItem {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+    /// How many checkpoint writes touched the path in this turn.
+    pub write_count: u32,
+    /// Distinct tools that wrote it, sorted; empty when the checkpoints record no name.
+    pub tool_names: Vec<String>,
+    /// The writes' hunks in write order, shaped like the App's `readonlyDiffHunkSchema`
+    /// (`{oldStart, oldLines, newStart, newLines, lines}`).
+    pub patches: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,9 +155,51 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instructions: Option<String>,
     },
+    /// Fork (desktop App): an input submitted with its own execution state (Node `sendText`,
+    /// `sendGoalCommand`, `compact`). Idle: the session first commits `execution` (model, mode, plan)
+    /// through the same facts as [`Command::SetModel`] / [`Command::SetMode`] / [`Command::SetPlan`],
+    /// then starts the turn, or the compaction for [`QueuedKind::Compact`]. Busy: the input is queued
+    /// with `execution` frozen on it, and the session's state is left alone until the item drains.
+    /// A compaction is refused with [`COMPACT_LOCKED`] while one runs or is queued. Non-empty
+    /// `content` is the input's blocks (attachments); `text` is then its display text.
+    /// `behind_held`: idle with a held queue that has inputs, the input joins the queue tail instead of
+    /// starting (Node `compact` "held queue → append to the tail"; a queue promotion passes false).
+    SubmitWith {
+        kind: QueuedKind,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<crate::message::ContentBlock>,
+        delivery: Delivery,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        execution: Option<InputExecution>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        behind_held: bool,
+    },
+    /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
+    /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are
+    /// kept. The pending ask itself is answered separately. `interaction` is the ask that granted it
+    /// (Node `config.permissionGrant`, [`crate::session_api_events::KernelEvent::PermissionGranted`]).
+    GrantFullAccess {
+        interaction: String,
+    },
+    /// Fork (desktop App): Node `pauseGoal`: an active goal becomes paused (persisted as a
+    /// `goal_status` attachment), then the running turn is aborted. No active goal: a no-op.
+    PauseGoal,
+    /// Fork (desktop App): Node `resumeGoal`: a paused goal becomes active and a continuation turn
+    /// starts. Rejected while a turn runs ([`GOAL_ACTIVE_TURN`]) or with plan on
+    /// ([`GOAL_PLAN_EXCLUSIVE`]); no paused goal: a no-op.
+    ResumeGoal,
     Rewind {
         target: MessageId,
         scope: RewindScope,
+    },
+    /// Fork: restore only the checkpoints of the turn opened by `target` (the App's per-turn
+    /// summary rewind, Node `applyFileRewind`): the conversation is not cut, and the turn's
+    /// summary flips to reverted ([`KernelEvent::TurnFilesReverted`]). Rejected while busy or when
+    /// the turn has no unrestored checkpoints; the reply waits for the transaction, like
+    /// [`Command::Rewind`], and reports the restored files with `removed: 0`.
+    RewindTurnFiles {
+        target: MessageId,
     },
     /// 从 `at` 处分叉出新会话；回执是 [`CommandResult::Forked`]。
     Fork {
@@ -158,6 +283,26 @@ pub enum Command {
     Dequeue {
         command: CommandId,
     },
+    /// Replace the text of an input that is still queued, keeping its place and delivery (Node `editQueueItem`).
+    /// Rejected with the same reason as [`Command::Dequeue`] when the input already started a turn or was
+    /// merged into one.
+    EditQueued {
+        command: CommandId,
+        text: String,
+    },
+    /// Move a queued input before another queued input, or to the end of the queue when `before` is `None`
+    /// (Node `reorderQueueItem`). Rejected with the same reason as [`Command::Dequeue`] when either input is
+    /// no longer queued.
+    ReorderQueued {
+        command: CommandId,
+        before: Option<CommandId>,
+    },
+    /// Pause or resume the automatic drain of the queue (Node `setAutoDrain`; `held` is `!autoDrain`). While
+    /// held, a finished turn does not start the next queued input; releasing the hold while idle starts the
+    /// head of the queue, as a turn end would. Always `Accepted`; every change emits `QueueChanged` once.
+    HoldQueue {
+        held: bool,
+    },
 }
 
 /// 带 ID 的命令；同一个 ID 重复提交时返回 [`Ack::Duplicate`]，不重复执行。
@@ -236,12 +381,48 @@ pub struct SessionView {
     /// put `sourceCommandId` on its rows after an agent restart. Empty when unknown.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: per-turn file-change summaries for the projection (the App's turn header
+    /// `fileChanges`), keyed by the typed user message that opened the turn. Filled by the session
+    /// actor from its checkpoints; empty for sessions without file writes.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub turn_files: std::collections::BTreeMap<MessageId, TurnFileFacts>,
+    /// Fork: the desktop goal state (Node snapshot `goal`); None without a goal or outside the
+    /// desktop App.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<crate::goal::GoalState>,
+}
+
+/// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
+pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
+/// Fork: `Command::ResumeGoal` with plan on (Node `guard.planGoalMutuallyExclusive`).
+pub const GOAL_PLAN_EXCLUSIVE: &str = "guard.planGoalMutuallyExclusive";
+
+/// One turn's file summary carried in [`SessionView::turn_files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileFacts {
+    /// Per path, sorted by path.
+    pub files: Vec<TurnFileCount>,
+    /// The turn's checkpoints can be rewound (they were when they settled).
+    pub rewindable: bool,
+    /// Every checkpoint of the turn was already restored.
+    pub reverted: bool,
+}
+
+/// One path's counts inside [`SessionView::turn_files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileCount {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
 }
 
 // 内核事件与回合结局放在分出的文件里（800 行上限，工作线 F131；路径与名字不变）。
 #[path = "session_api_events.rs"]
 mod events;
-pub use events::{FileChange, KernelEvent, NoticeLevel, QueuedInput, SequencedEvent, TurnOutcome};
+pub use events::{
+    FileChange, InputExecution, KernelEvent, NoticeLevel, QueuedInput, QueuedKind, SequencedEvent,
+    TurnOutcome,
+};
 
 // 命令的结果放在分出的文件里（800 行上限，工作线 F134）。
 #[path = "session_api_results.rs"]
@@ -286,6 +467,25 @@ pub trait SessionHandle: Send + Sync {
     /// rewind 选择器的条目（活动历史里可选的 user 消息，按顺序）。
     async fn rewind_options(&self) -> Result<Vec<RewindOption>, KernelError>;
 
+    /// Fork: what a code rewind to `target` would restore and which files conflicts block, computed
+    /// without changing anything (Node's file rewind preview).
+    async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError>;
+
+    /// Fork: the files the turn opened by the typed user message `turn_input` changed (the App's
+    /// per-turn "N files changed" summary query, Node `v4/conversation/fileChanges`). The actor
+    /// picks the turn's unrestored checkpoints; the artifact reads run in the caller's task.
+    async fn turn_file_changes(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<TurnFileChanges, KernelError>;
+
+    /// Fork: what restoring only that turn's own checkpoints would do (the App's per-turn
+    /// `v4/conversation/fileRewindPreview`), computed without changing anything.
+    async fn turn_rewind_preview(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError>;
+
     /// `/goal` 面板的数据：会话 actor 的当前目标与最近一次达成的结果（docs/specs/rust-cli/goal.md §6.2）。
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError>;
 
@@ -312,6 +512,13 @@ pub trait SessionHandle: Send + Sync {
         &self,
         task: &str,
     ) -> Result<Option<crate::panels::ShellDetail>, KernelError>;
+
+    /// Fork: a background Bash command's output window (the desktop detail pane); None when this session has
+    /// no such Bash command or output file.
+    async fn background_bash_output(
+        &self,
+        task: &str,
+    ) -> Result<Option<crate::panels::BashOutputRead>, KernelError>;
 }
 
 #[async_trait]
@@ -365,6 +572,14 @@ pub trait Kernel: Send + Sync {
         Err(KernelError::Unsupported {
             what: "workspace files".to_owned(),
         })
+    }
+
+    /// Fork (desktop App): the Composer skill reference catalog of this workspace. Default: none.
+    async fn skill_references(
+        &self,
+        _workspace: &crate::env::WorkspaceRef,
+    ) -> Vec<crate::user_command::SkillReference> {
+        Vec::new()
     }
 
     /// 这个工作区里用户可调用的斜杠命令（skill，TUI 的补全；ext.md §2.7，L22）。默认没有。

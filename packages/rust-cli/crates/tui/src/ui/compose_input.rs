@@ -29,6 +29,8 @@ impl App {
                 command,
                 text,
                 delivery,
+                kind: Default::default(),
+                execution: None,
             });
     }
 

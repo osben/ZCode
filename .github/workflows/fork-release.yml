@@ -93,6 +93,54 @@ jobs:
       - name: Build desktop bundles and runtime assets
         run: pnpm --filter @zcode/desktop build
 
+      # Fork: build the zcode-rs agent and stage it with its licenses as <resources>/zcode-rs
+      # (specs/fork-agent-runtime-selection.md, "Packaging"). The default runtime stays node; the
+      # binary is what the agent runtime setting switches to.
+      - name: Install pinned Rust toolchain
+        working-directory: packages/rust-cli
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - name: Restore cargo registry and release target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-about
+            packages/rust-cli/target
+          key: rust-cli-release-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml', 'packages/rust-cli/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-cli-release-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml', 'packages/rust-cli/Cargo.lock') }}-
+
+      - name: Build zcode-rs (macOS arm64)
+        working-directory: packages/rust-cli
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          # Keeps proc-macro dylib metadata on macOS (the release profile strips).
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
+        run: cargo build --release --locked -p rust-cli --bin zcode-rs
+
+      - name: Generate zcode-rs crate licenses
+        working-directory: packages/rust-cli
+        shell: bash
+        run: |
+          command -v cargo-about >/dev/null || cargo install --locked cargo-about --version 0.9.3 --features cli
+          cargo about generate --fail -c ../../scripts/fork-rust-agent/about.toml -m Cargo.toml \
+            ../../scripts/fork-rust-agent/about.hbs -o target/CRATE-LICENSES.md
+
+      - name: Stage zcode-rs into desktop resources
+        shell: bash
+        run: >-
+          node scripts/fork-rust-agent/stage-resources.mjs
+          --binary packages/rust-cli/target/release/zcode-rs
+          --crate-licenses packages/rust-cli/target/CRATE-LICENSES.md
+
       - name: Package with electron-builder (unsigned)
         # --publish never: the config's generic publish URL is a localhost placeholder; the
         # GitHub Release is created separately in the release job.
@@ -146,6 +194,54 @@ jobs:
 
       - name: Build desktop bundles and runtime assets
         run: pnpm --filter @zcode/desktop build
+
+      # Fork: build the zcode-rs agent and stage it with its licenses as <resources>/zcode-rs
+      # (specs/fork-agent-runtime-selection.md, "Packaging"). The default runtime stays node; the
+      # binary is what the agent runtime setting switches to.
+      - name: Install pinned Rust toolchain
+        working-directory: packages/rust-cli
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - name: Restore cargo registry and release target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-about.exe
+            packages/rust-cli/target
+          key: rust-cli-release-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml', 'packages/rust-cli/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-cli-release-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml', 'packages/rust-cli/Cargo.lock') }}-
+
+      - name: Build zcode-rs (Windows x64)
+        working-directory: packages/rust-cli
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          # Keeps proc-macro dylib metadata on macOS (the release profile strips).
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
+        run: cargo build --release --locked -p rust-cli --bin zcode-rs
+
+      - name: Generate zcode-rs crate licenses
+        working-directory: packages/rust-cli
+        shell: bash
+        run: |
+          command -v cargo-about >/dev/null || cargo install --locked cargo-about --version 0.9.3 --features cli
+          cargo about generate --fail -c ../../scripts/fork-rust-agent/about.toml -m Cargo.toml \
+            ../../scripts/fork-rust-agent/about.hbs -o target/CRATE-LICENSES.md
+
+      - name: Stage zcode-rs into desktop resources
+        shell: bash
+        run: >-
+          node scripts/fork-rust-agent/stage-resources.mjs
+          --binary packages/rust-cli/target/release/zcode-rs.exe
+          --crate-licenses packages/rust-cli/target/CRATE-LICENSES.md
 
       - name: Package with electron-builder (unsigned)
         run: >-

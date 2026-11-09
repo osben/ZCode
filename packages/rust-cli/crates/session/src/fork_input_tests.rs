@@ -296,3 +296,50 @@ fn the_turn_runs_until_the_next_input() {
         );
     }
 }
+
+/// Answers the first request, then never answers (a turn that keeps running).
+struct OnceThenSilent(std::sync::atomic::AtomicUsize);
+
+impl ModelPort for OnceThenSilent {
+    fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: CancellationToken,
+    ) -> BoxStream<'static, Result<ModelEvent, ModelError>> {
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            ScriptedModel::new(vec![text_response(&["one"])]).stream(request, cancel)
+        } else {
+            futures_util::stream::pending().boxed()
+        }
+    }
+}
+
+/// Fork (node_desktop): a completed turn forks while a later turn runs; the running turn does not.
+#[tokio::test]
+async fn a_desktop_session_forks_a_completed_turn_while_another_runs() {
+    let mut setup = Setup::new(Arc::new(OnceThenSilent(Default::default())));
+    setup.fork_while_running = true;
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "first")).await;
+    until(&mut events, finished).await;
+    built.session.send(submit("c2", "second")).await;
+    let messages = built.session.view().await.unwrap().messages;
+    let inputs: Vec<MessageId> = messages
+        .iter()
+        .filter(
+            |message| matches!(message, Message::User(user) if user.origin == UserOrigin::Human),
+        )
+        .map(|message| message.id().clone())
+        .collect();
+    assert_eq!(inputs.len(), 2, "{messages:?}");
+    let ack = built.session.send(fork(&inputs[0])).await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let ack = built.session.send(fork(&inputs[1])).await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "a turn is running; fork after it finishes".to_owned()
+        }
+    );
+}

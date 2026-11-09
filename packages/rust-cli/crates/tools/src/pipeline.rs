@@ -29,7 +29,9 @@ use crate::texts;
 use crate::validate::{strip_unknown, validate};
 
 pub(crate) const REJECT_MESSAGE: &str = rust_cli_kernel_api::tool::REJECT_MESSAGE;
-pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n";
+/// Fork: the Node agent's denial with feedback (`buildPermissionDeniedContent`, bootstrap `permission-options.ts`):
+/// the full denial, STOP sentence included, then the user's words.
+pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. To tell you how to proceed, the user said:\n";
 /// 工具使用被中断时的文字（kernel-api 的定义，F55）。
 const INTERRUPT_FOR_TOOL_USE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[1];
 const NO_OUTPUT: &str = "Command failed with no output";
@@ -54,8 +56,10 @@ const SUBAGENT_REJECT_WITH_REASON: &str = "Permission for this tool use was deni
 /// 而不是停下来等用户。
 fn rejection(context: &ToolUseContext, feedback: Option<&str>) -> String {
     match (context.agent.is_some(), feedback) {
-        (false, None) => REJECT_MESSAGE.to_owned(),
-        (false, Some(feedback)) => format!("{REJECT_WITH_REASON}{feedback}"),
+        (false, Some(feedback)) if !feedback.trim().is_empty() => {
+            format!("{REJECT_WITH_REASON}{}", feedback.trim())
+        }
+        (false, _) => REJECT_MESSAGE.to_owned(),
         (true, None) => SUBAGENT_REJECT.to_owned(),
         (true, Some(feedback)) => format!("{SUBAGENT_REJECT_WITH_REASON}{feedback}"),
     }
@@ -172,6 +176,7 @@ impl Pipeline {
         // “不再询问”一行的种子与建议规则出自同一套命令分析（shell-permissions.md §4.10）；前端不再自己算（F133）。
         let rule_seed = rust_cli_policy::ask_rule_seed(tool.name(), input, &suggestions);
         let request = InteractionRequest::Permission {
+            origin: None,
             tool_use: context.tool_use.clone(),
             tool: tool.name().to_owned(),
             input: input.clone(),
@@ -181,6 +186,7 @@ impl Pipeline {
             asked_by: None,
             // 额外机器上的调用，询问带机器名（R3，remote-exec.md §20.8；主 env 不写出）。
             machine: call.machine.clone(),
+            once,
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));
@@ -392,7 +398,9 @@ impl Pipeline {
             Ok(ToolCallOutput {
                 mut output,
                 mut new_messages,
+                stop_turn,
             }) => {
+                messages.stop_turn |= stop_turn;
                 let payload = tag(
                     hooks::post_tool_use(tool.name(), &input, &output, &context),
                     machine,

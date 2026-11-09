@@ -322,6 +322,7 @@ fn a_compaction_is_one_row_with_its_token_arrow() {
 fn permission_asks_mark_the_tool_and_resolve() {
     let mut feed = Feed::new();
     let ask = InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".into(),
@@ -330,6 +331,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: None,
+        once: false,
     };
     feed.push(started())
         .push(KernelEvent::ToolStarted {
@@ -363,6 +365,8 @@ fn steered_input_leaves_the_queue_and_shows_as_a_user_row() {
         command: CommandId::new("c2"),
         text: "also this".into(),
         delivery: Delivery::Steer,
+        kind: Default::default(),
+        execution: None,
     };
     feed.push(started()).push(KernelEvent::QueueChanged {
         items: vec![queued.clone()],

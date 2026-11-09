@@ -6,9 +6,10 @@
 //! （`Rename`）或 hook 改过标题后，候选标题丢弃（用量行照写）。
 
 use rust_cli_base::{Task, TaskError};
-use rust_cli_kernel_api::ids::{CommandId, MessageId};
+use rust_cli_kernel_api::ids::{CommandId, MessageId, RunId};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
 use rust_cli_kernel_api::session_api::{Ack, KernelEvent};
+use rust_cli_kernel_api::side_request::SideSource;
 use rust_cli_kernel_api::store::{Fact, SessionKind, TurnAnchor};
 use rust_cli_kernel_api::user_command::LocalCommandRecord;
 use tokio_util::sync::CancellationToken;
@@ -22,6 +23,10 @@ struct TitleJob {
     prompt: MessageId,
     /// 起任务时的回合锚点（首条输入与它的轮次）：用量行写在这一轮，标题晚于下一条输入回来也不变。
     turn: Option<TurnAnchor>,
+    /// Fork (desktop App): the goal this first input set; the title is also its summary (Node `goalSummaryTargetID`).
+    goal: Option<String>,
+    /// The title is the session's (false: only a goal summary, Node `goal_summary_title`).
+    session: bool,
     task: Task<Generated>,
 }
 
@@ -29,6 +34,8 @@ struct TitleJob {
 pub(crate) struct TitleDone {
     prompt: MessageId,
     turn: Option<TurnAnchor>,
+    goal: Option<String>,
+    session: bool,
     result: Result<Generated, TaskError>,
 }
 
@@ -44,6 +51,24 @@ pub(crate) struct TitleState {
     /// 本 actor 里改名（`Rename`、hook 的标题、起名写入）的次数：起名期间有新的改名时不写
     /// （titles.md §8.2，`superseded`）。
     renames: u64,
+    /// Fork (Node desktop titles): the first-input title waiting for its turn to complete.
+    deferred: Option<DeferredTitle>,
+    /// Fork (Node desktop titles): no turn completed yet after a deferred title was dropped, so the next input is
+    /// still the first (Node counts `turnNumber` on completed turns only).
+    rearmed: bool,
+}
+
+/// Fork: Node's desktop agent always has a provider runtime-headers port, so `shouldDeferSessionTitleForRuntimeHeaders`
+/// holds and the first-input title starts only after the turn completed (core `turn.ts`
+/// `maybeStartDeferredSessionTitleGeneration`); a turn that does not complete gets none.
+struct DeferredTitle {
+    prompt: MessageId,
+    text: String,
+    turn: Option<TurnAnchor>,
+    run: Option<RunId>,
+    goal: Option<String>,
+    /// The session title's request, or only a goal summary's (`SideSource::GoalSummaryTitle`).
+    source: SideSource,
 }
 
 impl TitleState {
@@ -65,6 +90,8 @@ pub(crate) async fn title_done(state: &mut TitleState) -> TitleDone {
             TitleDone {
                 prompt: job.prompt.clone(),
                 turn: job.turn.clone(),
+                goal: job.goal.clone(),
+                session: job.session,
                 result,
             }
         }
@@ -109,27 +136,79 @@ impl Actor {
             self.meta.title.clone_from(&title);
             self.log.append(KernelEvent::TitleChanged { title });
         }
-        let Some(titles) = self.deps.titles.clone() else {
+        // Fork (desktop App): a `/goal` input that set a goal; it gets a summary title either way.
+        let goal = self.goal_set_by(message.id());
+        let Some(node_titles) = self.deps.titles.as_ref().map(|titles| titles.node_prompt) else {
+            if let Some(target) = goal {
+                self.goal_summarized(&target, None);
+            }
             return;
         };
-        let eligible = first
+        let eligible = (first || self.titles.rearmed)
             && !self.titles.attempted
             && !self.titles.custom
             && self.meta.kind == SessionKind::Interactive
             && self.meta.parent.is_none()
             && long_enough(&text);
         if !eligible {
+            if let Some(target) = goal {
+                self.start_goal_summary(target);
+            }
             return;
         }
         self.titles.attempted = true;
-        // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
-        let selection = self.selection.clone();
-        let session = self.meta.id.clone();
+        self.titles.rearmed = false;
+        // Node starts the title of a `/goal` control turn at once (core `control-only-turn.ts`, no defer flag).
+        let deferred = node_titles && crate::goal::command(&text).is_none();
         // 提交这条输入的回合（工作线 F64：标题请求与回合共用 `x-query-id`，Node 的标题沿用回合的 trace，model.md §2.4）。
         let run = self
             .running
             .as_ref()
             .and_then(|running| running.run.clone());
+        let title = DeferredTitle {
+            prompt: message.id().clone(),
+            text,
+            turn: self.turn_anchor(),
+            run,
+            goal,
+            source: crate::title_model::SOURCE,
+        };
+        if deferred {
+            self.titles.deferred = Some(title);
+        } else {
+            self.start_title(title);
+        }
+    }
+
+    /// Fork (Node desktop titles): the turn ended; a completed turn starts its deferred first-input title, any other
+    /// leaves the next input eligible (Node: no attempt was made and `turnNumber` stays 0).
+    pub(crate) fn after_turn(&mut self, completed: bool) {
+        let Some(title) = self.titles.deferred.take() else {
+            return;
+        };
+        if completed {
+            self.start_title(title);
+        } else {
+            self.titles.attempted = false;
+            self.titles.rearmed = true;
+        }
+    }
+
+    fn start_title(&mut self, title: DeferredTitle) {
+        let Some(titles) = self.deps.titles.clone() else {
+            return;
+        };
+        let DeferredTitle {
+            prompt,
+            text,
+            turn,
+            run,
+            goal,
+            source,
+        } = title;
+        // 入队时冻结当前选择（Node `retainTitleModelContext`）；选择的 owner 是本 actor。
+        let selection = self.selection.clone();
+        let session = self.meta.id.clone();
         // 用量事实的时钟与逻辑请求 ID（工作线 F73）。
         let clock = self.deps.clock.clone();
         let request = self.deps.ids.message();
@@ -141,13 +220,46 @@ impl Actor {
                     &text,
                     (clock.as_ref(), request),
                     CancellationToken::new(),
+                    source,
                 )
                 .await
         });
         self.titles.task = Some(TitleJob {
-            prompt: message.id().clone(),
-            turn: self.turn_anchor(),
+            prompt,
+            turn,
+            goal,
+            session: source == crate::title_model::SOURCE,
             task,
+        });
+    }
+
+    /// Fork (desktop App): Node `maybeStartGoalSummaryTitleGeneration`: a goal set after the first input asks the
+    /// title model for its summary only (`goal_summary_title`); when that cannot start, the objective is the summary.
+    fn start_goal_summary(&mut self, target: String) {
+        let eligible = self.titles.task.is_none()
+            && self.meta.kind == SessionKind::Interactive
+            && self.meta.parent.is_none();
+        let objective = self.goal_objective(&target);
+        let (Some(objective), true) = (objective, eligible) else {
+            self.goal_summarized(&target, None);
+            return;
+        };
+        let prompt = self.messages.last().map(|message| message.id().clone());
+        let Some(prompt) = prompt else {
+            self.goal_summarized(&target, None);
+            return;
+        };
+        let run = self
+            .running
+            .as_ref()
+            .and_then(|running| running.run.clone());
+        self.start_title(DeferredTitle {
+            prompt,
+            text: objective,
+            turn: self.turn_anchor(),
+            run,
+            goal: Some(target),
+            source: SideSource::GoalSummaryTitle,
         });
     }
 
@@ -157,15 +269,24 @@ impl Actor {
         let TitleDone {
             prompt,
             turn,
+            goal,
+            session,
             result,
         } = done;
         let generated = match result {
             Ok(generated) => generated,
             Err(error) => {
                 tracing::warn!(%error, "the session title task ended without a result");
+                if let Some(target) = goal {
+                    self.goal_summarized(&target, None);
+                }
                 return;
             }
         };
+        // Node writes the goal summary even when the session title is custom (`goalSummaryTargetID`).
+        if let Some(target) = &goal {
+            self.goal_summarized(target, generated.title.clone());
+        }
         // 工作线 F73（usage.md §2.1.1）：Node 在标题请求结束时就写用量行，不看标题用不用；单独一批，锚在起任务时的
         // 回合；写入失败只记日志（Node 同）。
         let usage = vec![Fact::ModelCalled {
@@ -174,7 +295,7 @@ impl Actor {
         if let Err(reason) = self.commit_in_turn(turn, usage).await {
             tracing::warn!(%reason, "the session title usage was not stored");
         }
-        let Some(title) = generated.title else {
+        let Some(title) = generated.title.filter(|_| session) else {
             return;
         };
         // 用户先改了名，或首条输入已被回退掉（Node `isSuppressedByFirstQueryEdit`）：丢弃。

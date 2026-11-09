@@ -87,6 +87,9 @@ impl Kernel for LocalKernel {
             table::Claim::Open(open) => return Ok(open),
             table::Claim::Load(loading) => loading,
         };
+        // Fork: a subagent's live run is taken before the cold load, so nothing it stores falls between the two
+        // (session crate `child_live`).
+        let child_live = self.agents.child_live(session);
         let loaded = self.ports.store.load(session).await?;
         // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
         // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
@@ -103,12 +106,13 @@ impl Kernel for LocalKernel {
                 self.machine().files().as_ref(),
             )
             .await;
-        let state = SessionState::from_loaded(
+        let mut state = SessionState::from_loaded(
             loaded,
             &self.defaults.selection.current(),
             self.defaults.mode,
             start,
         );
+        state.child_live = child_live;
         Ok(self.start(state, Opened::Loaded))
     }
 
@@ -343,6 +347,14 @@ impl Kernel for LocalKernel {
         change: rust_cli_kernel_api::permission::PermissionRulesChange,
     ) -> Result<Vec<rust_cli_kernel_api::permission::SourcedRule>, KernelError> {
         permissions::change(&self.gate, self.ports.store.as_ref(), change).await
+    }
+
+    /// Fork (desktop App): the Composer skill reference catalog (Node `skill-reference-catalog.ts`).
+    async fn skill_references(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Vec<rust_cli_kernel_api::user_command::SkillReference> {
+        self.ext.skills().references(workspace).await
     }
 
     /// TUI 的斜杠补全：ext 给出的可调用 skill（ext.md §2.7）。

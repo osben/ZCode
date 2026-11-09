@@ -61,3 +61,22 @@ fn a_restarted_subscription_waits_for_a_new_first_frame() {
     assert_eq!(log.start("s1"), Some(2));
     assert!(!log.restart("gone"));
 }
+
+/// Fork: a log opened on a session with history starts at the kernel's last event sequence (Node's topic
+/// sequence is the durable event sequence), and later records continue from it.
+#[test]
+fn a_log_with_a_base_starts_at_that_sequence() {
+    let mut log = TopicLog::<&str>::with_base("e1", 7);
+    log.subscribe("s1", "c1");
+    assert_eq!(log.start("s1"), Some(7));
+    assert_eq!(log.record(vec!["a"]), 8);
+    assert_eq!(
+        log.flush(),
+        vec![Batch {
+            subscription: "s1".to_owned(),
+            from: 7,
+            to: 8,
+            deltas: vec!["a"],
+        }]
+    );
+}

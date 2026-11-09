@@ -29,6 +29,44 @@ pub struct GoalStatus {
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
+    /// Fork (desktop App): a pause (`Some(true)`) or resume (`Some(false)`) of the active goal
+    /// (Node `pauseGoal` / `resumeGoal`); None for set, clear and evaluation statuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<bool>,
+}
+
+/// Fork: the meta source of the desktop goal continuation prompt (Node `target_continuation`).
+pub const CONTINUATION_SOURCE: &str = "target_continuation";
+
+/// Fork: the desktop goal's status (Node `goalStateSchema.status`, `verifying` and `notSatisfied`
+/// are not produced by this kernel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GoalPhase {
+    Active,
+    Paused,
+    Verified,
+    Failed,
+}
+
+/// Fork: the desktop goal as the App shows it (Node snapshot `goal`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalState {
+    /// The `goal_status` attachment that set the goal.
+    pub target: String,
+    pub objective: String,
+    pub status: GoalPhase,
+    /// Evaluations that found the goal not met yet.
+    pub iteration: u32,
+    /// Time spent active before the current active stretch.
+    pub time_used_seconds: u64,
+    /// When the current active stretch started; None while paused or finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_run_started_at_ms: Option<u64>,
+    /// Fork (desktop App): the goal's short title (Node `target.summaryTitle`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_title: Option<String>,
 }
 
 /// 正在生效的目标的快照。

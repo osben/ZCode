@@ -112,6 +112,27 @@ pub enum ShellOutput {
     Unavailable,
 }
 
+/// Fork: the most bytes of a background Bash output window (Node `BACKGROUND_BASH_OUTPUT_MAX_BYTES`).
+pub const BASH_OUTPUT_WINDOW_BYTES: usize = 8192;
+
+/// Fork: a background Bash command's output window for the desktop detail pane (Node
+/// `readBackgroundBashOutput`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BashOutputRead {
+    /// The tail of the output file (at most [`BASH_OUTPUT_WINDOW_BYTES`], cut at a character boundary).
+    Window {
+        /// The ledger's status; None once the ledger no longer lists the command (its notice was acknowledged).
+        status: Option<BackgroundStatus>,
+        text: String,
+        /// The file holds more than the window.
+        truncated: bool,
+        path: crate::env::EnvPath,
+    },
+    /// The command is known but its output file could not be read (`code`: `ENOENT` for a missing file).
+    ReadFailed { code: Option<String> },
+}
+
 /// 一个后台命令的详情（tui-panels.md §3.3）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellDetail {

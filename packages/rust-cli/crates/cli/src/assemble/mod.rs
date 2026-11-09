@@ -124,12 +124,22 @@ impl CliInputs {
     }
 }
 
+/// Fork: whether sessions get generated titles, and with which prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Titles {
+    Off,
+    /// This CLI's prompt (titles.md §1).
+    Cli,
+    /// Node's prompt ([`rust_cli_prompts::title::node_system`]), for the desktop app-server.
+    Node,
+}
+
 /// 一个 controller 前端的组装规格。
 pub(crate) struct Controller {
     /// 提示词与工具的形态：`-p` 是 Print，交互界面与 App 是 Interactive。
     pub(crate) surface: Surface,
-    /// 会话标题（只在交互界面生成，titles.md §2）。
-    pub(crate) titles: bool,
+    /// 会话标题（只在交互界面生成，titles.md §2）。Fork: the app-server generates them too, like the Node desktop agent.
+    pub(crate) titles: Titles,
     pub(crate) peers: Peering,
     /// 远端机器（R3，remote-exec.md §20）：None 是没有机器清单（app-server：注册表只有主 env）。
     pub(crate) machines: Option<machines::When>,
@@ -140,6 +150,11 @@ pub(crate) struct Controller {
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
     pub(crate) wait_model: bool,
+    /// Fork: [`ContextConfig::token_budget`]; the app-server leaves it off like the Node desktop agent.
+    pub(crate) token_budget: bool,
+    /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
+    /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
+    pub(crate) node_desktop: bool,
     pub(crate) cli: CliInputs,
 }
 
@@ -148,13 +163,15 @@ impl Controller {
     pub(crate) fn tui(cli: CliInputs) -> Self {
         Self {
             surface: Surface::Interactive,
-            titles: true,
+            titles: Titles::Cli,
             peers: Peering::Interactive,
             machines: Some(machines::When::Background),
             primary: Primary::Configured,
             headers: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
+            token_budget: true,
+            node_desktop: false,
             cli,
         }
     }
@@ -164,7 +181,7 @@ impl Controller {
         let declared = hooks.assume.loopback_machines || hooks.assume.ssh_machines;
         Self {
             surface: Surface::Print,
-            titles: false,
+            titles: Titles::Off,
             peers: Peering::Print,
             machines: Some(if declared {
                 machines::When::Now
@@ -175,22 +192,26 @@ impl Controller {
             headers: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
+            token_budget: true,
+            node_desktop: false,
             cli,
         }
     }
 
-    /// app-server（app-protocol.md §3.7）：交互形态的提示词；不生成标题、不登记跨会话通信、不连远端机器、只接受本地主
+    /// app-server（app-protocol.md §3.7）：交互形态的提示词；Fork: 标题照 Node 桌面端生成（Node 的提示词）；不登记跨会话通信、不连远端机器、只接受本地主
     /// env；账号凭据经 Host；root 下的 bypass 照 Node 不拒绝。
     pub(crate) fn app(headers: Arc<dyn HeaderSource>) -> Self {
         Self {
             surface: Surface::Interactive,
-            titles: false,
+            titles: Titles::Node,
             peers: Peering::Off,
             machines: None,
             primary: Primary::LocalOnly,
             headers: Some(headers),
             root_bypass: RootBypass::Allow,
             wait_model: true,
+            token_budget: false,
+            node_desktop: true,
             cli: CliInputs::default(),
         }
     }
@@ -210,7 +231,18 @@ pub(crate) struct LocalEnv {
 pub(crate) async fn local_env(
     process: &ProcessFacts,
     egress: &Arc<Egress>,
+    flags: (bool, bool),
+) -> LocalEnv {
+    local_env_with(process, egress, flags, false).await
+}
+
+/// Fork (node_desktop): `desktop` (the app-server's `node_desktop`) additionally configures the
+/// Node adapter's temp output layout for Bash tool commands (see `shell::desktop_root`).
+pub(crate) async fn local_env_with(
+    process: &ProcessFacts,
+    egress: &Arc<Egress>,
     (find_and_grep, expanding_vars): (bool, bool),
+    desktop: bool,
 ) -> LocalEnv {
     let shell =
         crate::assemble::shell::config(process.env.clone(), &process.temp, find_and_grep).await;
@@ -229,6 +261,11 @@ pub(crate) async fn local_env(
         .with_shell(shell)
         // WebFetch 的网络出口（tools-more.md §4），与模型请求共用出口策略。
         .with_web(egress.clone());
+    let env = if desktop {
+        env.with_bash_outputs(crate::assemble::shell::desktop_root(&process.temp))
+    } else {
+        env
+    };
     LocalEnv { env, mcp, bash }
 }
 
@@ -291,7 +328,13 @@ pub(crate) async fn open(
         directory
     });
     let find_and_grep = !names_search_tools(&spec.cli.allowed);
-    let local = local_env(&facts.process, &egress, (find_and_grep, false)).await;
+    let local = local_env_with(
+        &facts.process,
+        &egress,
+        (find_and_grep, false),
+        spec.node_desktop,
+    )
+    .await;
     let monitor = options::monitor(&facts.hooks.assume, local.bash.is_some());
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);
@@ -528,6 +571,7 @@ pub(crate) async fn kernel(
     };
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
+    context.token_budget = spec.token_budget;
     context.custom_system_prompt = opened.resolved.system_prompt.clone();
     context.append_system_prompt = opened.resolved.append_system_prompt.clone();
     // 附加目录只归会话（deployment.md §21）：环境段、嵌套规则文件与权限规则读这一份。
@@ -557,6 +601,7 @@ pub(crate) async fn kernel(
     )
     .await;
     extensions.monitor = opened.monitor;
+    extensions.node_desktop = spec.node_desktop;
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened
@@ -602,10 +647,11 @@ pub(crate) async fn kernel(
         extensions,
     );
     // 会话标题只在交互界面生成（titles.md §2），模型经小模型槽位从会话当前的主模型得出。
-    let kernel = Arc::new(if spec.titles {
+    let kernel = Arc::new(if spec.titles != Titles::Off {
         let titles = TitleModel {
             model: kernel.ports().model.clone(),
             directory: opened.directory.clone(),
+            node_prompt: spec.titles == Titles::Node,
         };
         kernel.with_titles(titles)
     } else {

@@ -452,6 +452,184 @@ pub trait LocalSettings: Send + Sync {
     ) -> Result<(), StoreError>;
 }
 
+/// Fork: the session mix of a session tree (Node `SessionTreeCounts`, `session/treeCounts`). The
+/// running count is process-local (live runtimes) and stays with the protocol caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTreeCounts {
+    pub total: u64,
+    pub side_chats: u64,
+    pub subagents: u64,
+    pub workflow_sessions: u64,
+    pub workflow_runs: u64,
+}
+
+/// Fork: what a `session/eraseTree` deleted. `erased_roots` pairs each erased requested root with
+/// the workspace its session row carried (read inside the delete transaction), for the
+/// sessions-index announcement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErasedSessionTree {
+    pub erased_ids: Vec<String>,
+    pub erased_roots: Vec<(String, String)>,
+}
+
+/// Fork: one app-level usage query span (`v4/usage/stats`; Node `UsageQuerySpan`): an inclusive
+/// `[since_ms, until_ms]` instant range plus the fixed offset days are bucketed with, and the
+/// rollup-only extras the caller asked for (the raw-table fallback ignores the flags; specs/
+/// fork-rust-agent-parity.md).
+#[derive(Debug, Clone)]
+pub struct AppUsageSpan {
+    pub since_ms: i64,
+    pub until_ms: i64,
+    pub tz_offset_ms: i64,
+    pub filters: AppUsageFilters,
+    pub include_facets: bool,
+    pub hourly: bool,
+    pub top_sessions: bool,
+}
+
+/// Fork: the App Usage filters (Node `appUsageFiltersSchema`). Only the rollup can answer a
+/// non-empty filter; the raw-table fallback refuses it with `usage_rollup_unavailable`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageFilters {
+    pub model_ids: Vec<String>,
+    pub provider_ids: Vec<String>,
+    pub query_sources: Vec<String>,
+    pub workspace_keys: Vec<String>,
+}
+
+impl AppUsageFilters {
+    pub fn is_empty(&self) -> bool {
+        self.model_ids.is_empty()
+            && self.provider_ids.is_empty()
+            && self.query_sources.is_empty()
+            && self.workspace_keys.is_empty()
+    }
+}
+
+/// The error message Node throws when neither the rollup nor the raw tables can answer a read
+/// correctly; stores report it as `StoreError::Storage` with exactly this message.
+pub const USAGE_ROLLUP_UNAVAILABLE: &str = "usage_rollup_unavailable";
+
+/// Fork: the aggregated rows of one span (Node `queryAppUsage` result). The three `Option`
+/// groups and the reason are rollup territory: the raw-table fallback leaves them `None` and
+/// sets `rollup_fallback_reason` (protocol layer logs it like Node's "App Usage rollup
+/// unavailable" warn).
+#[derive(Debug, Clone, Default)]
+pub struct AppUsageRows {
+    pub totals: AppUsageTotals,
+    pub turn_totals: AppUsageTurnTotals,
+    pub tool_totals: AppUsageToolTotals,
+    pub models: Vec<AppUsageModelRow>,
+    pub tools: Vec<AppUsageToolRow>,
+    pub days: Vec<AppUsageDayRow>,
+    pub day_models: Vec<AppUsageDayModelRow>,
+    pub facets: Option<AppUsageFacets>,
+    pub hourly_tokens: Option<Vec<i64>>,
+    pub top_sessions: Option<Vec<AppUsageSessionRow>>,
+    pub rollup_fallback_reason: Option<String>,
+}
+
+/// Token totals over the span (Node `appUsageTotalsSchema`); the averages are null when no row
+/// carries the column.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageTotals {
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub model_request_count: i64,
+    pub model_error_count: i64,
+    pub avg_time_to_first_token_ms: Option<f64>,
+}
+
+/// Turn/session totals (completed turns only for the averages and the per-session sums).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageTurnTotals {
+    pub total_sessions: i64,
+    pub total_turns: i64,
+    pub avg_turn_duration_ms: Option<f64>,
+    pub longest_session_ms: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageToolTotals {
+    pub tool_call_count: i64,
+    pub tool_error_count: i64,
+}
+
+/// `model_id` is `Option` on purpose: the raw tables can hold NULL model ids and Node's raw
+/// path keeps them null in the models list.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageModelRow {
+    pub model_id: Option<String>,
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageToolRow {
+    pub tool_name: String,
+    pub call_count: i64,
+    pub error_count: i64,
+    pub avg_duration_ms: Option<f64>,
+}
+
+/// One local day (index = floor((started_at + tz_offset_ms) / 86_400_000)).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageDayRow {
+    pub day_index: i64,
+    pub total_tokens: i64,
+    pub turn_count: i64,
+    pub tool_call_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageDayModelRow {
+    pub day_index: i64,
+    pub model_id: Option<String>,
+    pub total_tokens: i64,
+}
+
+/// Rollup-only facet values for the App's filter menus.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageFacets {
+    pub models: Vec<String>,
+    pub providers: Vec<String>,
+    pub query_sources: Vec<String>,
+    pub workspaces: Vec<String>,
+}
+
+/// Rollup-only top-sessions entry (already sorted by the store).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageSessionRow {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub workspace_key: String,
+    pub total_tokens: i64,
+    pub turn_count: i64,
+    pub duration_ms: i64,
+}
+
+/// Fork: one session's incremental token totals (`v4/conversation/usage`; Node
+/// `queryTaskUsage`). `input_baseline_by_source` keeps first-seen order (main_turn /
+/// subagent / workflow_child), matching Node's object key order on the wire.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TaskUsageTotals {
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub model_request_count: i64,
+    pub model_error_count: i64,
+    pub input_baseline_by_source: Vec<(String, i64)>,
+}
+
 /// 用量的只读查询与前端记录（审查 K7）：前端经 `Kernel::queries` 直接用，不经会话 actor（这些都不是会话状态）。以前
 /// runtime 为它们各写一个透传的 `Kernel` 方法，加一个查询要改 9 个文件。
 #[async_trait]
@@ -488,6 +666,89 @@ pub trait StoreQueries: Send + Sync {
         session: &SessionId,
         kind: &str,
     ) -> Result<Vec<FrontendRecord>, StoreError>;
+
+    /// Fork: the tree mix of the given roots, descendants through the session-tree child task
+    /// types (Node `countSessionTree`; archived included, forks never walked into).
+    async fn session_tree_counts(
+        &self,
+        _root_ids: Vec<String>,
+    ) -> Result<SessionTreeCounts, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree counts".to_owned(),
+        })
+    }
+
+    /// Fork: ids of the roots plus their tree descendants (Node `listSessionTreeIds`).
+    async fn session_tree_ids(&self, _root_ids: Vec<String>) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree ids".to_owned(),
+        })
+    }
+
+    /// Fork: tree sessions with a child outside the tree, a fork whose copied parts still point
+    /// at their files (Node `listSessionTreeIdsWithSurvivingChildren`).
+    async fn session_tree_ids_with_surviving_children(
+        &self,
+        _root_ids: Vec<String>,
+    ) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree surviving children".to_owned(),
+        })
+    }
+
+    /// Fork: hard-delete the trees of the given roots in one `BEGIN IMMEDIATE` transaction (Node
+    /// `deleteSessionTree`, with the fork-usage preserve step inside it). The caller closes open
+    /// runtimes first.
+    async fn erase_session_tree(
+        &self,
+        _root_ids: Vec<String>,
+    ) -> Result<ErasedSessionTree, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree erase".to_owned(),
+        })
+    }
+
+    /// Fork: the aggregated usage rows of one span (`v4/usage/stats`). The default answers
+    /// `Unsupported`: a store without the app-level read gets the empty snapshot from the protocol
+    /// layer (Node's missing-usageStore guard).
+    async fn app_usage(&self, _span: AppUsageSpan) -> Result<AppUsageRows, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "app usage".to_owned(),
+        })
+    }
+
+    /// Fork: one session's incremental token totals (`v4/conversation/usage`).
+    async fn task_usage(&self, _session: &SessionId) -> Result<TaskUsageTotals, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "task usage".to_owned(),
+        })
+    }
+
+    /// Fork: the App's subagent directory (`session/subagents`): the parent row plus the subagent
+    /// tool parts of the active branch (node-store `subagent_rows`).
+    async fn subagent_rows(&self, _session: &SessionId) -> Result<Value, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent rows".to_owned(),
+        })
+    }
+
+    /// Fork: the child rows for the collected candidate ids, resolved by id like Node's
+    /// `getSession` per candidate (missing ids are absent).
+    async fn subagent_children(&self, _ids: Vec<String>) -> Result<Value, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent children".to_owned(),
+        })
+    }
+
+    /// Fork: the stored row behind the session-list reconcile (Node `reconcileSessions` reads
+    /// `getSession`, soft-deleted rows included): `{directory, workspaceId, title, titleSource,
+    /// timeCreated, timeUpdated, timeTitleUpdated, timeDeleted, lastOutcome}`; `None` when the
+    /// session has no row. Stores without that read answer `Unsupported`.
+    async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "reconcile row".to_owned(),
+        })
+    }
 }
 
 /// 一个存储适配器实现的全部会话端口（组装根与 runtime 的 `Ports` 用；各能力只拿自己用的那一个）。node-store 与测试的

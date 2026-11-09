@@ -500,15 +500,47 @@ pub enum InteractionRequest {
         /// 调用在哪台机器上执行（R3，remote-exec.md §20.8）；主 env 不写出。界面的标记在 R4。
         #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
         machine: crate::ids::MachineName,
+        /// Fork: approves this one execution only (guarded dangerous command, Node
+        /// `approvalMode: "user-once"`): the App offers no "always allow" option for it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        once: bool,
+        /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
+        /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
     },
     Question {
         tool_use: ToolUseId,
         questions: Value,
+        /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
+        /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
     },
     PlanApproval {
         tool_use: ToolUseId,
         plan: String,
+        /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
+        /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
     },
+}
+
+/// Fork: the subagent an ask came from (Node `zcodeInteractionRequestOriginSchema`, `kind: "subagent"`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskOrigin {
+    pub agent: AgentId,
+    /// The agent type (definition name).
+    pub agent_type: String,
+    pub child_session: SessionId,
+    pub parent_session: SessionId,
+    /// The Agent call's description.
+    #[serde(default)]
+    pub description: String,
+    /// The parent's Agent call that started the subagent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_tool_use: Option<ToolUseId>,
 }
 
 impl InteractionRequest {
@@ -519,6 +551,27 @@ impl InteractionRequest {
             | Self::Question { tool_use, .. }
             | Self::PlanApproval { tool_use, .. } => tool_use,
         }
+    }
+
+    /// Fork: the subagent that asked ([`AskOrigin`]).
+    pub fn origin(&self) -> Option<&AskOrigin> {
+        match self {
+            Self::Permission { origin, .. }
+            | Self::Question { origin, .. }
+            | Self::PlanApproval { origin, .. } => origin.as_deref(),
+        }
+    }
+
+    /// Fork: records the subagent that asked unless an inner subagent already did.
+    #[must_use]
+    pub fn asked_from(mut self, from: AskOrigin) -> Self {
+        let (Self::Permission { origin, .. }
+        | Self::Question { origin, .. }
+        | Self::PlanApproval { origin, .. }) = &mut self;
+        if origin.is_none() {
+            *origin = Some(Box::new(from));
+        }
+        self
     }
 }
 

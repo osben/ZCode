@@ -339,6 +339,7 @@ pub(crate) fn command_event(
             output_bytes,
             output_limit,
         } => CommandEvent::Finished {
+            output_unreadable: None,
             outcome: outcome(ended),
             exit_code,
             timed_out,

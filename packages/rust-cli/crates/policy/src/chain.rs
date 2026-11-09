@@ -233,6 +233,8 @@ pub struct Outer {
     pub auto_in_plan: bool,
     /// 没有人能回答询问。
     pub avoid_prompts: bool,
+    /// Fork: plan mode denies anything that would ask, like the Node desktop agent (no classifier, no prompt).
+    pub node_plan: bool,
 }
 
 /// 一次调用。
@@ -271,6 +273,11 @@ pub async fn outer(
     if mode == PermissionMode::DontAsk {
         return PermissionDecision::Deny {
             message: texts::dont_ask_rejected(tool),
+        };
+    }
+    if mode == PermissionMode::Plan && options.node_plan {
+        return PermissionDecision::Deny {
+            message: texts::PLAN_MODE_READ_ONLY.to_owned(),
         };
     }
     let automatic =

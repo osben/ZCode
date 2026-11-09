@@ -276,6 +276,11 @@ fn is_zero(value: &u64) -> bool {
 pub struct BackgroundTask {
     pub session: SessionId,
     pub task: ShellTaskId,
+    /// Fork (node_desktop): a stop still delivers the command's terminal notice (Node wakes the parent
+    /// with `<status>killed</status>`); without it a stop stays silent (shell-permissions.md §2.6).
+    /// Read only by `stop_background_command`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub notify_stop: bool,
 }
 
 /// 后台命令的状态：在跑，或已结束、通知还没 ack 时的终态（与通知的 `<status>` 同一规则）。

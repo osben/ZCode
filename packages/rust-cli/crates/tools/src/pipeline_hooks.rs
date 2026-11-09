@@ -17,6 +17,8 @@ pub(crate) struct HookMessages {
     pub after: Vec<Message>,
     /// PreToolUse 的停止说明；只有调用执行了、或被 hook 拒绝时才交出。
     pub pre_stop: Vec<Message>,
+    /// Fork: the tool itself asked to end the turn ([`rust_cli_kernel_api::tool::ToolCallOutput::stop_turn`]).
+    pub stop_turn: bool,
 }
 
 impl HookMessages {
@@ -25,10 +27,11 @@ impl HookMessages {
         if keep_pre_stop {
             after.extend(self.pre_stop);
         }
-        // 停止请求只有一个来源：消息里有 `hook_stopped_continuation`。
-        let prevent_continuation = after.iter().any(|message| {
-            matches!(message, Message::Attachment(a) if a.source == "hook_stopped_continuation")
-        });
+        // 停止请求的来源：消息里有 `hook_stopped_continuation`，或（Fork）工具自己要求结束回合。
+        let prevent_continuation = self.stop_turn
+            || after.iter().any(|message| {
+                matches!(message, Message::Attachment(a) if a.source == "hook_stopped_continuation")
+            });
         ToolExecution {
             output,
             before: self.before,

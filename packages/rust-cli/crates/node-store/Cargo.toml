@@ -31,5 +31,7 @@ uuid.workspace = true
 [dev-dependencies]
 # 共用的测试时钟（kernel-api 的 testing，F126）。
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
+# Fork: the notification preamble the read-back of a Node notification carries.
+rust-cli-prompts.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

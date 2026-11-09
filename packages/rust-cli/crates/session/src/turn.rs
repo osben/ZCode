@@ -66,6 +66,11 @@ pub(crate) enum TurnInput {
         command: CommandId,
         content: Vec<ContentBlock>,
     },
+    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
+    Compact { command: CommandId },
+    /// Fork (desktop App): a resumed goal's continuation (Node `goal-continuation`, model-only):
+    /// `text` is the wrapped continuation prompt, a meta user message.
+    GoalContinuation { text: String },
 }
 
 impl Actor {
@@ -94,6 +99,16 @@ impl Actor {
                 self.start_bash_turn(command, line);
                 return Ok(());
             }
+            TurnInput::Compact { command } => {
+                if let Err(reason) = self.start_compaction(command, None) {
+                    tracing::warn!(%reason, "queued compaction could not start");
+                }
+                return Ok(());
+            }
+            TurnInput::GoalContinuation { text } => (
+                vec![(text, meta(rust_cli_kernel_api::goal::CONTINUATION_SOURCE))],
+                Vec::new(),
+            ),
             TurnInput::Cron(fire) => {
                 fired = Some(self.fire_prelude(fire.kind));
                 // `/loop` 的哨兵在这里展开（tools-more.md §17.3）。
@@ -109,16 +124,36 @@ impl Actor {
                 (texts, notices)
             }
         };
+        // Fork: the Node desktop agent stores a batch of task notifications as one user message with a
+        // text block per notification (`persistBackgroundTaskNotificationBatch`); the model request is
+        // the same either way. Mixed sources (a peer message among them) keep a message each.
+        let blocks: Vec<(Vec<ContentBlock>, UserOrigin)> = if self.deps.one_input_per_turn
+            && texts.len() > 1
+            && texts.iter().all(|(_, origin)| {
+                matches!(origin, UserOrigin::Meta { source } if source == crate::notices::NOTICE_SOURCE)
+            }) {
+            let origin = texts[0].1.clone();
+            let content = texts
+                .into_iter()
+                .map(|(text, _)| ContentBlock::Text { text })
+                .collect();
+            vec![(content, origin)]
+        } else {
+            texts
+                .into_iter()
+                .map(|(text, origin)| (vec![ContentBlock::Text { text }], origin))
+                .collect()
+        };
         let before = fired
             .as_ref()
             .map(|fired| fired.before.clone())
             .unwrap_or_default();
         let users: Vec<Message> = before
             .into_iter()
-            .chain(texts.into_iter().map(|(text, origin)| {
+            .chain(blocks.into_iter().map(|(content, origin)| {
                 Message::User(UserMessage {
                     id: self.deps.ids.message(),
-                    content: vec![ContentBlock::Text { text }],
+                    content,
                     origin,
                 })
             }))
@@ -208,8 +243,12 @@ impl Actor {
                 self.log
                     .append(KernelEvent::CompactFailed { trigger, message });
             }
-            SinkRequest::SetPlan { enabled, reply } => {
-                let changed = self.change_plan(enabled).await;
+            SinkRequest::SetPlan {
+                enabled,
+                tool_call,
+                reply,
+            } => {
+                let changed = self.change_plan(enabled, tool_call).await;
                 let _ = reply.send(changed.map_err(failed));
             }
             SinkRequest::View { reply } => {
@@ -290,37 +329,10 @@ impl Actor {
         let Some(turn) = self.running.as_ref().map(|running| running.turn.clone()) else {
             return;
         };
-        let event = match event {
-            QueryEvent::Delta {
-                message,
-                index,
-                delta,
-            } => KernelEvent::StreamDelta {
-                turn,
-                response: u32::try_from(message).unwrap_or(u32::MAX),
-                index,
-                delta,
-            },
-            QueryEvent::ToolStarted {
-                tool_use,
-                name,
-                input,
-            } => KernelEvent::ToolStarted {
-                tool_use,
-                name,
-                input,
-            },
-            QueryEvent::ToolProgress { tool_use, progress } => {
-                KernelEvent::ToolProgress { tool_use, progress }
-            }
-            QueryEvent::ToolFinished { tool_use, output } => {
-                self.ledger.tool_finished(&tool_use, &output);
-                KernelEvent::ToolDone { tool_use, output }
-            }
-            // 模型通知只供显示，不落库（stall-visibility.md §1）。
-            QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
-        };
-        self.log.append(event);
+        if let QueryEvent::ToolFinished { tool_use, output } = &event {
+            self.ledger.tool_finished(tool_use, output);
+        }
+        self.log.append(kernel_event(turn, event));
     }
 
     pub(crate) async fn finish_turn(&mut self) {
@@ -378,6 +390,10 @@ impl Actor {
             });
         // 回合结束那一行（修复线 F118，tui-display.md §2.7）：排在 TurnFinished 之后、下一个回合之前。
         let interrupted = matches!(outcome, TurnOutcome::Interrupted);
+        let completed = matches!(
+            outcome,
+            TurnOutcome::Success | TurnOutcome::HookStopped | TurnOutcome::StopHookPrevented
+        );
         let turn = running.turn.clone();
         self.log.append(KernelEvent::TurnFinished {
             turn: running.turn,
@@ -385,6 +401,10 @@ impl Actor {
             usage,
         });
         self.turn_duration(turn, running.timing, interrupted).await;
+        self.after_turn(completed);
+        if self.continue_goal_after_set(completed).await {
+            return;
+        }
         self.start_next().await;
     }
 
@@ -398,13 +418,22 @@ impl Actor {
         }
         // 这次工作期间到达的本地命令记录先进对话，再开下一个回合（修复线 L-A，tui-manage.md §11.3）。
         self.flush_held_records().await;
-        let input = if let Some(input) = self.next_turn_input() {
-            input
+        let (input, execution) = if let Some(next) = self.next_turn_input() {
+            next
         } else if let Some(fire) = self.next_cron().await {
-            TurnInput::Cron(fire)
+            (TurnInput::Cron(fire), None)
         } else {
             return;
         };
+        // Fork: the item's frozen state becomes the session's through the same facts as `SetModel` /
+        // `SetMode` / `SetPlan`, so a cold open sees what the turn ran with.
+        if let Some(execution) = execution
+            // Boxed: the mode change's peer release is an async path back into `start_next` (not taken
+            // here, `submitted_execution` does not start peers, but the future type is recursive).
+            && let Err(reason) = Box::pin(self.submitted_execution(execution)).await
+        {
+            tracing::warn!(%reason, "queued input's execution state could not be applied");
+        }
         // 提交失败时只记日志：排队输入已出队，前端从 QueueChanged 看到它消失；通知没有 ack，
         // 会再次送达。
         if let Err(reason) = self.start_turn(input).await {
@@ -415,6 +444,40 @@ impl Actor {
 
 #[path = "turn_interact.rs"]
 mod interact;
+
+/// The log event of a query event in `turn` (the actor's own run and a mirrored child run, crate::child_live).
+pub(crate) fn kernel_event(
+    turn: rust_cli_kernel_api::ids::TurnId,
+    event: QueryEvent,
+) -> KernelEvent {
+    match event {
+        QueryEvent::Delta {
+            message,
+            index,
+            delta,
+        } => KernelEvent::StreamDelta {
+            turn,
+            response: u32::try_from(message).unwrap_or(u32::MAX),
+            index,
+            delta,
+        },
+        QueryEvent::ToolStarted {
+            tool_use,
+            name,
+            input,
+        } => KernelEvent::ToolStarted {
+            tool_use,
+            name,
+            input,
+        },
+        QueryEvent::ToolProgress { tool_use, progress } => {
+            KernelEvent::ToolProgress { tool_use, progress }
+        }
+        QueryEvent::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
+        // 模型通知只供显示，不落库（stall-visibility.md §1）。
+        QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+    }
+}
 
 #[cfg(test)]
 #[path = "write_failure_tests.rs"]

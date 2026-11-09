@@ -241,6 +241,7 @@ async fn text_only_models_get_image_placeholders() {
                 media_type: "image/png".to_owned(),
                 data: "iVBORw0KGgo=".to_owned(),
             },
+            name: None,
         },
         cache_control: None,
     });

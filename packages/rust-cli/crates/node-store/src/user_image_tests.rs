@@ -16,6 +16,7 @@ async fn pasted_images_round_trip_as_node_file_parts() {
             media_type: "image/png".into(),
             data: "iVBORw0KGgo=".into(),
         },
+        name: None,
     };
     let message = Message::User(UserMessage {
         id: MessageId::new("msg_ru_u1"),
@@ -64,6 +65,7 @@ async fn attachment_blocks_round_trip_as_parts_after_the_text() {
             media_type: "image/png".into(),
             data: "iVBORw0KGgo=".into(),
         },
+        name: None,
     };
     let cell = ContentBlock::Text {
         text: "<system-reminder>\n<cell id=\"p\">show()</cell id=\"p\">\n</system-reminder>".into(),

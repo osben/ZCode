@@ -10,6 +10,7 @@ use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelRequest};
 use rust_cli_kernel_api::provider::{Credential, ModelEndpoint, WireProtocol};
 use rust_cli_net::sse::SseEvent;
 use rust_cli_net::{HeaderValue, HttpRequest};
+use serde_json::Value;
 
 use crate::anthropic::Anthropic;
 use crate::errors::{Vendor, Verdict};
@@ -41,6 +42,12 @@ pub(crate) trait StreamDecoder: Send {
 
     /// 已收到流的终止事件，之后的字节不再读取。
     fn finished(&self) -> bool;
+
+    /// Fork: the response body ended without a single SSE frame and is this JSON value (an endpoint or a replay that
+    /// answers a streaming request with the whole message, as Node's non-streaming auxiliary calls are answered).
+    /// Returns whether it was read as the response; protocols that do not know the shape leave it a truncated stream.
+    /// Required, so a wrapping decoder (the trace tape) cannot drop it.
+    fn whole(&mut self, body: Value, out: &mut VecDeque<ModelEvent>) -> Result<bool, Verdict>;
 }
 
 /// 线协议对应的实现。
