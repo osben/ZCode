@@ -240,3 +240,29 @@ async fn a_stopped_verification_keeps_queued_input_held() {
     let view = built.session.view().await.unwrap();
     assert_eq!(view.queue.len(), 1);
 }
+
+/// Stop during the goal's own turn pauses the goal (Node `pauseActiveTargetForCancellation`); nothing is verified and
+/// no continuation follows.
+#[tokio::test]
+async fn a_stopped_goal_turn_pauses_the_goal() {
+    let gate = Arc::new(Notify::new());
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["reply 0"])]).gated_at(0, gate));
+    let built = desktop(model.clone()).await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", "/goal tests pass")).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while model.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the goal turn requested the model");
+    built.session.send(command("c2", Command::Interrupt)).await;
+    let seen = until(&mut events, |event| is_goal(event, GoalPhase::Paused)).await;
+    assert!(steps(&seen).is_empty());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(model.requests().len(), 1);
+    let view = built.session.view().await.unwrap();
+    assert_eq!(view.goal.unwrap().status, GoalPhase::Paused);
+    assert!(!view.running);
+}

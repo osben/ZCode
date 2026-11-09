@@ -756,6 +756,23 @@ impl Actor {
         accepted()
     }
 
+    /// Fork (desktop App): Node `pauseActiveTargetForCancellation`: a cancelled turn (Stop, or the preemption of
+    /// `sendQueuedNow`) pauses the active goal. Not while closing or shutting down: that turn is not the user's stop.
+    pub(crate) async fn pause_goal_after_cancel(&mut self) {
+        if !self.deps.desktop_goals || self.closing.is_some() || self.shutting_down {
+            return;
+        }
+        let Some(status) = self.goal.control(true) else {
+            return;
+        };
+        if let Err(error) = self
+            .record(vec![self.status_message(&status)], Vec::new())
+            .await
+        {
+            tracing::warn!(%error, "the paused goal was not stored");
+        }
+    }
+
     /// Fork (desktop App): Node `resumeGoal`: refused while a turn runs or with plan on; a paused
     /// goal becomes active and a continuation turn starts. No paused goal: a no-op.
     pub(crate) async fn resume_goal(&mut self) -> Ack {

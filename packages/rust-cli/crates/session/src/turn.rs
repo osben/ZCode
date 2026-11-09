@@ -405,6 +405,9 @@ impl Actor {
         self.turn_duration(turn, running.timing, interrupted).await;
         self.goal_touched = true;
         self.after_turn(completed);
+        if interrupted {
+            self.pause_goal_after_cancel().await;
+        }
         // The `/goal X` control turn: its continuation is the first, unverified one (Node `verifyBeforeFirstContinue`).
         let control = self.goal.continue_after_set;
         if self.continue_goal_after_set(completed).await {

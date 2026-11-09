@@ -40,6 +40,10 @@ bootstrap `zcode-protocol-v4/product-projection.ts` (`onTargetVerification`), `t
    verdict on this path: an impossible goal is `passed: false` with the blocker in the reason, like Node.
 7. While a verification runs the session is busy: input queues, `Interrupt` cancels it, `ResumeGoal` is refused
    (`activeTurn`), `PauseGoal` pauses the goal and cancels it.
+8. A cancelled main turn (Stop / `Interrupt`, or the preemption of `sendQueuedNow`) pauses the active desktop goal, like
+   Node `pauseActiveTargetForCancellation`: `goal_status` paused, no verification, no continuation. `sendQueuedNow`
+   during a verification cancels it first (Node preempts the verifier), so the goal is paused before the promoted
+   item runs.
 
 ## 2. State owner and interfaces
 
@@ -104,3 +108,5 @@ The goal row in `session_target` keeps `active` while verifying and after `notSa
 7. Reopen: markers and `verifications` come back from the session entries.
 8. Plan on, an interrupted turn, or the control turn: no verification.
 9. The TUI / `-p` `/goal` keeps the stop-time evaluation (`goal.md`), unchanged.
+10. Stop during a goal turn (the `/goal X` control turn or a continuation): goal `paused`, the session idle.
+11. `sendQueuedNow` while verifying: the verification is `cancelled`, the goal `paused`, then the promoted item runs.
