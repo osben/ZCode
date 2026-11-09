@@ -158,6 +158,65 @@ pub enum Fact {
         child: SessionId,
         agent_type: String,
     },
+    /// Fork: an input queued behind a running turn, Node's `session_input` row `admitted` (specs/fork-rust-agent-parity.md,
+    /// Input ledger). Written again when the queued input is edited (the row's sequence is kept).
+    ///
+    /// The ledger facts are observations like the usage facts: a failed write drops only that row and is logged.
+    InputAdmitted {
+        input: AdmittedInput,
+    },
+    /// Fork: the queued input left the queue into a turn (`promoted`).
+    InputPromoted {
+        command: CommandId,
+    },
+    /// Fork: the queued input left the queue without a turn (`cancelled` with `reason`).
+    InputCancelled {
+        command: CommandId,
+        reason: String,
+    },
+    /// Fork: the session was opened from the store; its queue did not survive. Every `admitted` row becomes `promoted`
+    /// when its command is in `transcript`, else `discarded`/`session_resumed` (Node `discardPersistedPendingSteerInputs`).
+    InputsResumed {
+        transcript: Vec<CommandId>,
+    },
+}
+
+/// Fork: a queued input as the `session_input` ledger stores it ([`Fact::InputAdmitted`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdmittedInput {
+    pub command: CommandId,
+    /// Node's ledger `kind`: `sendText`, `sendGoalCommand` or `compact`.
+    pub kind: String,
+    pub delivery: InputDelivery,
+    pub text: String,
+}
+
+/// Fork: Node's ledger `delivery` of a queued input (`startNow` inputs are never queued here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InputDelivery {
+    /// A steer (`Delivery::Steer`).
+    Guide,
+    Queue,
+}
+
+impl InputDelivery {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Guide => "guide",
+            Self::Queue => "queue",
+        }
+    }
+}
+
+/// Fork: the `session_input` row of a command that left the queue without a turn ([`StoreQueries::settled_input`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettledInput {
+    /// `discarded` or `cancelled`.
+    pub status: String,
+    pub reason: Option<String>,
+    /// The row's `delivery` (`startNow`, `guide` or `queue`).
+    pub delivery: String,
 }
 
 /// 本机项目规则集的一次修改（`SessionStore::change_project_rules`）：`behavior` 这一类里先删 `remove`、再加
@@ -695,6 +754,16 @@ pub trait StoreQueries: Send + Sync {
         session: &SessionId,
         kind: &str,
     ) -> Result<Vec<FrontendRecord>, StoreError>;
+
+    /// Fork: the `discarded` or `cancelled` ledger row of a queued command (Node `loadPersistentCommandFacts`); `None`
+    /// when the command has no row or its row is `admitted`, `promoted` or `failed`. Stores without the ledger: `None`.
+    async fn settled_input(
+        &self,
+        _session: &SessionId,
+        _command: &CommandId,
+    ) -> Result<Option<SettledInput>, StoreError> {
+        Ok(None)
+    }
 
     /// Fork: the tree mix of the given roots, descendants through the session-tree child task
     /// types (Node `countSessionTree`; archived included, forks never walked into).

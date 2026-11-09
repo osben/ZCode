@@ -259,6 +259,18 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
                 crate::usage::turn_ended(ctx, *status)
             })
         }
+        Fact::InputAdmitted { input } => {
+            crate::session_inputs::observe(ctx, || crate::session_inputs::admit(ctx, input))
+        }
+        Fact::InputPromoted { command } => {
+            crate::session_inputs::observe(ctx, || crate::session_inputs::promote(ctx, command))
+        }
+        Fact::InputCancelled { command, reason } => crate::session_inputs::observe(ctx, || {
+            crate::session_inputs::settle(ctx, command, "cancelled", reason)
+        }),
+        Fact::InputsResumed { transcript } => {
+            crate::session_inputs::observe(ctx, || crate::session_inputs::resumed(ctx, transcript))
+        }
         Fact::SubagentLinked {
             tool_use,
             agent,

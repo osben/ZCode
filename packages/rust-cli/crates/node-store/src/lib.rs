@@ -30,6 +30,7 @@ mod reconcile_row;
 mod repo;
 mod rewind;
 mod rust_entries;
+mod session_inputs;
 mod session_tree;
 mod state;
 mod subagent_rows;
@@ -384,6 +385,16 @@ impl StoreQueries for NodeStore {
     ) -> Result<Vec<rust_cli_kernel_api::store::FrontendRecord>, StoreError> {
         let (session, kind) = (session.as_str().to_owned(), kind.to_owned());
         self.with_db(move |conn, _| frontend_records::list(conn, &session, &kind))
+            .await
+    }
+
+    async fn settled_input(
+        &self,
+        session: &SessionId,
+        command: &rust_cli_kernel_api::ids::CommandId,
+    ) -> Result<Option<rust_cli_kernel_api::store::SettledInput>, StoreError> {
+        let (session, command) = (session.as_str().to_owned(), command.clone());
+        self.with_db(move |conn, _| session_inputs::settled(conn, &session, &command))
             .await
     }
 

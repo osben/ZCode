@@ -1090,13 +1090,7 @@ pub async fn query(server: &Server, params: &Value) -> Result<Value, RpcError> {
             .cloned();
         let known = match (known, session) {
             (Some(ack), _) => Some(ack),
-            (None, Some(session)) => server
-                .kernel
-                .queries()
-                .records(&SessionId::new(session), inbox::COMMAND_FACT)
-                .await
-                .ok()
-                .and_then(|records| inbox::find_fact(&records, command)),
+            (None, Some(session)) => stored_ack(server, &SessionId::new(session), command).await,
             (None, None) => None,
         };
         results.push(json!({
@@ -1113,6 +1107,28 @@ pub async fn query(server: &Server, params: &Value) -> Result<Value, RpcError> {
         });
     }
     Ok(reply)
+}
+
+/// The stored verdict of a command the in-memory table no longer has. A queued input settled in the
+/// `session_input` ledger answers first: the Rust agent also stores an `accepted` fact when it queues an input, which
+/// Node does not (specs/fork-rust-agent-parity.md, Input ledger).
+async fn stored_ack(server: &Server, session: &SessionId, command: &str) -> Option<Ack> {
+    let queries = server.kernel.queries();
+    match queries
+        .settled_input(session, &CommandId::new(command))
+        .await
+    {
+        Ok(Some(row)) => return Some(inbox::settled_input_ack(command, &row)),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(event = "protocol.command_query.ledger_failed", error = %error, "reading the input ledger failed");
+        }
+    }
+    queries
+        .records(session, inbox::COMMAND_FACT)
+        .await
+        .ok()
+        .and_then(|records| inbox::find_fact(&records, command))
 }
 
 /// Fork: Node's stop holds the following queue (specs/stop-queue-hold.md rules 1-4): a stop that will cancel a turn

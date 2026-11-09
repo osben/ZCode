@@ -227,6 +227,8 @@ pub(crate) struct Actor {
     pub(crate) goal_written: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): a turn ended; the next sync writes the row again (its last-seen time).
     pub(crate) goal_touched: bool,
+    /// Fork: the session was opened from the store and its `session_input` ledger is not swept yet (input_ledger.rs).
+    pub(crate) ledger_resume: bool,
     /// Fork (desktop App): the running goal completion verification (its job is `job`).
     pub(crate) goal_verify: Option<crate::goal_verify::Pending>,
     /// 回合或压缩在跑时到达的本地命令记录（修复线 L-A，local_record.rs）：收尾后按到达顺序提交。
@@ -324,6 +326,7 @@ impl Actor {
             goal,
             goal_written,
             goal_touched: false,
+            ledger_resume: start == rust_cli_kernel_api::session_api::StartSource::Resume,
             goal_verify: None,
             held_records: Vec::new(),
             seen: HashSet::new(),
@@ -476,6 +479,7 @@ impl Actor {
         // Fork: on a cold open, rebuild the per-turn file summaries from the stored checkpoints
         // (the previous process's `FileChanges` events are gone).
         self.restore_turn_files().await;
+        self.resume_input_ledger().await;
         loop {
             // 修复（R1-1）：以前这里在“所有句柄都已释放”（`recv` 返回 None）时退出，但内核的会话表一直持有
             // 句柄，这个分支永远到不了——关闭后 actor 还活着，收到后台通知就自己开回合。现在由 `Request::Close`
@@ -525,6 +529,7 @@ impl Actor {
             // 登记里的状态只看 actor 自己的状态，变化时才写（cross-session.md §2.1）。
             self.peer_status(self.status_now()).await;
             self.goal_target_sync().await;
+            self.input_ledger_sync().await;
         }
     }
 

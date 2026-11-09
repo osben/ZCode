@@ -57,3 +57,48 @@ fn the_idempotency_table_forgets_the_oldest() {
     assert!(new_session_id().as_str().starts_with("session_"));
     assert_eq!(new_session_id().as_str().len(), "session_".len() + 32);
 }
+
+/// Fork: Node `loadPersistentCommandFacts` (specs/fork-rust-agent-parity.md, Input ledger).
+#[test]
+fn a_settled_ledger_row_answers_like_node() {
+    use rust_cli_kernel_api::store::SettledInput;
+    let row = |status: &str, reason: Option<&str>| SettledInput {
+        status: status.to_owned(),
+        reason: reason.map(str::to_owned),
+        delivery: "queue".to_owned(),
+    };
+    assert_eq!(
+        settled_input_ack("c1", &row("discarded", Some("session_resumed"))).to_value(),
+        serde_json::json!({
+            "commandId": "c1",
+            "status": "failed",
+            "reasonCode": "fault.command.inputDiscardedOnRestart",
+            "message": "Input was discarded when the CLI restarted; confirm before resending.",
+            "revisionAtDecision": 0,
+            "result": {"type": "inputDisposition", "delivery": "queue"},
+            "memoryEnabled": false,
+        })
+    );
+    let cancelled = settled_input_ack("c2", &row("cancelled", Some("user_removed")));
+    assert_eq!(
+        cancelled.reason_code.as_deref(),
+        Some("fault.command.inputCancelled")
+    );
+    assert_eq!(
+        cancelled.message.as_deref(),
+        Some("Input was cancelled before it entered the transcript.")
+    );
+    assert_eq!(cancelled.result, None);
+    assert_eq!(
+        settled_input_ack("c3", &row("cancelled", Some("guard.inputRejected")))
+            .reason_code
+            .as_deref(),
+        Some("guard.inputRejected")
+    );
+    assert_eq!(
+        settled_input_ack("c4", &row("discarded", Some("user_cleared")))
+            .reason_code
+            .as_deref(),
+        Some("fault.command.inputCancelled")
+    );
+}
