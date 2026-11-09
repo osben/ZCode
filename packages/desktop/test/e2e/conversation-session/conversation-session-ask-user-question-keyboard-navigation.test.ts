@@ -179,7 +179,22 @@ async function focusCustomInputAndSetValue(value: string) {
     timeoutMsg: "AskUserQuestion 自定义回答输入框没有出现",
   });
   await input.click();
-  await input.setValue(value);
+  // WebDriver clearValue fires only `change`, which React's value tracker ignores for a controlled
+  // textarea, so the draft keeps the old answer and the next re-render (the focus from addValue)
+  // writes it back. Clear through the native setter plus an `input` event, as typing would.
+  await browser.execute(() => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '[data-elicitation-dialog-body="true"] textarea',
+    );
+    if (!textarea) return;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+      textarea,
+      "",
+    );
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expectCustomInputValue("");
+  await input.addValue(value);
   await expectCustomInputValue(value);
 }
 
