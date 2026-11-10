@@ -931,6 +931,18 @@ describe("ZCode legacy task compat task index", () => {
       }
     }
 
+    function taskTitle(taskId: string): unknown {
+      const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
+      try {
+        const row = rawDatabase
+          .prepare("SELECT title FROM tasks WHERE workspace_key = ? AND task_id = ?")
+          .get("/repo", taskId) as { title: unknown } | undefined;
+        return row ? row.title : "missing";
+      } finally {
+        rawDatabase.close();
+      }
+    }
+
     it("admits a session titled while still draft once it runs and completes", async () => {
       const { indexFrameEmitter, service } = createService();
       await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -960,6 +972,33 @@ describe("ZCode legacy task compat task index", () => {
       fireIndexUpsert(indexFrameEmitter, summary("running", "Sentinel", "sentinel-task"));
       await vi.waitFor(() => expect(typeof cliCreatedAt("sentinel-task")).toBe("number"));
       expect(cliCreatedAt()).toBe("missing");
+    });
+
+    it("keeps a newer online summary over a later baseline batch of the initial snapshot", async () => {
+      // 64 sessions fill the first baseline batch; the late session is seeded in the second one.
+      const fillers = Array.from({ length: 64 }, (_, index) =>
+        summary("completedSuccess", `Filler ${index}`, `filler-${index}`),
+      );
+      initialIndexSessions = [
+        ...fillers,
+        summary("completedSuccess", "Baseline title", "late-task"),
+      ];
+      try {
+        const { indexFrameEmitter, service } = createService();
+        await service.createTask({ workspacePath: "/repo", provider: "glm" });
+        fireIndexUpsert(indexFrameEmitter, {
+          ...summary("completedSuccess", "Online title", "late-task"),
+          lastActivityAt: 200,
+        });
+        await vi.waitFor(() => expect(typeof cliCreatedAt("filler-63")).toBe("number"));
+        await flushMicrotasks();
+        await vi.waitFor(() => expect(taskTitle("late-task")).toBe("Online title"));
+        // The baseline write of the second batch must not land after the online summary.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(taskTitle("late-task")).toBe("Online title");
+      } finally {
+        initialIndexSessions = [];
+      }
     });
 
     it("admits existing sessions from the initial snapshot", async () => {

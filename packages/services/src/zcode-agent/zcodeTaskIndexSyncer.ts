@@ -905,8 +905,14 @@ export function createZCodeTaskIndexSyncer(
           if (summary.phase === "draft") return taskIndexRepo.seedTaskMetaIfMissing(meta);
           // Like upstream taskFacts.ingest: an existing non-draft session is admitted with its CLI facts,
           // so a fresh task index lists it without waiting for a later summary.
-          return serializeSummaryWrite(sessionTargetFrom(state.target, summary.sessionId), () =>
-            mirrorSummary(sessionTargetFrom(state.target, summary.sessionId), summary),
+          return serializeSummaryWrite(
+            sessionTargetFrom(state.target, summary.sessionId),
+            async () => {
+              // A later batch is queued after earlier batches settle; an online summary processed meanwhile already
+              // wrote newer facts, and the per-task chain keeps enqueue order, not frame order. Skip the stale baseline.
+              if (state.summaries.get(summary.sessionId) !== summary) return;
+              await mirrorSummary(sessionTargetFrom(state.target, summary.sessionId), summary);
+            },
           );
         }),
       );

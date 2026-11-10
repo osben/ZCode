@@ -29,7 +29,11 @@ snapshot paths write only organization columns. The row stayed invisible, and
    reservation seeding.
 5. The first sessions-index snapshot (the silent baseline) admits existing non-draft
    sessions through the same mirror, like upstream; it does not broadcast or replay
-   terminal events.
+   terminal events. The baseline is written in batches of 64; a baseline summary that is
+   no longer the session's current summary (an online summary arrived while earlier
+   batches were written) is skipped, so it cannot overwrite the newer facts. Rust cold
+   rows carry the stored fork ancestry (`parentSessionId`), so a fork first seen in a
+   cold snapshot is admitted into its parent's project.
 6. Summary-driven writes for one task run in arrival order
    (`serializeSummaryWrite`): a handler's follow-up `applyAgentPatch` writes the same
    title/status/updatedAt as the CLI facts, so it must not land after the next
@@ -65,7 +69,8 @@ Each path awaits the mirror before its follow-up write, so the snapshot resync
   the same title, then `completed`, leaves the row with `cli_created_at` set and the
   project tree lists it; a `draft` → `completed` sequence does the same; an untouched
   `draft` summary writes no row; a non-draft session in the initial snapshot is
-  admitted. Rust unit test: a cold row reports the stored creation time and outcome.
+  admitted; an online summary for a session in a later baseline batch keeps its title.
+  Rust unit test: a cold fork row carries its parent. Rust unit test: a cold row reports the stored creation time and outcome.
 - E2E: `conversation-session-goal`, `-goal-timeline`, `-goal-interruptions` and
   `context-window-cold-resume` pass on the Node agent; the three goal specs also pass on
   the Rust agent. `conversation-session-v4-vertical-slice` passes on both agents once the
