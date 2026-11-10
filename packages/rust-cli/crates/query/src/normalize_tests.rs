@@ -634,6 +634,35 @@ fn notices_and_models_without_system_turns_keep_the_old_place_for_queued_command
     );
 }
 
+/// Fork: plan feedback (a steer with `steerSource`) reaches the model as the plain user text after the tool result,
+/// with or without system turns (Node `steering.ts`: a sourced input has no guide presentation).
+#[test]
+fn plan_feedback_follows_the_tool_result_as_plain_user_text() {
+    let feedback = Message::Attachment(AttachmentMessage {
+        id: MessageId::new("f1"),
+        source: "queued_command".to_owned(),
+        text: reminder::wrap("The user sent a new message while you were working:\nadd tests"),
+        data: serde_json::json!({"prompt": "add tests", "commandMode": "prompt",
+            "steerSource": "plan_approval_feedback"}),
+    });
+    for options in [&ON, &OFF] {
+        let api = normalize(
+            &read_then("denied", "Read", vec![feedback.clone()]),
+            options,
+        );
+        assert_eq!(api[2].role, ApiRole::User);
+        assert_eq!(result_texts(&api[2]), ["denied"]);
+        assert!(matches!(
+            api[2].content[0].block,
+            ContentBlock::ToolResult { .. }
+        ));
+        assert!(
+            matches!(&api[2].content[1].block, ContentBlock::Text { text } if text == "add tests")
+        );
+        assert_eq!(api[2].content.len(), 2);
+    }
+}
+
 /// Fork: an attached file reaches the model as Node's reminders (inline text), its image block, or the metadata
 /// reminder; the adapters never see a `File` block.
 #[test]

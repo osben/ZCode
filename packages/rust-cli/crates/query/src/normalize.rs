@@ -336,6 +336,12 @@ pub(crate) fn normalize<'a>(
             Message::User(user) => builder.push_user(plain(user.content.clone())),
             // 只供显示的 attachment（如 `max_turns_reached`）文本为空，渲染为空。
             Message::Attachment(attachment) if attachment.text.is_empty() => {}
+            // Fork: a steer with a source (plan feedback) reaches the model as the plain user text, after the tool
+            // result, never folded into it (Node `steering.ts`: no guide presentation for a sourced input).
+            Message::Attachment(attachment) if queued_command::sourced(attachment).is_some() => {
+                let (_, prompt) = queued_command::sourced(attachment).unwrap_or_default();
+                builder.push_user(vec![text(prompt.to_owned())]);
+            }
             // 缺陷修复（修复线 F13）：人类插话原来按 system 角色折进末尾的 system 消息。应在
             // 有 system turn 时把它当人类输入（缺省开）：去包装、接在工具结果所在的
             // user 消息后面（先于 system 文字落地）。没有 system turn 时走下面的老路。

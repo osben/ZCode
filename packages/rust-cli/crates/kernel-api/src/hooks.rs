@@ -390,6 +390,23 @@ pub mod queued_command {
         }
     }
 
+    /// Fork: the source of a steer that no command carries (plan feedback) and its prompt. Node keeps such an input a
+    /// plain user message for the model (no steer reminder: `steering.ts` sets the guide presentation only for a
+    /// guide without a source).
+    pub fn sourced(attachment: &AttachmentMessage) -> Option<(&str, &str)> {
+        if attachment.source != SOURCE
+            || attachment.data.get(MODE_KEY).and_then(Value::as_str) != Some(PROMPT_MODE)
+        {
+            return None;
+        }
+        let source = attachment
+            .data
+            .get(STEER_SOURCE_KEY)
+            .and_then(Value::as_str)?;
+        let prompt = attachment.data.get(PROMPT_KEY).and_then(Value::as_str)?;
+        Some((source, prompt))
+    }
+
     /// A steer the user sees as a guided user row: its prompt and the command it came from. None for other
     /// attachments, notifications, coordinator steers and steers stored before the keys existed.
     pub fn guided(attachment: &AttachmentMessage) -> Option<(&str, Option<&str>)> {
