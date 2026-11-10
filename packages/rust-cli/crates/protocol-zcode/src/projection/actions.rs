@@ -110,10 +110,9 @@ impl Projection {
                 _ => {}
             }
         }
-        // Node offers Edit only when the latest real-user row has an edit target. A guided row has none here (the
-        // kernel rewinds to typed inputs only), so it takes Node's no-target path: no row offers Edit.
-        let latest_editable =
-            latest_user.filter(|&at| !compacting && !self.rows[at].contains_key("guided"));
+        // Node offers Edit on the latest real-user row. A guided row is a target too: the kernel rewinds to its
+        // steer attachment (cut before it, files undone from the turn's opener).
+        let latest_editable = latest_user.filter(|_| !compacting);
         let latest_retryable = latest_assistant.filter(|&at| {
             let row = &self.rows[at];
             let turn = turn_of(row);

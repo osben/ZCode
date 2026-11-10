@@ -8,7 +8,7 @@ use rust_cli_kernel_api::message::{
 use rust_cli_kernel_api::session_api::{KernelEvent, TurnOutcome};
 use serde_json::{Map, Value, json};
 
-use super::{Feed, Followup, Projection, assistant, user, view};
+use super::{Feed, Followup, Projection, RowAction, assistant, user, view};
 
 fn history(steer: AttachmentMessage) -> Vec<Message> {
     vec![
@@ -152,16 +152,23 @@ fn a_steer_without_a_command_or_source_shows_no_row() {
 /// Node offers Edit only on a latest real-user row with an edit target; a guided row has none on Rust, so no
 /// row offers Edit (Node's no-target path), and the reply can still be retried from the typed input.
 #[test]
-fn a_latest_guided_row_offers_no_edit_and_the_reply_keeps_retry() {
+fn a_latest_guided_row_offers_edit_and_the_reply_keeps_retry() {
     for projection in [live(history(feedback())), cold(history(feedback()))] {
-        assert!(
-            projection
-                .rows
-                .iter()
-                .all(|row| row.get("actions").and_then(|a| a.get("canEdit")).is_none()),
-            "{:?}",
-            projection.rows
-        );
+        let editable: Vec<_> = projection
+            .rows
+            .iter()
+            .filter(|row| row.get("actions").and_then(|a| a.get("canEdit")) == Some(&json!(true)))
+            .collect();
+        assert_eq!(editable.len(), 1, "{:?}", projection.rows);
+        let guided = editable[0];
+        assert_eq!(guided["guided"], true);
+        assert_eq!(guided["actions"]["editDisposition"], "rewind");
+        // The edit targets the guided steer itself, not the turn's typed input.
+        let entity = guided["entityId"].as_str().unwrap();
+        let target = projection
+            .row_target(guided["rowId"].as_u64().unwrap(), entity, RowAction::Edit)
+            .unwrap();
+        assert_eq!(target.user_message, entity);
         let replies = kind_rows(&projection, "assistantText");
         let last = replies.last().expect("a reply");
         assert_eq!(last["actions"]["canRetry"], true);

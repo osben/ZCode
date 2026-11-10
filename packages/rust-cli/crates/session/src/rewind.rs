@@ -310,15 +310,11 @@ impl Actor {
         if self.busy() {
             return Err("a turn is running; rewind after it finishes".to_owned());
         }
-        if !self
-            .messages
-            .iter()
-            .any(|m| m.id() == target && rewind_plan::selectable(m).is_some())
-        {
+        let Some(anchor) = rewind_plan::rewind_anchor(&self.messages, target) else {
             return Err(format!("{target} is not a message to rewind to"));
-        }
+        };
         let undo: Vec<WorkspaceCheckpoint> =
-            rewind_plan::checkpoints_from(&self.messages, &self.checkpoints, target)
+            rewind_plan::checkpoints_from(&self.messages, &self.checkpoints, anchor)
                 .into_iter()
                 .cloned()
                 .collect();
@@ -367,16 +363,13 @@ impl Actor {
             let _ = reply.send(rejected("a turn is running; rewind after it finishes"));
             return;
         }
-        if !self
-            .messages
-            .iter()
-            .any(|m| m.id() == &target && rewind_plan::selectable(m).is_some())
-        {
+        // Fork: a guided steer is a target too; its files are undone from the turn's opener.
+        let Some(anchor) = rewind_plan::rewind_anchor(&self.messages, &target) else {
             let _ = reply.send(rejected(format!("{target} is not a message to rewind to")));
             return;
-        }
+        };
         let undo: Vec<WorkspaceCheckpoint> =
-            rewind_plan::checkpoints_from(&self.messages, &self.checkpoints, &target)
+            rewind_plan::checkpoints_from(&self.messages, &self.checkpoints, anchor)
                 .into_iter()
                 .cloned()
                 .collect();

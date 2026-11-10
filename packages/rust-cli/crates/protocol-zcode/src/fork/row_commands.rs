@@ -8,6 +8,7 @@
 //! new session (kernel `ForkFromAssistant`).
 
 use futures_util::StreamExt;
+use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::session_api::{
@@ -77,11 +78,19 @@ pub(super) fn target_refused(
     Ack::refused(&envelope.command_id, status, miss.code(), message, revision)
 }
 
-/// The typed user message `id` as it is stored now.
+/// The typed user message `id` as it is stored now, or the prompt of the guided steer `id` (Fork: a guided row is
+/// edited like a typed input).
 async fn stored_input(live: &Bridged<Live>, id: &str) -> Option<Vec<ContentBlock>> {
     let view = live.handle.view().await.ok()?;
     view.messages.into_iter().find_map(|message| match message {
         Message::User(user) if user.id.as_str() == id => Some(user.content),
+        Message::Attachment(attachment) if attachment.id.as_str() == id => {
+            queued_command::guided(&attachment).map(|(prompt, _)| {
+                vec![ContentBlock::Text {
+                    text: prompt.to_owned(),
+                }]
+            })
+        }
         _ => None,
     })
 }
