@@ -69,12 +69,21 @@ fn kept_reads(kept: &[&Message]) -> HashSet<String> {
     out
 }
 
-/// 要重读的文件：readFileState 的复制品，最近的在前；去掉保留尾段里 Read 过的，最多 5 个。
-pub(crate) fn candidates(recent: &[String], kept: &[&Message]) -> Vec<String> {
+/// Node `shouldSkipPostCompactReadStatePath`: memory stores, plan drafts and Git internals are never restored.
+fn skipped_path(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    ["/.codex/memories/", "/docs/superpowers/plans/", "/.git/"]
+        .iter()
+        .any(|part| path.contains(part))
+}
+
+/// 要重读的文件：readFileState 的复制品，最近的在前；去掉保留尾段里 Read 过的与 `excluded`（context 给的
+/// Node `excludedPaths`），最多 5 个。先排除再截取，与 Node 一致。
+pub(crate) fn candidates(recent: &[String], kept: &[&Message], excluded: &[String]) -> Vec<String> {
     let kept = kept_reads(kept);
     recent
         .iter()
-        .filter(|path| !kept.contains(*path))
+        .filter(|path| !kept.contains(*path) && !excluded.contains(*path) && !skipped_path(path))
         .take(MAX_FILES)
         .cloned()
         .collect()
@@ -155,11 +164,12 @@ impl Restore<'_> {
         request: &CompactRequest,
         recent: &[String],
         kept: &[&Message],
+        excluded: &[String],
         cancel: &CancellationToken,
     ) -> Vec<AttachmentMessage> {
         let mut out = Vec::new();
         let mut used = 0;
-        for path in candidates(recent, kept) {
+        for path in candidates(recent, kept, excluded) {
             let Some(result) = self.read(request, &path, cancel).await else {
                 continue;
             };

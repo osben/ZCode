@@ -106,7 +106,11 @@ async fn plan_is_a_switch_next_to_the_mode() {
 async fn approving_the_plan_returns_to_the_mode_from_before() {
     let model = GatedModel::scripted(vec![
         tool_use_response("toolu_1", "EnterPlanMode", &json!({})),
-        tool_use_response("toolu_2", "ExitPlanMode", &json!({})),
+        tool_use_response(
+            "toolu_2",
+            "ExitPlanMode",
+            &json!({"plan": "# Plan\n1. do it"}),
+        ),
         text_response(&["implementing"]),
     ]);
     // 对话框连同计划与选项要放得下。
@@ -136,9 +140,9 @@ async fn approving_the_plan_returns_to_the_mode_from_before() {
     .await;
     let requests = model.requests();
     assert_eq!(requests.len(), 3);
-    // EnterPlanMode 之后的请求在 plan 里（完整提醒），批准之后退出（结果文字）。
+    // EnterPlanMode 之后的请求在 plan 里（完整提醒），批准之后退出（结果文字带上 plan 参数）。
     assert!(request_text(&requests[1]).contains("Plan mode is active"));
-    assert!(request_text(&requests[2]).contains("User has approved exiting plan mode"));
+    assert!(request_text(&requests[2]).contains("User has approved your plan."));
 }
 
 /// guarded：危险命令询问一次，没有“不再询问”（照 Puffin 的回答：允许一次、完全访问、拒绝，板头标 risky）；其余命令同

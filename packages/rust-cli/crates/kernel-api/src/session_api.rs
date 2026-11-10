@@ -239,6 +239,12 @@ pub enum Command {
     ForkFromInput {
         input: MessageId,
     },
+    /// Fork from an assistant reply (Node `forkAssistant`, the row action of a turn opened by a notification): the
+    /// new session carries the history through `assistant`. `assistant` must be a stored assistant reply (not the
+    /// resume sentinel); a running turn's reply is refused (`Rejected`), like [`Command::ForkFromInput`].
+    ForkFromAssistant {
+        assistant: MessageId,
+    },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是
     /// [`crate::peers::HeldPeerMessage::msg_id`]。已经解决（过期、改模式放行）时 `Rejected`。
     ResolvePeerMessage {

@@ -150,6 +150,7 @@ pub(crate) fn base_tools(
             .with_tools(rust_cli_tools::interaction_tools(
                 &catalog,
                 traits.interactive,
+                ports.ids.clone(),
             ))
             .with_tools(rust_cli_tools::web_tools(side_model(), ports.clock.clone()))
             .with_tools(rust_cli_tools::cron_tools(&cron, extensions.monitor))

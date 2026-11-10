@@ -444,7 +444,10 @@ impl RunSink for ChildSink {
             .into_iter()
             .map(|notice| rust_cli_prompts::agents::notification_wrap(&notice.envelope))
             .collect();
-        Absorbed::ordered(steered.into_iter().map(Steered::plain).collect(), notices)
+        Absorbed::ordered(
+            steered.into_iter().map(Steered::coordinator).collect(),
+            notices,
+        )
     }
 
     /// 子代理没有目标（goal.md §4）：不提交。

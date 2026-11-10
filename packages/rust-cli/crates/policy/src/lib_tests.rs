@@ -277,3 +277,6 @@ mod machine;
 
 #[path = "lib_tests_allowed.rs"]
 mod allowed;
+
+#[path = "lib_tests_plan_mcp.rs"]
+mod plan_mcp;

@@ -72,6 +72,7 @@ impl Compactor for FakeCompactor {
             used_tokens: history.len() as u64,
             max_tokens: window,
             compact_at: None,
+            window_tokens: None,
         })
     }
 
@@ -288,6 +289,7 @@ async fn compact_runs_as_a_turn_and_commits_one_batch() {
         used_tokens: 7,
         max_tokens: 100,
         compact_at: None,
+        window_tokens: None,
     }));
     assert!(matches!(
         events.last(),
@@ -404,6 +406,7 @@ async fn the_view_carries_the_context_usage_and_notice() {
             used_tokens: 2,
             max_tokens: 100,
             compact_at: None,
+            window_tokens: None,
         })
     );
     assert_eq!(
@@ -455,6 +458,7 @@ async fn changing_the_model_recomputes_the_context() {
                 used_tokens: 2,
                 max_tokens: 1_000,
                 compact_at: None,
+                window_tokens: None,
             }
         ]
     );

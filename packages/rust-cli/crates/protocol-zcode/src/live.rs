@@ -206,6 +206,15 @@ impl Live {
         self.state().projection.row_target(row_id, entity, action)
     }
 
+    /// Fork: see [`Projection::fork_target`].
+    pub fn fork_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+    ) -> Result<String, crate::projection::TargetMiss> {
+        self.state().projection.fork_target(row_id, entity)
+    }
+
     /// Fork: the `v4/conversation/plans` catalog with the topic position it was read at.
     /// Fork: the terminal status the notification of background command `task` reported.
     pub fn notified_status(&self, task: &str) -> Option<String> {

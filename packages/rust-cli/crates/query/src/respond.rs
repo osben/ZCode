@@ -350,6 +350,19 @@ async fn stream(
                 Some(Ok(ModelStreamItem::Event(event))) => {
                     // 首字（Node `firstModelTokenAt`）与首个内容（F105）。
                     timing.observe(&event, scope.parts.clock.as_ref());
+                    if let ModelEvent::BlockStart {
+                        index,
+                        block: ContentBlock::ToolUse { id, name, .. },
+                    } = &event
+                    {
+                        let started = QueryEvent::ToolInputStarted {
+                            message: response,
+                            index: *index,
+                            tool_use: id.clone(),
+                            name: name.clone(),
+                        };
+                        let _ = scope.sink.emit(started).await;
+                    }
                     if let ModelEvent::BlockDelta { index, delta } = &event {
                         deltas += 1;
                         let delta = QueryEvent::Delta {

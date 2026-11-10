@@ -5,6 +5,7 @@
 // projection attributes, and the old ChatView DOM is no longer depended on.
 // The old helper's login/workspace/provider parts are still reused
 // (desktop-app.ts / upstream-provider.ts).
+import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
 import {
   TID_CHAT_ERROR_DETAILS_BUTTON,
   TID_CHAT_MODE_SELECT_ITEM,
@@ -20,6 +21,7 @@ import {
   TID_LOGIN_API_KEY_CONTINUE_BUTTON,
   TID_LOGIN_API_KEY_INPUT,
   TID_LOGIN_USE_API_KEY_BUTTON,
+  TID_TASK_DELETE_CONFIRM,
   TID_TASK_ITEM,
   TID_TASK_NEW_BUTTON,
   TID_V4_AUTODRAIN_TOGGLE,
@@ -662,10 +664,44 @@ export async function setV4ComposerText(text: string) {
 }
 
 export async function waitForV4ComposerText(expected: string, timeoutMsg: string, timeout = 10000) {
-  await browser.waitUntil(async () => (await getV4ComposerText()) === expected, {
-    timeout,
-    timeoutMsg,
-  });
+  try {
+    await browser.waitUntil(async () => (await getV4ComposerText()) === expected, {
+      timeout,
+      timeoutMsg,
+    });
+  } catch (error) {
+    const actual = await getV4ComposerText().catch(() => "<unreadable>");
+    const state = await getV4ConversationState().catch((stateError) => ({
+      error: stateError instanceof Error ? stateError.message : String(stateError),
+    }));
+    const ui = await browser
+      .execute(() => {
+        const tabs = (window as any).__zcodeTabStoreE2E?.getState();
+        return {
+          tabs: JSON.stringify(tabs?.tabs ?? null).slice(0, 1500),
+          active: tabs?.activeTabId ?? null,
+          taskItems: Array.from(document.querySelectorAll('[data-testid^="task-item"]')).map((el) =>
+            (el.textContent ?? "").slice(0, 60),
+          ),
+          projects: Array.from(document.querySelectorAll("[data-project-name]")).map((el) =>
+            el.getAttribute("data-project-name"),
+          ),
+          onboarding: Boolean(document.querySelector('[data-testid="onboarding-page"]')),
+          projectSection: Boolean(document.querySelector('[data-testid="project-section"]')),
+          sidebarText: (document.querySelector("aside, nav")?.textContent ?? "").slice(0, 600),
+          panes: Array.from(document.querySelectorAll('[data-testid^="v4-session-pane-"]')).map(
+            (el) => el.getAttribute("data-testid"),
+          ),
+        };
+      })
+      .catch((e) => String(e));
+    throw new Error(
+      `${timeoutMsg}; composer=${JSON.stringify(actual)}; state=${JSON.stringify(state)}; ui=${JSON.stringify(ui)}`,
+      {
+        cause: error,
+      },
+    );
+  }
 }
 
 /** Clicks the v4 composer send button (input already written by the caller, e.g. a slash command). */
@@ -1271,7 +1307,9 @@ export async function clickV4DeleteSession() {
   const deleteButton = archived.$('[data-testid="archive-delete"]');
   await deleteButton.waitForClickable({ timeout: 15000 });
   await deleteButton.click();
-  const confirm = $('[data-testid="confirm-dialog-confirm"]');
+  // Fork: archive delete is permanent and confirmed in the task delete dialog (useTaskDeleteDialog),
+  // not the generic confirm dialog.
+  const confirm = $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`);
   await confirm.waitForDisplayed({ timeout: 15000 });
   await confirm.click();
   await archived.waitForExist({ reverse: true, timeout: 15000 });
@@ -1437,6 +1475,13 @@ export async function switchV4Model(provider: string, model: string, thought: st
     timeoutMsg: `模型切换后 config.model 投影没有更新为 ${model}`,
   });
 
+  // The combined composer menu renders the thought slider inside the model menu, so the standalone
+  // thought trigger may not exist; use the combined path first.
+  if (thought && (await selectCombinedComposerThoughtLevel(thought))) return;
+  if (!thought && (await modelTrigger.getAttribute("data-composer-combined-model")) === "true") {
+    await browser.keys("Escape");
+    return;
+  }
   // Custom providers without reasoning metadata render no thought selector. Protocol-type E2Es
   // pass an empty value to mean "switch the model only"; a missing reasoning-depth control must
   // not be treated as a model-switch failure.

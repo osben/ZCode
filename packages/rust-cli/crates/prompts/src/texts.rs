@@ -107,15 +107,10 @@ texts! {
     git_status_truncated => "context/git_status_truncated",
     // 计划模式（context.md §13，工作线 L11c）。
     plan_mode_full => "context/plan_mode_full",
-    plan_mode_file_new => "context/plan_mode_file_new",
-    plan_mode_file_exists => "context/plan_mode_file_exists",
     plan_mode_sparse => "context/plan_mode_sparse",
     plan_mode_subagent => "context/plan_mode_subagent",
-    plan_mode_subagent_file_new => "context/plan_mode_subagent_file_new",
-    plan_mode_subagent_file_exists => "context/plan_mode_subagent_file_exists",
-    plan_mode_reentry => "context/plan_mode_reentry",
+    plan_mode_subagent_ask => "context/plan_mode_subagent_ask",
     plan_mode_exit => "context/plan_mode_exit",
-    plan_mode_exit_file => "context/plan_mode_exit_file",
     // bypass 模式的宣布（shell-permissions.md §4.9，修复线 F43）。
     auto_mode_bypass => "context/auto_mode_bypass",
     // 读过的文件在磁盘上被改动（tools-files.md §4.1，工作线 F70）。

@@ -27,7 +27,8 @@ fn a_conversation_encodes_in_the_node_order() {
         concat!(
             r#"{"model":"<model>","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":32000,"input":["#,
             r#"{"role":"system","content":"You are ZCode."},"#,
-            r#"{"role":"user","content":[{"type":"input_text","text":"<system-reminder>ctx</system-reminder>"},{"type":"input_text","text":"read a.png"},{"type":"input_text","text":"<system-reminder>\n# Environment\n</system-reminder>"}]},"#,
+            r#"{"role":"user","content":[{"type":"input_text","text":"<system-reminder>ctx</system-reminder>"},{"type":"input_text","text":"read a.png"}]},"#,
+            r#"{"role":"user","content":[{"type":"input_text","text":"<system-reminder>\n# Environment\n</system-reminder>"}]},"#,
             r#"{"type":"function_call","call_id":"toolu_1","name":"Read","arguments":"{\"file_path\":\"a.png\"}"},"#,
             r#"{"type":"function_call_output","call_id":"toolu_1","output":"line 1\nline 2"},"#,
             r#"{"role":"user","content":[{"type":"input_text","text":"<system-reminder>\nlate note\n</system-reminder>"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"},{"type":"input_text","text":"thanks"}]},"#,

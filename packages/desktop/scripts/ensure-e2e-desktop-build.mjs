@@ -97,6 +97,8 @@ export const E2E_DESKTOP_BUILD_ENV_NAMES = [
   "ZCODE_PACKAGED_AGENT_OTEL_HEADERS",
   "ZCODE_PACKAGED_AGENT_OTEL_SERVICE_NAME",
   "ZCODE_PRODUCTION_BASE_URL",
+  // Fork: compiled into main as the warehouse report endpoint (fork-e2e-telemetry-endpoint.mjs).
+  "ZCODE_TELEMETRY_REPORT_ENDPOINT",
   "ZCODE_TEST_BASE_URL",
 ];
 

@@ -67,6 +67,8 @@ pub(crate) struct McpTool {
     description: String,
     schema: Value,
     read_only: bool,
+    /// Fork: `annotations.destructiveHint == true` (Node counts only a literal `true`).
+    destructive: bool,
     manager: Weak<Inner>,
 }
 
@@ -106,6 +108,10 @@ impl McpTool {
                 .pointer("/annotations/readOnlyHint")
                 .and_then(Value::as_bool)
                 == Some(true),
+            destructive: listed
+                .pointer("/annotations/destructiveHint")
+                .and_then(Value::as_bool)
+                == Some(true),
             info: McpToolInfo {
                 server: server.to_owned(),
                 tool: original,
@@ -132,6 +138,10 @@ impl Tool for McpTool {
 
     fn is_read_only(&self, _input: &Value) -> bool {
         self.read_only
+    }
+
+    fn is_destructive(&self, _input: &Value) -> bool {
+        self.destructive
     }
 
     fn is_concurrency_safe(&self, _input: &Value) -> bool {

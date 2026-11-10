@@ -36,6 +36,10 @@ pub(crate) struct NormalizeOptions {
     pub turn_effort: Option<String>,
     /// 摘要请求不写缓存：断点往前挪一条（[`skip_write_marker`]）。
     pub skip_cache_write: bool,
+    /// Fork: OpenAI-compatible protocols (`ModelCapabilities::separate_user_messages`). Every user message, reminder and
+    /// media attachment becomes its own message: no adjacent-user merge and no reminder fold into tool results, like
+    /// Node when `foldRemindersIntoToolResults` is off.
+    pub separate_user_messages: bool,
 }
 
 fn message(role: ApiRole, content: Vec<ApiContent>) -> ApiMessage {
@@ -146,6 +150,8 @@ fn merge_user(into: &mut Vec<ApiContent>, next: Vec<ApiContent>) {
 
 struct Builder {
     out: Vec<ApiMessage>,
+    /// [`NormalizeOptions::separate_user_messages`].
+    separate: bool,
     folded: Vec<String>,
     /// 已发出的 tool_use 的工具名：提醒并进工具结果时按它推结果的形式（`array_result`）。
     tool_names: HashMap<ToolUseId, String>,
@@ -158,7 +164,9 @@ impl Builder {
 
     fn push_user(&mut self, content: Vec<ApiContent>) {
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => merge_user(&mut last.content, content),
+            Some(last) if last.role == ApiRole::User && !self.separate => {
+                merge_user(&mut last.content, content);
+            }
             _ => self.out.push(message(ApiRole::User, content)),
         }
     }
@@ -170,7 +178,7 @@ impl Builder {
     /// 应把它并进工具结果的字符串、缓存断点落在工具结果上，所以 GLM 等没有卡片的模型每个工具轮的请求形状都不对。
     fn push_reminder(&mut self, value: String) {
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => {
+            Some(last) if last.role == ApiRole::User && !self.separate => {
                 let names = &self.tool_names;
                 let array_form = |id: &ToolUseId, is_error: bool| {
                     names
@@ -192,7 +200,7 @@ impl Builder {
     fn push_media(&mut self, value: String, blocks: Vec<ContentBlock>) {
         let blocks = plain(blocks);
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => {
+            Some(last) if last.role == ApiRole::User && !self.separate => {
                 last.content.push(text(value));
                 last.content.extend(blocks);
                 tool_results_first(&mut last.content);
@@ -311,6 +319,7 @@ pub(crate) fn normalize<'a>(
 ) -> Vec<ApiMessage> {
     let mut builder = Builder {
         out: Vec::new(),
+        separate: options.separate_user_messages,
         folded: Vec::new(),
         tool_names: HashMap::new(),
     };
@@ -327,6 +336,12 @@ pub(crate) fn normalize<'a>(
             Message::User(user) => builder.push_user(plain(user.content.clone())),
             // 只供显示的 attachment（如 `max_turns_reached`）文本为空，渲染为空。
             Message::Attachment(attachment) if attachment.text.is_empty() => {}
+            // Fork: a steer with a source (plan feedback) reaches the model as the plain user text, after the tool
+            // result, never folded into it (Node `steering.ts`: no guide presentation for a sourced input).
+            Message::Attachment(attachment) if queued_command::sourced(attachment).is_some() => {
+                let (_, prompt) = queued_command::sourced(attachment).unwrap_or_default();
+                builder.push_user(vec![text(prompt.to_owned())]);
+            }
             // 缺陷修复（修复线 F13）：人类插话原来按 system 角色折进末尾的 system 消息。应在
             // 有 system turn 时把它当人类输入（缺省开）：去包装、接在工具结果所在的
             // user 消息后面（先于 system 文字落地）。没有 system turn 时走下面的老路。

@@ -267,7 +267,17 @@ impl ScopedGate for PolicyGate {
             let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
             chain::inner(name, check, updated, &inputs)
         };
-        let result = evaluate(context.mode);
+        let plan_mcp = (context.mode == PermissionMode::Plan
+            && self.options.node_plan
+            && tool.mcp_info().is_some())
+        .then(|| chain::PlanMcp {
+            read_only: tool.is_read_only(input),
+            destructive: tool.is_destructive(input),
+        });
+        let mut result = evaluate(context.mode);
+        if let Some(mcp) = plan_mcp {
+            result = chain::plan_mcp(name, mcp, result);
+        }
         let call = Call {
             tool: name,
             input,
@@ -278,6 +288,7 @@ impl ScopedGate for PolicyGate {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
             node_plan: self.options.node_plan,
+            plan_mcp: plan_mcp.is_some(),
         };
         chain::outer(
             &call,

@@ -91,7 +91,11 @@ fn the_builtin_tools_that_run_on_a_named_machine() {
         ]
     );
     let mut others = crate::worktree_tools(&Arc::default());
-    others.extend(crate::interaction_tools(&Arc::default(), true));
+    others.extend(crate::interaction_tools(
+        &Arc::default(),
+        true,
+        Arc::new(rust_cli_kernel_api::testing::SequentialIds::default()),
+    ));
     others.push(Arc::new(crate::WebFetchTool::new(
         None,
         Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),

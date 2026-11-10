@@ -37,6 +37,42 @@ async fn a_steering_input_joins_the_running_turn_and_a_queued_one_waits() {
     )));
 }
 
+/// Fork: a guided steer is a rewind target (Node edits a drained guide row): the conversation is
+/// cut right before it and the earlier part of the turn stays.
+#[tokio::test]
+async fn a_rewind_to_a_guided_steer_cuts_before_it() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    let interaction = asked(&mut events).await;
+    session.send(steer("c2", "also b")).await;
+    session.send(answer("c4", interaction)).await;
+    until_finished(&mut events, 1).await;
+    let messages = session.view().await.unwrap().messages;
+    let at = messages
+        .iter()
+        .position(|message| {
+            matches!(message, Message::Attachment(attachment)
+            if rust_cli_kernel_api::hooks::queued_command::guided(attachment).is_some())
+        })
+        .expect("a guided steer");
+    let guided = messages[at].id().clone();
+    assert!(session.rewind_preview(&guided).await.is_ok());
+    let rewind = CommandEnvelope {
+        id: CommandId::new("r1"),
+        command: Command::Rewind {
+            target: guided,
+            scope: rust_cli_kernel_api::session_api::RewindScope::Conversation,
+        },
+    };
+    let ack = session.send(rewind).await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let kept = session.view().await.unwrap().messages;
+    assert_eq!(kept.len(), at);
+    assert_eq!(kept[..], messages[..at]);
+}
+
 /// 斜杠命令不在工具边界并入（query.md §4）：后面的插话照常并入，
 /// 斜杠命令留到回合结束后作为独立回合。
 #[tokio::test]

@@ -312,6 +312,8 @@ impl SessionStore for MemoryStore {
                 id: meta.id.clone(),
                 title: meta.title.clone(),
                 updated_at_ms: meta.created_at_ms,
+                created_at_ms: meta.created_at_ms,
+                last_outcome: None,
             })
             .collect())
     }

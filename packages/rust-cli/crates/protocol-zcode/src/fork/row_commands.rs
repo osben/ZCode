@@ -5,9 +5,10 @@
 //! Edit and retry cut the conversation back to before the turn's typed input (kernel `Rewind{conversation}`) and submit
 //! the input again: edit with the new text, retry with the stored content. The rewrite reaches the App as a fresh
 //! snapshot ([`crate::live::Live`] rebuilds on `HistoryRewritten`). Fork copies the conversation through the turn into a
-//! new session (kernel `ForkFromInput`).
+//! new session (kernel `ForkFromAssistant`).
 
 use futures_util::StreamExt;
+use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::session_api::{
@@ -77,11 +78,19 @@ pub(super) fn target_refused(
     Ack::refused(&envelope.command_id, status, miss.code(), message, revision)
 }
 
-/// The typed user message `id` as it is stored now.
+/// The typed user message `id` as it is stored now, or the prompt of the guided steer `id` (Fork: a guided row is
+/// edited like a typed input).
 async fn stored_input(live: &Bridged<Live>, id: &str) -> Option<Vec<ContentBlock>> {
     let view = live.handle.view().await.ok()?;
     view.messages.into_iter().find_map(|message| match message {
         Message::User(user) if user.id.as_str() == id => Some(user.content),
+        Message::Attachment(attachment) if attachment.id.as_str() == id => {
+            queued_command::guided(&attachment).map(|(prompt, _)| {
+                vec![ContentBlock::Text {
+                    text: prompt.to_owned(),
+                }]
+            })
+        }
         _ => None,
     })
 }
@@ -463,23 +472,22 @@ pub(super) async fn fork(
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let target =
-        match live
-            .sink
-            .row_target(body.target.row_id, &body.target.entity_id, RowAction::Fork)
-        {
-            Ok(target) => target,
-            Err(miss) => {
-                return target_refused(
-                    envelope,
-                    miss,
-                    format!("row {} cannot be forked from", body.target.row_id),
-                    revision,
-                );
-            }
-        };
-    let command = Command::ForkFromInput {
-        input: MessageId::new(&target.user_message),
+    let assistant = match live
+        .sink
+        .fork_target(body.target.row_id, &body.target.entity_id)
+    {
+        Ok(assistant) => assistant,
+        Err(miss) => {
+            return target_refused(
+                envelope,
+                miss,
+                format!("row {} cannot be forked from", body.target.row_id),
+                revision,
+            );
+        }
+    };
+    let command = Command::ForkFromAssistant {
+        assistant: MessageId::new(&assistant),
     };
     let forked = match send(live.handle.as_ref(), &envelope.command_id, command).await {
         KernelAck::Accepted {

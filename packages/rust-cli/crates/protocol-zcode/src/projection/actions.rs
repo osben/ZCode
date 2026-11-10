@@ -110,6 +110,8 @@ impl Projection {
                 _ => {}
             }
         }
+        // Node offers Edit on the latest real-user row. A guided row is a target too: the kernel rewinds to its
+        // steer attachment (cut before it, files undone from the turn's opener).
         let latest_editable = latest_user.filter(|_| !compacting);
         let latest_retryable = latest_assistant.filter(|&at| {
             let row = &self.rows[at];
@@ -149,8 +151,7 @@ impl Projection {
                         && row["state"] == "complete"
                         && headers.get(turn) == Some(&"completedSuccess")
                         && latest_by_turn.get(turn) == Some(&at)
-                        && row.contains_key("assistantResponseId")
-                        && users.contains(turn);
+                        && row.contains_key("assistantResponseId");
                     if can_fork {
                         actions.insert("canFork".into(), json!(true));
                     } else {
@@ -203,14 +204,13 @@ impl Projection {
         }
     }
 
-    /// The target of a row action command: the row must exist with this `entityId` and offer `action` now (Node's
-    /// latest-only guards: an older row lost its action when a newer one became the target).
-    pub fn row_target(
+    /// The row a command addresses: it must exist with this `entityId` and offer `action` now.
+    fn offered_row(
         &self,
         row_id: u64,
         entity: &str,
         action: RowAction,
-    ) -> Result<RowTarget, TargetMiss> {
+    ) -> Result<&Map<String, Value>, TargetMiss> {
         let row = self
             .rows
             .iter()
@@ -228,6 +228,32 @@ impl Projection {
         if !offered {
             return Err(TargetMiss::Unavailable);
         }
+        Ok(row)
+    }
+
+    /// Fork from an assistant reply: the assistant message id the row carries, for the row offering `canFork` now
+    /// (Node `forkAssistant`). Unlike [`Self::row_target`] it needs no typed user row, so a turn opened by a
+    /// notification forks too.
+    pub fn fork_target(&self, row_id: u64, entity: &str) -> Result<String, TargetMiss> {
+        let row = self.offered_row(row_id, entity, RowAction::Fork)?;
+        if RowKind::of(row) != Some(RowKind::AssistantText) {
+            return Err(TargetMiss::Unavailable);
+        }
+        row["assistantResponseId"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(TargetMiss::Unavailable)
+    }
+
+    /// The target of a row action command: the row must exist with this `entityId` and offer `action` now (Node's
+    /// latest-only guards: an older row lost its action when a newer one became the target).
+    pub fn row_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+        action: RowAction,
+    ) -> Result<RowTarget, TargetMiss> {
+        let row = self.offered_row(row_id, entity, action)?;
         let target = (|| match RowKind::of(row) {
             Some(RowKind::UserInput) => Some(RowTarget {
                 user_message: entity.to_owned(),

@@ -232,11 +232,13 @@ impl Transcript {
                 used_tokens,
                 max_tokens,
                 compact_at,
+                window_tokens,
             } => {
                 self.occupancy = Some(rust_cli_kernel_api::compaction::ContextOccupancy {
                     used_tokens,
                     max_tokens,
                     compact_at,
+                    window_tokens,
                 });
                 if let Some((id, true)) = self.compact {
                     self.compact = None;
@@ -284,6 +286,7 @@ impl Transcript {
             | KernelEvent::PlanTransition { .. }
             | KernelEvent::GoalChanged { .. }
             | KernelEvent::GoalVerification { .. }
+            | KernelEvent::ToolInputStarted { .. }
             | KernelEvent::TurnControlOnly { .. } => {}
             // HistoryRewritten 由 runner 处理（丢弃视图后重新 view()）；后台任务的快照由 runner 在
             // BackgroundWork 之后重取（tui-display.md §1）；其余不显示（tui.md §9）。

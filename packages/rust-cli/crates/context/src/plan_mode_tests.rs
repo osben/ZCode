@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::{ContextConfig, ContextPorts, PromptAssembler, Surface};
+use rust_cli_prompts::texts;
 
 const PLAN: &str = "/Users/dev/w/.zcode/plans/plan-sess_1.md";
 
@@ -57,6 +58,10 @@ impl ListingSource for Skills {
 }
 
 fn assembler(home: Option<&str>, plan: Option<&str>) -> PromptAssembler {
+    assembler_with(home, plan.map(|path| (path, "# Plan\n")))
+}
+
+fn assembler_with(home: Option<&str>, plan: Option<(&str, &str)>) -> PromptAssembler {
     let facts = EnvFacts {
         cwd: EnvPath::new("/Users/dev/w"),
         platform: "linux".to_owned(),
@@ -67,8 +72,8 @@ fn assembler(home: Option<&str>, plan: Option<&str>) -> PromptAssembler {
         uid: None,
     };
     let mut env = MemoryEnvironment::new(facts);
-    if let Some(path) = plan {
-        env = env.with_file(path, "# Plan\n");
+    if let Some((path, text)) = plan {
+        env = env.with_file(path, text);
     }
     let env = Arc::new(env);
     PromptAssembler::new(
@@ -130,7 +135,7 @@ fn sources(attachments: &[AttachmentMessage]) -> Vec<&str> {
 }
 
 #[tokio::test]
-async fn the_full_reminder_comes_after_the_skill_listing_and_names_the_plan_file() {
+async fn the_full_reminder_comes_after_the_skill_listing_without_a_plan_file_path() {
     let built = assembler(Some("/Users/dev"), None)
         .step(request(PermissionMode::Plan, None), &[human()])
         .await
@@ -144,17 +149,18 @@ async fn the_full_reminder_comes_after_the_skill_listing_and_names_the_plan_file
     assert!(at("skill_listing") < at(PLAN_MODE));
     assert!(at(PLAN_MODE) < at("total_tokens_reminder"));
     let reminder = &built.attachments[at(PLAN_MODE)];
-    assert!(reminder.text.starts_with(
-        "<system-reminder>\nPlan mode is active. The user indicated that they do not want you to execute yet"
-    ));
-    assert!(reminder.text.contains(&format!(
-        "## Plan File Info:\nNo plan file exists yet. You should create your plan at {PLAN} using the Write tool.\nYou should build your plan"
-    )));
-    assert!(reminder.text.contains("### Phase 5: Call ExitPlanMode"));
+    assert_eq!(
+        reminder.text,
+        format!(
+            "<system-reminder>\n{}\n</system-reminder>",
+            texts::plan_mode_full()
+        )
+    );
+    assert!(!reminder.text.contains("Plan File Info"));
     assert!(
         reminder
             .text
-            .ends_with("before implementation begins.\n</system-reminder>")
+            .contains("pass the complete final plan in its `plan` parameter")
     );
     assert_eq!(
         reminder.data,
@@ -163,7 +169,7 @@ async fn the_full_reminder_comes_after_the_skill_listing_and_names_the_plan_file
 }
 
 #[tokio::test]
-async fn an_existing_plan_file_is_offered_for_incremental_edits() {
+async fn an_existing_plan_file_does_not_change_the_reminder_text() {
     let found = plan_attachments(
         &assembler(Some("/Users/dev"), Some(PLAN)),
         request(PermissionMode::Plan, None),
@@ -171,14 +177,12 @@ async fn an_existing_plan_file_is_offered_for_incremental_edits() {
     )
     .await;
     assert_eq!(sources(&found), [PLAN_MODE]);
-    assert!(found[0].text.contains(&format!(
-        "A plan file already exists at {PLAN}. You can read it and make incremental edits using the Edit tool.\n"
-    )));
+    assert!(!found[0].text.contains(PLAN));
     assert_eq!(found[0].data["planExists"], json!(true));
 }
 
 #[tokio::test]
-async fn the_sparse_reminder_repeats_only_the_plan_file() {
+async fn the_sparse_reminder_is_one_fixed_line() {
     let mut history = vec![human(), marker(PLAN_MODE)];
     history.extend(humans(5));
     let found = plan_attachments(
@@ -190,9 +194,11 @@ async fn the_sparse_reminder_repeats_only_the_plan_file() {
     assert_eq!(
         found[0].text,
         format!(
-            "<system-reminder>\nPlan mode still active (see full instructions earlier in conversation). Read-only except plan file ({PLAN}). Follow 5-phase workflow. End turns with AskUserQuestion (for clarifications) or ExitPlanMode (for plan approval). Never ask about plan approval via text or AskUserQuestion.\n</system-reminder>"
+            "<system-reminder>\n{}\n</system-reminder>",
+            texts::plan_mode_sparse()
         )
     );
+    assert!(!found[0].text.contains(PLAN));
     assert_eq!(found[0].data["reminderType"], json!("sparse"));
 }
 
@@ -201,41 +207,26 @@ fn with_flags(mut request: ContextRequest, flags: PlanModeFlags) -> ContextReque
     request
 }
 
+/// Node 3.17 没有再次进入的提醒：离开过 plan 的标志为真时，只有普通的完整提醒，没有 reentry。
 #[tokio::test]
-async fn reentering_with_a_plan_file_announces_the_reentry_first() {
+async fn reentering_gets_the_ordinary_reminder_and_no_reentry() {
     let history = vec![human(), marker(PLAN_MODE), marker(EXIT), human()];
     let exited = PlanModeFlags {
         has_exited: true,
         needs_exit_attachment: false,
     };
-    let reentry = || with_flags(request(PermissionMode::Plan, None), exited);
     let found = plan_attachments(
         &assembler(Some("/Users/dev"), Some(PLAN)),
-        reentry(),
-        &history,
-    )
-    .await;
-    assert_eq!(sources(&found), [REENTRY, PLAN_MODE]);
-    assert!(found[0].text.starts_with(&format!(
-        "<system-reminder>\n## Re-entering Plan Mode\n\nYou are returning to plan mode after having previously exited it. A plan file exists at {PLAN} from your previous planning session."
-    )));
-    assert_eq!(found[0].data, json!({"planFilePath": PLAN}));
-    assert_eq!(found[1].data["reminderType"], json!("full"));
-    // 计划文件不存在时没有 reentry。
-    let found = plan_attachments(&assembler(Some("/Users/dev"), None), reentry(), &history).await;
-    assert_eq!(sources(&found), [PLAN_MODE]);
-    // 标志为假（resume 之后）时也没有 reentry，即使历史里有退出。
-    let found = plan_attachments(
-        &assembler(Some("/Users/dev"), Some(PLAN)),
-        request(PermissionMode::Plan, None),
+        with_flags(request(PermissionMode::Plan, None), exited),
         &history,
     )
     .await;
     assert_eq!(sources(&found), [PLAN_MODE]);
+    assert_eq!(found[0].data["reminderType"], json!("full"));
 }
 
 #[tokio::test]
-async fn the_exit_points_at_the_plan_file_only_when_it_exists() {
+async fn the_exit_reminder_has_no_plan_file_reference() {
     let history = vec![human(), marker(PLAN_MODE)];
     let found = plan_attachments(
         &assembler(Some("/Users/dev"), Some(PLAN)),
@@ -245,29 +236,16 @@ async fn the_exit_points_at_the_plan_file_only_when_it_exists() {
     .await;
     assert_eq!(
         found[0].text,
-        format!(
-            "<system-reminder>\n## Exited Plan Mode\n\nYou have exited plan mode. You can now make edits, run tools, and take actions. The plan file is located at {PLAN} if you need to reference it.\n</system-reminder>"
-        )
+        "<system-reminder>\n## Exited Plan Mode\n\nYou have exited plan mode. You can now make edits, run tools, and take actions.\n</system-reminder>"
     );
     assert_eq!(
         found[0].data,
         json!({"planFilePath": PLAN, "planExists": true})
     );
-    let found = plan_attachments(
-        &assembler(Some("/Users/dev"), None),
-        request(PermissionMode::Default, None),
-        &history,
-    )
-    .await;
-    assert!(
-        found[0]
-            .text
-            .ends_with("and take actions.\n</system-reminder>")
-    );
 }
 
 #[tokio::test]
-async fn subagents_get_their_own_text_and_plan_file() {
+async fn subagents_get_the_read_only_reminder_and_ask_only_when_they_can_ask() {
     // 子代理跑在子会话：同一目录下的 `plan-<子会话>.md`（tools-more.md §2.2、D15）。
     let plan = "/Users/dev/w/.zcode/plans/plan-sess_subagent_agent_1.md";
     // 子代理的 plan_mode 只在工具轮结束时的当步 attachment 里（F16，agents.md §4.3），这里直接取那一组。
@@ -282,12 +260,32 @@ async fn subagents_get_their_own_text_and_plan_file() {
     let at = |name: &str| order.iter().position(|source| *source == name).unwrap();
     assert!(at("skill_listing") < at(PLAN_MODE));
     let reminder = &found[at(PLAN_MODE)];
-    assert!(reminder.text.contains(&format!(
-        "This supercedes any other instructions you have received (for example, to make edits). Instead, you should:\n\n## Plan File Info:\nNo plan file exists yet. You should create your plan at {plan} using the Write tool if you need to.\n"
-    )));
+    assert_eq!(
+        reminder.text,
+        format!(
+            "<system-reminder>\n{}\n</system-reminder>",
+            texts::plan_mode_subagent()
+        )
+    );
+    assert!(!reminder.text.contains("AskUserQuestion"));
     assert!(!reminder.text.contains("Phase 1"));
     assert_eq!(reminder.data["isSubAgent"], json!(true));
     assert_eq!(reminder.data["planFilePath"], json!(plan));
+
+    let mut with_ask = request(PermissionMode::Plan, Some("a1"));
+    with_ask.tool_names.push("AskUserQuestion".to_owned());
+    let found = assembler(Some("/Users/dev"), None)
+        .turn_attachments(with_ask, &[human()])
+        .await
+        .unwrap();
+    let reminder = found.iter().find(|a| a.source == PLAN_MODE).unwrap();
+    assert_eq!(
+        reminder.text,
+        format!(
+            "<system-reminder>\n{}\n</system-reminder>",
+            texts::plan_mode_subagent_ask()
+        )
+    );
 }
 
 /// 计划文件在工作区里（Node 的位置），不再依赖 home。
@@ -314,11 +312,15 @@ async fn compaction_attaches_a_full_plan_reminder_in_plan_mode() {
         .await
         .unwrap();
     assert_eq!(
-        restored.first().map(|item| item.source.as_str()),
-        Some(PLAN_MODE)
+        restored
+            .iter()
+            .take(2)
+            .map(|item| item.source.as_str())
+            .collect::<Vec<_>>(),
+        [PLAN_FILE_REFERENCE, PLAN_MODE]
     );
     assert_eq!(
-        restored[0].data,
+        restored[1].data,
         json!({"reminderType": "full", "isSubAgent": false, "planFilePath": PLAN, "planExists": true})
     );
     let restored = assembler
@@ -330,4 +332,51 @@ async fn compaction_attaches_a_full_plan_reminder_in_plan_mode() {
             .iter()
             .all(|item| !item.source.starts_with("plan_mode"))
     );
+}
+
+/// Node `readApprovedPlanFileReferenceEntry`: after compaction the approved plan file is referenced with
+/// its path and raw content, first among the context attachments and in every mode.
+#[tokio::test]
+async fn compaction_references_the_approved_plan_file_in_any_mode() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let plan = "  1. Persist the plan.\n2. Keep it.\n";
+    let assembler = assembler_with(Some("/Users/dev"), Some((PLAN, plan)));
+    let restored = assembler
+        .post_compact(request(PermissionMode::Default, None), &[])
+        .await
+        .unwrap();
+    let first = restored.first().expect("a plan file reference");
+    assert_eq!(first.source, PLAN_FILE_REFERENCE);
+    assert_eq!(first.data, json!({ "planFilePath": PLAN }));
+    let expected = format!(
+        "A plan file exists from plan mode at: {PLAN}\n\nPlan contents:\n\n{plan}\n\nIf this plan is relevant to the current work and not already complete, continue working on it."
+    );
+    assert_eq!(first.text, rust_cli_prompts::reminder::wrap(&expected));
+    assert_eq!(
+        restored
+            .iter()
+            .filter(|item| item.source == PLAN_FILE_REFERENCE)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn compaction_skips_a_missing_blank_or_oversized_plan_file() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let oversized = "x".repeat(20_000 * 4 + 1025);
+    for plan in [None, Some(" \n\t\n"), Some(oversized.as_str())] {
+        let assembler = assembler_with(Some("/Users/dev"), plan.map(|text| (PLAN, text)));
+        let restored = assembler
+            .post_compact(request(PermissionMode::Plan, None), &[])
+            .await
+            .unwrap();
+        assert!(
+            restored
+                .iter()
+                .all(|item| item.source != PLAN_FILE_REFERENCE),
+            "plan file {:?}",
+            plan.map(str::len)
+        );
+    }
 }

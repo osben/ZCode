@@ -45,7 +45,9 @@ async function enterSearch(text = "/plan") {
   });
   await $(PLAN_OPTION).waitForDisplayed({ timeout: 15000 });
   expect(await $(PLAN_OPTION).getText()).toMatch(/计划模式|Plan mode/);
-  expect(await $(PLAN_OPTION).getText()).not.toContain("/plan");
+  // The shipped slash panel (upstream 3.17.2 included) labels app commands with their slash name and shows the
+  // description below it, so the Plan row reads "/plan" + "Enable Plan mode".
+  expect(await $(PLAN_OPTION).getText()).toContain("/plan");
 }
 
 async function assertSelected(expectedText: string) {

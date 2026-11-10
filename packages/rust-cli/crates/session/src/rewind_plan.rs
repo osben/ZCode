@@ -6,11 +6,15 @@ use std::collections::HashMap;
 use rust_cli_base::text;
 use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::env_rewind::{RestoreFile, content_hash};
+use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::{MachineName, MessageId};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::session_api::FileChange;
 use rust_cli_kernel_api::store::WorkspaceCheckpoint;
 use serde::Deserialize;
+
+use crate::notices::NOTICE_SOURCE;
+use crate::peers::PEER_SOURCE;
 
 /// 中断文本（合成的消息）；这两条不是可选的 user 消息（kernel-api 的定义，F55）。
 const INTERRUPTS: [&str; 2] = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
@@ -45,6 +49,30 @@ pub(crate) fn selectable(message: &Message) -> Option<&UserMessage> {
         return None;
     }
     Some(user)
+}
+
+/// Fork: where a rewind to `target` undoes files from (Node edits a drained guide row through the
+/// same canonical target as a typed input, and restores the files of the whole turn). A typed input
+/// is its own anchor. A guided steer attachment (`queued_command::guided`) anchors at the turn's
+/// opener: the nearest earlier typed input or notice/peer meta message, else the attachment itself.
+/// `None` when `target` is neither.
+pub(crate) fn rewind_anchor<'a>(
+    messages: &'a [Message],
+    target: &MessageId,
+) -> Option<&'a MessageId> {
+    let index = messages.iter().position(|m| m.id() == target)?;
+    match &messages[index] {
+        message if selectable(message).is_some() => Some(message.id()),
+        Message::Attachment(attachment) if queued_command::guided(attachment).is_some() => {
+            let opener = messages[..index].iter().rev().find(|m| {
+                selectable(m).is_some()
+                    || matches!(m, Message::User(user) if matches!(&user.origin,
+                        UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE))
+            });
+            Some(opener.unwrap_or(&messages[index]).id())
+        }
+        _ => None,
+    }
 }
 
 /// esc 撤回的判断（修复线 F38，spec §5.5）：输入之后的这些消息里有没有

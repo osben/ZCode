@@ -226,6 +226,39 @@ fn bypass_category(mode: PermissionMode) -> bool {
     )
 }
 
+/// Fork: an MCP tool's annotations, read by Node's plan gate (`checkPlanMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanMcp {
+    /// `readOnlyHint: true`.
+    pub read_only: bool,
+    /// `destructiveHint: true`.
+    pub destructive: bool,
+}
+
+/// Fork: Node's plan gate for an MCP tool, after the inner chain (specs/fork-rust-agent-parity.md, "MCP tools in plan
+/// mode"). Deny rules, the tool's own denial and whole-tool ask rules come first, as in Node. Then a destructive tool is
+/// denied and a tool that is not read-only asks once, even with an allow rule (Node asks before allow rules, and a rule
+/// remembered in plan mode would not apply). A read-only tool keeps the inner result.
+pub fn plan_mcp(tool: &str, mcp: PlanMcp, result: Inner) -> Inner {
+    match result {
+        Inner::Deny { .. }
+        | Inner::Ask {
+            kind: AskKind::Rule,
+            ..
+        } => result,
+        _ if mcp.destructive => Inner::Deny {
+            message: texts::PLAN_MODE_READ_ONLY.to_owned(),
+        },
+        _ if !mcp.read_only => Inner::Ask {
+            message: texts::request_message(tool, None),
+            kind: AskKind::Other,
+            suggestions: Vec::new(),
+            once: true,
+        },
+        _ => result,
+    }
+}
+
 /// 外层的选项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outer {
@@ -235,6 +268,8 @@ pub struct Outer {
     pub avoid_prompts: bool,
     /// Fork: plan mode denies anything that would ask, like the Node desktop agent (no classifier, no prompt).
     pub node_plan: bool,
+    /// Fork: the call already went through [`plan_mcp`]: under `node_plan` its ask goes to the user (no classifier).
+    pub plan_mcp: bool,
 }
 
 /// 一次调用。
@@ -276,8 +311,18 @@ pub async fn outer(
         };
     }
     if mode == PermissionMode::Plan && options.node_plan {
-        return PermissionDecision::Deny {
-            message: texts::PLAN_MODE_READ_ONLY.to_owned(),
+        if !options.plan_mcp {
+            return PermissionDecision::Deny {
+                message: texts::PLAN_MODE_READ_ONLY.to_owned(),
+            };
+        }
+        if options.avoid_prompts {
+            return PermissionDecision::Deny { message };
+        }
+        return PermissionDecision::Ask {
+            message,
+            suggestions,
+            once,
         };
     }
     let automatic =

@@ -8,6 +8,20 @@ use serde_json::{Value, json};
 
 use super::{Projection, RowKind, ToolStatus, block_key, state, text_of, tool_key};
 
+/// Fork: Node publishes the streaming input of Write and Edit at most once a second
+/// (`ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS`, `isZCodeFileStreamingToolInputPreviewTool`).
+const FILE_PREVIEW_INTERVAL_MS: u64 = 1_000;
+
+/// Fork: a tool call whose input is streaming (Node `fileToolInputPreviewByCallId` for the throttled tools).
+#[derive(Debug, Clone)]
+pub(super) struct StreamingTool {
+    tool_use: String,
+    /// Write or Edit: deltas are published at most every [`FILE_PREVIEW_INTERVAL_MS`].
+    throttled: bool,
+    published_at: Option<u64>,
+    pending: String,
+}
+
 /// A background task notification (the session's notification turns and the agents' completion notices).
 pub(super) fn is_task_notification(origin: &UserOrigin) -> bool {
     matches!(origin, UserOrigin::Meta { source }
@@ -29,7 +43,11 @@ impl Projection {
         let (kind, text) = match delta {
             BlockDelta::Text(text) => (RowKind::AssistantText, text),
             BlockDelta::Thinking(text) => (RowKind::Reasoning, text),
-            BlockDelta::Signature(_) | BlockDelta::InputJson(_) => return,
+            BlockDelta::InputJson(text) => {
+                self.streaming_tool_input(turn, response, index, text, now, out);
+                return;
+            }
+            BlockDelta::Signature(_) => return,
         };
         if let Some(current) = &mut self.turn {
             current.response = Some(response);
@@ -162,6 +180,16 @@ impl Projection {
                             self.upsert(
                                 &tool_key(id.as_str()),
                                 |row| {
+                                    // Fork: the committed call finalizes a row opened while its input streamed
+                                    // (Node `finalizeStreamingToolInput`); it is `running` like a row opened here.
+                                    if ToolStatus::of(row) == Some(ToolStatus::InputStreaming) {
+                                        row.insert("inputText".into(), json!(input.to_string()));
+                                        row.insert("input".into(), input.clone());
+                                        row.insert(
+                                            "status".into(),
+                                            json!(ToolStatus::Running.as_str()),
+                                        );
+                                    }
                                     row.insert("assistantResponseId".into(), json!(message_id));
                                 },
                                 out,
@@ -180,8 +208,43 @@ impl Projection {
                     current.response = None;
                 }
             }
-            // 工具结果、meta 输入与中断标记（user）、附件与 system 消息不投成行（P1）。
-            Message::User(_) | Message::Attachment(_) | Message::System(_) => {}
+            // Fork: a steer absorbed into the running turn is a guided user row inside it (Node's drained guide row).
+            Message::Attachment(attachment) => {
+                let Some((prompt, command)) =
+                    rust_cli_kernel_api::hooks::queued_command::guided(attachment)
+                else {
+                    return;
+                };
+                let Some(turn) = self.turn.clone() else {
+                    return;
+                };
+                let key = format!("user:{}", attachment.id.as_str());
+                if self.index.contains_key(&key) {
+                    return;
+                }
+                let command = command.unwrap_or(attachment.id.as_str()).to_owned();
+                let mut row = self.base(
+                    &turn.id,
+                    attachment.id.as_str(),
+                    RowKind::UserInput,
+                    now,
+                    seq,
+                );
+                row.insert("text".into(), json!(prompt));
+                row.insert("origin".into(), json!("realUser"));
+                row.insert("guided".into(), json!(true));
+                row.insert("sourceCommandId".into(), json!(command));
+                row.insert("rootSourceCommandId".into(), json!(command));
+                if let Some(meta) = self.inputs.get(&command) {
+                    if let Some(origin) = &meta.origin {
+                        row.insert("inputOrigin".into(), json!(origin));
+                    }
+                    row.insert("clientId".into(), json!(meta.client));
+                }
+                self.append(key, row, out);
+            }
+            // 工具结果、meta 输入与中断标记（user）与 system 消息不投成行（P1）。
+            Message::User(_) | Message::System(_) => {}
         }
     }
 
@@ -250,6 +313,91 @@ impl Projection {
         row.insert("inputText".into(), json!(input.to_string()));
         row.insert("input".into(), input.clone());
         self.append(tool_key(tool_use), row, out);
+    }
+
+    /// Fork: Node `openToolRow` (`tool_input_start`): the model started a tool call; the row shows it while the input
+    /// streams (status `inputStreaming`, empty `inputText`). A call that already has a row keeps it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn streaming_tool_row(
+        &mut self,
+        turn: &str,
+        response: u32,
+        index: usize,
+        tool_use: &str,
+        name: &str,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) {
+        let key = tool_key(tool_use);
+        if self.index.contains_key(&key) {
+            return;
+        }
+        if let Some(current) = &mut self.turn {
+            current.response = Some(response);
+        }
+        let throttled = matches!(name.trim().to_lowercase().as_str(), "write" | "edit");
+        // Blocks of earlier turns are settled.
+        self.streaming_tools.retain(|(at, _, _), _| at == turn);
+        self.streaming_tools.insert(
+            (turn.to_owned(), response, index),
+            StreamingTool {
+                tool_use: tool_use.to_owned(),
+                throttled,
+                published_at: None,
+                pending: String::new(),
+            },
+        );
+        let mut row = self.base(turn, tool_use, RowKind::ToolCall, now, seq);
+        row.insert("toolCallId".into(), json!(tool_use));
+        row.insert("toolName".into(), json!(name));
+        row.insert("status".into(), json!(ToolStatus::InputStreaming.as_str()));
+        row.insert("inputText".into(), json!(""));
+        self.append(key, row, out);
+    }
+
+    /// Fork: Node `appendStreamingToolInput`: an input delta of a streaming tool call, while its row has no final
+    /// input yet. Write and Edit publish at most once per [`FILE_PREVIEW_INTERVAL_MS`]; the rest waits for the next
+    /// publication or for the committed call, which sets the whole input.
+    fn streaming_tool_input(
+        &mut self,
+        turn: &str,
+        response: u32,
+        index: usize,
+        text: &str,
+        now: u64,
+        out: &mut Vec<Value>,
+    ) {
+        let Some(streaming) = self
+            .streaming_tools
+            .get_mut(&(turn.to_owned(), response, index))
+        else {
+            return;
+        };
+        let Some(&at) = self.index.get(&tool_key(&streaming.tool_use)) else {
+            return;
+        };
+        let row = &mut self.rows[at];
+        if ToolStatus::of(row) != Some(ToolStatus::InputStreaming) || row.contains_key("input") {
+            return;
+        }
+        let text = if streaming.throttled {
+            streaming.pending.push_str(text);
+            if streaming
+                .published_at
+                .is_some_and(|at| now.saturating_sub(at) < FILE_PREVIEW_INTERVAL_MS)
+            {
+                return;
+            }
+            streaming.published_at = Some(now);
+            std::mem::take(&mut streaming.pending)
+        } else {
+            text.to_owned()
+        };
+        let joined = format!("{}{text}", row["inputText"].as_str().unwrap_or_default());
+        row.insert("inputText".into(), json!(joined));
+        let row_id = row["rowId"].clone();
+        out.push(json!({"op": "row.delta", "rowId": row_id, "path": "inputText", "append": text}));
     }
 
     /// 登记一个询问。返回它所属的工具调用。

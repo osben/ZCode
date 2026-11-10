@@ -243,11 +243,13 @@ pub fn usage(
     total: &Usage,
 ) -> Value {
     json!({
-        "contextWindow": context.map(|context| json!({
+        // Fork: Node publishes the model window (not the window minus the summary reserve) and no
+        // context window at all for an unknown model.
+        "contextWindow": context.and_then(|context| context.window_tokens.map(|window| json!({
             "usedTokens": context.used_tokens,
-            "maxTokens": context.max_tokens,
+            "maxTokens": window,
             "autoCompactThresholdTokens": context.compact_at,
-        })),
+        }))),
         "cumulative": {
             "inputTokens": total.input_tokens,
             "outputTokens": total.output_tokens,

@@ -12,11 +12,13 @@ const ON: NormalizeOptions = NormalizeOptions {
     system_turns: true,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 const OFF: NormalizeOptions = NormalizeOptions {
     system_turns: false,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 
 fn text(value: &str) -> ContentBlock {
@@ -212,6 +214,7 @@ fn the_turn_effort_rides_on_the_system_turn_after_the_first_prompt() {
         system_turns: true,
         turn_effort: Some("medium".to_owned()),
         skip_cache_write: false,
+        separate_user_messages: false,
     };
     let messages = [
         human("u1", "a"),
@@ -270,6 +273,7 @@ fn marked(api: &[ApiMessage]) -> Vec<(usize, usize)> {
 fn a_summary_request_marks_the_message_before_the_last() {
     let options = NormalizeOptions {
         skip_cache_write: true,
+        separate_user_messages: false,
         ..ON
     };
     let call = ContentBlock::ToolUse {
@@ -630,6 +634,35 @@ fn notices_and_models_without_system_turns_keep_the_old_place_for_queued_command
     );
 }
 
+/// Fork: plan feedback (a steer with `steerSource`) reaches the model as the plain user text after the tool result,
+/// with or without system turns (Node `steering.ts`: a sourced input has no guide presentation).
+#[test]
+fn plan_feedback_follows_the_tool_result_as_plain_user_text() {
+    let feedback = Message::Attachment(AttachmentMessage {
+        id: MessageId::new("f1"),
+        source: "queued_command".to_owned(),
+        text: reminder::wrap("The user sent a new message while you were working:\nadd tests"),
+        data: serde_json::json!({"prompt": "add tests", "commandMode": "prompt",
+            "steerSource": "plan_approval_feedback"}),
+    });
+    for options in [&ON, &OFF] {
+        let api = normalize(
+            &read_then("denied", "Read", vec![feedback.clone()]),
+            options,
+        );
+        assert_eq!(api[2].role, ApiRole::User);
+        assert_eq!(result_texts(&api[2]), ["denied"]);
+        assert!(matches!(
+            api[2].content[0].block,
+            ContentBlock::ToolResult { .. }
+        ));
+        assert!(
+            matches!(&api[2].content[1].block, ContentBlock::Text { text } if text == "add tests")
+        );
+        assert_eq!(api[2].content.len(), 2);
+    }
+}
+
 /// Fork: an attached file reaches the model as Node's reminders (inline text), its image block, or the metadata
 /// reminder; the adapters never see a `File` block.
 #[test]
@@ -693,5 +726,85 @@ fn attached_files_expand_into_reminders_and_images() {
                 3
             )),
         ]
+    );
+}
+
+const SEPARATE: NormalizeOptions = NormalizeOptions {
+    system_turns: false,
+    turn_effort: None,
+    skip_cache_write: false,
+    separate_user_messages: true,
+};
+
+fn one_text(message: &ApiMessage) -> &str {
+    assert_eq!(message.role, ApiRole::User);
+    assert_eq!(message.content.len(), 1, "{message:?}");
+    match &message.content[0].block {
+        ContentBlock::Text { text } => text,
+        other => panic!("not text: {other:?}"),
+    }
+}
+
+/// Fork: OpenAI-compatible protocols send every reminder and prompt as its own user message, reminders before the
+/// prompt they were hoisted over (Node without `foldRemindersIntoToolResults`). A fork notice therefore comes before
+/// the child prompt.
+#[test]
+fn separate_user_messages_keep_each_reminder_and_prompt_apart() {
+    let messages = [
+        human("u1", "parent"),
+        attachment("a1", "environment", "# Environment"),
+        attachment("a2", "date", "Today's date is 2026-10-17."),
+        assistant("m1", vec![text("reply")]),
+        human("u2", "child"),
+        attachment("a3", "fork_notice", "This session was forked."),
+    ];
+    let api = normalize(&messages, &SEPARATE);
+    let roles: Vec<_> = api.iter().map(|message| message.role).collect();
+    assert_eq!(
+        roles,
+        [
+            ApiRole::User,
+            ApiRole::User,
+            ApiRole::User,
+            ApiRole::Assistant,
+            ApiRole::User,
+            ApiRole::User
+        ]
+    );
+    assert_eq!(
+        one_text(&api[0]),
+        "<system-reminder>\n# Environment\n</system-reminder>"
+    );
+    assert_eq!(
+        one_text(&api[1]),
+        "<system-reminder>\nToday's date is 2026-10-17.\n</system-reminder>"
+    );
+    assert_eq!(one_text(&api[2]), "parent");
+    assert_eq!(
+        one_text(&api[4]),
+        "<system-reminder>\nThis session was forked.\n</system-reminder>"
+    );
+    assert_eq!(one_text(&api[5]), "child");
+}
+
+/// Fork: with separate user messages a reminder after a tool result is its own user message, not folded into the
+/// result string.
+#[test]
+fn separate_user_messages_leave_tool_results_unfolded() {
+    let messages = read_then(
+        "1\talpha",
+        "Read",
+        vec![attachment(
+            "a1",
+            "total_tokens_reminder",
+            "<total_tokens>9 tokens left</total_tokens>",
+        )],
+    );
+    let api = normalize(&messages, &SEPARATE);
+    assert_eq!(api.len(), 4);
+    assert_eq!(result_texts(&api[2]), ["1\talpha"]);
+    assert_eq!(
+        one_text(&api[3]),
+        "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
     );
 }

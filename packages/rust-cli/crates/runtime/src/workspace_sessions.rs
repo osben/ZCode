@@ -93,6 +93,8 @@ impl LocalKernel {
                     id,
                     title: meta.title,
                     updated_at_ms: meta.created_at_ms,
+                    created_at_ms: meta.created_at_ms,
+                    last_outcome: None,
                 },
                 activity: Some(activity),
                 last_reply,

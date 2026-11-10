@@ -6,7 +6,7 @@ use rust_cli_kernel_api::message::{
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::store::LocalSettings;
-use rust_cli_kernel_api::store::{Fact, SessionStore};
+use rust_cli_kernel_api::store::{Fact, SessionFilter, SessionStore};
 use serde_json::{Value, json};
 
 use crate::tests::{TestStore, batch, started, text, user};
@@ -139,6 +139,18 @@ async fn the_turn_end_records_the_last_outcome() {
             t.rows("select last_outcome, time_updated from session"),
             vec![vec![json!(expected), json!(at)]]
         );
+        // Fork: the workspace list carries the outcome and the creation time for cold index rows.
+        let workspace = t.store.load(&session).await.unwrap().meta.workspace;
+        let listed = t
+            .store
+            .list(SessionFilter {
+                workspace,
+                limit: 10,
+            })
+            .await
+            .unwrap();
+        assert_eq!(listed[0].last_outcome.as_deref(), Some(expected));
+        assert!(listed[0].created_at_ms > 0 && listed[0].created_at_ms < at);
     }
 }
 

@@ -24,6 +24,8 @@ pub struct SessionRow {
     pub time_created: i64,
     pub time_updated: i64,
     pub time_deleted: Option<i64>,
+    /// Node `lastOutcome` of the last finished turn (`completed` / `interrupted` / `error`).
+    pub last_outcome: Option<String>,
 }
 
 /// Node `CreateSessionInput`（本 crate 写入的成员）。
@@ -91,6 +93,7 @@ fn decode(row: &Row) -> rusqlite::Result<SessionRow> {
         time_created: row.get("time_created")?,
         time_updated: row.get("time_updated")?,
         time_deleted: row.get("time_deleted")?,
+        last_outcome: nonempty(row.get("last_outcome")?),
     })
 }
 

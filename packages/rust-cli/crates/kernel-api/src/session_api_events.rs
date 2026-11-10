@@ -153,6 +153,15 @@ pub enum KernelEvent {
     MessageDone {
         message: Message,
     },
+    /// Fork: the model started a tool call in response `response` of `turn` (block `index`); its input streams as
+    /// [`KernelEvent::StreamDelta`] with `BlockDelta::InputJson` (Node `tool_input_start`).
+    ToolInputStarted {
+        turn: TurnId,
+        response: u32,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,
@@ -189,6 +198,9 @@ pub enum KernelEvent {
         /// 生效的自动压缩阈值（[`crate::compaction::ContextOccupancy::compact_at`]，compact.md §2.3）。serde 缺省 None。
         #[serde(default)]
         compact_at: Option<u64>,
+        /// Fork: [`crate::compaction::ContextOccupancy::window_tokens`]. serde default None.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_tokens: Option<u64>,
     },
     /// 上下文快满的提示（docs/specs/rust-cli/compact.md §2.1）：提交带用量的 assistant 与压缩结果之后重算。
     ContextNotice {

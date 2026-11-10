@@ -165,6 +165,18 @@ Row-target validation follows Node `validateRowTarget` / `resolveRowActionTarget
 
 `changes-group-responsive-file-summary` is not in the gate: its first assertion waits for the running `Changes` group, which only exists while the replayed turn runs. The replay adds no delay to `tool-use` fixtures, and the Rust agent finishes the five replayed tool calls in about 100 ms, so the running state is gone before the first poll. Without that assertion, the rest of the spec passes on Rust: the four unique files and the chips or `+N` at both widths.
 
+Context window in the App projection: Node publishes the model's own window as `usage.contextWindow.maxTokens` (the configured or catalog window, with an explicit override) and no `contextWindow` for a model it does not know (`product-projection.ts` seed, `maxTokens: null` → `contextWindow: null`). The Rust compaction owner computes the footer's effective window (window minus the summary reserve, 980,000 for a 1M model) and falls back to 200,000 for an unknown model. `ContextOccupancy` and `KernelEvent::ContextUsage` therefore also carry `window_tokens` (`CompactConfig::model_window`: `None` when neither the model limits nor the card know the model), and `protocol-zcode` publishes it as `maxTokens`, or `contextWindow: null` when it is `None`. The TUI footer and the thresholds keep the effective window. Spec: `context-window-cold-resume`.
+
+Manual compaction scope: Node `selectCompactEntries` keeps recent rounds verbatim only for automatic and reactive compaction (`shouldPreserveRecent`); a manual `/compact` summarizes every round and writes no preserved segment. The Rust compaction ladder started at one kept round for every trigger, so a manual summary request left out the last reply and the boundary kept it verbatim. The ladder now starts at zero kept rounds for `CompactTrigger::Manual` (`compact/src/engine.rs`); the prompt-too-long steps are unchanged. Spec: `context-window-cold-resume` (the manual compact fixture matches the last reply).
+
+User-message layout on OpenAI-compatible protocols: Node folds reminders into tool results and merges adjacent user content only on Anthropic Messages (`resolveModelRequestCapabilities` `foldRemindersIntoToolResults`, `provider-request-messages.ts` `mergesAdjacentUserContent`). On OpenAI Chat Completions and Responses every user entry is its own user message, and each reminder is a separate string message in session order, so the fork notice comes before the child prompt. The Rust agent used to merge on every protocol and, for GLM, always used mid-conversation system turns (upstream F121), which on OpenAI lowering put the folded reminders after the prompt in the same array message. Now:
+
+- `ModelCapabilities.separate_user_messages` (platform catalog and site rules: true unless the protocol is Anthropic Messages) sets `NormalizeOptions.separate_user_messages`: `query/src/normalize.rs` then pushes every user message, reminder and media attachment as its own message, with no newline join and no tool-result fold;
+- `model/src/openai/lower.rs` never merges adjacent user items (Node's OpenAI path has no merge);
+- the F121 GLM forcing of `supports_mid_conversation_system` applies to Anthropic Messages only, like the F121 reasoning patch; on OpenAI protocols GLM follows its configuration, as on Node.
+
+Anthropic Messages requests are unchanged. Spec: `v4-fork`.
+
 The default runtime stays `node`, so specs outside the gate keep their Node behaviour; the matrix lists the gaps that remain.
 
 ## Input ledger (`session_input`)
@@ -206,6 +218,134 @@ sequenceDiagram
     Store-->>Adapter: discarded/session_resumed, delivery queue
     Adapter-->>App: failed, inputDiscardedOnRestart, inputDisposition
 ```
+
+## Plan mode follows Node 3.17 (inline plan)
+
+Node 3.17 takes the plan as the `plan` parameter of ExitPlanMode (required, trimmed non-empty, at most 20000 UTF-16 code units, optional `allowedPrompts`); the plan file is no longer named to the model. The reminders (`plan_mode` full and sparse, the subagent variant with AskUserQuestion only when visible, `plan_mode_exit`) carry Node's texts byte for byte and never give a plan file path. There is no `plan_mode_reentry` reminder any more: re-entering plan mode gets the ordinary full reminder (old transcripts that contain one still count as an entry for the cadence). ExitPlanMode's approval interaction carries the input plan. After approval the Rust agent writes the raw plan to `<workspace>/.zcode/plans/plan-<session>.md` (write failures are logged, the approval still applies), as Node does for compaction continuity and `/plan`. The policy still lets the model write that file in plan mode (Node's policy has no such exception): a deliberate difference, kept for now.
+
+## Guided steer rows and plan-approval feedback (Node 3.17)
+
+Node shows every input it drains into a running turn with delivery `guide` as a `userInput` row inside that turn: origin `realUser`, `guided: true`, `sourceCommandId` the steer's command (else its pending input id), `clientId` when known (`product-projection.ts`, drain). The cold path inlines it too (`metadata.turnSteerDelivery: "guide"`, `transcript-hydration.ts`), so a reload does not split the turn. The model sees the steer in the `user_steer` wrapper as a mid-turn attachment.
+
+A denied ExitPlanMode with custom feedback (`turn-control.ts` `withPlanExitDeniedTurnStop`) answers the tool call with `The plan was not approved by the user.` and steers the feedback into the running turn (`source: "plan_approval_feedback"`, delivery `guide`); the turn continues. A denial without feedback still ends the turn after the result.
+
+Rust:
+
+- Owner of the stored fact: the `queued_command` attachment (`commandMode: prompt`) that the query loop commits when it absorbs a steer at a tool boundary (no new stored format; the Node build already reads these attachments). Its `data` now also carries `sourceCommandId` (the absorbed command) for a typed steer, or `steerSource: "plan_approval_feedback"` for plan feedback. The model text is unchanged (the `user_steer` wrapper, kernel-api `queued_command::steer_text`).
+- Projection (live `MessageDone` and cold, one function `rows.rs` `message`): such an attachment becomes a `userInput` row in the current turn: `text` the raw prompt, origin `realUser`, `guided: true`, `sourceCommandId` and `rootSourceCommandId` the stored command (the attachment id when none), `clientId` from the input facts when known. It never opens a turn. An attachment without either key (older transcripts, a coordinator steer into a subagent) shows no row, as before.
+- ExitPlanMode feedback: the tool result is Node's denial text (an error result) and the tool's follow-up message is the feedback as such an attachment (`steerSource: "plan_approval_feedback"`), committed right after the tool result (`ToolCallOutput::new_messages`). The feedback is no longer inside the tool result. The model sees it as Node sends a sourced steer (`steering.ts` gives the guide presentation only to an input without `source`): the plain feedback text as a user text block after the tool result, never wrapped in the `user_steer` reminder and never folded into the tool result or a system turn (query `normalize`, `queued_command::sourced`).
+- Edit (Node: a drained guide row registers the same canonical edit target as a typed input; `fork-edit-retry.ts` `editUserQuery`): the latest real-user row offers Edit also when it is guided. Editing it cuts the conversation back to before the guided message and sends the new text as a new turn; with `workspaceMode: "rewind"` the files of the whole turn are restored first (Node passes the turn row's message ids), in the same kernel command.
+  - Kernel (owner of the cut): `Command::Rewind { target, scope }` and the rewind preview accept a guided steer attachment (`queued_command::guided`) as `target`. The conversation is cut at `target`. The file anchor is the turn's opening message: the nearest earlier typed input (`rewind_plan::selectable`) or background-task notification, else `target` itself; checkpoints are undone from that anchor (`rewind_plan::files_anchor`). For a typed input the anchor is the input, as before. `/rewind` and Fork keep listing typed inputs only.
+  - Store: unchanged. The guided attachment is a Node message row with its own id, so the Node `conversation_rewind` record targets an existing message (`targetMessageID`).
+  - Protocol: the edit reads the old content from the guided attachment's prompt when the target is guided.
+
+Event order (one session actor): tool results commit, then the tool's follow-up messages (plan feedback), then absorbed steers; each commit emits `MessageDone` and the projection upserts the guided row. The next model request carries the tool result first and the steer after it.
+
+Acceptance:
+
+- Projection: for [prompt, assistant tool_use, tool result, guided attachment, assistant] the live and cold rows match, there is one turn, and the guided row is `realUser` with `guided: true` and its own `sourceCommandId`; an attachment without the keys shows no row; a latest guided row offers `canEdit` (rewind) and the prompt row does not; the reply still offers `canRetry`.
+- Kernel: a rewind to a guided attachment cuts before it and keeps the earlier part of the turn; its code scope undoes the checkpoints of the whole turn (from the typed input); a non-guided attachment is refused; `files_anchor` stops at a notification opener.
+- Tools: a denied ExitPlanMode with feedback returns Node's denial text without the feedback and one follow-up attachment with the feedback and `steerSource`; without feedback the turn stops.
+- E2E (when allowed): `plan-approval-feedback-user-message`, `running-guide-steer`, `background-guide-steer` and `turn-steer-probe` on both runtimes; the gate's queue and steer specs stay green.
+
+## MCP tools in plan mode (Node `checkPlanMode`)
+
+Node (`permission/service.ts`, plan enabled) decides an MCP tool call in this order: a project deny rule denies; a project ask rule asks (the normal options); then the plan gate: `destructiveHint: true` denies with `Plan mode only allows read-only, non-destructive tools` before the server is called; a tool without `readOnlyHint: true` asks before any allow rule (`mode.plan.mcp`, options without "always allow", because a rule remembered in plan mode would not apply); a `readOnlyHint` tool goes on to the allow rules and otherwise asks with the normal options (MCP tools always need approval). Annotations count only when they are literally `true`.
+
+Rust (app-server, `PolicyGate::with_node_plan_mode`): the gate reads `Tool::is_read_only` and the new `Tool::is_destructive` (default false; the MCP tool sets it from `annotations.destructiveHint == true`) for tools that carry `mcp_info`. After the inner chain, `chain::plan_mcp` keeps a denial and an ask-rule ask, turns the rest into the denial for a destructive tool or a single-use ask (`once`, no suggestions: the projection offers allow once and deny only) for a tool that is not read-only, and leaves a read-only tool's result alone. The outer layer then passes such an ask to the user in plan mode (no classifier) instead of denying it; with no one to answer (`avoid_prompts`) it is denied. Other tools keep the existing node-plan rule (anything that would ask is denied). The TUI (no node plan) is unchanged.
+
+Acceptance:
+
+- Policy unit tests (node plan on, plan mode): a non-read-only, non-destructive MCP tool asks once even with an allow rule; a destructive one is denied with Node's text even with an allow rule; a deny rule keeps its own text; an ask rule asks normally; a `readOnlyHint` tool is allowed by an allow rule and otherwise asks normally; a built-in tool that would ask is still denied.
+- MCP unit test: `destructiveHint: true` sets `is_destructive`; a missing or false hint does not.
+- E2E (when allowed): `conversation-session-plan-mode-mcp-permission` on both runtimes.
+
+## Tool rows while the tool input streams (Node `tool_input_start`)
+
+Node opens a `toolCall` row as soon as the model starts a tool call (`product-projection.ts` `openToolRow` on `tool_input_start`): status `inputStreaming`, `inputText` empty, then appends each `tool_input_delta` to `inputText` (file tools throttled); the scheduled call later upserts the row with the full `input` and `inputText`. A row still `inputStreaming` when the stream ends without a call is cancelled. The desktop shows the tool block (for ExitPlanMode, the plan preview) before the arguments are complete, and a session switched away and back finds the row in the snapshot.
+
+Rust used to open the row only at `ToolStarted` (after the stream), so nothing was shown while a long input streamed (`plan-session-switch-restore` waits for the ExitPlanMode block during the stream).
+
+- Kernel: the query loop emits `QueryEvent::ToolInputStarted { message, index, tool_use, name }` when the model stream starts a `tool_use` block; the session maps it to `KernelEvent::ToolInputStarted { turn, response, index, tool_use, name }` (stored in the session event log like other state events, so a replaying client rebuilds the row). The input deltas stay `StreamDelta` with `BlockDelta::InputJson`.
+- Projection (owner of the row): `ToolInputStarted` appends the row (`inputStreaming`, `inputText: ""`) unless it exists, and remembers the block (turn, response, index); an `InputJson` delta of that block appends to `inputText` (`row.delta`). The committed assistant message finalizes the row: `input` and `inputText` from the stored `tool_use`, status `running` (Rust opened its rows as `running` at that point before; Node keeps `inputStreaming` until the tool starts). `ToolStarted` on a row still `inputStreaming` sets the final input too. Open rows are cancelled at turn end as before. Rows from stored history are unchanged (they come from the stored `tool_use`). Write and Edit publish their streaming input at most once a second, the first delta at once (Node `ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS`); the rest arrives with the committed call.
+
+Event order (one session actor): `ToolInputStarted` → `StreamDelta(InputJson)`… → `MessageDone(assistant)` → `ToolStarted` → interaction / `ToolDone`.
+
+Acceptance:
+
+- Projection: `ToolInputStarted` then two `InputJson` deltas give one `inputStreaming` row whose `inputText` is the joined text; the committed assistant message turns it `running` with the final `input`; a turn that ends while it is `inputStreaming` cancels it; a second `ToolInputStarted` for the same call adds no row; a Write call publishes its first delta and holds the next one inside the second.
+- Query: a streamed `tool_use` block emits `ToolInputStarted` before its input deltas.
+- E2E (when allowed): `conversation-session-plan-session-switch-restore` on both runtimes; the gate's tool specs stay green.
+
+## Plan file reference after compaction (Node `readApprovedPlanFileReferenceEntry`)
+
+Node keeps an approved plan across compaction (`plan-file-continuity.ts`, `compact-active.ts`; `docs/plan-mode-plan-file-compact-continuity.md`). After a successful compact it reads the deterministic plan file `<workspaceRoot>/.zcode/plans/plan-<sanitized session>.md` (at most `PLAN_MODE_MAX_PLAN_CHARS * 4 + 1024` bytes) and, when the file exists and its content is not blank, adds a `plan_file_reference` system-reminder attachment:
+
+```text
+A plan file exists from plan mode at: <path>
+
+Plan contents:
+
+<content>
+
+If this plan is relevant to the current work and not already complete, continue working on it.
+```
+
+It is added in every permission mode (the plan was approved, so the session is usually no longer in plan mode). Compaction attachment order: file restore → plan file → plan reminder → the rest.
+
+Rust used to send only the plan-mode reminder (and only in plan mode), so after a compact the model lost the approved plan text.
+
+- Owner: context (`PromptAssembler::post_compact_parts`), the first entry of its post-compact attachments; the compact engine already places file restore before them. The path is `PlanFiles::in_workspace(..).path(agent)`, the same path ExitPlanMode writes.
+- Read: `stat` for kind and size, then `read_file`; content is the raw bytes, decoded as UTF-8 (lossy), not trimmed. Not found, not a regular file, or blank after trimming → no attachment. Larger than the byte cap or a read error → no attachment and a `warn` (Node fails the compact; Rust keeps the compact because the attachment is only continuity). Data: `{ "planFilePath": <path> }`.
+- File restore skips what Node's `restorePostCompactFiles` excludes (`excludedPaths`), so nothing already in the context is sent twice: the plan file, the instruction files in the context prefix, and the auto-memory `MEMORY.md`. Owner of the list: context (`PostCompactContext::restore_exclusions`; plan file from `PlanFiles`, instruction files from the rule cache of the window being compacted, `MEMORY.md` under the configured memory dir); the compact engine asks for it before choosing files, for subagents too. A context without the method excludes nothing. Node's path skips (`/.codex/memories/`, `/docs/superpowers/plans/`, `/.git/`, either separator) apply too. Paths are compared as stored (Node normalizes them first). The exclusions apply before the five-file cap, as in Node.
+
+Acceptance:
+
+- Context unit tests: an existing plan file yields the attachment with Node's text first among the post-compact attachments, in default mode too; a missing file, a blank file and a file over the cap yield none; in plan mode the plan reminder follows the reference.
+- Compact unit tests: excluded and skipped paths are not restore candidates and do not take one of the five places; the engine passes the context's exclusions to file restore.
+- Context unit test: the exclusions list the plan file, the loaded instruction files and `MEMORY.md`.
+- E2E (when allowed): `conversation-session-plan-file-compact-continuity` on both runtimes.
+
+## SendMessage to a running agent (Node 3.17)
+
+Node 3.17 steers a SendMessage for a running local agent into its active turn (`message-steering.ts`, delivery `steered`) and answers `Message msg_<uuid> was sent to its active turn for local agent <agentId>.`. The Rust mailbox already delivers at the same boundary (the next model request); the tool result text follows Node. A finished agent still resumes in the background as before.
+
+The running child absorbs the message at that boundary in Node's `coordinator_steer` form (`incoming-message.ts`): `The coordinator sent a message while you were working:\n<message>\n\nAddress this before completing your current task.`, as a `<system-reminder>` attachment. Owner: the steer's sender (`Steered.from`, kernel-api `SteerSender`); the child mailbox sets `Coordinator`, the session's queued prompts set `User`, and the query loop picks the wrapper (`query/src/texts.rs`). Acceptance: `query/src/texts_tests.rs`, and the `conversation-session-background` case "running background Agent 可以通过 SendMessage 收到 steer 消息" on Rust.
+
+## Fork from a turn opened by a notification
+
+Rule (Node `product-projection.ts` `materializeCommandRowActions`): an `assistantText` row offers `canFork` when the session is not compacting, the row is `complete`, its turn header is `completedSuccess`, and the row is the latest `assistantText` of its turn that has an assistant message id. The turn needs no typed user row, so a turn opened by a background task notification (a meta user message, origin `task-notification`) offers Fork like any other turn. The Rust projection (`projection/actions.rs` `refresh_actions`) follows this rule; it no longer requires a `realUser` row in the turn.
+
+Target: a Fork always goes through the assistant reply the row carries (Node `forkAssistant`: copy the history through that reply). The protocol resolves it with `Projection::fork_target` (owner: the projection's row state; the row must offer `canFork` now and its entity id must match, else `proto.staleTarget` or `guard.actionUnavailable`). The command is `Command::ForkFromAssistant { assistant }` (kernel owner: `session/src/fork_input.rs`). It copies the stored history through `assistant` into a new session, files untouched, like `ForkFromInput`.
+
+Kernel guards (the projection decides what is offered; the kernel decides only what is safe to copy):
+
+- A message that is not an assistant reply (user, tool result, notification, resume sentinel, unknown id) is refused: `<id> is not a message to fork from`.
+- A running turn is not a fork target. While a turn runs, `ForkFromAssistant` is refused: `a turn is running; fork after it finishes` (no fork at all unless `SessionDeps::fork_while_running`). With `fork_while_running`, the running turn starts at its opening user message (`Running::prompt`: the typed input, or the last notification of a notification turn); a reply before it is a completed turn and forks, a reply from it on is refused. Without a stored prompt (compaction) the last selectable (human) input bounds the running turn.
+- `/fork` in the TUI keeps `ForkFromInput` and its rules (`rewind_plan::selectable`). Its through-point is unchanged.
+
+Event order (one session actor, serial): the projection upserts `canFork` on the reply when `TurnFinished(Success)` arrives; a Fork command read after that sees the offer; the kernel reads the in-memory history, checks the guards, then `SessionStore::fork` writes the child in one step; the protocol opens the child and announces it. A command that arrives before `TurnFinished` finds no offer and is refused by the protocol (`guard.actionUnavailable`).
+
+Acceptance:
+
+- Projection: the final reply of a notification turn offers `canFork` (and nothing else when no user row exists); a reply inside a notification turn that is not the latest does not; a notification turn still running or ending in `Interrupted` offers nothing; a stale entity id is `proto.staleTarget`.
+- Kernel: forking through a notification turn's reply copies exactly the messages through that reply (the notification and the work after it that precede the reply are included, later messages are not); the running guards above; a non-assistant id is refused.
+- Protocol: `fork` on a notification reply sends `ForkFromAssistant` with that reply's id.
+
+## Workspace writes refuse symlinked targets (Node fs adapter)
+
+Node writes workspace files with `atomic: true` (every caller: Write, Edit, apply-patch, file rewind, workspace fork, the approved plan file), and its `atomicWrite` refuses a target that is a symlink (`lstat`, then `O_NOFOLLOW`): `Refusing to write through symlink: <path>. Resolve the symlink and pass the real target path explicitly.` The Rust local machine (`env-local` `files::put_file`, also behind the remote exec-server) used to write through the link. It now refuses the same way: an `lstat` check before the write and `O_NOFOLLOW` on Unix opens (ELOOP maps to the same error). Symlinked parent directories are still followed, as in Node. The Rust write stays in place (inode, mode and hard links kept) instead of Node's temp-file rename. Acceptance: executor-host contract case `writes_refuse_a_symlinked_target` (local and loopback machines).
+
+## Known differences kept on purpose
+
+- **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.
+- **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.
+
+## Open gaps (not yet ported)
+
+- **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
+- **Plan-mode specs outside the gate.** `plan-approval-feedback-user-message`, `plan-session-switch-restore` and `plan-file-compact-continuity` pass on Rust (E2E 2026-11-10). `plan-mode-mcp-permission` fails on Node too ("v4 权限弹窗没有出现"), so it does not cover "MCP tools in plan mode" yet; that section is backed by unit tests only.
+- **Guides in a running turn (`running-guide-steer`).** One case ("guide 模式下 running 中发送引导消息…") fails on Node too. Rust also fails three cases: under MCS a human guide reaches the model as user text instead of being folded into the system turn; without MCS a guide sent after a text-only reply starts a new turn instead of joining the current one (Node `drainInlineGuideForNextRequest`); while a goal verifier runs the guide shows as a user message where Node keeps it queued. `background-guide-steer` and `turn-steer-probe` pass on Rust.
 
 ## Order of work
 

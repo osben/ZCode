@@ -89,7 +89,11 @@ async fn run(dir: &Path) -> (Arc<ScriptedModel>, String) {
             "Write",
             &json!({"file_path": blocked, "content": "too early\n"}),
         ),
-        tool_use_response("toolu_4", "ExitPlanMode", &json!({})),
+        tool_use_response(
+            "toolu_4",
+            "ExitPlanMode",
+            &json!({"plan": "# Plan\n\nAdd the feature.\n"}),
+        ),
         text_response(&["Plan approved; starting."]),
     ]));
     let store = Arc::new(MemoryStore::default());
@@ -199,9 +203,9 @@ async fn enter_write_the_plan_and_exit() {
     // 2：EnterPlanMode 之后的那一步就有完整提醒，计划文件还不存在。
     assert!(requests[1].contains("Entered plan mode"), "{}", requests[1]);
     assert_eq!(count(&requests[1], full), 1);
-    assert!(requests[1].contains(&format!(
-        "No plan file exists yet. You should create your plan at {plan} using the Write tool."
-    )));
+    // Node 3.17：提醒里没有计划文件的路径（计划是 ExitPlanMode 的 plan 参数）。
+    assert!(!requests[1].contains("Plan File Info"), "{}", requests[1]);
+    assert!(!requests[1].contains(&plan), "{}", requests[1]);
     // 3：写计划文件放行；同一回合不重发提醒。
     assert!(requests[2].contains(&format!("File created successfully at: {plan}")));
     assert_eq!(count(&requests[2], full), 1);
@@ -214,8 +218,9 @@ async fn enter_write_the_plan_and_exit() {
     // 5：批准后切到 acceptEdits；下一步发一次退出提醒，指向计划文件。
     assert!(requests[4].contains("User has approved your plan."));
     assert_eq!(count(&requests[4], exit), 1);
-    assert!(requests[4].contains(&format!(
-        "You have exited plan mode. You can now make edits, run tools, and take actions. The plan file is located at {plan} if you need to reference it."
-    )));
+    assert!(requests[4].contains(
+        "You have exited plan mode. You can now make edits, run tools, and take actions.\n"
+    ));
+    assert!(!requests[4].contains("located at"), "{}", requests[4]);
     assert_eq!(count(&requests[4], full), 1);
 }

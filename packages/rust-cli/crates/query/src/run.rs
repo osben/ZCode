@@ -27,7 +27,6 @@ use crate::request::{Prepared, orchestration, prepare};
 use crate::respond::{Responded, commit, commit_metered, respond};
 use crate::step::StepTools;
 use crate::stop_hooks::{StopHook, stop_hooks};
-use crate::texts;
 
 /// 一次运行内不变的请求参数。
 struct Inputs {
@@ -164,12 +163,14 @@ async fn absorb_steering(scope: &RunScope, history: &mut Vec<Message>) -> Result
     for item in scope.sink.take_absorbed().await {
         let (id, text, data, after) = match item {
             Absorbed::Prompt(steered) => {
-                let text = texts::queued_prompt(&steered.text);
-                let data = json!({
-                    queued_command::PROMPT_KEY: steered.text,
-                    queued_command::MODE_KEY: queued_command::PROMPT_MODE,
-                });
-                (None, text, data, steered.after)
+                let steer = queued_command::steer_attachment(
+                    scope.parts.ids.message(),
+                    &steered.text,
+                    steered.from,
+                    steered.command.as_deref(),
+                    None,
+                );
+                (Some(steer.id), steer.text, steer.data, steered.after)
             }
             // 输出端给了消息 ID 时用它：提交之后它按这个 ID 认出是哪一条通知（会话 actor 的通道，工作线 F130）。
             Absorbed::Notice(notice) => {

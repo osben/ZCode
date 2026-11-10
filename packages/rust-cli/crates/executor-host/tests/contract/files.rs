@@ -204,9 +204,42 @@ async fn stat_many_answers_each_path_in_order(kind: Kind) {
     assert_eq!(third.kind, FileKind::Directory);
 }
 
+/// Like Node's fs adapter, a write whose target is a symlink is refused and the linked file keeps its content.
+async fn writes_refuse_a_symlinked_target(kind: Kind) {
+    #[cfg(unix)]
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = workspace(dir.path());
+        let env = machine(kind, LocalEnvironment::new(None)).await;
+        let files = env.files();
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, "keep").unwrap();
+        let link = dir.path().join("link.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let refused = files
+            .put_file(
+                &ws,
+                context("op_1"),
+                put(&link, b"plan", WritePrecondition::Any),
+            )
+            .await;
+        let Err(EnvError::Io { message }) = refused else {
+            panic!("{refused:?}");
+        };
+        assert!(
+            message.starts_with("Refusing to write through symlink: "),
+            "{message}"
+        );
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "keep");
+    }
+    #[cfg(not(unix))]
+    let _ = kind;
+}
+
 contract!(
     stat_many_answers_each_path_in_order,
     conditional_writes_check_versions,
+    writes_refuse_a_symlinked_target,
     reads_report_directories_missing_files_and_size_limits,
     whole_files_round_trip_with_binary_content,
     path_facts_carry_the_home_given_by_the_entry_crate,

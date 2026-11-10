@@ -130,6 +130,8 @@ import {
   reconcileConversationTelemetryWorkspaceScopes,
 } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
 import { installConversationTelemetryParityE2EBridge } from "@/v4/telemetry/conversationTelemetryParityE2E.js";
+import { willRestorePersistedPaneSession } from "@/v4/usePaneSessionPersistence.js";
+import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import { useSourceServerUpdateNotifications } from "@/root/sourceServerUpdateNotifications.js";
 import type {
   DeviceAdditionResult,
@@ -922,12 +924,25 @@ function RootInner({
           directory && !directory.error
             ? new Set(directory.projects.map((project) => project.id))
             : null;
-        for (const tab of tabStoreApi.getState().tabs) {
+        const { tabs: restoredTabs, activeTabId } = tabStoreApi.getState();
+        const rendererReload = isRendererReloadNavigation();
+        for (const tab of restoredTabs) {
           if (!isWorkspaceTab(tab)) continue;
           const workspace = useZCodeSessionStore
             .getState()
             .getWorkspaceState(tab.workspacePath, tab.workspaceIdentity);
           if (workspace.activeTaskId || workspace.draftProjectId !== undefined) continue;
+          // The pane restores its persisted session; a stale draft intent must not preempt it.
+          if (
+            willRestorePersistedPaneSession({
+              workspacePath: tab.workspacePath,
+              workspaceIdentity: tab.workspaceIdentity,
+              active: tab.id === activeTabId,
+              rendererReload,
+              restoreOnStartup: isDesktop === true && tab.restorePaneSession === true,
+            })
+          )
+            continue;
           const persistedScope = readComposerWorkspaceScope(
             tab.workspacePath,
             tab.workspaceIdentity,
@@ -977,7 +992,13 @@ function RootInner({
           : {}),
       };
     },
-    [restoreWorkspaceTabs, composerClientNamespace, tabStoreApi, waitForProjectDirectory],
+    [
+      restoreWorkspaceTabs,
+      composerClientNamespace,
+      tabStoreApi,
+      waitForProjectDirectory,
+      isDesktop,
+    ],
   );
 
   const { isRestoring, hasCompletedInitialRestore, hasCompletedFullRestore } = useTabPersistence({
