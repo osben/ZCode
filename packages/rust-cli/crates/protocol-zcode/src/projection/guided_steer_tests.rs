@@ -148,3 +148,22 @@ fn a_steer_without_a_command_or_source_shows_no_row() {
         assert_eq!(kind_rows(&projection, "turnHeader").len(), 1);
     }
 }
+
+/// Node offers Edit only on a latest real-user row with an edit target; a guided row has none on Rust, so no
+/// row offers Edit (Node's no-target path), and the reply can still be retried from the typed input.
+#[test]
+fn a_latest_guided_row_offers_no_edit_and_the_reply_keeps_retry() {
+    for projection in [live(history(feedback())), cold(history(feedback()))] {
+        assert!(
+            projection
+                .rows
+                .iter()
+                .all(|row| row.get("actions").and_then(|a| a.get("canEdit")).is_none()),
+            "{:?}",
+            projection.rows
+        );
+        let replies = kind_rows(&projection, "assistantText");
+        let last = replies.last().expect("a reply");
+        assert_eq!(last["actions"]["canRetry"], true);
+    }
+}
