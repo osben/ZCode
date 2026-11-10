@@ -160,7 +160,32 @@ async fn reached_max_turns(
 /// `absorbed_mid_turn`；query.md §4、§5）。每条插话的 UserPromptSubmit 消息紧跟在它的 `queued_command`
 /// 之后（query.md §4.1）；通知是 `commandMode: task-notification`（§5.1）。
 async fn absorb_steering(scope: &RunScope, history: &mut Vec<Message>) -> Result<(), QueryError> {
-    for item in scope.sink.take_absorbed().await {
+    let items = scope.sink.take_absorbed().await;
+    commit_absorbed(scope, history, items).await
+}
+
+/// Fork: a reply without tool calls is a continuation boundary for pending steers (Node
+/// `finishModelStepWithoutToolCalls` → `drainInlineGuideForNextRequest`, before the Stop hooks): they join this turn
+/// as `queued_command` attachments after the reply and the loop requests again. Notices are not taken here. True when
+/// a steer was taken.
+async fn absorb_text_only_steers(
+    scope: &RunScope,
+    history: &mut Vec<Message>,
+) -> Result<bool, QueryError> {
+    let items = scope.sink.take_steered_prompts().await;
+    if items.is_empty() {
+        return Ok(false);
+    }
+    commit_absorbed(scope, history, items).await?;
+    Ok(true)
+}
+
+async fn commit_absorbed(
+    scope: &RunScope,
+    history: &mut Vec<Message>,
+    items: Vec<Absorbed>,
+) -> Result<(), QueryError> {
+    for item in items {
         let (id, text, data, after) = match item {
             Absorbed::Prompt(steered) => {
                 let steer = queued_command::steer_attachment(
@@ -406,6 +431,9 @@ async fn reply_ended(
 ) -> Result<Option<QueryStop>, QueryError> {
     match conclude(scope, history, outcome, assistant, call).await? {
         Some(QueryStop::Completed) => {
+            if absorb_text_only_steers(scope, history).await? {
+                return Ok(None);
+            }
             let hook = stop_hooks(
                 scope,
                 history,

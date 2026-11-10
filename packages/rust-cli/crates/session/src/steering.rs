@@ -55,8 +55,9 @@ pub(crate) enum Fate {
 
 impl Actor {
     /// 按通道顺序给出插话与通知。遇到留下的插话后不再给插话（筛查屏障只挡 `prompt`），通知照常
-    /// 给出。已中止或没有回合时不领取，都继续排队。
-    pub(crate) fn claim_steering(&self) -> Option<Claimed> {
+    /// 给出。已中止或没有回合时不领取，都继续排队。Fork: `prompts_only` (the text-only boundary) leaves the
+    /// notices in the lane.
+    pub(crate) fn claim_steering(&self, prompts_only: bool) -> Option<Claimed> {
         let running = self.running.as_ref()?;
         if running.abort.is_aborted() {
             return None;
@@ -83,6 +84,7 @@ impl Actor {
                         Box::new(event),
                     ));
                 }
+                LaneItem::Notice(_) if prompts_only => {}
                 LaneItem::Notice(notice) => {
                     items.push(ClaimedItem::Notice(notice.key, notice.waiting.text()));
                 }
@@ -158,18 +160,21 @@ enum Taken {
 }
 
 impl ActorSink {
-    async fn claim(&self) -> Option<Claimed> {
+    async fn claim(&self, prompts_only: bool) -> Option<Claimed> {
         let (reply, answer) = oneshot::channel();
         self.sender
-            .send(SinkRequest::ClaimSteering { reply })
+            .send(SinkRequest::ClaimSteering {
+                prompts_only,
+                reply,
+            })
             .await
             .ok()?;
         answer.await.ok().flatten()
     }
 
     /// 领取 → 逐条跑插话的 UPS → 交回结局（query.md §4.1 的表），按到达顺序给出插话与通知。
-    pub(crate) async fn absorbed(&self) -> Vec<Absorbed> {
-        let Some(claimed) = self.claim().await else {
+    pub(crate) async fn absorbed(&self, prompts_only: bool) -> Vec<Absorbed> {
+        let Some(claimed) = self.claim(prompts_only).await else {
             return Vec::new();
         };
         let mut fates = Vec::new();

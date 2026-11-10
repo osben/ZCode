@@ -29,6 +29,8 @@ pub(crate) enum SinkRequest {
     },
     /// 工具边界领取插话与通知（不出队，query.md §4.1、§5）。
     ClaimSteering {
+        /// Fork: claim steers only (the text-only boundary); notices stay in the lane.
+        prompts_only: bool,
         reply: oneshot::Sender<Option<crate::steering::Claimed>>,
     },
     /// 插话的结局（出队或留下）与并入的通知（按顺序）：回复出了队、可以并入的插话，与每条通知的 attachment 用的
@@ -356,7 +358,11 @@ impl RunSink for ActorSink {
 
     /// 插话（并入前先跑 UserPromptSubmit）与后台通知，按到达顺序（steering.rs，query.md §5）。
     async fn take_absorbed(&self) -> Vec<Absorbed> {
-        self.absorbed().await
+        self.absorbed(false).await
+    }
+
+    async fn take_steered_prompts(&self) -> Vec<Absorbed> {
+        self.absorbed(true).await
     }
 
     async fn goal_checked(

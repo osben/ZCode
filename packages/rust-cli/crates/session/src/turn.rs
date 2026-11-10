@@ -205,8 +205,11 @@ impl Actor {
                 self.ask(request, reply, crate::actor::AskScope::Turn);
             }
             SinkRequest::CancelAsk { tool_use } => self.cancel_ask(&tool_use),
-            SinkRequest::ClaimSteering { reply } => {
-                let _ = reply.send(self.claim_steering());
+            SinkRequest::ClaimSteering {
+                prompts_only,
+                reply,
+            } => {
+                let _ = reply.send(self.claim_steering(prompts_only));
             }
             SinkRequest::SettleSteering {
                 fates,
