@@ -256,6 +256,23 @@ Acceptance:
 - MCP unit test: `destructiveHint: true` sets `is_destructive`; a missing or false hint does not.
 - E2E (when allowed): `conversation-session-plan-mode-mcp-permission` on both runtimes.
 
+## Tool rows while the tool input streams (Node `tool_input_start`)
+
+Node opens a `toolCall` row as soon as the model starts a tool call (`product-projection.ts` `openToolRow` on `tool_input_start`): status `inputStreaming`, `inputText` empty, then appends each `tool_input_delta` to `inputText` (file tools throttled); the scheduled call later upserts the row with the full `input` and `inputText`. A row still `inputStreaming` when the stream ends without a call is cancelled. The desktop shows the tool block (for ExitPlanMode, the plan preview) before the arguments are complete, and a session switched away and back finds the row in the snapshot.
+
+Rust used to open the row only at `ToolStarted` (after the stream), so nothing was shown while a long input streamed (`plan-session-switch-restore` waits for the ExitPlanMode block during the stream).
+
+- Kernel: the query loop emits `QueryEvent::ToolInputStarted { message, index, tool_use, name }` when the model stream starts a `tool_use` block; the session maps it to `KernelEvent::ToolInputStarted { turn, response, index, tool_use, name }` (stored in the session event log like other state events, so a replaying client rebuilds the row). The input deltas stay `StreamDelta` with `BlockDelta::InputJson`.
+- Projection (owner of the row): `ToolInputStarted` appends the row (`inputStreaming`, `inputText: ""`) unless it exists, and remembers the block (turn, response, index); an `InputJson` delta of that block appends to `inputText` (`row.delta`). The committed assistant message finalizes the row: `input` and `inputText` from the stored `tool_use`, status `running` (Rust opened its rows as `running` at that point before; Node keeps `inputStreaming` until the tool starts). `ToolStarted` on a row still `inputStreaming` sets the final input too. Open rows are cancelled at turn end as before. Rows from stored history are unchanged (they come from the stored `tool_use`). Write and Edit publish their streaming input at most once a second, the first delta at once (Node `ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS`); the rest arrives with the committed call.
+
+Event order (one session actor): `ToolInputStarted` → `StreamDelta(InputJson)`… → `MessageDone(assistant)` → `ToolStarted` → interaction / `ToolDone`.
+
+Acceptance:
+
+- Projection: `ToolInputStarted` then two `InputJson` deltas give one `inputStreaming` row whose `inputText` is the joined text; the committed assistant message turns it `running` with the final `input`; a turn that ends while it is `inputStreaming` cancels it; a second `ToolInputStarted` for the same call adds no row; a Write call publishes its first delta and holds the next one inside the second.
+- Query: a streamed `tool_use` block emits `ToolInputStarted` before its input deltas.
+- E2E (when allowed): `conversation-session-plan-session-switch-restore` on both runtimes; the gate's tool specs stay green.
+
 ## SendMessage to a running agent (Node 3.17)
 
 Node 3.17 steers a SendMessage for a running local agent into its active turn (`message-steering.ts`, delivery `steered`) and answers `Message msg_<uuid> was sent to its active turn for local agent <agentId>.`. The Rust mailbox already delivers at the same boundary (the next model request); the tool result text follows Node. A finished agent still resumes in the background as before.
@@ -294,7 +311,7 @@ Node writes workspace files with `atomic: true` (every caller: Write, Edit, appl
 ## Open gaps (not yet ported)
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
-- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port (`plan-approval-feedback-user-message` and `plan-mode-mcp-permission` are addressed by "Guided steer rows and plan-approval feedback" and "MCP tools in plan mode", not yet run on E2E): `plan-file-compact-continuity` (post-compact `plan_file_reference`), `plan-session-switch-restore` (no ExitPlanMode block after switching back).
+- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port (`plan-approval-feedback-user-message`, `plan-mode-mcp-permission` and `plan-session-switch-restore` are addressed by "Guided steer rows and plan-approval feedback", "MCP tools in plan mode" and "Tool rows while the tool input streams", not yet run on E2E): `plan-file-compact-continuity` (post-compact `plan_file_reference`).
 
 ## Order of work
 

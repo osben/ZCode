@@ -95,6 +95,15 @@ pub enum QueryEvent {
         index: usize,
         delta: BlockDelta,
     },
+    /// Fork: the model stream started a `tool_use` block (Node `tool_input_start`); its input follows as
+    /// [`QueryEvent::Delta`] with `BlockDelta::InputJson` (specs/fork-rust-agent-parity.md, "Tool rows while the tool
+    /// input streams").
+    ToolInputStarted {
+        message: usize,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,

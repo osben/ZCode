@@ -488,6 +488,18 @@ pub(crate) fn kernel_event(
             index,
             delta,
         },
+        QueryEvent::ToolInputStarted {
+            message,
+            index,
+            tool_use,
+            name,
+        } => KernelEvent::ToolInputStarted {
+            turn,
+            response: u32::try_from(message).unwrap_or(u32::MAX),
+            index,
+            tool_use,
+            name,
+        },
         QueryEvent::ToolStarted {
             tool_use,
             name,

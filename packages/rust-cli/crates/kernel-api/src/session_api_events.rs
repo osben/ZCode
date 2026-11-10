@@ -153,6 +153,15 @@ pub enum KernelEvent {
     MessageDone {
         message: Message,
     },
+    /// Fork: the model started a tool call in response `response` of `turn` (block `index`); its input streams as
+    /// [`KernelEvent::StreamDelta`] with `BlockDelta::InputJson` (Node `tool_input_start`).
+    ToolInputStarted {
+        turn: TurnId,
+        response: u32,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,

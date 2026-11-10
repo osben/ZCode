@@ -147,6 +147,9 @@ pub struct Projection {
     /// Fork: subagent rows and the snapshot `subagents` manifest (projection/subagent_rows.rs).
     subagents: subagent_rows::Subagents,
     shells: background_shells::Shells,
+    /// Fork: the tool call each streaming `tool_use` block opened (turn, response, block index), so its `InputJson`
+    /// deltas append to that row's `inputText` (Node `tool_input_delta`, projection/rows.rs).
+    streaming_tools: HashMap<(String, u32, usize), rows::StreamingTool>,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -267,6 +270,7 @@ impl Projection {
             compact_turn: false,
             compactions: 0,
             last_turn_model: None,
+            streaming_tools: HashMap::new(),
             goal_verifier: None,
             goal_verifier_failed: false,
             catalog: std::sync::Arc::from(Vec::new()),
@@ -561,6 +565,22 @@ impl Projection {
                 index,
                 delta,
             } => self.stream(turn.as_str(), *response, *index, delta, now, seq, &mut out),
+            KernelEvent::ToolInputStarted {
+                turn,
+                response,
+                index,
+                tool_use,
+                name,
+            } => self.streaming_tool_row(
+                turn.as_str(),
+                *response,
+                *index,
+                tool_use.as_str(),
+                name,
+                now,
+                seq,
+                &mut out,
+            ),
             KernelEvent::ToolStarted {
                 tool_use,
                 name,
@@ -573,6 +593,11 @@ impl Projection {
                 self.upsert(
                     &key,
                     |row| {
+                        // Fork: a row opened while the input streamed gets the final input (Node's scheduled call).
+                        if ToolStatus::of(row) == Some(ToolStatus::InputStreaming) {
+                            row.insert("inputText".into(), json!(input.to_string()));
+                            row.insert("input".into(), input.clone());
+                        }
                         if ToolStatus::of(row) != Some(ToolStatus::PendingApproval) {
                             row.insert("status".into(), json!(ToolStatus::Running.as_str()));
                         }

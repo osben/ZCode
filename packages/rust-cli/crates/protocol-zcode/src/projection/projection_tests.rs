@@ -25,6 +25,8 @@ mod goal_verify;
 mod guided_steer;
 #[path = "model_change_tests.rs"]
 mod model_change;
+#[path = "streaming_tool_tests.rs"]
+mod streaming_tool;
 #[path = "subagent_rows_tests.rs"]
 mod subagent_rows;
 
