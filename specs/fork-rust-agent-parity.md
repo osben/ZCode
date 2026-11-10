@@ -357,6 +357,23 @@ Acceptance:
 - Admission: a guide while a turn runs is `guide`; while only a session job runs it is `queue` (`commands_tests.rs`).
 - E2E: `conversation-session-running-guide-steer` P06 MCS and non-MCS, and "goal verifier 运行中发送消息".
 
+## Send now from the composer while a turn runs (Node `forceStartNow`)
+
+Node `session-flow.ts`: a `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode, `resolveOppositeFollowupDelivery`) never queues. It takes the foreground promotion lease, preempts the active turn (`preemptActiveTurnAndWait`, the goal is paused like any cancelled turn) and starts the input as the next turn. No queue item appears. Rust queued such an input like any other.
+
+- Owner: `protocol-zcode` `commands.rs` `send_text_now`. It runs the same steps as `sendQueuedNow`:
+  - hold the queue (the lease);
+  - `Interrupt` and wait for `TurnFinished`, or the verifier's end (`fork::settle_running_turn`);
+  - submit the input to the now idle session (`admitted: "startNow"`);
+  - restore the user's own hold.
+- Only text inputs take this path; `sendGoalCommand` keeps its own admission. A failed preemption is refused with `fault.command.inputRejected`.
+- The interrupted turn keeps its user message, so the new request lists the earlier prompt first and the new text after it, in the order the user typed them.
+
+Acceptance:
+
+- Unit: only an explicit `startNow` preempts (`commands_tests.rs`).
+- E2E: `conversation-session-modified-submit-delivery` M06k, MCS and non-MCS.
+
 ## Known differences kept on purpose
 
 - **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.

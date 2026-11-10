@@ -202,7 +202,10 @@ pub(super) async fn set_auto_drain(
 
 /// Node preempts the active turn before a promotion: interrupt it and wait for its `TurnFinished`
 /// (the same settlement the row commands use for edit and retry).
-async fn settle_running_turn(live: &Bridged<Live>, envelope: &Envelope) -> Result<(), String> {
+pub(crate) async fn settle_running_turn(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+) -> Result<(), String> {
     let view = live
         .handle
         .view()
