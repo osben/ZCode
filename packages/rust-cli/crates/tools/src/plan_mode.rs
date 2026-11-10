@@ -2,11 +2,14 @@
 //!
 //! 两个工具都不持有执行状态：经 `SessionOps::set_plan` 请求会话 actor 打开或关掉 plan 开关（唯一 owner），
 //! 返回后同一回合里后续的调用按新状态判决（§2.3）。修复线 F20：plan 是独立开关，权限模式留在 actor 里，退出
-//! plan 后就是进入前的值（Node `exitPlanMode` 只设 `planEnabled: false`）。计划文件经执行环境端口读（§2.2）。
+//! plan 后就是进入前的值（Node `exitPlanMode` 只设 `planEnabled: false`）。
+//!
+//! Node 3.17：计划是 ExitPlanMode 的 `plan` 参数（不再从计划文件读）。批准后把它写到计划文件，供压缩后的
+//! 续接与 `/plan` 使用（Node `persistApprovedPlanFileBeforeExitPlanMode`）。
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::env::EnvPath;
-use rust_cli_kernel_api::env_files::{ReadText, TextRead};
+use rust_cli_kernel_api::env::{EnvPath, WritePrecondition};
+use rust_cli_kernel_api::env_files::PutFile;
 use rust_cli_kernel_api::orchestration::{InteractionRequest, PlanApprovalAnswer};
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
 use rust_cli_kernel_api::plan::PlanFiles;
@@ -158,7 +161,7 @@ impl ExitPlanModeTool {
 }
 
 /// 计划文件的位置（§2.2）：kernel-api 的 `PlanFiles`，与计划模式 attachment、判决链同一来源。
-/// Node 的位置 `<工作区>/.zcode/plans/plan-<会话>.md`；会话 ID 净化后为空时报错（Node 同样报错）。
+/// Node 的位置 `<工作区>/.zcode/plans/plan-<会话>.md`；会话 ID 净化后为空时报错。
 pub(crate) async fn plan_file(context: &ToolUseContext) -> Result<String, ToolError> {
     let facts = context
         .machine
@@ -173,22 +176,48 @@ pub(crate) async fn plan_file(context: &ToolUseContext) -> Result<String, ToolEr
     Ok(plans.path(context.agent.as_ref()).as_str().to_owned())
 }
 
-/// 读计划文件；不存在或读不了时没有计划。
-async fn read_plan(context: &ToolUseContext, path: &str) -> Option<String> {
-    let request = ReadText {
-        path: EnvPath::new(path),
-        start_line: 0,
-        max_lines: None,
-        max_bytes: None,
+/// Node `ExitPlanModeInputSchema.plan`：必填，去掉首尾空白后非空，最多 20000 个字符。
+/// 长度按 UTF-16 码元数计（JS 字符串长度，Node 按它校验）。错误文本沿用 Node 的 zod 报错。
+const PLAN_MAX_UTF16_UNITS: usize = 20_000;
+
+fn validate_plan(input: &Value) -> Result<&str, String> {
+    let Some(plan) = input.get("plan").and_then(Value::as_str) else {
+        return Err("Invalid input: expected string, received undefined".to_owned());
     };
-    match context
+    if plan.encode_utf16().count() > PLAN_MAX_UTF16_UNITS {
+        return Err(format!(
+            "Too big: expected string to have <={PLAN_MAX_UTF16_UNITS} characters"
+        ));
+    }
+    if plan.trim().is_empty() {
+        return Err("String must contain at least 1 character(s)".to_owned());
+    }
+    Ok(plan)
+}
+
+/// 把批准的计划写到计划文件（Node `writeApprovedPlanFile`，写的是原始字符串，不去空白）。
+/// 写失败只记日志，批准照常生效（Node 同样只在取消时中断）。
+async fn persist_plan(context: &ToolUseContext, plan: &str) {
+    let path = match plan_file(context).await {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(%error, "approved plan file path unavailable");
+            return;
+        }
+    };
+    let request = PutFile {
+        path: EnvPath::new(path),
+        bytes: plan.as_bytes().to_vec(),
+        precondition: WritePrecondition::Any,
+        create_parents: true,
+    };
+    if let Err(error) = context
         .machine
         .files()
-        .read_text(&context.workspace, request)
+        .put_file(&context.workspace, context.operation.clone(), request)
         .await
     {
-        Ok(TextRead::Text(slice)) => Some(slice.content),
-        Ok(TextRead::Directory | TextRead::TooLarge { .. }) | Err(_) => None,
+        tracing::warn!(%error, "approved plan file was not written");
     }
 }
 
@@ -226,7 +255,10 @@ impl Tool for ExitPlanModeTool {
         Some(rust_cli_kernel_api::tool::DEFAULT_MAX_RESULT_CHARS)
     }
 
-    async fn validate_input(&self, _input: &Value, context: &ToolUseContext) -> Validation {
+    async fn validate_input(&self, input: &Value, context: &ToolUseContext) -> Validation {
+        if let Err(message) = validate_plan(input) {
+            return invalid(&message);
+        }
         if context.mode != PermissionMode::Plan {
             return invalid(texts::NOT_IN_PLAN_MODE);
         }
@@ -257,7 +289,7 @@ impl Tool for ExitPlanModeTool {
     /// does not rewrite the plan on its own; feedback keeps the turn going.
     async fn call_with_messages(
         &self,
-        _input: Value,
+        input: Value,
         context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolCallOutput, ToolError> {
@@ -266,8 +298,7 @@ impl Tool for ExitPlanModeTool {
             new_messages: Vec::new(),
             stop_turn: false,
         };
-        let path = plan_file(&context).await?;
-        let plan = read_plan(&context, &path).await.unwrap_or_default();
+        let plan = validate_plan(&input).map_err(failed)?.to_owned();
         let request = InteractionRequest::PlanApproval {
             origin: None,
             tool_use: context.tool_use.clone(),
@@ -291,15 +322,13 @@ impl Tool for ExitPlanModeTool {
                 });
             }
         }
+        persist_plan(&context, &plan).await;
         if context.agent.is_some() {
             // 子代理的模式不归会话 actor 管：只回报批准。
             return Ok(done(text(texts::AGENT_PLAN_APPROVED.to_owned())));
         }
         set_plan(&context, false).await?;
-        if plan.trim().is_empty() {
-            return Ok(done(text(texts::PLAN_EXIT_APPROVED.to_owned())));
-        }
-        Ok(done(text(texts::plan_approved(&path, &plan))))
+        Ok(done(text(texts::plan_approved(&plan))))
     }
 }
 

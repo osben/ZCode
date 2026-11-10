@@ -1,11 +1,9 @@
 //! 计划模式的 attachment（docs/specs/rust-cli/context.md §13，工作线 L11c）：`plan_mode`（完整、简略、
-//! 子代理三种文本）、`plan_mode_reentry`、`plan_mode_exit`。
+//! 子代理两种文本）、`plan_mode_exit`。计划是 ExitPlanMode 的 `plan` 参数，文本里不写计划文件路径（Node 3.17）。
 //!
 //! 模式与两个会话标志取 `ContextRequest.mode` / `plan_flags`（会话 actor 是唯一 owner，同一个快照），
-//! 计划文件取 kernel-api 的 `PlanFiles`（与 ExitPlanMode、判决链同一来源）。节奏从压缩边界之后的历史
-//! 推导；再次进入看 `has_exited`，退出看 `needs_exit_attachment`
-//! 或历史（§13.4）。context 不改标志：actor 提交这里产生的 reentry /
-//! exit 时清掉对应的标志。
+//! 节奏从压缩边界之后的历史推导；退出看 `needs_exit_attachment` 或历史（§13.4）。context 不改标志：
+//! actor 提交这里产生的 exit 时清掉对应的标志。
 
 use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::env_files::{FileKind, StatFile};
@@ -13,7 +11,8 @@ use rust_cli_kernel_api::message::{AttachmentMessage, Message, UserOrigin};
 use rust_cli_kernel_api::orchestration::ContextRequest;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::plan::{self, PlanFiles, PlanModeFlags};
-use rust_cli_prompts::texts::{self, render};
+use rust_cli_kernel_api::tool_names;
+use rust_cli_prompts::texts;
 use serde_json::{Value, json};
 
 use crate::PromptAssembler;
@@ -30,22 +29,31 @@ const FULL_REMINDER_EVERY_N_ATTACHMENTS: usize = 5;
 /// 最近一条计划模式 attachment。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Last {
-    /// `plan_mode` 或 `plan_mode_reentry`。
+    /// `plan_mode`（旧会话里的 `plan_mode_reentry` 也算进入）。
     Entered,
     /// `plan_mode_exit`。
     Exited,
 }
 
 /// 这一步要发什么（不含 IO，便于单测）。
+///
+/// Node 3.17 没有再次进入的提醒（`plan_mode_reentry`）：每次进入都是普通的 `plan_mode`，所以这里不分叉。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Due {
     Nothing,
-    /// 发 `plan_mode`。`reentry`：离开过 plan 模式（会话标志），计划文件存在时先发 reentry。
+    /// 发 `plan_mode`，`full` 为完整提醒。
     Enter {
         full: bool,
-        reentry: bool,
     },
     Exit,
+}
+
+/// 本步的请求里是否看得到 AskUserQuestion（只影响子代理的提醒）。
+fn asks_user_question(request: &ContextRequest) -> bool {
+    request
+        .tool_names
+        .iter()
+        .any(|name| name == tool_names::ASK_USER_QUESTION)
 }
 
 /// 从后往前读历史：最近一条计划模式 attachment、它之后的人类输入次数（遇到 exit 就停），
@@ -94,41 +102,30 @@ pub(crate) fn due(history: &[Message], mode: PermissionMode, flags: PlanModeFlag
     }
     Due::Enter {
         full: (since_exit + 1) % FULL_REMINDER_EVERY_N_ATTACHMENTS == 1,
-        // 再次进入：离开过 plan 模式的标志为真（计划文件是否存在在产生时再看）。
-        reentry: flags.has_exited,
     }
 }
 
-/// `plan_mode` 的文本：子代理、简略、完整。
-fn reminder(full: bool, subagent: bool, path: &str, exists: bool) -> String {
-    let info =
-        |new: &str, existing: &str| render(if exists { existing } else { new }, &[("path", path)]);
+/// `plan_mode` 的文本（Node `buildRuntimeModeReminderBody`）：子代理、简略、完整。
+/// 计划是 ExitPlanMode 的 `plan` 参数，提醒里不再提计划文件的路径。
+/// `ask_user_question`：子代理只有看得到 AskUserQuestion 时才提它（Node 同样判断）。
+fn reminder(full: bool, subagent: bool, ask_user_question: bool) -> &'static str {
     if subagent {
-        let info = info(
-            texts::plan_mode_subagent_file_new(),
-            texts::plan_mode_subagent_file_exists(),
-        );
-        return render(texts::plan_mode_subagent(), &[("plan_file_info", &info)]);
+        return if ask_user_question {
+            texts::plan_mode_subagent_ask()
+        } else {
+            texts::plan_mode_subagent()
+        };
     }
-    if !full {
-        return render(texts::plan_mode_sparse(), &[("path", path)]);
-    }
-    let info = info(texts::plan_mode_file_new(), texts::plan_mode_file_exists());
-    render(texts::plan_mode_full(), &[("plan_file_info", &info)])
-}
-
-fn exit_text(path: &str, exists: bool) -> String {
-    let file = if exists {
-        render(texts::plan_mode_exit_file(), &[("path", path)])
+    if full {
+        texts::plan_mode_full()
     } else {
-        String::new()
-    };
-    render(texts::plan_mode_exit(), &[("plan_file", &file)])
+        texts::plan_mode_sparse()
+    }
 }
 
 impl PromptAssembler {
     /// 本会话的计划文件（`<工作区>/.zcode/plans/plan-<会话>.md`，子代理是子会话的文件）与它是否存在；
-    /// 执行环境答不出路径风格时为 None（不发计划模式 attachment）。
+    /// 执行环境答不出路径风格时为 None（不发计划模式 attachment）。文件只记在 attachment 的数据里，不进文本。
     async fn plan_file(&self, request: &ContextRequest) -> Option<(EnvPath, bool)> {
         let facts = match self.ports.info.path_facts(&request.workspace).await {
             Ok(facts) => facts,
@@ -168,11 +165,11 @@ impl PromptAssembler {
             "planFilePath": path,
             "planExists": exists,
         });
-        let text = reminder(true, subagent, path, exists);
-        Some(self.attachment(PLAN_MODE, (text, data)))
+        let text = reminder(true, subagent, asks_user_question(request));
+        Some(self.attachment(PLAN_MODE, (text.to_owned(), data)))
     }
 
-    /// 这一步的计划模式 attachment，按产生顺序（reentry 在 plan_mode 前面）。
+    /// 这一步的计划模式 attachment。
     pub(crate) async fn plan_mode(
         &self,
         request: &ContextRequest,
@@ -190,14 +187,9 @@ impl PromptAssembler {
             Due::Nothing => Vec::new(),
             Due::Exit => {
                 let data = json!({"planFilePath": path, "planExists": exists});
-                vec![self.attachment(EXIT, (exit_text(path, exists), data))]
+                vec![self.attachment(EXIT, (texts::plan_mode_exit().to_owned(), data))]
             }
-            Due::Enter { full, reentry } => {
-                let mut out = Vec::new();
-                if reentry && exists {
-                    let text = render(texts::plan_mode_reentry(), &[("path", path)]);
-                    out.push(self.attachment(REENTRY, (text, json!({"planFilePath": path}))));
-                }
+            Due::Enter { full } => {
                 let subagent = request.agent.is_some();
                 let data: Value = json!({
                     "reminderType": if full { "full" } else { "sparse" },
@@ -205,9 +197,8 @@ impl PromptAssembler {
                     "planFilePath": path,
                     "planExists": exists,
                 });
-                let text = reminder(full, subagent, path, exists);
-                out.push(self.attachment(PLAN_MODE, (text, data)));
-                out
+                let text = reminder(full, subagent, asks_user_question(request));
+                vec![self.attachment(PLAN_MODE, (text.to_owned(), data))]
             }
         }
     }
