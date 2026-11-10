@@ -79,10 +79,11 @@ async fn consecutive_plain_inputs_run_as_one_turn() {
         matches!(event, KernelEvent::TurnStarted { .. })
     })
     .await;
-    // 运行中：一条插话（next）、一条排队（later）、一个斜杠命令（不成批，单独一个回合）。
+    // 运行中：两条排队（later）、一个斜杠命令（不成批，单独一个回合）。A steer here would join the running turn
+    // after its text-only reply (Node 3.17 drain, steer_tests.rs), so both batched inputs are `Queue`.
     built
         .session
-        .send(queued("c2", "first queued", Delivery::Steer))
+        .send(queued("c2", "first queued", Delivery::Queue))
         .await;
     built
         .session
