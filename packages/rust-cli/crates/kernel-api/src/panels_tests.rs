@@ -136,6 +136,7 @@ fn workspace_sessions_and_shell_details_round_trip() {
             updated_at_ms: 10,
             created_at_ms: 5,
             last_outcome: Some("error".to_owned()),
+            parent: None,
         },
         activity: Some(SessionActivity::NeedsInput),
         last_reply: Some("done".to_owned()),

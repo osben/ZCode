@@ -65,10 +65,15 @@ fn cold_row(workspace: &str, session: &WorkspaceSession) -> Value {
         permissions: 0,
     }
     .to_value();
-    if outcome.is_none()
-        && let Some(fields) = row.as_object_mut()
-    {
-        fields.remove("lastOutcome");
+    if let Some(fields) = row.as_object_mut() {
+        if outcome.is_none() {
+            fields.remove("lastOutcome");
+        }
+        // Fork: a stored fork keeps its ancestry like Node's cold summary, so the Host admits it into its parent's
+        // project instead of as an ordinary session.
+        if let Some(parent) = &summary.parent {
+            fields.insert("parentSessionId".to_owned(), json!(parent.as_str()));
+        }
     }
     row
 }
