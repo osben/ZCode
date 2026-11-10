@@ -10,8 +10,21 @@ fn candidates_skip_files_read_in_the_kept_tail_and_cap_at_five() {
     let kept: Vec<Message> = tool_round(6, "Read", "/w/6.rs").to_vec();
     let kept_refs: Vec<&Message> = kept.iter().collect();
     assert_eq!(
-        candidates(&recent, &kept_refs),
+        candidates(&recent, &kept_refs, None),
         ["/w/5.rs", "/w/4.rs", "/w/3.rs", "/w/2.rs", "/w/1.rs"]
+    );
+}
+
+/// Node `excludedPaths`: the plan file is never restored and does not take one of the five places.
+#[test]
+fn candidates_skip_the_plan_file_before_the_cap() {
+    let plan = "/w/.zcode/plans/plan-s.md";
+    let recent: Vec<String> = [plan, "/w/a", "/w/b", "/w/c", "/w/d", "/w/e"]
+        .map(str::to_owned)
+        .to_vec();
+    assert_eq!(
+        candidates(&recent, &[], Some(plan)),
+        ["/w/a", "/w/b", "/w/c", "/w/d", "/w/e"]
     );
 }
 
