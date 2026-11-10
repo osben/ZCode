@@ -809,9 +809,9 @@ fn requests_start_now(envelope: &Envelope) -> bool {
 }
 
 /// Fork: Node `session-flow.ts` `forceStartNow`: a `startNow` input while a turn (or the goal verifier) runs preempts
-/// it and starts at once instead of being queued. Same steps as `sendQueuedNow`: hold the queue (the promotion lease,
-/// so the drain after the stopped turn cannot start a queued item first), interrupt and wait for the turn to finish,
-/// submit the input to the idle session, then restore the user's own hold.
+/// it and starts at once instead of being queued. Same steps as `sendQueuedNow`: reserve the foreground (the promotion
+/// lease, so the drain after the stopped turn cannot start a queued item or a background notice first), interrupt and
+/// wait for the turn to finish, submit the input to the idle session, then release the reservation.
 async fn send_text_now(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
@@ -820,8 +820,12 @@ async fn send_text_now(
 ) -> Ack {
     let handle = live.handle.as_ref();
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
-    let user_held = !live.sink.auto_drain();
-    send(handle, &part("hold"), Command::HoldQueue { held: true }).await;
+    send(
+        handle,
+        &part("reserve"),
+        Command::ReserveForeground { reserved: true },
+    )
+    .await;
     let ack = match crate::fork::settle_running_turn(live, envelope).await {
         Ok(()) => {
             send_text(
@@ -846,8 +850,8 @@ async fn send_text_now(
     };
     send(
         handle,
-        &part("resume"),
-        Command::HoldQueue { held: user_held },
+        &part("release"),
+        Command::ReserveForeground { reserved: false },
     )
     .await;
     ack

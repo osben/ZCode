@@ -696,6 +696,7 @@ impl Actor {
                 self.reorder_queued(&command, before.as_ref())
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
+            Command::ReserveForeground { reserved } => self.reserve_foreground(reserved).await,
             // 在 `handle` 里处理（回执要等事务结束或名字）。
             Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")

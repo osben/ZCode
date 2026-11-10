@@ -83,6 +83,19 @@ impl Actor {
         Ok(())
     }
 
+    /// Fork: an absorbed guide's frozen mode and Plan switch (`settle_steering`), applied to the running turn the way a
+    /// user `SetMode` / `SetPlan` would be; the mode is saved as the project mode.
+    pub(crate) async fn absorbed_execution(
+        &mut self,
+        next: rust_cli_kernel_api::permission::ExecutionState,
+    ) -> Result<(), StoreError> {
+        if next == self.execution {
+            return Ok(());
+        }
+        let save = next.mode != self.execution.mode;
+        self.apply(None, next, save).await
+    }
+
     /// Fork: the permission dialog's full access (`Command::GrantFullAccess`, Node `fullAccess`): the
     /// session's permission mode becomes bypass (plan kept, saved like a user `SetMode`) and so does every
     /// queued input's frozen mode (their plan switches kept).

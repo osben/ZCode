@@ -104,20 +104,26 @@ impl Actor {
 
     /// 结局：并入与丢弃的出队（丢弃时发提示）；留下的记下结果（回合结束后由 `start_next` 取用）。并入的通知（按顺序）
     /// 各得到一个 attachment 的消息 ID，返回给主循环；提交之后按它出通道（C8）。同时返回出了队、可以并入的插话。
-    pub(crate) fn settle_steering(
+    pub(crate) async fn settle_steering(
         &mut self,
         fates: Vec<(CommandId, Fate)>,
         notices: Vec<NoticeKey>,
     ) -> Settled {
         let mut absorbed = Vec::new();
+        let mut execution = None;
         for (command, fate) in fates {
             if !self.inbox.contains_input(&command) {
                 continue;
             }
             match fate {
                 Fate::Absorbed => {
-                    self.inbox
-                        .remove_input(&command, crate::inbox::Left::Promoted);
+                    if let Some(queued) = self
+                        .inbox
+                        .remove_input(&command, crate::inbox::Left::Promoted)
+                        && queued.input.execution.is_some()
+                    {
+                        execution = queued.input.execution;
+                    }
                     absorbed.push(command);
                 }
                 Fate::Dropped(notice) => {
@@ -135,6 +141,14 @@ impl Actor {
             }
         }
         self.emit_queue();
+        // Fork: the last absorbed guide's frozen permission mode and Plan switch join the running turn, like Node's
+        // drain (`applyRuntimeExecutionState` with the last intent), so later tool calls in this turn run under them. Its
+        // model is not switched mid-run (see specs/fork-rust-agent-parity.md).
+        if let Some(execution) = execution
+            && let Err(reason) = self.absorbed_execution(execution.state).await
+        {
+            tracing::warn!(%reason, "an absorbed guide's execution state could not be applied");
+        }
         let notices = notices
             .into_iter()
             .map(|key| {
