@@ -1,6 +1,6 @@
 //! 压缩附件里的上下文（docs/specs/rust-cli/compact.md §3.4）。
 //!
-//! 压缩收尾时生成附件：重读的文件之后是计划模式提醒，再是延迟工具、agent、MCP instructions 的清单增量（按保留段
+//! 压缩收尾时生成附件：重读的文件之后是计划文件与计划模式提醒，再是延迟工具、agent、MCP instructions 的清单增量（按保留段
 //! 算），然后是环境段与模型身份（保留段里没有时从压缩前带过来）。这里用与当步
 //! attachment 相同的增量函数生成，compact 经 kernel-api [`PostCompactContext`] 调用（只在主线程的压缩里调，由
 //! compact 决定）。
@@ -24,6 +24,8 @@ impl PromptAssembler {
         let current = self.ports.listings.listings_for(&request, kept).await?;
         let instructions = self.ports.listings.mcp_instructions(&request).await?;
         let mut out = Vec::new();
+        // Node order: file restore (compact engine, before these) → plan file → plan reminder.
+        out.extend(self.post_compact_plan_file(&request).await);
         out.extend(self.post_compact_plan_mode(&request).await);
         // 调用过的 skill（compact.md §3.4）：计划模式之后、清单之前。
         if let Some(history) = history {

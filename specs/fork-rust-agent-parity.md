@@ -273,6 +273,33 @@ Acceptance:
 - Query: a streamed `tool_use` block emits `ToolInputStarted` before its input deltas.
 - E2E (when allowed): `conversation-session-plan-session-switch-restore` on both runtimes; the gate's tool specs stay green.
 
+## Plan file reference after compaction (Node `readApprovedPlanFileReferenceEntry`)
+
+Node keeps an approved plan across compaction (`plan-file-continuity.ts`, `compact-active.ts`; `docs/plan-mode-plan-file-compact-continuity.md`). After a successful compact it reads the deterministic plan file `<workspaceRoot>/.zcode/plans/plan-<sanitized session>.md` (at most `PLAN_MODE_MAX_PLAN_CHARS * 4 + 1024` bytes) and, when the file exists and its content is not blank, adds a `plan_file_reference` system-reminder attachment:
+
+```text
+A plan file exists from plan mode at: <path>
+
+Plan contents:
+
+<content>
+
+If this plan is relevant to the current work and not already complete, continue working on it.
+```
+
+It is added in every permission mode (the plan was approved, so the session is usually no longer in plan mode). Compaction attachment order: file restore → plan file → plan reminder → the rest.
+
+Rust used to send only the plan-mode reminder (and only in plan mode), so after a compact the model lost the approved plan text.
+
+- Owner: context (`PromptAssembler::post_compact_parts`), the first entry of its post-compact attachments; the compact engine already places file restore before them. The path is `PlanFiles::in_workspace(..).path(agent)`, the same path ExitPlanMode writes.
+- Read: `stat` for kind and size, then `read_file`; content is the raw bytes, decoded as UTF-8 (lossy), not trimmed. Not found, not a regular file, or blank after trimming → no attachment. Larger than the byte cap or a read error → no attachment and a `warn` (Node fails the compact; Rust keeps the compact because the attachment is only continuity). Data: `{ "planFilePath": <path> }`.
+- Not ported: Node also excludes the plan file from file restore; Rust's restore picks from readFileState only, which the ExitPlanMode write does not enter, so the file is restored only if the model Read it.
+
+Acceptance:
+
+- Context unit tests: an existing plan file yields the attachment with Node's text first among the post-compact attachments, in default mode too; a missing file, a blank file and a file over the cap yield none; in plan mode the plan reminder follows the reference.
+- E2E (when allowed): `conversation-session-plan-file-compact-continuity` on both runtimes.
+
 ## SendMessage to a running agent (Node 3.17)
 
 Node 3.17 steers a SendMessage for a running local agent into its active turn (`message-steering.ts`, delivery `steered`) and answers `Message msg_<uuid> was sent to its active turn for local agent <agentId>.`. The Rust mailbox already delivers at the same boundary (the next model request); the tool result text follows Node. A finished agent still resumes in the background as before.
@@ -311,7 +338,7 @@ Node writes workspace files with `atomic: true` (every caller: Write, Edit, appl
 ## Open gaps (not yet ported)
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
-- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port (`plan-approval-feedback-user-message`, `plan-mode-mcp-permission` and `plan-session-switch-restore` are addressed by "Guided steer rows and plan-approval feedback", "MCP tools in plan mode" and "Tool rows while the tool input streams", not yet run on E2E): `plan-file-compact-continuity` (post-compact `plan_file_reference`).
+- **Plan-mode specs outside the gate** failed on Rust before the Node 3.17 plan-mode port; `plan-approval-feedback-user-message`, `plan-mode-mcp-permission`, `plan-session-switch-restore` and `plan-file-compact-continuity` are addressed by "Guided steer rows and plan-approval feedback", "MCP tools in plan mode", "Tool rows while the tool input streams" and "Plan file reference after compaction", not yet run on E2E.
 
 ## Order of work
 

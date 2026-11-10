@@ -5,7 +5,7 @@
 //! 节奏从压缩边界之后的历史推导；退出看 `needs_exit_attachment` 或历史（§13.4）。context 不改标志：
 //! actor 提交这里产生的 exit 时清掉对应的标志。
 
-use rust_cli_kernel_api::env::EnvPath;
+use rust_cli_kernel_api::env::{EnvPath, ReadFile};
 use rust_cli_kernel_api::env_files::{FileKind, StatFile};
 use rust_cli_kernel_api::message::{AttachmentMessage, Message, UserOrigin};
 use rust_cli_kernel_api::orchestration::ContextRequest;
@@ -21,6 +21,9 @@ use crate::PromptAssembler;
 pub(crate) const PLAN_MODE: &str = "plan_mode";
 pub(crate) const REENTRY: &str = plan::REENTRY_SOURCE;
 pub(crate) const EXIT: &str = plan::EXIT_SOURCE;
+pub(crate) const PLAN_FILE_REFERENCE: &str = "plan_file_reference";
+/// Node `PLAN_FILE_REFERENCE_MAX_BYTES`: `PLAN_MODE_MAX_PLAN_CHARS * 4 + 1024`.
+const PLAN_FILE_REFERENCE_MAX_BYTES: u64 = 20_000 * 4 + 1024;
 /// 两次 plan_mode 之间至少隔几次人类输入。
 const TURNS_BETWEEN_ATTACHMENTS: usize = 5;
 /// 每第几条 plan_mode 是完整提醒。
@@ -146,6 +149,50 @@ impl PromptAssembler {
         Some((path, exists))
     }
 
+    /// 压缩附件里的计划文件（Node `readApprovedPlanFileReferenceEntry`）：计划文件存在且去掉首尾空白后
+    /// 非空时带上路径与原样内容，不看模式。超过字节上限或读失败时不带（Node 让压缩失败；这里只影响延续）。
+    pub(crate) async fn post_compact_plan_file(
+        &self,
+        request: &ContextRequest,
+    ) -> Option<AttachmentMessage> {
+        let (path, exists) = self.plan_file(request).await?;
+        if !exists {
+            return None;
+        }
+        let stat = self
+            .ports
+            .files
+            .stat(&request.workspace, StatFile { path: path.clone() })
+            .await;
+        if let Ok(Some(stat)) = &stat
+            && stat.size > PLAN_FILE_REFERENCE_MAX_BYTES
+        {
+            tracing::warn!(
+                size = stat.size,
+                "plan file over the size cap; not referenced after compaction"
+            );
+            return None;
+        }
+        let content = match self
+            .ports
+            .files
+            .read_file(&request.workspace, ReadFile { path: path.clone() })
+            .await
+        {
+            Ok(content) => String::from_utf8_lossy(&content.bytes).into_owned(),
+            Err(error) => {
+                tracing::warn!(%error, "plan file unreadable; not referenced after compaction");
+                return None;
+            }
+        };
+        if content.trim().is_empty() {
+            return None;
+        }
+        let text = plan_file_reference(path.as_str(), &content);
+        let data = json!({ "planFilePath": path.as_str() });
+        Some(self.attachment(PLAN_FILE_REFERENCE, (text, data)))
+    }
+
     /// 压缩附件里的计划模式提醒：模式是 plan 时总是
     /// 一条完整的 `plan_mode`（不看节奏与再次进入）。以前由压缩后下一步的上下文按“边界之后还没发过”补发，
     /// F10 起当步 attachment 只在输入与工具轮之后产生，所以放进压缩附件（compact.md §3.4）。
@@ -202,6 +249,13 @@ impl PromptAssembler {
             }
         }
     }
+}
+
+/// Node `formatPlanFileReference`.
+fn plan_file_reference(path: &str, content: &str) -> String {
+    format!(
+        "A plan file exists from plan mode at: {path}\n\nPlan contents:\n\n{content}\n\nIf this plan is relevant to the current work and not already complete, continue working on it."
+    )
 }
 
 #[cfg(test)]

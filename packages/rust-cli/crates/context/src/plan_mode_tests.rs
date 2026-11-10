@@ -58,6 +58,10 @@ impl ListingSource for Skills {
 }
 
 fn assembler(home: Option<&str>, plan: Option<&str>) -> PromptAssembler {
+    assembler_with(home, plan.map(|path| (path, "# Plan\n")))
+}
+
+fn assembler_with(home: Option<&str>, plan: Option<(&str, &str)>) -> PromptAssembler {
     let facts = EnvFacts {
         cwd: EnvPath::new("/Users/dev/w"),
         platform: "linux".to_owned(),
@@ -68,8 +72,8 @@ fn assembler(home: Option<&str>, plan: Option<&str>) -> PromptAssembler {
         uid: None,
     };
     let mut env = MemoryEnvironment::new(facts);
-    if let Some(path) = plan {
-        env = env.with_file(path, "# Plan\n");
+    if let Some((path, text)) = plan {
+        env = env.with_file(path, text);
     }
     let env = Arc::new(env);
     PromptAssembler::new(
@@ -308,11 +312,15 @@ async fn compaction_attaches_a_full_plan_reminder_in_plan_mode() {
         .await
         .unwrap();
     assert_eq!(
-        restored.first().map(|item| item.source.as_str()),
-        Some(PLAN_MODE)
+        restored
+            .iter()
+            .take(2)
+            .map(|item| item.source.as_str())
+            .collect::<Vec<_>>(),
+        [PLAN_FILE_REFERENCE, PLAN_MODE]
     );
     assert_eq!(
-        restored[0].data,
+        restored[1].data,
         json!({"reminderType": "full", "isSubAgent": false, "planFilePath": PLAN, "planExists": true})
     );
     let restored = assembler
@@ -324,4 +332,51 @@ async fn compaction_attaches_a_full_plan_reminder_in_plan_mode() {
             .iter()
             .all(|item| !item.source.starts_with("plan_mode"))
     );
+}
+
+/// Node `readApprovedPlanFileReferenceEntry`: after compaction the approved plan file is referenced with
+/// its path and raw content, first among the context attachments and in every mode.
+#[tokio::test]
+async fn compaction_references_the_approved_plan_file_in_any_mode() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let plan = "  1. Persist the plan.\n2. Keep it.\n";
+    let assembler = assembler_with(Some("/Users/dev"), Some((PLAN, plan)));
+    let restored = assembler
+        .post_compact(request(PermissionMode::Default, None), &[])
+        .await
+        .unwrap();
+    let first = restored.first().expect("a plan file reference");
+    assert_eq!(first.source, PLAN_FILE_REFERENCE);
+    assert_eq!(first.data, json!({ "planFilePath": PLAN }));
+    let expected = format!(
+        "A plan file exists from plan mode at: {PLAN}\n\nPlan contents:\n\n{plan}\n\nIf this plan is relevant to the current work and not already complete, continue working on it."
+    );
+    assert_eq!(first.text, rust_cli_prompts::reminder::wrap(&expected));
+    assert_eq!(
+        restored
+            .iter()
+            .filter(|item| item.source == PLAN_FILE_REFERENCE)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn compaction_skips_a_missing_blank_or_oversized_plan_file() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let oversized = "x".repeat(20_000 * 4 + 1025);
+    for plan in [None, Some(" \n\t\n"), Some(oversized.as_str())] {
+        let assembler = assembler_with(Some("/Users/dev"), plan.map(|text| (PLAN, text)));
+        let restored = assembler
+            .post_compact(request(PermissionMode::Plan, None), &[])
+            .await
+            .unwrap();
+        assert!(
+            restored
+                .iter()
+                .all(|item| item.source != PLAN_FILE_REFERENCE),
+            "plan file {:?}",
+            plan.map(str::len)
+        );
+    }
 }
