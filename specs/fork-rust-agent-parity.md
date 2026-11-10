@@ -219,6 +219,21 @@ sequenceDiagram
     Adapter-->>App: failed, inputDiscardedOnRestart, inputDisposition
 ```
 
+## Plan mode follows Node 3.17 (inline plan)
+
+Node 3.17 takes the plan as the `plan` parameter of ExitPlanMode (required, trimmed non-empty, at most 20000 UTF-16 code units, optional `allowedPrompts`); the plan file is no longer named to the model. The reminders (`plan_mode` full and sparse, the subagent variant with AskUserQuestion only when visible, `plan_mode_exit`) carry Node's texts byte for byte and never give a plan file path. There is no `plan_mode_reentry` reminder any more: re-entering plan mode gets the ordinary full reminder (old transcripts that contain one still count as an entry for the cadence). ExitPlanMode's approval interaction carries the input plan. After approval the Rust agent writes the raw plan to `<workspace>/.zcode/plans/plan-<session>.md` (write failures are logged, the approval still applies), as Node does for compaction continuity and `/plan`. The policy still lets the model write that file in plan mode (Node's policy has no such exception): a deliberate difference, kept for now.
+
+## SendMessage to a running agent (Node 3.17)
+
+Node 3.17 steers a SendMessage for a running local agent into its active turn (`message-steering.ts`, delivery `steered`) and answers `Message msg_<uuid> was sent to its active turn for local agent <agentId>.`. The Rust mailbox already delivers at the same boundary (the next model request); the tool result text follows Node. A finished agent still resumes in the background as before.
+
+The running child absorbs the message at that boundary in Node's `coordinator_steer` form (`incoming-message.ts`): `The coordinator sent a message while you were working:\n<message>\n\nAddress this before completing your current task.`, as a `<system-reminder>` attachment. Owner: the steer's sender (`Steered.from`, kernel-api `SteerSender`); the child mailbox sets `Coordinator`, the session's queued prompts set `User`, and the query loop picks the wrapper (`query/src/texts.rs`). Acceptance: `query/src/texts_tests.rs`, and the `conversation-session-background` case "running background Agent 可以通过 SendMessage 收到 steer 消息" on Rust.
+
+## Known differences kept on purpose
+
+- **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.
+- **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.
+
 ## Order of work
 
 1. Gap discovery run (all `conversation-session` specs, then settings, ui-shell, plugins).
