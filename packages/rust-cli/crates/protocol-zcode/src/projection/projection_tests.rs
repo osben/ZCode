@@ -21,6 +21,8 @@ mod background_result;
 mod background_shells;
 #[path = "goal_verify_tests.rs"]
 mod goal_verify;
+#[path = "guided_steer_tests.rs"]
+mod guided_steer;
 #[path = "model_change_tests.rs"]
 mod model_change;
 #[path = "subagent_rows_tests.rs"]

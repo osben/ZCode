@@ -11,6 +11,10 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::test_more::{Ctx, TextEnv, output_text};
 
+fn ids() -> Arc<dyn Ids> {
+    Arc::new(rust_cli_kernel_api::testing::SequentialIds::default())
+}
+
 const PLAN: &str = "# Plan\n1. do it";
 
 fn approve(mode: PermissionMode) -> rust_cli_kernel_api::orchestration::Answer {
@@ -58,7 +62,7 @@ async fn entering_plan_mode_only_turns_the_plan_switch_on() {
 fn plan_tools_are_deferred_and_interactive_only() {
     for tool in [
         Arc::new(EnterPlanModeTool::new(false)) as Arc<dyn Tool>,
-        Arc::new(ExitPlanModeTool::new(false)),
+        Arc::new(ExitPlanModeTool::new(false, ids())),
     ] {
         assert!(tool.should_defer());
         assert!(!tool.is_enabled());
@@ -103,7 +107,7 @@ async fn approving_the_plan_only_turns_the_plan_switch_off() {
     let interactions = Arc::new(ScriptedInteractions::new([approve(
         PermissionMode::AcceptEdits,
     )]));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let context = plan_context(interactions.clone()).build();
     assert_eq!(
         tool.validate_input(&json!({"plan": PLAN}), &context).await,
@@ -126,7 +130,7 @@ async fn approving_the_plan_only_turns_the_plan_switch_off() {
 /// Node 3.17 `ExitPlanModeInputSchema`：`plan` 必填、去掉首尾空白后非空、最多 20000 个字符。
 #[tokio::test]
 async fn the_plan_input_is_validated_like_node() {
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let context = plan_context(Arc::new(ScriptedInteractions::default())).build();
     let invalid = |message: &str| Validation::Invalid {
         message: message.to_owned(),
@@ -186,7 +190,7 @@ async fn the_approved_text_carries_the_trimmed_plan() {
     let interactions = Arc::new(ScriptedInteractions::new([approve(
         PermissionMode::Default,
     )]));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let (progress, _) = mpsc::channel(1);
     let output = tool
         .call(
@@ -200,28 +204,41 @@ async fn the_approved_text_carries_the_trimmed_plan() {
     assert_eq!(interactions.plans(), [false]);
 }
 
+/// Node 3.17 `withPlanExitDeniedTurnStop`: the result is the denial text alone; the feedback follows the result as a
+/// guided steer (`plan_approval_feedback`) and the mode stays on.
 #[tokio::test]
-async fn keep_planning_rejects_with_the_feedback_and_keeps_the_mode() {
+async fn keep_planning_steers_the_feedback_after_the_denial() {
     let feedback = PlanApprovalAnswer::KeepPlanning {
-        feedback: Some("add tests".to_owned()),
+        feedback: Some("  add tests ".to_owned()),
     };
     let interactions = Arc::new(ScriptedInteractions::new([
         rust_cli_kernel_api::orchestration::Answer::from(feedback),
     ]));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let (progress, _) = mpsc::channel(1);
-    let output = tool
-        .call(
+    let called = tool
+        .call_with_messages(
             json!({"plan": PLAN}),
             plan_context(interactions.clone()).build(),
             progress,
         )
         .await
         .unwrap();
-    assert!(output.is_error);
+    assert!(called.output.is_error);
+    assert_eq!(output_text(&called.output), EXIT_PLAN_DENIED);
+    assert!(!called.stop_turn);
+    let [Message::Attachment(steer)] = called.new_messages.as_slice() else {
+        panic!("one steer attachment: {:?}", called.new_messages);
+    };
+    assert_eq!(steer.source, queued_command::SOURCE);
+    assert_eq!(queued_command::guided(steer), Some(("add tests", None)));
     assert_eq!(
-        output_text(&output),
-        format!("{REJECT_WITH_REASON}add tests")
+        steer.data[queued_command::STEER_SOURCE_KEY],
+        queued_command::PLAN_APPROVAL_FEEDBACK
+    );
+    assert_eq!(
+        steer.text,
+        queued_command::steer_text("add tests", SteerSender::User)
     );
     assert!(interactions.plans().is_empty());
 }
@@ -242,7 +259,7 @@ async fn a_decline_without_feedback_ends_the_turn() {
         let interactions = Arc::new(ScriptedInteractions::new([
             rust_cli_kernel_api::orchestration::Answer::from(answer),
         ]));
-        let tool = ExitPlanModeTool::new(true);
+        let tool = ExitPlanModeTool::new(true, ids());
         let (progress, _) = mpsc::channel(1);
         let called = tool
             .call_with_messages(
@@ -259,7 +276,7 @@ async fn a_decline_without_feedback_ends_the_turn() {
 
 #[tokio::test]
 async fn exit_outside_plan_mode_is_invalid() {
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let context = Ctx::new(Arc::new(ScriptedInteractions::default())).build();
     assert_eq!(
         tool.validate_input(&json!({"plan": PLAN}), &context).await,
@@ -277,7 +294,7 @@ async fn a_subagent_plan_is_approved_without_touching_the_session_mode() {
     )]));
     let mut context = plan_context(interactions.clone());
     context.agent = Some(AgentId::new("a1"));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let (progress, _) = mpsc::channel(1);
     let output = tool
         .call(json!({"plan": PLAN}), context.build(), progress)

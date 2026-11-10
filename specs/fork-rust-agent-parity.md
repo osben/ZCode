@@ -223,6 +223,27 @@ sequenceDiagram
 
 Node 3.17 takes the plan as the `plan` parameter of ExitPlanMode (required, trimmed non-empty, at most 20000 UTF-16 code units, optional `allowedPrompts`); the plan file is no longer named to the model. The reminders (`plan_mode` full and sparse, the subagent variant with AskUserQuestion only when visible, `plan_mode_exit`) carry Node's texts byte for byte and never give a plan file path. There is no `plan_mode_reentry` reminder any more: re-entering plan mode gets the ordinary full reminder (old transcripts that contain one still count as an entry for the cadence). ExitPlanMode's approval interaction carries the input plan. After approval the Rust agent writes the raw plan to `<workspace>/.zcode/plans/plan-<session>.md` (write failures are logged, the approval still applies), as Node does for compaction continuity and `/plan`. The policy still lets the model write that file in plan mode (Node's policy has no such exception): a deliberate difference, kept for now.
 
+## Guided steer rows and plan-approval feedback (Node 3.17)
+
+Node shows every input it drains into a running turn with delivery `guide` as a `userInput` row inside that turn: origin `realUser`, `guided: true`, `sourceCommandId` the steer's command (else its pending input id), `clientId` when known (`product-projection.ts`, drain). The cold path inlines it too (`metadata.turnSteerDelivery: "guide"`, `transcript-hydration.ts`), so a reload does not split the turn. The model sees the steer in the `user_steer` wrapper as a mid-turn attachment.
+
+A denied ExitPlanMode with custom feedback (`turn-control.ts` `withPlanExitDeniedTurnStop`) answers the tool call with `The plan was not approved by the user.` and steers the feedback into the running turn (`source: "plan_approval_feedback"`, delivery `guide`); the turn continues. A denial without feedback still ends the turn after the result.
+
+Rust:
+
+- Owner of the stored fact: the `queued_command` attachment (`commandMode: prompt`) that the query loop commits when it absorbs a steer at a tool boundary (no new stored format; the Node build already reads these attachments). Its `data` now also carries `sourceCommandId` (the absorbed command) for a typed steer, or `steerSource: "plan_approval_feedback"` for plan feedback. The model text is unchanged (the `user_steer` wrapper, kernel-api `queued_command::steer_text`).
+- Projection (live `MessageDone` and cold, one function `rows.rs` `message`): such an attachment becomes a `userInput` row in the current turn: `text` the raw prompt, origin `realUser`, `guided: true`, `sourceCommandId` and `rootSourceCommandId` the stored command (the attachment id when none), `clientId` from the input facts when known. It never opens a turn. An attachment without either key (older transcripts, a coordinator steer into a subagent) shows no row, as before.
+- ExitPlanMode feedback: the tool result is Node's denial text (an error result) and the tool's follow-up message is the feedback as such an attachment (`steerSource: "plan_approval_feedback"`), committed right after the tool result (`ToolCallOutput::new_messages`). The feedback is no longer inside the tool result.
+- Not ported: Node lets a guided row be edited like a typed input (canonical user row target); Rust rows offer no actions.
+
+Event order (one session actor): tool results commit, then the tool's follow-up messages (plan feedback), then absorbed steers; each commit emits `MessageDone` and the projection upserts the guided row. The next model request carries the tool result first and the steer after it.
+
+Acceptance:
+
+- Projection: for [prompt, assistant tool_use, tool result, guided attachment, assistant] the live and cold rows match, there is one turn, and the guided row is `realUser` with `guided: true` and its own `sourceCommandId`; an attachment without the keys shows no row.
+- Tools: a denied ExitPlanMode with feedback returns Node's denial text without the feedback and one follow-up attachment with the feedback and `steerSource`; without feedback the turn stops.
+- E2E (when allowed): `plan-approval-feedback-user-message`, `running-guide-steer`, `background-guide-steer` and `turn-steer-probe` on both runtimes; the gate's queue and steer specs stay green.
+
 ## SendMessage to a running agent (Node 3.17)
 
 Node 3.17 steers a SendMessage for a running local agent into its active turn (`message-steering.ts`, delivery `steered`) and answers `Message msg_<uuid> was sent to its active turn for local agent <agentId>.`. The Rust mailbox already delivers at the same boundary (the next model request); the tool result text follows Node. A finished agent still resumes in the background as before.
@@ -261,7 +282,7 @@ Node writes workspace files with `atomic: true` (every caller: Write, Edit, appl
 ## Open gaps (not yet ported)
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
-- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port: `plan-approval-feedback-user-message` (Node's denial text `The plan was not approved by the user.` with the feedback as a follow-up user message), `plan-file-compact-continuity` (post-compact `plan_file_reference`), `plan-mode-mcp-permission` (no permission dialog for non-destructive MCP), `plan-session-switch-restore` (no ExitPlanMode block after switching back).
+- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port (`plan-approval-feedback-user-message` is addressed by "Guided steer rows and plan-approval feedback", not yet run on E2E): `plan-file-compact-continuity` (post-compact `plan_file_reference`), `plan-mode-mcp-permission` (no permission dialog for non-destructive MCP), `plan-session-switch-restore` (no ExitPlanMode block after switching back).
 
 ## Order of work
 

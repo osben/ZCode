@@ -7,9 +7,14 @@
 //! Node 3.17：计划是 ExitPlanMode 的 `plan` 参数（不再从计划文件读）。批准后把它写到计划文件，供压缩后的
 //! 续接与 `/plan` 使用（Node `persistApprovedPlanFileBeforeExitPlanMode`）。
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::env::{EnvPath, WritePrecondition};
 use rust_cli_kernel_api::env_files::PutFile;
+use rust_cli_kernel_api::hooks::{SteerSender, queued_command};
+use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::orchestration::{InteractionRequest, PlanApprovalAnswer};
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
 use rust_cli_kernel_api::plan::PlanFiles;
@@ -21,7 +26,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::ask_user_question::user_interaction;
-use crate::pipeline::{REJECT_MESSAGE, REJECT_WITH_REASON, rejected};
+use crate::pipeline::{REJECT_MESSAGE, rejected};
 use crate::texts_more as texts;
 use rust_cli_kernel_api::tool::{failed, text};
 use rust_cli_kernel_api::tool_names;
@@ -146,16 +151,23 @@ impl Tool for EnterPlanModeTool {
     }
 }
 
+/// Node's tool result for a plan declined with feedback (`turn-control.ts`): the feedback follows as a steer, so the
+/// result does not repeat it or promise it.
+pub(crate) const EXIT_PLAN_DENIED: &str = "The plan was not approved by the user.";
+
 pub struct ExitPlanModeTool {
     definition: Definition,
     interactive: bool,
+    /// The message id of the feedback steer.
+    ids: Arc<dyn Ids>,
 }
 
 impl ExitPlanModeTool {
-    pub fn new(interactive: bool) -> Self {
+    pub fn new(interactive: bool, ids: Arc<dyn Ids>) -> Self {
         Self {
             definition: rust_cli_prompts::definition(EXIT).clone(),
             interactive,
+            ids,
         }
     }
 }
@@ -286,7 +298,8 @@ impl Tool for ExitPlanModeTool {
     }
 
     /// Node's `withPlanExitDeniedTurnStop`: a decline without feedback ends the turn after the result, so the model
-    /// does not rewrite the plan on its own; feedback keeps the turn going.
+    /// does not rewrite the plan on its own. Feedback keeps the turn going: the result is Node's denial text and the
+    /// feedback follows it as a guided steer (`plan_approval_feedback`), a user row in the running turn.
     async fn call_with_messages(
         &self,
         input: Value,
@@ -313,7 +326,17 @@ impl Tool for ExitPlanModeTool {
             Some(PlanApprovalAnswer::KeepPlanning {
                 feedback: Some(feedback),
             }) if !feedback.trim().is_empty() => {
-                return Ok(done(rejected(format!("{REJECT_WITH_REASON}{feedback}"))));
+                let steer = queued_command::steer_attachment(
+                    self.ids.message(),
+                    feedback.trim(),
+                    SteerSender::User,
+                    None,
+                    Some(queued_command::PLAN_APPROVAL_FEEDBACK),
+                );
+                return Ok(ToolCallOutput {
+                    new_messages: vec![Message::Attachment(steer)],
+                    ..done(rejected(EXIT_PLAN_DENIED.to_owned()))
+                });
             }
             Some(PlanApprovalAnswer::KeepPlanning { .. }) | None => {
                 return Ok(ToolCallOutput {

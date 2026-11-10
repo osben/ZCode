@@ -124,8 +124,8 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             Message::System(SystemMessage::CompactBoundary(boundary)) => {
                 projection.compacted(boundary.trigger, boundary.pre_tokens, at, &mut out);
             }
-            // 附件不投成行（P1）。
-            Message::Attachment(_) => {}
+            // 附件不投成行（P1）; fork: an absorbed steer is a guided user row of the current turn (rows.rs).
+            Message::Attachment(_) => projection.message(message, at, 0, &mut out),
         }
     }
     projection.seed_turn_model(turns);

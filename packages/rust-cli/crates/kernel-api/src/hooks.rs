@@ -288,6 +288,9 @@ pub struct Steered {
     pub after: Vec<Message>,
     /// Who sent it; picks the mid-turn wrapper (Node `user_steer` / `coordinator_steer`).
     pub from: SteerSender,
+    /// Fork: the absorbed queued command, stored on its `queued_command` attachment so the projection shows the steer
+    /// as a guided user row with that command (Node's drained guide row). None for a coordinator steer.
+    pub command: Option<String>,
 }
 
 /// The sender of a mid-turn steer.
@@ -306,6 +309,7 @@ impl Steered {
             text,
             after: Vec::new(),
             from: SteerSender::User,
+            command: None,
         }
     }
 
@@ -315,6 +319,7 @@ impl Steered {
             text,
             after: Vec::new(),
             from: SteerSender::Coordinator,
+            command: None,
         }
     }
 }
@@ -332,6 +337,79 @@ pub mod queued_command {
     pub const PROMPT_MODE: &str = "prompt";
     /// 后台通知的模式；通知开的回合里 meta user 消息的来源也是它（会话 actor 与子代理的续跑）。
     pub const TASK_NOTIFICATION: &str = "task-notification";
+    /// Fork: the `data` key of the absorbed command of a typed steer.
+    pub const COMMAND_KEY: &str = "sourceCommandId";
+    /// Fork: the `data` key of a steer that no command carries (Node `TurnSteerSource`).
+    pub const STEER_SOURCE_KEY: &str = "steerSource";
+    /// Fork: the steer source of ExitPlanMode feedback (Node `plan_approval_feedback`).
+    pub const PLAN_APPROVAL_FEEDBACK: &str = "plan_approval_feedback";
+
+    use serde_json::{Map, Value, json};
+
+    use super::SteerSender;
+    use crate::ids::MessageId;
+    use crate::message::AttachmentMessage;
+
+    /// The model text of a steer absorbed mid-turn: Node's `user_steer` / `coordinator_steer` wrapper
+    /// (`incoming-message.ts`, product name ZCode) inside `<system-reminder>`.
+    pub fn steer_text(prompt: &str, from: SteerSender) -> String {
+        rust_cli_base::reminder::wrap(&match from {
+            SteerSender::User => format!(
+                "The user sent a new message while you were working:\n{prompt}\n\nThis is how ZCode surfaces messages the user sends mid-turn \u{2014} within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn."
+            ),
+            SteerSender::Coordinator => format!(
+                "The coordinator sent a message while you were working:\n{prompt}\n\nAddress this before completing your current task."
+            ),
+        })
+    }
+
+    /// The `queued_command` attachment (`commandMode: prompt`) of an absorbed steer. `command` is the queued command a
+    /// typed steer came from; `steer_source` names a steer without a command (plan feedback). With either, the
+    /// projection shows it as a guided user row.
+    pub fn steer_attachment(
+        id: MessageId,
+        prompt: &str,
+        from: SteerSender,
+        command: Option<&str>,
+        steer_source: Option<&str>,
+    ) -> AttachmentMessage {
+        let mut data = Map::new();
+        data.insert(PROMPT_KEY.to_owned(), json!(prompt));
+        data.insert(MODE_KEY.to_owned(), json!(PROMPT_MODE));
+        if let Some(command) = command {
+            data.insert(COMMAND_KEY.to_owned(), json!(command));
+        }
+        if let Some(source) = steer_source {
+            data.insert(STEER_SOURCE_KEY.to_owned(), json!(source));
+        }
+        AttachmentMessage {
+            id,
+            source: SOURCE.to_owned(),
+            text: steer_text(prompt, from),
+            data: Value::Object(data),
+        }
+    }
+
+    /// A steer the user sees as a guided user row: its prompt and the command it came from. None for other
+    /// attachments, notifications, coordinator steers and steers stored before the keys existed.
+    pub fn guided(attachment: &AttachmentMessage) -> Option<(&str, Option<&str>)> {
+        if attachment.source != SOURCE
+            || attachment.data.get(MODE_KEY).and_then(Value::as_str) != Some(PROMPT_MODE)
+        {
+            return None;
+        }
+        let command = attachment.data.get(COMMAND_KEY).and_then(Value::as_str);
+        let sourced = attachment
+            .data
+            .get(STEER_SOURCE_KEY)
+            .and_then(Value::as_str)
+            .is_some();
+        if command.is_none() && !sourced {
+            return None;
+        }
+        let prompt = attachment.data.get(PROMPT_KEY).and_then(Value::as_str)?;
+        Some((prompt, command))
+    }
 }
 
 /// 工具边界并入的一条通知。

@@ -180,8 +180,43 @@ impl Projection {
                     current.response = None;
                 }
             }
-            // 工具结果、meta 输入与中断标记（user）、附件与 system 消息不投成行（P1）。
-            Message::User(_) | Message::Attachment(_) | Message::System(_) => {}
+            // Fork: a steer absorbed into the running turn is a guided user row inside it (Node's drained guide row).
+            Message::Attachment(attachment) => {
+                let Some((prompt, command)) =
+                    rust_cli_kernel_api::hooks::queued_command::guided(attachment)
+                else {
+                    return;
+                };
+                let Some(turn) = self.turn.clone() else {
+                    return;
+                };
+                let key = format!("user:{}", attachment.id.as_str());
+                if self.index.contains_key(&key) {
+                    return;
+                }
+                let command = command.unwrap_or(attachment.id.as_str()).to_owned();
+                let mut row = self.base(
+                    &turn.id,
+                    attachment.id.as_str(),
+                    RowKind::UserInput,
+                    now,
+                    seq,
+                );
+                row.insert("text".into(), json!(prompt));
+                row.insert("origin".into(), json!("realUser"));
+                row.insert("guided".into(), json!(true));
+                row.insert("sourceCommandId".into(), json!(command));
+                row.insert("rootSourceCommandId".into(), json!(command));
+                if let Some(meta) = self.inputs.get(&command) {
+                    if let Some(origin) = &meta.origin {
+                        row.insert("inputOrigin".into(), json!(origin));
+                    }
+                    row.insert("clientId".into(), json!(meta.client));
+                }
+                self.append(key, row, out);
+            }
+            // 工具结果、meta 输入与中断标记（user）与 system 消息不投成行（P1）。
+            Message::User(_) | Message::System(_) => {}
         }
     }
 

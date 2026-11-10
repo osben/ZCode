@@ -1,5 +1,6 @@
-use super::queued_prompt;
+// The wrapper moved to kernel-api (`queued_command::steer_text`); the query loop commits it at tool boundaries.
 use rust_cli_kernel_api::hooks::SteerSender;
+use rust_cli_kernel_api::hooks::queued_command::steer_text as queued_prompt;
 
 #[test]
 fn a_coordinator_steer_uses_the_node_coordinator_wrapper() {

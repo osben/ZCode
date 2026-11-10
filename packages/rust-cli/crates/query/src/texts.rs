@@ -1,9 +1,7 @@
 //! 主循环里给模型看的固定文本。
 //! L2 的 prompts 数据加载就绪后迁到 `prompts/`。
 
-use rust_cli_kernel_api::hooks::SteerSender;
 use rust_cli_kernel_api::model::ModelError;
-use rust_cli_prompts::reminder;
 
 /// 中断文本（kernel-api 的定义，F55：以前各 crate 各写一份）。
 pub(crate) const INTERRUPT_MESSAGE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[0];
@@ -49,20 +47,6 @@ pub(crate) fn output_limit_exhausted(max_tokens: u32) -> String {
 /// D7 暂定，修复线 F113）。
 pub(crate) const CONTEXT_WINDOW_EXHAUSTED: &str =
     "API Error: The model has reached its context window limit.";
-
-/// 工具边界并入的插话（human 来源的格式，
-/// 工作中收到消息的前缀在前；产品名按替换表换成 ZCode），外面包 `<system-reminder>`。
-/// A steer from the parent agent follows Node's `coordinator_steer` (`incoming-message.ts`).
-pub(crate) fn queued_prompt(prompt: &str, from: SteerSender) -> String {
-    reminder::wrap(&match from {
-        SteerSender::User => format!(
-            "The user sent a new message while you were working:\n{prompt}\n\nThis is how ZCode surfaces messages the user sends mid-turn \u{2014} within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn."
-        ),
-        SteerSender::Coordinator => format!(
-            "The coordinator sent a message while you were working:\n{prompt}\n\nAddress this before completing your current task."
-        ),
-    })
-}
 
 /// 断流续写的提示：主线程与子代理。
 pub(crate) const TRUNCATED_NUDGE: &str = "Your response above was cut off mid-stream. Resume directly from where it stops \u{2014} no apology, no recap. If none of it survived, answer the request from the start.";
