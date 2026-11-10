@@ -265,3 +265,55 @@ async fn manual_compact_with_an_initial_gap_keeps_no_tail() {
     let ids: Vec<&str> = sent[0].messages.iter().map(|m| m.id().as_str()).collect();
     assert_eq!(&ids[..8], ["u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4"]);
 }
+
+/// Context that excludes one file from the restore (Node `excludedPaths`).
+struct Excluding(&'static str);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::compaction::PostCompactContext for Excluding {
+    async fn post_compact(
+        &self,
+        _request: rust_cli_kernel_api::orchestration::ContextRequest,
+        _kept: &[Message],
+    ) -> Result<
+        Vec<rust_cli_kernel_api::message::AttachmentMessage>,
+        rust_cli_kernel_api::orchestration::OrchestrationError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn restore_exclusions(
+        &self,
+        _request: &rust_cli_kernel_api::orchestration::ContextRequest,
+    ) -> Vec<String> {
+        vec![self.0.to_owned()]
+    }
+}
+
+#[tokio::test]
+async fn files_the_context_excludes_are_not_reread() {
+    let runner = ScriptedRunner::new(vec![summary("S")]);
+    let read = Arc::new(FakeTool::new("Read", true, "     1\tfn main() {}"));
+    let files = FakeFileStates::with(&["/Users/dev/project/b.rs", "/Users/dev/project/a.rs"]);
+    let mut ports = ports_with_files(runner, Arc::new(ListTools(vec![read])), files);
+    ports.context = Arc::new(Excluding("/Users/dev/project/b.rs"));
+    let history = vec![human("u1", "edit things"), reply("a_end", "done", None)];
+    let result = Engine { ports: &ports }
+        .run(
+            &request(history, CompactTrigger::Manual),
+            true,
+            &CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let restored: Vec<&str> = result
+        .restored
+        .iter()
+        .filter_map(|m| match m {
+            Message::Attachment(attachment) => attachment.data["filename"].as_str(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(restored, ["/Users/dev/project/a.rs"]);
+}

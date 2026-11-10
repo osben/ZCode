@@ -10,7 +10,7 @@ fn candidates_skip_files_read_in_the_kept_tail_and_cap_at_five() {
     let kept: Vec<Message> = tool_round(6, "Read", "/w/6.rs").to_vec();
     let kept_refs: Vec<&Message> = kept.iter().collect();
     assert_eq!(
-        candidates(&recent, &kept_refs, None),
+        candidates(&recent, &kept_refs, &[]),
         ["/w/5.rs", "/w/4.rs", "/w/3.rs", "/w/2.rs", "/w/1.rs"]
     );
 }
@@ -23,7 +23,7 @@ fn candidates_skip_the_plan_file_before_the_cap() {
         .map(str::to_owned)
         .to_vec();
     assert_eq!(
-        candidates(&recent, &[], Some(plan)),
+        candidates(&recent, &[], &[plan.to_owned()]),
         ["/w/a", "/w/b", "/w/c", "/w/d", "/w/e"]
     );
 }
@@ -41,7 +41,7 @@ fn candidates_skip_memory_plan_draft_and_git_paths() {
     .map(str::to_owned)
     .to_vec();
     assert_eq!(
-        candidates(&recent, &[], None),
+        candidates(&recent, &[], &[]),
         ["/w/a", "/w/gitignore/.gitkeep"]
     );
 }
@@ -121,6 +121,7 @@ async fn one_reread_carries_one_run_and_one_operation() {
         .files(
             &request,
             &["/w/a.rs".to_owned()],
+            &[],
             &[],
             &tokio_util::sync::CancellationToken::new(),
         )

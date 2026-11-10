@@ -293,12 +293,13 @@ Rust used to send only the plan-mode reminder (and only in plan mode), so after 
 
 - Owner: context (`PromptAssembler::post_compact_parts`), the first entry of its post-compact attachments; the compact engine already places file restore before them. The path is `PlanFiles::in_workspace(..).path(agent)`, the same path ExitPlanMode writes.
 - Read: `stat` for kind and size, then `read_file`; content is the raw bytes, decoded as UTF-8 (lossy), not trimmed. Not found, not a regular file, or blank after trimming → no attachment. Larger than the byte cap or a read error → no attachment and a `warn` (Node fails the compact; Rust keeps the compact because the attachment is only continuity). Data: `{ "planFilePath": <path> }`.
-- File restore skips the plan file, like Node (`restorePostCompactFiles` `excludedPaths`), so a plan the model Read is not sent twice. The path comes from the machine's path facts; without them nothing is excluded. Node's path skips (`/.codex/memories/`, `/docs/superpowers/plans/`, `/.git/`, either separator) apply too; its `MEMORY.md` and instruction-file exclusions are not ported yet. The exclusion is applied before the five-file cap, as in Node.
+- File restore skips what Node's `restorePostCompactFiles` excludes (`excludedPaths`), so nothing already in the context is sent twice: the plan file, the instruction files in the context prefix, and the auto-memory `MEMORY.md`. Owner of the list: context (`PostCompactContext::restore_exclusions`; plan file from `PlanFiles`, instruction files from the rule cache of the window being compacted, `MEMORY.md` under the configured memory dir); the compact engine asks for it before choosing files, for subagents too. A context without the method excludes nothing. Node's path skips (`/.codex/memories/`, `/docs/superpowers/plans/`, `/.git/`, either separator) apply too. Paths are compared as stored (Node normalizes them first). The exclusions apply before the five-file cap, as in Node.
 
 Acceptance:
 
 - Context unit tests: an existing plan file yields the attachment with Node's text first among the post-compact attachments, in default mode too; a missing file, a blank file and a file over the cap yield none; in plan mode the plan reminder follows the reference.
-- Compact unit tests: the plan file and the skipped paths are not restore candidates and do not take one of the five places.
+- Compact unit tests: excluded and skipped paths are not restore candidates and do not take one of the five places; the engine passes the context's exclusions to file restore.
+- Context unit test: the exclusions list the plan file, the loaded instruction files and `MEMORY.md`.
 - E2E (when allowed): `conversation-session-plan-file-compact-continuity` on both runtimes.
 
 ## SendMessage to a running agent (Node 3.17)

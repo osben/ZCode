@@ -10,6 +10,9 @@ use rust_cli_kernel_api::compaction::PostCompactContext;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::{ContextRequest, OrchestrationError};
 
+use rust_cli_kernel_api::env_files::PathStyle;
+use rust_cli_memory::entrypoint::ENTRYPOINT;
+
 use crate::system::AGENT_TOOL;
 use crate::{PromptAssembler, announce, environment, invoked, listings, mcp};
 
@@ -92,5 +95,24 @@ impl PostCompactContext for PromptAssembler {
         kept: &[Message],
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
         self.post_compact_parts(request, Some(history), kept).await
+    }
+
+    async fn restore_exclusions(&self, request: &ContextRequest) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some((plan, _)) = self.plan_file(request).await {
+            out.push(plan.as_str().to_owned());
+        }
+        if let Some(files) = self.rules.current(&request.session) {
+            out.extend(files.iter().map(|file| file.path.clone()));
+        }
+        if let Some(dir) = &self.config.memory_dir
+            && let Some(facts) = self.facts(request).await
+        {
+            let style = PathStyle::of_platform(&facts.platform);
+            out.push(style.join(dir.trim_end_matches(['/', '\\']), &[ENTRYPOINT]));
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 }

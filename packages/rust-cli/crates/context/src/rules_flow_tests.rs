@@ -284,3 +284,37 @@ async fn a_shell_cd_announces_the_new_working_directory() {
         next[0].text
     );
 }
+
+/// Node `restorePostCompactFiles` `excludedPaths`: the plan file, the instruction files in the context
+/// prefix and the auto-memory `MEMORY.md` are not restored after a compact.
+#[tokio::test]
+async fn the_restore_exclusions_list_the_files_already_in_the_context() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let env = Arc::new(environment());
+    let mut config = ContextConfig::new(Surface::Print);
+    config.memory_dir = Some("/Users/dev/.zcode/memory/".to_owned());
+    let context = PromptAssembler::new(
+        ContextPorts {
+            info: env.clone(),
+            files: env.clone(),
+            shell: env.clone(),
+            git: env,
+            clock: Arc::new(FixedClock(1_792_224_000_000)),
+            ids: Arc::new(SequentialIds::default()),
+            listings: Arc::new(NoListings),
+        },
+        config,
+    );
+    let mut history = vec![human()];
+    step(&context, &mut history).await;
+    assert_eq!(
+        context.restore_exclusions(&request()).await,
+        [
+            "/Users/dev/.zcode/AGENTS.md",
+            "/Users/dev/.zcode/memory/MEMORY.md",
+            "/Users/dev/w/.zcode/plans/plan-s.md",
+            "/Users/dev/w/AGENTS.md",
+            "/Users/dev/w/docs/style.md",
+        ]
+    );
+}

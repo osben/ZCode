@@ -417,6 +417,12 @@ pub trait PostCompactContext: Send + Sync {
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
         self.post_compact(request, kept).await
     }
+
+    /// 压缩后重读文件时要跳过的路径（Node `restorePostCompactFiles` 的 `excludedPaths`）：已在上下文里的计划文件、
+    /// 规则文件与 MEMORY.md。缺省为空。
+    async fn restore_exclusions(&self, _request: &ContextRequest) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

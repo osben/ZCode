@@ -9,13 +9,12 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::controller_services::ControllerServices;
-use rust_cli_kernel_api::env::{EnvPath, Operations, Origin};
+use rust_cli_kernel_api::env::{Operations, Origin};
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::message::{AttachmentMessage, ContentBlock, Message, ToolResultContent};
 use rust_cli_kernel_api::orchestration::{CompactRequest, ToolRegistry};
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::plan::PlanFiles;
 use rust_cli_kernel_api::store::ArtifactStore;
 use rust_cli_kernel_api::tool::ToolUseContext;
 use rust_cli_prompts::compact as texts;
@@ -78,19 +77,13 @@ fn skipped_path(path: &str) -> bool {
         .any(|part| path.contains(part))
 }
 
-/// 要重读的文件：readFileState 的复制品，最近的在前；去掉保留尾段里 Read 过的与 `excluded`（计划文件，
+/// 要重读的文件：readFileState 的复制品，最近的在前；去掉保留尾段里 Read 过的与 `excluded`（context 给的
 /// Node `excludedPaths`），最多 5 个。先排除再截取，与 Node 一致。
-pub(crate) fn candidates(
-    recent: &[String],
-    kept: &[&Message],
-    excluded: Option<&str>,
-) -> Vec<String> {
+pub(crate) fn candidates(recent: &[String], kept: &[&Message], excluded: &[String]) -> Vec<String> {
     let kept = kept_reads(kept);
     recent
         .iter()
-        .filter(|path| {
-            !kept.contains(*path) && Some(path.as_str()) != excluded && !skipped_path(path)
-        })
+        .filter(|path| !kept.contains(*path) && !excluded.contains(*path) && !skipped_path(path))
         .take(MAX_FILES)
         .cloned()
         .collect()
@@ -165,32 +158,18 @@ impl Restore<'_> {
         (tokens::rough(&text) <= FILE_BUDGET).then_some(text)
     }
 
-    /// 本会话的计划文件（ExitPlanMode 写的位置）；拿不到路径事实时为 None，什么都不排除。
-    async fn plan_file(&self, request: &CompactRequest) -> Option<EnvPath> {
-        let facts = self
-            .machine
-            .info()
-            .path_facts(&request.workspace)
-            .await
-            .ok()?;
-        Some(
-            PlanFiles::in_workspace(&facts, &request.workspace.root, &request.session)?
-                .path(request.agent.as_ref()),
-        )
-    }
-
     /// 文件附件，最近的在前；总量超出预算的跳过（按顺序累计）。`recent` 是清空前的 readFileState。
     pub(crate) async fn files(
         &self,
         request: &CompactRequest,
         recent: &[String],
         kept: &[&Message],
+        excluded: &[String],
         cancel: &CancellationToken,
     ) -> Vec<AttachmentMessage> {
         let mut out = Vec::new();
         let mut used = 0;
-        let plan = self.plan_file(request).await;
-        for path in candidates(recent, kept, plan.as_ref().map(EnvPath::as_str)) {
+        for path in candidates(recent, kept, excluded) {
             let Some(result) = self.read(request, &path, cancel).await else {
                 continue;
             };
