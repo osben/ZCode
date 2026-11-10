@@ -347,6 +347,7 @@ fn provider_and_failover_types_round_trip() {
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: None,
+            host: None,
         }],
         default: Some(ModelSelection {
             reasoning: Some("high".to_owned()),

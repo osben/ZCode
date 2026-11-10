@@ -17,7 +17,31 @@ use crate::context::Context;
 use crate::index::{Summary, Topics};
 use crate::projection::state::{Followup, Phase};
 use crate::projection::{InputMeta, Projection};
+use crate::telemetry::{Observed, Provider, Role, Telemetry};
 use crate::wire::Purpose;
+
+/// Fork: the session ID prefix of a subagent's child session (node-store `NodeIds::subagent`).
+const SUBAGENT_SESSION_PREFIX: &str = "sess_subagent_";
+
+/// Fork: the selected model as the telemetry facts name it (crate::telemetry).
+fn provider_of(projection: &Projection) -> Provider {
+    use rust_cli_kernel_api::provider::WireProtocol;
+    let (selection, _, _) = projection.current_config();
+    let entry = projection.catalog_entry();
+    Provider {
+        provider: selection.provider,
+        model: selection.model,
+        kind: entry.map(|entry| {
+            match entry.protocol {
+                WireProtocol::AnthropicMessages => "anthropic",
+                WireProtocol::OpenAiChatCompletions => "openai-compatible",
+                WireProtocol::OpenAiResponses => "openai-responses",
+            }
+            .to_owned()
+        }),
+        host: entry.and_then(|entry| entry.host.clone()),
+    }
+}
 
 pub const CONVERSATION_PREFIX: &str = "conversation/";
 
@@ -34,13 +58,25 @@ struct State {
     watcher: Option<rust_cli_base::Task<()>>,
     /// Fork: an event that can change the background ledger was projected; the next flush re-reads it.
     shells_dirty: bool,
+    /// Fork: the conversation telemetry facts (crate::telemetry); None for a subagent's child session, whose facts
+    /// the parent reports from the child's live run.
+    telemetry: Option<Telemetry>,
+    /// Fork: the telemetry of the subagent children whose live runs are read, with their own fact counters.
+    children: std::collections::HashMap<String, (Telemetry, u64, rust_cli_base::Task<()>)>,
+    /// Fork: facts waiting for the next write, in order.
+    facts: Vec<Value>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
 struct Outgoing {
     frames: Vec<(String, (u64, u64), Value)>,
     summary: Option<Value>,
+    facts: Vec<Value>,
 }
+
+/// Fork: starts reading a subagent child's live run for the parent's telemetry (set by the server, which owns the
+/// spawner); None when the kernel keeps no live run for it.
+pub(crate) type ChildWatch = dyn Fn(&str) -> Option<rust_cli_base::Task<()>> + Send + Sync;
 
 pub struct Live {
     context: Arc<Context>,
@@ -57,6 +93,8 @@ pub struct Live {
     /// Fork: the queue items a `sendQueuedNow` is promoting (Node `reserveQueueItem`): a second promotion of the
     /// same item is refused instead of preempting the turn the first one started.
     promotions: crate::reservations::Reservations,
+    /// Fork: see [`ChildWatch`].
+    child_watch: std::sync::OnceLock<Box<ChildWatch>>,
 }
 
 impl Live {
@@ -69,6 +107,9 @@ impl Live {
         catalog: Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     ) -> Self {
         let levels = view.selection.reasoning.iter().cloned().collect();
+        // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
+        let telemetry = (!view.meta.id.as_str().starts_with(SUBAGENT_SESSION_PREFIX))
+            .then(|| Telemetry::new(view.meta.id.as_str(), Role::Main));
         let epoch = context.fresh("epoch");
         context.register(view.meta.id.as_str(), view.meta.workspace.root.as_str());
         Self {
@@ -84,11 +125,99 @@ impl Live {
                 skip_through: view.last_seq,
                 watcher: None,
                 shells_dirty: false,
+                telemetry,
+                children: std::collections::HashMap::new(),
+                facts: Vec::new(),
             }),
             context,
             topics,
             rebuilds: tokio::sync::watch::Sender::new(0),
             promotions: crate::reservations::Reservations::default(),
+            child_watch: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Fork: see [`ChildWatch`]; set once when the server opens the session.
+    pub(crate) fn set_child_watch(&self, watch: Box<ChildWatch>) {
+        let _ = self.child_watch.set(watch);
+    }
+
+    /// Fork: the session handle (the server's child watch reads subagent runs through it).
+    pub(crate) fn handle(&self) -> &Arc<dyn SessionHandle> {
+        &self.handle
+    }
+
+    /// Fork: one event of a subagent child's live run, reported as the child's telemetry facts. In the session's
+    /// pump task, after the parent's own facts of the same moment.
+    pub(crate) async fn child_event(&self, child: &str, event: KernelEvent) {
+        let now = self.context.now();
+        let outgoing = {
+            let mut state = self.state();
+            let provider = provider_of(&state.projection);
+            let Some((telemetry, seq, _)) = state.children.get_mut(child) else {
+                return;
+            };
+            *seq += 1;
+            let facts = telemetry.observe(
+                &event,
+                &Observed {
+                    scope: "",
+                    seq: *seq,
+                    now,
+                    provider: &provider,
+                },
+            );
+            if matches!(event, KernelEvent::TurnFinished { .. }) {
+                state.children.remove(child);
+            }
+            state.facts.extend(facts);
+            Outgoing {
+                frames: Vec::new(),
+                summary: None,
+                facts: std::mem::take(&mut state.facts),
+            }
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: the subagent facts of the projection's rows; returns the children whose runs to read.
+    fn subagent_facts(state: &mut State, scope: &'static str, seq: u64, now: u64) -> Vec<String> {
+        let links = state.projection.subagent_links();
+        let provider = provider_of(&state.projection);
+        let Some(telemetry) = &mut state.telemetry else {
+            return Vec::new();
+        };
+        let mut facts = Vec::new();
+        let spawned = telemetry.subagents(
+            &links,
+            &Observed {
+                scope,
+                seq,
+                now,
+                provider: &provider,
+            },
+            &mut facts,
+        );
+        state.facts.extend(facts);
+        spawned
+    }
+
+    /// Fork: starts reading the runs of the children just spawned.
+    fn watch_children(&self, spawned: Vec<String>) {
+        let Some(watch) = self.child_watch.get() else {
+            return;
+        };
+        for child in spawned {
+            let Some(task) = watch(&child) else {
+                continue;
+            };
+            let mut state = self.state();
+            if let Some((_, _, previous)) = state.children.insert(
+                child.clone(),
+                (Telemetry::new(&child, Role::Child), 0, task),
+            ) {
+                previous.abort();
+            }
         }
     }
 
@@ -307,15 +436,18 @@ impl Live {
             }
         };
         let now = self.context.now();
-        let outgoing = {
+        let (outgoing, spawned) = {
             let mut state = self.state();
             let deltas = state.projection.subagent_table(&entries, now);
             if deltas.is_empty() {
                 return;
             }
             state.log.record(deltas);
-            self.collect(&mut state)
+            let seq = state.log.seq();
+            let spawned = Self::subagent_facts(&mut state, "table-", seq, now);
+            (self.collect(&mut state), spawned)
         };
+        self.watch_children(spawned);
         self.write(outgoing).await;
     }
 
@@ -460,6 +592,7 @@ impl Live {
                 )
             })
             .collect();
+        let facts = std::mem::take(&mut state.facts);
         let row = self.summary_of(state);
         let mut comparable = row.clone();
         comparable["lastActivityAt"] = json!(0);
@@ -467,7 +600,11 @@ impl Live {
             state.summary = Some(comparable);
             row
         });
-        Outgoing { frames, summary }
+        Outgoing {
+            frames,
+            summary,
+            facts,
+        }
     }
 
     async fn write(&self, outgoing: Outgoing) {
@@ -479,6 +616,12 @@ impl Live {
         }
         if let Some(row) = outgoing.summary {
             self.topics.upsert(&self.workspace, row);
+        }
+        for fact in outgoing.facts {
+            self.context
+                .peer
+                .notify(crate::telemetry::FACT, &fact)
+                .await;
         }
     }
 
@@ -494,6 +637,9 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        for (_, (_, _, task)) in self.state().children.drain() {
+            task.abort();
+        }
         if let Some(watcher) = self.state().watcher.take() {
             watcher.abort();
         }
@@ -512,6 +658,52 @@ pub(crate) async fn watch_subagents(
         };
         let sink = bridged.sink.clone();
         bridged.run(Box::pin(async move { sink.subagents_changed().await }));
+    }
+}
+
+/// Fork: reads a subagent child's live run into the parent's telemetry (`Live::child_event`), in the parent's pump
+/// task so the child's facts follow the parent's `spawned`. Ends with the run, or when the parent closes.
+pub(crate) async fn read_child_run(
+    feed: rust_cli_kernel_api::agents::ChildLiveFeed,
+    child: String,
+    live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,
+) {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::agents::ChildLive;
+    let turn =
+        rust_cli_kernel_api::ids::TurnId::new(format!("turn_{}", crate::telemetry::uuid_v7(0)));
+    let mut events = futures_util::stream::iter(feed.replay).chain(feed.live);
+    let mut started = false;
+    while let Some(event) = events.next().await {
+        let event = match event {
+            ChildLive::Started if !started => {
+                started = true;
+                KernelEvent::TurnStarted {
+                    turn: turn.clone(),
+                    command: None,
+                }
+            }
+            ChildLive::Started => continue,
+            ChildLive::Event(event) => event.into_kernel_event(turn.clone()),
+            ChildLive::Committed(message) => KernelEvent::MessageDone { message },
+            ChildLive::Finished(outcome) => KernelEvent::TurnFinished {
+                turn: turn.clone(),
+                outcome,
+                usage: None,
+            },
+        };
+        let finished = matches!(event, KernelEvent::TurnFinished { .. });
+        let Some(bridged) = live.upgrade() else {
+            return;
+        };
+        let sink = bridged.sink.clone();
+        let child = child.clone();
+        bridged.run(Box::pin(
+            async move { sink.child_event(&child, event).await },
+        ));
+        if finished {
+            return;
+        }
     }
 }
 
@@ -539,6 +731,22 @@ impl SessionSink for Live {
         }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
+        let provider = provider_of(&state.projection);
+        if let Some(telemetry) = &mut state.telemetry {
+            let facts = telemetry.observe(
+                &event.event,
+                &Observed {
+                    scope: "",
+                    seq: event.seq,
+                    now,
+                    provider: &provider,
+                },
+            );
+            state.facts.extend(facts);
+        }
+        let spawned = Self::subagent_facts(&mut state, "", event.seq, now);
+        drop(state);
+        self.watch_children(spawned);
     }
 
     async fn flush(&self) {

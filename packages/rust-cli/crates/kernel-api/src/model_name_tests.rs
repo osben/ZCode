@@ -27,6 +27,7 @@ fn entry(provider: &str, model: &str, team: Option<(&str, &str)>) -> CatalogMode
             vendor: "BigModel".to_owned(),
             name: name.to_owned(),
         }),
+        host: None,
     }
 }
 

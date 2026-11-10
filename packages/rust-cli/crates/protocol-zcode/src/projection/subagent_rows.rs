@@ -79,6 +79,47 @@ pub(super) struct Subagents {
 }
 
 impl Projection {
+    /// Fork: the subagent rows as the telemetry facts read them (crate::telemetry), in row order.
+    pub(crate) fn subagent_links(&self) -> Vec<crate::telemetry::SubagentLink> {
+        let text = |row: &Map<String, Value>, key: &str| {
+            field(row, key)
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        };
+        let mut agents: Vec<(&String, usize)> = self
+            .subagents
+            .known
+            .iter()
+            .filter_map(|agent| Some((agent, *self.index.get(&subagent_key(agent))?)))
+            .collect();
+        agents.sort_by_key(|(_, at)| *at);
+        agents
+            .into_iter()
+            .map(|(agent, at)| {
+                let row = &self.rows[at];
+                let parent_tool = text(row, "parentToolCallId").unwrap_or_default();
+                // A background launch is known from the call's input before its result marks the row.
+                let launched_in_background =
+                    self.index
+                        .get(&tool_key(&parent_tool))
+                        .is_some_and(|&call| {
+                            field(&self.rows[call], "input")["run_in_background"] == true
+                        });
+                crate::telemetry::SubagentLink {
+                    agent: agent.clone(),
+                    agent_type: text(row, "subagentType"),
+                    child: text(row, "childSessionId").unwrap_or_else(|| child_session(agent)),
+                    parent_tool,
+                    background: launched_in_background
+                        || field(row, "backgrounded") == &Value::Bool(true),
+                    status: text(row, "status").unwrap_or_default(),
+                    turn: text(row, "turnId"),
+                }
+            })
+            .collect()
+    }
+
     fn is_subagent_call(&self, tool_use: &str) -> bool {
         self.index.get(&tool_key(tool_use)).is_some_and(|&at| {
             field(&self.rows[at], "toolName")

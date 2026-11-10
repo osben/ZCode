@@ -21,6 +21,7 @@ mod projection;
 mod reservations;
 mod server;
 mod subscribe;
+mod telemetry;
 mod uploads;
 mod wire;
 

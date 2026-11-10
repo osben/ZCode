@@ -427,6 +427,13 @@ impl Projection {
         self
     }
 
+    /// Fork: the selected model's directory entry, when the directory lists it.
+    pub(crate) fn catalog_entry(&self) -> Option<&rust_cli_kernel_api::provider::CatalogModel> {
+        self.catalog
+            .iter()
+            .find(|entry| rust_cli_kernel_api::model_name::is_entry(&self.selection, entry))
+    }
+
     /// Fork: the selected model's levels in the directory, like Node `listThoughtLevels`; a model the directory does
     /// not list keeps the protocol's own levels.
     fn thought_levels(&self) -> Vec<String> {

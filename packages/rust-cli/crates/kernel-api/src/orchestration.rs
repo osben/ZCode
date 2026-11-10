@@ -121,6 +121,53 @@ pub enum QueryEvent {
     ModelNotice { notice: crate::model::ModelNotice },
 }
 
+impl QueryEvent {
+    /// The session event of a query event in `turn` (the session actor's log, and the App's telemetry of a
+    /// subagent's live run).
+    pub fn into_kernel_event(self, turn: crate::ids::TurnId) -> crate::session_api::KernelEvent {
+        use crate::session_api::KernelEvent;
+        match self {
+            Self::Delta {
+                message,
+                index,
+                delta,
+            } => KernelEvent::StreamDelta {
+                turn,
+                response: u32::try_from(message).unwrap_or(u32::MAX),
+                index,
+                delta,
+            },
+            Self::ToolInputStarted {
+                message,
+                index,
+                tool_use,
+                name,
+            } => KernelEvent::ToolInputStarted {
+                turn,
+                response: u32::try_from(message).unwrap_or(u32::MAX),
+                index,
+                tool_use,
+                name,
+            },
+            Self::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => KernelEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            },
+            Self::ToolProgress { tool_use, progress } => {
+                KernelEvent::ToolProgress { tool_use, progress }
+            }
+            Self::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
+            // 模型通知只供显示，不落库（stall-visibility.md §1）。
+            Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum QueryStop {

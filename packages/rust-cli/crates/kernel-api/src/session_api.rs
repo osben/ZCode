@@ -517,6 +517,12 @@ pub trait SessionHandle: Send + Sync {
     /// （修复线 F34）。
     fn subagent_changes(&self) -> BoxStream<'static, ()>;
 
+    /// Fork: the live run of one of this session's subagent child sessions (the feed a side tab mirrors), read by the
+    /// App's telemetry facts. None when the kernel keeps no live runs (the TUI) or for an unknown child.
+    fn child_live(&self, _child: &SessionId) -> Option<crate::agents::ChildLiveFeed> {
+        None
+    }
+
     /// 子代理列表与后台任务的同一份快照（修复线 F34，tui-panels.md §0、§3.1）：一次查询、一次回执。前端在子代理的变化
     /// 通知与后台任务相关的事件之后都重取它，不再分别取 [`SessionHandle::subagents`] 与
     /// [`SessionHandle::background_tasks`]。

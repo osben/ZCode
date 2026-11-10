@@ -498,6 +498,10 @@ impl SessionHandle for Session {
         self.deps.agents.subagent_changes()
     }
 
+    fn child_live(&self, child: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.deps.agents.child_live(child)
+    }
+
     /// 子代理列表与后台任务的同一份快照（修复线 F34，tui-panels.md §0）：actor 只给出工作区，命令与子代理在调用方的
     /// 任务里取，一次回执。
     async fn tasks_snapshot(

@@ -485,45 +485,7 @@ pub(crate) fn kernel_event(
     turn: rust_cli_kernel_api::ids::TurnId,
     event: QueryEvent,
 ) -> KernelEvent {
-    match event {
-        QueryEvent::Delta {
-            message,
-            index,
-            delta,
-        } => KernelEvent::StreamDelta {
-            turn,
-            response: u32::try_from(message).unwrap_or(u32::MAX),
-            index,
-            delta,
-        },
-        QueryEvent::ToolInputStarted {
-            message,
-            index,
-            tool_use,
-            name,
-        } => KernelEvent::ToolInputStarted {
-            turn,
-            response: u32::try_from(message).unwrap_or(u32::MAX),
-            index,
-            tool_use,
-            name,
-        },
-        QueryEvent::ToolStarted {
-            tool_use,
-            name,
-            input,
-        } => KernelEvent::ToolStarted {
-            tool_use,
-            name,
-            input,
-        },
-        QueryEvent::ToolProgress { tool_use, progress } => {
-            KernelEvent::ToolProgress { tool_use, progress }
-        }
-        QueryEvent::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
-        // 模型通知只供显示，不落库（stall-visibility.md §1）。
-        QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
-    }
+    event.into_kernel_event(turn)
 }
 
 #[cfg(test)]

@@ -192,6 +192,26 @@ pub struct CatalogModel {
     /// 这一项的账号连接（Team Plan 的团队项目，工作线 F49）；没有时为 None。选中时 `connection.id` 进选择。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<CatalogConnection>,
+    /// Fork: the host of the provider's base URL, without scheme, port, path or credentials (the
+    /// `providerHostname` of the App's telemetry facts); None when the URL has no host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
+/// Fork: the host of a base URL (`https://user@api.example.com:8443/v1` → `api.example.com`, an IPv6
+/// literal keeps its brackets); None without one.
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if authority.starts_with('[') {
+        authority.split_inclusive(']').next().unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or_default()
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// 目录项的账号连接（docs/specs/rust-cli/platform.md §9.3）：连接本身与显示用的两个名字，前端按界面语言拼说明。
