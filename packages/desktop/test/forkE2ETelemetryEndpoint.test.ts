@@ -16,7 +16,9 @@ describe("fork E2E telemetry report endpoint", () => {
   });
 
   it("keeps an explicitly configured value, including an empty one", () => {
-    const configured = { ZCODE_TELEMETRY_REPORT_ENDPOINT: "https://example.test/api/v1/event/report" };
+    const configured = {
+      ZCODE_TELEMETRY_REPORT_ENDPOINT: "https://example.test/api/v1/event/report",
+    };
     expect(applyForkE2ETelemetryReportEndpoint(configured).ZCODE_TELEMETRY_REPORT_ENDPOINT).toBe(
       "https://example.test/api/v1/event/report",
     );
