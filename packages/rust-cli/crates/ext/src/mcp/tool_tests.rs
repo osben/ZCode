@@ -52,3 +52,25 @@ fn the_server_option_does_not_look_at_the_tool() {
         true
     ));
 }
+
+fn destructive(listed: Value) -> bool {
+    McpTool::from_listed("files", &listed, false, Weak::new())
+        .unwrap()
+        .destructive
+}
+
+/// Fork: Node counts `destructiveHint` only when it is literally `true` (specs/fork-rust-agent-parity.md).
+#[test]
+fn only_a_true_destructive_hint_marks_the_tool_destructive() {
+    assert!(destructive(
+        json!({"name": "reset", "annotations": {"destructiveHint": true}})
+    ));
+    for listed in [
+        json!({"name": "lookup", "annotations": {"destructiveHint": false}}),
+        json!({"name": "lookup", "annotations": {"destructiveHint": "true"}}),
+        json!({"name": "lookup", "annotations": {}}),
+        json!({"name": "lookup"}),
+    ] {
+        assert!(!destructive(listed));
+    }
+}

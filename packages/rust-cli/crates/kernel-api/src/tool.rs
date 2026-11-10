@@ -261,6 +261,12 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Fork: the call may destroy data (an MCP tool's `destructiveHint: true`, Node `destructive`). Node's plan mode
+    /// denies such an MCP call before the server runs it (specs/fork-rust-agent-parity.md, "MCP tools in plan mode").
+    fn is_destructive(&self, _input: &Value) -> bool {
+        false
+    }
+
     /// 并发安全的调用可以和其他并发安全的调用同时执行（按输入判定）。
     fn is_concurrency_safe(&self, _input: &Value) -> bool {
         false

@@ -244,6 +244,18 @@ Acceptance:
 - Tools: a denied ExitPlanMode with feedback returns Node's denial text without the feedback and one follow-up attachment with the feedback and `steerSource`; without feedback the turn stops.
 - E2E (when allowed): `plan-approval-feedback-user-message`, `running-guide-steer`, `background-guide-steer` and `turn-steer-probe` on both runtimes; the gate's queue and steer specs stay green.
 
+## MCP tools in plan mode (Node `checkPlanMode`)
+
+Node (`permission/service.ts`, plan enabled) decides an MCP tool call in this order: a project deny rule denies; a project ask rule asks (the normal options); then the plan gate: `destructiveHint: true` denies with `Plan mode only allows read-only, non-destructive tools` before the server is called; a tool without `readOnlyHint: true` asks before any allow rule (`mode.plan.mcp`, options without "always allow", because a rule remembered in plan mode would not apply); a `readOnlyHint` tool goes on to the allow rules and otherwise asks with the normal options (MCP tools always need approval). Annotations count only when they are literally `true`.
+
+Rust (app-server, `PolicyGate::with_node_plan_mode`): the gate reads `Tool::is_read_only` and the new `Tool::is_destructive` (default false; the MCP tool sets it from `annotations.destructiveHint == true`) for tools that carry `mcp_info`. After the inner chain, `chain::plan_mcp` keeps a denial and an ask-rule ask, turns the rest into the denial for a destructive tool or a single-use ask (`once`, no suggestions: the projection offers allow once and deny only) for a tool that is not read-only, and leaves a read-only tool's result alone. The outer layer then passes such an ask to the user in plan mode (no classifier) instead of denying it; with no one to answer (`avoid_prompts`) it is denied. Other tools keep the existing node-plan rule (anything that would ask is denied). The TUI (no node plan) is unchanged.
+
+Acceptance:
+
+- Policy unit tests (node plan on, plan mode): a non-read-only, non-destructive MCP tool asks once even with an allow rule; a destructive one is denied with Node's text even with an allow rule; a deny rule keeps its own text; an ask rule asks normally; a `readOnlyHint` tool is allowed by an allow rule and otherwise asks normally; a built-in tool that would ask is still denied.
+- MCP unit test: `destructiveHint: true` sets `is_destructive`; a missing or false hint does not.
+- E2E (when allowed): `conversation-session-plan-mode-mcp-permission` on both runtimes.
+
 ## SendMessage to a running agent (Node 3.17)
 
 Node 3.17 steers a SendMessage for a running local agent into its active turn (`message-steering.ts`, delivery `steered`) and answers `Message msg_<uuid> was sent to its active turn for local agent <agentId>.`. The Rust mailbox already delivers at the same boundary (the next model request); the tool result text follows Node. A finished agent still resumes in the background as before.
@@ -282,7 +294,7 @@ Node writes workspace files with `atomic: true` (every caller: Write, Edit, appl
 ## Open gaps (not yet ported)
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
-- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port (`plan-approval-feedback-user-message` is addressed by "Guided steer rows and plan-approval feedback", not yet run on E2E): `plan-file-compact-continuity` (post-compact `plan_file_reference`), `plan-mode-mcp-permission` (no permission dialog for non-destructive MCP), `plan-session-switch-restore` (no ExitPlanMode block after switching back).
+- **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port (`plan-approval-feedback-user-message` and `plan-mode-mcp-permission` are addressed by "Guided steer rows and plan-approval feedback" and "MCP tools in plan mode", not yet run on E2E): `plan-file-compact-continuity` (post-compact `plan_file_reference`), `plan-session-switch-restore` (no ExitPlanMode block after switching back).
 
 ## Order of work
 
