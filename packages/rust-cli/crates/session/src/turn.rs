@@ -205,15 +205,19 @@ impl Actor {
                 self.ask(request, reply, crate::actor::AskScope::Turn);
             }
             SinkRequest::CancelAsk { tool_use } => self.cancel_ask(&tool_use),
-            SinkRequest::ClaimSteering { reply } => {
-                let _ = reply.send(self.claim_steering());
+            SinkRequest::ClaimSteering {
+                prompts_only,
+                reply,
+            } => {
+                let _ = reply.send(self.claim_steering(prompts_only));
             }
             SinkRequest::SettleSteering {
                 fates,
                 notices,
                 reply,
             } => {
-                let _ = reply.send(self.settle_steering(fates, notices));
+                let settled = self.settle_steering(fates, notices).await;
+                let _ = reply.send(settled);
             }
             SinkRequest::Metered {
                 message,
@@ -441,6 +445,10 @@ impl Actor {
         // 关闭中（R1-1）：排队的输入、通知与定时任务都不再开回合；通知没有 ack，会话再打开时送达。进程要退出
         // （`Shutdown`，修复线 F38）时同样。
         if self.closing.is_some() || self.shutting_down {
+            return;
+        }
+        // Fork: a promoted input holds the foreground (`Command::ReserveForeground`); it starts its own turn.
+        if self.inbox.reserved() {
             return;
         }
         // 这次工作期间到达的本地命令记录先进对话，再开下一个回合（修复线 L-A，tui-manage.md §11.3）。

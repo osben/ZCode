@@ -336,16 +336,60 @@ Acceptance:
 
 Node writes workspace files with `atomic: true` (every caller: Write, Edit, apply-patch, file rewind, workspace fork, the approved plan file), and its `atomicWrite` refuses a target that is a symlink (`lstat`, then `O_NOFOLLOW`): `Refusing to write through symlink: <path>. Resolve the symlink and pass the real target path explicitly.` The Rust local machine (`env-local` `files::put_file`, also behind the remote exec-server) used to write through the link. It now refuses the same way: an `lstat` check before the write and `O_NOFOLLOW` on Unix opens (ELOOP maps to the same error). Symlinked parent directories are still followed, as in Node. The Rust write stays in place (inode, mode and hard links kept) instead of Node's temp-file rename. Acceptance: executor-host contract case `writes_refuse_a_symlinked_target` (local and loopback machines).
 
+## Guides after a reply without tool calls, and guides in system turns (Node 3.17)
+
+Node 3.17 (`turn-stop.ts` `finishModelStepWithoutToolCalls`, `turn-guide-drain.ts` `drainInlineGuideForNextRequest`, `system-reminder/incoming-message.ts`):
+
+- A reply without tool calls is a continuation boundary for a pending guide. Before the Stop hooks, the pending guides join the same active turn after the reply and the turn requests the model again; the turn finishes once. Background notices are not taken there; they open their own turn after this one.
+- A drained guide is a `mid_turn` input (`user_steer`). With mid-conversation system turns (MCS) it is folded into the run's system message (blank-line separated); with no user/tool anchor (right after a text-only reply) the run's MCS text falls back to one wrapped user reminder. Without MCS it is a wrapped user reminder, folded into the last tool result when it follows one.
+
+The Rust agent used to end the turn after such a reply and start a new turn with the guide as plain typed input, and with MCS it sent a guide as unwrapped user text (port decision F13). Now:
+
+- Owner: the query loop (`run.rs` `reply_ended`). On a normal completion it first takes the steers waiting in the lane (`RunSink::take_steered_prompts`, the session actor's claim with `prompts_only`: UserPromptSubmit screening, slash commands and the hook barrier work as at a tool boundary). Taken steers are committed as `queued_command` attachments and the loop requests again; with none, the Stop hooks run as before. Subagent and compaction sinks take none (default).
+- Model request (`query` `normalize`): a typed steer has no branch of its own any more; it is a system-role attachment, so MCS folds it into the run's system message and the existing fallback wraps it when no user message precedes. Sourced steers (plan feedback) stay plain user text (section above).
+- Projection and store: unchanged. The drained steer is the same guided row inside the running turn.
+- Execution state (`session` `steering.rs` `settle_steering`): Node's drain applies the last drained input's intent (`applyRuntimeExecutionState`). The Rust session applies the last absorbed guide's frozen permission mode and Plan switch to the running turn, at a tool boundary and after a text-only reply, like a user `SetMode` / `SetPlan`. The guide's model is not switched mid-run (known difference below).
+- File mentions: Node's drain resolves only the input's explicit attachments and parses no `@path` text. An absorbed guide likewise keeps its text as typed; inputs with attachments never steer (they are admitted as queue items).
+- Admission (`protocol-zcode` `commands.rs` `admission`): Node steers only into an active turn (`prompt-admission.ts` `canSteer`). While the session runs a job without a turn (the goal completion verifier), a guide is admitted as a future queue item (`delivery.admitted: "queue"`), so the queue panel shows it instead of a pending guide row; it starts its own turn after the job.
+
+Acceptance:
+
+- Session: a steer sent while the model answers without tool calls joins that turn after the reply; one `TurnFinished`; the queue is empty (`steer_tests.rs`).
+- Session: an absorbed guide's mode and Plan switch apply to the running turn (`submit_with_tests.rs`).
+- Query: with system turns a steer after a tool result folds into the system message; after a text reply it is one wrapped user reminder (`normalize_tests.rs`).
+- Admission: a guide while a turn runs is `guide`; while only a session job runs it is `queue` (`commands_tests.rs`).
+- E2E: `conversation-session-running-guide-steer` P06 MCS and non-MCS, and "goal verifier 运行中发送消息".
+
+## Send now from the composer while a turn runs (Node `forceStartNow`)
+
+Node `session-flow.ts`: a `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode, `resolveOppositeFollowupDelivery`) never queues. It takes the foreground promotion lease, preempts the active turn (`preemptActiveTurnAndWait`, the goal is paused like any cancelled turn) and starts the input as the next turn. No queue item appears. Rust queued such an input like any other.
+
+- Owner: `protocol-zcode` `commands.rs` `send_text_now`. It runs the same steps as `sendQueuedNow`:
+  - reserve the foreground (`Command::ReserveForeground`, the lease);
+  - `Interrupt` and wait for `TurnFinished`, or the verifier's end (`fork::settle_running_turn`);
+  - submit the input to the now idle session (`admitted: "startNow"`);
+  - release the reservation.
+- The reservation is not the user's hold (`HoldQueue`, `autoDrain`): while it is held the session starts no turn on its own, neither a queued input nor a waiting background notice nor cron (Node `dequeueNextRunnableBatch` returns only the promoted command). It emits no `QueueChanged`. Releasing it while idle resumes the drain as a turn end would.
+- Only text inputs take this path; `sendGoalCommand` keeps its own admission. A failed preemption is refused with `fault.command.inputRejected`.
+- The interrupted turn keeps its user message, so the new request lists the earlier prompt first and the new text after it, in the order the user typed them.
+
+Acceptance:
+
+- Unit: only an explicit `startNow` preempts (`commands_tests.rs`); a reserved foreground keeps a waiting notice behind the promoted input (`lane_tests.rs`).
+- E2E: `conversation-session-modified-submit-delivery` M06k, MCS and non-MCS.
+
 ## Known differences kept on purpose
 
 - **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.
 
+- **A guide's model inside the running turn.** Node switches the loop's model to a drained guide's selection (unless the turn's model is fixed) and rebuilds the context prefix. The Rust run keeps one model selection per run; the guide's mode and Plan switch apply, and the next input carries its own selection. Porting it needs a per-request selection in the query loop.
+
 ## Open gaps (not yet ported)
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
 - **Plan-mode specs outside the gate.** `plan-approval-feedback-user-message`, `plan-session-switch-restore` and `plan-file-compact-continuity` pass on Rust (E2E 2026-11-10). `plan-mode-mcp-permission` fails on Node too ("v4 权限弹窗没有出现"), so it does not cover "MCP tools in plan mode" yet; that section is backed by unit tests only.
-- **Guides in a running turn (`running-guide-steer`).** One case ("guide 模式下 running 中发送引导消息…") fails on Node too. Rust also fails three cases: under MCS a human guide reaches the model as user text instead of being folded into the system turn; without MCS a guide sent after a text-only reply starts a new turn instead of joining the current one (Node `drainInlineGuideForNextRequest`); while a goal verifier runs the guide shows as a user message where Node keeps it queued. `background-guide-steer` and `turn-steer-probe` pass on Rust.
+- **Guides in a running turn (`running-guide-steer`).** One case ("guide 模式下 running 中发送引导消息…") fails on Node too; the Rust-only cases are covered by "Guides after a reply without tool calls, and guides in system turns" above.
 
 ## Order of work
 

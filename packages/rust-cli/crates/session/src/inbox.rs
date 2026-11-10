@@ -165,6 +165,8 @@ pub(crate) struct Inbox {
     /// Fork: the drain is paused (`Command::HoldQueue`, Node `setAutoDrain` with `autoDrain: false`):
     /// turn ends do not start queued inputs until it is released.
     held: bool,
+    /// Fork: the foreground promotion lease (`Command::ReserveForeground`): no turn starts on its own.
+    reserved: bool,
 }
 
 impl Inbox {
@@ -362,6 +364,16 @@ impl Inbox {
     /// queued inputs.
     pub(crate) fn held(&self) -> bool {
         self.held
+    }
+
+    /// Fork: the foreground is reserved for a promoted input (`Command::ReserveForeground`).
+    pub(crate) fn reserved(&self) -> bool {
+        self.reserved
+    }
+
+    /// Fork: set the reservation; returns the previous value.
+    pub(crate) fn set_reserved(&mut self, reserved: bool) -> bool {
+        std::mem::replace(&mut self.reserved, reserved)
     }
 
     /// Fork: set the hold; returns whether it changed (the actor emits `QueueChanged` on a change).

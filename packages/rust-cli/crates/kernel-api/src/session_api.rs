@@ -309,6 +309,14 @@ pub enum Command {
     HoldQueue {
         held: bool,
     },
+    /// Fork: the foreground promotion lease (Node `acquireForegroundPromotionLease`, `send-now:`/`sendQueuedNow`). While
+    /// reserved, nothing starts a turn on its own (queued inputs, background notices, cron): the caller interrupts the
+    /// running turn and submits the promoted input to the idle session. Releasing while idle resumes the drain as a turn
+    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. Always
+    /// `Accepted`.
+    ReserveForeground {
+        reserved: bool,
+    },
 }
 
 /// 带 ID 的命令；同一个 ID 重复提交时返回 [`Ack::Duplicate`]，不重复执行。

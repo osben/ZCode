@@ -273,7 +273,17 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             } else {
                 QueuedKind::Text
             };
-            let ack = send_text(server, handle, &live.sink, envelope, kind, phase, revision).await;
+            let ack = if phase == Phase::Running
+                && kind == QueuedKind::Text
+                && requests_start_now(envelope)
+            {
+                send_text_now(server, &live, envelope, revision).await
+            } else {
+                send_text(
+                    server, handle, &live.sink, envelope, kind, phase, revision, false,
+                )
+                .await
+            };
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
             }
@@ -768,9 +778,92 @@ fn input_execution(
     })
 }
 
+/// How a `sendText` input is admitted. Running, it is steered into the turn (`guide`) or queued; idle, it starts now.
+/// Fork: content blocks (attachments) are never steered into a running turn; they wait for it to end. Node steers
+/// only into an active turn (`prompt-admission.ts` `canSteer`): while the session runs a job without one (the goal
+/// completion verifier), a guide is a future queue item, shown in the queue rather than as a pending guide row.
+fn admission(
+    requested: Option<Requested>,
+    followup: Followup,
+    phase: Phase,
+    turn_running: bool,
+    with_attachments: bool,
+) -> (Delivery, &'static str) {
+    let running = phase == Phase::Running;
+    let steerable = running && turn_running && !with_attachments;
+    match (requested, running) {
+        (Some(Requested::Guide), true) if steerable => (Delivery::Steer, "guide"),
+        (None, true) if steerable && followup == Followup::Guide => (Delivery::Steer, "guide"),
+        (_, true) => (Delivery::Queue, "queue"),
+        (_, false) => (Delivery::Queue, "startNow"),
+    }
+}
+
+/// Fork: `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode).
+fn requests_start_now(envelope: &Envelope) -> bool {
+    envelope
+        .payload
+        .get("requestedDelivery")
+        .and_then(Value::as_str)
+        == Some("startNow")
+}
+
+/// Fork: Node `session-flow.ts` `forceStartNow`: a `startNow` input while a turn (or the goal verifier) runs preempts
+/// it and starts at once instead of being queued. Same steps as `sendQueuedNow`: reserve the foreground (the promotion
+/// lease, so the drain after the stopped turn cannot start a queued item or a background notice first), interrupt and
+/// wait for the turn to finish, submit the input to the idle session, then release the reservation.
+async fn send_text_now(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    revision: u64,
+) -> Ack {
+    let handle = live.handle.as_ref();
+    let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
+    send(
+        handle,
+        &part("reserve"),
+        Command::ReserveForeground { reserved: true },
+    )
+    .await;
+    let ack = match crate::fork::settle_running_turn(live, envelope).await {
+        Ok(()) => {
+            send_text(
+                server,
+                handle,
+                &live.sink,
+                envelope,
+                QueuedKind::Text,
+                Phase::Running,
+                revision,
+                true,
+            )
+            .await
+        }
+        Err(reason) => Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "fault.command.inputRejected",
+            reason,
+            revision,
+        ),
+    };
+    send(
+        handle,
+        &part("release"),
+        Command::ReserveForeground { reserved: false },
+    )
+    .await;
+    ack
+}
+
 /// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
 /// now and queueing, and applies the input's execution state only when its turn starts
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the sendText admission inputs plus the preempted flag"
+)]
 async fn send_text(
     server: &Server,
     handle: &dyn SessionHandle,
@@ -779,6 +872,7 @@ async fn send_text(
     kind: QueuedKind,
     phase: Phase,
     revision: u64,
+    preempted: bool,
 ) -> Ack {
     let input: Input = match payload(envelope) {
         Ok(input) => input,
@@ -824,22 +918,24 @@ async fn send_text(
         return *ack;
     }
     let execution = input_execution(&input, view.as_ref());
-    let running = phase == Phase::Running;
     let requested = input.requested_delivery;
-    let followup = live.followup();
-    // Fork: content blocks (attachments) are never steered into a running turn; they wait for it to end.
-    let with_attachments = !refs.is_empty();
-    let (delivery, admitted) = match (requested, running) {
-        (_, true) if with_attachments => (Delivery::Queue, "queue"),
-        (Some(Requested::Guide), true) => (Delivery::Steer, "guide"),
-        (None, true) if followup == Followup::Guide => (Delivery::Steer, "guide"),
-        (_, true) => (Delivery::Queue, "queue"),
-        (_, false) => (Delivery::Queue, "startNow"),
+    // A preempted turn has settled: the input starts now even though the snapshot still said running.
+    let admission_phase = if preempted {
+        Phase::CompletedInterrupted
+    } else {
+        phase
     };
+    let (delivery, admitted) = admission(
+        requested,
+        live.followup(),
+        admission_phase,
+        view.as_ref().is_none_or(|view| view.running),
+        !refs.is_empty(),
+    );
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();
-    let content = if with_attachments {
+    let content = if !refs.is_empty() {
         crate::attachments::content(server, handle.id(), &text, refs).await
     } else {
         Vec::new()
@@ -1175,3 +1271,7 @@ async fn stop(
         Ack::refused(id, Status::Noop, "proto.nothingToStop", reason, revision)
     })
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;

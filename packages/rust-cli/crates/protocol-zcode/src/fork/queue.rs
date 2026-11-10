@@ -202,7 +202,10 @@ pub(super) async fn set_auto_drain(
 
 /// Node preempts the active turn before a promotion: interrupt it and wait for its `TurnFinished`
 /// (the same settlement the row commands use for edit and retry).
-async fn settle_running_turn(live: &Bridged<Live>, envelope: &Envelope) -> Result<(), String> {
+pub(crate) async fn settle_running_turn(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+) -> Result<(), String> {
     let view = live
         .handle
         .view()
@@ -303,11 +306,15 @@ pub(super) async fn send_queued_now(
         );
     };
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
-    // The release restores the user's own hold (`setAutoDrain: false`) instead of clearing it.
-    let user_held = !live.sink.auto_drain();
-    let release = || Command::HoldQueue { held: user_held };
-    // The promotion lease: while the window is open the drain cannot start another queued item.
-    send(handle, &part("hold"), Command::HoldQueue { held: true }).await;
+    let release = || Command::ReserveForeground { reserved: false };
+    // The promotion lease: while the window is open neither another queued item nor a background notice can start
+    // (Node `dequeueNextRunnableBatch` returns only the promoted command). The user's own hold stays as it is.
+    send(
+        handle,
+        &part("reserve"),
+        Command::ReserveForeground { reserved: true },
+    )
+    .await;
     if let Err(reason) = settle_running_turn(live, envelope).await {
         send(handle, &part("resume"), release()).await;
         return failed(ITEM_UNAVAILABLE, reason);
@@ -372,7 +379,7 @@ pub(super) async fn send_queued_now(
         }
         KernelAck::Rejected { reason } => failed(PROMOTION_BUSY, reason),
     };
-    // Release the promotion hold: with the promoted turn running it only clears the flag; if the turn
+    // Release the promotion lease: with the promoted turn running it only clears the flag; if the turn
     // could not start, the release lets the queue drain again as a turn end would.
     send(handle, &part("resume"), release()).await;
     ack

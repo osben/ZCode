@@ -371,9 +371,16 @@ async fn delivering_moves_the_foreground_only_while_an_input_waits() {
         memory.moved(),
         [BackgroundReason::DeliverMessage, BackgroundReason::User]
     );
-    // 第一个请求放行后插话开下一个回合（没有工具边界），再放行一次。
+    // The first reply ends without tool calls: the steer joins that turn (Node 3.17 text-only drain) and the
+    // model is asked again; release that request too. One turn finishes.
     gate.notify_one();
-    until(&mut events, finished).await;
+    for _ in 0..200 {
+        if built.session.view().await.unwrap().queue.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(built.session.view().await.unwrap().queue.is_empty());
     gate.notify_one();
     until(&mut events, finished).await;
 }

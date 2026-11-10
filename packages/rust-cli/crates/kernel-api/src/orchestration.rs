@@ -202,6 +202,13 @@ pub trait RunSink: Interactions + SessionOps {
     /// 另有 `take_steering`、`take_steered`、`take_notices` 三个缺省方法拼出它，主循环只调这一个。
     async fn take_absorbed(&self) -> Vec<Absorbed>;
 
+    /// Fork: the steers a reply without tool calls takes into the same turn (Node `drainInlineGuideForNextRequest`:
+    /// a text-only reply is a continuation boundary for a pending guide). Only prompts, never notices (a notice
+    /// still opens its own turn after this one). Default: none (subagents and the compaction sink).
+    async fn take_steered_prompts(&self) -> Vec<Absorbed> {
+        Vec::new()
+    }
+
     /// 报告一次目标评估（goal.md §3）：actor 按判定提交反馈与 `goal_status`、改目标，返回已提交的
     /// 消息（主循环并入自己的历史）。`condition` 不是当前目标时什么都不做；没有目标的输出端（子代理）不提交。
     async fn goal_checked(

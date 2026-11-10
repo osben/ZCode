@@ -260,3 +260,57 @@ async fn a_notice_already_absorbed_is_only_acked_when_it_comes_again() {
         matches!(message, Message::User(user) if matches!(user.origin, UserOrigin::Meta { .. }))
     }));
 }
+
+/// Fork: the foreground promotion lease (`Command::ReserveForeground`, Node `acquireForegroundPromotionLease`): the
+/// turn end while it is held starts no waiting background notice, so a send-now input submitted to the idle session
+/// starts first; releasing the lease lets the notice turn follow.
+#[tokio::test]
+async fn a_reserved_foreground_keeps_a_waiting_notice_behind_the_promoted_input() {
+    let gate = Arc::new(Notify::new());
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(
+        ScriptedModel::new(vec![
+            text_response(&["ok"]),
+            text_response(&["promoted seen"]),
+            text_response(&["notice seen"]),
+        ])
+        .gated_at(0, gate.clone()),
+    );
+    let session = session(&scope, env.clone(), model.clone(), Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "first")).await;
+    env.finish(shell_notice(1, "b1"));
+    queued(&mut events, "b1").await;
+    let reserve = |id: &str, reserved: bool| CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveForeground { reserved },
+    };
+    assert!(matches!(
+        session.send(reserve("c2", true)).await,
+        Ack::Accepted { .. }
+    ));
+    gate.notify_one();
+    until_finished(&mut events, 1).await;
+    // The turn end started nothing: the notice still waits and the session is idle.
+    assert_eq!(model.requests().len(), 1);
+    assert!(!session.view().await.unwrap().running);
+    session.send(submit("c3", "promoted")).await;
+    until_finished(&mut events, 1).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let second = format!("{:?}", requests[1].messages);
+    assert!(
+        second.contains("promoted") && !second.contains("b1"),
+        "{second}"
+    );
+    assert!(matches!(
+        session.send(reserve("c4", false)).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 3);
+    assert!(format!("{:?}", requests[2].messages).contains("b1"));
+    assert_eq!(env.acked(), [1]);
+}

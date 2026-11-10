@@ -217,3 +217,30 @@ fn yolo_with_plan_on_still_runs_in_plan_mode() {
     };
     assert_eq!(state.effective(), PermissionMode::Plan);
 }
+
+/// Fork: a guide (`Delivery::Steer`) absorbed into the running turn applies its frozen mode and Plan switch at once,
+/// like Node's drain `applyRuntimeExecutionState`, instead of losing them when it leaves the queue without a turn.
+#[tokio::test]
+async fn an_absorbed_guide_applies_its_mode_and_plan_to_the_running_turn() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session
+        .send(submit_with("c1", "ask me", PermissionMode::Default, false))
+        .await;
+    let interaction = asked(&mut events).await;
+    let mut guide = submit_with("c2", "guide in plan", PermissionMode::Guarded, true);
+    if let Command::SubmitWith { delivery, .. } = &mut guide.command {
+        *delivery = Delivery::Steer;
+    }
+    assert!(matches!(session.send(guide).await, Ack::Accepted { .. }));
+    let view = session.view().await.unwrap();
+    assert_eq!((view.mode, view.plan), (PermissionMode::Default, false));
+    session.send(answer("c3", interaction)).await;
+    until_finished(&mut events, 1).await;
+    // The guide joined the same turn (one turn, its text in the request after the tool round) and its state applies.
+    assert!(format!("{:?}", model.requests().last().unwrap().messages).contains("guide in plan"));
+    let view = session.view().await.unwrap();
+    assert!(view.queue.is_empty());
+    assert_eq!((view.mode, view.plan), (PermissionMode::Guarded, true));
+}

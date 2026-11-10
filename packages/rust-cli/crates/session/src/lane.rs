@@ -255,6 +255,20 @@ impl Actor {
         crate::actor::accepted()
     }
 
+    /// Fork: `Command::ReserveForeground` (Node's foreground promotion lease): while reserved, [`Self::start_next`]
+    /// starts nothing, so the turn end after the interrupt cannot start a background notice (or a queued input) ahead of
+    /// the promoted input. Releasing while idle resumes the drain as a turn end would. Always `Accepted`.
+    pub(crate) async fn reserve_foreground(
+        &mut self,
+        reserved: bool,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        let was = self.inbox.set_reserved(reserved);
+        if was && !reserved && !self.busy() {
+            self.start_next().await;
+        }
+        crate::actor::accepted()
+    }
+
     /// 回合结束后的下一项（query.md §5）：通道头是输入就是它；是通知就取走头部连续的通知，合成一个
     /// 回合（通知合并）；通道空时是 `Queue` 输入（优先级 `later`）。定时任务由调用方最后看。
     /// The next turn's input, with the execution state frozen on it when it was submitted
