@@ -1387,3 +1387,130 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
         .unwrap_or_default();
     assert_eq!(cold["status"], "cancelled", "{snapshot}");
 }
+
+/// A background task notification: a meta user message, no typed input (Node `task-notification` origin).
+fn notification(id: &str) -> Message {
+    Message::User(UserMessage {
+        id: MessageId::new(id),
+        content: vec![ContentBlock::Text {
+            text: "<task-notification>done</task-notification>".into(),
+        }],
+        origin: UserOrigin::Meta {
+            source: "task-notification".into(),
+        },
+    })
+}
+
+fn said(text: &str) -> Vec<ContentBlock> {
+    vec![ContentBlock::Text { text: text.into() }]
+}
+
+/// The assistant row of message `id` (a streamed row keeps its `turn:response:index` entity id).
+fn reply_of<'a>(projection: &'a Projection, id: &str) -> &'a Map<String, Value> {
+    projection
+        .rows
+        .iter()
+        .find(|row| row["kind"] == "assistantText" && row["assistantResponseId"] == id)
+        .unwrap()
+}
+
+/// Fork: a turn opened by a notification offers `canFork` on its latest reply like a typed-input turn
+/// (Node `materializeCommandRowActions` has no real-user requirement); earlier replies do not.
+#[test]
+fn a_notification_turn_offers_fork_on_its_final_reply() {
+    let mut feed = Feed::new();
+    let turn = TurnId::new("turn_n");
+    feed.apply(KernelEvent::TurnStarted {
+        turn: turn.clone(),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: notification("msg_notice"),
+    });
+    // Each model response is its own row key (turn, response, block): stream two responses.
+    let reply = |response: u32, text: &str| KernelEvent::StreamDelta {
+        turn: turn.clone(),
+        response,
+        index: 0,
+        delta: BlockDelta::Text(text.into()),
+    };
+    feed.apply(reply(1, "checking"));
+    feed.apply(KernelEvent::MessageDone {
+        message: assistant("msg_n1", said("checking")),
+    });
+    feed.apply(reply(2, "noted"));
+    feed.apply(KernelEvent::MessageDone {
+        message: assistant("msg_n2", said("noted")),
+    });
+    let running = &feed.projection;
+    assert!(reply_of(running, "msg_n2").get("actions").is_none());
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    let projection = &feed.projection;
+    assert!(reply_of(projection, "msg_n1").get("actions").is_none());
+    assert_eq!(
+        reply_of(projection, "msg_n2")["actions"],
+        json!({"canFork": true})
+    );
+    assert!(finished.iter().any(|delta| {
+        delta["op"] == "row.upserted"
+            && delta["row"]["assistantResponseId"] == "msg_n2"
+            && delta["row"]["actions"] == json!({"canFork": true})
+    }));
+    let reply = reply_of(projection, "msg_n2");
+    let (row_id, entity) = (
+        reply["rowId"].as_u64().unwrap(),
+        reply["entityId"].as_str().unwrap().to_owned(),
+    );
+    assert_eq!(
+        projection.fork_target(row_id, &entity),
+        Ok("msg_n2".to_owned())
+    );
+    // An earlier reply of the same turn is no longer the target: unavailable, not stale.
+    let earlier = reply_of(projection, "msg_n1");
+    assert_eq!(
+        projection.fork_target(
+            earlier["rowId"].as_u64().unwrap(),
+            earlier["entityId"].as_str().unwrap()
+        ),
+        Err(TargetMiss::Unavailable)
+    );
+    assert_eq!(
+        projection.fork_target(row_id, "other"),
+        Err(TargetMiss::Stale)
+    );
+    assert_eq!(
+        projection.fork_target(u64::MAX, &entity),
+        Err(TargetMiss::Stale)
+    );
+}
+
+/// Fork: a notification turn that is still running, or that ended interrupted, offers no fork.
+#[test]
+fn a_notification_turn_offers_no_fork_while_running_or_interrupted() {
+    let mut feed = Feed::new();
+    let turn = TurnId::new("turn_n");
+    feed.apply(KernelEvent::TurnStarted {
+        turn: turn.clone(),
+        command: None,
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: notification("msg_notice"),
+    });
+    feed.apply(KernelEvent::MessageDone {
+        message: assistant("msg_n1", said("noted")),
+    });
+    feed.apply(KernelEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Interrupted,
+        usage: None,
+    });
+    assert!(
+        row_of(&feed.projection, "assistantText", "msg_n1")
+            .get("actions")
+            .is_none()
+    );
+}

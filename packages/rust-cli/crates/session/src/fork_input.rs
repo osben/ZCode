@@ -43,11 +43,21 @@ fn is_last_turn(messages: &[Message], input: &MessageId) -> bool {
         .is_some_and(|message| message.id() == input)
 }
 
+/// The position of `id` when it is a stored assistant reply (not the resume sentinel).
+fn reply_position(messages: &[Message], id: &MessageId) -> Option<usize> {
+    messages.iter().position(|message| {
+        message.id() == id
+            && matches!(message, Message::Assistant(assistant) if !assistant.is_resume_sentinel())
+    })
+}
+
+const RUNNING: &str = "a turn is running; fork after it finishes";
+
 impl Actor {
     /// `ForkFromInput`：空闲时按内存里的活动历史算出终点，交给存储一次写完新会话（§6.5.2）。
     pub(crate) async fn fork_from_input(&self, input: MessageId) -> Ack {
         if self.busy() && !self.deps.fork_while_running {
-            return rejected("a turn is running; fork after it finishes");
+            return rejected(RUNNING);
         }
         let Some(through) = through(&self.messages, &input) else {
             return rejected(format!("{input} is not a message to fork from"));
@@ -55,8 +65,35 @@ impl Actor {
         // Fork (node_desktop): only a completed turn is a stable target while a turn runs; the running turn
         // is the last one in the active history, so its input has no later selectable input.
         if self.busy() && is_last_turn(&self.messages, &input) {
-            return rejected("a turn is running; fork after it finishes");
+            return rejected(RUNNING);
         }
+        self.copy_through(through).await
+    }
+
+    /// `ForkFromAssistant`: the copy ends at `assistant`. Only the projection's offer decides which reply the App
+    /// may fork from; here a running turn is refused: a reply after the last selectable input belongs to the
+    /// running turn (a notification turn in progress), a reply before it is a completed turn.
+    pub(crate) async fn fork_from_assistant(&self, assistant: MessageId) -> Ack {
+        let Some(at) = reply_position(&self.messages, &assistant) else {
+            return rejected(format!("{assistant} is not a message to fork from"));
+        };
+        if self.busy() {
+            if !self.deps.fork_while_running {
+                return rejected(RUNNING);
+            }
+            let last_input = self
+                .messages
+                .iter()
+                .rposition(|message| selectable(message).is_some());
+            if last_input.is_none_or(|input| at > input) {
+                return rejected(RUNNING);
+            }
+        }
+        self.copy_through(assistant).await
+    }
+
+    /// Writes the child session that carries the history through `through` (`SessionStore::fork`, files untouched).
+    async fn copy_through(&self, through: MessageId) -> Ack {
         let child = self.deps.ids.session();
         let fork = SessionFork {
             parent: self.meta.id.clone(),

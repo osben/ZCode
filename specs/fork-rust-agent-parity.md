@@ -229,6 +229,24 @@ Node 3.17 steers a SendMessage for a running local agent into its active turn (`
 
 The running child absorbs the message at that boundary in Node's `coordinator_steer` form (`incoming-message.ts`): `The coordinator sent a message while you were working:\n<message>\n\nAddress this before completing your current task.`, as a `<system-reminder>` attachment. Owner: the steer's sender (`Steered.from`, kernel-api `SteerSender`); the child mailbox sets `Coordinator`, the session's queued prompts set `User`, and the query loop picks the wrapper (`query/src/texts.rs`). Acceptance: `query/src/texts_tests.rs`, and the `conversation-session-background` case "running background Agent 可以通过 SendMessage 收到 steer 消息" on Rust.
 
+## Fork from a turn opened by a notification
+
+Rule (Node `product-projection.ts` `materializeCommandRowActions`): an `assistantText` row offers `canFork` when the session is not compacting, the row is `complete`, its turn header is `completedSuccess`, and the row is the latest `assistantText` of its turn that has an assistant message id. The turn needs no typed user row, so a turn opened by a background task notification (a meta user message, origin `task-notification`) offers Fork like any other turn. The Rust projection (`projection/actions.rs` `refresh_actions`) follows this rule; it no longer requires a `realUser` row in the turn.
+
+Target: a Fork always goes through the assistant reply the row carries (Node `forkAssistant`: copy the history through that reply). The protocol resolves it with `Projection::fork_target` (owner: the projection's row state; the row must offer `canFork` now and its entity id must match, else `proto.staleTarget` or `guard.actionUnavailable`). The command is `Command::ForkFromAssistant { assistant }` (kernel owner: `session/src/fork_input.rs`). It copies the stored history through `assistant` into a new session, files untouched, like `ForkFromInput`.
+
+Kernel guards (the projection decides what is offered; the kernel decides only what is safe to copy):
+- A message that is not an assistant reply (user, tool result, notification, resume sentinel, unknown id) is refused: `<id> is not a message to fork from`.
+- A running turn is not a fork target. While a turn runs, `ForkFromAssistant` is refused: `a turn is running; fork after it finishes` (no fork at all unless `SessionDeps::fork_while_running`). With `fork_while_running`, a reply before the last selectable (human) input is a completed turn and forks; a reply after it belongs to the running turn and is refused.
+- `/fork` in the TUI keeps `ForkFromInput` and its rules (`rewind_plan::selectable`). Its through-point is unchanged.
+
+Event order (one session actor, serial): the projection upserts `canFork` on the reply when `TurnFinished(Success)` arrives; a Fork command read after that sees the offer; the kernel reads the in-memory history, checks the guards, then `SessionStore::fork` writes the child in one step; the protocol opens the child and announces it. A command that arrives before `TurnFinished` finds no offer and is refused by the protocol (`guard.actionUnavailable`).
+
+Acceptance:
+- Projection: the final reply of a notification turn offers `canFork` (and nothing else when no user row exists); a reply inside a notification turn that is not the latest does not; a notification turn still running or ending in `Interrupted` offers nothing; a stale entity id is `proto.staleTarget`.
+- Kernel: forking through a notification turn's reply copies exactly the messages through that reply (the notification and the work after it that precede the reply are included, later messages are not); the running guards above; a non-assistant id is refused.
+- Protocol: `fork` on a notification reply sends `ForkFromAssistant` with that reply's id.
+
 ## Known differences kept on purpose
 
 - **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.
