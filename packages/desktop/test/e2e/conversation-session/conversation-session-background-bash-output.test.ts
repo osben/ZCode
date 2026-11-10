@@ -431,12 +431,17 @@ describe("后台 Bash 实时输出详情", () => {
         )!
         .click();
     }, childSessionId);
+    // Fork: the publisher release and the cold subscribe are Node host debug lines in ZCODE_LOG_DIR; the Rust agent
+    // has no detached-publisher lifecycle and writes no such lines, so it checks the UI path only.
+    const nodeAgentLogs = process.env.ZCODE_E2E_AGENT_RUNTIME !== "rust";
     const releasedMessage = `release detached live child publisher session=${childSessionId}`;
-    await browser.waitUntil(async () => (await readAgentLogs()).includes(releasedMessage), {
-      timeout: 260000,
-      interval: 1000,
-      timeoutMsg: "子会话 publisher 未实际释放",
-    });
+    if (nodeAgentLogs) {
+      await browser.waitUntil(async () => (await readAgentLogs()).includes(releasedMessage), {
+        timeout: 260000,
+        interval: 1000,
+        timeoutMsg: "子会话 publisher 未实际释放",
+      });
+    }
     expect(await alive("CHILD")).toBe(true);
     await browser.saveScreenshot(
       join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "background-bash-child-released.png"),
@@ -449,12 +454,20 @@ describe("后台 Bash 实时输出详情", () => {
     const childSummary = await $(`[data-testid="v4-subagent-open-side-pane-${childSessionId}"]`);
     await childSummary.scrollIntoView();
     await childSummary.waitForClickable();
+    // Upstream 3.17.1 moved the cold-resume single flight to the host lifecycle and dropped the
+    // "cold resume flight cleared" line; the gateway's cold subscribe line is the remaining signal. Count it, since
+    // the child's first open already logged one.
+    const coldSubscribe = `subscribe conversation session=${childSessionId} coldResume=true`;
+    const countColdSubscribes = async () =>
+      nodeAgentLogs ? (await readAgentLogs()).split(coldSubscribe).length - 1 : 0;
+    const coldSubscribesBefore = await countColdSubscribes();
     await childSummary.click();
-    const resumedMessage = `cold resume flight cleared session=${childSessionId}`;
-    await browser.waitUntil(async () => (await readAgentLogs()).includes(resumedMessage), {
-      timeout: 15000,
-      timeoutMsg: "重新打开子会话未完成冷恢复",
-    });
+    if (nodeAgentLogs) {
+      await browser.waitUntil(async () => (await countColdSubscribes()) > coldSubscribesBefore, {
+        timeout: 15000,
+        timeoutMsg: "重新打开子会话未完成冷恢复",
+      });
+    }
     // 冷恢复不新增历史后台任务目录；回到之前保留的输出 tab，验证它仍能查询原任务。
     await $(`[data-side-pane-tab-id="${outputTabId}"]`).click();
     await details().waitForDisplayed();
@@ -474,7 +487,7 @@ describe("后台 Bash 实时输出详情", () => {
           rootSessionId,
           workId,
           releasedMessage,
-          resumedMessage,
+          coldSubscribe,
           requests,
           output: await text(),
         },
