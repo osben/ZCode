@@ -238,7 +238,7 @@ Target: a Fork always goes through the assistant reply the row carries (Node `fo
 Kernel guards (the projection decides what is offered; the kernel decides only what is safe to copy):
 
 - A message that is not an assistant reply (user, tool result, notification, resume sentinel, unknown id) is refused: `<id> is not a message to fork from`.
-- A running turn is not a fork target. While a turn runs, `ForkFromAssistant` is refused: `a turn is running; fork after it finishes` (no fork at all unless `SessionDeps::fork_while_running`). With `fork_while_running`, a reply before the last selectable (human) input is a completed turn and forks; a reply after it belongs to the running turn and is refused.
+- A running turn is not a fork target. While a turn runs, `ForkFromAssistant` is refused: `a turn is running; fork after it finishes` (no fork at all unless `SessionDeps::fork_while_running`). With `fork_while_running`, the running turn starts at its opening user message (`Running::prompt`: the typed input, or the last notification of a notification turn); a reply before it is a completed turn and forks, a reply from it on is refused. Without a stored prompt (compaction) the last selectable (human) input bounds the running turn.
 - `/fork` in the TUI keeps `ForkFromInput` and its rules (`rewind_plan::selectable`). Its through-point is unchanged.
 
 Event order (one session actor, serial): the projection upserts `canFork` on the reply when `TurnFinished(Success)` arrives; a Fork command read after that sees the offer; the kernel reads the in-memory history, checks the guards, then `SessionStore::fork` writes the child in one step; the protocol opens the child and announces it. A command that arrives before `TurnFinished` finds no offer and is refused by the protocol (`guard.actionUnavailable`).
@@ -249,6 +249,10 @@ Acceptance:
 - Kernel: forking through a notification turn's reply copies exactly the messages through that reply (the notification and the work after it that precede the reply are included, later messages are not); the running guards above; a non-assistant id is refused.
 - Protocol: `fork` on a notification reply sends `ForkFromAssistant` with that reply's id.
 
+## Workspace writes refuse symlinked targets (Node fs adapter)
+
+Node writes workspace files with `atomic: true` (every caller: Write, Edit, apply-patch, file rewind, workspace fork, the approved plan file), and its `atomicWrite` refuses a target that is a symlink (`lstat`, then `O_NOFOLLOW`): `Refusing to write through symlink: <path>. Resolve the symlink and pass the real target path explicitly.` The Rust local machine (`env-local` `files::put_file`, also behind the remote exec-server) used to write through the link. It now refuses the same way: an `lstat` check before the write and `O_NOFOLLOW` on Unix opens (ELOOP maps to the same error). Symlinked parent directories are still followed, as in Node. The Rust write stays in place (inode, mode and hard links kept) instead of Node's temp-file rename. Acceptance: executor-host contract case `writes_refuse_a_symlinked_target` (local and loopback machines).
+
 ## Known differences kept on purpose
 
 - **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.
@@ -256,8 +260,7 @@ Acceptance:
 
 ## Open gaps (not yet ported)
 
-- **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. The same case run alone (`it.only`) fails on Node too.
-- **Fork while a later notification turn runs.** `ForkFromAssistant` refuses a reply after the last human input while a turn runs, so a completed notification turn followed by a running one shows Fork but the command is refused. Node accepts it.
+- **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
 - **Plan-mode specs outside the gate** fail on Rust before and after the Node 3.17 plan-mode port: `plan-approval-feedback-user-message` (Node's denial text `The plan was not approved by the user.` with the feedback as a follow-up user message), `plan-file-compact-continuity` (post-compact `plan_file_reference`), `plan-mode-mcp-permission` (no permission dialog for non-destructive MCP), `plan-session-switch-restore` (no ExitPlanMode block after switching back).
 
 ## Order of work

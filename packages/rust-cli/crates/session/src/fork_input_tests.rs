@@ -15,7 +15,7 @@ use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use super::through;
+use super::{completed_while_running, through};
 use crate::Opened;
 use crate::rewind::tests::{Writing, file};
 use crate::test_support::{Setup, envelope, finished, meta, submit, until};
@@ -477,4 +477,36 @@ async fn forking_from_assistant_refuses_a_running_turn() {
         .send(fork_assistant(&MessageId::new("msg_a1")))
         .await;
     assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+}
+
+/// While a notification turn runs, the replies before its opening notification are completed turns (the typed
+/// turn's reply and an earlier notification turn's reply); its own replies are not.
+#[test]
+fn a_running_notification_turn_starts_at_its_notification() {
+    let meta_origin = || UserOrigin::Meta {
+        source: "task-notification".to_owned(),
+    };
+    let history = vec![
+        human("msg_u1", "first"),
+        assistant("msg_a1", said("one")),
+        user(
+            "msg_n1",
+            "<task-notification>a</task-notification>",
+            meta_origin(),
+        ),
+        assistant("msg_r1", said("noted a")),
+        user(
+            "msg_n2",
+            "<task-notification>b</task-notification>",
+            meta_origin(),
+        ),
+        assistant("msg_r2", said("checking b")),
+    ];
+    let running = MessageId::new("msg_n2");
+    assert!(completed_while_running(&history, 1, Some(&running)));
+    assert!(completed_while_running(&history, 3, Some(&running)));
+    assert!(!completed_while_running(&history, 5, Some(&running)));
+    // Without a stored prompt the last typed input bounds the running turn, as before.
+    assert!(!completed_while_running(&history, 3, None));
+    assert!(!completed_while_running(&history, 1, None));
 }

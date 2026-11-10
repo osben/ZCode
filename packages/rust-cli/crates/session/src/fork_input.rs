@@ -51,6 +51,24 @@ fn reply_position(messages: &[Message], id: &MessageId) -> Option<usize> {
     })
 }
 
+/// Where the running turn starts in `messages`: its opening user message (`Running::prompt`, a typed input or the
+/// last notification of a notification turn). Without a stored prompt (compaction, or a prompt not committed yet)
+/// the last selectable input stands in.
+fn running_turn_start(messages: &[Message], prompt: Option<&MessageId>) -> Option<usize> {
+    prompt
+        .and_then(|prompt| messages.iter().position(|message| message.id() == prompt))
+        .or_else(|| {
+            messages
+                .iter()
+                .rposition(|message| selectable(message).is_some())
+        })
+}
+
+/// While a turn runs, a reply at `at` is a completed turn when it precedes the running turn's opening message.
+fn completed_while_running(messages: &[Message], at: usize, prompt: Option<&MessageId>) -> bool {
+    running_turn_start(messages, prompt).is_some_and(|start| at < start)
+}
+
 const RUNNING: &str = "a turn is running; fork after it finishes";
 
 impl Actor {
@@ -71,8 +89,8 @@ impl Actor {
     }
 
     /// `ForkFromAssistant`: the copy ends at `assistant`. Only the projection's offer decides which reply the App
-    /// may fork from; here a running turn is refused: a reply after the last selectable input belongs to the
-    /// running turn (a notification turn in progress), a reply before it is a completed turn.
+    /// may fork from; here a running turn is refused: a reply from the running turn's opening message on belongs to
+    /// it, a reply before it is a completed turn (also when a notification opened the running turn).
     pub(crate) async fn fork_from_assistant(&self, assistant: MessageId) -> Ack {
         let Some(at) = reply_position(&self.messages, &assistant) else {
             return rejected(format!("{assistant} is not a message to fork from"));
@@ -81,11 +99,11 @@ impl Actor {
             if !self.deps.fork_while_running {
                 return rejected(RUNNING);
             }
-            let last_input = self
-                .messages
-                .iter()
-                .rposition(|message| selectable(message).is_some());
-            if last_input.is_none_or(|input| at > input) {
+            let prompt = self
+                .running
+                .as_ref()
+                .and_then(|running| running.prompt.as_ref());
+            if !completed_while_running(&self.messages, at, prompt) {
                 return rejected(RUNNING);
             }
         }
