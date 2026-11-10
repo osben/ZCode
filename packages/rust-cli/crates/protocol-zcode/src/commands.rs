@@ -768,6 +768,27 @@ fn input_execution(
     })
 }
 
+/// How a `sendText` input is admitted. Running, it is steered into the turn (`guide`) or queued; idle, it starts now.
+/// Fork: content blocks (attachments) are never steered into a running turn; they wait for it to end. Node steers
+/// only into an active turn (`prompt-admission.ts` `canSteer`): while the session runs a job without one (the goal
+/// completion verifier), a guide is a future queue item, shown in the queue rather than as a pending guide row.
+fn admission(
+    requested: Option<Requested>,
+    followup: Followup,
+    phase: Phase,
+    turn_running: bool,
+    with_attachments: bool,
+) -> (Delivery, &'static str) {
+    let running = phase == Phase::Running;
+    let steerable = running && turn_running && !with_attachments;
+    match (requested, running) {
+        (Some(Requested::Guide), true) if steerable => (Delivery::Steer, "guide"),
+        (None, true) if steerable && followup == Followup::Guide => (Delivery::Steer, "guide"),
+        (_, true) => (Delivery::Queue, "queue"),
+        (_, false) => (Delivery::Queue, "startNow"),
+    }
+}
+
 /// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
 /// now and queueing, and applies the input's execution state only when its turn starts
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
@@ -824,22 +845,18 @@ async fn send_text(
         return *ack;
     }
     let execution = input_execution(&input, view.as_ref());
-    let running = phase == Phase::Running;
     let requested = input.requested_delivery;
-    let followup = live.followup();
-    // Fork: content blocks (attachments) are never steered into a running turn; they wait for it to end.
-    let with_attachments = !refs.is_empty();
-    let (delivery, admitted) = match (requested, running) {
-        (_, true) if with_attachments => (Delivery::Queue, "queue"),
-        (Some(Requested::Guide), true) => (Delivery::Steer, "guide"),
-        (None, true) if followup == Followup::Guide => (Delivery::Steer, "guide"),
-        (_, true) => (Delivery::Queue, "queue"),
-        (_, false) => (Delivery::Queue, "startNow"),
-    };
+    let (delivery, admitted) = admission(
+        requested,
+        live.followup(),
+        phase,
+        view.as_ref().is_none_or(|view| view.running),
+        !refs.is_empty(),
+    );
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();
-    let content = if with_attachments {
+    let content = if !refs.is_empty() {
         crate::attachments::content(server, handle.id(), &text, refs).await
     } else {
         Vec::new()
@@ -1175,3 +1192,7 @@ async fn stop(
         Ack::refused(id, Status::Noop, "proto.nothingToStop", reason, revision)
     })
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;
