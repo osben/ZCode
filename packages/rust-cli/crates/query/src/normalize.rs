@@ -21,11 +21,10 @@ use std::collections::HashMap;
 
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::ToolUseId;
-use rust_cli_kernel_api::message::{AttachmentMessage, AttachmentRole, ContentBlock, Message};
+use rust_cli_kernel_api::message::{AttachmentRole, ContentBlock, Message};
 use rust_cli_kernel_api::model::{ApiContent, ApiMessage, ApiRole, CacheControl, TurnOutputConfig};
 use rust_cli_kernel_api::reminder_fold::{array_result, fold_into_tool_result};
 use rust_cli_prompts::reminder;
-use serde_json::Value;
 
 /// normalize 的选项（随模型变化）。
 #[derive(Debug, Clone, Default)]
@@ -70,17 +69,6 @@ fn text(value: String) -> ApiContent {
         block: ContentBlock::Text { text: value },
         cache_control: None,
     }
-}
-
-/// 人类插话（记录里带 `humanTurn: true` 的 `queued_command`）：插话的 `commandMode` 是 `prompt`，
-/// 后台通知是 `task-notification`（query.md §4、§5）。
-fn is_human_prompt(attachment: &AttachmentMessage) -> bool {
-    attachment.source == queued_command::SOURCE
-        && attachment
-            .data
-            .get(queued_command::MODE_KEY)
-            .and_then(Value::as_str)
-            == Some(queued_command::PROMPT_MODE)
 }
 
 /// 停止上浮的位置：assistant，或以工具结果开头的 user 消息。
@@ -342,14 +330,9 @@ pub(crate) fn normalize<'a>(
                 let (_, prompt) = queued_command::sourced(attachment).unwrap_or_default();
                 builder.push_user(vec![text(prompt.to_owned())]);
             }
-            // 缺陷修复（修复线 F13）：人类插话原来按 system 角色折进末尾的 system 消息。应在
-            // 有 system turn 时把它当人类输入（缺省开）：去包装、接在工具结果所在的
-            // user 消息后面（先于 system 文字落地）。没有 system turn 时走下面的老路。
-            Message::Attachment(attachment)
-                if options.system_turns && is_human_prompt(attachment) =>
-            {
-                builder.push_user(vec![text(reminder::unwrap(&attachment.text).to_owned())]);
-            }
+            // Fork: a typed steer is a mid-turn input (Node 3.17 `inputPresentationRole` `mid_turn`): with system turns
+            // it folds into the run's system message like any system-role attachment, and without an anchor it falls
+            // back to one wrapped user reminder (`flush`). The Rust port used to send it as unwrapped user text (F13).
             Message::Attachment(attachment) => {
                 let blocks = attachment.blocks();
                 if !blocks.is_empty() {
