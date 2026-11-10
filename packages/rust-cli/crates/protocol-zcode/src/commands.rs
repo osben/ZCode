@@ -273,7 +273,17 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             } else {
                 QueuedKind::Text
             };
-            let ack = send_text(server, handle, &live.sink, envelope, kind, phase, revision).await;
+            let ack = if phase == Phase::Running
+                && kind == QueuedKind::Text
+                && requests_start_now(envelope)
+            {
+                send_text_now(server, &live, envelope, revision).await
+            } else {
+                send_text(
+                    server, handle, &live.sink, envelope, kind, phase, revision, false,
+                )
+                .await
+            };
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
             }
@@ -789,9 +799,67 @@ fn admission(
     }
 }
 
+/// Fork: `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode).
+fn requests_start_now(envelope: &Envelope) -> bool {
+    envelope
+        .payload
+        .get("requestedDelivery")
+        .and_then(Value::as_str)
+        == Some("startNow")
+}
+
+/// Fork: Node `session-flow.ts` `forceStartNow`: a `startNow` input while a turn (or the goal verifier) runs preempts
+/// it and starts at once instead of being queued. Same steps as `sendQueuedNow`: hold the queue (the promotion lease,
+/// so the drain after the stopped turn cannot start a queued item first), interrupt and wait for the turn to finish,
+/// submit the input to the idle session, then restore the user's own hold.
+async fn send_text_now(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    revision: u64,
+) -> Ack {
+    let handle = live.handle.as_ref();
+    let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
+    let user_held = !live.sink.auto_drain();
+    send(handle, &part("hold"), Command::HoldQueue { held: true }).await;
+    let ack = match crate::fork::settle_running_turn(live, envelope).await {
+        Ok(()) => {
+            send_text(
+                server,
+                handle,
+                &live.sink,
+                envelope,
+                QueuedKind::Text,
+                Phase::Running,
+                revision,
+                true,
+            )
+            .await
+        }
+        Err(reason) => Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "fault.command.inputRejected",
+            reason,
+            revision,
+        ),
+    };
+    send(
+        handle,
+        &part("resume"),
+        Command::HoldQueue { held: user_held },
+    )
+    .await;
+    ack
+}
+
 /// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
 /// now and queueing, and applies the input's execution state only when its turn starts
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the sendText admission inputs plus the preempted flag"
+)]
 async fn send_text(
     server: &Server,
     handle: &dyn SessionHandle,
@@ -800,6 +868,7 @@ async fn send_text(
     kind: QueuedKind,
     phase: Phase,
     revision: u64,
+    preempted: bool,
 ) -> Ack {
     let input: Input = match payload(envelope) {
         Ok(input) => input,
@@ -846,10 +915,16 @@ async fn send_text(
     }
     let execution = input_execution(&input, view.as_ref());
     let requested = input.requested_delivery;
+    // A preempted turn has settled: the input starts now even though the snapshot still said running.
+    let admission_phase = if preempted {
+        Phase::CompletedInterrupted
+    } else {
+        phase
+    };
     let (delivery, admitted) = admission(
         requested,
         live.followup(),
-        phase,
+        admission_phase,
         view.as_ref().is_none_or(|view| view.running),
         !refs.is_empty(),
     );

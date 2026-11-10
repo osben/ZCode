@@ -49,3 +49,24 @@ fn attachments_queue_and_an_idle_session_starts_now() {
         (Delivery::Queue, "startNow")
     );
 }
+
+#[test]
+fn only_an_explicit_start_now_preempts_a_running_turn() {
+    let envelope = |payload: serde_json::Value| -> Envelope {
+        serde_json::from_value(json!({
+            "commandId": "c1",
+            "clientId": "desktop",
+            "sessionId": "s1",
+            "type": "sendText",
+            "payload": payload,
+        }))
+        .unwrap()
+    };
+    assert!(requests_start_now(&envelope(
+        json!({"text": "now", "requestedDelivery": "startNow"})
+    )));
+    assert!(!requests_start_now(&envelope(
+        json!({"text": "later", "requestedDelivery": "queue"})
+    )));
+    assert!(!requests_start_now(&envelope(json!({"text": "plain"}))));
+}
