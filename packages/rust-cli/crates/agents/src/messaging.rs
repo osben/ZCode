@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::abort::Abort;
-use rust_cli_kernel_api::ids::AgentId;
+use rust_cli_kernel_api::ids::{AgentId, CommandId};
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, parse,
@@ -95,11 +95,10 @@ impl Messaging {
             return Ok(rust_cli_kernel_api::tool::text(text));
         };
         if self.core.live.enqueue(&id, input.message.clone()) {
-            let text = format!(
-                "Message queued for delivery to {} at its next tool round.",
-                input.to
-            );
-            return Ok(rust_cli_kernel_api::tool::text(text));
+            return Ok(rust_cli_kernel_api::tool::text(steered_text(
+                &self.core.ports.ids.command(),
+                input.to.trim(),
+            )));
         }
         // 已结束：在后台续跑子会话。
         let status = agent.status().as_str();
@@ -113,11 +112,10 @@ impl Messaging {
         if !self.core.live.restart(&id, Abort::new(), tool_use) {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
             self.core.live.enqueue(&id, input.message.clone());
-            let text = format!(
-                "Message queued for delivery to {} at its next tool round.",
-                input.to
-            );
-            return Ok(rust_cli_kernel_api::tool::text(text));
+            return Ok(rust_cli_kernel_api::tool::text(steered_text(
+                &self.core.ports.ids.command(),
+                input.to.trim(),
+            )));
         }
         let origin = rust_cli_kernel_api::message::UserOrigin::Human;
         let opening = match spawn::resume(&self.core, &agent, &input.message, origin).await {
@@ -216,3 +214,17 @@ impl Tool for Messaging {
         }
     }
 }
+
+/// Node 3.17 steers a message for a running agent into its active turn (`message-steering.ts`, delivery
+/// `steered`) and answers with this text; the mailbox here delivers at the same boundary, the next model request.
+/// Node's message id is `msg_<uuid>`; the native `command` id is a bare uuid.
+pub(crate) fn steered_text(id: &CommandId, agent: &str) -> String {
+    format!(
+        "Message msg_{} was sent to its active turn for local agent {agent}.",
+        id.as_str()
+    )
+}
+
+#[cfg(test)]
+#[path = "messaging_tests.rs"]
+mod tests;

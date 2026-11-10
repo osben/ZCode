@@ -1,6 +1,7 @@
 //! 主循环里给模型看的固定文本。
 //! L2 的 prompts 数据加载就绪后迁到 `prompts/`。
 
+use rust_cli_kernel_api::hooks::SteerSender;
 use rust_cli_kernel_api::model::ModelError;
 use rust_cli_prompts::reminder;
 
@@ -51,10 +52,16 @@ pub(crate) const CONTEXT_WINDOW_EXHAUSTED: &str =
 
 /// 工具边界并入的插话（human 来源的格式，
 /// 工作中收到消息的前缀在前；产品名按替换表换成 ZCode），外面包 `<system-reminder>`。
-pub(crate) fn queued_prompt(prompt: &str) -> String {
-    reminder::wrap(&format!(
-        "The user sent a new message while you were working:\n{prompt}\n\nThis is how ZCode surfaces messages the user sends mid-turn \u{2014} within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn."
-    ))
+/// A steer from the parent agent follows Node's `coordinator_steer` (`incoming-message.ts`).
+pub(crate) fn queued_prompt(prompt: &str, from: SteerSender) -> String {
+    reminder::wrap(&match from {
+        SteerSender::User => format!(
+            "The user sent a new message while you were working:\n{prompt}\n\nThis is how ZCode surfaces messages the user sends mid-turn \u{2014} within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn."
+        ),
+        SteerSender::Coordinator => format!(
+            "The coordinator sent a message while you were working:\n{prompt}\n\nAddress this before completing your current task."
+        ),
+    })
 }
 
 /// 断流续写的提示：主线程与子代理。
@@ -72,3 +79,7 @@ pub(crate) fn truncated_error(error: &ModelError) -> String {
     };
     format!("API Error: {what} The response above may be incomplete.")
 }
+
+#[cfg(test)]
+#[path = "texts_tests.rs"]
+mod tests;

@@ -258,6 +258,7 @@ impl ActorSink {
                     absorbed.push(Absorbed::Prompt(Steered {
                         text,
                         after: outcome.messages,
+                        from: rust_cli_kernel_api::hooks::SteerSender::User,
                     }));
                 }
                 Taken::Notice(text) => absorbed.push(Absorbed::Notice(AbsorbedNotice {

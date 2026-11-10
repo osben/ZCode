@@ -286,6 +286,18 @@ pub trait HookHttp: Send + Sync {
 pub struct Steered {
     pub text: String,
     pub after: Vec<Message>,
+    /// Who sent it; picks the mid-turn wrapper (Node `user_steer` / `coordinator_steer`).
+    pub from: SteerSender,
+}
+
+/// The sender of a mid-turn steer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SteerSender {
+    /// The user typed it into the running session.
+    #[default]
+    User,
+    /// The parent agent sent it to a running subagent with SendMessage.
+    Coordinator,
 }
 
 impl Steered {
@@ -293,6 +305,16 @@ impl Steered {
         Self {
             text,
             after: Vec::new(),
+            from: SteerSender::User,
+        }
+    }
+
+    /// A SendMessage from the parent agent, absorbed by the running subagent.
+    pub fn coordinator(text: String) -> Self {
+        Self {
+            text,
+            after: Vec::new(),
+            from: SteerSender::Coordinator,
         }
     }
 }

@@ -164,7 +164,7 @@ async fn absorb_steering(scope: &RunScope, history: &mut Vec<Message>) -> Result
     for item in scope.sink.take_absorbed().await {
         let (id, text, data, after) = match item {
             Absorbed::Prompt(steered) => {
-                let text = texts::queued_prompt(&steered.text);
+                let text = texts::queued_prompt(&steered.text, steered.from);
                 let data = json!({
                     queued_command::PROMPT_KEY: steered.text,
                     queued_command::MODE_KEY: queued_command::PROMPT_MODE,
