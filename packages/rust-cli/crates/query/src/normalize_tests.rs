@@ -572,11 +572,10 @@ fn steered(id: &str, prompt: &str) -> Message {
     })
 }
 
-/// 修复线 F13（context.md §3 第 10 条）：有 system turn 时人类插话按人类输入
-/// ——去掉包装、作为文本块接在工具结果所在的 user 消息后面，排在 system 文字之前；两条插话
-/// 之间补换行。修前它被折进末尾的 system 消息，与剩余 token 连在一起。
+/// Fork (Node 3.17 `mid_turn`): with system turns a typed steer folds into the run's system message like the other
+/// system-role attachments, unwrapped and separated by a blank line; the tool result stays alone in its user message.
 #[test]
-fn with_system_turns_a_steered_prompt_follows_the_tool_result_as_text() {
+fn with_system_turns_a_steered_prompt_folds_into_the_system_turn() {
     let messages = read_then(
         "ok",
         "Read",
@@ -593,19 +592,33 @@ fn with_system_turns_a_steered_prompt_follows_the_tool_result_as_text() {
     let api = normalize(&messages, &ON);
     assert_eq!(api.len(), 4);
     assert_eq!(api[2].role, ApiRole::User);
-    assert!(matches!(
-        api[2].content[0].block,
-        ContentBlock::ToolResult { .. }
-    ));
+    assert_eq!(api[2].content.len(), 1);
+    assert_eq!(api[3].role, ApiRole::System);
     assert_eq!(
-        texts(&api[2])[1..],
+        texts(&api[3]),
         [
-            "The user sent a new message while you were working:\nfirst\n",
-            "The user sent a new message while you were working:\nsecond"
+            "The user sent a new message while you were working:\nfirst\n\nThe user sent a new message while you were working:\nsecond\n\n<total_tokens>9</total_tokens>"
         ]
     );
-    assert_eq!(api[3].role, ApiRole::System);
-    assert_eq!(texts(&api[3]), ["<total_tokens>9</total_tokens>"]);
+}
+
+/// Fork: after a reply without tool calls there is no user message to follow, so with system turns the steer falls
+/// back to one wrapped user reminder (Node's MCS fallback).
+#[test]
+fn with_system_turns_a_steer_after_a_text_reply_is_a_wrapped_user_reminder() {
+    let messages = vec![
+        human("u1", "go"),
+        assistant("a1", vec![text("middle")]),
+        steered("q1", "second"),
+    ];
+    let api = normalize(&messages, &ON);
+    assert_eq!(api.last().unwrap().role, ApiRole::User);
+    assert_eq!(
+        texts(api.last().unwrap()),
+        [
+            "<system-reminder>\nThe user sent a new message while you were working:\nsecond\n</system-reminder>"
+        ]
+    );
 }
 
 /// 没有 system turn 的模型照旧（带包装、并进工具结果）；后台通知（`commandMode: task-notification`）仍是 system
