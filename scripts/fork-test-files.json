@@ -30,6 +30,7 @@
   "packages/desktop/test/desktopTaskDraftShortRead.test.ts",
   "packages/desktop/test/desktopTelemetryFetch.test.ts",
   "packages/desktop/test/forkAgentRuntimeSelection.test.ts",
+  "packages/desktop/test/forkE2ETelemetryEndpoint.test.ts",
   "packages/desktop/test/hostDatabaseStartupSweepGate.test.ts",
   "packages/desktop/test/hostQuickPromptsWiring.test.ts",
   "packages/desktop/test/pluginSandboxPermissions.test.ts",

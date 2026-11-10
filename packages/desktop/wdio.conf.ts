@@ -119,6 +119,7 @@ import { prepareMcpFailureGuidanceFixture } from "#e2e/helpers/mcp-failure-guida
 import { createE2EReplayFixtureVariables } from "./test/e2e/helpers/e2e-runtime-paths.js";
 import { stageE2EAppOutput } from "./test/e2e/helpers/e2e-app-output-stage.js";
 import { withE2EDesktopBuildLock } from "./scripts/ensure-e2e-desktop-build.mjs";
+import { applyForkE2ETelemetryReportEndpoint } from "./scripts/fork-e2e-telemetry-endpoint.mjs";
 import {
   ensureSshRemoteReleaseAssets,
   resolveSshRemoteReleaseScope,
@@ -636,6 +637,8 @@ process.env.ZCODE_DESKTOP_HOME_DIR = E2E_HOME_DIR;
 process.env.ZCODE_DESKTOP_USE_ELECTRON_DEFAULT_USER_DATA = "1";
 // Bugfix: the renderer E2E store bridge may be opened only explicitly by the WDIO process, so the ZCODE_ENV=test product environment does not expose a global mutable store.
 process.env.VITE_ZCODE_E2E_STORE_BRIDGE = "1";
+// Fork: bake a reserved telemetry endpoint into E2E builds so /event/report capture specs see requests.
+applyForkE2ETelemetryReportEndpoint(process.env);
 // Bugfix: the e2e session's debug port is managed by Chromedriver; disable the main process's fixed 9229 used in dev mode,
 // to avoid colliding with an already-open ZCode Dev on this machine, which causes a blank window and a stall during session creation.
 process.env.ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT = "1";

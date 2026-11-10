@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { spawnCancellableStep, startStepExecution } from "./e2e-step-process.mjs";
+import { applyForkE2ETelemetryReportEndpoint } from "./fork-e2e-telemetry-endpoint.mjs";
 import {
   hasRequiredSshE2EEnvironment,
   isSshFormalSpec,
@@ -163,14 +164,14 @@ export function createWindowsE2ERunId({ timestamp, processId, entropy }) {
 
 function createBuildEnv(env) {
   const { NODE_OPTIONS: _nodeOptions, ...buildEnv } = env;
-  return {
+  return applyForkE2ETelemetryReportEndpoint({
     ...buildEnv,
     PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false",
     VITE_ZCODE_E2E_STORE_BRIDGE: "1",
     // Windows full E2E 反复执行时复用 Turbo 内容缓存；冷缓存仍按依赖图构建，
     // targeted/non-Windows 路径不会经过父 runner 的 sharded build env。
     ZCODE_DESKTOP_AGENT_BUILD_MODE: env.ZCODE_DESKTOP_AGENT_BUILD_MODE ?? "turbo",
-  };
+  });
 }
 
 export function createWindowsE2EShardPlan({
