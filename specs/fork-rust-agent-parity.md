@@ -293,12 +293,12 @@ Rust used to send only the plan-mode reminder (and only in plan mode), so after 
 
 - Owner: context (`PromptAssembler::post_compact_parts`), the first entry of its post-compact attachments; the compact engine already places file restore before them. The path is `PlanFiles::in_workspace(..).path(agent)`, the same path ExitPlanMode writes.
 - Read: `stat` for kind and size, then `read_file`; content is the raw bytes, decoded as UTF-8 (lossy), not trimmed. Not found, not a regular file, or blank after trimming → no attachment. Larger than the byte cap or a read error → no attachment and a `warn` (Node fails the compact; Rust keeps the compact because the attachment is only continuity). Data: `{ "planFilePath": <path> }`.
-- File restore skips the plan file, like Node (`restorePostCompactFiles` `excludedPaths`), so a plan the model Read is not sent twice. The path comes from the machine's path facts; without them nothing is excluded. Node's other skips (`MEMORY.md`, instruction files, `/.codex/memories/`, `/docs/superpowers/plans/`, `/.git/`) are not ported yet. The exclusion is applied before the five-file cap, as in Node.
+- File restore skips the plan file, like Node (`restorePostCompactFiles` `excludedPaths`), so a plan the model Read is not sent twice. The path comes from the machine's path facts; without them nothing is excluded. Node's path skips (`/.codex/memories/`, `/docs/superpowers/plans/`, `/.git/`, either separator) apply too; its `MEMORY.md` and instruction-file exclusions are not ported yet. The exclusion is applied before the five-file cap, as in Node.
 
 Acceptance:
 
 - Context unit tests: an existing plan file yields the attachment with Node's text first among the post-compact attachments, in default mode too; a missing file, a blank file and a file over the cap yield none; in plan mode the plan reminder follows the reference.
-- Compact unit test: the plan file is not a restore candidate and does not take one of the five places.
+- Compact unit tests: the plan file and the skipped paths are not restore candidates and do not take one of the five places.
 - E2E (when allowed): `conversation-session-plan-file-compact-continuity` on both runtimes.
 
 ## SendMessage to a running agent (Node 3.17)

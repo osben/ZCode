@@ -28,6 +28,24 @@ fn candidates_skip_the_plan_file_before_the_cap() {
     );
 }
 
+/// Node `shouldSkipPostCompactReadStatePath`, applied before the cap (Windows separators too).
+#[test]
+fn candidates_skip_memory_plan_draft_and_git_paths() {
+    let recent: Vec<String> = [
+        "/w/.git/config",
+        "C:\\w\\.codex\\memories\\a.md",
+        "/w/docs/superpowers/plans/p.md",
+        "/w/a",
+        "/w/gitignore/.gitkeep",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    assert_eq!(
+        candidates(&recent, &[], None),
+        ["/w/a", "/w/gitignore/.gitkeep"]
+    );
+}
+
 /// 调用说明与结果说明之间只隔一个换行（折进 system 消息的文件附件是
 /// `Called the Read tool …\nResult of calling the Read tool:\n…`）。
 #[test]
