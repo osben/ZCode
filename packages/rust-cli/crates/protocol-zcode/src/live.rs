@@ -236,7 +236,7 @@ impl Live {
             return;
         };
         for (child, alive) in children {
-            let Some(id) = self.state().child_runs.open(&child, alive) else {
+            let Some(id) = self.state().child_runs.open(&child) else {
                 continue;
             };
             let task = watch(&child, id, alive);
@@ -249,17 +249,6 @@ impl Live {
                 }
                 None => state.child_runs.closed(&child, id),
             }
-        }
-    }
-
-    /// Fork: closes idle watches whose child settled.
-    fn close_watches(&self, children: Vec<String>) {
-        let mut state = self.state();
-        for child in children {
-            if let Some(task) = state.watches.remove(&child) {
-                task.abort();
-            }
-            state.child_runs.forget_watch(&child);
         }
     }
 
@@ -510,7 +499,6 @@ impl Live {
             };
             (self.collect(&mut state), spawned, plan)
         };
-        self.close_watches(plan.close);
         spawned.extend(plan.open);
         self.watch_children(spawned);
         self.write(outgoing).await;

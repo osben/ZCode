@@ -17,22 +17,19 @@ use serde_json::Value;
 
 use crate::telemetry::{Observed, Provider, Role, SubagentLink, Telemetry, uuid_v7};
 
-/// Which watches to open and close after a table read.
+/// Which watches to open after a table read. A watch is never closed from the table: when its entry settles, the
+/// run may already sit in the watch's feed unread (the mirror publishes `Finished` before the table settles), so a
+/// watch only ends after its run's `Finished` or when its feed ends.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Plan {
     /// Children to watch, with whether the entry looked alive (running or parked). A watch opened for an entry that
     /// was not alive only reads a finished run the feed kept, and ends when there is none.
     pub open: Vec<(String, bool)>,
-    /// Children whose idle watch (opened alive, no run read yet) to close: the entry settled.
-    pub close: Vec<String>,
 }
 
 #[derive(Debug)]
 struct Watch {
     id: u64,
-    alive: bool,
-    /// The watch has read a `Started`.
-    read_run: bool,
     /// The run the feed replays was already read: its items are skipped until its `Finished`.
     skipping: bool,
 }
@@ -44,8 +41,13 @@ struct Reading {
     scope: String,
     provider: Provider,
     seq: u64,
-    /// The run continues on a new watch (the previous one fell behind): replayed items were already read.
+    /// The run continues on a new watch (the previous one fell behind): of its replay, only the committed messages
+    /// past the ones already read are new.
     skip_replay: bool,
+    /// The run's committed messages read so far. The replay lists every committed message of the run in order.
+    committed: usize,
+    /// The committed messages of the current replay passed so far, while `skip_replay`.
+    replayed: usize,
 }
 
 struct Child {
@@ -75,6 +77,9 @@ pub(crate) struct ChildRuns {
     /// The first table read is done: entries settled before this `Live` opened are only recorded.
     primed: bool,
     watches: u64,
+    /// The table reads with nested lifecycle facts: their event sequence, so two reads at the same parent log
+    /// sequence never repeat an event ID.
+    nested_reads: u64,
 }
 
 /// What one feed item did.
@@ -87,7 +92,7 @@ pub(crate) struct Read {
 
 impl ChildRuns {
     /// Opens a watch on `child` unless one is open; returns its ID.
-    pub fn open(&mut self, child: &str, alive: bool) -> Option<u64> {
+    pub fn open(&mut self, child: &str) -> Option<u64> {
         let record = self
             .children
             .entry(child.to_owned())
@@ -98,25 +103,16 @@ impl ChildRuns {
         self.watches += 1;
         record.watch = Some(Watch {
             id: self.watches,
-            alive,
-            read_run: false,
             skipping: false,
         });
         Some(self.watches)
     }
 
-    /// The watch `id` on `child` ended without a run (no feed, or closed by [`Plan::close`]).
+    /// The watch `id` on `child` could not start (no feed).
     pub fn closed(&mut self, child: &str, id: u64) {
         if let Some(record) = self.children.get_mut(child)
             && record.watch.as_ref().is_some_and(|watch| watch.id == id)
         {
-            record.watch = None;
-        }
-    }
-
-    /// The idle watch on `child` was closed ([`Plan::close`]).
-    pub fn forget_watch(&mut self, child: &str) {
-        if let Some(record) = self.children.get_mut(child) {
             record.watch = None;
         }
     }
@@ -155,10 +151,12 @@ impl ChildRuns {
                 return read;
             }
             Some(ChildLive::Started { run, selection }) => {
-                watch.read_run = true;
                 if run <= record.last_run {
                     match &mut record.reading {
-                        Some(reading) if reading.run == run => reading.skip_replay = replayed,
+                        Some(reading) if reading.run == run => {
+                            reading.skip_replay = replayed;
+                            reading.replayed = 0;
+                        }
                         _ => watch.skipping = true,
                     }
                     return read;
@@ -173,6 +171,8 @@ impl ChildRuns {
                     provider: resolve(&selection),
                     seq: 0,
                     skip_replay: false,
+                    committed: 0,
+                    replayed: 0,
                 });
                 KernelEvent::TurnStarted {
                     turn,
@@ -188,8 +188,23 @@ impl ChildRuns {
                 let Some(reading) = record.reading.as_mut() else {
                     return read;
                 };
-                if skipping || (replayed && reading.skip_replay) {
+                if skipping {
                     return read;
+                }
+                if replayed && reading.skip_replay {
+                    // A watch that fell behind: the items it lost are gone from the stream, but the replay still
+                    // lists the run's committed messages; the ones past those already read are new. The in-progress
+                    // events of the replay (merged deltas, tools) cannot be told apart from the ones read: skipped.
+                    if !matches!(item, ChildLive::Committed(_)) {
+                        return read;
+                    }
+                    reading.replayed += 1;
+                    if reading.replayed <= reading.committed {
+                        return read;
+                    }
+                }
+                if matches!(item, ChildLive::Committed(_)) {
+                    reading.committed += 1;
                 }
                 let turn = reading.turn.clone();
                 match item {
@@ -253,6 +268,7 @@ impl ChildRuns {
         out: &mut Vec<Value>,
     ) -> Plan {
         let mut plan = Plan::default();
+        let mut nested_seq = None;
         let primed = std::mem::replace(&mut self.primed, true);
         let child_of: HashMap<&str, &str> = entries
             .iter()
@@ -267,12 +283,8 @@ impl ChildRuns {
                 .children
                 .entry(child.to_owned())
                 .or_insert_with(|| Child::new(child));
-            match &record.watch {
-                None if alive || (changed && primed) => plan.open.push((child.to_owned(), alive)),
-                Some(watch) if !alive && watch.alive && !watch.read_run => {
-                    plan.close.push(child.to_owned());
-                }
-                _ => {}
+            if record.watch.is_none() && (alive || (changed && primed)) {
+                plan.open.push((child.to_owned(), alive));
             }
             // A nested agent (Rust only: Node's child runtimes cannot launch subagents) is reported by its owner.
             let Some(owner) = entry
@@ -298,11 +310,23 @@ impl ChildRuns {
                 status: status.to_owned(),
                 turn: None,
             };
+            if nested_seq.is_none() {
+                self.nested_reads += 1;
+                nested_seq = Some(self.nested_reads);
+            }
             let owner = self
                 .children
                 .entry((*owner).to_owned())
                 .or_insert_with(|| Child::new(owner));
-            owner.telemetry.subagents(&[link], at, out);
+            // The owner child's facts: the parent log sequence names no event of the child's session, and two table
+            // reads can share it, so the nested facts take this record's own sequence.
+            let at = Observed {
+                scope: at.scope,
+                seq: nested_seq.unwrap_or_default(),
+                now: at.now,
+                provider: at.provider,
+            };
+            owner.telemetry.subagents(&[link], &at, out);
         }
         plan
     }

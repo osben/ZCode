@@ -110,7 +110,8 @@ impl Parent {
             entries,
             &Observed {
                 scope: "table-",
-                seq: self.now,
+                // A nested agent's change moves no row of the parent, so the parent log sequence stays put.
+                seq: 7,
                 now: self.now,
                 provider: &provider,
             },
@@ -173,7 +174,7 @@ fn a_run_that_finished_before_the_watch_is_read_once() {
     // The table first shows the child already finished.
     let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]);
     assert_eq!(plan.open, [(CHILD.to_owned(), false)]);
-    let id = parent.runs.open(CHILD, false).expect("watch");
+    let id = parent.runs.open(CHILD).expect("watch");
     parent.feed(
         CHILD,
         id,
@@ -182,7 +183,7 @@ fn a_run_that_finished_before_the_watch_is_read_once() {
     );
     assert!(!parent.runs.watching(CHILD));
     // A later watch that gets the same run again reads nothing.
-    let again = parent.runs.open(CHILD, true).expect("watch");
+    let again = parent.runs.open(CHILD).expect("watch");
     parent.feed(
         CHILD,
         again,
@@ -198,7 +199,7 @@ fn a_run_that_finished_before_the_watch_is_read_once() {
 #[test]
 fn a_resumed_run_is_read_as_a_new_turn_with_unique_ids() {
     let mut parent = Parent::new();
-    let first = parent.runs.open(CHILD, true).expect("watch");
+    let first = parent.runs.open(CHILD).expect("watch");
     parent.feed(
         CHILD,
         first,
@@ -206,7 +207,7 @@ fn a_resumed_run_is_read_as_a_new_turn_with_unique_ids() {
         vec![Some(started(1)), Some(assistant("m1")), Some(finished())],
     );
     // `SendMessage` resumes the settled child; its new run is read on a new watch.
-    let second = parent.runs.open(CHILD, true).expect("watch");
+    let second = parent.runs.open(CHILD).expect("watch");
     parent.feed(
         CHILD,
         second,
@@ -222,7 +223,7 @@ fn a_resumed_run_is_read_as_a_new_turn_with_unique_ids() {
 #[test]
 fn a_child_request_carries_the_child_runs_own_model() {
     let mut parent = Parent::new();
-    let id = parent.runs.open(CHILD, true).expect("watch");
+    let id = parent.runs.open(CHILD).expect("watch");
     parent.feed(
         CHILD,
         id,
@@ -295,7 +296,7 @@ fn a_parked_agent_keeps_a_watch_for_its_wake() {
 #[test]
 fn a_watch_that_fell_behind_continues_its_run_without_reading_it_twice() {
     let mut parent = Parent::new();
-    let first = parent.runs.open(CHILD, true).expect("watch");
+    let first = parent.runs.open(CHILD).expect("watch");
     let reopen = parent.feed(
         CHILD,
         first,
@@ -303,7 +304,7 @@ fn a_watch_that_fell_behind_continues_its_run_without_reading_it_twice() {
         vec![Some(started(3)), Some(assistant("m1")), None],
     );
     assert!(reopen);
-    let second = parent.runs.open(CHILD, true).expect("watch");
+    let second = parent.runs.open(CHILD).expect("watch");
     parent.feed(
         CHILD,
         second,
@@ -316,7 +317,7 @@ fn a_watch_that_fell_behind_continues_its_run_without_reading_it_twice() {
 }
 
 #[test]
-fn settled_agents_at_the_open_get_no_watch_and_an_idle_watch_closes() {
+fn settled_agents_at_the_open_get_no_watch() {
     let mut parent = Parent {
         runs: ChildRuns::default(),
         now: 0,
@@ -327,16 +328,104 @@ fn settled_agents_at_the_open_get_no_watch_and_an_idle_watch_closes() {
         parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]),
         Plan::default()
     );
-    // A running agent gets a watch; when it settles before the watch read a run, the watch closes.
-    let plan = parent.table(&[entry("agent_2", SubagentStatus::Running, None)]);
-    assert_eq!(plan.open, [("sess_subagent_agent_2".to_owned(), true)]);
-    parent
-        .runs
-        .open("sess_subagent_agent_2", true)
-        .expect("watch");
-    let plan = parent.table(&[entry("agent_2", SubagentStatus::Completed, None)]);
-    assert_eq!(plan.close, ["sess_subagent_agent_2"]);
     assert!(parent.facts.is_empty());
+}
+
+#[test]
+fn a_watch_whose_agent_settles_before_its_run_is_read_still_reads_the_run() {
+    let mut parent = Parent::new();
+    let plan = parent.table(&[entry("agent_1", SubagentStatus::Running, None)]);
+    assert_eq!(plan.open, [(CHILD.to_owned(), true)]);
+    let id = parent.runs.open(CHILD).expect("watch");
+    // The child finished right after the watch subscribed: its whole run waits in the feed when the settled table
+    // reaches the pump first. The watch stays open.
+    assert_eq!(
+        parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]),
+        Plan::default()
+    );
+    assert!(parent.runs.watching(CHILD));
+    parent.feed(
+        CHILD,
+        id,
+        vec![],
+        vec![Some(started(1)), Some(assistant("m1")), Some(finished())],
+    );
+
+    assert_eq!(parent.kinds(), RUN);
+    assert_schema(&parent.facts);
+}
+
+#[test]
+fn a_watch_that_fell_behind_reads_the_messages_it_lost_from_the_replay() {
+    let mut parent = Parent::new();
+    let first = parent.runs.open(CHILD).expect("watch");
+    // The watch reads m1, then falls behind: m2 is lost from its stream.
+    assert!(parent.feed(
+        CHILD,
+        first,
+        vec![],
+        vec![Some(started(3)), Some(assistant("m1")), None],
+    ));
+    let second = parent.runs.open(CHILD).expect("watch");
+    parent.feed(
+        CHILD,
+        second,
+        vec![
+            started(3),
+            assistant("m1"),
+            assistant("m2"),
+            delta("partial"),
+        ],
+        vec![Some(finished())],
+    );
+
+    assert_eq!(
+        parent.kinds(),
+        [
+            "turn.started",
+            "model.request.status:model_request_started",
+            "model.request.status:model_request_completed",
+            "usage.delta",
+            "model.request.status:model_request_started",
+            "model.request.status:model_request_completed",
+            "usage.delta",
+            "turn.terminal:success",
+        ]
+    );
+    assert_schema(&parent.facts);
+    let terminal = parent.facts.last().expect("terminal");
+    assert_eq!(terminal["tokenCount"], 24);
+}
+
+#[test]
+fn nested_lifecycle_facts_of_two_reads_at_one_parent_sequence_keep_unique_ids() {
+    let mut parent = Parent::new();
+    let owner = entry("agent_1", SubagentStatus::Running, None);
+    parent.table(&[
+        owner.clone(),
+        entry("agent_2", SubagentStatus::Running, Some("agent_1")),
+    ]);
+    // The owner child's own run reports facts between the two reads.
+    let id = parent.runs.open(CHILD).expect("watch");
+    parent.feed(
+        CHILD,
+        id,
+        vec![],
+        vec![Some(started(1)), Some(assistant("m1"))],
+    );
+    parent.table(&[
+        owner,
+        entry("agent_2", SubagentStatus::Completed, Some("agent_1")),
+    ]);
+
+    let lifecycle: Vec<_> = parent
+        .facts
+        .iter()
+        .filter(|fact| fact["kind"] == "subagent.lifecycle")
+        .collect();
+    assert_eq!(lifecycle.len(), 2);
+    assert_ne!(lifecycle[0]["eventId"], lifecycle[1]["eventId"]);
+    assert_schema(&parent.facts);
 }
 
 #[test]
