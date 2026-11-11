@@ -27,6 +27,7 @@ mod subscribe;
 mod telemetry;
 mod uploads;
 mod wire;
+mod worktree;
 
 use std::sync::Arc;
 

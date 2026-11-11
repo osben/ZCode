@@ -3,6 +3,7 @@
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
 use rust_cli_kernel_api::interaction::PermissionAnswer;
+use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::permission::ExecutionState;
@@ -47,13 +48,32 @@ pub(crate) fn selection(value: Option<&Value>) -> Option<ModelSelection> {
     })
 }
 
-/// App 的模式与 plan 开关 → 内核的权限模式与 plan（README §5 的映射；`plan` 是旧写法，读成 plan 开、build）。
-fn mode(name: Option<&str>, plan: Option<bool>) -> Option<(PermissionMode, bool)> {
-    let name = name?;
-    if name == "plan" {
-        return Some((PermissionMode::Default, true));
+/// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`). A known mode (build,
+/// edit, yolo, guarded, auto) replaces the current one; the legacy `plan` is no mode and keeps it. `planEnabled` wins;
+/// without it the legacy `plan` turns plan on, a known mode turns it off, anything else keeps the current switch.
+/// `None` when the input names neither a known mode, the legacy `plan` nor `planEnabled` (nothing to change).
+pub(crate) fn resolve_execution(
+    name: Option<&str>,
+    plan: Option<bool>,
+    current: ExecutionState,
+) -> Option<ExecutionState> {
+    let legacy_plan = name == Some("plan");
+    let known = name
+        .filter(|_| !legacy_plan)
+        .and_then(PermissionMode::from_node_name);
+    if known.is_none() && !legacy_plan && plan.is_none() {
+        return None;
     }
-    Some((PermissionMode::from_node_name(name)?, plan.unwrap_or(false)))
+    Some(ExecutionState {
+        mode: known.unwrap_or(current.mode),
+        plan: plan.unwrap_or(if legacy_plan {
+            true
+        } else if known.is_some() {
+            false
+        } else {
+            current.plan
+        }),
+    })
 }
 
 /// 一次输入（sendText 的 payload、createSession 的 firstInput；只取用到的字段）。
@@ -116,6 +136,10 @@ struct CreateSessionPayload {
     expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
+    /// Fork: execution worktree (crate::worktree).
+    worktree_preparation: Option<crate::worktree::Request>,
+    expected_attempt_id: Option<String>,
+    execution_worktree: Option<crate::worktree::Requested>,
 }
 
 #[derive(Deserialize)]
@@ -252,6 +276,9 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             0,
         );
     };
+    if let Some(ack) = crate::worktree::refuse_before_activation(server, envelope, session).await {
+        return ack;
+    }
     let live = match server.live(&SessionId::new(session)).await {
         Ok(live) => live,
         Err(error) => {
@@ -300,7 +327,7 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     }
 }
 
-async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
+pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     let payload: CreateSessionPayload = match payload(envelope) {
         Ok(payload) => payload,
         Err(ack) => return *ack,
@@ -308,11 +335,60 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     if let Some(preparation) = &payload.submission_preparation {
         return reserve_submission(server, envelope, &payload, &preparation.submission_id).await;
     }
+    if let Some(request) = &payload.worktree_preparation {
+        return prepare_worktree(server, envelope, &payload, request).await;
+    }
     if let (Some(prepared), Some(expected)) = (
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
     ) {
         return activate_submission(server, envelope, &payload, prepared, expected).await;
+    }
+    if let Some(prepared) = payload.prepared_session_id.as_deref() {
+        let config = &payload.config;
+        let empty = Input::default();
+        let first = payload.first_input.as_ref().unwrap_or(&empty);
+        // Refused before anything moves, so a malformed attachment leaves the prepared session as it was.
+        let refs = match crate::attachments::parse_refs(&first.attachments) {
+            Ok(refs) => refs,
+            Err(error) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    error.message,
+                    0,
+                );
+            }
+        };
+        // Resolved before the session moves: text material that cannot be written refuses the command first.
+        let content =
+            match first_content(server, envelope, &SessionId::new(prepared), first, refs).await {
+                Ok(content) => content,
+                Err(ack) => return *ack,
+            };
+        // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
+        // input follows the move into the worktree.
+        let request = crate::worktree::ActivationRequest {
+            prepared,
+            expected_attempt: payload.expected_attempt_id.as_deref(),
+            workspace: payload.workspace_id.as_deref(),
+            requested: payload.execution_worktree.as_ref(),
+        };
+        return crate::worktree::activate(
+            server,
+            envelope,
+            request,
+            async |live| apply_draft_config(server, live, envelope, config, first).await,
+            async |live| submit_first(live, envelope, first, content).await,
+        )
+        .await;
+    }
+    // Fork: the direct route refuses a dead worktree before the session exists.
+    if let Some(requested) = &payload.execution_worktree
+        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested).await
+    {
+        return *ack;
     }
     let config = &payload.config;
     let first = payload.first_input.unwrap_or_default();
@@ -332,30 +408,24 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     let chosen = selection(config.model_selection.as_ref())
         .or_else(|| selection(first.model_selection.as_ref()))
         .unwrap_or_else(|| server.defaults.selection.clone());
-    let (permission, plan) =
-        mode(config.mode.as_deref(), config.plan_enabled).unwrap_or((server.defaults.mode, false));
+    let defaults = ExecutionState {
+        mode: server.defaults.mode,
+        plan: false,
+    };
+    let ExecutionState {
+        mode: permission,
+        plan,
+    } = resolve_execution(config.mode.as_deref(), config.plan_enabled, defaults)
+        .unwrap_or(defaults);
     let id = payload
         .session_id
         .as_deref()
         .map_or_else(inbox::new_session_id, SessionId::new);
     // The first input's attachments are resolved before the session exists: text material that cannot be written
     // refuses the command and leaves no session behind.
-    let content = match first.text.as_deref() {
-        Some(text) if !refs.is_empty() => {
-            match crate::attachments::content(server, &id, text, refs).await {
-                Ok(content) => Some(content),
-                Err(error) => {
-                    return Ack::refused(
-                        &envelope.command_id,
-                        Status::Failed,
-                        &error.message,
-                        error.message.clone(),
-                        0,
-                    );
-                }
-            }
-        }
-        _ => None,
+    let content = match first_content(server, envelope, &id, &first, refs).await {
+        Ok(content) => content,
+        Err(ack) => return *ack,
     };
     if let Some(followup) = config.followup_mode {
         server
@@ -364,16 +434,28 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             .insert(id.clone(), followup);
     }
     let workspace = payload.workspace_id.as_deref().unwrap_or_default();
-    let created = server
-        .kernel
-        .create_session(CreateSession {
-            id: Some(id.clone()),
-            workspace: server.workspace(workspace),
-            selection: chosen,
-            mode: permission,
-            plan,
-        })
-        .await;
+    let request = CreateSession {
+        id: Some(id.clone()),
+        workspace: server.workspace(workspace),
+        selection: chosen,
+        mode: permission,
+        plan,
+    };
+    // Fork: the direct route starts the session in its worktree (SessionStart included); the row keeps the
+    // parent workspace, and opening it below picks up the stored worktree facts.
+    let created = match &payload.execution_worktree {
+        Some(requested) => {
+            server
+                .kernel
+                .create_session_in_worktree(
+                    request,
+                    rust_cli_kernel_api::env::EnvPath::new(&requested.path),
+                    requested.branch_name.clone(),
+                )
+                .await
+        }
+        None => server.kernel.create_session(request).await,
+    };
     let refused = |message: String| {
         Ack::refused(
             &envelope.command_id,
@@ -393,29 +475,71 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     };
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
-    if let Some(text) = first.text.clone() {
-        live.sink.remember_input(
-            &envelope.command_id,
-            input_meta(envelope, &first, "startNow", "startNow"),
-        );
-        let submit = match content {
-            None => Command::Submit {
-                text,
-                attachments: Vec::new(),
-                delivery: Delivery::Queue,
-            },
-            Some(content) => Command::SubmitContent {
-                content,
-                delivery: Delivery::Queue,
-            },
-        };
-        if let KernelAck::Accepted { .. } =
-            send(live.handle.as_ref(), &envelope.command_id, submit).await
-        {
-            result["input"] = json!({"delivery": "startNow", "inputId": envelope.command_id});
-        }
+    if let Some(input) = submit_first(&live, envelope, &first, content).await {
+        result["input"] = input;
     }
     Ack::accepted(&envelope.command_id, 0, Some(result))
+}
+
+/// The content of a first input with attachments, resolved before any side effect of the command (the session's
+/// creation or activation): text material that cannot be written refuses the command. `None` without text or refs.
+async fn first_content(
+    server: &Server,
+    envelope: &Envelope,
+    id: &SessionId,
+    first: &Input,
+    refs: Vec<crate::attachments::AttachmentRef>,
+) -> Result<Option<Vec<ContentBlock>>, Box<Ack>> {
+    match first.text.as_deref() {
+        Some(text) if !refs.is_empty() => crate::attachments::content(server, id, text, refs)
+            .await
+            .map(Some)
+            .map_err(|error| {
+                Box::new(Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    0,
+                ))
+            }),
+        _ => Ok(None),
+    }
+}
+
+/// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
+/// createSession command id, with its attachments already resolved ([`first_content`]). The `input` field of the
+/// result; `None` without text or when the session refused it.
+async fn submit_first(
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    first: &Input,
+    content: Option<Vec<ContentBlock>>,
+) -> Option<Value> {
+    let text = first.text.clone()?;
+    live.sink.remember_input(
+        &envelope.command_id,
+        input_meta(envelope, first, "startNow", "startNow"),
+    );
+    // The input's own mode, plan switch and model (Node `resolveSubmittedExecutionState`) apply when its turn starts,
+    // as for `sendText`; missing parts are the session's current state.
+    let view = live.handle.view().await.ok();
+    let execution = input_execution(first, view.as_ref());
+    let content = content.unwrap_or_default();
+    let submit = Command::SubmitWith {
+        kind: QueuedKind::Text,
+        text,
+        content,
+        delivery: Delivery::Queue,
+        execution,
+        behind_held: false,
+    };
+    match send(live.handle.as_ref(), &envelope.command_id, submit).await {
+        KernelAck::Accepted { .. } => {
+            Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
+        }
+        _ => None,
+    }
 }
 
 /// Fork: reservation. Creates the session with the draft's selection and stores a preparing marker; a repeat with
@@ -563,7 +687,29 @@ async fn activate_submission(
     prepared: &str,
     expected: &str,
 ) -> Ack {
+    // Node `v4-bridge.ts`: a submission activation names no worktree; a worktree is never silently dropped.
+    if payload.execution_worktree.is_some() || payload.expected_attempt_id.is_some() {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the requested workspace or submission",
+            0,
+        );
+    }
     let id = SessionId::new(prepared);
+    // Node compares the reservation's workspace with `workspaceId`: an activation from another workspace is refused.
+    let listed = crate::worktree::listed_key(server, &id).await;
+    let workspace_matches = payload.workspace_id.is_some() && payload.workspace_id == listed;
+    if !workspace_matches {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the requested workspace or submission",
+            0,
+        );
+    }
     let marker = match crate::preparation::load(server, &id).await {
         Ok(Some(marker)) if marker.submission_id == expected => marker,
         _ => {
@@ -605,30 +751,17 @@ async fn activate_submission(
         "already-active"
     } else {
         // The draft's choices: the first sendText carries them too, this keeps a config-only activation right.
-        let handle = live.handle.as_ref();
-        if let Some(chosen) = selection(payload.config.model_selection.as_ref()) {
-            send(
-                handle,
-                &format!("{}:model", envelope.command_id),
-                Command::SetModel { selection: chosen },
-            )
-            .await;
-        }
-        if let Some((permission, plan)) =
-            mode(payload.config.mode.as_deref(), payload.config.plan_enabled)
+        // A refused guarded mode fails the activation (Node rethrows it); the reservation stays for a retry.
+        if let Err(message) =
+            apply_draft_config(server, &live, envelope, &payload.config, &Input::default()).await
         {
-            send(
-                handle,
-                &format!("{}:mode", envelope.command_id),
-                Command::SetMode { mode: permission },
-            )
-            .await;
-            send(
-                handle,
-                &format!("{}:plan", envelope.command_id),
-                Command::SetPlan { enabled: plan },
-            )
-            .await;
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.executionFailed",
+                message,
+                0,
+            );
         }
         "input-pending"
     };
@@ -639,6 +772,133 @@ async fn activate_submission(
             json!({"type": "createSession", "sessionId": id.as_str(), "preparedActivation": outcome}),
         ),
     )
+}
+
+/// Fork: a prepared session takes the draft's model, mode, plan switch and follow-up mode (Node
+/// `applyRequestedSessionConfig`). Without a model in the config the first input's model is the session's, as an
+/// ordinary createSession chooses it, so SessionStart and later turns run on it (in Node the first turn's model
+/// becomes the session's when it starts, and SessionStart runs in that turn).
+///
+/// A refused step is logged and the session keeps its settings, except when the config or the first input asks for
+/// `guarded`: Node rethrows that failure (`session-mgmt.ts` `runActivation`), since running with the previous, possibly
+/// broader, permission mode is not an option. The `Err` carries the refusal.
+async fn apply_draft_config(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    config: &SessionConfig,
+    first: &Input,
+) -> Result<(), String> {
+    let handle = live.handle.as_ref();
+    let mut refusals = Vec::new();
+    if let Some(chosen) = selection(config.model_selection.as_ref())
+        .or_else(|| selection(first.model_selection.as_ref()))
+    {
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:model", envelope.command_id),
+                Command::SetModel { selection: chosen },
+            )
+            .await,
+        );
+    }
+    let current = handle
+        .view()
+        .await
+        .ok()
+        .map_or_else(ExecutionState::default, |view| ExecutionState {
+            mode: view.mode,
+            plan: view.plan,
+        });
+    if let Some(ExecutionState {
+        mode: permission,
+        plan,
+    }) = resolve_execution(config.mode.as_deref(), config.plan_enabled, current)
+    {
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:mode", envelope.command_id),
+                Command::SetMode { mode: permission },
+            )
+            .await,
+        );
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:plan", envelope.command_id),
+                Command::SetPlan { enabled: plan },
+            )
+            .await,
+        );
+    }
+    let refused = refusals.into_iter().find_map(|ack| match ack {
+        KernelAck::Rejected { reason } => Some(reason),
+        KernelAck::Accepted { .. } | KernelAck::Duplicate => None,
+    });
+    if let Some(reason) = refused {
+        let guarded = [config.mode.as_deref(), first.mode.as_deref()].contains(&Some("guarded"));
+        if guarded {
+            return Err(reason);
+        }
+        tracing::warn!(
+            event = "protocol.create.config_failed",
+            "the draft config was refused; the session keeps its settings"
+        );
+    }
+    // Node writes only a non-default follow-up mode; the open session's projection and a later cold open both take it.
+    if let Some(followup) = config.followup_mode.filter(|mode| *mode != Followup::Queue) {
+        server
+            .followups
+            .lock_unpoisoned()
+            .insert(handle.id().clone(), followup);
+        let sink = live.sink.clone();
+        live.run(Box::pin(async move { sink.set_followup(followup).await }));
+    }
+    Ok(())
+}
+
+/// Fork: worktree preparation (Node `createSession` with `worktreePreparation`): only the workspace and the
+/// worktree request; runtime settings and input belong to the activation.
+async fn prepare_worktree(
+    server: &Server,
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+    request: &crate::worktree::Request,
+) -> Ack {
+    let refused = |message: &str| {
+        Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            message,
+            0,
+        )
+    };
+    let raw = &envelope.payload;
+    if payload.prepared_session_id.is_some()
+        || payload.first_input.is_some()
+        || payload.execution_worktree.is_some()
+        || !raw["config"].is_null()
+        || !raw["permissionScope"].is_null()
+    {
+        return refused("worktree preparation cannot include runtime or input settings");
+    }
+    if !raw["incognito"].is_null() {
+        return refused(
+            "worktree preparation cannot include an incognito profile; send it on the activation createSession",
+        );
+    }
+    let workspace = payload.workspace_id.as_deref().unwrap_or_default();
+    crate::worktree::prepare(
+        server,
+        envelope,
+        workspace,
+        request,
+        server.defaults.selection.clone(),
+    )
+    .await
 }
 
 /// Fork: the first input of a reserved session was admitted: persist the marker as active, then drop
@@ -781,17 +1041,19 @@ fn input_execution(
     view: Option<&rust_cli_kernel_api::session_api::SessionView>,
 ) -> Option<InputExecution> {
     let chosen = selection(input.model_selection.as_ref());
-    let state = mode(input.mode.as_deref(), input.plan_enabled)
-        .map(|(mode, plan)| ExecutionState { mode, plan });
-    if chosen.is_none() && state.is_none() {
-        return None;
-    }
     let current = view.map_or_else(ExecutionState::default, |view| ExecutionState {
         mode: view.mode,
         plan: view.plan,
     });
+    // Each field overrides the session's own (Node `resolveExecutionState(payload, current)`): a plan switch without a
+    // mode keeps the session's mode, and the legacy `mode: "plan"` keeps it too.
+    let resolved = resolve_execution(input.mode.as_deref(), input.plan_enabled, current);
+    if chosen.is_none() && resolved.is_none() {
+        return None;
+    }
+    let state = resolved.unwrap_or(current);
     Some(InputExecution {
-        state: state.unwrap_or(current),
+        state,
         selection: chosen,
     })
 }
