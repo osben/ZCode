@@ -256,9 +256,10 @@ pub fn from_part(part: &Value, index: usize) -> Option<AttachedFile> {
         // one Node never writes: inline without `sizeBytes`, or an artifact with `metadata.rustCli`.
         None if metadata[crate::records::RUST_CLI].is_null() && metadata["sizeBytes"].is_u64() => {
             // Node `attachmentMetasOfMessage`: `filename ?? (basenameFromUrl || attachment-${index + 1})`.
-            let basename = (!url.starts_with("data:"))
-                .then(|| url.rsplit(['/', '\\']).next().unwrap_or_default())
-                .unwrap_or_default();
+            let basename = match url.starts_with("data:") {
+                true => "",
+                false => url.rsplit(['/', '\\']).next().unwrap_or_default(),
+            };
             if basename.is_empty() {
                 format!("attachment-{}", index + 1)
             } else {
