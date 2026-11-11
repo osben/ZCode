@@ -21,9 +21,6 @@ const TEXT_MIME: &str = "text/plain";
 /// Node's `errorCode` of a text file that could not be read; the model gets nothing for it.
 const READ_FAILED: &str = "attachment_read_failed";
 
-/// Node's `errorCode`s of an image that could not be prepared for the model.
-const IMAGE_FAILED: [&str; 2] = ["attachment_image_resize_failed", "attachment_image_invalid"];
-
 /// Node `safeAttachmentOriginalRef` of an inline data URL: a marker, not a ref the App can open.
 const INLINE_DATA_URL: &str = "inline:data-url";
 
@@ -211,24 +208,27 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["sizeBytes"] = json!(file.bytes);
             metadata["storageKind"] = json!("local_ref");
         }
-        // Node `resolvedPlaceholderAttachment(…, "attachment_image_resize_failed")`: the App's MIME, the path the App
-        // sent.
-        AttachedBody::ImageFailed { code } => {
+        // Node `resolvedPlaceholderAttachment`: the App's MIME, the path the App sent. Node writes an unnamed one without
+        // options: no `source` and no `sizeBytes`, and an inline data URL as its `url` (`originalUrl: inline:data-url`).
+        AttachedBody::Placeholder { code, url, .. } => {
+            let path = reference.filter(|reference| !reference.contains("://"));
             out["mime"] = json!(file.mime);
             out["filename"] = json!(file.name);
-            out["url"] = json!(reference.unwrap_or(unnamed_url));
-            if let Some(path) = reference.filter(|reference| !reference.contains("://")) {
+            out["url"] = json!(url.as_deref().or(reference).unwrap_or(unnamed_url));
+            if reference.is_none() && url.as_deref().is_some_and(|url| url.starts_with("data:")) {
+                metadata["originalUrl"] = json!(INLINE_DATA_URL);
+            }
+            if let Some(path) = path.filter(|_| !file.unnamed) {
                 out["source"] = source(path, path);
             }
             metadata["errorCode"] = json!(code);
             metadata["recoverability"] = json!("metadata_only");
-            metadata["sizeBytes"] = json!(file.bytes);
-            metadata["storageKind"] = json!(if reference
-                .is_some_and(|reference| !reference.contains("://"))
-            {
-                "local_ref"
-            } else {
-                "metadata_only"
+            if !file.unnamed {
+                metadata["sizeBytes"] = json!(file.bytes);
+            }
+            metadata["storageKind"] = json!(match path {
+                Some(_) => "local_ref",
+                None => "metadata_only",
             });
         }
         AttachedBody::Omitted => {
@@ -263,16 +263,17 @@ pub fn from_part(part: &Value, index: usize) -> Option<AttachedFile> {
     let mime = part["mime"].as_str().unwrap_or_default().to_owned();
     let metadata = &part["metadata"];
     let url = part["url"].as_str().unwrap_or_default();
-    let image_failed = metadata["errorCode"]
+    // Node `resolvedPlaceholderAttachment` (a path reference has no `errorCode`).
+    let placeholder = metadata["errorCode"]
         .as_str()
-        .filter(|code| IMAGE_FAILED.contains(code) && mime.starts_with("image/"));
+        .filter(|_| metadata["recoverability"] == "metadata_only");
     let name = match part["filename"].as_str() {
         Some(name) => name.to_owned(),
         // Node's web-remote image and video parts carry no `filename`; a Rust TUI image has none either, and is the
-        // one Node never writes: inline without `sizeBytes`, or an artifact with `metadata.rustCli`. Node's failed
-        // web-remote image has no `sizeBytes` either (`resolvedPlaceholderAttachment` without options).
+        // one Node never writes: inline without `sizeBytes`, or an artifact with `metadata.rustCli`. Node's placeholder
+        // written without options (any error code and MIME) has no `sizeBytes` either.
         None if metadata[crate::records::RUST_CLI].is_null()
-            && (metadata["sizeBytes"].is_u64() || image_failed.is_some()) =>
+            && (metadata["sizeBytes"].is_u64() || placeholder.is_some()) =>
         {
             // Node `attachmentMetasOfMessage`: `filename ?? (basenameFromUrl || attachment-${index + 1})`.
             let basename = match url.starts_with("data:") {
@@ -300,12 +301,24 @@ pub fn from_part(part: &Value, index: usize) -> Option<AttachedFile> {
     let path_reference = metadata["pathReferenceText"]
         .as_str()
         .filter(|_| metadata["storageKind"] == "local_ref");
-    let failed = metadata["errorCode"] == READ_FAILED && mime.starts_with("text/");
+    // Node skips a failed text read only when it has a source; a source-less one goes as an inline-text reminder.
+    let failed = metadata["errorCode"] == READ_FAILED
+        && mime.starts_with("text/")
+        && part["source"].is_object();
+    let unnamed = part["filename"].as_str().is_none();
     let body = if failed {
         AttachedBody::ReadFailed
-    } else if let Some(code) = image_failed {
-        AttachedBody::ImageFailed {
-            code: code.to_owned(),
+    } else if let Some(code) = placeholder {
+        // Node's live line names `path ?? attachment-<n>`; a path is the part's `originalUrl` (`storageKind: local_ref`).
+        let path = metadata["originalUrl"]
+            .as_str()
+            .filter(|_| metadata["storageKind"] == "local_ref");
+        AttachedBody::Placeholder {
+            code: code.into(),
+            label: unnamed.then(|| {
+                path.map_or_else(|| format!("attachment-{}", index + 1).into(), Box::from)
+            }),
+            url: url.starts_with("data:").then(|| Box::from(url)),
         }
     } else if let Some(text) = path_reference {
         AttachedBody::PathReference {
@@ -341,7 +354,7 @@ pub fn from_part(part: &Value, index: usize) -> Option<AttachedFile> {
             (mime.starts_with("image/") || mime.starts_with("video/"))
                 && uri.starts_with(ARTIFACT_SCHEME)
                 // A failed image's `url` is the App's ref: nothing of it is loaded.
-                && !matches!(body, AttachedBody::ImageFailed { .. })
+                && !matches!(body, AttachedBody::Placeholder { .. })
         })
         .map(Box::from);
     let bytes = metadata["sizeBytes"]
@@ -357,7 +370,7 @@ pub fn from_part(part: &Value, index: usize) -> Option<AttachedFile> {
         stored,
         material: None,
         image: image_info(metadata),
-        unnamed: part["filename"].as_str().is_none(),
+        unnamed,
         body,
     })
 }

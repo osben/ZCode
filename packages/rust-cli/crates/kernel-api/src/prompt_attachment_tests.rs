@@ -329,8 +329,10 @@ fn a_failed_image_reads_as_nodes_placeholder() {
     file.name = "scan.tiff".into();
     file.mime = "image/tiff".into();
     file.reference = Some("/w/scan.tiff".into());
-    file.body = AttachedBody::ImageFailed {
+    file.body = AttachedBody::Placeholder {
         code: "attachment_image_resize_failed".into(),
+        label: None,
+        url: None,
     };
     let text = |file: &AttachedFile| match blocks(file).as_slice() {
         [ContentBlock::Text { text }] => text.clone(),
