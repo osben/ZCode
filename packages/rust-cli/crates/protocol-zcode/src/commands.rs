@@ -93,10 +93,9 @@ struct Input {
     held_queue_disposition: Option<HeldDisposition>,
     /// Fork: the queue the client confirmed, as `queueItemId`s; a changed queue makes the confirmation stale.
     expected_held_queue_item_ids: Option<Vec<String>>,
-    /// Fork: selections quoted from the conversation, sent to the model after the text
-    /// ([`rust_cli_kernel_api::conversation_quote`]).
-    #[serde(default)]
-    conversation_quotes: Vec<rust_cli_kernel_api::conversation_quote::Quote>,
+    /// Fork: selections quoted from the conversation, as sent (absent, `[]` or quotes); they travel in the input
+    /// intent ([`input_intent`]).
+    conversation_quotes: Option<Vec<rust_cli_kernel_api::conversation_quote::Quote>>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -530,8 +529,17 @@ async fn submit_first(
     let view = live.handle.view().await.ok();
     let execution = input_execution(first, view.as_ref());
     let content = content.unwrap_or_default();
+    // `firstInput` has no quotes.
+    let intent = input_intent(
+        envelope,
+        first,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        live.sink.admit(),
+    );
     let submit = Command::SubmitWith {
-        intent: None,
+        intent: Some(Box::new(intent)),
         kind: QueuedKind::Text,
         text,
         content,
@@ -963,6 +971,66 @@ fn input_meta(
     }
 }
 
+/// Fork: Node `inputIntentMetadata` (`bootstrap/src/zcode-protocol-v4/commands/input-intent.ts`): the admitted
+/// facts of one App input, in Node's key order (specs/fork-agent-runtime-selection.md, Conversation quotes in Rust
+/// mode). `admission` is the input's `admissionSeq` and `admittedAt`.
+fn input_intent(
+    envelope: &Envelope,
+    input: &Input,
+    kind: QueuedKind,
+    quotes: Option<&[rust_cli_kernel_api::conversation_quote::Quote]>,
+    (requested, admitted): (&str, &str),
+    (seq, at): (u64, u64),
+) -> rust_cli_kernel_api::input_intent::InputIntent {
+    let mut fields = serde_json::Map::new();
+    let origin = envelope
+        .input_origin
+        .as_deref()
+        .or(input.input_origin.as_deref())
+        .filter(|origin| matches!(*origin, "desktop" | "mobile"));
+    if let Some(origin) = origin {
+        fields.insert("inputOrigin".into(), json!(origin));
+    }
+    if let Some(quotes) = quotes {
+        fields.insert(
+            rust_cli_kernel_api::input_intent::QUOTES.into(),
+            json!(quotes),
+        );
+    }
+    let command = envelope.command_id.as_str();
+    fields.insert("sourceCommandId".into(), json!(command));
+    fields.insert("queueItemId".into(), json!(format!("queue_{command}")));
+    let client = Some(envelope.client_id.as_str()).filter(|client| !client.is_empty());
+    fields.insert("clientId".into(), json!(client.unwrap_or("cli")));
+    let kind = if kind == QueuedKind::Goal {
+        "sendGoalCommand"
+    } else {
+        "sendText"
+    };
+    fields.insert("kind".into(), json!(kind));
+    fields.insert(
+        rust_cli_kernel_api::input_intent::TEXT.into(),
+        json!(input.text.as_deref().unwrap_or_default()),
+    );
+    if let Some(selection) = input.model_selection.as_ref().filter(|v| !v.is_null()) {
+        fields.insert("modelSelection".into(), selection.clone());
+    }
+    if let Some(mode) = input.mode.as_deref().filter(|mode| !mode.is_empty()) {
+        fields.insert("mode".into(), json!(mode));
+    }
+    if let Some(plan) = input.plan_enabled {
+        fields.insert("planEnabled".into(), json!(plan));
+    }
+    fields.insert("admissionSeq".into(), json!(seq));
+    fields.insert("admittedAt".into(), json!(at));
+    fields.insert("requestedDelivery".into(), json!(requested));
+    fields.insert("admittedDelivery".into(), json!(admitted));
+    if !input.attachments.is_empty() {
+        fields.insert("attachmentRefs".into(), json!(input.attachments));
+    }
+    rust_cli_kernel_api::input_intent::InputIntent::from_fields(fields)
+}
+
 /// Fork: Node's `applyHeldQueueDisposition`. After a finished turn a paused queue (`autoDrain` off, items
 /// waiting) routes input as `choice`: without a disposition the input is refused
 /// (`heldQueueDispositionRequired`), a queue that changed since the client's confirmation is stale
@@ -1174,9 +1242,9 @@ async fn send_text(
             revision,
         );
     }
-    if let Err(reason) =
-        rust_cli_kernel_api::conversation_quote::validate(&input.conversation_quotes)
-    {
+    if let Err(reason) = rust_cli_kernel_api::conversation_quote::validate(
+        input.conversation_quotes.as_deref().unwrap_or_default(),
+    ) {
         return Ack::refused(
             command,
             Status::Rejected,
@@ -1185,11 +1253,9 @@ async fn send_text(
             revision,
         );
     }
-    // Node `withConversationQuotes`: attachments and the queue see the text the model reads.
-    let typed = rust_cli_kernel_api::conversation_quote::compose(
-        input.text.as_deref().unwrap_or_default(),
-        &input.conversation_quotes,
-    );
+    // Attachments, slash expansion and the prompt hook see the typed text; the session adds the quote block from the
+    // input intent (Node composes `expandedInput`).
+    let typed = input.text.clone().unwrap_or_default();
     // Checked before any side effect (model or mode change), so a refused input changes nothing.
     let refs = match crate::attachments::parse_refs(&input.attachments) {
         Ok(refs) => refs,
@@ -1253,6 +1319,14 @@ async fn send_text(
     );
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
+    let intent = input_intent(
+        envelope,
+        &input,
+        kind,
+        input.conversation_quotes.as_deref(),
+        (requested, admitted),
+        live.admit(),
+    );
     // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
     let text = if kind == QueuedKind::Goal {
         format!("/goal {}", input.text.as_deref().unwrap_or_default().trim())
@@ -1260,7 +1334,7 @@ async fn send_text(
         typed
     };
     let submit = Command::SubmitWith {
-        intent: None,
+        intent: Some(Box::new(intent)),
         kind,
         text,
         content,

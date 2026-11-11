@@ -1703,28 +1703,37 @@ fn a_notification_turn_offers_no_fork_while_running_or_interrupted() {
     );
 }
 
-/// Fork: a quoted input shows its typed text and its quotes apart (Node's `intent.text` and `conversationQuotes`),
-/// cold and queued alike; the stored text keeps the block the model read.
+/// Fork: a quoted input shows its typed text and its quotes from its input intent (Node `intent.text` and
+/// `conversationQuotes`), cold and queued alike; the stored text keeps the block the model read. A text that merely
+/// ends with a quote block has no chips, and an intent's `[]` is kept.
 #[test]
 fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
-    use rust_cli_kernel_api::conversation_quote::{Quote, compose};
+    use rust_cli_kernel_api::input_intent::InputIntent;
     use rust_cli_kernel_api::session_api::{Delivery, QueuedKind};
-    let quotes = vec![Quote {
-        text: "E2E selection".to_owned(),
-        path: Some("/w/a.ts".to_owned()),
-        sender_name: None,
-        sender_id: None,
-        message_id: None,
-        sent_at: None,
-    }];
-    let quoted = compose("explain this", &quotes);
     let expected = json!([{"text": "E2E selection", "path": "/w/a.ts"}]);
+    let intent = |text: &str, quotes: Value| -> InputIntent {
+        serde_json::from_value(json!({"text": text, "conversationQuotes": quotes})).unwrap()
+    };
+    let quoted_intent = intent("explain this", expected.clone());
+    let quoted = quoted_intent.compose("explain this");
+    let with_intent = |id: &str, text: &str, intent: InputIntent| {
+        let Message::User(mut message) = user(id, text) else {
+            unreachable!()
+        };
+        message.intent = Some(Box::new(intent));
+        Message::User(message)
+    };
     let projection = Projection::from_view(
         &view(vec![
-            user("msg_u1", &quoted),
+            with_intent("msg_u1", &quoted, quoted_intent.clone()),
             assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
             user("msg_u2", "plain"),
             assistant("msg_a2", vec![ContentBlock::Text { text: "ok".into() }]),
+            // A literal block without an intent is plain text.
+            user("msg_u3", &quoted),
+            assistant("msg_a3", vec![ContentBlock::Text { text: "ok".into() }]),
+            with_intent("msg_u4", "typed", intent("typed", json!([]))),
+            assistant("msg_a4", vec![ContentBlock::Text { text: "ok".into() }]),
         ]),
         Followup::Guide,
         Vec::new(),
@@ -1740,13 +1749,17 @@ fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
     assert_eq!(inputs[0]["conversationQuotes"], expected);
     assert_eq!(inputs[1]["text"], "plain");
     assert!(inputs[1].get("conversationQuotes").is_none());
+    assert_eq!(inputs[2]["text"], json!(quoted));
+    assert!(inputs[2].get("conversationQuotes").is_none());
+    assert_eq!(inputs[3]["text"], "typed");
+    assert_eq!(inputs[3]["conversationQuotes"], json!([]));
 
     let mut feed = Feed::new();
     let deltas = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
-            intent: None,
+            intent: Some(Box::new(quoted_intent)),
             command: CommandId::new("c1"),
-            text: quoted,
+            text: "explain this".into(),
             delivery: Delivery::Queue,
             kind: QueuedKind::Text,
             execution: None,

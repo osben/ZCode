@@ -115,6 +115,8 @@ pub struct Live {
     child_watch: std::sync::OnceLock<Box<ChildWatch>>,
     /// Fork: the summary goes to the sessions index ([`listed_in_sessions_index`]).
     indexed: bool,
+    /// Fork: the last App input's `admissionSeq` (Node `CommandInbox`, per session from 1, in memory).
+    admissions: std::sync::atomic::AtomicU64,
 }
 
 /// Fork: the stored facts a cold open restores (crate::server::Server::live). They are read before the bridge
@@ -178,7 +180,17 @@ impl Live {
             promotions: crate::reservations::Reservations::default(),
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
+            admissions: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Fork: admits one App input: its `admissionSeq` and `admittedAt` (ms) for the input intent.
+    pub fn admit(&self) -> (u64, u64) {
+        let seq = self
+            .admissions
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        (seq, self.context.now())
     }
 
     /// Fork: see [`ChildWatch`]; set once when the server opens the session.

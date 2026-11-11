@@ -157,3 +157,78 @@ fn execution_state_resolves_like_node() {
         Some(state(PermissionMode::Default, true))
     );
 }
+
+/// Fork: Node `inputIntentMetadata`: the admitted facts in Node's key order; the quotes as sent (absent stays absent,
+/// `[]` stays `[]`); `text` is the typed text, without the quote block (the session composes it after slash
+/// expansion and the prompt hook).
+#[test]
+fn an_app_input_is_admitted_with_nodes_intent() {
+    let envelope = |client: &str, origin: Option<&str>| -> Envelope {
+        let mut value = json!({
+            "commandId": "c1",
+            "clientId": client,
+            "sessionId": "s1",
+            "type": "sendText",
+            "payload": {},
+        });
+        if let Some(origin) = origin {
+            value["inputOrigin"] = json!(origin);
+        }
+        serde_json::from_value(value).unwrap()
+    };
+    let input: Input = serde_json::from_value(json!({
+        "text": "explain this",
+        "mode": "default",
+        "planEnabled": false,
+        "conversationQuotes": [{"text": "E2E selection"}],
+        "attachments": [{"kind": "file", "reference": "r1"}],
+    }))
+    .unwrap();
+    let intent = input_intent(
+        &envelope("desktop-client", Some("desktop")),
+        &input,
+        QueuedKind::Text,
+        input.conversation_quotes.as_deref(),
+        ("queue", "queue"),
+        (3, 1500),
+    );
+    assert_eq!(
+        serde_json::to_string(&intent).unwrap(),
+        serde_json::to_string(&json!({
+            "inputOrigin": "desktop",
+            "conversationQuotes": [{"text": "E2E selection"}],
+            "sourceCommandId": "c1",
+            "queueItemId": "queue_c1",
+            "clientId": "desktop-client",
+            "kind": "sendText",
+            "text": "explain this",
+            "mode": "default",
+            "planEnabled": false,
+            "admissionSeq": 3,
+            "admittedAt": 1500,
+            "requestedDelivery": "queue",
+            "admittedDelivery": "queue",
+            "attachmentRefs": [{"kind": "file", "reference": "r1"}],
+        }))
+        .unwrap()
+    );
+
+    let empty: Input =
+        serde_json::from_value(json!({"text": "objective", "conversationQuotes": []})).unwrap();
+    let goal = input_intent(
+        &envelope("", Some("web")),
+        &empty,
+        QueuedKind::Goal,
+        empty.conversation_quotes.as_deref(),
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(goal.quotes(), Some(Vec::new()));
+    assert_eq!(goal.str("kind"), Some("sendGoalCommand"));
+    assert_eq!(goal.str("clientId"), Some("cli"));
+    assert_eq!(goal.text(), Some("objective"));
+    assert!(goal.get("inputOrigin").is_none());
+
+    let plain: Input = serde_json::from_value(json!({"text": "hi"})).unwrap();
+    assert_eq!(plain.conversation_quotes, None);
+}

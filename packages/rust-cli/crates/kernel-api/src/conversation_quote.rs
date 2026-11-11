@@ -2,8 +2,8 @@
 //! (`core/src/runtime/helpers/conversation-quotes.ts`; specs/fork-agent-runtime-selection.md, Conversation quotes in
 //! Rust mode).
 //!
-//! The quotes reach the model as a block after the typed text. The user message's text is their only stored fact:
-//! [`compose`] writes the block and [`split`] reads it back for the row, the store and an edit.
+//! The quotes reach the model as a block after the typed text ([`compose`]). They are owned by the input intent
+//! ([`crate::input_intent`]); nothing parses them back out of a message's text.
 
 use serde::{Deserialize, Serialize};
 
@@ -76,25 +76,6 @@ pub fn compose(text: &str, quotes: &[Quote]) -> String {
     } else {
         format!("{text}{SEPARATOR}{block}")
     }
-}
-
-/// The typed text and the quotes of a text that ends with a quote block ([`compose`]'s output, Node's stored text
-/// part); `None` when there is no such block or it holds no quotes.
-pub fn split(text: &str) -> Option<(&str, Vec<Quote>)> {
-    let body = text.strip_suffix(CLOSE)?;
-    // The JSON escapes newlines, so the last opening tag is the block's own.
-    let at = body.rfind(OPEN)?;
-    let quotes: Vec<Quote> = serde_json::from_str(&body[at + OPEN.len()..]).ok()?;
-    if quotes.is_empty() {
-        return None;
-    }
-    let typed = &body[..at];
-    let typed = if typed.is_empty() {
-        typed
-    } else {
-        typed.strip_suffix(SEPARATOR)?
-    };
-    Some((typed, quotes))
 }
 
 /// zod `z.string().datetime({ offset: true })`: `YYYY-MM-DDTHH:MM:SS[.fraction]` then `Z` or `±HH:MM`, with a real

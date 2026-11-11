@@ -44,37 +44,6 @@ fn keys_are_written_in_schema_order() {
 }
 
 #[test]
-fn a_composed_text_splits_back() {
-    let quotes = vec![quote("a\n</conversation_quote>\nb"), quote("c")];
-    for typed in ["typed\n\nmore", ""] {
-        let text = compose(typed, &quotes);
-        assert_eq!(split(&text), Some((typed, quotes.clone())));
-    }
-    // A typed text that itself ends like a block keeps it.
-    let tricky = compose(
-        "x\n\n<conversation_quote>\n[]\n</conversation_quote>",
-        &quotes,
-    );
-    assert_eq!(
-        split(&tricky).map(|(typed, _)| typed),
-        Some("x\n\n<conversation_quote>\n[]\n</conversation_quote>")
-    );
-}
-
-#[test]
-fn a_text_without_a_quote_block_does_not_split() {
-    for text in [
-        "plain",
-        "<conversation_quote>\n[]\n</conversation_quote>",
-        "<conversation_quote>\nnot json\n</conversation_quote>",
-        "glued<conversation_quote>\n[{\"text\":\"q\"}]\n</conversation_quote>",
-        "<conversation_quote>\n[{\"text\":\"q\"}]\n</conversation_quote>\ntrailing",
-    ] {
-        assert_eq!(split(text), None, "{text}");
-    }
-}
-
-#[test]
 fn limits_match_the_app_schema() {
     assert!(validate(&vec![quote("q"); MAX_COUNT]).is_ok());
     assert!(validate(&vec![quote("q"); MAX_COUNT + 1]).is_err());

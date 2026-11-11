@@ -364,7 +364,8 @@ pub(super) async fn send_queued_now(
         handle,
         &part("send"),
         Command::SubmitWith {
-            intent: None,
+            // Node `inputIntentMetadataFromQueueItem`: the item's intent unchanged.
+            intent: item.intent,
             kind: item.kind,
             text: item.text,
             content: Vec::new(),

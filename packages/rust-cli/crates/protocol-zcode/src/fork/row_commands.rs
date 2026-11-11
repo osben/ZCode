@@ -11,6 +11,7 @@ use futures_util::StreamExt;
 use rust_cli_kernel_api::conversation_quote::{self, Quote};
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::{MessageId, SessionId};
+use rust_cli_kernel_api::input_intent::InputIntent;
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::session_api::{
     Ack as KernelAck, Command, CommandResult, Delivery, KernelEvent, RewindPreview, RewindScope,
@@ -57,17 +58,107 @@ struct EditPayload {
     conversation_quotes: Option<Vec<Quote>>,
 }
 
-/// The quotes a stored input was sent with (its text ends with their block).
-fn stored_quotes(stored: &[ContentBlock]) -> Vec<Quote> {
-    stored
-        .iter()
-        .find_map(|block| match block {
-            ContentBlock::Text { text } => {
-                conversation_quote::split(text).map(|(_, quotes)| quotes)
+/// A stored input: its content and the input intent it was admitted with.
+struct Stored {
+    content: Vec<ContentBlock>,
+    intent: Option<InputIntent>,
+}
+
+impl Stored {
+    /// The content as typed: the first text without the quote block the intent added.
+    fn typed(&self) -> Vec<ContentBlock> {
+        let mut content = self.content.clone();
+        if let Some(intent) = &self.intent
+            && let Some(ContentBlock::Text { text }) = content
+                .iter_mut()
+                .find(|block| matches!(block, ContentBlock::Text { .. }))
+        {
+            *text = intent.typed(text).to_owned();
+        }
+        content.retain(|block| !matches!(block, ContentBlock::Text { text } if text.is_empty()));
+        content
+    }
+}
+
+/// Node `inputIntentMetadataFromCanonical` (`canonical-intent-replay.ts`): the intent of an input submitted again
+/// from a stored one (specs/fork-agent-runtime-selection.md, Conversation quotes in Rust mode, Edit). `quotes` is the
+/// payload's (`None` keeps the stored ones), `attachments` the payload's refs (`None` keeps the stored ones),
+/// `(seq, at)` the new admission.
+fn replayed_intent(
+    (seq, at): (u64, u64),
+    envelope: &Envelope,
+    stored: Option<&InputIntent>,
+    text: &str,
+    quotes: Option<&[Quote]>,
+    attachments: Option<&[Value]>,
+) -> InputIntent {
+    let empty = serde_json::Map::new();
+    let canonical = stored.map_or(&empty, InputIntent::fields);
+    let get = |key: &str| canonical.get(key).filter(|value| !value.is_null());
+    let mut fields = serde_json::Map::new();
+    if let Some(origin) = envelope
+        .input_origin
+        .as_deref()
+        .filter(|origin| matches!(*origin, "desktop" | "mobile"))
+    {
+        fields.insert("inputOrigin".into(), json!(origin));
+    }
+    let quotes = quotes
+        .map(|quotes| json!(quotes))
+        .or_else(|| get(rust_cli_kernel_api::input_intent::QUOTES).cloned());
+    if let Some(quotes) = quotes {
+        fields.insert(rust_cli_kernel_api::input_intent::QUOTES.into(), quotes);
+    }
+    let command = envelope.command_id.as_str();
+    fields.insert("sourceCommandId".into(), json!(command));
+    fields.insert("queueItemId".into(), json!(format!("queue_{command}")));
+    let client = Some(envelope.client_id.as_str())
+        .filter(|client| !client.is_empty())
+        .or_else(|| {
+            get("clientId")
+                .and_then(Value::as_str)
+                .filter(|c| !c.is_empty())
+        });
+    fields.insert("clientId".into(), json!(client.unwrap_or("cli")));
+    fields.insert(
+        "kind".into(),
+        get("kind").cloned().unwrap_or_else(|| json!("sendText")),
+    );
+    fields.insert(rust_cli_kernel_api::input_intent::TEXT.into(), json!(text));
+    for key in ["modelSelection", "mode", "planEnabled"] {
+        if let Some(value) = get(key) {
+            fields.insert(key.into(), value.clone());
+        }
+    }
+    fields.insert("admissionSeq".into(), json!(seq));
+    fields.insert("admittedAt".into(), json!(at));
+    for key in ["requestedDelivery", "admittedDelivery"] {
+        fields.insert(
+            key.into(),
+            get(key).cloned().unwrap_or_else(|| json!("startNow")),
+        );
+    }
+    let refs = attachments
+        .map(|refs| json!(refs))
+        .or_else(|| get("attachmentRefs").cloned())
+        .filter(|refs| refs.as_array().is_some_and(|refs| !refs.is_empty()));
+    if let Some(refs) = refs {
+        fields.insert("attachmentRefs".into(), refs);
+    }
+    let provenance = get("provenance").cloned().or_else(|| {
+        let mut original = serde_json::Map::new();
+        original.insert("sourceCommandId".into(), get("sourceCommandId")?.clone());
+        for key in ["queueItemId", "clientId"] {
+            if let Some(value) = get(key) {
+                original.insert(key.into(), value.clone());
             }
-            _ => None,
-        })
-        .unwrap_or_default()
+        }
+        Some(Value::Object(original))
+    });
+    if let Some(provenance) = provenance {
+        fields.insert("provenance".into(), provenance);
+    }
+    InputIntent::from_fields(fields)
 }
 
 fn refused(envelope: &Envelope, code: &str, message: impl Into<String>, revision: u64) -> Ack {
@@ -97,15 +188,19 @@ pub(super) fn target_refused(
 
 /// The typed user message `id` as it is stored now, or the prompt of the guided steer `id` (Fork: a guided row is
 /// edited like a typed input).
-async fn stored_input(live: &Bridged<Live>, id: &str) -> Option<Vec<ContentBlock>> {
+async fn stored_input(live: &Bridged<Live>, id: &str) -> Option<Stored> {
     let view = live.handle.view().await.ok()?;
     view.messages.into_iter().find_map(|message| match message {
-        Message::User(user) if user.id.as_str() == id => Some(user.content),
+        Message::User(user) if user.id.as_str() == id => Some(Stored {
+            content: user.content,
+            intent: user.intent.map(|intent| *intent),
+        }),
         Message::Attachment(attachment) if attachment.id.as_str() == id => {
-            queued_command::guided(&attachment).map(|(prompt, _)| {
-                vec![ContentBlock::Text {
+            queued_command::guided(&attachment).map(|(prompt, _)| Stored {
+                content: vec![ContentBlock::Text {
                     text: prompt.to_owned(),
-                }]
+                }],
+                intent: queued_command::intent(&attachment),
             })
         }
         _ => None,
@@ -249,6 +344,7 @@ async fn resubmit(
     envelope: &Envelope,
     text: &str,
     content: Vec<ContentBlock>,
+    intent: InputIntent,
 ) -> KernelAck {
     live.sink.remember_input(
         &envelope.command_id,
@@ -265,17 +361,14 @@ async fn resubmit(
     let only_text = content
         .iter()
         .all(|block| matches!(block, ContentBlock::Text { .. }));
-    let submit = if only_text {
-        Command::Submit {
-            text: text.to_owned(),
-            attachments: Vec::new(),
-            delivery: Delivery::Queue,
-        }
-    } else {
-        Command::SubmitContent {
-            content,
-            delivery: Delivery::Queue,
-        }
+    let submit = Command::SubmitWith {
+        kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+        text: text.to_owned(),
+        content: if only_text { Vec::new() } else { content },
+        delivery: Delivery::Queue,
+        execution: None,
+        behind_held: false,
+        intent: Some(Box::new(intent)),
     };
     send(live.handle.as_ref(), &envelope.command_id, submit).await
 }
@@ -325,6 +418,11 @@ async fn edited_content(
     Ok(content)
 }
 
+/// Quotes alone are an input (Node `fork-edit-retry.ts`).
+fn is_input(content: &[ContentBlock], intent: &InputIntent) -> bool {
+    has_input(content) || intent.quotes().is_some_and(|quotes| !quotes.is_empty())
+}
+
 fn has_input(content: &[ContentBlock]) -> bool {
     content.iter().any(|block| match block {
         ContentBlock::Text { text } => !text.trim().is_empty(),
@@ -368,19 +466,26 @@ pub(super) async fn edit(
             revision,
         );
     };
-    let quotes = body
-        .conversation_quotes
-        .unwrap_or_else(|| stored_quotes(&stored));
-    if let Err(reason) = conversation_quote::validate(&quotes) {
+    if let Err(reason) =
+        conversation_quote::validate(body.conversation_quotes.as_deref().unwrap_or_default())
+    {
         return refused(envelope, "proto.invalidPayload", reason, revision);
     }
-    // Node `withConversationQuotes`: the model reads the quotes after the edited text.
-    let text = conversation_quote::compose(&body.new_text, &quotes);
+    let intent = replayed_intent(
+        live.sink.admit(),
+        envelope,
+        stored.intent.as_ref(),
+        &body.new_text,
+        body.conversation_quotes.as_deref(),
+        body.attachments.as_deref(),
+    );
+    // The session adds the quote block after the edited text (Node `withConversationQuotes`).
+    let text = body.new_text.clone();
     let session = live.handle.id().clone();
     let content = match edited_content(
         server,
         &session,
-        &stored,
+        &stored.content,
         &text,
         body.attachments.as_deref(),
     )
@@ -390,7 +495,7 @@ pub(super) async fn edit(
         Err(message) => return refused(envelope, "proto.invalidPayload", message, revision),
     };
     // Checked before the history is cut, like Node: an empty edit changes nothing.
-    if !has_input(&content) {
+    if !is_input(&content, &intent) {
         return refused(
             envelope,
             "fault.command.inputRejected",
@@ -430,7 +535,7 @@ pub(super) async fn edit(
     }
     let result =
         json!({"type": "editUserQuery", "disposition": "rewind", "sessionId": session.as_str()});
-    match resubmit(live, envelope, &text, content).await {
+    match resubmit(live, envelope, &text, content, intent).await {
         KernelAck::Accepted { .. } | KernelAck::Duplicate => {
             Ack::accepted(&envelope.command_id, revision, Some(result))
         }
@@ -480,8 +585,18 @@ pub(super) async fn retry(live: &Bridged<Live>, envelope: &Envelope, revision: u
     {
         return refused(envelope, EXECUTION_FAILED, reason, revision);
     }
-    let text = crate::projection::text_of(&stored);
-    match resubmit(live, envelope, &text, stored).await {
+    // Retry submits the stored input again, typed text and quotes as they were.
+    let content = stored.typed();
+    let text = crate::projection::text_of(&content);
+    let intent = replayed_intent(
+        live.sink.admit(),
+        envelope,
+        stored.intent.as_ref(),
+        &text,
+        None,
+        None,
+    );
+    match resubmit(live, envelope, &text, content, intent).await {
         KernelAck::Accepted { .. } | KernelAck::Duplicate => {
             Ack::accepted(&envelope.command_id, revision, None)
         }
