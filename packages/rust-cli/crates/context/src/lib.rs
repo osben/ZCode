@@ -109,7 +109,7 @@ pub struct PromptAssembler {
     /// 连上的远端机器（R3，remote-exec.md §20.5.3）：机器清单提醒读它的快照；没有时不提醒。
     machines: Option<Arc<dyn EnvironmentRegistry>>,
     /// Fork: Gen UI output directories already created (Node creates its one once, at context initialization).
-    gen_ui_dirs: desktop::Created,
+    gen_ui_dirs: desktop::Directories,
 }
 
 /// 当步 attachment 属于哪个循环（docs/specs/rust-cli/agents.md §4.3）。
@@ -161,7 +161,7 @@ impl PromptAssembler {
             changed: None,
             tasks: Late::new(),
             machines: None,
-            gen_ui_dirs: desktop::Created::default(),
+            gen_ui_dirs: desktop::Directories::default(),
         }
     }
 
@@ -172,19 +172,23 @@ impl PromptAssembler {
         &self,
         request: &ContextRequest,
     ) -> Result<Option<String>, OrchestrationError> {
+        // Node children do not inherit the presentation surface or the Gen UI root, and `SubagentContext` replaces the
+        // system blocks anyway: a subagent neither names nor creates a directory.
+        if matches!(request.source, QuerySource::Subagent(_)) {
+            return Ok(None);
+        }
         let Some(desktop) = self.config.desktop.as_ref() else {
             return Ok(None);
         };
-        let directory = desktop::directory(
-            desktop,
-            request.workspace.root.as_str(),
-            request.session.as_str(),
-        );
-        if let Some(directory) = &directory {
-            self.gen_ui_dirs
-                .ensure(self.ports.files.as_ref(), &request.workspace, directory)
-                .await?;
-        }
+        let directory = self
+            .gen_ui_dirs
+            .for_session(
+                desktop,
+                self.ports.files.as_ref(),
+                &request.workspace,
+                request.session.as_str(),
+            )
+            .await?;
         Ok(Some(desktop::section(directory.as_deref())))
     }
 

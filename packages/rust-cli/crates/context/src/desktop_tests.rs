@@ -71,13 +71,17 @@ fn the_directory_is_nodes_hash_of_the_workspace_and_session() {
         gen_ui_root: Some("/home/u/.zcode/visualizations".to_owned()),
     };
     assert_eq!(
-        directory(&desktop, "/workspace/project", "ses_0123").as_deref(),
+        directory(&desktop, "/workspace/project", "ses_0123")
+            .unwrap()
+            .as_deref(),
         Some(
             "/home/u/.zcode/visualizations/126b6d78e2d83c7afcbabd1ad675bb9ee4d4b30f20fac3d7f86c9241cae89a3b"
         )
     );
     assert_eq!(
-        directory(&desktop, "/tmp/a \"q\"\\b", "s-ü").as_deref(),
+        directory(&desktop, "/tmp/a \"q\"\\b", "s-ü")
+            .unwrap()
+            .as_deref(),
         Some(
             "/home/u/.zcode/visualizations/425bcfa04fc3fa2a0d6c0375be98aaac7e45997258b2a23441300721b4b61ecf"
         )
@@ -91,7 +95,9 @@ fn the_root_is_resolved_like_node() {
         gen_ui_root: Some("/home/u/./.zcode//x/../visualizations/".to_owned()),
     };
     assert_eq!(
-        directory(&desktop, "/workspace/project", "ses_0123").as_deref(),
+        directory(&desktop, "/workspace/project", "ses_0123")
+            .unwrap()
+            .as_deref(),
         Some(
             "/home/u/.zcode/visualizations/126b6d78e2d83c7afcbabd1ad675bb9ee4d4b30f20fac3d7f86c9241cae89a3b"
         )
@@ -99,10 +105,132 @@ fn the_root_is_resolved_like_node() {
 }
 
 #[test]
-fn no_root_or_a_relative_root_gives_no_directory() {
-    assert_eq!(directory(&DesktopContext::default(), "/w", "s"), None);
+fn no_root_gives_no_directory_and_a_relative_path_is_nodes_error() {
+    assert_eq!(directory(&DesktopContext::default(), "/w", "s"), Ok(None));
+    // Node `!runtime.config.genUiOutputRoot`: an empty root is no root.
+    let empty = DesktopContext {
+        gen_ui_root: Some(String::new()),
+    };
+    assert_eq!(directory(&empty, "/w", "s"), Ok(None));
+    // Node `getGenUiOutputDirectory` throws for a relative root or workspace.
     let relative = DesktopContext {
         gen_ui_root: Some("visualizations".to_owned()),
     };
-    assert_eq!(directory(&relative, "/w", "s"), None);
+    assert_eq!(directory(&relative, "/w", "s"), Err(NOT_ABSOLUTE));
+    let absolute = DesktopContext {
+        gen_ui_root: Some("/root/visualizations".to_owned()),
+    };
+    assert_eq!(directory(&absolute, "w", "s"), Err(NOT_ABSOLUTE));
+}
+
+/// `Files` that records `ensure_dir` and can refuse it.
+#[derive(Default)]
+struct Dirs {
+    made: Mutex<Vec<String>>,
+    refuse: bool,
+}
+
+#[async_trait::async_trait]
+impl Files for Dirs {
+    async fn read_file(
+        &self,
+        _workspace: &WorkspaceRef,
+        request: rust_cli_kernel_api::env::ReadFile,
+    ) -> Result<rust_cli_kernel_api::env::FileContent, rust_cli_kernel_api::env::EnvError> {
+        Err(rust_cli_kernel_api::env::EnvError::NotFound {
+            path: request.path.as_str().to_owned(),
+        })
+    }
+
+    async fn write_file(
+        &self,
+        _workspace: &WorkspaceRef,
+        _context: rust_cli_kernel_api::env::OperationContext,
+        request: rust_cli_kernel_api::env::WriteFile,
+    ) -> Result<rust_cli_kernel_api::env::WriteReceipt, rust_cli_kernel_api::env::EnvError> {
+        Err(rust_cli_kernel_api::env::EnvError::NotFound {
+            path: request.path.as_str().to_owned(),
+        })
+    }
+
+    async fn ensure_dir(
+        &self,
+        _workspace: &WorkspaceRef,
+        request: EnsureDir,
+    ) -> Result<(), rust_cli_kernel_api::env::EnvError> {
+        if self.refuse {
+            return Err(rust_cli_kernel_api::env::EnvError::PermissionDenied {
+                message: "quota".to_owned(),
+            });
+        }
+        self.made
+            .lock_unpoisoned()
+            .push(request.path.as_str().to_owned());
+        Ok(())
+    }
+}
+
+fn workspace(root: &str) -> WorkspaceRef {
+    WorkspaceRef {
+        environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        root: EnvPath::new(root),
+    }
+}
+
+/// Node keys the directory on `config.workspacePath`, fixed at runtime start: EnterWorktree moves the session's
+/// workspace but not its Gen UI directory. The directory is created once, before it is first named.
+#[tokio::test]
+async fn the_directory_stays_with_the_session_after_a_workspace_change() {
+    let desktop = DesktopContext {
+        gen_ui_root: Some("/home/u/.zcode/visualizations".to_owned()),
+    };
+    let expected = "/home/u/.zcode/visualizations/126b6d78e2d83c7afcbabd1ad675bb9ee4d4b30f20fac3d7f86c9241cae89a3b";
+    let files = Dirs::default();
+    let directories = Directories::default();
+    let first = directories
+        .for_session(
+            &desktop,
+            &files,
+            &workspace("/workspace/project"),
+            "ses_0123",
+        )
+        .await
+        .unwrap();
+    let worktree = workspace("/workspace/project/.zcode/worktrees/fix");
+    let after = directories
+        .for_session(&desktop, &files, &worktree, "ses_0123")
+        .await
+        .unwrap();
+    assert_eq!(first.as_deref(), Some(expected));
+    assert_eq!(after.as_deref(), Some(expected));
+    assert_eq!(*files.made.lock_unpoisoned(), [expected]);
+}
+
+#[tokio::test]
+async fn a_directory_that_cannot_be_created_or_a_relative_root_fails_the_request() {
+    let desktop = DesktopContext {
+        gen_ui_root: Some("/home/u/.zcode/visualizations".to_owned()),
+    };
+    let refusing = Dirs {
+        refuse: true,
+        ..Dirs::default()
+    };
+    let error = Directories::default()
+        .for_session(&desktop, &refusing, &workspace("/w"), "s")
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Gen UI output directory unavailable"),
+        "{error}"
+    );
+    let relative = DesktopContext {
+        gen_ui_root: Some("visualizations".to_owned()),
+    };
+    let error = Directories::default()
+        .for_session(&relative, &Dirs::default(), &workspace("/w"), "s")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains(NOT_ABSOLUTE), "{error}");
 }
