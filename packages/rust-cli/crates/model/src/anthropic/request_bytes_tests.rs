@@ -165,6 +165,9 @@ mod reference {
             ContentBlock::Image { source, .. } => {
                 object([("type", text("image")), ("source", image_source(source)?)])
             }
+            ContentBlock::Video { source, .. } => {
+                object([("type", text("video")), ("source", image_source(source)?)])
+            }
             ContentBlock::Thinking {
                 thinking,
                 signature,

@@ -402,3 +402,22 @@ fn server_tools_follow_the_tool_list_and_their_blocks_replay() {
     assert!(body.contains(r#"{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"rust"}}"#));
     assert!(body.contains(r#"{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","title":"T","url":"https://example.com"}]}"#));
 }
+
+/// Node's patched Anthropic SDK writes an attached video as a base64 `video` block.
+#[test]
+fn videos_are_base64_video_blocks() {
+    let body = body(request(vec![user(vec![plain(ContentBlock::Video {
+        source: ImageSource::Base64 {
+            media_type: "video/mp4".to_owned(),
+            data: "AAAA".to_owned(),
+        },
+        name: Some("clip.mp4".to_owned()),
+    })])]))
+    .unwrap();
+    assert!(
+        body.contains(
+            r#"{"type":"video","source":{"type":"base64","media_type":"video/mp4","data":"AAAA"}}"#
+        ),
+        "{body}"
+    );
+}

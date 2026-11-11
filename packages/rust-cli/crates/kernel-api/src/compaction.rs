@@ -290,7 +290,8 @@ fn block_tokens(block: &ContentBlock) -> u64 {
         ContentBlock::Image {
             source: ImageSource::Base64 { .. } | ImageSource::Artifact { .. },
             ..
-        } => IMAGE_TOKENS,
+        }
+        | ContentBlock::Video { .. } => IMAGE_TOKENS,
         ContentBlock::Thinking { thinking, .. } => rough_tokens(thinking),
         ContentBlock::RedactedThinking { data } => rough_tokens(data),
         ContentBlock::ToolUse { name, input, .. } => rough_tokens(&format!("{name}{input}")),

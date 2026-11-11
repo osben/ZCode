@@ -178,3 +178,61 @@ fn a_live_material_chip_carries_its_marks() {
         Some("/data/s/attachment-tool-result-1.txt")
     );
 }
+
+/// Node `parseInlineVideoDataUrl` and `inferVideoMimeFromPath`.
+#[test]
+fn videos_parse_like_node() {
+    assert_eq!(
+        video_of_data_url("data:Video/MP4;base64,AAAA"),
+        Some(ImageSource::Base64 {
+            media_type: "video/mp4".into(),
+            data: "AAAA".into()
+        })
+    );
+    for refused in [
+        "data:video/mp4;base64,",
+        "data:video/mp4;base64,AAA",
+        "data:video/mp4;base64,AA!A",
+        "data:video/mp4,AAAA",
+        "data:image/png;base64,AAAA",
+    ] {
+        assert_eq!(video_of_data_url(refused), None, "{refused}");
+    }
+    // The limit is on the decoded bytes, so padding does not count against it.
+    let limit = VIDEO_INPUT_MAX_BYTES as usize;
+    let at_limit = format!("data:video/mp4;base64,{}", "A".repeat(limit / 3 * 4));
+    assert!(video_of_data_url(&at_limit).is_some());
+    let padded = format!("data:video/mp4;base64,{}AA==", "A".repeat(limit / 3 * 4));
+    assert_eq!(video_of_data_url(&padded), None);
+    assert_eq!(video_mime_of_path("/w/Clip.MOV"), Some("video/quicktime"));
+    assert_eq!(video_mime_of_path("/w/a.mkv"), Some("video/x-matroska"));
+    assert_eq!(video_mime_of_path("/w/a.png"), None);
+    assert_eq!(mime_of_path("/w/a.webm"), "video/webm");
+}
+
+#[test]
+fn a_video_is_sent_as_a_named_video_block() {
+    let source = ImageSource::Base64 {
+        media_type: "video/mp4".into(),
+        data: "AAAA".into(),
+    };
+    let file = AttachedFile {
+        name: "clip.mp4".into(),
+        mime: "video/mp4".into(),
+        bytes: 3,
+        reference: Some("/w/clip.mp4".into()),
+        preview_reference: None,
+        stored: None,
+        material: None,
+        body: AttachedBody::Video {
+            source: source.clone(),
+        },
+    };
+    assert_eq!(
+        blocks(&file),
+        vec![ContentBlock::Video {
+            source,
+            name: Some("clip.mp4".into())
+        }]
+    );
+}

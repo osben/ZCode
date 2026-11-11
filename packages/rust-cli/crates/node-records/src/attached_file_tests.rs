@@ -200,3 +200,55 @@ fn an_oversized_image_path_reference_keeps_its_image_mime() {
         "image/png"
     );
 }
+
+/// A video is always stored (Node `persistAttachmentDataUrl` stops the turn otherwise), so its part has the artifact
+/// shape and is read back from the artifact; a part holding the data URL itself is read inline.
+#[test]
+fn a_stored_video_has_nodes_artifact_shape() {
+    let source = ImageSource::Base64 {
+        media_type: "video/mp4".into(),
+        data: "AAAA".into(),
+    };
+    let original = AttachedFile {
+        name: "clip.mp4".into(),
+        mime: "video/mp4".into(),
+        reference: Some("/w/clip.mp4".into()),
+        stored: Some("zcode-artifact://sess/attachment-2".into()),
+        ..file(AttachedBody::Video {
+            source: source.clone(),
+        })
+    };
+    let stored = part("prt_1".into(), ("sess", "msg"), &original);
+    assert_eq!(stored["url"], "zcode-artifact://sess/attachment-2");
+    assert_eq!(stored["mime"], "video/mp4");
+    assert_eq!(stored["metadata"]["storageKind"], "artifact");
+    assert_eq!(stored["metadata"]["recoverability"], "provider_ready");
+    assert_eq!(
+        from_part(&stored),
+        Some(AttachedFile {
+            body: AttachedBody::Omitted,
+            ..original
+        })
+    );
+    let inline = json!({"type": "file", "mime": "video/mp4", "filename": "clip.mp4",
+        "url": "data:video/mp4;base64,AAAA", "metadata": {"recoverability": "provider_ready", "sizeBytes": 3}});
+    assert_eq!(
+        from_part(&inline).unwrap().body,
+        AttachedBody::Video { source }
+    );
+}
+
+/// A video part Node wrote (`persistAttachmentDataUrl`) reads back like its image: stored, filled from the artifact.
+#[test]
+fn a_node_artifact_video_comes_back_stored() {
+    let part = json!({"type": "file", "mime": "video/mp4", "filename": "clip.mp4",
+        "url": "zcode-artifact://s/attachment-v", "metadata": {"artifactUri": "zcode-artifact://s/attachment-v",
+            "originalUrl": "/w/clip.mp4", "recoverability": "provider_ready", "storageKind": "artifact", "sizeBytes": 3}});
+    let file = from_part(&part).unwrap();
+    assert_eq!(file.body, AttachedBody::Omitted);
+    assert_eq!(
+        file.stored.as_deref(),
+        Some("zcode-artifact://s/attachment-v")
+    );
+    assert_eq!(file.reference.as_deref(), Some("/w/clip.mp4"));
+}

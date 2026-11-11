@@ -355,3 +355,57 @@ fn text_is_previewed_only_as_material() {
     assert!(previewable("application/pdf", false));
     assert!(!previewable("application/zip", true));
 }
+
+/// Node `resolveLocalVideoAttachment`: a desktop video is read whole up to 30 MiB with the MIME of its extension;
+/// a larger one goes by path (`video_too_large`), an empty or missing one keeps only its metadata.
+#[tokio::test]
+async fn desktop_videos_are_read_whole_or_sent_by_path_like_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("clip.mov");
+    rust_cli_fs::append(&clip, b"moov").await.unwrap();
+    assert_eq!(
+        local_video(&local_ref(&clip, "video/mp4", 4)).await,
+        Some(AttachedBody::Video {
+            source: ImageSource::Base64 {
+                media_type: "video/quicktime".into(),
+                data: base64().encode(b"moov"),
+            }
+        })
+    );
+    // The App's MIME decides (Node `isVideoRef`): a video is never a binary-file path reference, while a `.mov` the
+    // App calls octet-stream is one, named with the MIME of its extension.
+    let Some(AttachedBody::PathReference { text }) =
+        path_reference(&local_ref(&clip, "application/octet-stream", 4)).await
+    else {
+        panic!("path reference");
+    };
+    assert!(text.starts_with("Attached video/quicktime: "), "{text}");
+    assert_eq!(
+        path_reference(&local_ref(&clip, "video/quicktime", 4)).await,
+        None
+    );
+    let big = dir.path().join("big.mp4");
+    rust_cli_fs::append(&big, &vec![0u8; VIDEO_INPUT_MAX_BYTES as usize + 1])
+        .await
+        .unwrap();
+    let Some(AttachedBody::PathReference { text }) =
+        local_video(&local_ref(&big, "video/mp4", VIDEO_INPUT_MAX_BYTES + 1)).await
+    else {
+        panic!("path reference");
+    };
+    assert!(text.starts_with("Attached video/mp4: "), "{text}");
+    assert!(
+        text.contains("larger than the ZCode video input limit"),
+        "{text}"
+    );
+    let empty = dir.path().join("empty.webm");
+    rust_cli_fs::append(&empty, b"").await.unwrap();
+    assert_eq!(
+        local_video(&local_ref(&empty, "video/webm", 0)).await,
+        Some(AttachedBody::Omitted)
+    );
+    assert_eq!(
+        local_video(&local_ref(&dir.path().join("gone.mp4"), "video/mp4", 1)).await,
+        Some(AttachedBody::Omitted)
+    );
+}

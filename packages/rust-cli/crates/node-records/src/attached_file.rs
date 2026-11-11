@@ -42,8 +42,10 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["storageKind"] = json!("inline");
         }
         // Node's artifact shape (`persistAttachmentDataUrl`): Node builds the chip's ref from a `url` that is not a data
-        // URL and reads the image back from `metadata.artifactUri`.
-        AttachedBody::Image { source } if file.stored.is_some() => {
+        // URL and reads the image or video back from `metadata.artifactUri`.
+        AttachedBody::Image { source } | AttachedBody::Video { source }
+            if file.stored.is_some() =>
+        {
             let stored = file.stored.as_deref().unwrap_or_default();
             let media_type = match source {
                 ImageSource::Base64 { media_type, .. }
@@ -57,7 +59,7 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["sizeBytes"] = json!(file.bytes);
             metadata["storageKind"] = json!("artifact");
         }
-        AttachedBody::Image { source } => {
+        AttachedBody::Image { source } | AttachedBody::Video { source } => {
             let (media_type, url) = match source {
                 ImageSource::Base64 { media_type, data } => (
                     media_type.as_str(),
@@ -138,6 +140,12 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
             Some(text) if recoverable && mime.starts_with("text/") => AttachedBody::Text {
                 text: text.to_owned(),
             },
+            _ if recoverable && mime.starts_with("video/") => {
+                match rust_cli_kernel_api::prompt_attachment::video_of_data_url(url) {
+                    Some(source) => AttachedBody::Video { source },
+                    None => AttachedBody::Omitted,
+                }
+            }
             _ if recoverable && mime.starts_with("image/") => {
                 match crate::tool_content::from_file_part(part) {
                     ToolResultContent::Image { source } => AttachedBody::Image { source },
@@ -147,11 +155,15 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
             _ => AttachedBody::Omitted,
         }
     };
-    // An image whose bytes live in a session artifact (both runtimes write Node's shape); the store reads it back.
+    // An image or video whose bytes live in a session artifact (both runtimes write Node's shape); the store reads it
+    // back.
     let stored = metadata["artifactUri"]
         .as_str()
         .or(Some(url))
-        .filter(|uri| mime.starts_with("image/") && uri.starts_with(ARTIFACT_SCHEME))
+        .filter(|uri| {
+            (mime.starts_with("image/") || mime.starts_with("video/"))
+                && uri.starts_with(ARTIFACT_SCHEME)
+        })
         .map(str::to_owned);
     let bytes = metadata["sizeBytes"]
         .as_u64()

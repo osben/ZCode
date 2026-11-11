@@ -13,7 +13,7 @@ use rust_cli_kernel_api::message::{
     AttachedBody, AttachedFile, ContentBlock, ImageSource, Material, MaterialKind,
 };
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
-use rust_cli_kernel_api::prompt_attachment::INLINE_IMAGE_MAX_BYTES;
+use rust_cli_kernel_api::prompt_attachment::{INLINE_IMAGE_MAX_BYTES, VIDEO_INPUT_MAX_BYTES};
 use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactRef, ArtifactStore};
 use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
@@ -240,6 +240,18 @@ pub(crate) async fn content(
                 .map_err(|_| material_failed())?;
             let (body, path) = write_material(store.as_ref(), session, kind, &content).await?;
             (body, Some(path))
+        } else if let Some(video) = video(server, session, &attachment).await {
+            match video {
+                AttachedBody::Video { source } => {
+                    // Node stops the turn when a video cannot be persisted: a part that cannot be read back would make
+                    // a cold load differ from what the model saw, and a 30 MiB data URL does not belong in the part.
+                    let stored = stored_image(server, session, &attachment, &source)
+                        .await
+                        .ok_or_else(|| fault("putFailed"))?;
+                    (AttachedBody::Video { source }, Some(stored))
+                }
+                other => (other, None),
+            }
         } else {
             let body = body(server, session, &attachment).await;
             let stored = match &body {
@@ -334,9 +346,9 @@ async fn write_material(
     Ok((body, path))
 }
 
-/// The session artifact holding an inline image's data URL (Node `persistAttachmentDataUrl`): a web-remote ref already
-/// is one (`read` checked it belongs to this session) and is reused; a desktop image is written now. `None` when the
-/// write fails: the part then keeps the inline data URL, which both runtimes still read.
+/// The session artifact holding an inline image's or video's data URL (Node `persistAttachmentDataUrl`): a web-remote
+/// ref already is one (`read` checked it belongs to this session) and is reused; a desktop file is written now. `None`
+/// when the write fails: an image part then keeps the inline data URL, which both runtimes still read.
 async fn stored_image(
     server: &Server,
     session: &SessionId,
@@ -365,10 +377,77 @@ async fn stored_image(
             // No error text: a storage error names the storage path.
             tracing::warn!(
                 event = "attachment.store_failed",
-                "storing an attached image failed; it stays inline"
+                "storing an attached image or video failed"
             );
             None
         }
+    }
+}
+
+/// Node `resolveLocalVideoAttachment` and the video branch of `resolveInlineMediaAttachment`: a video of at most
+/// [`VIDEO_INPUT_MAX_BYTES`] is read whole and sent as a video block; a larger desktop video goes by path
+/// (`video_too_large`); an empty, unreadable or malformed one keeps only its metadata. `None` when it is not a video.
+async fn video(
+    server: &Server,
+    session: &SessionId,
+    attachment: &AttachmentRef,
+) -> Option<AttachedBody> {
+    use rust_cli_kernel_api::prompt_attachment::video_of_data_url;
+    if !essence(&attachment.mime).starts_with("video/") {
+        return None;
+    }
+    let reference = attachment.reference.as_str();
+    let omitted = |fault: &str| {
+        // The fault code only: a local ref is a user path.
+        tracing::warn!(event = "attachment.read_failed", mime = %attachment.mime, fault, "an attached video could not be read");
+        Some(AttachedBody::Omitted)
+    };
+    if reference.starts_with(ARTIFACT_SCHEME) {
+        let content =
+            match artifact_content(server, session, reference, VIDEO_INPUT_MAX_BYTES).await {
+                Ok(content) => content,
+                Err(error) => return omitted(&error.message),
+            };
+        return match std::str::from_utf8(&content)
+            .ok()
+            .and_then(video_of_data_url)
+        {
+            Some(source) => Some(AttachedBody::Video { source }),
+            None => omitted("attachment_video_invalid"),
+        };
+    }
+    local_video(attachment).await
+}
+
+/// The desktop half of [`video`]: the App's absolute path, read up to [`VIDEO_INPUT_MAX_BYTES`].
+async fn local_video(attachment: &AttachmentRef) -> Option<AttachedBody> {
+    use rust_cli_kernel_api::prompt_attachment::{PathReason, path_reference, video_mime_of_path};
+    let reference = attachment.reference.as_str();
+    let omitted = |fault: &str| {
+        // The fault code only: a local ref is a user path.
+        tracing::warn!(event = "attachment.read_failed", mime = %attachment.mime, fault, "an attached video could not be read");
+        Some(AttachedBody::Omitted)
+    };
+    let path = Path::new(reference);
+    if !path.is_absolute() {
+        return omitted("refInvalid");
+    }
+    let mime = video_mime_of_path(reference)
+        .map(str::to_owned)
+        .unwrap_or_else(|| essence(&attachment.mime));
+    match rust_cli_fs::read_regular_bounded(path, VIDEO_INPUT_MAX_BYTES).await {
+        Ok(BoundedRead::Bytes(bytes)) if bytes.is_empty() => omitted("attachment_video_invalid"),
+        Ok(BoundedRead::Bytes(bytes)) => Some(AttachedBody::Video {
+            source: ImageSource::Base64 {
+                media_type: mime,
+                data: base64().encode(&bytes),
+            },
+        }),
+        Ok(BoundedRead::TooLarge) => Some(AttachedBody::PathReference {
+            text: path_reference(&mime, reference, PathReason::VideoTooLarge),
+        }),
+        Ok(BoundedRead::Missing | BoundedRead::NotRegular) => omitted("fileNotFound"),
+        Err(_) => omitted("readFailed"),
     }
 }
 
@@ -628,7 +707,13 @@ pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcErr
         .sink
         .attachment_mime(&params.reference)
         .ok_or_else(|| fault("previewRefNotAuthorized"))?;
-    let (bytes, media_type) = read(server, &session, &params.reference, &mime, MAX_BYTES).await?;
+    // Node `PROTOCOL_V4_LIMITS`: a video preview may be as large as the video the model takes.
+    let limit = if essence(&mime).starts_with("video/") {
+        VIDEO_INPUT_MAX_BYTES
+    } else {
+        MAX_BYTES
+    };
+    let (bytes, media_type) = read(server, &session, &params.reference, &mime, limit).await?;
     if !previewable(&media_type, material) {
         return Err(fault("previewUnsupported"));
     }

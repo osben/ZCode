@@ -24,6 +24,14 @@ pub enum ContentBlock {
         #[serde(skip)]
         name: Option<String>,
     },
+    /// Fork: an attached video (Node's `video` model block). Only the model request carries it: `query::normalize`
+    /// expands an attached video into it, and the stored message keeps the `file` part.
+    Video {
+        source: ImageSource,
+        /// The attached file's name, as for [`ContentBlock::Image`].
+        #[serde(skip)]
+        name: Option<String>,
+    },
     Thinking {
         thinking: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,6 +125,9 @@ pub enum AttachedBody {
     Text { text: String },
     /// An image sent as an image block.
     Image { source: ImageSource },
+    /// A video sent as a video block (Node `resolveInlineMediaAttachment` / `resolveLocalVideoAttachment`); `source`
+    /// holds the video's media type.
+    Video { source: ImageSource },
     /// Only the metadata reminder (too large, unsupported or unreadable).
     Omitted,
     /// Node's path reference (`resolvedPathReferenceAttachment`): a local file the model is told to read with its

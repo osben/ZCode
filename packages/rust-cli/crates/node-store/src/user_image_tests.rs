@@ -297,3 +297,66 @@ async fn stored_app_images_are_read_back_from_their_artifacts() {
         ]
     );
 }
+
+/// Fork: an App video is stored like an image (Node `persistAttachmentDataUrl`) and read back from its artifact as a
+/// video block on load, so a cold resume sends the model what the first turn did.
+#[tokio::test]
+async fn stored_app_videos_are_read_back_from_their_artifacts() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactStore};
+
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let session = SessionId::new("sess_1");
+    let artifact = t
+        .store
+        .put(
+            &session,
+            ArtifactPurpose::Attachment,
+            "text/plain".into(),
+            b"data:video/mp4;base64,AAAA".to_vec(),
+        )
+        .await
+        .unwrap();
+    let video = ImageSource::Base64 {
+        media_type: "video/mp4".into(),
+        data: "AAAA".into(),
+    };
+    let message = Message::User(UserMessage {
+        id: MessageId::new("msg_ru_v1"),
+        content: vec![
+            ContentBlock::Text {
+                text: "watch".into(),
+            },
+            ContentBlock::File {
+                file: AttachedFile {
+                    name: "clip.mp4".into(),
+                    mime: "video/mp4".into(),
+                    bytes: 3,
+                    reference: Some("/work/clip.mp4".into()),
+                    preview_reference: None,
+                    stored: Some(rust_cli_node_records::artifacts::uri(&artifact)),
+                    material: None,
+                    body: AttachedBody::Video {
+                        source: video.clone(),
+                    },
+                },
+            },
+        ],
+        origin: UserOrigin::Human,
+    });
+    t.store
+        .commit(
+            &session,
+            batch(
+                Some("cmd"),
+                vec![Fact::MessageAppended {
+                    message: message.clone(),
+                }],
+            ),
+        )
+        .await
+        .unwrap();
+    let loaded = t.store.load(&session).await.unwrap();
+    assert_eq!(loaded.messages, vec![message]);
+}

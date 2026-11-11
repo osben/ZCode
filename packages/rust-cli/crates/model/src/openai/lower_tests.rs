@@ -256,3 +256,20 @@ fn documents_lower_to_file_parts_after_the_tool_result() {
         ]
     );
 }
+
+/// A user turn carrying an attached video (Node `normalizeTurnAttachments`' video block).
+pub(crate) fn video_turn() -> Vec<ApiMessage> {
+    vec![message(
+        ApiRole::User,
+        vec![
+            text("what happens?"),
+            ContentBlock::Video {
+                source: ImageSource::Base64 {
+                    media_type: "video/mp4".to_owned(),
+                    data: "AAAA".to_owned(),
+                },
+                name: Some("clip.mp4".to_owned()),
+            },
+        ],
+    )]
+}

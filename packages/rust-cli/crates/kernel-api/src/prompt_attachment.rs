@@ -56,6 +56,33 @@ pub fn image_of_data_url(content: &str) -> Option<ImageSource> {
     })
 }
 
+/// The video of a `data:<video mime>;base64,<payload>` URL (Node `parseInlineVideoDataUrl`: the media type is lowercased,
+/// the payload strict base64 and not empty); `None` otherwise or when larger than [`VIDEO_INPUT_MAX_BYTES`].
+pub fn video_of_data_url(content: &str) -> Option<ImageSource> {
+    let (header, data) = content.trim_end().strip_prefix("data:")?.split_once(',')?;
+    let (media_type, marker) = header.split_once(';')?;
+    let media_type = media_type.to_ascii_lowercase();
+    let body = data.trim_end_matches('=');
+    let strict = data.len() % 4 == 0
+        && data.len() - body.len() <= 2
+        && body
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/');
+    if !marker.eq_ignore_ascii_case("base64")
+        || !media_type.starts_with("video/")
+        || media_type.contains(',')
+        || body.is_empty()
+        || !strict
+        || (data.len() / 4 * 3 - (data.len() - body.len())) as u64 > VIDEO_INPUT_MAX_BYTES
+    {
+        return None;
+    }
+    Some(ImageSource::Base64 {
+        media_type,
+        data: data.to_owned(),
+    })
+}
+
 const OPEN: &str = "<system-reminder>\n";
 const CLOSE: &str = "\n</system-reminder>";
 const SEPARATOR: &str = "\n\n";
@@ -134,7 +161,25 @@ pub fn is_text_like_path(path: &str) -> bool {
     })
 }
 
-/// Node `inferAttachmentMimeFromPath` (video types aside: this runtime sends no video).
+/// Node `VIDEO_INPUT_MAX_BYTES`: the largest video sent to the model (and Share's preview limit).
+pub const VIDEO_INPUT_MAX_BYTES: u64 = 30 * 1024 * 1024;
+
+/// Node `inferVideoMimeFromPath`: the video types the model may receive, by extension.
+pub fn video_mime_of_path(path: &str) -> Option<&'static str> {
+    let lower = path.to_ascii_lowercase();
+    [
+        (".mp4", "video/mp4"),
+        (".m4v", "video/x-m4v"),
+        (".mov", "video/quicktime"),
+        (".webm", "video/webm"),
+        (".mkv", "video/x-matroska"),
+        (".avi", "video/x-msvideo"),
+    ]
+    .into_iter()
+    .find_map(|(extension, mime)| lower.ends_with(extension).then_some(mime))
+}
+
+/// Node `inferAttachmentMimeFromPath`.
 pub fn mime_of_path(path: &str) -> &'static str {
     let extension = path
         .rsplit_once('.')
@@ -145,8 +190,11 @@ pub fn mime_of_path(path: &str) -> &'static str {
         "json" => "application/json",
         "csv" => "text/csv",
         "md" => "text/markdown",
-        _ if is_text_like_path(path) => "text/plain",
-        _ => "application/octet-stream",
+        _ => video_mime_of_path(path).unwrap_or(if is_text_like_path(path) {
+            "text/plain"
+        } else {
+            "application/octet-stream"
+        }),
     }
 }
 
@@ -155,6 +203,7 @@ pub fn mime_of_path(path: &str) -> &'static str {
 pub enum PathReason {
     BinaryFile,
     ImageTooLarge,
+    VideoTooLarge,
     DeferredTopicHistory,
     DeferredClipboardText,
 }
@@ -174,6 +223,7 @@ pub fn path_reference(mime: &str, path: &str, reason: PathReason) -> String {
     let because = match reason {
         PathReason::BinaryFile => "the file is not a known text attachment",
         PathReason::ImageTooLarge => "the image is larger than the inline media budget",
+        PathReason::VideoTooLarge => "the video is larger than the ZCode video input limit",
         PathReason::DeferredTopicHistory => "topic history is provided for on-demand reading",
         PathReason::DeferredClipboardText => {
             "it is a pasted-text temporary attachment that is deferred to keep the model context small"
@@ -202,6 +252,10 @@ pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
             text: text_file(&file.name, text).join("\n"),
         }],
         AttachedBody::Image { source } => vec![ContentBlock::Image {
+            source: source.clone(),
+            name: Some(file.name.clone()),
+        }],
+        AttachedBody::Video { source } => vec![ContentBlock::Video {
             source: source.clone(),
             name: Some(file.name.clone()),
         }],
@@ -239,6 +293,10 @@ pub fn part_mime(file: &AttachedFile) -> String {
     match &file.body {
         AttachedBody::Text { .. } => "text/plain".to_owned(),
         AttachedBody::Image {
+            source:
+                ImageSource::Base64 { media_type, .. } | ImageSource::Artifact { media_type, .. },
+        }
+        | AttachedBody::Video {
             source:
                 ImageSource::Base64 { media_type, .. } | ImageSource::Artifact { media_type, .. },
         } => media_type.clone(),

@@ -39,9 +39,11 @@ fn project_result(content: &mut [ToolResultContent], endpoint: &ModelEndpoint) {
     }
 }
 
-/// 端点不接受图片或 PDF 时，把请求消息里的图片与 document 块换成占位文字。
+/// 端点不接受图片或 PDF 时，把请求消息里的图片与 document 块换成占位文字。Fork: an attached video likewise when the
+/// endpoint takes no video (`supportsVideo`, Node `video input`).
 pub(crate) fn project(messages: &mut [ApiMessage], endpoint: &ModelEndpoint) {
-    if endpoint.capabilities.supports_image && endpoint.capabilities.supports_pdf {
+    let capabilities = &endpoint.capabilities;
+    if capabilities.supports_image && capabilities.supports_pdf && capabilities.supports_video {
         return;
     }
     for message in messages {
@@ -50,6 +52,11 @@ pub(crate) fn project(messages: &mut [ApiMessage], endpoint: &ModelEndpoint) {
                 ContentBlock::Image { source, name } if !endpoint.capabilities.supports_image => {
                     content.block = ContentBlock::Text {
                         text: placeholder(source, name.as_deref(), "image input"),
+                    };
+                }
+                ContentBlock::Video { source, name } if !endpoint.capabilities.supports_video => {
+                    content.block = ContentBlock::Text {
+                        text: placeholder(source, name.as_deref(), "video input"),
                     };
                 }
                 ContentBlock::ToolResult { content, .. } => project_result(content, endpoint),
@@ -230,5 +237,44 @@ mod tests {
         let mut kept = request();
         project(&mut kept.messages, &endpoint(true));
         assert_eq!(kept, request());
+    }
+
+    /// Node `projectMessagesForProviderCapabilities`: a video goes only to a model that takes video input.
+    #[test]
+    fn videos_become_node_placeholders_for_models_without_video_input() {
+        let messages = || {
+            vec![ApiMessage {
+                role: ApiRole::User,
+                content: vec![plain(ContentBlock::Video {
+                    source: ImageSource::Base64 {
+                        media_type: "video/mp4".to_owned(),
+                        data: "AAAA".to_owned(),
+                    },
+                    name: Some("clip.mp4".to_owned()),
+                })],
+                output_config: None,
+            }]
+        };
+        // Image input alone does not let a video through.
+        let mut projected = messages();
+        project(&mut projected, &endpoint(true));
+        assert_eq!(
+            projected[0].content[0].block,
+            ContentBlock::Text {
+                text: "[Attached video/mp4: clip.mp4]\n[Media omitted from provider request because the selected model does not support video input.]".to_owned()
+            }
+        );
+        let mut kept = messages();
+        project(
+            &mut kept,
+            &ModelEndpoint {
+                capabilities: ModelCapabilities {
+                    supports_video: true,
+                    ..endpoint(true).capabilities
+                },
+                ..endpoint(true)
+            },
+        );
+        assert_eq!(kept, messages());
     }
 }

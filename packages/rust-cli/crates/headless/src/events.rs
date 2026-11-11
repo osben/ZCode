@@ -127,6 +127,9 @@ pub(crate) fn block(block: &ContentBlock) -> Value {
         ContentBlock::Image { source, .. } => {
             json!({"type": "image", "source": image_source(source)})
         }
+        ContentBlock::Video { source, .. } => {
+            json!({"type": "video", "source": image_source(source)})
+        }
         ContentBlock::Thinking {
             thinking,
             signature,

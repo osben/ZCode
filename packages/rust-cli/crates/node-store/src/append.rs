@@ -48,6 +48,7 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
     match block {
         ContentBlock::Text { .. } => "text",
         ContentBlock::Image { .. } => "image",
+        ContentBlock::Video { .. } => "video",
         ContentBlock::Thinking { .. } => "thinking",
         ContentBlock::RedactedThinking { .. } => "redacted_thinking",
         ContentBlock::ToolUse { .. } => "tool_use",

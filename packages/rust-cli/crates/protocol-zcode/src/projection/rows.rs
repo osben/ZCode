@@ -213,6 +213,7 @@ impl Projection {
                         }
                         // 不投成行的块（P1）。
                         ContentBlock::Image { .. }
+                        | ContentBlock::Video { .. }
                         | ContentBlock::RedactedThinking { .. }
                         | ContentBlock::ToolResult { .. }
                         | ContentBlock::ServerToolUse { .. }

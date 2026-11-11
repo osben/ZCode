@@ -26,6 +26,8 @@ pub(crate) enum Part {
     Image(String),
     /// PDF 文档（Read 整读的 document 块，model.md §10.6）：`data:application/pdf;base64,<data>`。
     File(String),
+    /// Fork: an attached video, `data:<video mime>;base64,<data>` (Node's patched `@ai-sdk/openai-compatible`).
+    Video(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +109,9 @@ pub(crate) fn items(
                         | ContentBlock::ServerToolUse { .. }
                         | ContentBlock::WebSearchToolResult { .. }
                         | ContentBlock::File { .. } => {}
-                        ContentBlock::Image { .. } | ContentBlock::ToolResult { .. } => {
+                        ContentBlock::Image { .. }
+                        | ContentBlock::Video { .. }
+                        | ContentBlock::ToolResult { .. } => {
                             return Err(invalid(
                                 "assistant messages carry only text and tool calls",
                             ));
@@ -138,6 +142,7 @@ fn user(
         match block {
             ContentBlock::Text { text } => parts.push(Part::Text(text)),
             ContentBlock::Image { source, .. } => parts.push(Part::Image(data_url(source)?)),
+            ContentBlock::Video { source, .. } => parts.push(Part::Video(data_url(source)?)),
             // Fork: `query::normalize` expands attached files before lowering.
             ContentBlock::File { .. } => {
                 return Err(invalid(
