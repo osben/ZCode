@@ -13,16 +13,15 @@ export function isForkRustAgentRuntime(env: NodeJS.ProcessEnv = process.env): bo
   return env[FORK_AGENT_RUNTIME_ENV]?.trim() === "rust";
 }
 
-/** Spread after both Host hello capability literals so the renderer takes the older-agent routes. */
-export function forkAgentRuntimeHelloOverrides(env: NodeJS.ProcessEnv = process.env): {
-  incognitoSession?: false;
-  incognitoPromptToggles?: false;
-} {
-  if (!isForkRustAgentRuntime(env)) return {};
-  return {
-    incognitoSession: false,
-    incognitoPromptToggles: false,
-  };
+/**
+ * Spread after both Host hello capability literals so the renderer takes the older-agent routes. Empty for
+ * both runtimes: zcode-rs reports every flag the Host claims (the incognito flags left this table when
+ * zcode-rs implemented incognito sessions).
+ */
+export function forkAgentRuntimeHelloOverrides(
+  _env: NodeJS.ProcessEnv = process.env,
+): Record<string, never> {
+  return {};
 }
 
 export const FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED =

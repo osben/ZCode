@@ -313,6 +313,10 @@ impl Server {
                 "genUiContext": false,
                 "sessionWorkspaceRouting": true,
                 "residentRowsRange": true,
+                // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,
+                // specs/fork-rust-agent-parity.md "Incognito sessions").
+                "incognitoSession": true,
+                "incognitoPromptToggles": true,
             })),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({
