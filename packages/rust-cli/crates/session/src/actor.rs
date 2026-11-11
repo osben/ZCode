@@ -756,6 +756,11 @@ impl Actor {
             last_seq: self.log.last_seq(),
             revision: self.log.revision(),
             running: self.running.is_some() || self.mirror.running(),
+            running_turn: self
+                .running
+                .as_ref()
+                .map(|running| running.turn.clone())
+                .or_else(|| self.mirror.turn().cloned()),
             background: [self.background().await, self.background_agents().await].concat(),
             peer_held: self.peers.views(),
             // 冷加载后不用等下一条回复（F27）：与 `context_changed` 同样两个函数。

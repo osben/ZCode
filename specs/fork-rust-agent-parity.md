@@ -132,6 +132,24 @@ Side-pane tab of a running subagent (Node: the child's own conversation topic st
 - `AgentSignals::child_live` returns that replay and a live receiver taken under one lock. The kernel takes it before the cold load of the child session; the actor applies it after it has served its first view, so the replayed events get sequence numbers after the projection's `last_seq`.
 - The actor turns the events into its own `TurnStarted` / `StreamDelta` / `ToolStarted` / `ToolProgress` / `ToolDone` / `MessageDone` / `TurnFinished` log events. A mirrored message goes only into the actor's in-memory history (it is already stored); one it already has is skipped, and if a streamed draft was open for it the actor emits `HistoryRewritten` so the projection rebuilds. If the live receiver falls behind, the actor resubscribes, reloads the history from the store and emits `HistoryRewritten`.
 - While a mirrored run is live the view reports `running` and the actor rejects commands that would start its own turn with `activeTurn`.
+- The view also names the running turn (`SessionView::running_turn`, owner: the session actor; its own running turn, else the mirrored run's turn). A projection rebuilt from a view while that turn runs keys the trailing turn by this id instead of the cold `<user message id>:turn:<n>`, so the events that follow (`StreamDelta`, `ToolInputStarted`, `MessageDone`, `FileChanges`, `TurnFinished`) land on the rebuilt turn. Before, a side tab whose child fell behind or got a draft-known message during a run rebuilt mid-run and then drew the reply twice (the replayed draft under the mirror's turn, the commit under the cold turn), and its turn header stayed `running` after the run ended (`TurnFinished` missed the cold header). Seen as the `conversation-session-subagent-side-tabs` SAT01 flake on Rust (`E2E_SIDE_TAB_CHILD_4_DONE` twice). Acceptance: the projection unit test (rebuild with a running turn, then delta, commit and finish give one reply row and a completed header) and SAT01 passing repeatedly on Rust.
+
+```mermaid
+sequenceDiagram
+  participant S as child session actor (turn owner)
+  participant L as Live (side tab topic)
+  participant P as projection
+  S->>L: TurnStarted(T) (mirror Started)
+  S->>L: StreamDelta(T) ...
+  Note over S: receiver fell behind / draft-known message
+  S->>L: HistoryRewritten
+  L->>S: view (running, running_turn = T, last_seq)
+  L->>P: rebuilt(view): trailing turn keyed T
+  S->>L: replayed StreamDelta(T) (seq > last_seq)
+  S->>L: MessageDone(reply) -> same row as the draft
+  S->>L: TurnFinished(T) -> header T completed
+```
+
 - A child session cold-loaded while its run is live ends on the run's own unanswered input. The resume repairs (interrupted tool results, the `No response requested.` sentinel) are skipped for it: the run stores its reply. Before this, the side tab showed a `No response requested.` row next to the streamed reply.
 
 ```mermaid
@@ -430,6 +448,16 @@ Acceptance:
 - Unit: `telemetry_tests.rs` (a plain turn, a tool turn, a wake turn, a background subagent with its child facts, a resumed subagent's second lifecycle pair, a subagent without its call ID); every fact passes the schema field lists and the non-empty fields. `mirror_tests.rs` (a run that finished with no subscriber is replayed once to `child_run`, not to `child_live`). `child_runs_tests.rs` (a run that finished before the watch, a resumed run as a new turn, the child run's own model, a nested agent under its owner, a parked agent's watch, a watch that fell behind, settled agents at the open), all read once with unique event IDs.
 - E2E: `conversation-session-background` telemetry cases on Rust (BG13, BG18 and the two background control cases).
 
+## Subagent child sessions stay out of the sessions index (Node `publishCurrentSummaryToIndex`)
+
+A subagent's child session (`SessionKind::Subagent`, Node `subagent_child`) is not a task. Node's cold list skips it and its gateway publishes no sessions-index row for it, so the Host task index never admits it and the sidebar lists only the parent.
+
+- Owner: `protocol-zcode` `Live`. A `Live` opened on a child session (a side tab, or the child of a reopened session) keeps its conversation topic and frames, but `write` sends no `session.upserted` row to `Topics`. The cold list (`node-store` `list`) already skips the child.
+- Before: a side tab on Rust published the child's summary, and the sidebar listed "Side tab N" / "Background side tab" next to the parent (container screenshots, 2026-11-11, on `origin/fork` too).
+- Acceptance:
+  - Unit test: `listed_in_sessions_index` excludes a subagent child and keeps interactive and forked sessions.
+  - E2E: `conversation-session-subagent-side-tabs` on Rust in the container; the sidebar screenshot lists only the parent task, like Node.
+
 ## Known differences kept on purpose
 
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.
@@ -440,7 +468,6 @@ Acceptance:
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
 - **Plan-mode specs outside the gate.** `plan-approval-feedback-user-message`, `plan-session-switch-restore` and `plan-file-compact-continuity` pass on Rust (E2E 2026-11-10). `plan-mode-mcp-permission` fails on Node too ("v4 权限弹窗没有出现"), so it does not cover "MCP tools in plan mode" yet; that section is backed by unit tests only.
-- **Subagent child sessions in the task list.** In `conversation-session-subagent-side-tabs` the Rust sidebar lists the subagent children (titled by the Agent `description`, "Side tab N", "Background side tab") as tasks of the project; Node lists only the parent. Seen on `origin/fork` and with the telemetry change alike (container screenshots, 2026-11-11), so it predates #395. Which writer admits the child rows (a sessions-index upsert from a child `Live`, or the Host) is not identified yet.
 - **Nested subagents.** Node's child runtimes run with `subagents.enabled: false`, so a Node subagent cannot launch another; the Rust Agent tool stays available to subagents down to `MAX_SPAWN_DEPTH` in node_desktop mode too. The telemetry for nested agents is defined ("Child runs"), but whether node_desktop should hide the Agent tool from subagents is not decided.
 - **Guides in a running turn (`running-guide-steer`).** One case ("guide 模式下 running 中发送引导消息…") fails on Node too; the Rust-only cases are covered by "Guides after a reply without tool calls, and guides in system turns" above.
 

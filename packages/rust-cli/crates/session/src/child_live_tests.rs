@@ -77,17 +77,20 @@ async fn a_late_view_streams_the_child_run_so_far_and_then_live() {
     let view = session.view().await.unwrap();
     assert!(view.messages.is_empty());
     let mut events = session.subscribe(Some(view.last_seq));
-    assert!(matches!(
-        next(&mut events).await,
-        KernelEvent::TurnStarted { .. }
-    ));
+    let mirrored = match next(&mut events).await {
+        KernelEvent::TurnStarted { turn, .. } => turn,
+        other => panic!("expected the mirrored turn, got {other:?}"),
+    };
     match next(&mut events).await {
         KernelEvent::StreamDelta { delta, .. } => {
             assert_eq!(delta, BlockDelta::Text("E2E_SIDE_TAB_CHILD_1_".to_owned()));
         }
         other => panic!("expected the partial text, got {other:?}"),
     }
-    assert!(session.view().await.unwrap().running);
+    let running = session.view().await.unwrap();
+    assert!(running.running);
+    // A projection rebuilt from this view keys the running turn like the mirrored events.
+    assert_eq!(running.running_turn, Some(mirrored));
     let ack = session
         .send(envelope(
             "c1",
@@ -121,6 +124,7 @@ async fn a_late_view_streams_the_child_run_so_far_and_then_live() {
     ));
     let view = session.view().await.unwrap();
     assert!(!view.running);
+    assert_eq!(view.running_turn, None);
     assert_eq!(view.messages.len(), 1);
     // Mirrored, not stored again: the child run stored it.
     assert!(

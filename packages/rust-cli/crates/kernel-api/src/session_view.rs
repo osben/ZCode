@@ -25,6 +25,7 @@ impl SessionView {
             last_seq: 0,
             revision: 0,
             running: false,
+            running_turn: None,
             background: Vec::new(),
             peer_held: Vec::new(),
             context_usage: None,
