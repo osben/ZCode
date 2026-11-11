@@ -413,7 +413,7 @@ impl Actor {
         &mut self,
         id: CommandId,
         kind: rust_cli_kernel_api::session_api::QueuedKind,
-        text: String,
+        (text, intent): crate::steering::Typed,
         content: Vec<rust_cli_kernel_api::message::ContentBlock>,
         delivery: rust_cli_kernel_api::session_api::Delivery,
         execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
@@ -441,7 +441,7 @@ impl Actor {
             };
             self.inbox.push_input(
                 QueuedInput {
-                    intent: None,
+                    intent,
                     command: id,
                     text,
                     delivery,
@@ -470,11 +470,13 @@ impl Actor {
                 text,
                 screened: None,
                 more: Vec::new(),
+                intent,
             }
         } else {
             TurnInput::Content {
                 command: id,
                 content,
+                intent,
             }
         };
         match self.start_turn(input).await {
@@ -650,6 +652,7 @@ impl Actor {
                         text,
                         screened: None,
                         more: Vec::new(),
+                        intent: None,
                     })
                     .await
                 {
@@ -669,7 +672,7 @@ impl Actor {
                 Err(reason) => rejected(reason),
             },
             Command::SubmitWith {
-                intent: _,
+                intent,
                 kind,
                 text,
                 content,
@@ -678,8 +681,16 @@ impl Actor {
                 behind_held,
             } => {
                 let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
-                self.submit_with(id, kind, text, content, delivery, execution, queue)
-                    .await
+                self.submit_with(
+                    id,
+                    kind,
+                    (text, intent),
+                    content,
+                    delivery,
+                    execution,
+                    queue,
+                )
+                .await
             }
             Command::PauseGoal => self.pause_goal().await,
             Command::ResumeGoal => self.resume_goal().await,

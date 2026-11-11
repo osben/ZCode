@@ -75,8 +75,12 @@ impl Actor {
             self.emit_queue();
             return Ok(());
         }
-        self.start_turn(crate::turn::TurnInput::Content { command, content })
-            .await
+        self.start_turn(crate::turn::TurnInput::Content {
+            command,
+            content,
+            intent: None,
+        })
+        .await
     }
 
     pub(crate) fn start_bash_turn(&mut self, command: CommandId, line: String) {

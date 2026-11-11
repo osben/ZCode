@@ -122,10 +122,10 @@ async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
     assert_eq!(row(&test)[..2], ["real question", "first_input"]);
 }
 
-/// Fork: a quoted first input is titled by its typed text (Node titles the display input), while its text part keeps
-/// the quote block for the model, as Node's part does.
+/// Fork: quotes are an input intent's (quote_intent_tests.rs); a text that merely ends with a quote block, without an
+/// intent, is plain text: the title and the part keep it whole.
 #[tokio::test]
-async fn a_quoted_first_input_is_titled_by_its_typed_text() {
+async fn a_quote_block_without_an_intent_is_plain_text() {
     use rust_cli_kernel_api::conversation_quote::{Quote, compose};
     let test = TestStore::new();
     let session = SessionId::new("sess_quoted");
@@ -149,8 +149,8 @@ async fn a_quoted_first_input_is_titled_by_its_typed_text() {
         .await
         .unwrap();
     assert_eq!(
-        row(&test),
-        [json!("explain this"), json!("first_input"), json!(null)]
+        row(&test)[0],
+        json!(rust_cli_node_records::records::title_from_input(&quoted))
     );
     let parts = test.rows("select data from part");
     let text: serde_json::Value = serde_json::from_str(parts[0][0].as_str().unwrap()).unwrap();

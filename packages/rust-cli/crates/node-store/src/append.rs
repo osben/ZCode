@@ -77,6 +77,11 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     }
     let id = user.id.as_str();
     let created = created_at(id, ctx.now);
+    // Fork: an App input's quote block is its intent's (specs/fork-agent-runtime-selection.md, Conversation quotes in
+    // Rust mode): the typed text is the text before that block, never a block parsed out of the text.
+    let intent = user.intent.as_deref();
+    let typed =
+        |text: &str| -> String { intent.map_or(text, |intent| intent.typed(text)).to_owned() };
     // 批次的回合锚点指向这条输入时用锚点的轮次（会话 actor 生成，node-store.md §4，修复线 F6）。
     let turn = ctx
         .anchored_turn(id)
@@ -88,6 +93,13 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         selection: state::selection(ctx.conn, ctx.session).storage()?,
         turn: &turn,
         command: ctx.command,
+        metadata: intent.map(|intent| {
+            let shown = texts.first().map(|text| display_input(&typed(text)));
+            rust_cli_node_records::input_intent::message_metadata(
+                intent,
+                shown.as_deref().unwrap_or_default(),
+            )
+        }),
     });
     messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
     ctx.opened(id, &turn);
@@ -95,7 +107,14 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         // Node `persistUserPrompt(displayInput, …, {modelInput})`：text 是界面原文，模型文本在
         // `metadata.modelInput`（冷读取优先读它）。修复线 F2：bash 模式与 skill 命令以前把 `<bash-input>`、
         // `<command-message>` 标签当用户原文存，App 显示成带标签的用户气泡。
-        let shown = display_input(text);
+        // Fork: Node's part is `withConversationQuotes(displayInput)`: the display input, then the intent's block.
+        let typed_text = typed(text);
+        let shown = match intent {
+            Some(intent) if typed_text.len() != text.len() => {
+                intent.compose(&display_input(&typed_text))
+            }
+            _ => display_input(text),
+        };
         let model = (shown != *text).then_some(*text);
         let part = records::user_text_part(
             part_id(ctx.now, &(ctx.uuid)()),
@@ -124,12 +143,7 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     // Fork: an input without text keeps the `default` placeholder for a later real input (Node `persistSession`).
     // Fork: the title seed is the typed text without its quotes (Node titles the display input); the part keeps them,
     // as Node's text part does, so either runtime sends them to the model.
-    let typed: Vec<&str> = texts
-        .iter()
-        .map(|&text| {
-            rust_cli_kernel_api::conversation_quote::split(text).map_or(text, |(typed, _)| typed)
-        })
-        .collect();
+    let typed: Vec<String> = texts.iter().map(|text| typed(text)).collect();
     let shown = display_input(&typed.join("\n"));
     let (title, source) = if shown.trim().is_empty() {
         (

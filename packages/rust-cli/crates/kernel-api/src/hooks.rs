@@ -347,6 +347,14 @@ pub mod queued_command {
     pub const STEER_SOURCE_KEY: &str = "steerSource";
     /// Fork: the steer source of ExitPlanMode feedback (Node `plan_approval_feedback`).
     pub const PLAN_APPROVAL_FEEDBACK: &str = "plan_approval_feedback";
+    /// Fork: the `data` key of a typed steer's App input intent (its row's typed text and quotes).
+    pub const INTENT_KEY: &str = "inputIntent";
+
+    /// Fork: the App input intent a typed steer was absorbed with.
+    pub fn intent(attachment: &AttachmentMessage) -> Option<crate::input_intent::InputIntent> {
+        let value = attachment.data.get(INTENT_KEY)?;
+        serde_json::from_value(value.clone()).ok()
+    }
 
     use serde_json::{Map, Value, json};
 

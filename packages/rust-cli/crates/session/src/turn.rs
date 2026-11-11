@@ -40,6 +40,8 @@ pub(crate) fn output_speed(call: &ModelCall) -> Option<OutputSpeed> {
 #[derive(Debug)]
 pub(crate) struct MorePrompt {
     pub(crate) text: String,
+    /// Fork: the App input's intent; its quotes join `text` when the input is committed.
+    pub(crate) intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     /// 在工具边界已跑过的 UserPromptSubmit 结果。
     pub(crate) screened: Option<Box<HookOutcome>>,
 }
@@ -53,6 +55,8 @@ pub(crate) enum TurnInput {
         screened: Option<Box<HookOutcome>>,
         /// 与它成批进这个回合的后续排队输入（修复线 L-A，query.md §4.3），按队列顺序。
         more: Vec<MorePrompt>,
+        /// Fork: the App input's intent (`text` is the typed text).
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
     /// 回合结束后还没并入的后台通知（命令与子代理，到达顺序）：连续的几条合成一个回合，每条一条
     /// meta user 消息、只调一次模型（docs/specs/rust-cli/query.md §5，通知合并）。
@@ -65,6 +69,8 @@ pub(crate) enum TurnInput {
     Content {
         command: CommandId,
         content: Vec<ContentBlock>,
+        /// Fork: the App input's intent (the text block is the typed text).
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
     /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
     Compact { command: CommandId },
@@ -87,12 +93,23 @@ impl Actor {
                 text,
                 screened,
                 more,
+                intent,
             } => {
-                self.start_human_turn(command, vec![ContentBlock::Text { text }], screened, more);
+                let content = if text.is_empty() && intent.is_some() {
+                    // Quotes alone are an input (Node `session-flow.ts`); the block becomes its text.
+                    Vec::new()
+                } else {
+                    vec![ContentBlock::Text { text }]
+                };
+                self.start_human_turn(command, content, screened, more, intent);
                 return Ok(());
             }
-            TurnInput::Content { command, content } => {
-                self.start_human_turn(command, content, None, Vec::new());
+            TurnInput::Content {
+                command,
+                content,
+                intent,
+            } => {
+                self.start_human_turn(command, content, None, Vec::new(), intent);
                 return Ok(());
             }
             TurnInput::Bash { command, line } => {

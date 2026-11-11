@@ -21,9 +21,15 @@ use crate::inbox::{LaneItem, NoticeKey, Screening, is_slash};
 use crate::sink::{ActorSink, SinkRequest};
 
 /// 领取到的一项，按通道顺序。
+/// Fork: a steer's typed text and its App input intent (the quotes join the model text when it is absorbed).
+pub(crate) type Typed = (
+    String,
+    Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
+);
+
 pub(crate) enum ClaimedItem {
     /// 插话，带组装好的 UPS 事件。
-    Prompt(CommandId, String, Box<HookEvent>),
+    Prompt(CommandId, Typed, Box<HookEvent>),
     /// 通知与它的全文。
     Notice(NoticeKey, String),
 }
@@ -80,7 +86,7 @@ impl Actor {
                     let event = self.user_prompt_submit(&input.text);
                     items.push(ClaimedItem::Prompt(
                         input.command.clone(),
-                        input.text.clone(),
+                        (input.text.clone(), input.intent.clone()),
                         Box::new(event),
                     ));
                 }
@@ -163,13 +169,13 @@ impl Actor {
 
 /// 领取之后、交回之前的一项。
 enum Screened {
-    Prompt(CommandId, String, Box<HookOutcome>),
+    Prompt(CommandId, Typed, Box<HookOutcome>),
     Notice(NoticeKey, String),
 }
 
 /// 交回之前的并入项：插话要等 actor 说出了队才并入，通知的消息 ID 要等 actor 给出。
 enum Taken {
-    Prompt(CommandId, Box<HookOutcome>, String),
+    Prompt(CommandId, Box<HookOutcome>, Typed),
     Notice(String),
 }
 
@@ -267,7 +273,7 @@ impl ActorSink {
         let mut absorbed = Vec::new();
         for item in taken {
             match item {
-                Taken::Prompt(command, outcome, text) => {
+                Taken::Prompt(command, outcome, (text, intent)) => {
                     if !settled.absorbed.contains(&command) {
                         continue;
                     }
@@ -275,7 +281,7 @@ impl ActorSink {
                         self.title(title).await;
                     }
                     absorbed.push(Absorbed::Prompt(Steered {
-                        intent: None,
+                        intent,
                         text,
                         after: outcome.messages,
                         from: rust_cli_kernel_api::hooks::SteerSender::User,

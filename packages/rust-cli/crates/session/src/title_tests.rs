@@ -7,7 +7,7 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{StopReason, Usage, UserMessage};
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
 use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelPort, ModelRequest, QuerySource};
-use rust_cli_kernel_api::session_api::{Command, SessionHandle};
+use rust_cli_kernel_api::session_api::{Command, CommandEnvelope, Delivery, SessionHandle};
 use rust_cli_kernel_api::side_request::SideSource;
 use rust_cli_kernel_api::testing::{MemoryStore, ScriptedModel, text_response};
 use tokio::sync::Notify;
@@ -433,17 +433,26 @@ async fn a_quoted_input_is_titled_by_its_typed_text() {
     setup.titles = titles(title_model.clone());
     let built = setup.build().await;
     let mut events = built.session.subscribe(None);
-    let quote = rust_cli_kernel_api::conversation_quote::Quote {
-        text: "QUOTED_SELECTION".to_owned(),
-        path: None,
-        sender_name: None,
-        sender_id: None,
-        message_id: None,
-        sent_at: None,
-    };
-    let text =
-        rust_cli_kernel_api::conversation_quote::compose("Explain the hook trust digest", &[quote]);
-    built.session.send(submit("c1", &text)).await;
+    let typed = "Explain the hook trust digest";
+    let intent: rust_cli_kernel_api::input_intent::InputIntent = serde_json::from_value(
+        serde_json::json!({"text": typed, "conversationQuotes": [{"text": "QUOTED_SELECTION"}]}),
+    )
+    .unwrap();
+    built
+        .session
+        .send(CommandEnvelope {
+            id: CommandId::new("c1"),
+            command: Command::SubmitWith {
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: typed.to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: false,
+                intent: Some(Box::new(intent)),
+            },
+        })
+        .await;
     let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
     assert!(
         seen.iter()
