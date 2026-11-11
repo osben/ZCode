@@ -49,8 +49,9 @@ pub struct SubagentLink {
 /// What a fact needs from its event besides the event itself.
 pub struct Observed<'a> {
     /// Keeps event IDs of facts that come from outside the kernel event stream (the subagent table) apart from
-    /// those of kernel events with the same number; empty for kernel events.
-    pub scope: &'static str,
+    /// those of kernel events with the same number; empty for kernel events, `"{turnId}-"` for a child run's
+    /// events (a child's runs restart their numbering).
+    pub scope: &'a str,
     pub seq: u64,
     pub now: u64,
     pub provider: &'a Provider,
@@ -90,8 +91,8 @@ pub struct Telemetry {
     role: Role,
     turn: Option<Turn>,
     tools: HashMap<String, Tool>,
-    /// The subagent statuses already reported, by agent.
-    subagents: HashMap<String, String>,
+    /// The subagent statuses already reported, by agent, with the turn of the last `spawned`.
+    subagents: HashMap<String, (String, Option<String>)>,
     /// Facts per kernel seq, for distinct event IDs when one event yields several facts.
     emitted: (u64, u32),
 }
@@ -307,7 +308,8 @@ impl Telemetry {
     }
 
     /// The `subagent.lifecycle` facts of the projection's subagent rows: a new row is `spawned`, a row that left
-    /// `running` is `stopped`. Returns the children that were just spawned (their runs are read next).
+    /// `running` is `stopped`, a settled row that runs again (a `SendMessage` resume) is `spawned` again, like Node's
+    /// resumed run. Returns the children that were just spawned (their runs are read next).
     pub fn subagents(
         &mut self,
         links: &[SubagentLink],
@@ -318,16 +320,25 @@ impl Telemetry {
         for link in links {
             let previous = self.subagents.get(&link.agent).cloned();
             let running = link.status == "running";
-            let phase = match previous.as_deref() {
+            let phase = match previous.as_ref().map(|(status, _)| status.as_str()) {
                 None => Some("spawned"),
                 Some("running") if !running => Some("stopped"),
+                Some(previous) if running && previous != "running" => Some("spawned"),
                 _ => None,
             };
             let Some(phase) = phase else {
                 continue;
             };
-            self.subagents
-                .insert(link.agent.clone(), link.status.clone());
+            let current_turn = self.turn.as_ref().map(|turn| turn.id.clone());
+            let spawn_turn = if phase == "spawned" {
+                current_turn.or_else(|| link.turn.clone())
+            } else {
+                previous.and_then(|(_, turn)| turn)
+            };
+            self.subagents.insert(
+                link.agent.clone(),
+                (link.status.clone(), spawn_turn.clone()),
+            );
             if phase == "spawned" {
                 if !running {
                     // A row first seen already settled (a reopened session) reports nothing.
@@ -337,10 +348,11 @@ impl Telemetry {
             }
             let mut fact = self.base("subagent.lifecycle", at);
             if phase == "stopped" {
-                // Node reports the stop under the launching turn, without a command (it may land in a later turn).
+                // Node reports the stop under the turn of its spawn (the launching turn, or the resuming turn of a
+                // resumed run), without a command (it may land in a later turn).
                 fact.remove("sourceCommandId");
                 fact.remove("turnId");
-                if let Some(turn) = &link.turn {
+                if let Some(turn) = spawn_turn.or_else(|| link.turn.clone()) {
                     fact.insert("turnId".into(), json!(turn));
                 }
             }
@@ -350,7 +362,10 @@ impl Telemetry {
                 fact.insert("agentType".into(), json!(agent_type));
             }
             fact.insert("childSessionId".into(), json!(link.child));
-            fact.insert("parentToolCallId".into(), json!(link.parent_tool));
+            // The schema requires a non-empty call ID when present; a nested agent has none.
+            if !link.parent_tool.is_empty() {
+                fact.insert("parentToolCallId".into(), json!(link.parent_tool));
+            }
             fact.insert("background".into(), json!(link.background));
             let status = match link.status.as_str() {
                 "running" => "running",
@@ -586,4 +601,4 @@ pub fn uuid_v7(now_ms: u64) -> String {
 
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]
-mod tests;
+pub(crate) mod tests;

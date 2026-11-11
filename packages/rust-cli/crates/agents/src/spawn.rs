@@ -271,7 +271,7 @@ pub(crate) async fn drive(
         .with_core(core.clone()),
     );
     // Fork (node_desktop): an open side tab on the child session streams this run; the guard ends it on every exit.
-    let mut mirrored = crate::mirror::MirrorRun::start(core, &agent.child);
+    let mut mirrored = crate::mirror::MirrorRun::start(core, &agent.child, &agent.selection);
     let result = match core.registry() {
         Some(registry) => {
             run_loop(core, agent, registry, messages, sink.clone(), abort, cancel).await

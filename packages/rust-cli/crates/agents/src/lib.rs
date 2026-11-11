@@ -330,6 +330,12 @@ impl AgentSignals for Signals {
         self.0.node_desktop.then(|| self.0.mirrors.feed(session))
     }
 
+    fn child_run(&self, session: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.0
+            .node_desktop
+            .then(|| self.0.mirrors.run_feed(session))
+    }
+
     async fn ack(&self, session: &SessionId, seq: u64) {
         self.0.hub.ack(session, seq);
     }

@@ -176,14 +176,23 @@ impl Server {
             live.sink.watch_subagents(watcher);
             // Fork: the telemetry facts of a subagent's run are read from its live feed (crate::telemetry).
             let (spawner, weak) = (self.spawner.clone(), Arc::downgrade(&live));
-            live.sink.set_child_watch(Box::new(move |child| {
-                let bridged = weak.upgrade()?;
-                let feed = bridged.sink.handle().child_live(&SessionId::new(child))?;
-                Some(spawner.spawn(
-                    "telemetry-child-run",
-                    crate::live::read_child_run(feed, child.to_owned(), weak.clone()),
-                ))
-            }));
+            live.sink
+                .set_child_watch(Box::new(move |child, watch, alive| {
+                    let bridged = weak.upgrade()?;
+                    let feed = bridged.sink.handle().child_run(&SessionId::new(child))?;
+                    Some(spawner.spawn(
+                        "telemetry-child-run",
+                        crate::live::read_child_run(
+                            feed,
+                            child.to_owned(),
+                            watch,
+                            alive,
+                            weak.clone(),
+                        ),
+                    ))
+                }));
+            let sink = live.sink.clone();
+            live.run(Box::pin(async move { sink.prime_child_runs().await }));
             // Fork: the background commands already running (a subagent's child session opened in a side tab, a
             // session reopened while its command runs) are listed from the open, not from the next ledger change.
             let sink = live.sink.clone();

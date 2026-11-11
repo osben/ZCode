@@ -521,9 +521,9 @@ pub trait SessionHandle: Send + Sync {
     /// （修复线 F34）。
     fn subagent_changes(&self) -> BoxStream<'static, ()>;
 
-    /// Fork: the live run of one of this session's subagent child sessions (the feed a side tab mirrors), read by the
-    /// App's telemetry facts. None when the kernel keeps no live runs (the TUI) or for an unknown child.
-    fn child_live(&self, _child: &SessionId) -> Option<crate::agents::ChildLiveFeed> {
+    /// Fork: the run feed of one of this session's subagent child sessions ([`crate::agents::AgentSignals::child_run`]),
+    /// read by the App's telemetry facts. None when the kernel keeps no live runs (the TUI).
+    fn child_run(&self, _child: &SessionId) -> Option<crate::agents::ChildLiveFeed> {
         None
     }
 

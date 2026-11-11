@@ -31,9 +31,17 @@ pub(crate) fn listed_in_sessions_index(kind: rust_cli_kernel_api::store::Session
 
 /// Fork: the selected model as the telemetry facts name it (crate::telemetry).
 fn provider_of(projection: &Projection) -> Provider {
-    use rust_cli_kernel_api::provider::WireProtocol;
     let (selection, _, _) = projection.current_config();
-    let entry = projection.catalog_entry();
+    provider_for(projection, selection)
+}
+
+/// Fork: a model as the telemetry facts name it, with its kind and host from the directory.
+fn provider_for(
+    projection: &Projection,
+    selection: rust_cli_kernel_api::model::ModelSelection,
+) -> Provider {
+    use rust_cli_kernel_api::provider::WireProtocol;
+    let entry = projection.catalog_entry_for(&selection);
     Provider {
         provider: selection.provider,
         model: selection.model,
@@ -67,8 +75,9 @@ struct State {
     /// Fork: the conversation telemetry facts (crate::telemetry); None for a subagent's child session, whose facts
     /// the parent reports from the child's live run.
     telemetry: Option<Telemetry>,
-    /// Fork: the telemetry of the subagent children whose live runs are read, with their own fact counters.
-    children: std::collections::HashMap<String, (Telemetry, u64, rust_cli_base::Task<()>)>,
+    /// Fork: the subagent runs read for the telemetry facts (crate::child_runs) and their open watch tasks.
+    child_runs: crate::child_runs::ChildRuns,
+    watches: std::collections::HashMap<String, rust_cli_base::Task<()>>,
     /// Fork: facts waiting for the next write, in order.
     facts: Vec<Value>,
 }
@@ -80,9 +89,10 @@ struct Outgoing {
     facts: Vec<Value>,
 }
 
-/// Fork: starts reading a subagent child's live run for the parent's telemetry (set by the server, which owns the
-/// spawner); None when the kernel keeps no live run for it.
-pub(crate) type ChildWatch = dyn Fn(&str) -> Option<rust_cli_base::Task<()>> + Send + Sync;
+/// Fork: starts watch `id` on a subagent child's runs for the parent's telemetry (child, watch ID, whether the child
+/// looked alive; set by the server, which owns the spawner); None when the kernel keeps no live runs.
+pub(crate) type ChildWatch =
+    dyn Fn(&str, u64, bool) -> Option<rust_cli_base::Task<()>> + Send + Sync;
 
 pub struct Live {
     context: Arc<Context>,
@@ -134,7 +144,8 @@ impl Live {
                 watcher: None,
                 shells_dirty: false,
                 telemetry,
-                children: std::collections::HashMap::new(),
+                child_runs: crate::child_runs::ChildRuns::default(),
+                watches: std::collections::HashMap::new(),
                 facts: Vec::new(),
             }),
             context,
@@ -156,41 +167,49 @@ impl Live {
         &self.handle
     }
 
-    /// Fork: one event of a subagent child's live run, reported as the child's telemetry facts. In the session's
-    /// pump task, after the parent's own facts of the same moment.
-    pub(crate) async fn child_event(&self, child: &str, event: KernelEvent) {
+    /// Fork: one item of watch `watch` on a subagent child's run feed (`None`: the feed ended), reported as the
+    /// child's telemetry facts (crate::child_runs). In the session's pump task, after the parent's own facts of the
+    /// same moment.
+    pub(crate) async fn child_event(
+        &self,
+        child: &str,
+        watch: u64,
+        replayed: bool,
+        item: Option<rust_cli_kernel_api::agents::ChildLive>,
+    ) {
         let now = self.context.now();
-        let outgoing = {
+        let (outgoing, reopen) = {
             let mut state = self.state();
-            let provider = provider_of(&state.projection);
-            let Some((telemetry, seq, _)) = state.children.get_mut(child) else {
-                return;
-            };
-            *seq += 1;
-            let facts = telemetry.observe(
-                &event,
-                &Observed {
-                    scope: "",
-                    seq: *seq,
-                    now,
-                    provider: &provider,
+            let state = &mut *state;
+            let projection = &state.projection;
+            let read = state
+                .child_runs
+                .item(child, watch, replayed, item, now, &|selection| {
+                    provider_for(projection, selection.clone())
+                });
+            state.facts.extend(read.facts);
+            (
+                Outgoing {
+                    frames: Vec::new(),
+                    summary: None,
+                    facts: std::mem::take(&mut state.facts),
                 },
-            );
-            if matches!(event, KernelEvent::TurnFinished { .. }) {
-                state.children.remove(child);
-            }
-            state.facts.extend(facts);
-            Outgoing {
-                frames: Vec::new(),
-                summary: None,
-                facts: std::mem::take(&mut state.facts),
-            }
+                read.reopen,
+            )
         };
+        if reopen {
+            self.watch_children(vec![(child.to_owned(), true)]);
+        }
         self.write(outgoing).await;
     }
 
-    /// Fork: the subagent facts of the projection's rows; returns the children whose runs to read.
-    fn subagent_facts(state: &mut State, scope: &'static str, seq: u64, now: u64) -> Vec<String> {
+    /// Fork: the subagent facts of the projection's rows; returns the children whose runs to read (alive).
+    fn subagent_facts(
+        state: &mut State,
+        scope: &'static str,
+        seq: u64,
+        now: u64,
+    ) -> Vec<(String, bool)> {
         let links = state.projection.subagent_links();
         let provider = provider_of(&state.projection);
         let Some(telemetry) = &mut state.telemetry else {
@@ -208,24 +227,27 @@ impl Live {
             &mut facts,
         );
         state.facts.extend(facts);
-        spawned
+        spawned.into_iter().map(|child| (child, true)).collect()
     }
 
-    /// Fork: starts reading the runs of the children just spawned.
-    fn watch_children(&self, spawned: Vec<String>) {
+    /// Fork: opens a watch on each child that has none (child, whether it looked alive).
+    fn watch_children(&self, children: Vec<(String, bool)>) {
         let Some(watch) = self.child_watch.get() else {
             return;
         };
-        for child in spawned {
-            let Some(task) = watch(&child) else {
+        for (child, alive) in children {
+            let Some(id) = self.state().child_runs.open(&child) else {
                 continue;
             };
+            let task = watch(&child, id, alive);
             let mut state = self.state();
-            if let Some((_, _, previous)) = state.children.insert(
-                child.clone(),
-                (Telemetry::new(&child, Role::Child), 0, task),
-            ) {
-                previous.abort();
+            match task {
+                Some(task) => {
+                    if let Some(previous) = state.watches.insert(child, task) {
+                        previous.abort();
+                    }
+                }
+                None => state.child_runs.closed(&child, id),
             }
         }
     }
@@ -445,19 +467,59 @@ impl Live {
             }
         };
         let now = self.context.now();
-        let (outgoing, spawned) = {
+        let (outgoing, mut spawned, plan) = {
             let mut state = self.state();
-            let deltas = state.projection.subagent_table(&entries, now);
-            if deltas.is_empty() {
-                return;
-            }
-            state.log.record(deltas);
+            // Fork: the child watches follow the table before the rows do: a parked agent's wake changes the table
+            // but no row (crate::child_runs). A child session's own `Live` (a side tab) reports no telemetry.
             let seq = state.log.seq();
-            let spawned = Self::subagent_facts(&mut state, "table-", seq, now);
-            (self.collect(&mut state), spawned)
+            let provider = provider_of(&state.projection);
+            let mut facts = Vec::new();
+            let plan = if state.telemetry.is_none() {
+                crate::child_runs::Plan::default()
+            } else {
+                state.child_runs.table(
+                    &entries,
+                    &Observed {
+                        scope: "table-",
+                        seq,
+                        now,
+                        provider: &provider,
+                    },
+                    &mut facts,
+                )
+            };
+            state.facts.extend(facts);
+            let deltas = state.projection.subagent_table(&entries, now);
+            let spawned = if deltas.is_empty() {
+                Vec::new()
+            } else {
+                state.log.record(deltas);
+                let seq = state.log.seq();
+                Self::subagent_facts(&mut state, "table-", seq, now)
+            };
+            (self.collect(&mut state), spawned, plan)
         };
+        spawned.extend(plan.open);
         self.watch_children(spawned);
         self.write(outgoing).await;
+    }
+
+    /// Fork: the first read of the kernel's subagent table after the open (crate::child_runs): agents that ended
+    /// before it are only recorded, so a later change can tell a fast child that finished unread from them. In the
+    /// session's pump task.
+    pub async fn prime_child_runs(&self) {
+        if self.state().telemetry.is_none() {
+            return;
+        }
+        let entries = match self.handle.subagents().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(event = "protocol.subagents.read_failed", error = %error, "reading the subagent table failed");
+                return;
+            }
+        };
+        let plan = self.state().child_runs.prime(&entries);
+        self.watch_children(plan.open);
     }
 
     /// Fork: re-read the kernel's background ledger and publish the running shell commands as
@@ -648,7 +710,7 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
-        for (_, (_, _, task)) in self.state().children.drain() {
+        for (_, task) in self.state().watches.drain() {
             task.abort();
         }
         if let Some(watcher) = self.state().watcher.take() {
@@ -672,50 +734,49 @@ pub(crate) async fn watch_subagents(
     }
 }
 
-/// Fork: reads a subagent child's live run into the parent's telemetry (`Live::child_event`), in the parent's pump
-/// task so the child's facts follow the parent's `spawned`. Ends with the run, or when the parent closes.
+/// Fork: watch `watch` on a subagent child's run feed: forwards the feed's items to the parent's telemetry
+/// (`Live::child_event`, crate::child_runs), in the parent's pump task so the child's facts follow the parent's
+/// `spawned`. Ends after a run's `Finished`, when the feed ends (forwarded as `None`), when there is no run to read
+/// for a child that did not look alive, or when the parent closes.
 pub(crate) async fn read_child_run(
     feed: rust_cli_kernel_api::agents::ChildLiveFeed,
     child: String,
+    watch: u64,
+    alive: bool,
     live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,
 ) {
     use futures_util::StreamExt;
     use rust_cli_kernel_api::agents::ChildLive;
-    let turn =
-        rust_cli_kernel_api::ids::TurnId::new(format!("turn_{}", crate::telemetry::uuid_v7(0)));
-    let mut events = futures_util::stream::iter(feed.replay).chain(feed.live);
-    let mut started = false;
-    while let Some(event) = events.next().await {
-        let event = match event {
-            ChildLive::Started if !started => {
-                started = true;
-                KernelEvent::TurnStarted {
-                    turn: turn.clone(),
-                    command: None,
-                }
-            }
-            ChildLive::Started => continue,
-            ChildLive::Event(event) => event.into_kernel_event(turn.clone()),
-            ChildLive::Committed(message) => KernelEvent::MessageDone { message },
-            ChildLive::Finished(outcome) => KernelEvent::TurnFinished {
-                turn: turn.clone(),
-                outcome,
-                usage: None,
-            },
-        };
-        let finished = matches!(event, KernelEvent::TurnFinished { .. });
+    let forward = |replayed: bool, item: Option<ChildLive>| {
         let Some(bridged) = live.upgrade() else {
-            return;
+            return false;
         };
         let sink = bridged.sink.clone();
         let child = child.clone();
-        bridged.run(Box::pin(
-            async move { sink.child_event(&child, event).await },
-        ));
-        if finished {
+        bridged.run(Box::pin(async move {
+            sink.child_event(&child, watch, replayed, item).await;
+        }));
+        true
+    };
+    let has_run = matches!(feed.replay.first(), Some(ChildLive::Started { .. }));
+    for item in feed.replay {
+        let finished = matches!(item, ChildLive::Finished(_));
+        if !forward(true, Some(item)) || finished {
             return;
         }
     }
+    if !has_run && !alive {
+        forward(false, None);
+        return;
+    }
+    let mut events = feed.live;
+    while let Some(item) = events.next().await {
+        let finished = matches!(item, ChildLive::Finished(_));
+        if !forward(false, Some(item)) || finished {
+            return;
+        }
+    }
+    forward(false, None);
 }
 
 #[async_trait]

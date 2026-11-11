@@ -64,7 +64,12 @@ pub struct AgentNotice {
 /// (specs/fork-rust-agent-parity.md, side-pane tab of a running subagent).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChildLive {
-    Started,
+    /// A run started. `run` is unique within the process (a later run of the same child has a higher number), and
+    /// `selection` is the model the run uses (a subagent definition can name its own).
+    Started {
+        run: u64,
+        selection: crate::model::ModelSelection,
+    },
     /// A query event of the run: stream deltas, tool start, progress and finish, model notices.
     Event(crate::orchestration::QueryEvent),
     /// A message the run has already stored in the child session.
@@ -150,6 +155,13 @@ pub trait AgentSignals: Send + Sync {
     /// Fork (node_desktop): the feed of the subagent run whose child session is `session`. None when the agents do
     /// not mirror child runs (the TUI).
     fn child_live(&self, _session: &SessionId) -> Option<ChildLiveFeed> {
+        None
+    }
+
+    /// Fork (node_desktop): like [`AgentSignals::child_live`], but when the child is not running the replay is its
+    /// last finished run that no subscriber read live (taken once), so a reader that subscribes late still sees it
+    /// (the App's telemetry facts; specs/fork-rust-agent-parity.md, "Child runs").
+    fn child_run(&self, _session: &SessionId) -> Option<ChildLiveFeed> {
         None
     }
 
