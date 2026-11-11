@@ -50,8 +50,10 @@ impl Kernel for LocalKernel {
             // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
             trace: TraceId::new(id.as_str()),
             created_at_ms: self.ports.clock.now_ms(),
+            incognito: request.incognito,
         };
         self.ports.store.create(meta.clone()).await?;
+        self.incognito.record(&id, meta.incognito);
         // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
         let execution = ExecutionState::from_parts(request.mode, request.plan);
         let batch = FactBatch {
@@ -91,6 +93,8 @@ impl Kernel for LocalKernel {
         // (session crate `child_live`).
         let child_live = self.agents.child_live(session);
         let loaded = self.ports.store.load(session).await?;
+        // Fork: the incognito gates read the profile by session id from here on.
+        self.incognito.record(session, loaded.meta.incognito);
         // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
         // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
         // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。

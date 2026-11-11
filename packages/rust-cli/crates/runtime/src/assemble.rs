@@ -282,6 +282,7 @@ pub(crate) fn agents(
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
     (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Agents {
     Agents::new(
         AgentsPorts {
@@ -299,6 +300,7 @@ pub(crate) fn agents(
             spawner,
             peers: peers.port.clone(),
             operations: parts.operations.clone(),
+            incognito: incognito.clone(),
         },
         parts.tools.clone(),
         AgentsConfig {

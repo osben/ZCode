@@ -133,6 +133,7 @@ fn view(last_seq: u64) -> SessionView {
                 title: String::new(),
                 trace: rust_cli_kernel_api::ids::TraceId::new("trace"),
                 created_at_ms: 0,
+                incognito: None,
             },
             Vec::new(),
             selection(),

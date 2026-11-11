@@ -498,6 +498,52 @@ A subagent's child session (`SessionKind::Subagent`, Node `subagent_child`) is n
   - Unit test: `listed_in_sessions_index` excludes a subagent child and keeps interactive and forked sessions.
   - E2E: `conversation-session-subagent-side-tabs` on Rust in the container; the sidebar screenshot lists only the parent task, like Node.
 
+## Incognito sessions (Node `specs/incognito-session.md`)
+
+`zcode-rs` implements incognito sessions with the Node row shape and reports `incognitoSession` and `incognitoPromptToggles` from `runtime/capabilities`; the Host hello override no longer turns them off. The product rules, the 13 profile keys and the Settings defaults are owned by `specs/incognito-session.md`; this section owns where each key is enforced in `zcode-rs`.
+
+- Owners:
+  - Stored fact: the session row's `fork_incognito` column (NULL = normal session, JSON profile = incognito), written by the `node-store` session create in the same upsert as the row, `fork_incognito = coalesce(session.fork_incognito, excluded.fork_incognito)`, so it is set once and a later write (fork copy, reconcile) never clears or replaces it. No migration: the column comes from Node's `9001_fork_session_incognito`, which storage preparation runs before `zcode-rs` starts. A database without the column (a standalone `zcode-rs` run) creates normal sessions as before and refuses an incognito create (`proto.invalidPayload`), never downgrades it.
+  - Profile type: `kernel-api` `incognito::IncognitoProfile`, the 13 booleans in Node's key order. The wire parse is strict (all 13 keys, no others, no `version`): an invalid profile fails the command with `proto.invalidPayload` before any row exists. The stored parse falls back to the lockdown profile (every key off) for damaged JSON or an unknown or missing key, like Node's `parseStoredIncognitoProfile`; a present column never reads as a normal session.
+  - In memory: one process-wide `kernel-api` `incognito::IncognitoProfiles` map, session id to profile, filled from `SessionMeta.incognito` at the three places a session's meta is materialized: the kernel create, the kernel open (cold load) and the subagent spawn (the child's meta carries the parent's profile and its row stores it, like Node's child rows). A session's profile never changes, so entries are not removed. Every gate below reads this map by the session id it already has (`ContextRequest.session`, `ToolUseContext.session`, `HookEvent.session`, the snapshot's session).
+  - Sessions index: every row of an incognito session carries top-level `incognito: true` (live row, prepared row, cold row, reconcile row); the profile itself is not projected.
+- First submission (`durableFirstSubmission`): the reservation `createSession{submissionPreparation, incognito}` writes the profile into the reserved row. A repeated reservation must carry an equal profile; an existing prewarmed session is adopted only when neither side is incognito. The activation `createSession{preparedSessionId, expectedSubmissionId, incognito}` compares the requested profile with the stored one (absent is not equal to present) and refuses a mismatch with "Prepared submission does not match the frozen incognito profile". `incognito` together with `worktreePreparation` is refused with `proto.invalidPayload`, like Node.
+- Event order:
+
+```text
+UI send (incognito draft) ──createSession{submissionPreparation, incognito}──► zcode-rs reserve
+   └─ node-store create: row + fork_incognito (one upsert) ──► IncognitoProfiles[s] = profile ──► index row incognito:true
+UI ──createSession{preparedSessionId, expectedSubmissionId, incognito}──► activate: stored == requested? else refuse
+turn in s ──► context build / tool snapshot / tool call / hook run / agent listing ──► IncognitoProfiles[s] ──► gate per key
+Agent tool in s ──► child meta (incognito = profile of s) ──► child row fork_incognito ──► IncognitoProfiles[child]
+cold open of s (either runtime) ──► row fork_incognito ──► SessionMeta.incognito ──► IncognitoProfiles[s]
+```
+
+- Per-key gates (a key that is `false` removes what the row lists; `true` keeps the normal behavior):
+
+| Key                     | Rust gate                                                                                                                                                                           | Note                                                                                              |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `projectInstructions`   | rule files (AGENTS.md, CLAUDE.md and the rules directories) and nested rules are not loaded                                                                                         | the auto-memory index follows `memory`                                                            |
+| `skills`                | no skills listing and no skill mentions; the Skill tool refuses non-plugin skills                                                                                                   |                                                                                                   |
+| `hooks`                 | `HookEngine::run` runs no hook for the session                                                                                                                                      |                                                                                                   |
+| `plugins`               | plugin MCP servers (`McpScope::Plugin`) leave the tool snapshot, plugin skills leave the listing and the Skill tool, plugin agents leave the agent catalog, plugin hooks do not run |                                                                                                   |
+| `mcp`                   | non-plugin MCP servers leave the tool snapshot (tools, instructions, pending servers); with both MCP sources off WaitForMcpServers and the MCP resource tools leave too             | connections stay process-wide; only their use is gated                                            |
+| `customAgents`          | the agent catalog lists and spawns built-in agents only                                                                                                                             | built-in model overrides do not exist in `zcode-rs`                                               |
+| `memory`                | the auto-memory index and the memory directory are not loaded                                                                                                                       | recall, extraction and dream do not exist in `zcode-rs`; Node's dream skips the row by its column |
+| `outputStyle`           | n/a                                                                                                                                                                                 | absent in `zcode-rs` normal sessions too                                                          |
+| `systemPromptOverrides` | n/a                                                                                                                                                                                 | absent in `zcode-rs` normal sessions too                                                          |
+| `identity`              | the identity block and the intro sentence leave the system prompt; the security notice stays                                                                                        |                                                                                                   |
+| `harness`               | the `# Harness` block, Communication, Pronouns and Session guidance leave; the confirm-first Caution paragraph stays as the floor                                                   | Context management and Working style stay (core)                                                  |
+| `environment`           | the environment and model announcements and the git session context leave; the date stays                                                                                           |                                                                                                   |
+| `automationTools`       | CronCreate, CronDelete and CronList leave the snapshot                                                                                                                              | OffPeak, workflow and ListModels tools do not exist in `zcode-rs`                                 |
+
+- Tool gates apply twice: the snapshot leaves the tool out, and the executor pipeline refuses a call of a gated tool by name (the model can name a tool from older history), with the "No such tool available" result.
+- A normal session (`incognito` absent) is byte-identical to before: the system prompt template, its cache block and the tool order do not change.
+- Acceptance:
+  - Rust unit tests: wire parse (strict, invalid fails) and stored parse (Node `JSON.stringify` output reads back equal; damaged, unknown or `version` keys read as lockdown); `node-store` create writes the column once, a repeat create keeps it, fork copies it, a database without the column refuses an incognito create; reservation, repeat, adopt refusal and activation mismatch; index rows carry `incognito: true`; with an all-off profile the built request has the security notice and Caution only, no rule files, skills listing, MCP or Cron tools, and each key switched on brings back only its own sections; a subagent child of an all-off parent has no MCP or Cron tools; the pipeline refuses a gated tool call.
+  - Interop: a row written by `zcode-rs` reads as the same profile in Node (`getSession`), and a Node-written row opens in `zcode-rs` with the same gates.
+  - E2E: `conversation-session-incognito-draft` on Rust in the container, no worse than on Node.
+
 ## Known differences kept on purpose
 
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.

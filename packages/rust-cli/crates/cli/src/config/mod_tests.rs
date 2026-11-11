@@ -233,6 +233,7 @@ async fn the_initial_mode_follows_the_node_order() {
         title: String::new(),
         trace: rust_cli_kernel_api::ids::TraceId::new("sess_mode"),
         created_at_ms: 0,
+        incognito: None,
     };
     store.create(meta.clone()).await.unwrap();
     let batch = rust_cli_kernel_api::store::FactBatch {

@@ -108,6 +108,7 @@ pub(crate) async fn session_for(
             selection: options.selection.clone(),
             mode: options.mode,
             plan: false,
+            incognito: None,
         })
         .await?;
     Ok(kernel.open_session(&id).await?)

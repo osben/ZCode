@@ -100,6 +100,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         title: String::new(),
         trace: TraceId::new("sess_1"),
         created_at_ms: 1,
+        incognito: None,
     };
     let loaded = LoadedSession {
         commands: Default::default(),

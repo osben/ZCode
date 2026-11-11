@@ -433,6 +433,7 @@ async fn a_completed_subagent_request_records_its_speed() {
             title: "work of agent_a".to_owned(),
             trace: TraceId::new("trace"),
             created_at_ms: 1,
+            incognito: None,
         })
         .await
         .unwrap();

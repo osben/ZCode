@@ -106,6 +106,7 @@ async fn a_session_with_usage_measures_messages_from_the_anchor() {
             selection: carded(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

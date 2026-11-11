@@ -85,6 +85,8 @@ pub struct AgentsPorts {
     pub peers: Arc<dyn rust_cli_kernel_api::peers::PeerMessaging>,
     /// 操作上下文的工厂（同会话 actor 的 `SessionDeps::operations`）：子代理里停掉 monitor 的操作上下文。
     pub operations: rust_cli_kernel_api::env::Operations,
+    /// Fork: incognito profiles by session; a child session inherits its parent's.
+    pub incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
 }
 
 /// Task v2 四个工具开不开（[`task_tools_enabled`]）。

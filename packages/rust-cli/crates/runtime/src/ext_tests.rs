@@ -120,6 +120,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

@@ -43,6 +43,7 @@ mod usage_v4;
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_node_records::{branch, hydrate, keys, mode, records, tool_content};
 
@@ -200,6 +201,7 @@ fn create_input(meta: &SessionMeta, version: &str) -> Result<repo::sessions::Cre
         // Node 写 `config.mode ?? "build"`；内核随后提交的 ModeChanged 会更新它。
         permission: Some(json!({"mode": "build"})),
         time_created: Some(i64::try_from(meta.created_at_ms).unwrap_or(i64::MAX)),
+        incognito: meta.incognito.as_ref().map(IncognitoProfile::to_stored),
     })
 }
 
@@ -588,3 +590,7 @@ mod resume_sentinel_tests;
 #[cfg(test)]
 #[path = "frontend_records_tests.rs"]
 mod frontend_records_tests;
+
+#[cfg(test)]
+#[path = "incognito_tests.rs"]
+mod incognito_tests;

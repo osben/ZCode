@@ -138,6 +138,9 @@ pub struct LocalKernel {
     sessions: OpenSessions,
     /// 关闭时标成关闭中、释放按会话的表（[`Closer`]）。
     closer: Arc<Closer>,
+    /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"): filled at create
+    /// and open, read by every incognito gate.
+    incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
     /// 本机跨会话通信（cross-session.md §2.4）：每个会话 actor 共用这一份端口。
     peers: rust_cli_session::PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）：每个会话 actor 共用这一份。
@@ -222,6 +225,7 @@ impl LocalKernel {
             extensions.streaming_input,
         );
         let late = Arc::new(late::LateCompactor::default());
+        let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
         let gate = assemble::gate(&ports, extensions.node_desktop);
         let base = assemble::base_tools(&ports, &defaults, &extensions, (traits, &gate));
         let ext = assemble::ext(
@@ -258,6 +262,7 @@ impl LocalKernel {
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
+            &incognito,
         );
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
@@ -310,6 +315,7 @@ impl LocalKernel {
             scope,
             sessions,
             closer,
+            incognito,
             peers: extensions.peers,
             detached,
             one_input_per_turn: extensions.node_desktop,

@@ -34,6 +34,9 @@ pub struct SessionMeta {
     pub title: String,
     pub trace: TraceId,
     pub created_at_ms: u64,
+    /// Fork: the incognito profile frozen at creation (`session.fork_incognito`); None for a normal session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 对话分支切点（Node `session.revert`）：活动分支 = `kept` + 切点之后追加的消息。
@@ -372,6 +375,9 @@ pub struct SessionSummary {
     /// cold fork as an ordinary session instead of inheriting its parent's project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
+    /// Fork: the session is incognito (its row has `fork_incognito`). Only the flag is projected, never the profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 //! 冷读取：会话行、活动分支上的消息、模型选择与模式；会话列表
 //! （docs/specs/rust-cli/node-store.md §5，docs/specs/rust-m11-node-storage.md §6）。
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rusqlite::Connection;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, MessageId, SessionId, TraceId, TurnId};
@@ -140,6 +141,7 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
             created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
             last_outcome: row.last_outcome,
             parent: row.parent_id.map(SessionId::new),
+            incognito: row.incognito.is_some(),
         })
         .collect())
 }
@@ -165,6 +167,8 @@ fn meta(row: &SessionRow) -> SessionMeta {
         // Node 会话都写 traceID；缺失时（极旧的会话）链路 ID 取会话 ID。
         trace: TraceId::new(row.trace_id.as_deref().unwrap_or(&row.id)),
         created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
+        // Fork: a present column never reads as a normal session (unparseable values read as lockdown).
+        incognito: row.incognito.as_deref().map(IncognitoProfile::from_stored),
     }
 }
 

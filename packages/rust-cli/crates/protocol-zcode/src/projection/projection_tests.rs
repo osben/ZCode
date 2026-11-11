@@ -49,6 +49,7 @@ fn view(messages: Vec<Message>) -> SessionView {
             title: String::new(),
             trace: TraceId::new("trace"),
             created_at_ms: 1000,
+            incognito: None,
         },
         messages,
         selection(),

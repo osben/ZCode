@@ -353,6 +353,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             selection: chosen,
             mode: permission,
             plan,
+            incognito: None,
         })
         .await;
     let refused = |message: String| {
@@ -494,6 +495,7 @@ async fn reserve_submission(
                     .unwrap_or_else(|| server.defaults.selection.clone()),
                 mode: server.defaults.mode,
                 plan: false,
+                incognito: None,
             })
             .await
     };

@@ -144,6 +144,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
             title: String::new(),
             trace: TraceId::new(child.as_str()),
             created_at_ms: now_ms(),
+            incognito: None,
         })
         .await?;
     let (cu, ca) = (message_id(), message_id());

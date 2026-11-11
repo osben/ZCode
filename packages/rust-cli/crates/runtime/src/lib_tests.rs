@@ -66,6 +66,7 @@ async fn a_created_session_runs_a_turn_and_reloads_after_restart() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -140,6 +141,7 @@ async fn a_closed_session_leaves_the_kernel_and_reopens_with_a_new_actor() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -169,6 +171,7 @@ async fn sessions_wait_for_the_default_model_to_settle() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -187,6 +190,7 @@ async fn sessions_wait_for_the_default_model_to_settle() {
                 selection: selection(),
                 mode: PermissionMode::Default,
                 plan: false,
+                incognito: None,
             })
             .await
         }
