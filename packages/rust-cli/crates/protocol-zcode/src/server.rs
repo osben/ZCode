@@ -167,6 +167,13 @@ impl Server {
         if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
             live.sink.set_preparation(marker.exposed());
         }
+        // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
+        if opening {
+            let queries = self.kernel.queries();
+            if queries.is_draft(session).await.unwrap_or(false) {
+                live.sink.set_draft_probe(queries);
+            }
+        }
         if opening {
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(

@@ -278,6 +278,21 @@ async fn delete_drops_the_draft_and_late_writes_stay_out() {
 }
 
 #[tokio::test]
+async fn a_new_create_of_a_dropped_id_is_a_new_draft() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    t.store.delete(&sid()).await.unwrap();
+    // A re-prewarm or retried reservation with the same explicit id.
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    assert!(t.store.is_draft(&sid()).await.unwrap());
+    t.store
+        .commit(&sid(), batch(None, vec![user("m1", "hi")]))
+        .await
+        .unwrap();
+    assert_eq!(session_rows(&t), 1);
+}
+
+#[tokio::test]
 async fn discard_draft_is_an_atomic_check_and_drop() {
     let t = deferring();
     t.store.create(meta(ID, "/w", "")).await.unwrap();

@@ -59,7 +59,7 @@ Rule: in the app-server (`Controller::app`, the only surface with `node_desktop`
 
 | Store method (draft session)                                    | Behavior                                                                                                                                                                                   |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create` (top-level `Interactive`, app-server)                  | no row; the draft (row input, creation time) is kept in memory                                                                                                                             |
+| `create` (top-level `Interactive`, app-server)                  | no row; the draft (row input, creation time) is kept in memory. A new create of a dropped id clears its tombstone (a new life of the id)                                                   |
 | `create` (subagent, fork, TUI, `-p`)                            | unchanged: the row is written at once                                                                                                                                                      |
 | `commit`, batch of config facts only                            | buffered with its commit time. Config facts: `ModelSelected`, `ModeChanged`, `ExecutionChanged`, `ProjectModeSet`                                                                          |
 | `commit`, `ProjectModeSet` inside a buffered batch              | written to the project at once (Node `setMode` → `saveProjectPermissionMode` runs for a draft too) and not replayed later, so an older buffered mode never overwrites a newer project mode |
@@ -74,11 +74,19 @@ Rule: in the app-server (`Controller::app`, the only surface with `node_desktop`
 | `fork` with a draft parent                                      | `NotFound` (a draft has no messages to copy); the draft stays a draft                                                                                                                      |
 | `discard_draft` / `is_draft` (new `StoreQueries`)               | atomic check-and-drop and a read, for `session/close`; other stores answer `false`                                                                                                         |
 
+Every new Store write keyed by a session (a column on the `session` row, a new record or table) must route through the drafts: it calls `drafts::persist` first (or is buffered like the config facts), never `with_db` alone, or it silently misses a draft that has no row yet.
+
+Outside the store:
+
+- Sessions index: Node `isDraftSession` keeps a draft out of `sessions-index` (live fan-out and cold seed). A Rust `Live` opened on a store draft asks the store before it publishes its summary and skips it while the session is a draft; the first publish after materialization lists it. A disposed prewarm therefore never shows as a new task.
+- Attachments of a draft are artifact files, not rows: an abandoned draft can leave an uploaded image file, as on Node.
+
 `session/close` follows Node `shouldCloseSessionForExpectedPersistence`:
 
 - `expectedPersistence: "deferred"`: if the store still holds the session as a draft, the store drops it in the same locked step, then the bridge and the actor close and the reply is `{closed: true}`. A session that materialized first (the first send won the race) gets `{closed: false}` and stays open.
 - `expectedPersistence: "immediate"`: a draft gets `{closed: false}`; a stored session closes.
 - No `expectedPersistence`: unchanged (bridge close, `{closed: true}`).
+- Limit: Node promotes the draft when a send is accepted; `zcode-rs` materializes it when the actor commits the user message, which is after the `Submit` ACK (hooks run first). A deferred close in that window drops the draft and the message is lost. The App does not close a draft it has sent on (the prewarm leaves the `draft` state first), and the durable route materializes at reservation, before any send; before this change the same close dropped the session unconditionally.
 
 ```text
 UI prewarm          protocol / kernel / actor              NodeStore (app-server)            db.sqlite
@@ -99,7 +107,8 @@ Acceptance:
 
 - An untouched prewarm, a prewarm with model and mode changes, and a disposed prewarm leave no `session` row; a fresh process (Rust or Node) does not list or load them. The project mode set on a draft is visible at once.
 - The first send materializes the session with the model and mode chosen on the draft; Node reads it with that model and mode.
-- A reservation on a prewarm (rule 5) persists it with the buffered config, and a repeated reservation is `Repeat`.
+- A reservation on a prewarm (rule 5) persists it with the buffered config; a repeated reservation reads the marker from the persisted row like any stored session.
+- A prewarm is absent from the sessions index until it materializes.
 - `session/close` with `expectedPersistence: "deferred"` drops a draft and answers `{closed: false}` for a materialized session.
 - Rust unit tests cover every row of the table; interop: a Rust-abandoned draft is absent for Node, a Rust-materialized draft reads the same on Node. E2E: `prewarming-queue` and the new-task specs on Rust are no worse than on Node.
 

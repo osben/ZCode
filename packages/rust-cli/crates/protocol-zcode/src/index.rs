@@ -274,6 +274,15 @@ impl Topics {
         }));
     }
 
+    /// The live rows of a workspace's sessions index (tests only).
+    #[cfg(test)]
+    pub(crate) fn live_rows(&self, workspace: &str) -> Vec<String> {
+        self.table()
+            .get(&format!("{INDEX_PREFIX}{workspace}"))
+            .map(|entry| entry.rows.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// The lock-held half of [`Topics::remove`]: drop the row, then record the removal delta.
     /// The delta is recorded even when this process held no live row: a subscriber's snapshot may
     /// have carried the row from the store, and Node's projection (seeded with stored rows) emits

@@ -113,6 +113,10 @@ pub struct Live {
     child_watch: std::sync::OnceLock<Box<ChildWatch>>,
     /// Fork: the summary goes to the sessions index ([`listed_in_sessions_index`]).
     indexed: bool,
+    /// Fork: set while the store may still hold the session as a draft (specs/fork-agent-runtime-selection.md
+    /// "Draft prewarm in Rust mode"). The store owns that fact; a draft never becomes one again, so the probe is
+    /// dropped the first time the store says the session has its row.
+    draft_probe: Mutex<Option<Arc<dyn rust_cli_kernel_api::store::StoreQueries>>>,
 }
 
 impl Live {
@@ -154,7 +158,30 @@ impl Live {
             promotions: crate::reservations::Reservations::default(),
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
+            draft_probe: Mutex::new(None),
         }
+    }
+
+    /// Fork: the session opened as a store draft; its row stays out of the sessions index until the store
+    /// persists it (Node `isDraftSession`), so an abandoned prewarm never shows as a new task.
+    pub(crate) fn set_draft_probe(
+        &self,
+        queries: Arc<dyn rust_cli_kernel_api::store::StoreQueries>,
+    ) {
+        *self.draft_probe.lock_unpoisoned() = Some(queries);
+    }
+
+    /// Fork: whether the store still holds the session as a draft (see [`Self::set_draft_probe`]).
+    async fn still_draft(&self) -> bool {
+        let Some(queries) = self.draft_probe.lock_unpoisoned().clone() else {
+            return false;
+        };
+        let session = rust_cli_kernel_api::ids::SessionId::new(self.session.as_str());
+        if queries.is_draft(&session).await.unwrap_or(false) {
+            return true;
+        }
+        self.draft_probe.lock_unpoisoned().take();
+        false
     }
 
     /// Fork: see [`ChildWatch`]; set once when the server opens the session.
@@ -696,7 +723,12 @@ impl Live {
         if let Some(row) = outgoing.summary
             && self.indexed
         {
-            self.topics.upsert(&self.workspace, row);
+            if self.still_draft().await {
+                // Published again once the draft has its row, even if the summary is unchanged by then.
+                self.state().summary = None;
+            } else {
+                self.topics.upsert(&self.workspace, row);
+            }
         }
         for fact in outgoing.facts {
             self.context

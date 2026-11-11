@@ -44,6 +44,11 @@ fn a_soft_deleted_row_exists_and_is_deleted() {
 fn a_missing_or_foreign_row_does_not_exist() {
     let missing = json!({"sessionId": "sess_1", "exists": false, "deleted": false});
     assert_eq!(stored_entry("sess_1", "/work/a", None, None), missing);
+    // A live draft prewarm has no row yet: Node's `getSession` misses it too.
+    assert_eq!(
+        stored_entry("sess_1", "/work/a", None, Some(&json!({"phase": "draft"}))),
+        missing
+    );
     assert_eq!(
         stored_entry("sess_1", "/work/b", Some(&row(Some(4_000))), None),
         missing

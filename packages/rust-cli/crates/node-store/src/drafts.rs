@@ -39,6 +39,9 @@ struct Draft {
 
 impl Drafts {
     pub(crate) fn hold(&mut self, create: Create, now: u64) {
+        // A new create starts a new life of the id: the actor that held the dropped draft is
+        // closed by then, so its tombstone must not reject the new session's writes.
+        self.dropped.remove(&create.id);
         self.pending.insert(
             create.id.clone(),
             Draft {

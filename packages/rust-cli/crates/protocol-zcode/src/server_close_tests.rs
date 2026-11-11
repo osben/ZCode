@@ -220,6 +220,28 @@ async fn an_immediate_close_of_a_draft_changes_nothing() {
     assert!(server.bridge.get(&SessionId::new("s1")).is_some());
 }
 
+/// Node `isDraftSession`: a prewarm's summary stays out of the sessions index until the store
+/// persists it, then the next publish lists it.
+#[tokio::test]
+async fn a_draft_stays_out_of_the_sessions_index_until_the_store_persists_it() {
+    let (_scope, server, _handle, queries) = open(true).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    live.sink.publish_summary().await;
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    assert!(server.topics.live_rows("/w").is_empty());
+    queries.drafts.lock_unpoisoned().clear();
+    live.sink.publish_summary().await;
+    for _ in 0..50 {
+        if !server.topics.live_rows("/w").is_empty() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(server.topics.live_rows("/w"), vec!["s1".to_owned()]);
+}
+
 #[tokio::test]
 async fn an_immediate_or_unconditional_close_of_a_stored_session_closes_the_bridge() {
     for expected in [Some("immediate"), None] {
