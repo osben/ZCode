@@ -24,6 +24,9 @@ impl Projection {
         seq: u64,
         out: &mut Vec<serde_json::Value>,
     ) {
+        // Only the first turn of a subagent child may draw "Using": a first turn of unknown model draws nothing and a
+        // later turn never does.
+        let initial = std::mem::take(&mut self.initial_model_marker);
         let Some(selection) = selection else {
             return;
         };
@@ -39,7 +42,7 @@ impl Projection {
         let previous = self
             .last_turn_model
             .replace((provider.clone(), model.clone()));
-        if std::mem::take(&mut self.initial_model_marker) {
+        if initial {
             let key = format!("model-initial:{turn}:{provider}/{model}");
             let mut row = self.base(turn, &key, RowKind::TimelineMarker, now, seq);
             row.insert("lane".into(), json!("lightBoundary"));

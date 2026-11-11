@@ -204,3 +204,41 @@ fn a_subagent_child_starts_with_a_source_less_model_marker() {
     let mut feed = Feed::new();
     assert!(markers(&turn(&mut feed, "turn_1")).is_empty());
 }
+
+#[test]
+fn the_using_marker_never_lands_after_the_child_s_first_turn() {
+    // An older child with no stored models: reopened cold, its next live turn draws nothing.
+    let mut cold = view(vec![
+        user("msg_u1", "one"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "a".into() }]),
+    ]);
+    cold.meta.kind = rust_cli_kernel_api::store::SessionKind::Subagent;
+    let mut feed = Feed::new();
+    feed.projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    assert!(
+        !feed
+            .projection
+            .rows
+            .iter()
+            .any(|row| row["kind"] == "timelineMarker")
+    );
+    assert!(markers(&turn(&mut feed, "turn_2")).is_empty());
+
+    // A first turn of unknown model: the second turn, of a known one, gets no "Using" marker.
+    let mut cold = view(vec![
+        user("msg_u1", "one"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "a".into() }]),
+        user("msg_u2", "two"),
+        assistant("msg_a2", vec![ContentBlock::Text { text: "b".into() }]),
+    ]);
+    cold.meta.kind = rust_cli_kernel_api::store::SessionKind::Subagent;
+    cold.message_models = [(MessageId::new("msg_a2"), stored("upstream", "flash"))]
+        .into_iter()
+        .collect();
+    let projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    assert!(!projection.rows.iter().any(|row| {
+        row["entityId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("model-initial:"))
+    }));
+}
