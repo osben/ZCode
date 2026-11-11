@@ -179,18 +179,25 @@ async fn the_first_real_commit_materializes_with_the_buffered_config() {
     assert_eq!(loaded.model, Some(picked()));
     assert_eq!(loaded.mode, Some(PermissionMode::AcceptEdits));
     assert_eq!(loaded.messages.len(), 1);
-    // The row keeps the draft's creation time; buffered writes keep their own times.
+    // Node `persistSession`: the row and the backfilled config are written at the persist time,
+    // and the first input's title replaces the "New session" placeholder.
     assert_eq!(
         t.rows(&format!(
-            "select time_created from session where id = '{ID}'"
+            "select time_created, time_updated >= time_created, title, title_source
+             from session where id = '{ID}'"
         )),
-        vec![vec![json!(1000)]]
+        vec![vec![
+            json!(4000),
+            json!(1),
+            json!("hi"),
+            json!("first_input")
+        ]]
     );
     assert_eq!(
         t.rows(&format!(
             "select time_created from session_entry where session_id = '{ID}' and id = 'a'"
         )),
-        vec![vec![json!(3000)]]
+        vec![vec![json!(4000)]]
     );
     assert_eq!(
         t.store.records(&sid(), "v4/command_fact").await.unwrap(),
@@ -231,8 +238,16 @@ async fn the_reservation_marker_materializes_the_draft() {
         key: format!("v4/fork_submission_preparation:{ID}"),
         data: json!({"submissionId": "sub_1", "status": "preparing"}),
     };
+    t.source.at(5000);
     t.store.put_record(&sid(), &marker).await.unwrap();
     assert_eq!(session_rows(&t), 1);
+    // Node `persistSession` with no input: "New session", `default`, created at the reservation.
+    assert_eq!(
+        t.rows(&format!(
+            "select title, title_source, time_created from session where id = '{ID}'"
+        )),
+        vec![vec![json!("New session"), json!("default"), json!(5000)]]
+    );
     assert_eq!(
         t.store
             .records(&sid(), "v4/fork_submission_preparation")
@@ -290,6 +305,75 @@ async fn a_new_create_of_a_dropped_id_is_a_new_draft() {
         .await
         .unwrap();
     assert_eq!(session_rows(&t), 1);
+}
+
+/// A draft never shadows a stored row: a create of a stored id upserts as before, so a later
+/// delete removes the row instead of dropping a phantom draft.
+#[tokio::test]
+async fn a_create_of_a_stored_id_is_not_held_as_a_draft() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    t.store
+        .commit(&sid(), batch(None, vec![user("m1", "hi")]))
+        .await
+        .unwrap();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    assert!(!t.store.is_draft(&sid()).await.unwrap());
+    assert!(!t.store.is_rowless_draft(&sid()).await.unwrap());
+    t.store.delete(&sid()).await.unwrap();
+    assert_eq!(
+        t.rows(&format!(
+            "select time_deleted is not null from session where id = '{ID}'"
+        )),
+        vec![vec![json!(1)]]
+    );
+}
+
+/// A repeated create of a held draft keeps its buffered config.
+#[tokio::test]
+async fn a_repeated_create_of_a_draft_keeps_its_buffer() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    configure(&t).await;
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    t.store
+        .commit(&sid(), batch(None, vec![user("m1", "hi")]))
+        .await
+        .unwrap();
+    assert_eq!(t.store.load(&sid()).await.unwrap().model, Some(picked()));
+}
+
+/// The first input's admission persists the draft (Node `admitInputCommand`); after a deferred
+/// close dropped it, the admission is `NotFound`.
+#[tokio::test]
+async fn persist_draft_materializes_and_a_dropped_draft_refuses() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    configure(&t).await;
+    assert!(t.store.persist_draft(&sid()).await.unwrap());
+    assert_eq!(session_rows(&t), 1);
+    assert_eq!(t.store.load(&sid()).await.unwrap().model, Some(picked()));
+    assert!(!t.store.persist_draft(&sid()).await.unwrap());
+    let other = SessionId::new("sess_other");
+    t.store.create(meta("sess_other", "/w", "")).await.unwrap();
+    assert!(t.store.discard_draft(&other).await.unwrap());
+    assert!(not_found(t.store.persist_draft(&other).await));
+}
+
+/// A held or dropped draft has no row; a persisted one and an unknown id do.
+#[tokio::test]
+async fn a_rowless_draft_is_held_or_dropped() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    assert!(t.store.is_rowless_draft(&sid()).await.unwrap());
+    assert!(t.store.discard_draft(&sid()).await.unwrap());
+    assert!(!t.store.is_draft(&sid()).await.unwrap());
+    assert!(t.store.is_rowless_draft(&sid()).await.unwrap());
+    let other = SessionId::new("sess_other");
+    assert!(!t.store.is_rowless_draft(&other).await.unwrap());
+    t.store.create(meta("sess_other", "/w", "")).await.unwrap();
+    t.store.persist_draft(&other).await.unwrap();
+    assert!(!t.store.is_rowless_draft(&other).await.unwrap());
 }
 
 #[tokio::test]

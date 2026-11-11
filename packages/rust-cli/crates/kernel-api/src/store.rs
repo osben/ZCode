@@ -871,6 +871,20 @@ pub trait StoreQueries: Send + Sync {
     async fn discard_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
         Ok(false)
     }
+
+    /// Fork: the session is a draft that never got a row: still held, or dropped without one. The
+    /// sessions index skips it either way (Node `isDraftSession`), so a flush racing a deferred
+    /// close cannot publish it.
+    async fn is_rowless_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: persists a draft before its first input is admitted (Node `admitInputCommand` →
+    /// `ensureSessionPersistedForExternalActivity`). `false` when the session is not a draft;
+    /// `NotFound` when a deferred close dropped it first.
+    async fn persist_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }
 
 /// 一个存储适配器实现的全部会话端口（组装根与 runtime 的 `Ports` 用；各能力只拿自己用的那一个）。node-store 与测试的

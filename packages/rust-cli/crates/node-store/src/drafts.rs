@@ -32,25 +32,21 @@ pub(crate) struct Drafts {
 
 struct Draft {
     create: Create,
-    created_at: u64,
-    batches: Vec<(FactBatch, u64)>,
-    records: Vec<(FrontendRecord, u64)>,
+    batches: Vec<FactBatch>,
+    records: Vec<FrontendRecord>,
 }
 
 impl Drafts {
-    pub(crate) fn hold(&mut self, create: Create, now: u64) {
+    pub(crate) fn hold(&mut self, create: Create) {
         // A new create starts a new life of the id: the actor that held the dropped draft is
         // closed by then, so its tombstone must not reject the new session's writes.
         self.dropped.remove(&create.id);
-        self.pending.insert(
-            create.id.clone(),
-            Draft {
-                create,
-                created_at: now,
-                batches: Vec::new(),
-                records: Vec::new(),
-            },
-        );
+        // A repeated create of a held draft keeps it and its buffered config.
+        self.pending.entry(create.id.clone()).or_insert(Draft {
+            create,
+            batches: Vec::new(),
+            records: Vec::new(),
+        });
     }
 
     pub(crate) fn is_draft(&self, session: &str) -> bool {
@@ -81,8 +77,8 @@ impl Drafts {
             draft
                 .records
                 .iter()
-                .filter(|(record, _)| record.kind == kind)
-                .map(|(record, _)| record.clone())
+                .filter(|record| record.kind == kind)
+                .cloned()
                 .collect()
         })
     }
@@ -143,7 +139,7 @@ pub(crate) fn commit(
         }
     }
     if !buffered.facts.is_empty() {
-        draft.batches.push((buffered, now));
+        draft.batches.push(buffered);
     }
     let sequence = u64::try_from(draft.batches.len()).unwrap_or(u64::MAX);
     Ok(Some(CommitReceipt { sequence }))
@@ -163,19 +159,15 @@ pub(crate) fn put_record(
     let Some(draft) = drafts.pending.get_mut(session.as_str()) else {
         return Ok(false);
     };
-    let now = ids.now_ms();
     if record.kind == BUFFERED_RECORD_KIND {
         // Same key replaces, like the `session_entry` upsert it stands for.
-        match draft
-            .records
-            .iter_mut()
-            .find(|(held, _)| held.key == record.key)
-        {
-            Some(held) => *held = (record.clone(), now),
-            None => draft.records.push((record.clone(), now)),
+        match draft.records.iter_mut().find(|held| held.key == record.key) {
+            Some(held) => *held = record.clone(),
+            None => draft.records.push(record.clone()),
         }
         return Ok(true);
     }
+    let now = ids.now_ms();
     materialize(conn, drafts, session, ids, |tx| {
         frontend_records::put(tx, session.as_str(), record, now)
     })?;
@@ -200,8 +192,11 @@ pub(crate) fn persist(
     Ok(true)
 }
 
-/// One `BEGIN IMMEDIATE` transaction: the row, the buffered batches and records with their own
-/// times, then `then`. The draft leaves memory only when the transaction committed.
+/// One `BEGIN IMMEDIATE` transaction: the row, the buffered batches and records, then `then`. The
+/// draft leaves memory only when the transaction committed. Like Node `persistSession` without an
+/// input, the row is created now as "New session" (`titleSource: "default"`, which the first
+/// input's title replaces), and the buffered config is written now too, as Node backfills the
+/// session selection at its first persistence.
 fn materialize<T>(
     conn: &mut Connection,
     drafts: &mut Drafts,
@@ -216,13 +211,19 @@ fn materialize<T>(
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .storage()?;
-    let created = i64::try_from(draft.created_at).unwrap_or(i64::MAX);
-    crate::repo::sessions::create(&tx, &draft.create, created).storage()?;
-    for (batch, at) in &draft.batches {
-        facts::commit_in(&tx, session, batch, ids, *at)?;
+    let now = ids.now_ms();
+    let mut create = draft.create.clone();
+    if create.title.is_empty() {
+        create.title = rust_cli_kernel_api::title::PLACEHOLDER.to_owned();
     }
-    for (record, at) in &draft.records {
-        frontend_records::put(&tx, session.as_str(), record, *at)?;
+    create.time_created = None;
+    let created = i64::try_from(now).unwrap_or(i64::MAX);
+    crate::repo::sessions::create(&tx, &create, created).storage()?;
+    for batch in &draft.batches {
+        facts::commit_in(&tx, session, batch, ids, now)?;
+    }
+    for record in &draft.records {
+        frontend_records::put(&tx, session.as_str(), record, now)?;
     }
     let out = then(&tx)?;
     tx.commit().storage()?;

@@ -237,15 +237,18 @@ impl SessionStore for NodeStore {
     async fn create(&self, meta: SessionMeta) -> Result<(), StoreError> {
         let input = create_input(&meta, &self.version)?;
         let deferred = meta.kind == SessionKind::Interactive && meta.parent.is_none();
-        self.with_drafts(move |conn, ids, drafts| match drafts {
-            Some(drafts) if deferred => {
-                drafts.hold(input, ids.now_ms());
-                Ok(())
+        self.with_drafts(move |conn, ids, drafts| {
+            // Under the drafts lock, a draft never shadows a stored row: a create of a stored id
+            // upserts as before, and whether a repeated create is refused is the protocol's rule.
+            if let Some(drafts) = drafts
+                && deferred
+                && repo::sessions::get(conn, &input.id).storage()?.is_none()
+            {
+                drafts.hold(input);
+                return Ok(());
             }
-            _ => {
-                let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
-                repo::sessions::create(conn, &input, now).storage()
-            }
+            let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
+            repo::sessions::create(conn, &input, now).storage()
         })
         .await
     }
@@ -556,6 +559,22 @@ impl StoreQueries for NodeStore {
             .drafts
             .as_ref()
             .is_some_and(|drafts| drafts.lock_unpoisoned().discard(session.as_str())))
+    }
+
+    async fn is_rowless_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        Ok(self.drafts.as_ref().is_some_and(|drafts| {
+            let drafts = drafts.lock_unpoisoned();
+            drafts.is_draft(session.as_str()) || drafts.was_dropped(session.as_str())
+        }))
+    }
+
+    async fn persist_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        let session = session.clone();
+        self.with_drafts(move |conn, ids, drafts| match drafts {
+            Some(drafts) => drafts::persist(conn, drafts, &session, ids),
+            None => Ok(false),
+        })
+        .await
     }
 }
 
