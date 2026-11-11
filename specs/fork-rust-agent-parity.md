@@ -544,7 +544,8 @@ Acceptance:
   - `agents` `shell_notices_tests.rs`:
     - Starting a forwarder twice for one child delivers and acknowledges each notice once.
     - Opening a top-level session adopts its persisted subagent children, routes their notices to that session and acknowledges them.
-    - Opening a subagent session adopts nothing.
+    - Opening a subagent session adopts nothing, not even its own nested subagent.
+  - `runtime` `adopt_tests.rs`: the kernel's open of a top-level session starts exactly one forwarder for its persisted child (fails when the `session_opened` call is removed).
   - `node-store` `session_tree_tests.rs`: `subagent_child_ids` returns the subagent descendants through `subagent_child` rows only. It does not return a side chat or what the side chat spawned. (The `kernel-api` memory store implements the same walk for the agents tests.)
   - `executor-host` contract test (both executor kinds): an acknowledged command answers its ended record over the wire, while `background_command` answers `None`.
   - `exec-wire`: the new op is a `read` in the `background` capability, and an executor that does not know an op answers that call with `unsupported`.

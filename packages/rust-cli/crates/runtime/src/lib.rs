@@ -355,3 +355,7 @@ mod metering_tests;
 #[cfg(test)]
 #[path = "closing_tests.rs"]
 mod closing_tests;
+
+#[cfg(test)]
+#[path = "adopt_tests.rs"]
+mod adopt_tests;

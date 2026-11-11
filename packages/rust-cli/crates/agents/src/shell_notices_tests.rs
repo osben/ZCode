@@ -402,6 +402,16 @@ async fn opening_a_subagent_session_adopts_nothing() {
         .await
         .unwrap();
     harness.store.create(child.clone()).await.unwrap();
+    // A nested subagent under the child: only its top-level session's open adopts it, with that session as its root.
+    harness
+        .store
+        .create(meta(
+            "sess_subagent_agent_nested",
+            SessionKind::Subagent,
+            Some("sess_subagent_agent_old"),
+        ))
+        .await
+        .unwrap();
     harness.agents.signals().session_opened(&child);
     settle_tasks().await;
     assert!(env.subscribed().is_empty());
