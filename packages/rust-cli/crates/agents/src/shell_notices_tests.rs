@@ -1012,4 +1012,21 @@ async fn erasing_a_parked_child_ends_it_and_releases_its_owner() {
         resumed[2].request.session, owner,
         "the owner did not resume"
     );
+    // The erased child is no longer addressable: SendMessage starts no run and no subscription for it.
+    let subscribed = env.subscribed().len();
+    let agent = child
+        .as_str()
+        .trim_start_matches("sess_subagent_")
+        .to_owned();
+    let sent = harness
+        .call(
+            owner.as_str(),
+            "SendMessage",
+            json!({"to": agent, "message": "Again."}),
+        )
+        .await;
+    settle_tasks().await;
+    assert!(!text(&sent).contains("resumed"), "{}", text(&sent));
+    assert_eq!(harness.seen().len(), 3, "the erased child ran again");
+    assert_eq!(env.subscribed().len(), subscribed);
 }

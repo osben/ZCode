@@ -182,11 +182,17 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
                 error.as_deref(),
                 false,
             );
+            // A foreground run's owner hears of it from its own Agent call, as on the normal path.
+            let wakes = if entry.background {
+                to_live_owner(agents, &core.hub, &entry, notice)
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
             return Settle {
                 parked: false,
-                wakes: to_live_owner(agents, &core.hub, &entry, notice)
-                    .into_iter()
-                    .collect(),
+                wakes,
             };
         }
         let stopped = aborted || finished.ending == Ending::Killed;

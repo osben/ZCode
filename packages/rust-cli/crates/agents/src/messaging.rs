@@ -79,7 +79,9 @@ impl Messaging {
             .core
             .live
             .get(&id)
-            .filter(|agent| agent.parent == context.session);
+            // Fork: an erased agent's session rows are gone; it is no longer addressable (a restart would write into
+            // the erased session).
+            .filter(|agent| agent.parent == context.session && !agent.erased);
         let Some(agent) = known else {
             // 进程内没有：按本机的同伴会话寻址（cross-session.md §1.4）。都没有时是打开跨会话后的
             // `No agent named '<to>' is reachable.`（结果 `success: false`、不标 is_error）。以前是关闭跨会话时的
