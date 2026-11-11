@@ -160,6 +160,17 @@ fn notification_batch(user: &rust_cli_kernel_api::message::UserMessage) -> bool 
 }
 
 /// 相邻 user 消息合并：文本接文本时，前一段末尾补一个换行。
+/// A block of the user's own input (model `media::is_real_user`, Node `isMetaUserContextMessage`): not attachment
+/// content, and not `<system-reminder>` text or a tool result.
+fn own_input(content: &ApiContent) -> bool {
+    !content.meta
+        && match &content.block {
+            ContentBlock::Text { text } => !text.trim_start().starts_with("<system-reminder>"),
+            ContentBlock::Image { .. } | ContentBlock::Video { .. } => true,
+            _ => false,
+        }
+}
+
 fn merge_user(into: &mut Vec<ApiContent>, next: Vec<ApiContent>) {
     if let (Some(last), Some(first)) = (into.last_mut(), next.first())
         && let (ContentBlock::Text { text }, ContentBlock::Text { .. }) =
@@ -188,6 +199,18 @@ impl Builder {
     fn push_user(&mut self, content: Vec<ApiContent>) {
         match self.out.last_mut() {
             Some(last) if last.role == ApiRole::User && !self.separate => {
+                // Node keeps each input its own user message and its media budget protects only the newest one; once
+                // a new input joins, the earlier input's media are history.
+                if content.iter().any(own_input) {
+                    for item in last.content.iter_mut().filter(|item| {
+                        matches!(
+                            item.block,
+                            ContentBlock::Image { .. } | ContentBlock::Video { .. }
+                        )
+                    }) {
+                        item.meta = true;
+                    }
+                }
                 merge_user(&mut last.content, content);
             }
             // The executor records each result of one reply as its own message, and pairing only reads the first user

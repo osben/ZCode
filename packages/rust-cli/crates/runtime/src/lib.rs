@@ -237,16 +237,6 @@ impl LocalKernel {
         ));
         let assembler = assemble::context(&ports, context, (&agent_catalog, &base, &ext));
         let sessions = OpenSessions::default();
-        let closer = Arc::new(Closer {
-            sessions: Arc::downgrade(&sessions),
-            scoped: table::SessionScoped {
-                context: assembler.clone(),
-                read_files: base.read_files.clone(),
-                worktrees: base.worktrees.clone(),
-                gate: gate.clone(),
-                mcp: ext.mcp().clone(),
-            },
-        });
         let parts = assemble::query_parts(
             &ports,
             (&assembler, &ext, &gate, &hooks),
@@ -259,6 +249,18 @@ impl LocalKernel {
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
         );
+        // Fork: built after the agents so a release also reaches them (their notice forwarders).
+        let closer = Arc::new(Closer {
+            sessions: Arc::downgrade(&sessions),
+            scoped: table::SessionScoped {
+                context: assembler.clone(),
+                read_files: base.read_files.clone(),
+                worktrees: base.worktrees.clone(),
+                gate: gate.clone(),
+                mcp: ext.mcp().clone(),
+                agents: agents.signals(),
+            },
+        });
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
         base.catalog.bind(&tools);
@@ -355,3 +357,7 @@ mod metering_tests;
 #[cfg(test)]
 #[path = "closing_tests.rs"]
 mod closing_tests;
+
+#[cfg(test)]
+#[path = "adopt_tests.rs"]
+mod adopt_tests;

@@ -463,7 +463,7 @@ The env ledger notifies a background command's end once per session, and the fir
 
 - Owners:
   - Delivery: the agents forwarder is the only consumer of a `SessionKind::Subagent` session's notices. The child session actor does not subscribe, so it never starts its own turn from a notice. Only the agents crate runs turns in a child session (the desktop side tab is read-only).
-  - Command status: the env ledger. It writes the terminal record at the command's exit (`env-local` `supervise.rs` and `socket.rs`, the two exit sites), keeps the newest 64 per session, and drops them with `close_session(forget)`. Only the new read `Background::ended_background_command` answers from them (default `None`: a remote executor keeps no record and keeps the projection fallback). `background_command`, `shell_state.background` (the commands `-p` waits for) and `stop` are unchanged: TaskStop, TaskOutput and the monitors read a `background_command` record as "the notice is still pending", so it still forgets the command at the ack.
+  - Command status: the env ledger. It writes the terminal record at the command's exit (`env-local` `supervise.rs` and `socket.rs`, the two exit sites), keeps the newest 64 per session, and drops them with `close_session(forget)`. Only the new read `Background::ended_background_command` answers from them; a remote executor answers it over the exec wire (`background.ended_background_command`, below). `background_command`, `shell_state.background` (the commands `-p` waits for) and `stop` are unchanged: TaskStop, TaskOutput and the monitors read a `background_command` record as "the notice is still pending", so it still forgets the command at the ack.
   - The projection's `BackgroundWork` / `<task-notification>` status stays the fallback after a process restart.
   - A stop beats an exit that is not finalized yet. The supervisor may have seen the process exit (code 0) and still be cleaning up when TaskStop is accepted (the task is still in `background`). From the stop on, the ledger reads `killed`, like Node's `killTask`, which marks the task killed at once and for good. When the exit is then finalized under the ledger lock, a task still in `stopping` or `stopped` settles as `Outcome::Cancelled` with the kill exit code (`SessionShell::settle_stop`, at both exit sites). This covers the terminal record, the notice of a stop that notifies (`killed`, "was stopped", like Node's killed notification), and the command's receipt. Before, the finalization wrote `completed` over the `killed` the ledger had already reported.
 - Event order:
@@ -484,9 +484,144 @@ detail pane poll ──► backgroundBashOutput ──► background_command(S, 
   - Unit tests: `env-local` `shell_registry_tests.rs` (an acknowledged command still answers its terminal status and output file from `ended_command`, while `background_command`, `stop` and `shell_state.background` forget it; a silently stopped command keeps a `killed` record after its exit; the per-session bound), `session` `notice_tests.rs` (a subagent child session's actor neither records, acknowledges nor opens a turn for a notice; the top-level cases are unchanged), `session` `tasks_tests.rs` (the detail window of an acknowledged command reads its terminal record).
   - Unit test `env-local` `shell_registry_tests.rs` `a_stop_accepted_before_the_exit_is_finalized_wins`: a stop accepted after the exit was seen but before it was finalized settles `killed`, for a notifying and a silent stop; without a stop the exit stands. The test uses the session ledger directly, because the interleaving is decided under the ledger lock.
   - E2E on Rust in the container: BGV04 5 of 5; `background-bash-output`, `background` and `subagent-side-tabs` no worse than on `fork`.
-- Known gaps (not fixed here; neither case worked correctly before this change, when the side tab's actor acknowledged the notice and started a turn of its own):
-  - After a process restart, an old child session has no forwarder: `shell_notices::watch` starts only in `AgentTool::call`, and the child's session actor no longer subscribes. A command on a remote executor that ends then leaves its notice pending with no consumer. Local commands die with the process.
-  - A command that outlives its foreground child: the child run has finished, so its notice goes to the top-level session and never appears in the child's history. On a remote executor, `ended_background_command` answers `None` by default, so the child tab's detail pane reads `unavailable`. Locally the ended record covers it until a restart or until 64 newer commands of the session push it out.
+
+### After a restart, and on a remote executor
+
+Two cases the section above left open. Neither worked before it either: then the side tab's actor acknowledged the notice and started a turn of its own.
+
+- **Gap A: no consumer after a process restart.** `shell_notices::watch` started only in `AgentTool::call`, and the child session actor no longer subscribes. When a command of an old child session ends on a resident remote executor after the restart, its notice stays pending and is never acknowledged. (Local commands die with the process.)
+- **Gap B: no status on a remote executor.** A foreground child finishes, and its background command ends later. The notice goes to the top-level session, so the child's history never gets the `<task-notification>`. The remote executor answered `ended_background_command` with the default `None`, so the child tab's detail pane read `unavailable`.
+
+Owners:
+
+- **Delivery (Gap A): still one forwarder per child session, owned by the agents crate.**
+  - **Owner: one registry entry per child (`routes::Routes`), kept inside the `Live` state under the same mutex as the agents.** An entry maps a child to its top-level session. Claiming a child that has an entry is a no-op, so no second subscriber can start while the entry exists. The child session actor still never subscribes.
+  - Three places claim children:
+    - `AgentTool::call`, for a new child, as before. It does not mark the top-level session open: the running agent keeps the child wanted.
+    - `Live::restart` (SendMessage resumes a finished or parked agent), in the same Live section that makes the agent running again. After `/clear` a finished nested child's entry has left; the restart makes it wanted again, so it claims the child again, and SendMessage starts the forwarder before the resumed run, so a command of that run has a consumer from its first turn.
+    - The kernel, when it opens a top-level session from the store (`open_session_as`) or creates one (`create_session_as`). It calls `AgentSignals::session_opened(meta)` after every step that can fail or be dropped at an await (load, session rules, restore) and in the same poll as starting the actor, so an open that fails is never open for the agents and nothing has to be undone. For a session that is not `SessionKind::Subagent`, the agents crate marks it open and asks the store for its persisted subagent children (`StoreQueries::subagent_child_ids`: the descendants reached through `subagent_child` rows only), then claims each, with this session as the top-level session.
+  - The walk stops at any other task type. A side chat or workflow child runs its own actor and is a top-level session for the agents it spawns, so its subagents are adopted when that session is opened.
+  - The forwarder finds the live agent by its child session when a notice arrives, not by an id captured at spawn. If the agent runs or is parked, the notice goes to its mailbox or resumes it, as before. If no live agent owns the child (it finished, or it ran before the restart), the notice goes to the top-level session through `signals::Hub` (`routing::deliver`). The Hub keeps the notice until the session actor commits it, so a forwarder may deliver before the actor subscribes.
+  - The trigger is the top-level session's open, not the child's. A child's notices are then consumed from the moment its top-level session opens, exactly like the top-level session's own notices. The root is known without walking parent links, and it works when no side tab is ever opened.
+  - **One desired-state function:** `want(C) = !erased(C) && (T open || a live agent owns C)`, for child C of top-level session T. Its inputs:
+    - `T open`: set by `session_opened`; cleared when the kernel starts closing T (`AgentSignals::session_closing`, called from `Closer::closing`, before T's actor exits).
+    - `a live agent owns C`: an agent of C is running or parked. It changes only under the Live lock.
+    - `erased(C)`: C or T was erased (`sessions_erased`).
+  - **One lock for every decision.** Under the Live lock: the `want` check, the push into the mailbox or the Hub, recording `delivered`, and every registry transition (open, close, erase, claim, a forwarder's exit). Every change of the agents ends with `Routes::reconcile` in the same section: an entry that is no longer wanted is marked inactive and its task is woken (a `watch`). Reconcile never removes an entry.
+  - **One exit point.** Only the entry's own task removes it, under the Live lock:
+    - at a safe point (before waiting for the next notice, or after an ack), when the entry is inactive;
+    - when it refuses a notice (`!want`), in the same section that refused it. The notice is not acknowledged and stays pending in the executor's ledger, like T's own notices while T is closed. The next open of T adopts the child again, and the new forwarder reads the pending notice from the ledger;
+    - when the merged notice stream ends.
+      A monitor's terminal notice is handed to the monitor's task (`MonitorBoard::take`), which delivers it with the monitor's last lines and acknowledges it itself. That hand-over is not a safe point: the forwarder waits until the monitor's task has acknowledged it, so the entry covers the delegated ack too. The monitor's task first waits for its event stream to end, which follows the command's end that the notice reports. When the monitor's task no longer takes the notice (it had already found the command gone), the forwarder delivers and acknowledges it itself.
+      The ack is network IO, so it runs outside the lock. That is safe because the entry outlives the task's last ack. A reopen between a delivery and its ack finds the entry, claims nothing, and makes it active again, so the same task carries on and the notice is not delivered twice.
+  - `/clear` and `/resume` close T while its background subagents keep running (agents.md §4.1.2). Their children stay wanted through their running or parked agent and still get their command notices. When such an agent finishes, reconcile wakes its forwarder, which leaves without waiting for a notice.
+  - A nested agent that a background subagent spawns after `/clear` is wanted through its own running agent. It does not reopen T, so nothing is acknowledged into the Hub of a closed session.
+  - Adoption carries T's open generation and the erase epoch it read the store under. Each claim checks, in the claim's section, that T is still open at that generation (else it claims nothing) and that no erase happened since (else it reads the store again). An adoption that read the store before an erase does not claim an erased child.
+  - Hub(T) keeps what it already holds across T's close; T's actor commits it when T reopens.
+  - **Erase guard** (Node `findRunningSessionIds`, which adds the running detached subagents of `getDetachedChildSessionFacts()`; parent decision 2026-11-11: Node parity). `erase_tree` and `treeCounts` count as running both the bridged sessions with a running turn and the child sessions of running subagents (`Kernel::running_agent_sessions`, answered by the agents from the Live state: `Running` only, not `Parked`, not erased). A tree with a running subagent is refused with it in `blockedRunningSessionIds`; nothing is erased and the agents are not told, so the subagent keeps running and its notices are delivered as usual. A parked subagent does not block: the erase ends it as stopped (below), as Node's close settles its parked work.
+  - **Erase** (`session/eraseTree`, Node `deleteSessionTree`). Node closes the tree's runtimes; its `ExecutionPort.close` settles their background tasks as cancelled, and late notifications are dropped with an info log (`runtime.background_task_notification.shutdown_dropped`). Rust matches it with `Kernel::sessions_erased(ids)`, which `erase_tree` calls after the rows are gone, with every erased id:
+    - Under the Live lock, the agents crate marks the erased sessions (not open, entries of erased children or roots unwanted, erase epoch bumped), ends their live agents, and drops their Hub channels, logging the dropped count at info.
+    - Ending the live agents of erased children (`routing::end_erased`), as a user stop of a parked agent does and as Node's runtime close cancels an erased session: a parked one ends now as stopped. A running one is not aborted: the guard above refused the erase, so one reaches here only when it started between the guard and the row erase (see Known limits); its run settles as erased, without parking or resuming. Each agent of an erased child is marked erased, a finished one too: its ending notice reaches only an owner that is not erased itself, never a Hub, and its leftover mailbox is dropped with its session. So an owner parked on an erased child resumes with the child's stop notice instead of waiting for it forever. A foreground erased child's owner hears of it from its own Agent call only. An erased agent, finished or live, is no longer addressable by SendMessage (a restart would claim a forwarder for the erased child and its resume would fail on the deleted row). A delivery decided after that section refuses; one decided before it is already in the Hub that the erase drops. Even a child a live agent owns is no longer wanted.
+    - Outside the lock, the kernel closes every erased session on every machine with `forget` (`Commands::close_session(id, true)`, as session close does on exit): the children's background commands are cancelled and their pending notices dropped at the source, so a resident remote executor does not keep them. A reconnecting machine gets the close in the background, as in `closing.rs`.
+    - This is new behaviour: before, erasing a tree left a subagent child's background command running.
+  - Soft delete (`delete_session`) refuses an open session, so the close above already made its unowned children unwanted. A soft-deleted session is not erased; its children's notices stay pending until it is opened again.
+  - **Lock order:** Live, then the Hub or the monitor board (leaf locks that never take Live); no store or network IO under Live; the kernel's session table lock is not held when it calls the agents' hooks.
+
+- **Command status (Gap B): still the execution environment's ledger, now also over the exec wire.**
+  - The exec protocol gets `background.ended_background_command` (`Op::EndedBackgroundCommand`, kind `read`, capability `background`). `exec-server` answers it from the executor's own ledger. `env-remote` implements `Background::ended_background_command` with it.
+  - An executor older than this op answers it per call with `unsupported`; it does not drop the connection (`RequestHeader::parse`). So no new capability bit is needed, and `env-remote` reads `unsupported` as `None` (an executor that keeps no record).
+  - Why the wire and not the child's projection:
+    - The ledger is already the one owner of a command's terminal status (above). Writing the status into the child's projection from the agents crate would add a second writer to a session whose actor owns its log. It would also give two sources of the same fact: the ledger locally, the projection remotely.
+    - A resident executor keeps its ledger across a client restart, so the detail pane keeps its status after a restart too. A projection write would be lost if the restart came before it was stored.
+  - The projection's `BackgroundWork` / `<task-notification>` status stays the fallback when the ledger has no record: a local command after a restart, or a record pushed out by 64 newer ones.
+
+Event order:
+
+```text
+kernel open_session_as / create_session_as(top-level T) ──► agents.session_opened(T):
+    [Live] T open at generation g; erase epoch e
+    └─ store.subagent_child_ids(T) ──► [Live] T open at g? erase epoch still e?
+                                         yes: claim each child C (no-op if C has an entry)
+                                         epoch changed: read the store again
+                                         T closed or reopened: claim nothing
+AgentTool::call (new child C) ───────► [Live] claim C (its running agent keeps it wanted)
+SendMessage restarts C's agent ──────► [Live] agent running; claim C (no-op if C has an entry) ──► start, then resume
+kernel Closer::closing(T) ───────────► agents.session_closing(T): [Live] T closed; reconcile
+agent finishes / parks / resumes ────► [Live] state change; reconcile
+protocol erase_tree ──► guard: bridged running turns ∪ kernel.running_agent_sessions(tree) ──► non-empty: refused
+                   ──► rows erased ──► kernel.sessions_erased(ids):
+                                       [Live] mark erased, epoch += 1, end live agents of erased children
+                                              (parked: stopped now, notice to a non-erased owner; running: only
+                                              marked, see the guard),
+                                              Hub.forget(ids); reconcile ──► (outside) resume the woken owners
+                                       then every machine: close_session(id, forget) ──► commands cancelled,
+                                                                                          notices dropped
+
+command of C ends on machine M ──► M's ledger (one lock): leaves `background`, notice pending, ended record
+    │ merged notice stream of C (all machines, follows reconnects)
+    ▼
+forwarder(C) ──► [Live] want(C)?
+                   no: remove the entry; exit without ack (notice pending on M until T reopens)
+                   yes: live agent owning C? running: mailbox | parked: resume
+                                             none: Hub(T) ──► T's actor commits ──► Hub ack
+                 (a watched monitor's terminal notice: handed to the monitor's task, which delivers it and acks;
+                  the forwarder waits for that ack before its next safe point)
+             ──► (outside the lock) ack to M: notice gone, ended record stays on M
+             ──► [Live] entry inactive? remove it and exit : wait for the next notice or a wake
+
+child tab detail pane ──► backgroundBashOutput(C, task) ──► for each machine: background_command (running | pending)
+                                                       └─ none ──► ended_background_command
+                                                                    local: env-local ledger
+                                                                    remote: wire background.ended_background_command
+                                                                            ──► executor ledger
+                                                       └─ none ──► projection fallback
+```
+
+Child entry states:
+
+```text
+                     claim (no entry)
+   (no entry) ─────────────────────────► active ◄────────────┐
+       ▲                                   │                   │ reconcile: want again
+       │                                   │ reconcile:        │ (reopen, while the task
+       │                                   │ want = false      │  is between deliver and ack)
+       │                                   ▼                   │
+       ├──── task at a safe point ◄──── inactive ──────────────┘
+       │     [Live] remove, exit
+       │
+       └──── task refuses a notice: [Live] !want → remove in the same section, exit without ack
+```
+
+Known limits (stated, not fixed):
+
+- After the forwarder's ack the notice lives only in the in-memory Hub until the top-level actor commits it. A second restart in between loses it. A live forwarder has the same window.
+- A top-level session that is never opened after a restart leaves its children's remote notices pending, as it leaves its own.
+- A delivery decided just before `Closer::closing(T)` puts the notice in Hub(T) and acknowledges it; T's actor may exit before committing it. It is kept in memory until T reopens, which is the first window above.
+- The monitor's own delivery path does not check `want`: after an erase, a child's monitor that ends can still put its notice in the Hub of the erased top-level session (memory only; nothing reads it).
+- The erase guard and the row erase are not one critical section (in Node either): a parked subagent woken by a notice between them runs on while its session is erased. It is marked erased (not addressable, its ending reaches only a live owner) and is not aborted, so its run can still write into the erased child session.
+
+Acceptance:
+
+- Unit tests:
+  - `agents` `shell_notices_tests.rs`:
+    - Starting a forwarder twice for one child delivers and acknowledges each notice once.
+    - Opening a top-level session adopts its persisted subagent children, routes their notices to that session and acknowledges them.
+    - Opening a subagent session adopts nothing, not even its own nested subagent.
+    - Closing a top-level session stops the forwarder of a child with no live agent (its notice stream is dropped), and reopening starts exactly one again, which delivers the pending notice.
+    - Closing a top-level session keeps the forwarder of a child whose agent runs; its notice still reaches the mailbox. A notice of a child with no live agent while its top-level session is closed is not acknowledged and not put in the Hub.
+    - A close that lands while adoption reads the store starts no forwarder.
+    - Erasing stops the forwarders of erased children, including one a live agent owns, and drops the erased sessions' Hub notices.
+    - Review findings of the first lifecycle (each failed on it before this design): a reopen while the forwarder acknowledges starts no second consumer (#1); erase waits for a delivery that holds the Live lock (#2); erasing a child while adoption reads the store starts no forwarder for it (#3); a forwarder kept for a running agent stops when the agent finishes, without a notice (#4); a nested agent after `/clear` does not reopen the top-level session (#5); a reopen right after a refused notice still delivers it (#6).
+    - Round 3 (each failed before its fix): a nested agent restarted with SendMessage after `/clear` gets a forwarder again and its new command is acknowledged; erasing a parked child ends it and its parked owner resumes.
+    - Round 4 (Node parity of the erase guard): a running background agent is reported running and a parked one is not (fails when `Parked` counts); the agent then keeps running, a command notice that ends meanwhile reaches it and its own notice reaches the top-level session; an erase that races a running agent does not abort it; an agent that had finished before its subtree was erased is not restarted by SendMessage (review of df5d9c772; the call failed with "session not found").
+  - `protocol-zcode` `session_tree_tests.rs`: a running subagent in the tree blocks `session/eraseTree` (`blockedRunningSessionIds`, nothing erased, `sessions_erased` not called) and `treeCounts` reports it running (fails when the guard ignores `running_agent_sessions`); without one the same tree is erased.
+  - `agents` `monitors_tests.rs`: a close and reopen while a monitor acknowledges its terminal notice delivers it once (round 3; it was delivered twice).
+  - `agents` `routes_tests.rs`: a reopen before the task looks keeps the same entry; only the entry's task removes it; an adoption claims only for its own open and erase epoch; an erased child is not wanted.
+  - `runtime` `adopt_tests.rs`: the kernel's open of a top-level session starts exactly one forwarder for its persisted child (fails when the `session_opened` call is removed); an open that fails after the load (its session rules cannot be read) adopts nothing and acknowledges nothing (failed when the hook ran right after the load); creating a top-level session runs the same hook (fails when that call is removed); closing it ends that forwarder's subscription; `sessions_erased` closes each erased id on the machine with `forget`.
+  - `node-store` `session_tree_tests.rs`: `subagent_child_ids` returns the subagent descendants through `subagent_child` rows only. It does not return a side chat or what the side chat spawned. (The `kernel-api` memory store implements the same walk for the agents tests.)
+  - `executor-host` contract test (both executor kinds): an acknowledged command answers its ended record over the wire, while `background_command` answers `None`.
+  - `exec-wire`: the new op is a `read` in the `background` capability, and an executor that does not know an op answers that call with `unsupported`.
+- E2E on Rust in the container: `background-bash-output` (BGV04), `subagent-side-tabs` and `background` no worse than on `fork`. A resident remote executor across a process restart is not reproduced by the desktop E2E. The contract test and the agents unit tests cover it.
 
 ## Subagent child sessions stay out of the sessions index (Node `publishCurrentSummaryToIndex`)
 
@@ -669,7 +804,6 @@ The marker, the prepare / update / activate compare-and-set and the execution-co
 
 ## Open gaps (not yet ported)
 
-- **Bundled official plugins are not seeded by Rust.** Node's agent bootstrap copies the bundled official plugins into the plugin store on every start (`bootstrap/src/app/bundled-plugins.ts` `resolveOfficialPluginRoots` → `seedBundledOfficialPlugins`: `cache/zcode-plugins-official/<name>/<version>` plus `marketplaces/zcode-plugins-official/bundled-marketplace.json`). `zcode-rs` only reads that store (`platform/src/local/plugin_inventory.rs`). It breaks only for a home where the Node agent never started: there, Rust lists no official plugin skill (`skill-creator`, `visualize`, `documents`, …), as seen in the container E2E (2026-11-11). A home where the Node agent has run once has the cache. Candidate owner instead of a Rust port: the Node storage preparation step, which always runs from the bundled `zcode.cjs` before the agent spawns (`specs/fork-agent-runtime-selection.md` rule 3, `app-server --prepare-storage`, `runZCodeProtocolAgent` `prepareStorageOnly`). It has the same seed sources and could call `resolveOfficialPluginRoots` with the agent's plugin store root. Not done here.
 - **Gen UI widget state (`genUiContext`).** Rust reports `runtime/capabilities` `genUiContext: false` and does not implement the `sendText.genUiContext` input path (widget `modelContent` sent to the model as `<untrusted_gen_ui_state>`); Node reports `true`. The Host's `ensureGenUiContextSupport` therefore keeps widget state away from Rust sessions. Visualizations themselves work ("ZCode Desktop Context" above); only the widget-state round trip is missing.
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
 - **Plan-mode specs outside the gate.** `plan-approval-feedback-user-message`, `plan-session-switch-restore` and `plan-file-compact-continuity` pass on Rust (E2E 2026-11-10). `plan-mode-mcp-permission` fails on Node too ("v4 权限弹窗没有出现"), so it does not cover "MCP tools in plan mode" yet; that section is backed by unit tests only.

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-fork-official-plugins-fresh-home",
+  "spec": "./test/e2e/conversation-session/conversation-session-fork-official-plugins-fresh-home.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-fork-official-plugins-fresh-home.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "title-E2E_FORK_OFFICIAL_PLUGINS",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Fixed reply: the case checks the request the agent builds (its skill listing), not the model output."
+    },
+    {
+      "id": "reply-E2E_FORK_OFFICIAL_PLUGINS",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Fixed reply: the case checks the request the agent builds (its skill listing), not the model output."
+    }
+  ]
+}

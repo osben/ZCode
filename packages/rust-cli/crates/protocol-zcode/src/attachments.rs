@@ -302,6 +302,18 @@ pub(crate) async fn content(
             };
             (body, stored, image, size)
         };
+        // Node states a local path reference's `stat` size (binary file, deferred material, an image or video too
+        // large to inline), so Share's stat of the same file agrees with the chip.
+        let size = match (&body, size) {
+            (AttachedBody::PathReference { .. }, None) if !is_uri_ref(&attachment.reference) => {
+                rust_cli_fs::stat(Path::new(&attachment.reference))
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|stat| stat.len)
+            }
+            (_, size) => size,
+        };
         let material = attachment.material();
         out.push(ContentBlock::File {
             file: AttachedFile {

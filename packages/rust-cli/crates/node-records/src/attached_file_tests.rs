@@ -80,7 +80,7 @@ fn every_body_round_trips() {
             original.bytes = read.original_bytes;
         }
         let stored = part("prt_1".into(), ("sess", "msg"), &original);
-        assert_eq!(from_part(&stored), Some(original));
+        assert_eq!(from_part(&stored, 0), Some(original));
     }
 }
 
@@ -90,7 +90,7 @@ fn reads_a_node_desktop_text_part() {
         "source": {"type": "file", "path": "/w/a.md", "text": {"value": "/w/a.md", "start": 0, "end": 7}},
         "metadata": {"originalUrl": "/w/a.md", "preview": {"text": "body", "truncated": false},
             "recoverability": "provider_ready", "sizeBytes": 4, "storageKind": "inline"}});
-    let file = from_part(&part).unwrap();
+    let file = from_part(&part, 0).unwrap();
     assert_eq!(file.name, "a.md");
     assert_eq!(file.reference.as_deref(), Some("/w/a.md"));
     assert_eq!(
@@ -138,7 +138,7 @@ fn a_read_desktop_text_part_has_nodes_shape() {
     );
     assert_eq!(metadata["recoverability"], "provider_ready");
     assert_eq!(metadata["sizeBytes"], 300_000);
-    assert_eq!(from_part(&part), Some(original));
+    assert_eq!(from_part(&part, 0), Some(original));
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn a_failed_text_read_is_nodes_placeholder_both_ways() {
         "source": {"type": "file", "path": "/w/gone.txt", "text": {"value": "/w/gone.txt", "start": 0, "end": 11}},
         "metadata": {"errorCode": "attachment_read_failed", "originalUrl": "/w/gone.txt",
             "recoverability": "metadata_only", "storageKind": "local_ref"}});
-    assert_eq!(from_part(&node).unwrap().body, AttachedBody::ReadFailed);
+    assert_eq!(from_part(&node, 0).unwrap().body, AttachedBody::ReadFailed);
 }
 
 #[test]
@@ -163,19 +163,22 @@ fn a_node_artifact_image_comes_back_stored_and_a_placeholder_metadata_only() {
     let artifact = json!({"type": "file", "mime": "image/png", "filename": "p.png",
         "url": "zcode-artifact://s/a", "metadata": {"artifactUri": "zcode-artifact://s/a",
             "recoverability": "provider_ready", "storageKind": "artifact", "sizeBytes": 9}});
-    let file = from_part(&artifact).unwrap();
+    let file = from_part(&artifact, 0).unwrap();
     assert_eq!(file.body, AttachedBody::Omitted);
     assert_eq!(file.reference.as_deref(), Some("zcode-artifact://s/a"));
     assert_eq!(file.stored.as_deref(), Some("zcode-artifact://s/a"));
     let placeholder = json!({"type": "file", "mime": "application/pdf", "filename": "d.pdf",
         "url": "/w/d.pdf", "metadata": {"recoverability": "metadata_only", "sizeBytes": 3}});
-    assert_eq!(from_part(&placeholder).unwrap().body, AttachedBody::Omitted);
+    assert_eq!(
+        from_part(&placeholder, 0).unwrap().body,
+        AttachedBody::Omitted
+    );
 }
 
 #[test]
 fn a_tui_image_without_a_filename_is_not_an_attachment() {
     let part = json!({"type": "file", "mime": "image/png", "url": "data:image/png;base64,iVBO"});
-    assert_eq!(from_part(&part), None);
+    assert_eq!(from_part(&part, 0), None);
 }
 
 /// An image stored in a session artifact has Node's `persistAttachmentDataUrl` shape, so Node shows its chip with a
@@ -205,7 +208,7 @@ fn a_stored_image_has_nodes_artifact_shape() {
     assert_eq!(metadata["storageKind"], "artifact");
     assert_eq!(metadata["originalUrl"], "/w/p.png");
     assert_eq!(
-        from_part(&stored),
+        from_part(&stored, 0),
         Some(AttachedFile {
             body: AttachedBody::Omitted,
             ..original
@@ -231,7 +234,7 @@ fn a_path_reference_keeps_its_note_like_node() {
         stored["metadata"]["pathReferenceText"],
         "Attached application/octet-stream: /p/a.zip\nThe file was sent by local path because x.\nUse tools."
     );
-    let back = from_part(&stored).unwrap();
+    let back = from_part(&stored, 0).unwrap();
     assert_eq!(back.body, original.body);
     assert_eq!(back.reference, original.reference);
 }
@@ -259,7 +262,7 @@ fn text_material_names_its_stored_file_like_node() {
     assert_eq!(stored["metadata"]["pathReferenceText"], note);
     // The marks are the live row's only; Node's cold chip has neither.
     assert!(!stored.to_string().contains("topic-history"));
-    let back = from_part(&stored).unwrap();
+    let back = from_part(&stored, 0).unwrap();
     assert_eq!(back.body, original.body);
     assert_eq!(
         back.reference.as_deref(),
@@ -305,7 +308,7 @@ fn a_stored_video_has_nodes_artifact_shape() {
     assert_eq!(stored["metadata"]["storageKind"], "artifact");
     assert_eq!(stored["metadata"]["recoverability"], "provider_ready");
     assert_eq!(
-        from_part(&stored),
+        from_part(&stored, 0),
         Some(AttachedFile {
             body: AttachedBody::Omitted,
             ..original
@@ -314,7 +317,7 @@ fn a_stored_video_has_nodes_artifact_shape() {
     let inline = json!({"type": "file", "mime": "video/mp4", "filename": "clip.mp4",
         "url": "data:video/mp4;base64,AAAA", "metadata": {"recoverability": "provider_ready", "sizeBytes": 3}});
     assert_eq!(
-        from_part(&inline).unwrap().body,
+        from_part(&inline, 0).unwrap().body,
         AttachedBody::Video { source }
     );
 }
@@ -325,7 +328,7 @@ fn a_node_artifact_video_comes_back_stored() {
     let part = json!({"type": "file", "mime": "video/mp4", "filename": "clip.mp4",
         "url": "zcode-artifact://s/attachment-v", "metadata": {"artifactUri": "zcode-artifact://s/attachment-v",
             "originalUrl": "/w/clip.mp4", "recoverability": "provider_ready", "storageKind": "artifact", "sizeBytes": 3}});
-    let file = from_part(&part).unwrap();
+    let file = from_part(&part, 0).unwrap();
     assert_eq!(file.body, AttachedBody::Omitted);
     assert_eq!(
         file.stored.as_deref(),
@@ -365,7 +368,7 @@ fn a_prepared_images_metadata_round_trips_like_node() {
         json!({"width": 2000, "height": 1000, "originalWidth": 4000, "originalHeight": 2000,
             "maxDimension": 2000, "resized": true, "transformedSizeBytes": 123_456})
     );
-    let back = from_part(&stored).unwrap();
+    let back = from_part(&stored, 0).unwrap();
     assert_eq!(back.image.as_deref(), Some(&resized));
     let webp = ImageInfo {
         width: None,
@@ -388,7 +391,7 @@ fn a_prepared_images_metadata_round_trips_like_node() {
         stored["metadata"]["image"],
         json!({"maxDimension": 2000, "resized": false, "transformedSizeBytes": 9})
     );
-    assert_eq!(from_part(&stored).unwrap().image.as_deref(), Some(&webp));
+    assert_eq!(from_part(&stored, 0).unwrap().image.as_deref(), Some(&webp));
 }
 
 /// Node `resolvedPlaceholderAttachment(…, "attachment_image_resize_failed")`, read back from either runtime; a web-remote
@@ -408,7 +411,7 @@ fn a_failed_image_is_nodes_placeholder_both_ways() {
     assert_eq!(metadata["errorCode"], "attachment_image_resize_failed");
     assert_eq!(metadata["recoverability"], "metadata_only");
     assert_eq!(metadata["storageKind"], "local_ref");
-    assert_eq!(from_part(&stored).unwrap(), desktop);
+    assert_eq!(from_part(&stored, 0).unwrap(), desktop);
 
     let mut remote = file(AttachedBody::ImageFailed {
         code: "attachment_image_invalid".into(),
@@ -417,7 +420,7 @@ fn a_failed_image_is_nodes_placeholder_both_ways() {
     let stored = part("prt_2".into(), ("sess", "msg"), &remote);
     assert_eq!(stored["metadata"]["storageKind"], "metadata_only");
     assert_eq!(stored["source"], Value::Null);
-    let back = from_part(&stored).unwrap();
+    let back = from_part(&stored, 0).unwrap();
     assert_eq!(back.body, remote.body);
     assert_eq!(back.stored, None);
     // Node's own part of a web-remote image (its `url` is the artifact; there is no `artifactUri`).
@@ -425,7 +428,7 @@ fn a_failed_image_is_nodes_placeholder_both_ways() {
         "metadata": {"errorCode": "attachment_image_resize_failed", "originalUrl": "zcode-artifact://s/a",
             "recoverability": "metadata_only", "storageKind": "metadata_only"}});
     assert_eq!(
-        from_part(&node).unwrap().body,
+        from_part(&node, 0).unwrap().body,
         AttachedBody::ImageFailed {
             code: "attachment_image_resize_failed".into()
         }
@@ -482,8 +485,80 @@ fn web_remote_upload_parts_match_nodes_resolved_metadata() {
         }
         // Read back by either runtime, the chip keeps Node's size.
         assert_eq!(
-            from_part(&stored).unwrap().bytes,
+            from_part(&stored, 0).unwrap().bytes,
             node["metadata"]["sizeBytes"]
         );
     }
+}
+
+/// Node's web-remote image and video resolvers return no `filename`, and `persistUserPrompt` stores the part without
+/// one (exact parts below: an artifact-backed video and image, and an inline video when Node has no artifact store).
+/// Node names the chip `filename ?? basename(url) || attachment-${index + 1}` (`attachmentMetasOfMessage`); read
+/// back, they stay App attachments with that name, their stored bytes and Node's size.
+#[test]
+fn nodes_web_remote_parts_without_a_filename_are_attachments() {
+    let video = json!({"id": "prt_1", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "video/mp4",
+        "url": "zcode-artifact://s1/vid", "metadata": {"recoverability": "provider_ready", "sizeBytes": 29,
+            "storageKind": "artifact", "artifactUri": "zcode-artifact://s1/vid"}});
+    let file = from_part(&video, 0).unwrap();
+    assert_eq!(file.name, "vid");
+    assert_eq!(file.mime, "video/mp4");
+    assert_eq!(file.bytes, 29);
+    assert_eq!(file.reference.as_deref(), Some("zcode-artifact://s1/vid"));
+    assert_eq!(file.stored.as_deref(), Some("zcode-artifact://s1/vid"));
+    let image = json!({"id": "prt_2", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "image/png",
+        "url": "zcode-artifact://s1/img", "metadata": {"recoverability": "provider_ready", "sizeBytes": 114,
+            "storageKind": "artifact", "artifactUri": "zcode-artifact://s1/img"}});
+    let file = from_part(&image, 1).unwrap();
+    assert_eq!((file.name.as_str(), file.bytes), ("img", 114));
+    assert_eq!(file.stored.as_deref(), Some("zcode-artifact://s1/img"));
+    let inline = json!({"id": "prt_3", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "video/mp4",
+        "url": "data:video/mp4;base64,AAAA", "metadata": {"recoverability": "provider_ready", "sizeBytes": 3,
+            "storageKind": "inline"}});
+    let file = from_part(&inline, 2).unwrap();
+    assert_eq!((file.name.as_str(), file.bytes), ("attachment-3", 3));
+    assert!(matches!(file.body, AttachedBody::Video { .. }));
+    assert_eq!(file.reference, None);
+}
+
+/// A Rust TUI image has no `filename` either; it is told apart by what Node never writes: an inline one has no
+/// `sizeBytes`, an artifact one carries `metadata.rustCli`. Both stay plain images.
+#[test]
+fn a_tui_artifact_image_is_not_an_attachment() {
+    let part = json!({"type": "file", "mime": "image/png", "url": "zcode-artifact://s/a", "metadata": {
+        "artifactUri": "zcode-artifact://s/a", "storageKind": "artifact", "sizeBytes": 9,
+        "rustCli": {"artifact": {"id": "a"}}}});
+    assert_eq!(from_part(&part, 0), None);
+}
+
+/// Read back through the history, an unnamed attachment takes its place among the message's file parts, a TUI image
+/// included: the second file part here is `attachment-2`.
+#[test]
+fn the_history_names_an_unnamed_attachment_by_its_place() {
+    let record = crate::row::WithParts {
+        info: json!({"id": "msg_1", "role": "user"}),
+        parts: vec![
+            json!({"type": "text", "text": "look"}),
+            json!({"type": "file", "mime": "image/png", "url": "data:image/png;base64,iVBO"}),
+            json!({"type": "file", "mime": "video/mp4", "url": "data:video/mp4;base64,AAAA",
+                "metadata": {"recoverability": "provider_ready", "sizeBytes": 3, "storageKind": "inline"}}),
+        ],
+    };
+    let messages = crate::hydrate::hydrate(&[std::borrow::Cow::Owned(record)]);
+    let [rust_cli_kernel_api::message::Message::User(user)] = messages.as_slice() else {
+        panic!("one user message: {messages:?}");
+    };
+    let names: Vec<&str> = user
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            rust_cli_kernel_api::message::ContentBlock::File { file } => Some(file.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, ["attachment-2"]);
+    assert!(matches!(
+        user.content[1],
+        rust_cli_kernel_api::message::ContentBlock::Image { .. }
+    ));
 }
