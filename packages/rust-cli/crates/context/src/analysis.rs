@@ -85,14 +85,10 @@ impl PromptAssembler {
                 .sections
                 .push(PromptSection::new("Git status", git));
         }
-        let scope = self.scope(request, &env_facts);
-        let mut loaded = scope.startup(&env_facts.platform).await;
-        if let Some(dir) = &self.config.memory_dir
-            && let Some(memory) = scope.auto_memory(dir).await
-        {
-            loaded.push(memory);
-        }
-        analysis.memory_files = loaded
+        // Fork: the same gated read as `build`, so `/context` never lists files an incognito profile excludes.
+        analysis.memory_files = self
+            .load_rule_files(request, &env_facts)
+            .await
             .into_iter()
             .filter(|file| file.globs.is_none())
             .map(|file| MemoryFile {

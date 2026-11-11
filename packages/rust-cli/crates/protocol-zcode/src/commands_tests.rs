@@ -111,4 +111,28 @@ fn an_incognito_profile_is_parsed_strictly() {
         parse(json!({"workspaceId": "/w", "incognito": profile, "worktreePreparation": {}})),
         invalid
     );
+    // Node's `.optional()` refuses an explicit null; it must not create a normal session.
+    assert_eq!(
+        parse(json!({"workspaceId": "/w", "incognito": null})),
+        invalid
+    );
+}
+
+/// Fork: a plain createSession of an existing id never runs it under a profile its row does not hold.
+#[test]
+fn an_existing_session_is_never_recreated_under_another_profile() {
+    let lockdown = Some(IncognitoProfile::LOCKDOWN);
+    let softer = Some(IncognitoProfile {
+        mcp: true,
+        ..IncognitoProfile::LOCKDOWN
+    });
+    // A new id, and a repeat with the same profile (a persisted prewarm), go through.
+    assert!(!recreate_conflict(None, lockdown));
+    assert!(!recreate_conflict(None, None));
+    assert!(!recreate_conflict(Some(None), None));
+    assert!(!recreate_conflict(Some(lockdown), lockdown));
+    // Another profile, or absent against present, is refused.
+    assert!(recreate_conflict(Some(lockdown), softer));
+    assert!(recreate_conflict(Some(lockdown), None));
+    assert!(recreate_conflict(Some(None), lockdown));
 }

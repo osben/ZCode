@@ -101,7 +101,7 @@ fn decode(row: &Row) -> rusqlite::Result<SessionRow> {
         last_outcome: nonempty(row.get("last_outcome")?),
         // Fork: the column comes from Node's fork migration; a database without it has normal sessions only.
         incognito: match row.as_ref().column_index("fork_incognito") {
-            Ok(index) => row.get(index)?,
+            Ok(index) => stored_incognito(row.get_ref(index)?),
             Err(_) => None,
         },
     })
@@ -123,9 +123,20 @@ pub fn incognito(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>
         return Ok(None);
     }
     conn.prepare_cached("select fork_incognito from session where id = ?")?
-        .query_row([id], |row| row.get(0))
+        .query_row([id], |row| row.get_ref(0).map(stored_incognito))
         .optional()
         .map(Option::flatten)
+}
+
+/// Fork: `fork_incognito` as text. A value that is not text (a BLOB, a number) is still present, so it reads as an
+/// unparseable profile, i.e. lockdown (Node `parseStoredIncognitoProfile`), instead of failing the whole row.
+fn stored_incognito(value: rusqlite::types::ValueRef<'_>) -> Option<String> {
+    use rusqlite::types::ValueRef;
+    match value {
+        ValueRef::Null => None,
+        ValueRef::Text(text) => Some(String::from_utf8_lossy(text).into_owned()),
+        ValueRef::Integer(_) | ValueRef::Real(_) | ValueRef::Blob(_) => Some(String::new()),
+    }
 }
 
 pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<SessionRow>> {

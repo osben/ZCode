@@ -117,10 +117,28 @@ struct CreateSessionPayload {
     expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
-    /// Fork: the incognito profile (strict; parsed by [`incognito_of`]).
+    /// Fork: the incognito profile (strict; parsed by [`incognito_of`]). An explicit `null` is kept as present, so it
+    /// is refused like Node's `incognitoProfileSchema.optional()` instead of creating a normal session.
+    #[serde(default, deserialize_with = "present")]
     incognito: Option<Value>,
     /// Fork: only its presence matters here (an incognito profile cannot ride on it).
     worktree_preparation: Option<Value>,
+}
+
+/// Fork: whether a plain createSession must refuse an id that already exists. Node refuses every existing id
+/// ("sessionId already exists"). zcode-rs persists a prewarm at once (Node defers it), so a repeated create of an
+/// existing session under the same profile stays allowed; under another profile (absent differs from present) it is
+/// refused, because the row keeps its first profile and the runtime would otherwise run with one the row does not hold.
+fn recreate_conflict(
+    stored: Option<Option<IncognitoProfile>>,
+    requested: Option<IncognitoProfile>,
+) -> bool {
+    stored.is_some_and(|stored| stored != requested)
+}
+
+/// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
 }
 
 /// Fork: the requested incognito profile. An invalid profile refuses the command before any row exists, so it never
@@ -384,6 +402,43 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
         .session_id
         .as_deref()
         .map_or_else(inbox::new_session_id, SessionId::new);
+    // Fork: the existence check and the create run under the reservation gate, so a concurrent reservation or create
+    // of the same id cannot slip between them.
+    let gate = match server.reservations.acquire().await {
+        Ok(permit) => permit,
+        Err(reason) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.createSessionFailed",
+                reason.to_owned(),
+                0,
+            );
+        }
+    };
+    let stored =
+        match crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await) {
+            Ok(view) => view.map(|view| view.meta.incognito),
+            Err(_) => {
+                // No error text: a storage error can name the storage path.
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.createSessionFailed",
+                    "reading the session failed".to_owned(),
+                    0,
+                );
+            }
+        };
+    if recreate_conflict(stored, incognito) {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "sessionId already exists".to_owned(),
+            0,
+        );
+    }
     if let Some(followup) = config.followup_mode {
         server
             .followups
@@ -402,6 +457,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             incognito,
         })
         .await;
+    drop(gate);
     let refused = |message: String| {
         Ack::refused(
             &envelope.command_id,

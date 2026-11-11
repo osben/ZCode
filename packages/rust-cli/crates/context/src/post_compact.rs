@@ -7,6 +7,7 @@
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::compaction::PostCompactContext;
+use rust_cli_kernel_api::incognito::IncognitoKey;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::{ContextRequest, OrchestrationError};
 
@@ -61,6 +62,10 @@ impl PromptAssembler {
         );
         // F10：环境段与模型身份以前由压缩后下一步的上下文宣布；当步 attachment 改在输入与工具轮之后产生后，
         // 放进压缩附件，排在清单之后。
+        // Fork: incognito without `environment` announces neither the environment nor the model here either.
+        if self.excludes(&request, IncognitoKey::Environment) {
+            return Ok(out);
+        }
         let facts = self.facts(&request).await;
         if let Some(shown) = self.shown_facts(&request, facts.as_ref()).await {
             out.extend(

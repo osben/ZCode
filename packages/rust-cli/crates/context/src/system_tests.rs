@@ -281,4 +281,18 @@ fn incognito_prompt_toggles_remove_only_their_own_parts() {
     let normal_body = &normal[1].text;
     let at = normal_body.find("# Harness").unwrap();
     assert!(harness[0].text.ends_with(&normal_body[at..]));
+
+    // `--system-prompt`: the identity block follows `identity` there too (Node `identityOff`).
+    let custom = |profile: Option<IncognitoProfile>| {
+        let mut facts = facts(&tools, Surface::Interactive);
+        facts.custom = Some("CUSTOM");
+        facts.incognito = profile;
+        system_blocks(&facts)
+    };
+    let normal_custom = custom(None);
+    assert_eq!(normal_custom.len(), 2);
+    assert_eq!(normal_custom[0].text, texts::identity());
+    let locked_custom = custom(Some(IncognitoProfile::LOCKDOWN));
+    assert_eq!(locked_custom.len(), 1);
+    assert_eq!(locked_custom[0].text, "CUSTOM");
 }

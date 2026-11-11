@@ -94,6 +94,34 @@ async fn a_node_row_this_build_cannot_parse_reads_as_lockdown() {
     assert_eq!(loaded.meta.incognito, Some(IncognitoProfile::LOCKDOWN));
 }
 
+/// A value that is not text (here a BLOB) reads as lockdown like Node, instead of failing the load and the list.
+#[tokio::test]
+async fn a_non_text_value_reads_as_lockdown_and_keeps_the_list() {
+    let t = TestStore::new();
+    with_column(&t).await;
+    t.store.create(meta("sess_1", "/w", "")).await.unwrap();
+    t.connection()
+        .execute(
+            "update session set fork_incognito = x'7b7d' where id = 'sess_0'",
+            [],
+        )
+        .unwrap();
+    let loaded = t.store.load(&SessionId::new("sess_0")).await.unwrap();
+    assert_eq!(loaded.meta.incognito, Some(IncognitoProfile::LOCKDOWN));
+    let listed = t.store.list(filter()).await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(
+        listed
+            .iter()
+            .any(|row| row.id.as_str() == "sess_0" && row.incognito)
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|row| row.id.as_str() == "sess_1" && !row.incognito)
+    );
+}
+
 #[tokio::test]
 async fn a_fork_keeps_the_source_profile() {
     let t = TestStore::new();

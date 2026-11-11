@@ -205,16 +205,22 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
             .chain(facts.append)
             .collect::<Vec<_>>()
             .join("\n\n");
-        return vec![
-            SystemBlock {
+        // Fork: incognito without `identity` drops the identity block here too (Node `identityOff` precedes the
+        // custom prompt).
+        let identity = facts
+            .incognito
+            .is_none_or(|profile| profile.identity)
+            .then(|| SystemBlock {
                 text: texts::identity().to_owned(),
                 cache_control: cache(None),
-            },
-            SystemBlock {
+            });
+        return identity
+            .into_iter()
+            .chain([SystemBlock {
                 text,
                 cache_control: cache(None),
-            },
-        ];
+            }])
+            .collect();
     }
     let session: Vec<String> = session_sections(facts)
         .into_iter()
