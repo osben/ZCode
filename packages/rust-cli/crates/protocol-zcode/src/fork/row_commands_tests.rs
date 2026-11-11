@@ -47,3 +47,13 @@ fn an_edit_keeps_the_stored_quotes_unless_it_sends_its_own() {
         Some(vec![quote("new")])
     );
 }
+
+/// Node `fork-edit-retry.ts`: quotes alone are an input, so an edit that clears the text but keeps them is accepted.
+#[test]
+fn quotes_alone_are_an_edited_input() {
+    let text = compose("", &[quote("kept")]);
+    assert!(has_input(&[ContentBlock::Text { text }]));
+    assert!(!has_input(&[ContentBlock::Text {
+        text: compose("  ", &[])
+    }]));
+}

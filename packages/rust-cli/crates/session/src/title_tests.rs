@@ -420,6 +420,41 @@ async fn node_desktop_titles_skip_a_failed_turn() {
     assert_eq!(title_model.requests().len(), 1);
 }
 
+/// Fork (specs/fork-agent-runtime-selection.md, Conversation quotes): a quoted input is titled, and seeds the title
+/// request, by its typed text only (Node `titleFromInput(displayInput)`).
+#[tokio::test]
+async fn a_quoted_input_is_titled_by_its_typed_text() {
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main.clone());
+    setup.titles = titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    let quote = rust_cli_kernel_api::conversation_quote::Quote {
+        text: "QUOTED_SELECTION".to_owned(),
+        path: None,
+        sender_name: None,
+        sender_id: None,
+        message_id: None,
+        sent_at: None,
+    };
+    let text =
+        rust_cli_kernel_api::conversation_quote::compose("Explain the hook trust digest", &[quote]);
+    built.session.send(submit("c1", &text)).await;
+    let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert!(
+        seen.iter()
+            .any(|event| titled(event, "Explain the hook trust digest"))
+    );
+    let requests = title_model.requests();
+    assert!(asked_with(&requests[0], "Explain the hook trust digest"));
+    assert!(!asked_with(&requests[0], "QUOTED_SELECTION"));
+    // The turn itself still reads the quotes.
+    assert!(format!("{:?}", main.requests()[0].messages).contains("QUOTED_SELECTION"));
+}
+
 fn asked_with(request: &ModelRequest, seed: &str) -> bool {
     format!("{:?}", request.messages).contains(seed)
 }

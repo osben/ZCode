@@ -133,7 +133,12 @@ fn human_text(message: &Message) -> Option<String> {
         .content
         .iter()
         .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
+            // Fork: the title is the typed text, without its conversation quote block (Node
+            // `titleFromInput(displayInput)`).
+            ContentBlock::Text { text } => Some(
+                rust_cli_kernel_api::conversation_quote::split(text)
+                    .map_or(text.as_str(), |(typed, _)| typed),
+            ),
             _ => None,
         })
         .collect();
