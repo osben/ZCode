@@ -155,6 +155,8 @@ pub(crate) async fn sources(
         candidates,
         enabled_plugins: section.enabled_plugins,
         suppressed_builtins: section.suppressed_builtins,
+        // The app-server sets it for the desktop surface (assembly).
+        view_host: false,
     }
 }
 

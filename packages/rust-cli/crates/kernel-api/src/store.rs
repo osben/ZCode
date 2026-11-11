@@ -880,14 +880,16 @@ pub trait StoreQueries: Send + Sync {
         })
     }
 
-    /// Fork: the workspace the session's row is listed under (Node's `directory`), never the directory it runs in
-    /// (an execution worktree); `None` for an unknown session. Stores without that read answer `Unsupported`.
-    async fn session_directory(
+    /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the
+    /// `workspaceKey` of `resolveWorkspaceRefFromId`): a remote identity when the row has one, else the directory.
+    /// Never the directory it runs in (an execution worktree); `None` for an unknown session. Stores without that
+    /// read answer `Unsupported`.
+    async fn session_workspace_key(
         &self,
         _session: &SessionId,
-    ) -> Result<Option<crate::env::EnvPath>, StoreError> {
+    ) -> Result<Option<String>, StoreError> {
         Err(StoreError::Unsupported {
-            what: "session directory".to_owned(),
+            what: "session workspace key".to_owned(),
         })
     }
 

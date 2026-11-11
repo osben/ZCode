@@ -52,6 +52,7 @@ impl PromptAssembler {
     ) -> Result<Analysis, OrchestrationError> {
         let window = since_boundary(history);
         let listings = self.ports.listings.listings_for(request, window).await?;
+        let desktop = self.desktop_section(request).await?;
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(request),
@@ -63,6 +64,7 @@ impl PromptAssembler {
             append: self.prompt_overrides(request).1,
             token_budget: self.config.token_budget,
             incognito: self.incognito.get(&request.session),
+            desktop: desktop.as_deref(),
         };
         let mut analysis = Analysis {
             sections: sections(&facts),

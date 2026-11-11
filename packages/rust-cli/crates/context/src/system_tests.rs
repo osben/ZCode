@@ -17,6 +17,7 @@ fn facts<'a>(tool_names: &'a [String], surface: Surface) -> PromptFacts<'a> {
         append: None,
         token_budget: true,
         incognito: None,
+        desktop: None,
     }
 }
 
@@ -295,4 +296,88 @@ fn incognito_prompt_toggles_remove_only_their_own_parts() {
     let locked_custom = custom(Some(IncognitoProfile::LOCKDOWN));
     assert_eq!(locked_custom.len(), 1);
     assert_eq!(locked_custom[0].text, "CUSTOM");
+}
+
+/// Fork: Node's desktop section closes the static block (Node's stable system message: identity body, then the
+/// section), before the session sections; the block is then cached per session, like Node's stable message.
+#[test]
+fn the_desktop_section_closes_the_static_block() {
+    let tools = names(&["Skill"]);
+    let plain = system_blocks(&facts(&tools, Surface::Interactive));
+    let mut desktop = facts(&tools, Surface::Interactive);
+    let text = crate::desktop::section(None);
+    desktop.desktop = Some(&text);
+    let blocks = system_blocks(&desktop);
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[0], plain[0]);
+    assert_eq!(blocks[1].text, format!("{}\n\n{text}", plain[1].text));
+    assert_eq!(blocks[1].cache_control, cache(None));
+    assert_eq!(plain[1].cache_control, cache(Some("global")));
+    assert_eq!(blocks[2], plain[2]);
+    assert!(!blocks[2].text.contains("# ZCode Desktop Context"));
+    let named: Vec<&str> = sections(&desktop)
+        .iter()
+        .map(|section| section.name)
+        .collect();
+    assert_eq!(
+        &named[..3],
+        [
+            "Core instructions",
+            "ZCode Desktop Context",
+            "Communication"
+        ]
+    );
+}
+
+/// Fork: like Node (`hasCustomSystemPrompt` skips the default dynamic sections), a custom prompt drops the section.
+#[test]
+fn a_custom_prompt_drops_the_desktop_section() {
+    let tools = names(&["Skill"]);
+    let mut custom = facts(&tools, Surface::Interactive);
+    custom.custom = Some("You are a terse test assistant.");
+    let text = crate::desktop::section(None);
+    custom.desktop = Some(&text);
+    let blocks = system_blocks(&custom);
+    assert!(
+        blocks
+            .iter()
+            .all(|block| !block.text.contains("# ZCode Desktop Context"))
+    );
+    assert!(
+        sections(&custom)
+            .iter()
+            .all(|section| section.name != "ZCode Desktop Context")
+    );
+}
+
+/// Fork: like Node (`harnessOff` in the context builder), an incognito profile without `harness` drops the desktop
+/// section from the request and from the `/context` sections; with `harness` it stays.
+#[test]
+fn incognito_without_harness_drops_the_desktop_section() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    let tools = names(&["Skill"]);
+    let text = crate::desktop::section(None);
+    let with = |profile: IncognitoProfile| {
+        let mut facts = facts(&tools, Surface::Interactive);
+        facts.desktop = Some(&text);
+        facts.incognito = Some(profile);
+        let blocks = system_blocks(&facts);
+        let named = sections(&facts)
+            .iter()
+            .any(|section| section.name == crate::desktop::NAME);
+        (
+            blocks
+                .iter()
+                .any(|block| block.text.contains("# ZCode Desktop Context")),
+            named,
+        )
+    };
+    assert_eq!(with(IncognitoProfile::LOCKDOWN), (false, false));
+    assert_eq!(
+        with(IncognitoProfile {
+            harness: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+        (true, true)
+    );
 }

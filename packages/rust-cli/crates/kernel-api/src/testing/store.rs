@@ -103,6 +103,8 @@ pub struct MemoryStore {
     fail_records: std::sync::atomic::AtomicBool,
     /// Fork: the next `put_record` of this kind fails ([`Self::fail_next_put_record`]).
     fail_put_kind: Mutex<Option<String>>,
+    /// Fork: rows a Node agent wrote with a `workspace_id` (a remote identity) besides their directory.
+    workspace_keys: Mutex<HashMap<SessionId, String>>,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
@@ -123,6 +125,13 @@ impl MemoryStore {
     /// Fork: the next `put_record` of `kind` fails (a storage error); other kinds and later writes work.
     pub fn fail_next_put_record(&self, kind: &str) {
         *self.fail_put_kind.lock_unpoisoned() = Some(kind.to_owned());
+    }
+
+    /// Fork: the session's row carries a Node `workspace_id` (a remote identity) besides its directory.
+    pub fn set_workspace_key(&self, session: &SessionId, key: &str) {
+        self.workspace_keys
+            .lock_unpoisoned()
+            .insert(session.clone(), key.to_owned());
     }
 
     /// Fork: the next `records` read fails (a storage error), later ones work.
@@ -801,15 +810,16 @@ impl StoreQueries for MemoryStore {
             }))
     }
 
-    async fn session_directory(
+    async fn session_workspace_key(
         &self,
         session: &SessionId,
-    ) -> Result<Option<crate::env::EnvPath>, StoreError> {
+    ) -> Result<Option<String>, StoreError> {
+        let stored = self.workspace_keys.lock_unpoisoned().get(session).cloned();
         Ok(self
             .sessions
             .lock_unpoisoned()
             .get(session)
-            .map(|(meta, _)| meta.workspace.root.clone()))
+            .map(|(meta, _)| stored.unwrap_or_else(|| meta.workspace.root.as_str().to_owned())))
     }
 
     async fn set_execution_worktree(
