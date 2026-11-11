@@ -5,6 +5,7 @@
 
 use rust_cli_base::sync::LockUnpoisoned;
 use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -19,6 +20,7 @@ use rust_cli_kernel_api::permission::PermissionMode;
 use crate::definitions::AgentDefinition;
 use crate::doing::Doing;
 use crate::report::{Ending, Report};
+use crate::routes::Routes;
 
 /// 发给某个子代理的一条通知：它派生的后台子代理结束了。
 #[derive(Debug, Clone)]
@@ -125,8 +127,30 @@ impl LiveAgent {
 
 pub(crate) type Agents = BTreeMap<AgentId, LiveAgent>;
 
+/// Fork: what the Live lock guards: the agents, and the registry of child-session notice forwarders that decides by
+/// them (`routes`, specs/fork-rust-agent-parity.md, "After a restart, and on a remote executor").
+#[derive(Default)]
+pub(crate) struct State {
+    agents: Agents,
+    routes: Routes,
+}
+
+impl Deref for State {
+    type Target = Agents;
+
+    fn deref(&self) -> &Agents {
+        &self.agents
+    }
+}
+
+impl DerefMut for State {
+    fn deref_mut(&mut self) -> &mut Agents {
+        &mut self.agents
+    }
+}
+
 pub(crate) struct Live {
-    agents: Mutex<Agents>,
+    agents: Mutex<State>,
     clock: Arc<dyn Clock>,
     /// 启动顺序的计数（列表按它排序）。
     order: AtomicU64,
@@ -144,16 +168,24 @@ impl Live {
         }
     }
 
-    fn agents(&self) -> MutexGuard<'_, Agents> {
+    fn agents(&self) -> MutexGuard<'_, State> {
         self.agents.lock_unpoisoned()
     }
 
     /// 改动条目：锁里改完、记好时刻，放锁后再通知（订阅方收到通知后去查，一定看得到这次改动）。
     fn change<R>(&self, work: impl FnOnce(&mut Agents) -> R) -> R {
+        self.change_routed(|agents, _| work(agents))
+    }
+
+    /// Fork: [`Self::change`] that also sees the forwarder registry. Every change ends with `Routes::reconcile` in the
+    /// same section, so an agent's finish wakes the forwarder that it alone kept wanted.
+    fn change_routed<R>(&self, work: impl FnOnce(&mut Agents, &mut Routes) -> R) -> R {
         let result = {
-            let mut agents = self.agents();
-            let result = work(&mut agents);
-            settle_times(&mut agents, self.clock.now_ms());
+            let mut state = self.agents();
+            let State { agents, routes } = &mut *state;
+            let result = work(agents, routes);
+            settle_times(agents, self.clock.now_ms());
+            routes.reconcile(agents);
             result
         };
         self.changes
@@ -197,6 +229,21 @@ impl Live {
     /// 在一把锁里读改（通知的路由要一次看清并改动几个条目，agents.md §5.1）。
     pub(crate) fn with<R>(&self, work: impl FnOnce(&mut Agents) -> R) -> R {
         self.change(work)
+    }
+
+    /// Fork: a delivery that decides by the forwarder registry ([`Self::with`] plus `routes`).
+    pub(crate) fn with_routes<R>(&self, work: impl FnOnce(&mut Agents, &mut Routes) -> R) -> R {
+        self.change_routed(work)
+    }
+
+    /// Fork: a registry transition (open, close, erase, claim, a forwarder's exit). It changes no agent, so it sends no
+    /// change notice; it still reconciles in the same section.
+    pub(crate) fn routes<R>(&self, work: impl FnOnce(&mut Routes) -> R) -> R {
+        let mut state = self.agents();
+        let State { agents, routes } = &mut *state;
+        let result = work(routes);
+        routes.reconcile(agents);
+        result
     }
 
     pub(crate) fn insert(&self, mut agent: LiveAgent) {

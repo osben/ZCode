@@ -41,6 +41,10 @@ pub struct NoticeEnvironment {
     changed: watch::Sender<u64>,
     /// Fork: notices pushed with [`Self::finish_in`]: a replaying subscription of another session skips them.
     owners: Arc<Mutex<Vec<(u64, SessionId)>>>,
+    /// Fork: acks wait while this is false ([`Self::hold_acks`]).
+    acks_open: watch::Sender<bool>,
+    /// Fork: acks that started (including held ones).
+    acks_started: AtomicUsize,
 }
 
 impl Default for NoticeEnvironment {
@@ -59,6 +63,8 @@ impl Default for NoticeEnvironment {
             replay: false,
             changed: watch::channel(0).0,
             owners: Arc::default(),
+            acks_open: watch::channel(true).0,
+            acks_started: AtomicUsize::new(0),
         }
     }
 }
@@ -100,6 +106,20 @@ impl NoticeEnvironment {
     pub fn finish_in(&self, session: SessionId, notice: ShellNotice) {
         self.owners.lock_unpoisoned().push((notice.seq, session));
         self.finish(notice);
+    }
+
+    /// Fork: acks wait until [`Self::release_acks`] (a subscriber is then between delivering and acknowledging).
+    pub fn hold_acks(&self) {
+        self.acks_open.send_replace(false);
+    }
+
+    pub fn release_acks(&self) {
+        self.acks_open.send_replace(true);
+    }
+
+    /// Fork: acks that started, including ones still held.
+    pub fn acks_started(&self) -> usize {
+        self.acks_started.load(Ordering::SeqCst)
     }
 
     /// Fork: notice streams handed out and not yet dropped.
@@ -284,6 +304,9 @@ impl Shell for NoticeEnvironment {
     }
 
     async fn ack_shell_notice(&self, _session: &SessionId, seq: u64) -> Result<(), EnvError> {
+        self.acks_started.fetch_add(1, Ordering::SeqCst);
+        let mut open = self.acks_open.subscribe();
+        let _ = open.wait_for(|open| *open).await;
         self.acked.lock_unpoisoned().push(seq);
         self.changed.send_modify(|count| *count += 1);
         Ok(())

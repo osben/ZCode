@@ -25,6 +25,7 @@ mod monitors;
 mod peer_send;
 mod plugin;
 mod report;
+mod routes;
 mod routing;
 mod runs;
 mod shell_notices;
@@ -148,8 +149,6 @@ pub(crate) struct Core {
     pub(crate) monitors: monitors::MonitorBoard,
     /// Fork (node_desktop): the live child runs for the child sessions' actors (side tabs).
     pub(crate) mirrors: mirror::Mirrors,
-    /// Fork: the child sessions that have a notice forwarder (one each, shell_notices.rs).
-    pub(crate) forwarders: shell_notices::Forwarders,
     pub(crate) keep_alive: bool,
     pub(crate) background_prompts: bool,
     pub(crate) fork: bool,
@@ -254,7 +253,6 @@ impl Agents {
                 hub: Hub::default(),
                 monitors: monitors::MonitorBoard::default(),
                 mirrors: mirror::Mirrors::default(),
-                forwarders: shell_notices::Forwarders::default(),
                 keep_alive: config.keep_alive,
                 background_prompts: config.background_prompts,
                 fork: config.fork,
@@ -333,8 +331,8 @@ impl AgentSignals for Signals {
         shell_notices::adopt(&self.0, meta);
     }
 
-    fn session_released(&self, session: &SessionId) {
-        shell_notices::released(&self.0, session);
+    fn session_closing(&self, session: &SessionId) {
+        shell_notices::closing(&self.0, session);
     }
 
     fn sessions_erased(&self, sessions: &[SessionId]) {

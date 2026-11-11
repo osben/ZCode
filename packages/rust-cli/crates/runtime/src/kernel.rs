@@ -66,6 +66,9 @@ impl Kernel for LocalKernel {
             turn: None,
         };
         self.ports.store.commit(&id, batch).await?;
+        // Fork: a created top-level session is open for the agents' notice forwarders, as an opened one is (after
+        // the fallible steps, in the same poll as `start`).
+        self.agents.session_opened(&meta);
         self.start(
             SessionState::created(meta, request.selection, execution, start),
             Opened::Created,
@@ -91,8 +94,6 @@ impl Kernel for LocalKernel {
         // (session crate `child_live`).
         let child_live = self.agents.child_live(session);
         let loaded = self.ports.store.load(session).await?;
-        // Fork: a reopened top-level session adopts its persisted subagent children's notices (one forwarder each).
-        self.agents.session_opened(&loaded.meta);
         // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
         // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
         // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
@@ -115,6 +116,10 @@ impl Kernel for LocalKernel {
             start,
         );
         state.child_live = child_live;
+        // Fork: a reopened top-level session adopts its persisted subagent children's notices (one forwarder each).
+        // Only here, after every step that can fail or be dropped at an await, and in the same poll as `start`: an open
+        // that fails leaves no actor and is never open for the agents, and no close can come before its actor exists.
+        self.agents.session_opened(&state.meta);
         Ok(self.start(state, Opened::Loaded))
     }
 

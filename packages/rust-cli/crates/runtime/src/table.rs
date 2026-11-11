@@ -126,8 +126,8 @@ pub(crate) struct SessionScoped {
     pub(crate) gate: Arc<PolicyGate>,
     /// WaitForMcpServers 的 declared 按会话记，会话关闭时清掉（ext.md §3.8、D34）。
     pub(crate) mcp: Arc<rust_cli_ext::McpManager>,
-    /// Fork: the agents' per-session notice forwarders (specs/fork-rust-agent-parity.md, "After a restart, and on a
-    /// remote executor").
+    /// Fork: the agents' notice forwarders follow a session's close (specs/fork-rust-agent-parity.md, "After a
+    /// restart, and on a remote executor").
     pub(crate) agents: Arc<dyn rust_cli_kernel_api::agents::AgentSignals>,
 }
 
@@ -164,7 +164,6 @@ impl SessionScoped {
         self.worktrees.forget(session);
         self.gate.release(session);
         self.mcp.release(session);
-        self.agents.session_released(session);
     }
 }
 
@@ -179,6 +178,9 @@ pub(crate) struct Closer {
 impl rust_cli_session::Released for Closer {
     /// Open → Closing（早于 SessionEnd）：从这时起打开同一个会话都等它关完，不会拿到马上要退出的 actor。
     fn closing(&self, session: &SessionId) {
+        // Fork: a top-level session is closed for the agents' notice forwarders from here, before its actor exits
+        // (a notice no live agent owns is no longer acknowledged into its Hub). Not under the session table lock.
+        self.scoped.agents.session_closing(session);
         let Some(sessions) = self.sessions.upgrade() else {
             return;
         };

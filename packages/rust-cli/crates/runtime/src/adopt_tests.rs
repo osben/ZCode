@@ -33,7 +33,13 @@ fn meta(id: &str, kind: SessionKind, parent: Option<&str>) -> SessionMeta {
 
 /// A kernel over `env` whose store holds a top-level session and one persisted subagent child of it.
 async fn kernel_with_child(env: Arc<NoticeEnvironment>) -> (LocalKernel, SessionId, SessionId) {
-    let store = Arc::new(MemoryStore::default());
+    kernel_with_child_in(env, Arc::new(MemoryStore::default())).await
+}
+
+async fn kernel_with_child_in(
+    env: Arc<NoticeEnvironment>,
+    store: Arc<MemoryStore>,
+) -> (LocalKernel, SessionId, SessionId) {
     let root = SessionId::new("sess_root");
     let child = SessionId::new("sess_subagent_agent_old");
     store
@@ -113,6 +119,69 @@ async fn closing_a_top_level_session_stops_its_childrens_forwarders() {
         "a notice stream outlived the closed session",
     )
     .await;
+}
+
+/// #7: an open that fails after the load (here its session rules cannot be read) leaves no actor, so the session is
+/// not open for the forwarders: its child is not adopted, and a child notice is not acknowledged into a Hub nobody
+/// reads.
+#[tokio::test]
+async fn a_failed_open_adopts_nothing() {
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let store = Arc::new(MemoryStore::default());
+    let (kernel, root, child) = kernel_with_child_in(env.clone(), store.clone()).await;
+    store.fail_next_session_rules();
+    assert!(
+        kernel
+            .open_session_as(&root, StartSource::Resume)
+            .await
+            .is_err()
+    );
+    env.finish_in(
+        child.clone(),
+        rust_cli_kernel_api::testing::shell_notice(1, "b1"),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!env.subscribed().contains(&child), "{:?}", env.subscribed());
+    assert!(env.acked().is_empty(), "{:?}", env.acked());
+}
+
+/// A top-level session created in this process is open for the forwarders as an opened one is: the kernel's create
+/// hands its meta to the agents too (the store already lists a child of that id here, so the hook is observable).
+#[tokio::test]
+async fn creating_a_top_level_session_runs_the_open_hook() {
+    let env = Arc::new(NoticeEnvironment::default());
+    let (kernel, _root, child) = kernel_with_child(env.clone()).await;
+    let created = SessionId::new("sess_created");
+    kernel
+        .ports
+        .store
+        .create(meta(
+            "sess_subagent_agent_new",
+            SessionKind::Subagent,
+            Some(created.as_str()),
+        ))
+        .await
+        .unwrap();
+    kernel
+        .create_session_as(
+            rust_cli_kernel_api::session_api::CreateSession {
+                id: Some(created),
+                workspace: meta("x", SessionKind::Interactive, None).workspace,
+                selection: selection(),
+                mode: PermissionMode::Default,
+                plan: false,
+            },
+            StartSource::Startup,
+        )
+        .await
+        .unwrap();
+    let new_child = SessionId::new("sess_subagent_agent_new");
+    eventually(
+        || env.subscribed().contains(&new_child),
+        "the created session's child got no forwarder",
+    )
+    .await;
+    assert!(!env.subscribed().contains(&child));
 }
 
 /// Erasing sessions makes every machine forget them (their background commands are cancelled, pending notices

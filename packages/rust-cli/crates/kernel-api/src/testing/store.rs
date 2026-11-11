@@ -97,6 +97,8 @@ pub struct MemoryStore {
     split: std::sync::atomic::AtomicBool,
     /// 下一个带 `TitleChanged` 的批次提交失败（[`Self::fail_next_title_change`]）。
     fail_title: std::sync::atomic::AtomicBool,
+    /// Fork: the next `session_rules` fails ([`Self::fail_next_session_rules`]).
+    fail_rules: std::sync::atomic::AtomicBool,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
 }
@@ -105,6 +107,11 @@ impl MemoryStore {
     /// 下一个带 `TitleChanged` 的批次整批提交失败（`Storage` 错误），之后照常（titles.md §4：改名被拒绝时它的记录也不在）。
     pub fn fail_next_title_change(&self) {
         self.fail_title.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `session_rules` read fails (`Storage`), later ones succeed: an open that fails after its load.
+    pub fn fail_next_session_rules(&self) {
+        self.fail_rules.store(true, Ordering::SeqCst);
     }
 
     /// 下一次 `load` 等到测试放行（`notify_one`）才读，之后的照常：让测试停在“会话正在打开”的窗口里（titles.md §4）。
@@ -150,6 +157,11 @@ impl MemoryStore {
     }
 
     /// 已删除的会话（修复线 F29）。
+    /// Fork: removes the session row, as `erase_session_tree` hard-deletes it.
+    pub fn erase(&self, session: &SessionId) {
+        self.sessions.lock_unpoisoned().remove(session);
+    }
+
     pub fn is_deleted(&self, session: &SessionId) -> bool {
         self.deleted.lock_unpoisoned().contains(session)
     }
@@ -540,6 +552,11 @@ impl LocalSettings for MemoryStore {
         &self,
         _session: &SessionId,
     ) -> Result<Option<crate::permission::ProjectRules>, StoreError> {
+        if self.fail_rules.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "injected session rules failure".to_owned(),
+            });
+        }
         Ok(None)
     }
 

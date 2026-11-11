@@ -152,15 +152,15 @@ pub trait AgentSignals: Send + Sync {
         }
     }
 
-    /// Fork: the kernel opened `meta` from the store. For a top-level session the agents start a notice forwarder
+    /// Fork: the kernel opened `meta` (from the store, or created it). For a top-level session the agents start a notice forwarder
     /// for each of its persisted subagent children that has none (specs/fork-rust-agent-parity.md, "After a restart,
     /// and on a remote executor"). Returns at once; the work runs in the background.
     fn session_opened(&self, _meta: &crate::store::SessionMeta) {}
 
-    /// Fork: the kernel released `session` (its actor is gone). When it is a top-level session, the forwarders of its
-    /// children that no running or parked agent owns stop; their later notices stay pending in the executor until the
-    /// session opens again.
-    fn session_released(&self, _session: &SessionId) {}
+    /// Fork: the kernel started closing `session` (before its actor exits). When it is a top-level session, the
+    /// forwarders of its children that no running or parked agent owns stop; their later notices stay pending in the
+    /// executor until the session opens again.
+    fn session_closing(&self, _session: &SessionId) {}
 
     /// Fork: these sessions were erased from the store (`session/eraseTree`). Their children's forwarders stop, even
     /// one a live agent owns, and the agents drop what they still hold for them (Node `deleteSessionTree`).

@@ -326,11 +326,14 @@ impl rust_cli_kernel_api::store::StoreQueries for GatedChildren {
         &self,
         root: &SessionId,
     ) -> Result<Vec<SessionId>, rust_cli_kernel_api::store::StoreError> {
+        // Reads first, then waits: the adoption holds what the store said before anything the test does meanwhile.
+        let read =
+            rust_cli_kernel_api::store::StoreQueries::subagent_child_ids(self.store.as_ref(), root)
+                .await;
         self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut open = self.open.subscribe();
         let _ = open.wait_for(|open| *open).await;
-        rust_cli_kernel_api::store::StoreQueries::subagent_child_ids(self.store.as_ref(), root)
-            .await
+        read
     }
 
     async fn metering(
@@ -395,6 +398,8 @@ pub(crate) struct Harness {
     pub(crate) controller: ControllerServices,
     /// 只读快照问过的压缩器（F112）：每次问的模型与档位。
     pub(crate) compactor: Arc<ContextFake>,
+    /// Fork: the top-level sessions a call opened (the kernel's open hook runs once per open, as `create_session_as`).
+    pub(crate) opened: Arc<Mutex<std::collections::HashSet<SessionId>>>,
     pub(crate) _scope: TaskScope,
 }
 
@@ -705,6 +710,7 @@ fn built_full(
         machine: machine(Arc::new(UnusedEnvironment)),
         controller: controller_services(Arc::new(UnusedEnvironment)),
         compactor,
+        opened: Arc::default(),
         _scope: scope,
     }
 }
@@ -752,18 +758,22 @@ impl Harness {
         };
         let runner = self.agents.track(Arc::new(parent));
         let session = SessionId::new(session);
-        self.store
-            .create(rust_cli_kernel_api::store::SessionMeta {
-                id: session.clone(),
-                kind: rust_cli_kernel_api::store::SessionKind::Interactive,
-                parent: None,
-                workspace: workspace(),
-                title: String::new(),
-                trace: rust_cli_kernel_api::ids::TraceId::new(session.as_str()),
-                created_at_ms: 0,
-            })
-            .await
-            .unwrap();
+        let meta = rust_cli_kernel_api::store::SessionMeta {
+            id: session.clone(),
+            kind: rust_cli_kernel_api::store::SessionKind::Interactive,
+            parent: None,
+            workspace: workspace(),
+            title: String::new(),
+            trace: rust_cli_kernel_api::ids::TraceId::new(session.as_str()),
+            created_at_ms: 0,
+        };
+        self.store.create(meta.clone()).await.unwrap();
+        // Fork: a top-level session the kernel runs a turn in was opened or created first (its open hook).
+        if !session.as_str().starts_with("sess_subagent_")
+            && self.opened.lock_unpoisoned().insert(session.clone())
+        {
+            self.agents.signals().session_opened(&meta);
+        }
         // 子会话里的调用带子代理 ID（与主循环相同）：`sess_subagent_<id>` 里的 `<id>`。
         let agent = session
             .as_str()

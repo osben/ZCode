@@ -446,7 +446,7 @@ async fn releasing_a_top_level_session_stops_an_unowned_childs_forwarder_until_i
     let signals = harness.agents.signals();
     signals.session_opened(&root_meta);
     until(|| env.live_subscriptions() == 1).await;
-    signals.session_released(&SessionId::new(ROOT));
+    signals.session_closing(&SessionId::new(ROOT));
     until(|| env.live_subscriptions() == 0).await;
     env.finish(shell_notice(1, "b1"));
     settle_tasks().await;
@@ -494,7 +494,7 @@ async fn a_running_agent_keeps_its_forwarder_after_its_top_level_session_closes(
     harness.started(1).await;
     until(|| env.live_subscriptions() == 1).await;
     let signals = harness.agents.signals();
-    signals.session_released(&SessionId::new(ROOT));
+    signals.session_closing(&SessionId::new(ROOT));
     settle_tasks().await;
     assert_eq!(env.live_subscriptions(), 1);
     env.finish(shell_notice(1, "b1"));
@@ -535,7 +535,7 @@ async fn a_release_during_adoption_starts_no_forwarder() {
     harness.children.hold();
     signals.session_opened(&root_meta);
     until(|| harness.children.reads() == 1).await;
-    signals.session_released(&SessionId::new(ROOT));
+    signals.session_closing(&SessionId::new(ROOT));
     harness.children.release();
     settle_tasks().await;
     assert!(env.subscribed().is_empty());
@@ -592,4 +592,327 @@ async fn erasing_a_tree_stops_its_forwarders_and_drops_its_hub_notices() {
             .pending(&SessionId::new(ROOT))
             .is_empty()
     );
+}
+
+// Review of 40b851df7 (PR #404): one reproduction per lifecycle finding (specs/fork-rust-agent-parity.md, "After a
+// restart, and on a remote executor"). Each failed on 40b851df7.
+
+/// Waits up to 5 s of real time (multi-thread tests).
+async fn within(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+}
+
+fn hub_count(harness: &crate::test_support::Harness, task: &str) -> usize {
+    harness
+        .agents
+        .core
+        .hub
+        .pending(&SessionId::new(ROOT))
+        .iter()
+        .filter(|agent| agent.as_str() == task)
+        .count()
+}
+
+/// Launches a background agent from `session` and returns its child session.
+async fn launch_from(harness: &crate::test_support::Harness, session: &str) -> SessionId {
+    let launched = harness
+        .call(
+            session,
+            "Agent",
+            json!({"description": "Builder", "prompt": "Build.", "run_in_background": true}),
+        )
+        .await;
+    let id = text(&launched)
+        .split("agentId: ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap()
+        .to_owned();
+    SessionId::new(format!("sess_subagent_{id}"))
+}
+
+/// #1: a release while the forwarder is between delivering and acknowledging must not let a reopen start a second
+/// consumer of the same child (it would deliver the unacknowledged notice again).
+#[tokio::test]
+async fn a_reopen_while_the_forwarder_acknowledges_starts_no_second_consumer() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = SessionId::new("sess_subagent_agent_old");
+    let root_meta = persisted(&harness, child.as_str()).await;
+    let signals = harness.agents.signals();
+    signals.session_opened(&root_meta);
+    until(|| env.live_subscriptions() == 1).await;
+    env.hold_acks();
+    env.finish_in(child.clone(), shell_notice(1, "b1"));
+    until(|| env.acks_started() == 1).await;
+    signals.session_closing(&SessionId::new(ROOT));
+    signals.session_opened(&root_meta);
+    settle_tasks().await;
+    assert_eq!(
+        hub_count(&harness, "b1"),
+        1,
+        "the notice was delivered twice"
+    );
+    env.release_acks();
+    until(|| env.acked() == [1]).await;
+    settle_tasks().await;
+    assert_eq!(hub_count(&harness, "b1"), 1);
+    assert_eq!(env.live_subscriptions(), 1);
+}
+
+/// #2: erase decides under the lock that delivery decides under (Live), so no delivery can fall between its
+/// checks and its Hub cleanup. While Live is held, erase waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn erase_waits_for_a_delivery_in_progress() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env));
+    let core = harness.agents.core.clone();
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let (free_tx, free_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        core.live.with(|_| {
+            held_tx.send(()).unwrap();
+            free_rx.recv().unwrap();
+        });
+    });
+    held_rx.recv().unwrap();
+    let signals = harness.agents.signals();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let eraser = std::thread::spawn(move || {
+        signals.sessions_erased(&[SessionId::new(ROOT)]);
+        done_tx.send(()).unwrap();
+    });
+    let finished_early = done_rx
+        .recv_timeout(std::time::Duration::from_millis(200))
+        .is_ok();
+    free_tx.send(()).unwrap();
+    holder.join().unwrap();
+    eraser.join().unwrap();
+    assert!(
+        !finished_early,
+        "erase ran while a delivery held the Live lock"
+    );
+}
+
+/// #3: erasing a child's subtree invalidates an adoption of its (still open) top-level session that read the store
+/// before the erase.
+#[tokio::test]
+async fn erasing_a_child_during_adoption_starts_no_forwarder_for_it() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = SessionId::new("sess_subagent_agent_old");
+    let root_meta = persisted(&harness, child.as_str()).await;
+    let signals = harness.agents.signals();
+    harness.children.hold();
+    signals.session_opened(&root_meta);
+    until(|| harness.children.reads() == 1).await;
+    // The store no longer has the child once it is erased; the adoption read it before.
+    harness.store.erase(&child);
+    signals.sessions_erased(std::slice::from_ref(&child));
+    harness.children.release();
+    settle_tasks().await;
+    assert!(!env.subscribed().contains(&child), "{:?}", env.subscribed());
+}
+
+/// #4: a forwarder kept at release for a running agent stops once that agent is gone, without waiting for a notice.
+#[tokio::test]
+async fn a_kept_forwarder_stops_when_its_agent_finishes_after_the_release() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    until(|| env.live_subscriptions() == 1).await;
+    harness
+        .agents
+        .signals()
+        .session_closing(&SessionId::new(ROOT));
+    settle_tasks().await;
+    assert_eq!(env.live_subscriptions(), 1);
+    gates.release(child.as_str());
+    until(|| {
+        harness
+            .agents
+            .core
+            .live
+            .background_in(&SessionId::new(ROOT))
+            .is_empty()
+    })
+    .await;
+    settle_tasks().await;
+    assert_eq!(
+        env.live_subscriptions(),
+        0,
+        "the kept forwarder outlived its agent"
+    );
+}
+
+/// #5: after `/clear` a background subagent spawns a nested one. That must not reopen the closed top-level session:
+/// a notice the nested child's finished agent cannot take stays pending, not acknowledged into an unread Hub.
+#[tokio::test]
+async fn a_nested_agent_after_clear_does_not_reopen_the_top_level_session() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    harness
+        .agents
+        .signals()
+        .session_closing(&SessionId::new(ROOT));
+    let nested = launch_from(&harness, child.as_str()).await;
+    harness.started(2).await;
+    gates.release(nested.as_str());
+    until(|| {
+        harness.agents.core.live.with(|agents| {
+            agents
+                .values()
+                .all(|agent| agent.child != nested || !agent.is_live())
+        })
+    })
+    .await;
+    env.finish_in(nested.clone(), shell_notice(7, "n7"));
+    settle_tasks().await;
+    assert!(!env.acked().contains(&7), "{:?}", env.acked());
+    assert_eq!(hub_count(&harness, "n7"), 0);
+}
+
+/// A tracing subscriber that runs `hook` once on the event named `name` (a seam for an interleaving).
+struct OnEvent {
+    name: &'static str,
+    hook: Arc<std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>>,
+    fired: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct FindEvent {
+    want: &'static str,
+    found: bool,
+}
+
+impl tracing::field::Visit for FindEvent {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "event" && value == self.want {
+            self.found = true;
+        }
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "event" && format!("{value:?}").trim_matches('"') == self.want {
+            self.found = true;
+        }
+    }
+}
+
+impl tracing::Subscriber for OnEvent {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut find = FindEvent {
+            want: self.name,
+            found: false,
+        };
+        event.record(&mut find);
+        if find.found
+            && !self.fired.swap(true, std::sync::atomic::Ordering::SeqCst)
+            && let Some(hook) = self.hook.get()
+        {
+            hook();
+        }
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// #6: a notice a kept forwarder cannot deliver, and a reopen that lands right after that refusal: the child must
+/// still get a forwarder, which delivers the notice. On 40b851df7 the refusal and the removal of the registration
+/// were two steps; the reopen in between saw the old registration and started nothing.
+#[test]
+fn a_reopen_right_after_a_refused_notice_still_delivers_it() {
+    let hook: Arc<std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>> = Arc::default();
+    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let subscriber = Arc::new(OnEvent {
+        name: "agents.subagent_notice.left_pending",
+        hook: hook.clone(),
+        fired: fired.clone(),
+    });
+    let on_start = subscriber;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .on_thread_start(move || {
+            std::mem::forget(tracing::subscriber::set_default(on_start.clone()));
+        })
+        .build()
+        .unwrap();
+    runtime.block_on(async move {
+        let gates = Gates::default();
+        let env = Arc::new(NoticeEnvironment::replaying());
+        let harness = held_with_env(&gates, false, machine(env.clone()));
+        let child = launch_from(&harness, ROOT).await;
+        harness.started(1).await;
+        within("the child got no forwarder", || {
+            env.live_subscriptions() == 1
+        })
+        .await;
+        let signals = harness.agents.signals();
+        let root_meta = rust_cli_kernel_api::store::SessionStore::load(
+            harness.store.as_ref(),
+            &SessionId::new(ROOT),
+        )
+        .await
+        .unwrap()
+        .meta;
+        signals.session_closing(&SessionId::new(ROOT));
+        gates.release(child.as_str());
+        within("the agent did not finish", || {
+            harness
+                .agents
+                .core
+                .live
+                .background_in(&SessionId::new(ROOT))
+                .is_empty()
+        })
+        .await;
+        // The reopen lands right after the refusal (on the forwarder's thread, before it unregisters).
+        let reopen = signals.clone();
+        let reopen_meta = root_meta.clone();
+        let _ = hook.set(Box::new(move || {
+            reopen.session_opened(&reopen_meta);
+            // Hands this worker's queue to another thread, so the adoption runs while the forwarder is held here.
+            tokio::task::block_in_place(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300))
+            });
+        }));
+        env.finish_in(child.clone(), shell_notice(3, "b3"));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if !fired.load(std::sync::atomic::Ordering::SeqCst) {
+            // No refusal: the forwarder had already stopped, so the notice waits; reopen now.
+            fired.store(true, std::sync::atomic::Ordering::SeqCst);
+            signals.session_opened(&root_meta);
+        }
+        within(
+            "the pending notice never reached the reopened session",
+            || hub_count(&harness, "b3") == 1 && env.acked().contains(&3),
+        )
+        .await;
+    });
 }
