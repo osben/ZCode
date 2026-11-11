@@ -59,6 +59,11 @@ impl Drafts {
         let held = self.pending.remove(session).is_some();
         if held {
             self.dropped.insert(session.to_owned());
+            tracing::info!(
+                event = "store.draft.dropped",
+                session,
+                "the draft was dropped without a row"
+            );
         }
         held
     }
@@ -219,6 +224,7 @@ fn materialize<T>(
     let out = then(&tx)?;
     tx.commit().storage()?;
     drafts.pending.remove(session.as_str());
+    tracing::info!(event = "store.draft.persisted", session = %session.as_str(), "the draft got its session row");
     Ok(out)
 }
 
