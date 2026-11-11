@@ -13,6 +13,7 @@ fn title(seq: u64) -> SequencedEvent {
         seq,
         event: KernelEvent::TitleChanged {
             title: format!("t{seq}"),
+            source: Default::default(),
         },
         revision: seq,
     }

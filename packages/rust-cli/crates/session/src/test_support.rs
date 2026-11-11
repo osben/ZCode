@@ -333,6 +333,7 @@ impl Setup {
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,
                 title_pending: self.title_pending,
+                title_source: None,
                 goal_target: self.goal_target,
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),

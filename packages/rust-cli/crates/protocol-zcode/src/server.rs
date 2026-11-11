@@ -215,6 +215,11 @@ impl Server {
             })
             .await?;
         if made.load(std::sync::atomic::Ordering::Relaxed) {
+            // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
+            let queries = self.kernel.queries();
+            if queries.is_draft(session).await.unwrap_or(false) {
+                live.sink.set_draft_probe(queries);
+            }
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(
                 "subagent-table-watch",
@@ -337,6 +342,33 @@ impl Server {
 
     async fn close_session(&self, params: &Value) -> Value {
         let session = SessionId::new(params["sessionId"].as_str().unwrap_or_default());
+        // Fork: Node `shouldCloseSessionForExpectedPersistence`. The store owns draft-ness, so a
+        // deferred close drops the draft in one locked step before anything closes; a first
+        // send that materialized it first wins and the close answers `false`.
+        // A close without the field releases a draft too: Node disposes the runtime, and a draft has nothing else.
+        let queries = self.kernel.queries();
+        let expected = params["expectedPersistence"].as_str();
+        match expected {
+            Some("deferred") | None => {
+                if queries.discard_draft(&session).await.unwrap_or(false) {
+                    let live = self.bridge.get(&session);
+                    self.bridge.close(&session);
+                    if let Some(live) = live {
+                        // Node disposes the draft's runtime; the actor's late commits find no draft.
+                        live.handle.close(EndReason::Other).await;
+                        self.announce_lifecycle(&session, "unloaded").await;
+                    }
+                    return json!({"closed": true});
+                }
+                if expected.is_some() {
+                    return json!({"closed": false});
+                }
+            }
+            Some("immediate") if queries.is_draft(&session).await.unwrap_or(false) => {
+                return json!({"closed": false});
+            }
+            _ => {}
+        }
         let open = self.bridge.get(&session).is_some();
         self.bridge.close(&session);
         if open {
@@ -451,3 +483,7 @@ impl Service for Handler {
         self.0.dispatch(method, params).await
     }
 }
+
+#[cfg(test)]
+#[path = "server_close_tests.rs"]
+mod close_tests;

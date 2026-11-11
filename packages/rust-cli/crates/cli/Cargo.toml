@@ -33,6 +33,7 @@ flate2.workspace = true
 sha2.workspace = true
 # 界面的服务端口（界面语言的写回、登录）返回 BoxFuture（docs/specs/rust-cli/tui-kit.md §2.2）；执行器下载与 `/usage` 的单飞（Shared）。
 futures-util.workspace = true
+rusqlite.workspace = true
 rust-cli-base.workspace = true
 rust-cli-env-local.workspace = true
 # 远端执行（docs/specs/rust-cli/remote-exec.md §18）：执行器模式与只给测试的 loopback。
@@ -109,6 +110,7 @@ windows-sys = { workspace = true, features = ["Win32_System_Registry"] }
 
 [dev-dependencies]
 futures-util.workspace = true
+rusqlite.workspace = true
 rust-cli-context.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 # The Node-written worktree session in tests/worktree_resume.rs.

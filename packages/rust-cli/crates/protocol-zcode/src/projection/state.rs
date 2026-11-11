@@ -196,10 +196,10 @@ pub fn input_routing(phase: Phase, followup: Followup, held: bool, verifying: bo
     }
 }
 
-pub fn meta(title: &str, generated: bool) -> Value {
+pub fn meta(title: &str, source: rust_cli_kernel_api::title::Source) -> Value {
     json!({
         "title": title,
-        "titleSource": if title.is_empty() { "default" } else if generated { "generated" } else { "custom" },
+        "titleSource": source.shown(),
     })
 }
 

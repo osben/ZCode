@@ -324,6 +324,10 @@ pub struct LoadedSession {
     /// `isAutoTitlePending`), so a later input may retry the generated title.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub title_pending: bool,
+    /// Fork: the stored `title_source`, so the session actor's view reports a renamed session as `custom` (Node
+    /// `normalizeStoredTitleSource`). `None` when the store does not keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
     /// Fork (desktop App): the stored goal row (Node `session_target`), an interrupted active stretch already counted
     /// into `time_used_seconds` (Node `recoverInterruptedSessionTargetRun`); `iteration` is not stored (0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -380,6 +384,10 @@ pub struct SessionSummary {
     /// cold fork as an ordinary session instead of inheriting its parent's project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
+    /// Fork: the stored `title_source` (`default`, `first_input`, `generated`, `custom`), which Node's cold summary
+    /// normalizes into its `titleSource`. `None` for a session the store keeps no row or no source for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<String>,
     /// Fork: the session is incognito (its row has `fork_incognito`). Only the flag is projected, never the profile.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub incognito: bool,
@@ -437,6 +445,17 @@ pub struct SessionPage {
     /// 超出 `limit` 还有更多会话。
     #[serde(default)]
     pub more: bool,
+}
+
+/// Fork: what [`StoreQueries::persist_for_input`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Admission {
+    /// A draft was persisted.
+    pub persisted: bool,
+    /// The first-input title it wrote over the `default` placeholder (`first_input`); `None` when the row kept its
+    /// title or the input is blank. The caller hands it to the session actor ([`crate::session_api::Command::AdoptTitle`])
+    /// before the input's hooks, as Node emits `SessionTitleUpdated` at the persistence.
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -888,6 +907,38 @@ pub trait StoreQueries: Send + Sync {
         Err(StoreError::Unsupported {
             what: "reconcile row".to_owned(),
         })
+    }
+
+    /// Fork: the session is a draft the store has not persisted yet (Node `persistence:
+    /// "deferred"`, specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"). Stores
+    /// that write every session at create answer `false`.
+    async fn is_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: drops the session if it is still a draft and answers whether it did, in one step,
+    /// so a concurrent first write either materializes before (`false`) or finds the draft gone.
+    async fn discard_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: the session is a draft that never got a row: still held, or dropped without one. The
+    /// sessions index skips it either way (Node `isDraftSession`), so a flush racing a deferred
+    /// close cannot publish it.
+    async fn is_rowless_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: the admission of a session's input (Node `admitInputCommand` →
+    /// `ensureSessionPersistedForExternalActivity(input.text)`): persists a draft with the input's first-input title,
+    /// or gives a stored row still on the `default` placeholder that title, before the input's hooks run (see
+    /// [`Admission`]); `NotFound` when a deferred close dropped it first.
+    async fn persist_for_input(
+        &self,
+        _session: &SessionId,
+        _input: &str,
+    ) -> Result<Admission, StoreError> {
+        Ok(Admission::default())
     }
 
     /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the

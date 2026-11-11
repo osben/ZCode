@@ -96,6 +96,7 @@ impl LocalKernel {
                     created_at_ms: meta.created_at_ms,
                     last_outcome: None,
                     parent: meta.parent,
+                    title_source: None,
                     incognito: meta.incognito.is_some(),
                 },
                 activity: Some(activity),

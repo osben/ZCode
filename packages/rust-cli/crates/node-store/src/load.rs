@@ -63,6 +63,10 @@ pub fn load(
             row.title_source.as_deref().unwrap_or("first_input"),
             "default" | "first_input"
         ),
+        title_source: row
+            .title_source
+            .as_deref()
+            .map(rust_cli_kernel_api::title::Source::stored),
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。
@@ -143,6 +147,7 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
             created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
             last_outcome: row.last_outcome,
             parent: row.parent_id.map(SessionId::new),
+            title_source: row.title_source,
             incognito: row.incognito.is_some(),
         })
         .collect())

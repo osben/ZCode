@@ -121,3 +121,25 @@ async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
         .unwrap();
     assert_eq!(row(&test)[..2], ["real question", "first_input"]);
 }
+
+/// Fork: a cold load carries the stored `title_source`, so the reopened session's actor and projection report a
+/// rename as `custom` (Node `normalizeStoredTitleSource`).
+#[tokio::test]
+async fn a_load_reports_the_stored_title_source() {
+    use rust_cli_kernel_api::title::Source;
+    let test = TestStore::new();
+    let session = SessionId::new("sess_source");
+    test.store
+        .create(meta("sess_source", "/w", ""))
+        .await
+        .unwrap();
+    let source = async || test.store.load(&session).await.unwrap().title_source;
+    assert_eq!(source().await, Some(Source::Default));
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", "hello there")]))
+        .await
+        .unwrap();
+    assert_eq!(source().await, Some(Source::FirstInput));
+    test.store.rename(&session, "Renamed").await.unwrap();
+    assert_eq!(source().await, Some(Source::Custom));
+}

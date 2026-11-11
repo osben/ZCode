@@ -263,6 +263,7 @@ fn enter_forks_on_the_answer_above_and_a_refusal_comes_back() {
             revision: 0,
             event: KernelEvent::TitleChanged {
                 title: "Footer work".into(),
+                source: Default::default(),
             },
         },
         0,
