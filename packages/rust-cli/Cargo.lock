@@ -2019,9 +2019,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
+ "image",
  "rusqlite",
  "rust-cli-base",
  "rust-cli-fs",
+ "rust-cli-image",
  "rust-cli-kernel-api",
  "rust-cli-node-records",
  "rust-cli-paths",

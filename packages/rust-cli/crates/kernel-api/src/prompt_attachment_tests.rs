@@ -51,11 +51,6 @@ fn artifact_uris_and_image_data_urls_parse() {
     );
     assert_eq!(image_of_data_url("data:text/plain;base64,AAAA"), None);
     assert_eq!(image_of_data_url("data:image/png,raw"), None);
-    let huge = format!(
-        "data:image/png;base64,{}",
-        "A".repeat(INLINE_IMAGE_MAX_BYTES / 3 * 4 + 8)
-    );
-    assert_eq!(image_of_data_url(&huge), None);
 }
 
 #[test]

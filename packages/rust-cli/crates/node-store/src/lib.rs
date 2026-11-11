@@ -229,7 +229,7 @@ impl SessionStore for NodeStore {
         let (mut loaded, checkpoints) = self.with_db(move |conn, _| load::load(conn, &id)).await?;
         loaded.checkpoints = node_checkpoints::resolve(self.paths.artifacts(), checkpoints).await;
         // Fork: artifact-backed App images (file IO, so not on the database thread).
-        attached_images::resolve(self, session, &mut loaded.messages).await;
+        attached_images::resolve(self, &mut loaded.messages).await;
         Ok(loaded)
     }
 
