@@ -210,6 +210,10 @@ fn validate_plan(input: &Value) -> Result<&str, String> {
 /// 把批准的计划写到计划文件（Node `writeApprovedPlanFile`，写的是原始字符串，不去空白）。
 /// 写失败只记日志，批准照常生效（Node 同样只在取消时中断）。
 async fn persist_plan(context: &ToolUseContext, plan: &str) {
+    if let Some(message) = crate::common::missing_workspace(context).await {
+        tracing::warn!(%message, "approved plan file was not written");
+        return;
+    }
     let path = match plan_file(context).await {
         Ok(path) => path,
         Err(error) => {

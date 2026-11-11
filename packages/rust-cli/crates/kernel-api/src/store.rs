@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::env::WorkspaceRef;
+use crate::env::{EnvPath, WorkspaceRef};
 use crate::ids::{
     AgentId, ArtifactId, CommandId, MessageId, OwnerEpoch, SessionId, ToolUseId, TraceId, TurnId,
 };
@@ -331,6 +331,10 @@ pub struct LoadedSession {
     /// cold model switch divider ([`crate::session_api::SessionView::message_models`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
+    /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
+    /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub execution_worktree: bool,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、
@@ -560,6 +564,16 @@ pub struct SessionTreeCounts {
     pub subagents: u64,
     pub workflow_sessions: u64,
     pub workflow_runs: u64,
+}
+
+/// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
+/// `execution_branch`, fork migration `9002_fork_session_execution_worktree`). `directory` is the row's
+/// `directory`: the parent workspace the session is listed under; `path` is where the session runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionWorktree {
+    pub directory: EnvPath,
+    pub path: EnvPath,
+    pub branch: Option<String>,
 }
 
 /// Fork: what a `session/eraseTree` deleted. `erased_roots` pairs each erased requested root with
@@ -856,6 +870,40 @@ pub trait StoreQueries: Send + Sync {
     async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
         Err(StoreError::Unsupported {
             what: "reconcile row".to_owned(),
+        })
+    }
+
+    /// Fork: the workspace the session's row is listed under (Node's `directory`), never the directory it runs in
+    /// (an execution worktree); `None` for an unknown session. Stores without that read answer `Unsupported`.
+    async fn session_directory(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<crate::env::EnvPath>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session directory".to_owned(),
+        })
+    }
+
+    /// Fork: the session's execution worktree (`None`: an ordinary session). Stores without the columns answer
+    /// `None`: they cannot hold one.
+    async fn execution_worktree(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<ExecutionWorktree>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: store the session's execution worktree, set once like Node's `coalesce` (a stored value is kept).
+    /// `NotFound` without the session row; `Unsupported` when the store has no execution columns, so the
+    /// caller never runs a worktree session that would resume in the parent.
+    async fn set_execution_worktree(
+        &self,
+        _session: &SessionId,
+        _path: &EnvPath,
+        _branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "execution worktree".to_owned(),
         })
     }
 }
