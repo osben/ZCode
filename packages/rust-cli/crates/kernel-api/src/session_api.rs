@@ -375,6 +375,10 @@ pub struct SessionView {
     /// 有回合正在运行。
     #[serde(default)]
     pub running: bool,
+    /// Fork: the running turn's id (the actor's own turn, else the mirrored subagent run's), so a projection rebuilt
+    /// while it runs keys that turn like the events that follow. `None` when idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_turn: Option<crate::ids::TurnId>,
     /// 执行环境里还没有处理完的后台命令（`ShellState::background`）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub background: Vec<ShellTaskId>,

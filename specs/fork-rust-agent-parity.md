@@ -132,6 +132,23 @@ Side-pane tab of a running subagent (Node: the child's own conversation topic st
 - `AgentSignals::child_live` returns that replay and a live receiver taken under one lock. The kernel takes it before the cold load of the child session; the actor applies it after it has served its first view, so the replayed events get sequence numbers after the projection's `last_seq`.
 - The actor turns the events into its own `TurnStarted` / `StreamDelta` / `ToolStarted` / `ToolProgress` / `ToolDone` / `MessageDone` / `TurnFinished` log events. A mirrored message goes only into the actor's in-memory history (it is already stored); one it already has is skipped, and if a streamed draft was open for it the actor emits `HistoryRewritten` so the projection rebuilds. If the live receiver falls behind, the actor resubscribes, reloads the history from the store and emits `HistoryRewritten`.
 - While a mirrored run is live the view reports `running` and the actor rejects commands that would start its own turn with `activeTurn`.
+- The view also names the running turn (`SessionView::running_turn`, owner: the session actor; its own running turn, else the mirrored run's turn). A projection rebuilt from a view while that turn runs keys the trailing turn by this id instead of the cold `<user message id>:turn:<n>`, so the events that follow (`StreamDelta`, `ToolInputStarted`, `MessageDone`, `FileChanges`, `TurnFinished`) land on the rebuilt turn. Before, a side tab whose child fell behind or got a draft-known message during a run rebuilt mid-run and then drew the reply twice (the replayed draft under the mirror's turn, the commit under the cold turn), and its turn header stayed `running` after the run ended (`TurnFinished` missed the cold header). Seen as the `conversation-session-subagent-side-tabs` SAT01 flake on Rust (`E2E_SIDE_TAB_CHILD_4_DONE` twice). Acceptance: the projection unit test (rebuild with a running turn, then delta, commit and finish give one reply row and a completed header) and SAT01 passing repeatedly on Rust.
+
+```mermaid
+sequenceDiagram
+  participant S as child session actor (turn owner)
+  participant L as Live (side tab topic)
+  participant P as projection
+  S->>L: TurnStarted(T) (mirror Started)
+  S->>L: StreamDelta(T) ...
+  Note over S: receiver fell behind / draft-known message
+  S->>L: HistoryRewritten
+  L->>S: view (running, running_turn = T, last_seq)
+  L->>P: rebuilt(view): trailing turn keyed T
+  S->>L: replayed StreamDelta(T) (seq > last_seq)
+  S->>L: MessageDone(reply) -> same row as the draft
+  S->>L: TurnFinished(T) -> header T completed
+```
 - A child session cold-loaded while its run is live ends on the run's own unanswered input. The resume repairs (interrupted tool results, the `No response requested.` sentinel) are skipped for it: the run stores its reply. Before this, the side tab showed a `No response requested.` row next to the streamed reply.
 
 ```mermaid

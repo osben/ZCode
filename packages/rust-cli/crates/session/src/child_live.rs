@@ -41,6 +41,11 @@ impl Mirror {
     pub(crate) fn running(&self) -> bool {
         self.turn.is_some()
     }
+
+    /// The mirrored run's turn while it runs (`SessionView::running_turn`).
+    pub(crate) fn turn(&self) -> Option<&TurnId> {
+        self.turn.as_ref()
+    }
 }
 
 /// The feed taken at the cold load shows a running child run.
