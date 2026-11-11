@@ -208,22 +208,35 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["sizeBytes"] = json!(file.bytes);
             metadata["storageKind"] = json!("local_ref");
         }
-        // Node `resolvedPlaceholderAttachment`: the App's MIME, the path the App sent. Node writes an unnamed one without
-        // options: no `source` and no `sizeBytes`, and an inline data URL as its `url` (`originalUrl: inline:data-url`).
+        // Node `resolvedPlaceholderAttachment`: the App's MIME, the path the App sent. `storageKind` and `originalUrl`
+        // follow that path only (`attachment.path ? "local_ref" : "metadata_only"`); without one, `originalUrl` is Node
+        // `safeAttachmentOriginalRef` of the content behind the stored `url` (`inline:data-url` for an inline data URL,
+        // which `inline:pdf` and a video's `inline:data-url` stand for). An unnamed part is Node's, written without
+        // `source`; its `sizeBytes` is written when Node gave one (a PDF's or video's parsed size).
         AttachedBody::Placeholder { code, url, .. } => {
-            let path = reference.filter(|reference| !reference.contains("://"));
+            use rust_cli_kernel_api::prompt_attachment::submitted_path;
+            let path = reference.and_then(submitted_path);
+            let stored_url = url.as_deref().or(reference).unwrap_or(unnamed_url);
             out["mime"] = json!(file.mime);
             out["filename"] = json!(file.name);
-            out["url"] = json!(url.as_deref().or(reference).unwrap_or(unnamed_url));
-            if reference.is_none() && url.as_deref().is_some_and(|url| url.starts_with("data:")) {
-                metadata["originalUrl"] = json!(INLINE_DATA_URL);
+            out["url"] = json!(stored_url);
+            let original = match path {
+                Some(path) => Some(path),
+                None if stored_url.starts_with("data:") || stored_url.starts_with("inline:") => {
+                    Some(INLINE_DATA_URL)
+                }
+                None => reference,
+            };
+            // `None` only without a reference, so nothing was written above.
+            if let Some(original) = original {
+                metadata["originalUrl"] = json!(original);
             }
             if let Some(path) = path.filter(|_| !file.unnamed) {
                 out["source"] = source(path, path);
             }
             metadata["errorCode"] = json!(code);
             metadata["recoverability"] = json!("metadata_only");
-            if !file.unnamed {
+            if !file.unnamed || file.bytes > 0 {
                 metadata["sizeBytes"] = json!(file.bytes);
             }
             metadata["storageKind"] = json!(match path {
