@@ -108,6 +108,8 @@ pub struct PromptAssembler {
     tasks: Late<Arc<dyn TaskReader>>,
     /// 连上的远端机器（R3，remote-exec.md §20.5.3）：机器清单提醒读它的快照；没有时不提醒。
     machines: Option<Arc<dyn EnvironmentRegistry>>,
+    /// Fork: Gen UI output directories already created (Node creates its one once, at context initialization).
+    gen_ui_dirs: desktop::Created,
 }
 
 /// 当步 attachment 属于哪个循环（docs/specs/rust-cli/agents.md §4.3）。
@@ -159,19 +161,31 @@ impl PromptAssembler {
             changed: None,
             tasks: Late::new(),
             machines: None,
+            gen_ui_dirs: desktop::Created::default(),
         }
     }
 
-    /// Fork: Node's desktop section for this request's session ([`ContextConfig::desktop`]), rendered. The
-    /// directory is the session's Gen UI output directory under the Host's root.
-    fn desktop_section(&self, request: &ContextRequest) -> Option<String> {
-        let desktop = self.config.desktop.as_ref()?;
+    /// Fork: Node's desktop section for this request's session ([`ContextConfig::desktop`]), rendered. A Gen UI
+    /// directory is named only after it exists: like Node (`ensureGenUiOutputDirectory`), a failure to create it fails
+    /// the request instead of sending the model elsewhere.
+    async fn desktop_section(
+        &self,
+        request: &ContextRequest,
+    ) -> Result<Option<String>, OrchestrationError> {
+        let Some(desktop) = self.config.desktop.as_ref() else {
+            return Ok(None);
+        };
         let directory = desktop::directory(
             desktop,
             request.workspace.root.as_str(),
             request.session.as_str(),
         );
-        Some(desktop::section(directory.as_deref()))
+        if let Some(directory) = &directory {
+            self.gen_ui_dirs
+                .ensure(self.ports.files.as_ref(), &request.workspace, directory)
+                .await?;
+        }
+        Ok(Some(desktop::section(directory.as_deref())))
     }
 
     /// 接上执行环境的注册表：连上、断开远端机器时发机器清单提醒（remote-exec.md §20.5.3）。
@@ -484,7 +498,7 @@ impl ContextBuilder for PromptAssembler {
             .listings
             .listings_for(&request, since_boundary(history))
             .await?;
-        let desktop = self.desktop_section(&request);
+        let desktop = self.desktop_section(&request).await?;
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(&request),

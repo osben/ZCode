@@ -1,8 +1,15 @@
 //! Fork: Node's "ZCode Desktop Context" system section (core `context/sections/desktop.ts`), byte for byte
 //! (specs/fork-rust-agent-parity.md, "ZCode Desktop Context").
 
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Mutex;
 
+use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+use rust_cli_kernel_api::env_files::EnsureDir;
+use rust_cli_kernel_api::machine::Files;
+use rust_cli_kernel_api::orchestration::OrchestrationError;
 use rust_cli_prompts::texts::{self, render};
 use sha2::{Digest, Sha256};
 
@@ -44,6 +51,35 @@ pub(crate) fn directory(
     let digest = Sha256::digest(key.as_bytes());
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
     Some(root.join(hex).to_string_lossy().into_owned())
+}
+
+/// The Gen UI output directories this process has created (the single owner of "created" for the section).
+#[derive(Default)]
+pub(crate) struct Created(Mutex<HashSet<String>>);
+
+impl Created {
+    /// Creates `directory` on the primary env once; later requests reuse it.
+    pub(crate) async fn ensure(
+        &self,
+        files: &dyn Files,
+        workspace: &WorkspaceRef,
+        directory: &str,
+    ) -> Result<(), OrchestrationError> {
+        if self.0.lock_unpoisoned().contains(directory) {
+            return Ok(());
+        }
+        let request = EnsureDir {
+            path: EnvPath::new(directory),
+        };
+        files.ensure_dir(workspace, request).await.map_err(|error| {
+            tracing::warn!(event = "context.gen_ui_dir.failed", error = %error, "creating the Gen UI output directory failed");
+            OrchestrationError::Failed {
+                message: format!("Gen UI output directory unavailable: {error}"),
+            }
+        })?;
+        self.0.lock_unpoisoned().insert(directory.to_owned());
+        Ok(())
+    }
 }
 
 #[cfg(test)]

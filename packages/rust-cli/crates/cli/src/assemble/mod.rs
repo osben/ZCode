@@ -398,6 +398,8 @@ pub(crate) async fn open(
     })
     .await;
     env_assembly::drop_remote_plugins(&deployment, &mut config.plugins);
+    // Fork: the desktop surface has the App's inline view host, so `visualize` loads (specs/fork-rust-agent-parity.md).
+    config.plugins.view_host = spec.desktop_context;
     // 会话库与产物目录按 Node 的 `storage.sessionDbPath` / `storage.dir`（用户级 → 项目级 → 环境变量，
     // config.md §2.3）：先读配置再开库。修复线 F2：以前总在缺省位置，Node 设了这些值时两边各用一个库。
     let paths = facts.storage_paths(&config.storage.settings());
@@ -578,9 +580,12 @@ pub(crate) async fn kernel(
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
     context.token_budget = spec.token_budget;
-    context.desktop = spec
-        .desktop_context
-        .then_some(DesktopContext { gen_ui_root: None });
+    // Fork: the Host decides the Gen UI output root for every agent it starts (`zcodeAgentProcessManager.ts`).
+    context.desktop = spec.desktop_context.then(|| DesktopContext {
+        gen_ui_root: env
+            .raw(rust_cli_base::names::env::ZCODE_GEN_UI_OUTPUT_ROOT)
+            .map(str::to_owned),
+    });
     context.custom_system_prompt = opened.resolved.system_prompt.clone();
     context.append_system_prompt = opened.resolved.append_system_prompt.clone();
     // 附加目录只归会话（deployment.md §21）：环境段、嵌套规则文件与权限规则读这一份。

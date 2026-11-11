@@ -51,7 +51,7 @@ impl PromptAssembler {
     ) -> Result<Analysis, OrchestrationError> {
         let window = since_boundary(history);
         let listings = self.ports.listings.listings_for(request, window).await?;
-        let desktop = self.desktop_section(request);
+        let desktop = self.desktop_section(request).await?;
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(request),
