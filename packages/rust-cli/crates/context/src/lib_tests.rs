@@ -244,3 +244,41 @@ async fn without_the_token_budget_nothing_mentions_total_tokens() {
             .all(|item| item.source != "total_tokens_reminder")
     );
 }
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): `outputStyle` and `systemPromptOverrides` drop the
+/// configured output style and the `--append-system-prompt` text; a normal session keeps them.
+#[tokio::test]
+async fn an_incognito_profile_drops_the_output_style_and_prompt_overrides() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let profiles = IncognitoProfiles::default();
+    profiles.record(&SessionId::new("locked"), Some(IncognitoProfile::LOCKDOWN));
+    let styled = {
+        let mut config = ContextConfig::new(Surface::Print);
+        config.append_system_prompt = Some("APPENDED-TEXT".to_owned());
+        config.output_style = Some(OutputStyle {
+            name: "Explanatory".to_owned(),
+            keep_coding_instructions: true,
+        });
+        assembler_with(config).with_incognito(profiles.clone())
+    };
+    let plain = assembler().with_incognito(profiles);
+    async fn system(assembler: &PromptAssembler, session: &str) -> Vec<String> {
+        let mut request = request(QuerySource::MainThread);
+        request.session = SessionId::new(session);
+        assembler
+            .build(request, &[])
+            .await
+            .unwrap()
+            .system
+            .iter()
+            .map(|block| block.text.clone())
+            .collect()
+    }
+    let normal = system(&styled, "s").await;
+    assert!(normal.iter().any(|text| text.contains("APPENDED-TEXT")));
+    assert_ne!(normal, system(&plain, "s").await);
+    assert_eq!(
+        system(&styled, "locked").await,
+        system(&plain, "locked").await
+    );
+}

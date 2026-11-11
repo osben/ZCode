@@ -318,3 +318,47 @@ async fn the_restore_exclusions_list_the_files_already_in_the_context() {
         ]
     );
 }
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): an all-off profile drops the rule files, the
+/// environment and model announcements and the git context; each key brings back only its own sections.
+#[tokio::test]
+async fn an_incognito_profile_removes_only_the_sections_it_turns_off() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let run = |profile: IncognitoProfile| async move {
+        let profiles = IncognitoProfiles::default();
+        profiles.record(&SessionId::new("s"), Some(profile));
+        let context = assembler(Arc::new(environment())).with_incognito(profiles);
+        let mut history = vec![human()];
+        step(&context, &mut history)
+            .await
+            .iter()
+            .map(|item| item.source.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        run(IncognitoProfile::LOCKDOWN).await,
+        ["total_tokens_reminder", "date"]
+    );
+    assert_eq!(
+        run(IncognitoProfile {
+            project_instructions: true,
+            ..IncognitoProfile::LOCKDOWN
+        })
+        .await,
+        ["total_tokens_reminder", "instructions", "date"]
+    );
+    assert_eq!(
+        run(IncognitoProfile {
+            environment: true,
+            ..IncognitoProfile::LOCKDOWN
+        })
+        .await,
+        [
+            "environment",
+            "model",
+            "total_tokens_reminder",
+            "session_context",
+            "date"
+        ]
+    );
+}

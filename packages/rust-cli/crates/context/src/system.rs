@@ -8,6 +8,7 @@
 //! 只实现 lean 变体：当前模型族都走 lean，非 lean 的完整段落
 //! （intro / system / doing tasks / actions / tools / tone）未覆盖，登记在 context.md §8。
 
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::model::{CacheControl, SystemBlock};
 use rust_cli_kernel_api::orchestration::ContextRequest;
 use rust_cli_prompts::models;
@@ -42,6 +43,9 @@ pub(crate) struct PromptFacts<'a> {
     pub append: Option<&'a str>,
     /// Fork: [`crate::ContextConfig::token_budget`].
     pub token_budget: bool,
+    /// Fork: the session's incognito profile (specs/fork-rust-agent-parity.md, "Incognito sessions"). None renders
+    /// the normal prompt unchanged.
+    pub incognito: Option<IncognitoProfile>,
 }
 
 fn cache(scope: Option<&str>) -> Option<CacheControl> {
@@ -80,15 +84,37 @@ fn lean_body(facts: &PromptFacts<'_>) -> String {
     } else {
         texts::intro()
     };
-    render(
+    let body = render(
         texts::lean_body(),
         &[
             ("intro", intro),
             ("security", texts::security()),
             ("reminders", reminders(facts.system_turns)),
         ],
-    )
+    );
+    match &facts.incognito {
+        None => body,
+        Some(profile) => incognito_body(profile, intro, &body),
+    }
 }
+
+/// Fork: the static section of an incognito session. `identity` owns the intro sentence and `harness` the
+/// `# Harness` block; the security notice is never toggled (Node `buildIdentitySection`).
+fn incognito_body(profile: &IncognitoProfile, intro: &str, body: &str) -> String {
+    let harness = body.find(HARNESS_HEADING).map(|at| &body[at..]);
+    let mut parts = Vec::new();
+    if profile.identity {
+        parts.push(intro);
+    }
+    parts.push(texts::security());
+    if profile.harness {
+        parts.extend(harness);
+    }
+    parts.join("\n\n")
+}
+
+/// Fork: the heading that starts the harness part of the static section (`prompts/system/lean_body.txt`).
+const HARNESS_HEADING: &str = "# Harness";
 
 /// `# Session-specific guidance`（lean 时不提 Agent 工具的用法）。
 fn guidance(facts: &PromptFacts<'_>) -> Option<String> {
@@ -108,12 +134,21 @@ fn guidance(facts: &PromptFacts<'_>) -> Option<String> {
 /// 会话段：按固定的顺序，空段跳过。每段带 `/context` 明细里的名字（context-usage.md §3.1）。
 fn session_sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
     let section = PromptSection::new;
-    let mut sections = vec![
-        section("Communication", texts::communication_lean().to_owned()),
-        section("Pronouns", texts::pronouns().to_owned()),
-        section("Caution", texts::action_caution().to_owned()),
-    ];
-    sections.extend(guidance(facts).map(|text| section("Session guidance", text)));
+    // Fork: incognito without `harness` drops the dynamic behavior (Communication, Pronouns) and the session
+    // guidance; Caution, the confirm-first paragraph, stays as the safety floor (Node `DEFAULT_CONFIRMATION_PARAGRAPH`).
+    let harness = facts.incognito.is_none_or(|profile| profile.harness);
+    let mut sections = Vec::new();
+    if harness {
+        sections.push(section(
+            "Communication",
+            texts::communication_lean().to_owned(),
+        ));
+        sections.push(section("Pronouns", texts::pronouns().to_owned()));
+    }
+    sections.push(section("Caution", texts::action_caution().to_owned()));
+    if harness {
+        sections.extend(guidance(facts).map(|text| section("Session guidance", text)));
+    }
     if let Some(dir) = facts.memory_dir {
         sections.push(section(
             "Memory",
@@ -186,11 +221,16 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
         .chain(appended(facts))
         .map(|section| section.text)
         .collect();
-    vec![
-        SystemBlock {
+    // Fork: incognito without `identity` sends no identity block (never an empty block).
+    let identity = facts.incognito.is_none_or(|profile| profile.identity);
+    let mut blocks = Vec::with_capacity(3);
+    if identity {
+        blocks.push(SystemBlock {
             text: texts::identity().to_owned(),
             cache_control: None,
-        },
+        });
+    }
+    blocks.extend([
         SystemBlock {
             text: lean_body(facts),
             cache_control: cache(Some("global")),
@@ -199,7 +239,8 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
             text: session.join("\n\n"),
             cache_control: cache(None),
         },
-    ]
+    ]);
+    blocks
 }
 
 #[cfg(test)]
