@@ -403,7 +403,14 @@ pub(crate) async fn open(
         (Some(_) | None, _) => None,
     };
     let ids = Arc::new(NodeIds::new(clock.clone()));
-    let store = Arc::new(NodeStore::new(paths.clone(), ids.clone()).with_version(VERSION));
+    let store = NodeStore::new(paths.clone(), ids.clone()).with_version(VERSION);
+    // Fork: the app-server defers prewarmed sessions like the Node desktop agent
+    // (specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"); TUI and `-p` do not.
+    let store = Arc::new(if spec.node_desktop {
+        store.with_deferred_drafts()
+    } else {
+        store
+    });
     Ok(Opened {
         deployment,
         egress,

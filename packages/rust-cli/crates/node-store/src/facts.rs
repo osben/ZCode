@@ -127,21 +127,36 @@ pub fn commit(
     batch: &FactBatch,
     ids: &NodeIds,
 ) -> Result<CommitReceipt, StoreError> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .storage()?;
+    let receipt = commit_in(&tx, session, batch, ids, ids.now_ms())?;
+    tx.commit().storage()?;
+    Ok(receipt)
+}
+
+/// [`commit`] inside a transaction the caller owns, at commit time `now`: a materializing draft
+/// replays its buffered batches with their own times before the batch that triggered it
+/// (`crate::drafts`).
+pub(crate) fn commit_in(
+    tx: &Connection,
+    session: &SessionId,
+    batch: &FactBatch,
+    ids: &NodeIds,
+    now: u64,
+) -> Result<CommitReceipt, StoreError> {
     // 本地只有一个 owner（OwnerEpoch::LOCAL）；其他值来自过期的租约。
     if batch.owner_epoch != OwnerEpoch::LOCAL {
         return Err(StoreError::StaleOwner {
             session: session.clone(),
         });
     }
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .storage()?;
-    live_session(&tx, session)?;
+    live_session(tx, session)?;
     let uuid = || ids.uuid();
     let ctx = Commit::new(
-        &tx,
+        tx,
         session.as_str(),
-        (ids.now_ms(), &uuid),
+        (now, &uuid),
         batch.command.as_ref().map(CommandId::as_str),
         &batch.facts,
         batch.turn.as_ref(),
@@ -154,7 +169,6 @@ pub fn commit(
         crate::usage::observe(&ctx, "usage.prune.failed", || crate::usage::prune(&ctx))?;
     }
     let sequence = next_sequence(&ctx)?;
-    tx.commit().storage()?;
     Ok(CommitReceipt { sequence })
 }
 

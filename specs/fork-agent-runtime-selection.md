@@ -23,7 +23,7 @@ The desktop Host always runs the Node agent (`zcode.cjs app-server --stdio`), wh
 5. **The Host tells the UI the truth about the runtime.** The Host's `hello` capability literals (`zcodeAgentService.ts` `helloConversationV4` and `zcodeAgentConnectionScope.ts`) claim fork capabilities statically. In Rust mode one fork helper, `forkAgentRuntimeHelloOverrides`, turns off the ones `zcode-rs` lacks: `incognitoSession`, `incognitoPromptToggles`. (`independentPlanState` was on this list until `zcode-rs` froze the plan switch per queued input, see `specs/fork-rust-agent-parity.md`.)
    - `durableFirstSubmission` stays claimed: `zcode-rs` implements the first-submission contract itself (reserve with `submissionPreparation`, activate with `preparedSessionId` + `expectedSubmissionId` and a `preparedActivation` result, completion on the first admitted `sendText`) and reports `durableFirstSubmission: true` from `runtime/capabilities`, so the Host gate `ensureDurableFirstSubmissionSupport` passes unchanged. The composer always uses the durable route (`SessionPane` passes the flag as a constant), so a runtime without the contract cannot be served by turning the hello flag off.
    - `zcode-rs` stores the marker in the same `session_entry` record the Node agent writes (`v4/fork_submission_preparation`, id `v4/fork_submission_preparation:<sessionId>`, data `{submissionId, status}`), so a session reserved by one runtime can be activated by the other after a switch.
-   - The UI prewarms a new task's session with a plain `createSession` before the first send. The Node agent keeps that prewarm deferred and adopts it on reservation; `zcode-rs` persists it at once, so its reservation adopts an existing session only when it has no marker, no messages, no queued input, no running turn, and the same workspace. A repeated reservation by the same submission returns the same session; any other existing session is refused with `proto.invalidPayload`.
+   - The UI prewarms a new task's session with a plain `createSession` before the first send. Both runtimes keep that prewarm deferred (not in `db.sqlite`) and persist it on reservation (see "Draft prewarm in Rust mode"); `zcode-rs` adopts an existing session only when it has no marker, no messages, no queued input, no running turn, and the same workspace. A repeated reservation by the same submission returns the same session; any other existing session is refused with `proto.invalidPayload`.
    - With the incognito flags off the UI does not offer incognito sessions.
    - Fork features that have no capability flag are refused by a Host command gate (rule 7) instead of silently degrading.
    - Phase 1 is env and sidecar only, meant for development. Phase 2 (the user-visible switch) waits until the table below has no "refused" or "lost" rows that users would hit.
@@ -45,11 +45,63 @@ Fork agent-side features write agent-owned `fork_` columns in `db.sqlite` (`apps
 | Execution worktree                                   | agent (`fork_execution_worktree`)               | `createSession` `worktreePreparation` / `executionWorktree`, `updateWorktreePreparation` | none upstream                                                                      | refused by the Host command gate                                                                                                                                                                      |
 | ACP agent binding / config / pending choice          | agent (`fork_session_acp_*`)                    | `modelSelection.providerId = "acp:<id>"`, `setExternalAgentConfigOption`                 | none upstream                                                                      | refused by the Host command gate                                                                                                                                                                      |
 | Usage rollup / detached usage                        | agent, internal                                 | none (agent-internal pruning)                                                            | none                                                                               | **lost**: usage older than 30 days and totals of deleted sessions are not rolled up. Whether Rust-side pruning also removes rows the Node agent would have rolled up is unverified.                   |
-| Draft prewarm                                        | agent (`session` row)                           | plain `createSession` before the first send                                              | none                                                                               | `zcode-rs` persists every prewarm: an abandoned new task leaves an empty `session` row (not shown in the sidebar in the 2026-11-07 run); draft cleanup returns `proto.unsupportedCommand`             |
+| Draft prewarm                                        | agent (`session` row)                           | plain `createSession` before the first send                                              | none                                                                               | implemented in `zcode-rs` (see "Draft prewarm in Rust mode"): the app-server keeps a prewarm in memory until the first send or reservation; an abandoned new task leaves no row                       |
 | File attachments                                     | agent (session artifacts + user message)        | `v4/attachment/{begin,chunk,commit,abort,read,previewSource}`, `sendText` `attachments`  | none                                                                               | implemented in `zcode-rs` (see "Attachments in Rust mode"); video, image resizing, `topic-history`/`clipboard-text` refs, Share reads (`v4/conversation/attachmentRead`/`attachmentStat`) are missing |
 | ChatGPT Plan provider (`account:chatgpt-plan`)       | agent (`chatgpt-account` access, account layer) | `modelSelection.providerId`                                                              | none                                                                               | listed but closed: `zcode-rs` has no `chatgpt-account` access, so the model has no credentials and the provider reports an `access` issue                                                             |
 
 Responses from the agent are parsed with `.parse` (unknown keys stripped) and notifications with `safeParse` (invalid ones dropped), so a Rust agent that omits fork-only fields does not crash the Host.
+
+## Draft prewarm in Rust mode
+
+The Node agent keeps a prewarmed session in memory (`record.persistence: "deferred"`, runtime `sessionPersisted = false`) until the first real activity: the first prompt turn, an admitted input, or a reservation (`ensureSessionPersistedForExternalActivity`). An abandoned draft never reaches `db.sqlite`; disposal (`deleteSession`, or `session/close` with `expectedPersistence: "deferred"` from `releaseWorkspacePreparation` and `closeDeferredDraftSession`) only drops the runtime, and a CLI restart forgets it. `zcode-rs` used to insert the `session` row at `create`, so every abandoned new task left an empty row, and `session/close` ignored `expectedPersistence`.
+
+Rule: in the app-server (`Controller::app`, the only surface with `node_desktop`), `NodeStore` defers a top-level interactive session the same way. The store owns the draft: the kernel, the session actor and the protocol keep calling the same Store methods, and the store decides whether a write is buffered, materializes the draft, or drops it. The TUI and `-p` keep writing the row at `create`.
+
+| Store method (draft session)                                    | Behavior                                                                                                                                                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create` (top-level `Interactive`, app-server)                  | no row; the draft (row input, creation time) is kept in memory                                                                                                                             |
+| `create` (subagent, fork, TUI, `-p`)                            | unchanged: the row is written at once                                                                                                                                                      |
+| `commit`, batch of config facts only                            | buffered with its commit time. Config facts: `ModelSelected`, `ModeChanged`, `ExecutionChanged`, `ProjectModeSet`                                                                          |
+| `commit`, `ProjectModeSet` inside a buffered batch              | written to the project at once (Node `setMode` → `saveProjectPermissionMode` runs for a draft too) and not replayed later, so an older buffered mode never overwrites a newer project mode |
+| `commit`, any other batch                                       | materializes: one `BEGIN IMMEDIATE` transaction inserts the row, replays the buffered batches and records with their original times, then applies this batch                               |
+| `put_record`, kind `v4/command_fact`                            | buffered (same key replaces, like the row upsert)                                                                                                                                          |
+| `put_record`, any other kind (`v4/fork_submission_preparation`) | materializes, then writes the record. This is the reservation's first write, so rule 5 adopts a prewarm by persisting it                                                                   |
+| `records`                                                       | served from the buffer                                                                                                                                                                     |
+| `rename`                                                        | materializes, then renames                                                                                                                                                                 |
+| `delete`                                                        | drops the draft and remembers its id: a later write (an actor's in-flight commit) is `NotFound` and never resurrects it                                                                    |
+| `erase_session_tree`                                            | drops drafts among the roots; the rest is erased as before                                                                                                                                 |
+| `load`, `list`, `query_sessions`, `reconcile_row`, usage reads  | see no row, like Node's `getSession`: `load` is `NotFound`, lists exclude the draft, `sessionsIndex/reconcile` answers `exists: false`, usage totals are zero                              |
+| `fork` with a draft parent                                      | `NotFound` (a draft has no messages to copy); the draft stays a draft                                                                                                                      |
+| `discard_draft` / `is_draft` (new `StoreQueries`)               | atomic check-and-drop and a read, for `session/close`; other stores answer `false`                                                                                                         |
+
+`session/close` follows Node `shouldCloseSessionForExpectedPersistence`:
+
+- `expectedPersistence: "deferred"`: if the store still holds the session as a draft, the store drops it in the same locked step, then the bridge and the actor close and the reply is `{closed: true}`. A session that materialized first (the first send won the race) gets `{closed: false}` and stays open.
+- `expectedPersistence: "immediate"`: a draft gets `{closed: false}`; a stored session closes.
+- No `expectedPersistence`: unchanged (bridge close, `{closed: true}`).
+
+```text
+UI prewarm          protocol / kernel / actor              NodeStore (app-server)            db.sqlite
+createSession  ───▶ create_session_as ───────────────────▶ create → draft (memory)            —
+setModel/setMode ─▶ actor commit [ModelSelected …] ──────▶ buffered                           —
+                    actor commit [ProjectModeSet] ───────▶ project mode written now ────────▶ local_setting
+                    command fact put_record ─────────────▶ buffered                           —
+  ├─ first send ──▶ actor commit [MessageAppended …] ───▶ materialize (one tx): ────────────▶ session row,
+  │                                                        row + buffered batches/records     entries, message
+  │                                                        + this batch; draft removed
+  ├─ reservation ─▶ put_record(fork_submission_prep.) ──▶ materialize, then marker ─────────▶ row + marker
+  ├─ dispose ─────▶ deleteSession / close(deferred) ────▶ drop + tombstone                    — (nothing)
+  │                 late actor commit ──────────────────▶ NotFound                            —
+  └─ CLI exit ────▶                                        memory gone                         — (nothing)
+```
+
+Acceptance:
+
+- An untouched prewarm, a prewarm with model and mode changes, and a disposed prewarm leave no `session` row; a fresh process (Rust or Node) does not list or load them. The project mode set on a draft is visible at once.
+- The first send materializes the session with the model and mode chosen on the draft; Node reads it with that model and mode.
+- A reservation on a prewarm (rule 5) persists it with the buffered config, and a repeated reservation is `Repeat`.
+- `session/close` with `expectedPersistence: "deferred"` drops a draft and answers `{closed: false}` for a materialized session.
+- Rust unit tests cover every row of the table; interop: a Rust-abandoned draft is absent for Node, a Rust-materialized draft reads the same on Node. E2E: `prewarming-queue` and the new-task specs on Rust are no worse than on Node.
 
 ## Attachments in Rust mode
 

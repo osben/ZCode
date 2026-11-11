@@ -858,6 +858,19 @@ pub trait StoreQueries: Send + Sync {
             what: "reconcile row".to_owned(),
         })
     }
+
+    /// Fork: the session is a draft the store has not persisted yet (Node `persistence:
+    /// "deferred"`, specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"). Stores
+    /// that write every session at create answer `false`.
+    async fn is_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: drops the session if it is still a draft and answers whether it did, in one step,
+    /// so a concurrent first write either materializes before (`false`) or finds the draft gone.
+    async fn discard_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }
 
 /// 一个存储适配器实现的全部会话端口（组装根与 runtime 的 `Ports` 用；各能力只拿自己用的那一个）。node-store 与测试的
