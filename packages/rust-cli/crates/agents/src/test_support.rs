@@ -290,9 +290,101 @@ impl QueryRunner for ParentRunner {
     }
 }
 
+/// Fork: `StoreQueries::subagent_child_ids` of the memory store, held while the gate is shut; counts the reads that
+/// started (an adoption in flight).
+pub(crate) struct GatedChildren {
+    store: Arc<MemoryStore>,
+    open: tokio::sync::watch::Sender<bool>,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl GatedChildren {
+    fn new(store: Arc<MemoryStore>) -> Self {
+        Self {
+            store,
+            open: tokio::sync::watch::channel(true).0,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn hold(&self) {
+        self.open.send_replace(false);
+    }
+
+    pub(crate) fn release(&self) {
+        self.open.send_replace(true);
+    }
+
+    pub(crate) fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::store::StoreQueries for GatedChildren {
+    async fn subagent_child_ids(
+        &self,
+        root: &SessionId,
+    ) -> Result<Vec<SessionId>, rust_cli_kernel_api::store::StoreError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut open = self.open.subscribe();
+        let _ = open.wait_for(|open| *open).await;
+        rust_cli_kernel_api::store::StoreQueries::subagent_child_ids(self.store.as_ref(), root)
+            .await
+    }
+
+    async fn metering(
+        &self,
+        session: &SessionId,
+    ) -> Result<
+        rust_cli_kernel_api::metering::SessionMetering,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        rust_cli_kernel_api::store::StoreQueries::metering(self.store.as_ref(), session).await
+    }
+
+    async fn request_stats(
+        &self,
+        session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::metering::RequestStats, rust_cli_kernel_api::store::StoreError>
+    {
+        rust_cli_kernel_api::store::StoreQueries::request_stats(self.store.as_ref(), session).await
+    }
+
+    async fn activity(
+        &self,
+        query: rust_cli_kernel_api::metering::ActivityQuery,
+    ) -> Result<rust_cli_kernel_api::metering::ActivityStats, rust_cli_kernel_api::store::StoreError>
+    {
+        rust_cli_kernel_api::store::StoreQueries::activity(self.store.as_ref(), query).await
+    }
+
+    async fn put_record(
+        &self,
+        session: &SessionId,
+        record: &rust_cli_kernel_api::store::FrontendRecord,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        rust_cli_kernel_api::store::StoreQueries::put_record(self.store.as_ref(), session, record)
+            .await
+    }
+
+    async fn records(
+        &self,
+        session: &SessionId,
+        kind: &str,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::FrontendRecord>,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        rust_cli_kernel_api::store::StoreQueries::records(self.store.as_ref(), session, kind).await
+    }
+}
+
 pub(crate) struct Harness {
     pub(crate) agents: Agents,
     pub(crate) store: Arc<MemoryStore>,
+    /// Fork: the store's `subagent_child_ids` behind a gate (adoption reads it).
+    pub(crate) children: Arc<GatedChildren>,
     pub(crate) tasks: Arc<MemoryTaskLists>,
     pub(crate) seen: Arc<Mutex<Vec<Seen>>>,
     pub(crate) absorbed: Arc<Mutex<Vec<(SessionId, String)>>>,
@@ -543,6 +635,7 @@ fn built_full(
 ) -> Harness {
     let scope = TaskScope::root("agents-test", |_| {});
     let store = Arc::new(MemoryStore::default());
+    let children = Arc::new(GatedChildren::new(store.clone()));
     let tasks = Arc::new(MemoryTaskLists::default());
     let queries = FakeQueries {
         gate,
@@ -574,7 +667,7 @@ fn built_full(
             Arc::new(UnusedEnvironment),
         )),
         tasks: tasks.clone() as Arc<dyn TaskListStore>,
-        store_queries: store.clone(),
+        store_queries: children.clone(),
         queries: Arc::new(queries),
         context: Arc::new(FixedContext(Vec::new())),
         spawner: scope.spawner(),
@@ -604,6 +697,7 @@ fn built_full(
     Harness {
         agents,
         store,
+        children,
         tasks,
         seen,
         absorbed,

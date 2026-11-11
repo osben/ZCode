@@ -237,6 +237,13 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
         .cloned()
         .collect();
     let late_failures = remove_session_directories(storage_root, &late).await;
+    // Fork: stop what the kernel still runs for the erased sessions (notice forwarders, background commands on every
+    // machine), as Node's runtime close does (specs/fork-rust-agent-parity.md, "After a restart, and on a remote
+    // executor").
+    server
+        .kernel
+        .sessions_erased(erased.erased_ids.iter().map(SessionId::new).collect())
+        .await;
     // Tell the sessions index each erased root is gone (the store returns the workspace the row
     // carried, read before the delete). Node's erase has no announcement; the Rust sessions
     // index needs one or the row lingers until the next reconcile.

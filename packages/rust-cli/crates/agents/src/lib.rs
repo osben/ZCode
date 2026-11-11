@@ -333,6 +333,14 @@ impl AgentSignals for Signals {
         shell_notices::adopt(&self.0, meta);
     }
 
+    fn session_released(&self, session: &SessionId) {
+        shell_notices::released(&self.0, session);
+    }
+
+    fn sessions_erased(&self, sessions: &[SessionId]) {
+        shell_notices::erased(&self.0, sessions);
+    }
+
     fn child_live(
         &self,
         session: &SessionId,

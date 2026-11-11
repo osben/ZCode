@@ -291,6 +291,41 @@ impl Kernel for LocalKernel {
         self.delete(session).await
     }
 
+    /// Fork: `session/eraseTree` erased these sessions (their runtimes already closed). The agents stop their notice
+    /// forwarders; every machine forgets them, cancelling their background commands and dropping pending notices, as
+    /// session close does on exit (session crate `closing.rs`) and as Node's runtime close does.
+    async fn sessions_erased(&self, sessions: Vec<SessionId>) {
+        self.agents.sessions_erased(&sessions);
+        let registry = &self.ports.environments;
+        let primary = registry.primary_machine();
+        for session in &sessions {
+            if let Err(error) = primary.commands().close_session(session, true).await {
+                tracing::warn!(%error, %session, "the environment could not forget an erased session");
+            }
+        }
+        for remote in registry.machines().machines {
+            let name = rust_cli_kernel_api::ids::MachineName::new(remote.name);
+            let Some(machine) = registry.machine(&name) else {
+                continue;
+            };
+            let reconnecting = registry.reconnecting(&name);
+            let sessions = sessions.clone();
+            let close = async move {
+                for session in &sessions {
+                    if let Err(error) = machine.commands().close_session(session, true).await {
+                        tracing::warn!(%error, %session, machine = %name, "a remote machine could not forget an erased session");
+                    }
+                }
+            };
+            // A reconnecting machine is not awaited (as in `closing.rs`): the close goes out when it is back.
+            if reconnecting {
+                drop(self.scope.spawner().spawn("forget-erased-sessions", close));
+            } else {
+                close.await;
+            }
+        }
+    }
+
     async fn session_snapshot(
         &self,
         session: &SessionId,

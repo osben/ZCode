@@ -502,7 +502,18 @@ Owners:
   - The walk stops at any other task type. A side chat or workflow child runs its own actor and is a top-level session for the agents it spawns, so its subagents are adopted when that session is opened.
   - The forwarder finds the live agent by its child session when a notice arrives, not by an id captured at spawn. If the agent runs or is parked, the notice goes to its mailbox or resumes it, as before. If no live agent owns the child (it finished, or it ran before the restart), the notice goes to the top-level session through `signals::Hub` (`routing::deliver`). The Hub keeps the notice until the session actor commits it, so a forwarder may deliver before the actor subscribes.
   - The trigger is the top-level session's open, not the child's. A child's notices are then consumed from the moment its top-level session opens, exactly like the top-level session's own notices. The root is known without walking parent links, and it works when no side tab is ever opened.
-  - Restored forwarders live for the process, like the ones `AgentTool::call` starts. Each is one idle task on the merged notice stream, which follows machines that connect later (`all_shell_notices` watches the registry). This matters because a resident remote executor may reconnect after the session opens. Ending a forwarder once its child has nothing running or pending would need every machine to answer, including one still reconnecting, so it is not done.
+  - A forwarder lives while its top-level session is open, or while a live agent (running or parked) owns its child:
+    - `Forwarders` maps each child to its top-level session and a stop token, and records each open top-level session with an open generation. `session_opened` and `AgentTool::call` register the top-level session; the kernel's release of a session (`AgentSignals::session_released`, called from `Closer::released`) removes it.
+    - On release of a top-level session T, the forwarders of T's children stop, except where a live running or parked agent owns the child. `/clear` and `/resume` close T while its background subagents keep running (agents.md §4.1.2), and those still need their command notices.
+    - A forwarder stops only between notices: its stop token is raced against the next notice, never inside deliver-and-ack. Aborting between the Hub push and the ack would leave the notice pending and deliver it twice after the next adoption.
+    - Adoption is guarded against a release that lands while it reads the store: it carries T's open generation, and each start checks "T is still open at this generation" and claims the child under the same lock.
+    - A forwarder delivers to the top-level session only while that session is open. When no live agent owns the child and T is closed, it neither delivers nor acknowledges: it stops, and the notice stays pending in the executor's ledger, like T's own notices while T is closed. The next open of T adopts the child again and delivers it. Nothing is acknowledged into the Hub of a closed or erased session.
+    - Hub(T) keeps what it already holds across T's release; T's actor commits it when T reopens.
+  - **Erase** (`session/eraseTree`, Node `deleteSessionTree`). Node closes the tree's runtimes; its `ExecutionPort.close` settles their background tasks as cancelled, and late notifications are dropped with an info log (`runtime.background_task_notification.shutdown_dropped`). Rust matches it with `Kernel::sessions_erased(ids)`, which `erase_tree` calls after the rows are gone, with every erased id:
+    - The agents crate stops the forwarders of every erased child, even one a live agent owns (`erase_tree` refuses only sessions the bridge sees running, not a background subagent of a closed session), and drops the Hub channels of erased sessions, logging the dropped count at info.
+    - The kernel closes every erased session on every machine with `forget` (`Commands::close_session(id, true)`, as session close does on exit): the children's background commands are cancelled and their pending notices dropped at the source, so a resident remote executor does not keep them. A reconnecting machine gets the close in the background, as in `closing.rs`.
+    - This is new behaviour: before, erasing a tree left a subagent child's background command running.
+  - Soft delete (`delete_session`) refuses an open session, so the release above already stopped the forwarders. A soft-deleted session is not erased; its children's notices stay pending until it is opened again.
 - **Command status (Gap B): still the execution environment's ledger, now also over the exec wire.**
   - The exec protocol gets `background.ended_background_command` (`Op::EndedBackgroundCommand`, kind `read`, capability `background`). `exec-server` answers it from the executor's own ledger. `env-remote` implements `Background::ended_background_command` with it.
   - An executor older than this op answers it per call with `unsupported`; it does not drop the connection (`RequestHeader::parse`). So no new capability bit is needed, and `env-remote` reads `unsupported` as `None` (an executor that keeps no record).
@@ -514,15 +525,22 @@ Owners:
 Event order:
 
 ```text
-kernel open_session_as(top-level T) ──► agents.session_opened(T)
-    └─ store.subagent_child_ids(T) ──► for each child C: Forwarders.start(C, root T)   (no-op if C has one)
-AgentTool::call (new child C) ───────► Forwarders.start(C, root)                       (no-op if C has one)
+kernel open_session_as(top-level T) ──► agents.session_opened(T): T open, generation g
+    └─ store.subagent_child_ids(T) ──► for each child C, under one lock:
+                                       T still open at g? ──► Forwarders.start(C, root T)   (no-op if C has one)
+AgentTool::call (new child C) ───────► T open; Forwarders.start(C, root)                    (no-op if C has one)
+kernel Closer::released(T) ──────────► agents.session_released(T): T closed;
+                                       stop forwarders of T's children without a running or parked owner
+protocol erase_tree ──► rows erased ──► kernel.sessions_erased(ids):
+                                       stop forwarders of erased children; drop Hub channels of erased ids
+                                       every machine: close_session(id, forget) ──► commands cancelled, notices dropped
 
 command of C ends on machine M ──► M's ledger (one lock): leaves `background`, notice pending, ended record
     │ merged notice stream of C (all machines, follows reconnects)
     ▼
 forwarder(C) ──► live agent owning C?  running: mailbox | parked: resume
-                                       none: Hub(T) ──► T's actor commits ──► Hub ack
+                                       none, T open: Hub(T) ──► T's actor commits ──► Hub ack
+                                       none, T closed: stop, no ack (pending on M until T reopens)
              ──► ack to M: notice gone, ended record stays on M
 
 child tab detail pane ──► backgroundBashOutput(C, task) ──► for each machine: background_command (running | pending)
@@ -537,6 +555,8 @@ Known limits (stated, not fixed):
 
 - After the forwarder's ack the notice lives only in the in-memory Hub until the top-level actor commits it. A second restart in between loses it. A live forwarder has the same window.
 - A top-level session that is never opened after a restart leaves its children's remote notices pending, as it leaves its own.
+- A forwarder kept at release for a live agent stays until its next notice finds the agent gone and T closed, or until the process ends, if no notice comes. It is one idle task per such child.
+- T's release can race a delivery: a notice pushed to Hub(T) just before T's actor exits is acknowledged at the executor and kept only in memory until T reopens. That is the window above.
 
 Acceptance:
 
@@ -545,7 +565,12 @@ Acceptance:
     - Starting a forwarder twice for one child delivers and acknowledges each notice once.
     - Opening a top-level session adopts its persisted subagent children, routes their notices to that session and acknowledges them.
     - Opening a subagent session adopts nothing, not even its own nested subagent.
-  - `runtime` `adopt_tests.rs`: the kernel's open of a top-level session starts exactly one forwarder for its persisted child (fails when the `session_opened` call is removed).
+    - Releasing a top-level session stops the forwarder of a child with no live agent (its notice stream is dropped), and reopening starts exactly one again, which delivers the pending notice.
+    - Releasing a top-level session keeps the forwarder of a child whose agent runs; its notice still reaches the mailbox.
+    - A notice of a child with no live agent while its top-level session is closed is not acknowledged and not put in the Hub.
+    - A release that lands while adoption reads the store starts no forwarder.
+    - Erasing stops the forwarders of erased children, including one a live agent owns, and drops the erased sessions' Hub notices.
+  - `runtime` `adopt_tests.rs`: the kernel's open of a top-level session starts exactly one forwarder for its persisted child (fails when the `session_opened` call is removed); closing it ends that forwarder's subscription (fails when the `session_released` call is removed); `sessions_erased` closes each erased id on the machine with `forget`.
   - `node-store` `session_tree_tests.rs`: `subagent_child_ids` returns the subagent descendants through `subagent_child` rows only. It does not return a side chat or what the side chat spawned. (The `kernel-api` memory store implements the same walk for the agents tests.)
   - `executor-host` contract test (both executor kinds): an acknowledged command answers its ended record over the wire, while `background_command` answers `None`.
   - `exec-wire`: the new op is a `read` in the `background` capability, and an executor that does not know an op answers that call with `unsupported`.

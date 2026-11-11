@@ -416,3 +416,180 @@ async fn opening_a_subagent_session_adopts_nothing() {
     settle_tasks().await;
     assert!(env.subscribed().is_empty());
 }
+
+/// A persisted child and its top-level session in the store; returns the top-level meta.
+async fn persisted(
+    harness: &crate::test_support::Harness,
+    child: &str,
+) -> rust_cli_kernel_api::store::SessionMeta {
+    use rust_cli_kernel_api::store::{SessionKind, SessionStore};
+    let root_meta = meta(ROOT, SessionKind::Interactive, None);
+    harness.store.create(root_meta.clone()).await.unwrap();
+    harness
+        .store
+        .create(meta(child, SessionKind::Subagent, Some(ROOT)))
+        .await
+        .unwrap();
+    root_meta
+}
+
+/// Releasing a top-level session stops the forwarder of a child that no live agent owns: its notice stream is
+/// dropped, and a notice that ends meanwhile stays pending. Reopening starts exactly one forwarder again, which
+/// delivers it.
+#[tokio::test]
+async fn releasing_a_top_level_session_stops_an_unowned_childs_forwarder_until_it_reopens() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = SessionId::new("sess_subagent_agent_old");
+    let root_meta = persisted(&harness, child.as_str()).await;
+    let signals = harness.agents.signals();
+    signals.session_opened(&root_meta);
+    until(|| env.live_subscriptions() == 1).await;
+    signals.session_released(&SessionId::new(ROOT));
+    until(|| env.live_subscriptions() == 0).await;
+    env.finish(shell_notice(1, "b1"));
+    settle_tasks().await;
+    assert!(env.acked().is_empty());
+    assert!(
+        harness
+            .agents
+            .core
+            .hub
+            .pending(&SessionId::new(ROOT))
+            .is_empty()
+    );
+    // Reopened: one forwarder again, and the pending notice reaches the top-level session.
+    let mut root = signals.signals(&SessionId::new(ROOT));
+    signals.session_opened(&root_meta);
+    let notice = next_notice(&mut root).await;
+    assert_eq!(notice.agent.as_str(), "b1");
+    until(|| env.acked() == [1]).await;
+    assert_eq!(env.live_subscriptions(), 1);
+    assert_eq!(env.subscribed(), [child.clone(), child]);
+}
+
+/// `/clear` closes the top-level session while its subagent keeps running: the child's forwarder stays and the
+/// notice reaches the agent's mailbox. Once the agent has finished, a later notice finds no owner and the session
+/// closed: it is neither put in the Hub nor acknowledged, and the forwarder ends.
+#[tokio::test]
+async fn a_running_agent_keeps_its_forwarder_after_its_top_level_session_closes() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let launched = harness
+        .call(
+            ROOT,
+            "Agent",
+            json!({"description": "Shell owner", "prompt": "Go."}),
+        )
+        .await;
+    let id = text(&launched)
+        .split("agentId: ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap()
+        .to_owned();
+    let child = SessionId::new(format!("sess_subagent_{id}"));
+    harness.started(1).await;
+    until(|| env.live_subscriptions() == 1).await;
+    let signals = harness.agents.signals();
+    signals.session_released(&SessionId::new(ROOT));
+    settle_tasks().await;
+    assert_eq!(env.live_subscriptions(), 1);
+    env.finish(shell_notice(1, "b1"));
+    until(|| env.acked() == [1]).await;
+    gates.release(child.as_str());
+    until(|| !harness.absorbed.lock().unwrap().is_empty()).await;
+    let absorbed = harness.absorbed.lock().unwrap().clone();
+    assert_eq!(absorbed[0].0, child);
+    assert!(absorbed[0].1.contains("<task-id>b1</task-id>"));
+    until(|| {
+        !harness
+            .agents
+            .core
+            .hub
+            .pending(&SessionId::new(ROOT))
+            .is_empty()
+    })
+    .await;
+    // The agent finished (its own notice waits in the Hub); the session is closed.
+    env.finish(shell_notice(2, "b2"));
+    until(|| env.live_subscriptions() == 0).await;
+    assert_eq!(env.acked(), [1]);
+    let pending = harness.agents.core.hub.pending(&SessionId::new(ROOT));
+    assert!(
+        pending.iter().all(|agent| agent.as_str() != "b2"),
+        "{pending:?}"
+    );
+}
+
+/// A release that lands while adoption reads the store starts no forwarder.
+#[tokio::test]
+async fn a_release_during_adoption_starts_no_forwarder() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let root_meta = persisted(&harness, "sess_subagent_agent_old").await;
+    let signals = harness.agents.signals();
+    harness.children.hold();
+    signals.session_opened(&root_meta);
+    until(|| harness.children.reads() == 1).await;
+    signals.session_released(&SessionId::new(ROOT));
+    harness.children.release();
+    settle_tasks().await;
+    assert!(env.subscribed().is_empty());
+    assert_eq!(env.live_subscriptions(), 0);
+}
+
+/// Erasing a tree stops every forwarder of it, even one a running agent owns, and drops the Hub notices the erased
+/// top-level session still held.
+#[tokio::test]
+async fn erasing_a_tree_stops_its_forwarders_and_drops_its_hub_notices() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let old = SessionId::new("sess_subagent_agent_old");
+    let root_meta = persisted(&harness, old.as_str()).await;
+    let signals = harness.agents.signals();
+    signals.session_opened(&root_meta);
+    until(|| env.live_subscriptions() == 1).await;
+    let launched = harness
+        .call(
+            ROOT,
+            "Agent",
+            json!({"description": "Shell owner", "prompt": "Go."}),
+        )
+        .await;
+    let id = text(&launched)
+        .split("agentId: ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap()
+        .to_owned();
+    let running = SessionId::new(format!("sess_subagent_{id}"));
+    harness.started(1).await;
+    until(|| env.live_subscriptions() == 2).await;
+    // The old child's notice waits in the Hub of the top-level session.
+    env.finish_in(old.clone(), shell_notice(1, "b1"));
+    until(|| {
+        harness
+            .agents
+            .core
+            .hub
+            .pending(&SessionId::new(ROOT))
+            .iter()
+            .any(|agent| agent.as_str() == "b1")
+    })
+    .await;
+    signals.sessions_erased(&[SessionId::new(ROOT), old, running]);
+    until(|| env.live_subscriptions() == 0).await;
+    assert!(
+        harness
+            .agents
+            .core
+            .hub
+            .pending(&SessionId::new(ROOT))
+            .is_empty()
+    );
+}

@@ -126,6 +126,9 @@ pub(crate) struct SessionScoped {
     pub(crate) gate: Arc<PolicyGate>,
     /// WaitForMcpServers 的 declared 按会话记，会话关闭时清掉（ext.md §3.8、D34）。
     pub(crate) mcp: Arc<rust_cli_ext::McpManager>,
+    /// Fork: the agents' per-session notice forwarders (specs/fork-rust-agent-parity.md, "After a restart, and on a
+    /// remote executor").
+    pub(crate) agents: Arc<dyn rust_cli_kernel_api::agents::AgentSignals>,
 }
 
 impl SessionScoped {
@@ -161,6 +164,7 @@ impl SessionScoped {
         self.worktrees.forget(session);
         self.gate.release(session);
         self.mcp.release(session);
+        self.agents.session_released(session);
     }
 }
 
