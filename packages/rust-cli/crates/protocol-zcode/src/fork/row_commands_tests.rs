@@ -137,7 +137,7 @@ fn a_retry_strips_only_the_intents_own_block() {
         content: vec![ContentBlock::Text {
             text: stored.compose("original"),
         }],
-        intent: Some(stored.clone()),
+        intent: Some(stored),
     };
     assert_eq!(
         quoted.typed(),
