@@ -16,7 +16,7 @@ mod supervise;
 mod watch;
 
 use rust_cli_base::sync::LockUnpoisoned;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -30,7 +30,7 @@ use rust_cli_kernel_api::env::{
 };
 use rust_cli_kernel_api::env_command::EnvOverrides;
 use rust_cli_kernel_api::env_shell::{
-    BackgroundKind, CwdScope, ShellKind, ShellNotice, ShellState,
+    BackgroundInfo, BackgroundKind, BackgroundStatus, CwdScope, ShellKind, ShellNotice, ShellState,
 };
 use rust_cli_kernel_api::ids::{OperationId, SessionId, ShellTaskId};
 use rust_cli_proc::ledger::Ledger;
@@ -211,8 +211,61 @@ pub(crate) struct SessionShell {
     /// meanwhile, like Node's `killTask`: they left `background` at the stop and their notice (if any) is recorded at
     /// the exit, which removes them from here under the same lock.
     pub stopping: BTreeMap<ShellTaskId, OperationId>,
+    /// Fork: the terminal records of the newest [`ENDED_KEPT`] background commands that ended, written at the exit
+    /// under the lock that records the notice and kept after the ack, so the desktop detail pane reads a finished
+    /// command's status whichever subscriber acknowledged its notice (`Background::ended_background_command`).
+    pub ended: VecDeque<(ShellTaskId, BackgroundInfo)>,
     pub next_seq: u64,
     pub acked: u64,
+}
+
+/// Fork: how many ended background commands a session keeps records of ([`SessionShell::ended`]). Bounded: the
+/// ledger otherwise keeps only live state (F119 removed records kept for every finished command).
+pub(crate) const ENDED_KEPT: usize = 64;
+
+impl SessionShell {
+    /// Fork: a TaskStop the ledger accepted before the exit is finalized wins over how the process ended, like Node's
+    /// `killTask`, which marks the task killed at once and for good. The supervisor may already have seen the
+    /// process exit (code 0) and be cleaning up when `stop` is accepted: the ledger then reported `killed`, and the
+    /// terminal record, the notice (for a stop that notifies) and the receipt must not turn it back into `completed`.
+    /// Called under the lock that finalizes the exit, before `stopping`/`stopped` are cleared.
+    pub(crate) fn settle_stop(
+        &self,
+        task: &ShellTaskId,
+        finish: &mut Finish,
+        killed_exit: Option<i32>,
+    ) {
+        if self.stopping.contains_key(task) || self.stopped.contains(task) {
+            finish.outcome = Outcome::Cancelled;
+            finish.exit_code = killed_exit;
+        }
+    }
+
+    /// Fork: a background command ended (both exit sites, under the lock that takes it off `background`): keep its
+    /// terminal record, newest last, at most [`ENDED_KEPT`].
+    pub(crate) fn record_ended(
+        &mut self,
+        task: &ShellTaskId,
+        command: &str,
+        background: &rust_cli_kernel_api::env_shell::BackgroundCommand,
+        output: EnvPath,
+        status: BackgroundStatus,
+    ) {
+        self.ended.retain(|(known, _)| known != task);
+        if self.ended.len() >= ENDED_KEPT {
+            self.ended.pop_front();
+        }
+        self.ended.push_back((
+            task.clone(),
+            BackgroundInfo {
+                command: command.to_owned(),
+                status,
+                kind: background.kind,
+                description: background.description.clone(),
+                output: Some(output),
+            },
+        ));
+    }
 }
 
 #[derive(Default)]

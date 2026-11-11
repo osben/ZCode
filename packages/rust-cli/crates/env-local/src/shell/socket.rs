@@ -176,7 +176,7 @@ pub(crate) async fn run(shared: Arc<Shared>, job: SocketJob) {
     let output_bytes = tokio::fs::metadata(&job.plan.output)
         .await
         .map_or(0, |meta| meta.len());
-    let finish = Finish {
+    let mut finish = Finish {
         outcome: if cancelled {
             Outcome::Cancelled
         } else {
@@ -195,8 +195,21 @@ pub(crate) async fn run(shared: Arc<Shared>, job: SocketJob) {
     state.commands.remove(&job.operation);
     if let Some(background) = job.request.kind.background() {
         let shell = state.sessions.entry(job.session.clone()).or_default();
+        // Fork: an accepted TaskStop wins over a close seen before it (same as `supervise.rs`).
+        shell.settle_stop(&job.request.task, &mut finish, None);
         shell.background.remove(&job.request.task);
         shell.stopping.remove(&job.request.task);
+        // Fork: the terminal record outlives the notice's ack (same as `supervise.rs`).
+        shell.record_ended(
+            &job.request.task,
+            &job.request.command,
+            background,
+            EnvPath::new(job.plan.output.to_string_lossy()),
+            rust_cli_kernel_api::env_shell::BackgroundStatus::ended(
+                &finish.outcome,
+                finish.exit_code,
+            ),
+        );
         // 被停掉的不记通知（同命令，shell-permissions.md §2.6）。
         if !shell.stopped.remove(&job.request.task) {
             shell.next_seq = shell.next_seq.max(shell.acked) + 1;
@@ -208,7 +221,7 @@ pub(crate) async fn run(shared: Arc<Shared>, job: SocketJob) {
                 description: background.description.clone(),
                 output: EnvPath::new(job.plan.output.to_string_lossy()),
                 outcome: finish.outcome.clone(),
-                exit_code: None,
+                exit_code: finish.exit_code,
                 kind: background.kind,
                 output_bytes,
             };

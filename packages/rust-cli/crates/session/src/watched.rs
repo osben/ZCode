@@ -18,6 +18,11 @@ impl<T> Watched<T> {
         Self(Some(Mutex::new(stream)))
     }
 
+    /// Fork: no stream; [`Watched::next`] never yields.
+    pub(crate) fn idle() -> Self {
+        Self(None)
+    }
+
     /// 下一项；流结束后永远等待（`select!` 里这一支不再就绪）。
     pub(crate) async fn next(&mut self) -> T {
         if let Some(stream) = &mut self.0 {

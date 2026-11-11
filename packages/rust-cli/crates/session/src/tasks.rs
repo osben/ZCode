@@ -298,6 +298,24 @@ pub(crate) async fn bash_output(
             break;
         }
     }
+    // Fork: after the notice's ack the ledger still keeps the command's terminal record, whichever subscriber
+    // acknowledged it (specs/fork-rust-agent-parity.md, "Subagent child sessions: one owner for background-command
+    // notices").
+    if found.is_none() {
+        for place in &places {
+            let info = place
+                .machine
+                .background()
+                .ended_background_command(key.clone())
+                .await
+                .ok()
+                .flatten();
+            if let Some(info) = info {
+                found = Some((place, Some(info)));
+                break;
+            }
+        }
+    }
     let (place, info) = found.or_else(|| places.first().map(|place| (place, None)))?;
     if info
         .as_ref()

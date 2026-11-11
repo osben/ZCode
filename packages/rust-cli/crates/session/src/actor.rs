@@ -284,10 +284,18 @@ impl Actor {
         resume_pending: Vec<MessageId>,
     ) -> Self {
         // 本机与连上的远端机器的通知（R3，remote-exec.md §20.7.2）。
-        let stream = Notices::new(rust_cli_kernel_api::machine_notices::all_shell_notices(
-            deps.machines.clone(),
-            state.meta.id.clone(),
-        ));
+        // Fork: a subagent's child session does not subscribe: the agents crate forwarder is the only consumer of its
+        // notices (agents.md §5.2), and only the agents crate runs turns there. A second subscriber raced the forwarder
+        // for the ack and, when it won, started its own turn next to the agent's run (specs/fork-rust-agent-parity.md,
+        // "Subagent child sessions: one owner for background-command notices").
+        let stream = if state.meta.kind == rust_cli_kernel_api::store::SessionKind::Subagent {
+            Notices::idle()
+        } else {
+            Notices::new(rust_cli_kernel_api::machine_notices::all_shell_notices(
+                deps.machines.clone(),
+                state.meta.id.clone(),
+            ))
+        };
         let agent_stream = AgentStream::new(deps.agents.signals(&state.meta.id));
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));

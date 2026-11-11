@@ -348,6 +348,13 @@ impl Background for LocalEnvironment {
         Ok(self.shells()?.background_command(&request))
     }
 
+    async fn ended_background_command(
+        &self,
+        request: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        Ok(self.shells()?.ended_command(&request))
+    }
+
     async fn background_elapsed(&self, request: BackgroundTask) -> Result<Option<u64>, EnvError> {
         Ok(self.shells()?.background_elapsed(&request))
     }
