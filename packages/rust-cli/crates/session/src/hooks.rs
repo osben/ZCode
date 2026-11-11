@@ -101,7 +101,7 @@ pub(crate) async fn session_end(
 }
 
 /// SessionStart 给的首条输入的命令 ID 前缀。
-pub(crate) const SESSION_START_INPUT: &str = "session-start-";
+pub(crate) const SESSION_START_INPUT: &str = rust_cli_kernel_api::session_api::SESSION_START_INPUT;
 
 impl Actor {
     /// actor 启动时：有 SessionStart hook 才进入"启动"后台工作（没有时不改变行为，无竞态）。

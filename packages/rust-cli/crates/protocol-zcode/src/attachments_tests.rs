@@ -281,7 +281,7 @@ async fn web_remote_text_material_is_written_and_referenced_by_its_file() {
         "data:text/plain;base64,{}",
         base64().encode("line 1\nline 2")
     );
-    let (body, path) = write_material(
+    let (body, path, size) = write_material(
         &store,
         &session,
         MaterialKind::ClipboardText,
@@ -297,6 +297,8 @@ async fn web_remote_text_material_is_written_and_referenced_by_its_file() {
             .unwrap(),
         b"line 1\nline 2"
     );
+    // Node's `sizeBytes` is the decoded text's length, not the data URL's or the App's declared size.
+    assert_eq!(size, 13);
     let AttachedBody::PathReference { text } = body else {
         panic!("path reference");
     };
@@ -309,7 +311,8 @@ async fn web_remote_text_material_is_written_and_referenced_by_its_file() {
         )
     );
     // Not Node's text data URL, or no local file to name: the input is refused (Node throws), never inlined.
-    let failed = |result: Result<(AttachedBody, String), RpcError>| result.unwrap_err().message;
+    let failed =
+        |result: Result<(AttachedBody, String, u64), RpcError>| result.unwrap_err().message;
     assert_eq!(
         failed(write_material(&store, &session, MaterialKind::TopicHistory, b"plain").await),
         "fault.attachment.textMaterializationFailed"
@@ -589,4 +592,164 @@ fn a_video_artifact_is_written_once_as_its_playback_copy() {
         );
     }
     assert!(!block_on(rust_cli_fs::is_file(&other)));
+}
+
+/// Session artifacts held in memory by URI, answering `find` with the stored object's length like the node store.
+struct Uploaded(std::collections::HashMap<String, Vec<u8>>);
+
+impl Uploaded {
+    fn key(session: &SessionId, id: &ArtifactId) -> String {
+        format!("{}/{}", session.as_str(), id.as_str())
+    }
+}
+
+#[async_trait::async_trait]
+impl ArtifactStore for Uploaded {
+    async fn put(
+        &self,
+        _session: &SessionId,
+        _purpose: ArtifactPurpose,
+        _media_type: String,
+        _bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, rust_cli_kernel_api::store::StoreError> {
+        unreachable!("a web-remote upload is reused, not written again")
+    }
+
+    async fn get(
+        &self,
+        artifact: &ArtifactRef,
+    ) -> Result<Vec<u8>, rust_cli_kernel_api::store::StoreError> {
+        Ok(self.0[&Self::key(&artifact.session, &artifact.id)].clone())
+    }
+
+    async fn find(
+        &self,
+        session: &SessionId,
+        id: &ArtifactId,
+    ) -> Result<Option<ArtifactRef>, rust_cli_kernel_api::store::StoreError> {
+        Ok(self
+            .0
+            .get(&Self::key(session, id))
+            .map(|content| ArtifactRef {
+                session: session.clone(),
+                id: id.clone(),
+                purpose: ArtifactPurpose::Attachment,
+                media_type: "text/plain".to_owned(),
+                size: content.len() as u64,
+            }))
+    }
+}
+
+struct UploadKernel(Arc<Uploaded>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::session_api::Kernel for UploadKernel {
+    fn queries(&self) -> Arc<dyn rust_cli_kernel_api::store::StoreQueries> {
+        unreachable!()
+    }
+
+    fn artifacts(&self) -> Option<Arc<dyn ArtifactStore>> {
+        Some(self.0.clone())
+    }
+
+    async fn create_session(
+        &self,
+        _request: rust_cli_kernel_api::session_api::CreateSession,
+    ) -> Result<SessionId, rust_cli_kernel_api::session_api::KernelError> {
+        unreachable!()
+    }
+
+    async fn open_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<
+        Arc<dyn rust_cli_kernel_api::session_api::SessionHandle>,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        unreachable!()
+    }
+
+    async fn list_sessions(
+        &self,
+        _filter: rust_cli_kernel_api::store::SessionFilter,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::SessionSummary>,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        unreachable!()
+    }
+
+    async fn delete_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<(), rust_cli_kernel_api::session_api::KernelError> {
+        unreachable!()
+    }
+}
+
+/// Node's `metadata.sizeBytes` for web-remote uploads, as Node's `resolveTurnAttachments` wrote it for these inputs: a
+/// 68-byte PNG's data URL artifact → 114 (the data URL's length, which is also the artifact Share stats), a 29-byte
+/// video's → 29 (the decoded payload). `zcode-rs` writes the same value, not the App's declared size.
+#[tokio::test]
+async fn web_remote_uploads_carry_nodes_size_bytes() {
+    use rust_cli_kernel_api::testing::{FixedClock, selection};
+    use rust_cli_protocol_core::connection::{self, Options};
+    // The same input Node's resolver was run on.
+    let png = base64()
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=")
+        .unwrap();
+    let video = b"not really a video but bytes!".to_vec();
+    let session = SessionId::new("s");
+    let image_url = format!("data:image/png;base64,{}", base64().encode(&png));
+    let video_url = format!("data:video/mp4;base64,{}", base64().encode(&video));
+    let store = Arc::new(Uploaded(
+        [
+            ("s/img".to_owned(), image_url.clone().into_bytes()),
+            ("s/vid".to_owned(), video_url.clone().into_bytes()),
+        ]
+        .into(),
+    ));
+    let scope = rust_cli_base::TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
+    let context = Arc::new(crate::context::Context::new(peer, Arc::new(FixedClock(5))));
+    let server = Server::new(
+        context,
+        Arc::new(UploadKernel(store.clone())),
+        scope.spawner(),
+        crate::server::Defaults {
+            selection: selection(),
+            mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        },
+    );
+    // The App's declared sizes are deliberately not Node's measure.
+    let refs = parse_refs(&[
+        json!({"ref": "zcode-artifact://s/img", "fileName": "dot.png", "mime": "image/png", "bytes": png.len()}),
+        json!({"ref": "zcode-artifact://s/vid", "fileName": "clip.mp4", "mime": "video/mp4", "bytes": 1}),
+    ])
+    .unwrap();
+    let blocks = content(&server, &session, "", refs).await.unwrap();
+    let files: Vec<&AttachedFile> = blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::File { file } => file,
+            other => panic!("file block expected: {other:?}"),
+        })
+        .collect();
+    assert_eq!(png.len(), 68);
+    assert_eq!(image_url.len(), 114);
+    assert!(matches!(files[0].body, AttachedBody::Image { .. }));
+    assert_eq!(files[0].stored.as_deref(), Some("zcode-artifact://s/img"));
+    assert_eq!(files[0].bytes, 114);
+    assert!(matches!(files[1].body, AttachedBody::Video { .. }));
+    assert_eq!(files[1].stored.as_deref(), Some("zcode-artifact://s/vid"));
+    assert_eq!(files[1].bytes, 29);
+    // Share's stat states the stored object (Node `statToolResultArtifact`): the image's chip and stat agree.
+    let found = store
+        .find(&session, &ArtifactId::new("img"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.size, files[0].bytes);
 }
