@@ -14,6 +14,7 @@ mod auto_mode;
 mod auxiliary;
 mod changed;
 mod config;
+mod desktop;
 mod directory;
 mod environment;
 mod input_reminders;
@@ -59,7 +60,7 @@ use rust_cli_prompts::{models, reminder};
 use serde_json::Value;
 
 pub use analysis::{Analysis, MemoryFile, PromptSection};
-pub use config::{Attribution, ContextConfig, OutputStyle, Surface};
+pub use config::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
 
 use crate::instructions::{Lookup, Memo};
 use crate::render::since_boundary;
@@ -159,6 +160,18 @@ impl PromptAssembler {
             tasks: Late::new(),
             machines: None,
         }
+    }
+
+    /// Fork: Node's desktop section for this request's session ([`ContextConfig::desktop`]), rendered. The
+    /// directory is the session's Gen UI output directory under the Host's root.
+    fn desktop_section(&self, request: &ContextRequest) -> Option<String> {
+        let desktop = self.config.desktop.as_ref()?;
+        let directory = desktop::directory(
+            desktop,
+            request.workspace.root.as_str(),
+            request.session.as_str(),
+        );
+        Some(desktop::section(directory.as_deref()))
     }
 
     /// 接上执行环境的注册表：连上、断开远端机器时发机器清单提醒（remote-exec.md §20.5.3）。
@@ -471,6 +484,7 @@ impl ContextBuilder for PromptAssembler {
             .listings
             .listings_for(&request, since_boundary(history))
             .await?;
+        let desktop = self.desktop_section(&request);
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(&request),
@@ -481,6 +495,7 @@ impl ContextBuilder for PromptAssembler {
             custom: self.config.custom_system_prompt.as_deref(),
             append: self.config.append_system_prompt.as_deref(),
             token_budget: self.config.token_budget,
+            desktop: desktop.as_deref(),
         };
         let system = system_blocks(&facts);
         // 当步的 attachment 在 `start_attachments` / `turn_attachments`（query.md §1.1；子代理同样，F16）；摘要请求见

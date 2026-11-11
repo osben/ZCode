@@ -498,6 +498,23 @@ A subagent's child session (`SessionKind::Subagent`, Node `subagent_child`) is n
   - Unit test: `listed_in_sessions_index` excludes a subagent child and keeps interactive and forked sessions.
   - E2E: `conversation-session-subagent-side-tabs` on Rust in the container; the sidebar screenshot lists only the parent task, like Node.
 
+## ZCode Desktop Context system section (Node `context/sections/desktop.ts`, 3.17.2)
+
+Node adds a "ZCode Desktop Context" section to the system prompt of desktop sessions. It has the Interactive views bullets (Gen UI), the Files & URLs link rules and the `::code-comment{...}` directive. Rust had no such section. The 3.18 move of the section to a dynamic meta-user block is not ported here; it belongs to the 3.18 sync.
+
+- Switch: the Host's server-side rollout (`desktopContextPromptRollout.ts`). Main passes `ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED`, services `resolveZCodeAgentPresentationSurface` decides, and `applyPresentationSurfaceToCommand` adds `--surface desktop` to the agent command. That command is the same for both runtimes. Node turns the argument into `presentationSurface: "zcode_desktop"`. Rust `app-server` now reads it too (`Controller::desktop_context` → `ContextConfig::desktop`). Without `--surface desktop` (rollout off, terminal, `-p`, TUI), neither runtime has the section.
+- Conditions, as in Node `ContextBuilder.build`:
+  - Main sessions only. Subagents get none: Node's child builder uses the agent prompt as a custom prompt, and Rust's `SubagentContext` replaces the system blocks.
+  - A custom system prompt drops it (Node `hasCustomSystemPrompt`; Rust `--system-prompt` path).
+  - Node also drops it for workflow actors (not ported to Rust) and for the incognito `harness` toggle. The Rust incognito prompt toggles are a separate change and must clear `ContextConfig::desktop` for `harness`.
+- Text: byte for byte Node's (`prompts/system/desktop_context.txt` with the Interactive views lines from `desktop_gen_ui.txt` or `desktop_gen_ui_none.txt`). The Gen UI directory, when named, is the shared `getGenUiOutputDirectory`: `ZCODE_GEN_UI_OUTPUT_ROOT` joined with the hex SHA-256 of `JSON.stringify([workspacePath, sessionId])`, written with `JSON.stringify` (`context` `desktop.rs`).
+- Position: Node puts the section in the stable system message right after the identity body and before Dynamic Behavior. Rust puts it at the end of its static block (after the lean body, joined by a blank line), before the session block that starts with Communication. That block is then cached `{ephemeral}` like Node's stable message, not `scope: global`, because the section can name a per-session directory. `/context` lists it as "ZCode Desktop Context" after "Core instructions".
+- `runtime/capabilities` `genUiContext` stays `false`. It announces the `sendText.genUiContext` input path (widget `modelContent` sent as `<untrusted_gen_ui_state>`), which Rust does not implement. It does not depend on this section. Node reports it `true` because Node implements that path. Flipping it would let the Host forward widget state that Rust drops, which `ensureGenUiContextSupport` exists to prevent. It stays an open gap.
+- GEN_UI_DECISION
+- Acceptance:
+  - `context` unit tests: the section equals Node's text with and without a directory (copied from Node's output, not retyped); the directory equals Node's hash for fixed inputs; the section closes the static block before Communication; a custom prompt drops it.
+  - E2E in the container: `first-send`, `context-window-cold-resume`, `v4-compact` and `subagent-parallel-projection` on Rust, with every model request dumped. Main requests carry the section and subagent requests do not, as on Node. No replay fixture matches on text from the section (checked: no `bodyIncludes` or `bodyExcludes` entry occurs in it).
+
 ## Known differences kept on purpose
 
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.

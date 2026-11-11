@@ -42,6 +42,8 @@ pub(crate) struct PromptFacts<'a> {
     pub append: Option<&'a str>,
     /// Fork: [`crate::ContextConfig::token_budget`].
     pub token_budget: bool,
+    /// Fork: Node's "ZCode Desktop Context" text ([`crate::ContextConfig::desktop`]), already rendered.
+    pub desktop: Option<&'a str>,
 }
 
 fn cache(scope: Option<&str>) -> Option<CacheControl> {
@@ -147,6 +149,11 @@ pub(crate) fn sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
         Some(custom) => vec![PromptSection::new("Custom prompt", custom.to_owned())],
         None => {
             let mut sections = vec![PromptSection::new("Core instructions", lean_body(facts))];
+            sections.extend(
+                facts
+                    .desktop
+                    .map(|text| PromptSection::new(crate::desktop::NAME, text.to_owned())),
+            );
             sections.extend(session_sections(facts));
             sections
         }
@@ -191,15 +198,28 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
             text: texts::identity().to_owned(),
             cache_control: None,
         },
-        SystemBlock {
-            text: lean_body(facts),
-            cache_control: cache(Some("global")),
-        },
+        stable_block(facts),
         SystemBlock {
             text: session.join("\n\n"),
             cache_control: cache(None),
         },
     ]
+}
+
+/// The static block. Fork: with Node's desktop section, the section follows the static body in this block, as in
+/// Node's stable system message (after the identity body, before the dynamic sections). It names a per-session
+/// directory, so the block is then cached per session (`{ephemeral}`, Node's stable cache control), not `scope: global`.
+fn stable_block(facts: &PromptFacts<'_>) -> SystemBlock {
+    match facts.desktop {
+        Some(desktop) => SystemBlock {
+            text: format!("{}\n\n{desktop}", lean_body(facts)),
+            cache_control: cache(None),
+        },
+        None => SystemBlock {
+            text: lean_body(facts),
+            cache_control: cache(Some("global")),
+        },
+    }
 }
 
 #[cfg(test)]
