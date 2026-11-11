@@ -169,6 +169,33 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             }
             AgentState::Parked { .. } | AgentState::Finished(_) => (false, Vec::new(), Vec::new()),
         };
+        // Fork: an erased agent's run ends here (it slipped past the erase guard, see `end_erased`): no parking, no
+        // resume, and its leftover notices and stranded messages are dropped with its session; only a live owner hears
+        // of it.
+        if entry.erased {
+            if let Some(slot) = agents.get_mut(id) {
+                slot.state = AgentState::Finished(finished.ending);
+            }
+            let notice = notice_of(
+                &entry,
+                finished.ending,
+                &finished.report,
+                error.as_deref(),
+                false,
+            );
+            // A foreground run's owner hears of it from its own Agent call, as on the normal path.
+            let wakes = if entry.background {
+                to_live_owner(agents, &core.hub, &entry, notice)
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            return Settle {
+                parked: false,
+                wakes,
+            };
+        }
         let stopped = aborted || finished.ending == Ending::Killed;
         // 被中止时 SendMessage 留下的消息丢弃（停止时清掉发给它的排队命令）。
         if stopped {
@@ -326,20 +353,72 @@ pub(crate) async fn release(core: &Core, id: &AgentId) -> Vec<Wake> {
 /// `user`）。不是停放状态时返回 None。
 pub(crate) fn stop_parked(core: &Core, id: &AgentId) -> Option<Vec<Wake>> {
     core.live.with(|agents| {
-        let entry = agents.get(id).cloned()?;
-        let AgentState::Parked { report, .. } = &entry.state else {
-            return None;
-        };
-        let notice = notice_of(&entry, Ending::KilledParked, report, None, false);
-        if let Some(slot) = agents.get_mut(id) {
-            slot.state = AgentState::Finished(Ending::KilledParked);
-        }
+        let (entry, notice) = end_parked(agents, id)?;
         Some(
             deliver(agents, &core.hub, entry.owner.as_ref(), &entry.root, notice)
                 .into_iter()
                 .collect(),
         )
     })
+}
+
+/// Ends a parked agent as stopped (`KilledParked`) and returns it with its notice, still to be delivered. None when it
+/// is not parked.
+fn end_parked(agents: &mut Agents, id: &AgentId) -> Option<(LiveAgent, Notice)> {
+    let entry = agents.get(id).cloned()?;
+    let AgentState::Parked { report, .. } = &entry.state else {
+        return None;
+    };
+    let notice = notice_of(&entry, Ending::KilledParked, report, None, false);
+    if let Some(slot) = agents.get_mut(id) {
+        slot.state = AgentState::Finished(Ending::KilledParked);
+    }
+    Some((entry, notice))
+}
+
+/// Fork: `sessions` were erased (`session/eraseTree`). Every agent whose child session is among them is marked erased
+/// (no longer addressable), a finished one too. A parked one ends now, as a user stop of a parked agent does and as Node's close of
+/// an erased session's runtime cancels it. The ending reaches only an owner that is not erased itself, so an owner
+/// parked on an erased child resumes instead of waiting for it forever. A running one is not aborted: the erase guard
+/// refuses a tree with a running subagent (Node parity, `running_agent_sessions`), so one reaches here only when it
+/// started between the guard and the row erase; its run settles as erased. Called under the Live lock; the wakes run
+/// outside.
+pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId]) -> Vec<Wake> {
+    // Every entry of an erased child is marked, a finished one too: SendMessage would restart it into the deleted
+    // session. Only a parked one also ends here (`end_parked` leaves the others).
+    let erased: Vec<AgentId> = agents
+        .values()
+        .filter(|agent| sessions.contains(&agent.child))
+        .map(|agent| agent.agent.clone())
+        .collect();
+    let mut notices = Vec::new();
+    for id in &erased {
+        let Some(entry) = agents.get_mut(id) else {
+            continue;
+        };
+        entry.erased = true;
+        notices.extend(end_parked(agents, id));
+    }
+    let mut wakes = Vec::new();
+    for (entry, notice) in notices {
+        wakes.extend(to_live_owner(agents, hub, &entry, notice));
+    }
+    wakes
+}
+
+/// Fork: an erased agent's notice goes to its owner only when that owner exists and is not erased (an owner that
+/// finished meanwhile hands it to its top-level session, which then is not erased either); otherwise it is dropped.
+fn to_live_owner(
+    agents: &mut Agents,
+    hub: &Hub,
+    entry: &LiveAgent,
+    notice: Notice,
+) -> Option<Wake> {
+    let owner = entry.owner.as_ref()?;
+    if agents.get(owner).is_none_or(|owner| owner.erased) {
+        return None;
+    }
+    deliver(agents, hub, Some(owner), &entry.root, notice)
 }
 
 /// 续跑：在子会话里提交第一条消息（通知是 meta、来源 `task-notification`；留下的 SendMessage 消息是人类

@@ -855,6 +855,16 @@ pub trait StoreQueries: Send + Sync {
         })
     }
 
+    /// Fork: the persisted subagent child sessions under `root`, reached through subagent child rows only (a side
+    /// chat or workflow child stops the walk: it is a top-level session for the agents it spawns). The agents crate
+    /// starts a notice forwarder for each when `root` opens (specs/fork-rust-agent-parity.md, "After a restart, and
+    /// on a remote executor").
+    async fn subagent_child_ids(&self, _root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent child ids".to_owned(),
+        })
+    }
+
     /// Fork: the child rows for the collected candidate ids, resolved by id like Node's
     /// `getSession` per candidate (missing ids are absent).
     async fn subagent_children(&self, _ids: Vec<String>) -> Result<Value, StoreError> {
