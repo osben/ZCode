@@ -34,6 +34,9 @@ pub struct RunView {
     pub selection: Option<ModelSelection>,
     /// 会话现在的目标条件（`/goal`，goal.md §4）；子代理没有。
     pub goal: Option<String>,
+    /// Fork: the workspace is the session's execution worktree (a subagent: its parent's), so a root that is gone
+    /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then).
+    pub execution_worktree: bool,
 }
 
 impl RunView {
@@ -46,6 +49,7 @@ impl RunView {
             workspace,
             selection: None,
             goal: None,
+            execution_worktree: false,
         }
     }
 }

@@ -42,7 +42,10 @@ pub(crate) async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> 
                 {
                     continue;
                 }
-                rows.push(cold_row(workspace, &session));
+                let mut row = cold_row(workspace, &session);
+                // Fork: the prepared worktree and the execution worktree of the stored row (crate::worktree).
+                crate::worktree::decorate_cold_row(server, &session.summary.id, &mut row).await;
+                rows.push(row);
             }
             rows
         }

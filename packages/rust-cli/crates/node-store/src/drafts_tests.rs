@@ -486,3 +486,53 @@ async fn a_restarted_store_forgets_the_draft() {
     assert!(not_found(fresh.load(&sid()).await));
     assert_eq!(session_rows(&t), 0);
 }
+
+/// A worktree draft (`createSession` with `executionWorktree`, held like any prewarm) keeps the
+/// worktree in memory, set once, and writes it with the row, as Node `persistSession` does from its
+/// runtime config. A direct column write would find no row, and the kernel would delete the session.
+#[tokio::test]
+async fn a_draft_keeps_its_execution_worktree_until_its_row() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    t.connection()
+        .execute_batch(
+            "alter table session add column execution_directory text;
+             alter table session add column execution_branch text;",
+        )
+        .unwrap();
+    let path = EnvPath::new("/w/.worktrees/a");
+    t.store
+        .set_execution_worktree(&sid(), &path, Some("feat/a"))
+        .await
+        .unwrap();
+    t.store
+        .set_execution_worktree(&sid(), &EnvPath::new("/elsewhere"), Some("other"))
+        .await
+        .unwrap();
+    assert_eq!(session_rows(&t), 0);
+    assert!(t.store.persist_draft(&sid()).await.unwrap());
+    let stored = t.store.execution_worktree(&sid()).await.unwrap().unwrap();
+    assert_eq!(stored.directory.as_str(), "/w");
+    assert_eq!(stored.path.as_str(), "/w/.worktrees/a");
+    assert_eq!(stored.branch.as_deref(), Some("feat/a"));
+    let other = SessionId::new("sess_other");
+    t.store.create(meta("sess_other", "/w", "")).await.unwrap();
+    assert!(t.store.discard_draft(&other).await.unwrap());
+    assert!(not_found(
+        t.store.set_execution_worktree(&other, &path, None).await
+    ));
+}
+
+/// A database without the execution columns refuses a draft's worktree at once, as it refuses the
+/// stored write.
+#[tokio::test]
+async fn a_draft_worktree_is_refused_without_the_columns() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    let refused = t
+        .store
+        .set_execution_worktree(&sid(), &EnvPath::new("/w/.worktrees/a"), None)
+        .await;
+    assert!(matches!(refused, Err(StoreError::Unsupported { .. })));
+    assert!(t.store.is_draft(&sid()).await.unwrap());
+}

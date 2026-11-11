@@ -244,3 +244,52 @@ async fn without_the_token_budget_nothing_mentions_total_tokens() {
             .all(|item| item.source != "total_tokens_reminder")
     );
 }
+
+/// Fork (ZCode Desktop Context): a child session (its steps and its auto-compaction) neither names nor creates a Gen UI
+/// directory (Node children do not inherit the surface or the root); the main thread creates it before the request, so a failure there fails the build.
+/// `UnusedEnvironment` refuses `ensure_dir`, which makes any creation attempt visible.
+#[tokio::test]
+async fn only_the_main_thread_creates_the_gen_ui_directory() {
+    let mut config = ContextConfig::new(Surface::Interactive);
+    config.desktop = Some(DesktopContext {
+        gen_ui_root: Some("/root/visualizations".to_owned()),
+    });
+    let built = assembler_with(config.clone())
+        .build(
+            request(QuerySource::Subagent("Explore".to_owned())),
+            &prompt(),
+        )
+        .await
+        .unwrap();
+    let system: String = built
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect();
+    assert!(!system.contains("ZCode Desktop Context"));
+    // A child's auto-compaction keeps the agent id but runs as `Compact` on this assembler.
+    let child_compact = ContextRequest {
+        agent: Some(rust_cli_kernel_api::ids::AgentId::new("agent_1")),
+        ..request(QuerySource::Compact)
+    };
+    let built = assembler_with(config.clone())
+        .build(child_compact, &prompt())
+        .await
+        .unwrap();
+    let system: String = built
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect();
+    assert!(!system.contains("ZCode Desktop Context"));
+    let error = assembler_with(config)
+        .build(request(QuerySource::MainThread), &prompt())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Gen UI output directory unavailable"),
+        "{error}"
+    );
+}

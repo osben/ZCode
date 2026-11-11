@@ -81,8 +81,11 @@ async fn run(
     _done: DropGuard,
 ) -> Vec<String> {
     tracing::info!(event = "session.close", session = %id, reason = ?reason, "session closed");
-    let notices = match ask(&requests, |reply| Request::Meta { reply }).await {
-        Ok(meta) => hooks::session_end(&deps, &meta, reason).await,
+    let notices = match ask(&requests, |reply| Request::EndMeta { reply }).await {
+        Ok(Some(meta)) => hooks::session_end(&deps, &meta, reason).await,
+        // Fork: a prepared session whose SessionStart is still held never started; SessionEnd does not run (in the
+        // parent checkout) either, as Node never made a runtime for it.
+        Ok(None) => Vec::new(),
         // actor 已经没了（例如 panic）：没有 meta，不跑 SessionEnd，照常释放。
         Err(_) => Vec::new(),
     };

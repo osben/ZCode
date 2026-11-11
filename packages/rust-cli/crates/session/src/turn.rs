@@ -286,6 +286,7 @@ impl Actor {
             selection: Some(self.selection.clone()),
             // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
             goal: self.goal.condition().filter(|_| !self.deps.desktop_goals),
+            execution_worktree: self.execution_worktree,
             ..RunView::new(self.mode(), self.meta.workspace.clone())
         }
     }

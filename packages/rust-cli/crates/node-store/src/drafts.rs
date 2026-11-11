@@ -34,6 +34,8 @@ struct Draft {
     create: Create,
     batches: Vec<FactBatch>,
     records: Vec<FrontendRecord>,
+    /// The execution worktree (`path`, `branch`), written with the row like Node's runtime config.
+    execution: Option<(String, Option<String>)>,
 }
 
 impl Drafts {
@@ -46,6 +48,7 @@ impl Drafts {
             create,
             batches: Vec::new(),
             records: Vec::new(),
+            execution: None,
         });
     }
 
@@ -174,6 +177,35 @@ pub(crate) fn put_record(
     Ok(true)
 }
 
+/// The execution worktree of a draft: `false` when the session is not a draft. Set once per column,
+/// like Node's `coalesce`. A database without the execution columns refuses it now, as it would
+/// refuse the stored write, so a worktree session never runs that would resume in the parent.
+pub(crate) fn set_execution(
+    conn: &Connection,
+    drafts: &mut Drafts,
+    session: &SessionId,
+    path: &str,
+    branch: Option<&str>,
+) -> Result<bool, StoreError> {
+    if drafts.was_dropped(session.as_str()) {
+        return Err(not_found(session));
+    }
+    let Some(draft) = drafts.pending.get_mut(session.as_str()) else {
+        return Ok(false);
+    };
+    if !crate::fork_execution_worktree::has_columns(conn)? {
+        return Err(StoreError::Unsupported {
+            what: "execution worktree (the database has no execution columns)".to_owned(),
+        });
+    }
+    let (held_path, held_branch) = draft.execution.take().unzip();
+    draft.execution = Some((
+        held_path.unwrap_or_else(|| path.to_owned()),
+        held_branch.flatten().or_else(|| branch.map(str::to_owned)),
+    ));
+    Ok(true)
+}
+
 /// Persists a draft without a write of its own (a rename then runs as for a stored session).
 /// `false` when the session is not a draft.
 pub(crate) fn persist(
@@ -219,6 +251,9 @@ fn materialize<T>(
     create.time_created = None;
     let created = i64::try_from(now).unwrap_or(i64::MAX);
     crate::repo::sessions::create(&tx, &create, created).storage()?;
+    if let Some((path, branch)) = &draft.execution {
+        crate::fork_execution_worktree::write(&tx, session.as_str(), path, branch.as_deref())?;
+    }
     for batch in &draft.batches {
         facts::commit_in(&tx, session, batch, ids, now)?;
     }
