@@ -354,7 +354,8 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
                 other => panic!("{other:?}"),
             },
             outcome: TurnOutcome::Failed {
-                message: "Not enough messages to compact.".to_owned()
+                message: "Not enough messages to compact.".to_owned(),
+                code: None,
             },
             usage: None,
         })

@@ -1084,9 +1084,10 @@ impl Projection {
                 "interrupted",
                 Phase::CompletedInterrupted,
             ),
-            TurnOutcome::Failed { message } => {
+            TurnOutcome::Failed { message, code } => {
                 self.error = Some(LastError {
                     message: message.clone(),
+                    code: code.clone(),
                     at: now,
                 });
                 ("failed", "failed", Phase::Error)

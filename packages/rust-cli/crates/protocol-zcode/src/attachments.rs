@@ -846,13 +846,11 @@ pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcErr
         MAX_BYTES
     };
     let (bytes, media_type) = match &stored {
-        Some((source, part_mime)) if source.starts_with(ARTIFACT_SCHEME) => {
-            bounded_data_url(
-                stored_artifact_content(server, source, limit).await?,
-                part_mime,
-                limit,
-            )?
-        }
+        Some((source, part_mime)) if source.starts_with(ARTIFACT_SCHEME) => bounded_data_url(
+            stored_artifact_content(server, source, limit).await?,
+            part_mime,
+            limit,
+        )?,
         Some((source, part_mime)) => read_local(Path::new(source), part_mime, limit).await?,
         None => read(server, &session, &params.reference, &mime, limit).await?,
     };

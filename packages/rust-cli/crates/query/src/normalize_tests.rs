@@ -849,7 +849,11 @@ fn separate_user_messages_send_attached_text_apart_like_node() {
     };
     let reminder = |name: &str| prompt_attachment::text_file(name, "abc").join("\n");
 
-    let api = send(vec![text(""), inline("a.txt"), file("b.txt", AttachedBody::ReadFailed)]);
+    let api = send(vec![
+        text(""),
+        inline("a.txt"),
+        file("b.txt", AttachedBody::ReadFailed),
+    ]);
     let texts: Vec<&str> = api.iter().map(one_text).collect();
     assert_eq!(texts, ["(no content)", reminder("a.txt").as_str()]);
     assert!(!api[0].content[0].meta && api[1].content[0].meta);

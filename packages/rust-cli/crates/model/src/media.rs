@@ -74,10 +74,6 @@ pub(crate) fn project(messages: &mut [ApiMessage], endpoint: &ModelEndpoint) {
 /// Fork: Node `DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES`, the media one request may carry.
 const MEDIA_BUDGET_BYTES: u64 = 40 * 1024 * 1024;
 
-/// Fork: Node's text when the latest user message's own media exceed the budget.
-pub(crate) const CURRENT_ATTACHMENTS_TOO_LARGE: &str =
-    "Current attachments are too large to send. Remove or compress attachments and try again.";
-
 /// One counted media block: `item` is its index inside a tool result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct MediaKey {
@@ -179,9 +175,7 @@ fn budget_within(messages: &mut [ApiMessage], max_bytes: u64) -> Result<(), Mode
         .map(|(_, bytes, _)| bytes)
         .sum();
     if protected > max_bytes {
-        return Err(ModelError::InvalidRequest {
-            message: CURRENT_ATTACHMENTS_TOO_LARGE.to_owned(),
-        });
+        return Err(ModelError::CurrentAttachmentsTooLarge);
     }
     let mut remaining = max_bytes - protected;
     let mut history: Vec<_> = media
@@ -588,14 +582,19 @@ mod tests {
             content: vec![
                 plain(text("look")),
                 plain(sized(60, Some("clip.png"))),
-                meta(text("<system-reminder>\nCalled the Read tool\n</system-reminder>")),
+                meta(text(
+                    "<system-reminder>\nCalled the Read tool\n</system-reminder>",
+                )),
                 meta(sized(50, None)),
             ],
             output_config: None,
         }];
         budget_within(&mut merged, 100).unwrap();
         assert_eq!(merged[0].content[1].block, sized(60, Some("clip.png")));
-        assert_eq!(merged[0].content[3].block, omitted_text("[Attached image/png]"));
+        assert_eq!(
+            merged[0].content[3].block,
+            omitted_text("[Attached image/png]")
+        );
 
         // Separate user messages (OpenAI-compatible): the mention's own message is not the latest real input.
         let mut separate = vec![
@@ -608,16 +607,25 @@ mod tests {
         ];
         budget_within(&mut separate, 100).unwrap();
         assert_eq!(separate[0].content[1].block, sized(60, Some("clip.png")));
-        assert_eq!(separate[1].content[0].block, omitted_text("[Attached image/png]"));
+        assert_eq!(
+            separate[1].content[0].block,
+            omitted_text("[Attached image/png]")
+        );
     }
 
     #[test]
     fn current_attachments_over_the_budget_refuse_the_request() {
         let mut messages = vec![user(vec![text("look"), sized(60, None), sized(60, None)])];
         let error = budget_within(&mut messages, 100).unwrap_err();
+        assert_eq!(error, ModelError::CurrentAttachmentsTooLarge);
+        // Node's text and code: the App localizes the failed turn by the code.
         assert_eq!(
             error.to_string(),
-            format!("invalid request: {CURRENT_ATTACHMENTS_TOO_LARGE}")
+            rust_cli_kernel_api::model::CURRENT_ATTACHMENTS_TOO_LARGE
+        );
+        assert_eq!(
+            error.code(),
+            Some("MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE")
         );
     }
 }

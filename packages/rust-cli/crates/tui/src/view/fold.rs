@@ -520,7 +520,7 @@ impl Transcript {
                 (TurnState::Success, None)
             }
             TurnOutcome::Interrupted => (TurnState::Interrupted, None),
-            TurnOutcome::Failed { message } => (TurnState::Failed, Some(message)),
+            TurnOutcome::Failed { message, .. } => (TurnState::Failed, Some(message)),
         };
         if let Some(at) = self
             .rows

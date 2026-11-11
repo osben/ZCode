@@ -384,6 +384,30 @@ pub enum ModelError {
         "API Error: Request too large. Remove large images or files from the conversation, or use /rewind to go back to before they were added. · {message}"
     )]
     RequestTooLarge { message: String },
+    /// Fork: the latest real user message's own media exceed the request media budget (Node
+    /// `projectMessagesForMediaBudget`); refused before sending. Node's text, and its error code ([`Self::code`]).
+    #[error("{CURRENT_ATTACHMENTS_TOO_LARGE}")]
+    CurrentAttachmentsTooLarge,
+}
+
+/// Fork: Node's text for [`ModelError::CurrentAttachmentsTooLarge`].
+pub const CURRENT_ATTACHMENTS_TOO_LARGE: &str =
+    "Current attachments are too large to send. Remove or compress attachments and try again.";
+
+/// Fork: Node's `MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE_ERROR_CODE` (`packages/shared/src/zcode-media-policy.ts`),
+/// which the App localizes.
+pub const MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE: &str =
+    "MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE";
+
+impl ModelError {
+    /// Fork: Node's error code for this failure, which a failed turn carries to the App (`lastError.code`); `None`
+    /// keeps the generic turn fault.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::CurrentAttachmentsTooLarge => Some(MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE),
+            _ => None,
+        }
+    }
 }
 
 /// 内容拦截的说明（[`ModelError::ContentBlocked`] 的前一句；结束原因是 refusal 时主循环用它结束回合，
