@@ -176,6 +176,12 @@ fn read_reminders(label_text: &str, content: &str, read: Option<&TextRead>) -> V
     out
 }
 
+/// The local path the App submitted (Node `attachment.path`) when `reference` is one: not a URI and not one of the
+/// `inline:` markers Node stores in a part's `url` or `originalUrl` (`inline:pdf`, `inline:data-url`).
+pub fn submitted_path(reference: &str) -> Option<&str> {
+    (!reference.contains("://") && !reference.starts_with("inline:")).then_some(reference)
+}
+
 /// Node's text placeholder written without a source (a web-remote text whose content could not be read): Node
 /// `shouldAddInlinePromptAttachmentReminder` sends it as an inline-text reminder, not as a user block.
 fn inline_placeholder(file: &AttachedFile) -> bool {
@@ -315,7 +321,7 @@ pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
             let label = label.as_deref().unwrap_or_else(|| {
                 file.reference
                     .as_deref()
-                    .filter(|reference| !reference.contains("://"))
+                    .and_then(submitted_path)
                     .unwrap_or(&file.name)
             });
             let line = format!("[Attached {}: {label}]", file.mime);
