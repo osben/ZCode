@@ -713,6 +713,20 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
         projection.row_attachment(row_id + 1, "msg_u1", 0, "/tmp/p.png"),
         None
     );
+    // `v4/attachment/read` with a row target: the chip's MIME authorises it, the stored part is what it reads.
+    let chip_mime = row["attachments"][0]["mime"].as_str().unwrap().to_owned();
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_u1", 0, "/tmp/p.png"),
+        Some((chip_mime, false))
+    );
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_u1", 1, "/tmp/p.png"),
+        None
+    );
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_a1", 0, "/tmp/p.png"),
+        None
+    );
     // Without a row target the ref alone finds its chip (Node's previewSource).
     assert_eq!(
         projection
