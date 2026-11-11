@@ -1553,3 +1553,159 @@ async fn a_materialized_session_whose_receipt_failed_still_takes_commands() {
         PrepStatus::Active
     );
 }
+
+/// The real inbound path: the `v4/command` envelope schema (its `type` enum), then `commands::command`.
+async fn inbound(
+    server: &Arc<Server>,
+    params: Value,
+) -> Result<Value, rust_cli_protocol_core::rpc::RpcError> {
+    use rust_cli_protocol_core::connection::Service;
+    crate::server::Handler(server.clone())
+        .request("v4/command", params)
+        .await
+        .map(|reply| reply.result)
+}
+
+/// `inbound.json` is generated from the App's zod schemas as a whole (`scripts/fork-rust-agent/inbound-schema.mts`).
+/// Before, `setRowPinned` and `setExternalAgentConfigOption` were missing from the envelope's `type` enum (refused as
+/// invalid params before any command handling), `setRowPinned` from the CAS lists, and `sendText.firstSubmissionId`
+/// from the payload (an empty id passed the schema).
+#[tokio::test]
+async fn commands_missing_from_the_inbound_schema_reach_the_command_path() {
+    let (_scope, server, _kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let ack = inbound(
+        &server,
+        json!({"commandId": "c1", "clientId": "k", "sessionId": null, "type": "createSession",
+            "issuedAt": 1, "payload": {"workspaceId": workspace}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let session = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    let command = |id: &str, kind: &str, payload: Value, cas: bool| {
+        let mut params = json!({"commandId": id, "clientId": "k", "sessionId": session,
+            "type": kind, "issuedAt": 1, "payload": payload});
+        if cas {
+            params["baseRevision"] = json!(0);
+            params["baseLogEpoch"] = json!("e");
+        }
+        params
+    };
+    let target = json!({"rowId": 1, "entityId": "m1"});
+
+    // A known command zcode-rs has not ported is refused as unsupported, not as an invalid envelope.
+    let ack = inbound(
+        &server,
+        command(
+            "p1",
+            "setRowPinned",
+            json!({"target": target, "pinned": true}),
+            true,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(ack["reasonCode"], "proto.unsupportedCommand", "{ack}");
+    let ack = inbound(
+        &server,
+        command(
+            "x1",
+            "setExternalAgentConfigOption",
+            json!({"sessionId": session, "configId": "model", "value": "fast"}),
+            false,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["reasonCode"], "proto.unsupportedCommand", "{ack}");
+
+    // The CAS rule (Node `parseCommandEnvelope`): setRowPinned needs baseRevision and baseLogEpoch.
+    let ack = inbound(
+        &server,
+        command(
+            "p2",
+            "setRowPinned",
+            json!({"target": target, "pinned": true}),
+            false,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["reasonCode"], "proto.invalidPayload", "{ack}");
+    assert_eq!(
+        ack["message"],
+        "CAS commands require baseRevision and baseLogEpoch"
+    );
+    // The payload schema: a pin without its row is invalid.
+    let ack = inbound(
+        &server,
+        command("p3", "setRowPinned", json!({"pinned": true}), true),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["reasonCode"], "proto.invalidPayload", "{ack}");
+
+    // sendText.firstSubmissionId is a non-empty string.
+    let ack = inbound(
+        &server,
+        command(
+            "s1",
+            "sendText",
+            json!({"text": "hi", "firstSubmissionId": ""}),
+            false,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(ack["reasonCode"], "proto.invalidPayload", "{ack}");
+    assert!(
+        ack["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("/payload/firstSubmissionId"),
+        "{ack}"
+    );
+}
+
+/// Node `v4-bridge.ts`: a submission activation whose `workspaceId` is not the reservation's workspace is refused,
+/// never activated in the other workspace; the reservation stays for the right one.
+#[tokio::test]
+async fn a_submission_activation_in_another_workspace_is_refused() {
+    let (_scope, server, kernel) = server();
+    let (parent, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let ack = run(
+        &server,
+        json!({"commandId": "r1", "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "submissionPreparation": {"submissionId": "sub"}}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let session = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    let activate = |id: &str, workspace: &str| {
+        json!({"commandId": id, "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "preparedSessionId": session,
+                "expectedSubmissionId": "sub"}})
+    };
+
+    let ack = run(&server, activate("a1", other.path().to_str().unwrap())).await;
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(
+        ack["message"],
+        "Prepared submission does not match the requested workspace or submission"
+    );
+    assert!(kernel.sent.lock().unwrap().is_empty());
+    let marker = crate::preparation::load(&server, &SessionId::new(&session))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!marker.active);
+
+    let ack = run(&server, activate("a2", &workspace)).await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(ack["result"]["sessionId"], session.as_str());
+}

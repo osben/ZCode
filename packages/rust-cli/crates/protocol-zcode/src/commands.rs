@@ -674,6 +674,20 @@ async fn activate_submission(
         );
     }
     let id = SessionId::new(prepared);
+    // Node compares the reservation's workspace with `workspaceId`: an activation from another workspace is refused.
+    let listed = crate::worktree::listed_directory(server, &id).await;
+    let workspace_matches = payload.workspace_id.as_deref().is_some_and(|workspace| {
+        listed.as_deref() == Some(server.workspace(workspace).root.as_str())
+    });
+    if !workspace_matches {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the requested workspace or submission",
+            0,
+        );
+    }
     let marker = match crate::preparation::load(server, &id).await {
         Ok(Some(marker)) if marker.submission_id == expected => marker,
         _ => {

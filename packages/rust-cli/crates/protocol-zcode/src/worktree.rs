@@ -654,6 +654,20 @@ pub async fn check_directory(
     Ok(())
 }
 
+/// The workspace a prepared session is listed under: the row's directory, never the actor's root. After a move whose
+/// column write failed, the actor already runs in the worktree while the session stays listed under the parent the
+/// client names.
+pub(crate) async fn listed_directory(server: &Server, id: &SessionId) -> Option<String> {
+    server
+        .kernel
+        .queries()
+        .session_directory(id)
+        .await
+        .ok()
+        .flatten()
+        .map(|directory| directory.as_str().to_owned())
+}
+
 /// What an activation names: the prepared session, the attempt, the parent workspace and the worktree.
 pub struct ActivationRequest<'a> {
     pub prepared: &'a str,
@@ -690,16 +704,7 @@ pub async fn activate(
         Err(reason) => return failed(envelope, reason, 0),
     };
     let stored = stored_execution(server, &id).await;
-    // The row's directory, never the actor's root: after a move whose column write failed, the actor already runs in
-    // the worktree while the session stays listed under the parent the client names.
-    let listed = server
-        .kernel
-        .queries()
-        .session_directory(&id)
-        .await
-        .ok()
-        .flatten()
-        .map(|directory| directory.as_str().to_owned());
+    let listed = listed_directory(server, &id).await;
     let workspace_matches = match (workspace, listed.as_deref()) {
         (Some(workspace), Some(listed)) => server.workspace(workspace).root.as_str() == listed,
         (None, Some(_)) => true,
