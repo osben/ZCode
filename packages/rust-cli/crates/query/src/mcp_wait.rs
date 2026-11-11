@@ -41,16 +41,15 @@ fn waiting(view: &McpView, name: &str, exhausted: &Exhausted) -> Vec<String> {
 
 /// 要不要等这个找不到的工具：它的服务器在首次连接（Pending、不在重连），本次运行没有等满过。
 pub(crate) fn connecting(scope: &RunScope, name: &str) -> bool {
-    let Some(mcp) = scope.parts.tools.mcp() else {
+    // Fork: the session's snapshot, so an incognito session never waits for a server its profile removes.
+    let Some(view) = scope.parts.tools.snapshot(&scope.session).mcp else {
         return false;
     };
-    servers_for_tool(&mcp.view(), name)
-        .into_iter()
-        .any(|server| {
-            server.state == McpServerState::Pending
-                && !server.reconnecting
-                && !scope.exhausted.has(&server.name)
-        })
+    servers_for_tool(&view, name).into_iter().any(|server| {
+        server.state == McpServerState::Pending
+            && !server.reconnecting
+            && !scope.exhausted.has(&server.name)
+    })
 }
 
 /// 等工具出现。`waited` 是这次模型响应里这类等待已用的时间。取消或等不到时为 None。

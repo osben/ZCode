@@ -112,3 +112,17 @@ async fn reconnecting_and_unknown_servers_are_not_waited_for() {
     assert_eq!(ran.elapsed, 0);
     assert!(ran.results[0].contains("No such tool available"));
 }
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): a server outside the session's snapshot is not waited
+/// for, so a direct call to a tool of a server the session's profile removes fails at once.
+#[tokio::test(start_paused = true)]
+async fn a_server_outside_the_sessions_snapshot_is_not_waited_for() {
+    let registry = McpRegistry::new(
+        Vec::new(),
+        FakeConnections::new(vec![server("slow", McpServerState::Pending)], 3_000),
+    );
+    registry.hidden.lock().unwrap().push("slow".to_owned());
+    let ran = run(registry, 1, |_| {}).await;
+    assert_eq!(ran.elapsed, 0);
+    assert!(ran.results[0].contains("No such tool available"));
+}

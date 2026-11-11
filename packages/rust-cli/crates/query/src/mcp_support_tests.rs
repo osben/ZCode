@@ -87,6 +87,8 @@ pub(crate) struct McpRegistry {
     pub(crate) late: Mutex<Vec<Arc<dyn Tool>>>,
     pub(crate) mcp: Arc<FakeConnections>,
     pub(crate) snapshots: AtomicUsize,
+    /// Fork: servers the session's snapshot leaves out (an incognito profile).
+    pub(crate) hidden: Mutex<Vec<String>>,
 }
 
 impl McpRegistry {
@@ -96,6 +98,7 @@ impl McpRegistry {
             late: Mutex::default(),
             mcp,
             snapshots: AtomicUsize::new(0),
+            hidden: Mutex::default(),
         })
     }
 
@@ -127,9 +130,12 @@ impl rust_cli_kernel_api::testing::RegistryOverride for McpRegistry {
 
     fn snapshot(&self, _session: &SessionId) -> ToolSnapshot {
         self.snapshots.fetch_add(1, Ordering::SeqCst);
+        let mut view = self.mcp.view();
+        let hidden = self.hidden.lock_unpoisoned();
+        view.servers.retain(|server| !hidden.contains(&server.name));
         ToolSnapshot {
             tools: ToolRegistry::tools(self),
-            mcp: Some(self.mcp.view()),
+            mcp: Some(view),
         }
     }
 

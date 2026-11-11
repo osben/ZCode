@@ -125,17 +125,6 @@ struct CreateSessionPayload {
     worktree_preparation: Option<Value>,
 }
 
-/// Fork: whether a plain createSession must refuse an id that already exists. Node refuses every existing id
-/// ("sessionId already exists"). zcode-rs persists a prewarm at once (Node defers it), so a repeated create of an
-/// existing session under the same profile stays allowed; under another profile (absent differs from present) it is
-/// refused, because the row keeps its first profile and the runtime would otherwise run with one the row does not hold.
-fn recreate_conflict(
-    stored: Option<Option<IncognitoProfile>>,
-    requested: Option<IncognitoProfile>,
-) -> bool {
-    stored.is_some_and(|stored| stored != requested)
-}
-
 /// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
 fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
     Value::deserialize(deserializer).map(Some)
@@ -416,28 +405,49 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             );
         }
     };
-    let stored =
-        match crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await) {
-            Ok(view) => view.map(|view| view.meta.incognito),
-            Err(_) => {
-                // No error text: a storage error can name the storage path.
-                return Ack::refused(
-                    &envelope.command_id,
-                    Status::Failed,
-                    "fault.command.createSessionFailed",
-                    "reading the session failed".to_owned(),
-                    0,
-                );
-            }
-        };
-    if recreate_conflict(stored, incognito) {
-        return Ack::refused(
+    let failed = |reason: &str| {
+        Ack::refused(
             &envelope.command_id,
-            Status::Rejected,
-            "proto.invalidPayload",
-            "sessionId already exists".to_owned(),
+            Status::Failed,
+            "fault.command.createSessionFailed",
+            reason.to_owned(),
             0,
-        );
+        )
+    };
+    let existing =
+        match crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await) {
+            Ok(view) => view,
+            // No error text: a storage error can name the storage path.
+            Err(_) => return failed("reading the session failed"),
+        };
+    if let Some(view) = &existing {
+        let marker = match crate::preparation::load(server, &id).await {
+            Ok(marker) => marker,
+            Err(reason) => return failed(reason),
+        };
+        let workspace_matches = payload
+            .workspace_id
+            .as_deref()
+            .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
+        if crate::preparation::recreate_existing(
+            marker.as_ref(),
+            workspace_matches,
+            crate::preparation::has_conversation(view),
+            crate::preparation::ReserveIncognito {
+                stored: view.meta.incognito,
+                requested: incognito,
+            },
+        )
+        .is_err()
+        {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                "sessionId already exists".to_owned(),
+                0,
+            );
+        }
     }
     if let Some(followup) = config.followup_mode {
         server
@@ -567,12 +577,11 @@ async fn reserve_submission(
             .workspace_id
             .as_deref()
             .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
-        let conversation = !view.messages.is_empty() || !view.queue.is_empty() || view.running;
         match crate::preparation::reserve_existing(
             marker.as_ref(),
             submission,
             workspace_matches,
-            conversation,
+            crate::preparation::has_conversation(view),
             crate::preparation::ReserveIncognito {
                 stored: view.meta.incognito,
                 requested: incognito,

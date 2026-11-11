@@ -271,7 +271,6 @@ impl LocalKernel {
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
         base.catalog.bind(&tools);
-        base.catalog.bind_incognito(ext.incognito_tools());
         assembler.bind_tasks(agents.task_reader());
         let usage = Arc::new(usage::UsageAnalyzer {
             model: ports.model.clone(),
