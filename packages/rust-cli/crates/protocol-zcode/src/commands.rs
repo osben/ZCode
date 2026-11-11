@@ -374,6 +374,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             request,
             async |live| apply_draft_config(server, live, envelope, config, first).await,
             async |live| {
+                // The reservation persisted the prepared session, so its admission has no draft to persist.
                 submit_first(
                     server,
                     live,
@@ -383,6 +384,8 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
                     refs,
                 )
                 .await
+                .ok()
+                .flatten()
             },
         )
         .await;
@@ -472,14 +475,17 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
     };
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
-    if let Some(input) = submit_first(server, &live, envelope, &id, &first, refs).await {
-        result["input"] = input;
+    match submit_first(server, &live, envelope, &id, &first, refs).await {
+        Ok(Some(input)) => result["input"] = input,
+        Ok(None) => {}
+        Err(ack) => return *ack,
     }
     Ack::accepted(&envelope.command_id, 0, Some(result))
 }
 
 /// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
-/// createSession command id. The `input` field of the result; `None` without text or when the session refused it.
+/// createSession command id. The `input` field of the result; `None` without text or when the session refused it;
+/// `Err` when the draft could not be persisted for it ([`admit_draft`]).
 async fn submit_first(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
@@ -487,10 +493,11 @@ async fn submit_first(
     id: &SessionId,
     first: &Input,
     refs: Vec<crate::attachments::AttachmentRef>,
-) -> Option<Value> {
-    let text = first.text.clone()?;
-    // Fork: Node admits a first input through `admitInputCommand`, which persists the session first.
-    server.kernel.queries().persist_draft(id).await.ok()?;
+) -> Result<Option<Value>, Box<Ack>> {
+    let Some(text) = first.text.clone() else {
+        return Ok(None);
+    };
+    admit_draft(server, id, &envelope.command_id, 0).await?;
     live.sink.remember_input(
         &envelope.command_id,
         input_meta(envelope, first, "startNow", "startNow"),
@@ -512,11 +519,47 @@ async fn submit_first(
         execution,
         behind_held: false,
     };
-    match send(live.handle.as_ref(), &envelope.command_id, submit).await {
-        KernelAck::Accepted { .. } => {
-            Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
+    Ok(
+        match send(live.handle.as_ref(), &envelope.command_id, submit).await {
+            KernelAck::Accepted { .. } => {
+                Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
+            }
+            _ => None,
+        },
+    )
+}
+
+/// Fork: Node `admitInputCommand` persists a deferred session before it accepts an input, so the accepted input can
+/// no longer be dropped with its draft. A deferred close that dropped the draft first refuses the input; any other
+/// failure fails the command like Node's admission error (`fault.command.executionFailed`), before the input is
+/// remembered or sent. The text names no storage detail.
+async fn admit_draft(
+    server: &Server,
+    session: &SessionId,
+    command: &str,
+    revision: u64,
+) -> Result<(), Box<Ack>> {
+    match server.kernel.queries().persist_draft(session).await {
+        Ok(_) => Ok(()),
+        Err(error @ rust_cli_kernel_api::store::StoreError::NotFound { .. }) => {
+            Err(Box::new(Ack::refused(
+                command,
+                Status::Rejected,
+                "proto.sessionNotFound",
+                error.to_string(),
+                revision,
+            )))
         }
-        _ => None,
+        Err(error) => {
+            tracing::warn!(event = "protocol.draft.persist_failed", session = %session.as_str(), error = %error, "persisting the draft for its input failed");
+            Err(Box::new(Ack::refused(
+                command,
+                Status::Failed,
+                "fault.command.executionFailed",
+                "persisting the session for its input failed".to_owned(),
+                revision,
+            )))
+        }
     }
 }
 
@@ -1190,16 +1233,8 @@ async fn send_text(
         view.as_ref().is_none_or(|view| view.running),
         !refs.is_empty(),
     );
-    // Fork: Node `admitInputCommand` persists a deferred session before it accepts the input, so the accepted
-    // input can no longer be dropped with its draft; a deferred close that dropped it first refuses the input.
-    if let Err(error) = server.kernel.queries().persist_draft(handle.id()).await {
-        return Ack::refused(
-            command,
-            Status::Rejected,
-            "proto.sessionNotFound",
-            error.to_string(),
-            revision,
-        );
+    if let Err(ack) = admit_draft(server, handle.id(), command, revision).await {
+        return *ack;
     }
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));

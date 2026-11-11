@@ -30,6 +30,8 @@ type Log = Arc<StdMutex<Vec<&'static str>>>;
 struct DraftQueries {
     drafts: StdMutex<HashSet<String>>,
     dropped: StdMutex<HashSet<String>>,
+    /// The next `persist_draft` fails as a full disk would.
+    fail_persist: std::sync::atomic::AtomicBool,
     log: Log,
 }
 
@@ -89,6 +91,14 @@ impl StoreQueries for DraftQueries {
     }
 
     async fn persist_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        if self
+            .fail_persist
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(StoreError::Storage {
+                message: "database or disk is full: /home/u/.zcode/cli/db/db.sqlite".to_owned(),
+            });
+        }
         if self.dropped.lock_unpoisoned().contains(session.as_str()) {
             return Err(StoreError::NotFound {
                 session: session.clone(),
@@ -145,10 +155,9 @@ impl Kernel for CloseKernel {
         self.queries.clone()
     }
 
+    /// The open `s1` stands for the created session.
     async fn create_session(&self, _request: CreateSession) -> Result<SessionId, KernelError> {
-        Err(KernelError::Unsupported {
-            what: "create".to_owned(),
-        })
+        Ok(SessionId::new("s1"))
     }
 
     async fn open_session(
@@ -178,6 +187,7 @@ impl Kernel for CloseKernel {
                 created_at_ms: 1000,
                 last_outcome: None,
                 parent: None,
+                title_source: None,
             },
             activity,
             last_reply: None,
@@ -391,5 +401,52 @@ async fn an_input_after_the_draft_was_dropped_is_refused() {
         .await
         .unwrap();
     assert_eq!(ack["status"], "rejected", "{ack}");
+    assert!(handle.log.lock_unpoisoned().is_empty());
+}
+
+fn create_with_input(command: &str) -> Value {
+    json!({
+        "commandId": command, "clientId": "k", "sessionId": null, "type": "createSession",
+        "payload": {"sessionId": "s1", "workspaceId": "/w", "firstInput": {"text": "hi"}},
+        "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e",
+    })
+}
+
+/// Node `admitInputCommand` throws when the deferred session cannot be persisted, and the command
+/// fails (`fault.command.executionFailed`). An accepted createSession without the input would be
+/// replayed as accepted on a retry, and the input would never reach the actor.
+#[tokio::test]
+async fn a_failed_persist_fails_the_create_with_its_first_input() {
+    let (_scope, server, handle, queries) = open(true).await;
+    queries
+        .fail_persist
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let ack = crate::commands::command(&server, create_with_input("c1"))
+        .await
+        .unwrap();
+    assert_eq!(ack["status"], "failed", "{ack}");
+    assert_eq!(ack["reasonCode"], "fault.command.executionFailed", "{ack}");
+    assert!(!ack.to_string().contains("db.sqlite"), "{ack}");
+    let retry = crate::commands::command(&server, create_with_input("c1"))
+        .await
+        .unwrap();
+    assert_ne!(retry["status"], "accepted", "{retry}");
+    assert!(handle.log.lock_unpoisoned().is_empty());
+    assert!(queries.drafts.lock_unpoisoned().contains("s1"));
+}
+
+/// The same for `sendText`: a storage failure is a failed command, not "no such session".
+#[tokio::test]
+async fn a_failed_persist_fails_the_input() {
+    let (_scope, server, handle, queries) = open(true).await;
+    queries
+        .fail_persist
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let ack = crate::commands::command(&server, send_text("c1"))
+        .await
+        .unwrap();
+    assert_eq!(ack["status"], "failed", "{ack}");
+    assert_eq!(ack["reasonCode"], "fault.command.executionFailed", "{ack}");
+    assert!(!ack.to_string().contains("db.sqlite"), "{ack}");
     assert!(handle.log.lock_unpoisoned().is_empty());
 }
