@@ -339,6 +339,21 @@ pub(crate) fn normalize<'a>(
                     builder.push_user(plain(vec![block.clone()]));
                 }
             }
+            // Fork: Node's empty real user message goes to the provider as `(no content)`, before the reminders.
+            Message::User(user)
+                if rust_cli_kernel_api::prompt_attachment::reminders_only(&user.content) =>
+            {
+                let mut content = vec![text(crate::texts::NO_CONTENT.to_owned())];
+                // The empty typed text is what the padding replaces (Node drops empty text blocks).
+                content.extend(plain(
+                    user.content
+                        .iter()
+                        .filter(|block| !matches!(block, ContentBlock::Text { text } if text.is_empty()))
+                        .cloned()
+                        .collect(),
+                ));
+                builder.push_user(content);
+            }
             Message::User(user) => builder.push_user(plain(user.content.clone())),
             // 只供显示的 attachment（如 `max_turns_reached`）文本为空，渲染为空。
             Message::Attachment(attachment) if attachment.text.is_empty() => {}

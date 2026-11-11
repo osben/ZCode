@@ -747,6 +747,65 @@ fn attached_files_expand_into_reminders_and_images() {
     );
 }
 
+/// Fork: an input of only attached text has an empty real user message in Node, which the wire pads with
+/// `(no content)` (`toAiSdkUserContent`); a typed text or another attachment keeps it unpadded.
+#[test]
+fn an_input_of_only_attached_text_is_padded_like_node() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |body| ContentBlock::File {
+        file: AttachedFile {
+            name: "a.txt".into(),
+            mime: "text/plain".into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            material: None,
+            image: None,
+            body,
+        },
+    };
+    let inline = || {
+        file(AttachedBody::Text {
+            text: "abc".into(),
+            read: None,
+        })
+    };
+    let user = |content: Vec<ContentBlock>| {
+        let message = Message::User(UserMessage {
+            id: MessageId::new("u1"),
+            content,
+            origin: UserOrigin::Human,
+        });
+        normalize([&message], &ON)
+            .into_iter()
+            .find(|message| message.role == ApiRole::User)
+            .unwrap()
+            .content
+            .into_iter()
+            .map(|item| item.block)
+            .collect::<Vec<_>>()
+    };
+    let reminder = text(&prompt_attachment::text_file("a.txt", "abc").join("\n"));
+    assert_eq!(
+        user(vec![text(""), inline(), file(AttachedBody::ReadFailed)]),
+        [text("(no content)"), reminder.clone()]
+    );
+    assert_eq!(
+        user(vec![text("hi"), inline()]),
+        [text("hi"), reminder.clone()]
+    );
+    assert_eq!(
+        user(vec![inline(), file(AttachedBody::Omitted)]),
+        [
+            reminder,
+            text(&prompt_attachment::metadata_only("a.txt", "text/plain", 3))
+        ]
+    );
+}
+
 const SEPARATE: NormalizeOptions = NormalizeOptions {
     system_turns: false,
     turn_effort: None,

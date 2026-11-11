@@ -329,6 +329,28 @@ pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
     }
 }
 
+/// Node `buildUserMessageEntries`: an input with no typed text whose attachments all go as text reminders (inline text,
+/// or nothing for a failed read) leaves Node's real user message empty, and the wire sends `(no content)` for it
+/// (`toAiSdkUserContent`). True for such a message.
+pub fn reminders_only(content: &[ContentBlock]) -> bool {
+    let mut attached = false;
+    for block in content {
+        match block {
+            ContentBlock::Text { text } if text.is_empty() => {}
+            ContentBlock::File { file }
+                if matches!(
+                    file.body,
+                    AttachedBody::Text { .. } | AttachedBody::ReadFailed
+                ) =>
+            {
+                attached = true;
+            }
+            _ => return false,
+        }
+    }
+    attached
+}
+
 /// The App's chip of an attached file (Node `attachmentMetasOfMessage`: `{fileName, mime, bytes, ref?}`, plus the
 /// App's `previewRef`, and on a live row the text material's `sourceKind` / `messageCount`).
 pub fn chip(file: &AttachedFile) -> serde_json::Value {
