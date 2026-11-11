@@ -360,7 +360,8 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
                 );
             }
         };
-        // Node `runActivation`: the draft's config, then the first input, both after the move into the worktree.
+        // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
+        // input follows the move into the worktree.
         return crate::worktree::activate(
             server,
             envelope,
@@ -369,7 +370,16 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             payload.workspace_id.as_deref(),
             payload.execution_worktree.as_ref(),
             async |live| {
-                apply_draft_config(live.handle.as_ref(), envelope, config).await;
+                apply_draft_config(
+                    server,
+                    live,
+                    envelope,
+                    config,
+                    first.model_selection.as_ref(),
+                )
+                .await;
+            },
+            async |live| {
                 submit_first(
                     server,
                     live,
@@ -711,7 +721,7 @@ async fn activate_submission(
         "already-active"
     } else {
         // The draft's choices: the first sendText carries them too, this keeps a config-only activation right.
-        apply_draft_config(live.handle.as_ref(), envelope, &payload.config).await;
+        apply_draft_config(server, &live, envelope, &payload.config, None).await;
         "input-pending"
     };
     Ack::accepted(
@@ -723,13 +733,21 @@ async fn activate_submission(
     )
 }
 
-/// Fork: a prepared session takes the draft's model and mode before its first input.
+/// Fork: a prepared session takes the draft's model, mode, plan switch and follow-up mode (Node
+/// `applyRequestedSessionConfig`). Without a model in the config the first input's model is the session's, as an
+/// ordinary createSession chooses it, so SessionStart and later turns run on it (in Node the first turn's model
+/// becomes the session's when it starts, and SessionStart runs in that turn).
 async fn apply_draft_config(
-    handle: &dyn SessionHandle,
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
     config: &SessionConfig,
+    first_selection: Option<&Value>,
 ) {
-    if let Some(chosen) = selection(config.model_selection.as_ref()) {
+    let handle = live.handle.as_ref();
+    if let Some(chosen) =
+        selection(config.model_selection.as_ref()).or_else(|| selection(first_selection))
+    {
         send(
             handle,
             &format!("{}:model", envelope.command_id),
@@ -762,6 +780,15 @@ async fn apply_draft_config(
             Command::SetPlan { enabled: plan },
         )
         .await;
+    }
+    // Node writes only a non-default follow-up mode; the open session's projection and a later cold open both take it.
+    if let Some(followup) = config.followup_mode.filter(|mode| *mode != Followup::Queue) {
+        server
+            .followups
+            .lock_unpoisoned()
+            .insert(handle.id().clone(), followup);
+        let sink = live.sink.clone();
+        live.run(Box::pin(async move { sink.set_followup(followup).await }));
     }
 }
 

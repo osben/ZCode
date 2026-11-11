@@ -640,8 +640,10 @@ pub async fn check_directory(
 }
 
 /// Fork: activation of a prepared worktree (`createSession` with `preparedSessionId`, no `expectedSubmissionId`;
-/// Node `runActivation`). After the move, `materialize` applies the draft's config and admits `firstInput`, and
-/// returns the result's `input`; the marker turns active within the activation, as Node completes it.
+/// Node `runActivation`). `configure` applies the draft's config before the move, since the move releases the held
+/// SessionStart and the hook must see the configured model (Node runs it in the first turn, after the config); after
+/// the move `materialize` admits `firstInput` and returns the result's `input`. The marker turns active within the
+/// activation, as Node completes it.
 pub async fn activate(
     server: &Server,
     envelope: &Envelope,
@@ -649,6 +651,7 @@ pub async fn activate(
     expected_attempt: Option<&str>,
     workspace: Option<&str>,
     requested: Option<&Requested>,
+    configure: impl AsyncFnOnce(&Bridged<Live>),
     materialize: impl AsyncFnOnce(&Bridged<Live>) -> Option<Value>,
 ) -> Ack {
     let id = SessionId::new(prepared);
@@ -719,6 +722,9 @@ pub async fn activate(
         .view()
         .await
         .is_ok_and(|view| input_admitted(&view));
+    if !admitted {
+        configure(&live).await;
+    }
     // The move also releases the held SessionStart, so it runs on every attempt: after a restart between the
     // admission and the active marker, the session is already in the stored worktree and only the start is left.
     if let Err(message) = enter(server, &live, envelope, &id, &target).await {

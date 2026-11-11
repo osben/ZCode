@@ -271,12 +271,21 @@ impl HandleOverride for TestHandle {
                 text, execution, ..
             } => match execution {
                 Some(execution) => format!(
-                    "Submit {text} mode={:?} plan={}",
-                    execution.state.mode, execution.state.plan
+                    "Submit {text} mode={:?} plan={}{}",
+                    execution.state.mode,
+                    execution.state.plan,
+                    execution
+                        .selection
+                        .as_ref()
+                        .map(|chosen| format!(" model={}", chosen.model))
+                        .unwrap_or_default()
                 ),
                 None => format!("Submit {text}"),
             },
-            Command::SetModel { .. } => "SetModel".to_owned(),
+            Command::SetModel { selection } => {
+                self.view.lock().unwrap().selection = selection.clone();
+                format!("SetModel {}", selection.model)
+            }
             Command::SetMode { mode } => {
                 self.view.lock().unwrap().mode = *mode;
                 "SetMode".to_owned()
@@ -580,11 +589,12 @@ async fn prepare_update_and_activate_run_the_session_in_the_worktree() {
     assert_eq!(ack.status, Status::Accepted, "{ack:?}");
     assert_eq!(ack.result.unwrap()["preparedActivation"], "materialized");
     let sent = kernel.sent.lock().unwrap().clone();
-    assert_eq!(
-        sent[0],
-        ("c5:worktree".to_owned(), format!("SetExecutionRoot {path}"))
-    );
-    assert!(sent.iter().any(|(_, name)| name == "SetMode"), "{sent:?}");
+    // The config comes first: the move releases SessionStart, which must see the configured session.
+    let mode = sent.iter().position(|(_, name)| name == "SetMode");
+    let moved = sent
+        .iter()
+        .position(|entry| *entry == ("c5:worktree".to_owned(), format!("SetExecutionRoot {path}")));
+    assert!(mode.is_some() && mode < moved, "{sent:?}");
     let execution = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
     assert_eq!(execution.path.as_str(), path);
     assert_eq!(execution.directory.as_str(), workspace);
@@ -930,13 +940,17 @@ async fn activation_admits_the_first_input_in_the_worktree() {
         .iter()
         .map(|(_, name)| name.clone())
         .collect();
-    assert_eq!(sent.first(), Some(&format!("SetExecutionRoot {path}")));
+    // Node's order as SessionStart sees it: the config, the move (which releases SessionStart), the first input.
     let mode = sent.iter().position(|name| name == "SetMode").unwrap();
+    let moved = sent
+        .iter()
+        .position(|name| *name == format!("SetExecutionRoot {path}"))
+        .unwrap();
     let input = sent
         .iter()
         .position(|name| name.starts_with("Submit hello"))
         .unwrap();
-    assert!(mode < input, "{sent:?}");
+    assert!(mode < moved && moved < input, "{sent:?}");
     // The input's own plan switch rides with it (Node `resolveSubmittedExecutionState`), not the defaults.
     assert!(sent[input].ends_with("plan=true"), "{sent:?}");
 }
@@ -1335,4 +1349,75 @@ async fn a_legacy_plan_first_input_keeps_the_mode_and_the_plan_switch() {
         submitted(&kernel),
         ["Submit hello mode=AcceptEdits plan=false"]
     );
+}
+
+/// Node `runActivation` + `applyRequestedSessionConfig`: the draft's config reaches the session before the move that
+/// releases SessionStart (Node runs SessionStart in the first turn, after the config). Without a model in the config
+/// the first input's model is the session's, as an ordinary createSession chooses it (Node makes the first turn's
+/// model the session's), and `followupMode: guide` reaches the open projection and the server's table.
+#[tokio::test]
+async fn activation_applies_the_draft_before_session_start() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt-a");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = SessionId::new(&session);
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": path}, "config": {"followupMode": "guide"},
+            "firstInput": {"text": "hello", "modelSelection": {"providerId": "other", "modelId": "m2"}}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent: Vec<String> = kernel
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect();
+    let model = sent.iter().position(|name| name == "SetModel m2");
+    let moved = sent
+        .iter()
+        .position(|name| *name == format!("SetExecutionRoot {path}"));
+    let input = sent
+        .iter()
+        .position(|name| name.starts_with("Submit hello") && name.ends_with("model=m2"));
+    assert!(
+        model.is_some() && model < moved && moved < input,
+        "{sent:?}"
+    );
+    let view = kernel.handle(&id).unwrap().view.lock().unwrap().clone();
+    assert_eq!(view.selection.model, "m2");
+
+    assert_eq!(
+        server.followups.lock().unwrap().get(&id).copied(),
+        Some(crate::projection::state::Followup::Guide)
+    );
+    let live = server.live(&id).await.unwrap();
+    let guided = async {
+        while live.sink.followup() != crate::projection::state::Followup::Guide {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), guided)
+        .await
+        .unwrap();
 }
