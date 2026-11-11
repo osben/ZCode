@@ -2,8 +2,8 @@
 // 模块说明改成中文；关键字的范围不变（P1 生成的 schema 只用到这些）。
 //! JSON Schema 子集的校验器（docs/specs/rust-cli/app-protocol.md §7）：只认 zod `toJSONSchema` 生成的关键字。
 //!
-//! 编译时遇到不认识的关键字就报错：zod 新用了一种写法时测试失败，而不是被悄悄忽略。字符串长度按 UTF-16 计（与 JS 的
-//! `length` 相同）。
+//! 编译时遇到不认识的关键字就报错：zod 新用了一种写法时测试失败，而不是被悄悄忽略。Fork: 字符串长度按码点计（zod 4 的
+//! `min` / `max` 数 `[...value].length`，不是 JS `length` 的 UTF-16 单元）。
 use regex::Regex;
 use serde_json::Value;
 
@@ -209,7 +209,8 @@ impl Node {
         }
         match value {
             Value::String(s) => {
-                let length = s.encode_utf16().count();
+                // zod 4 counts code points (`[...value].length`), not JS `length`'s UTF-16 units.
+                let length = s.chars().count();
                 if let Some(min) = self.min_length
                     && length < min
                 {
