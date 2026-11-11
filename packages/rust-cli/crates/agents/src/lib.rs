@@ -339,6 +339,10 @@ impl AgentSignals for Signals {
         shell_notices::erased(&self.0, sessions);
     }
 
+    fn running_agent_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.0.live.running_in(sessions)
+    }
+
     fn child_live(
         &self,
         session: &SessionId,

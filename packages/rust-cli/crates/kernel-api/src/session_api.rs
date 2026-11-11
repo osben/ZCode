@@ -812,6 +812,12 @@ pub trait Kernel: Send + Sync {
     /// notices (`close_session` with `forget`), as Node's runtime close cancels them.
     async fn sessions_erased(&self, _sessions: Vec<SessionId>) {}
 
+    /// Fork: the sessions among `sessions` that a running subagent runs in (`AgentSignals::running_agent_sessions`).
+    /// `session/eraseTree` counts them as running and refuses the erase.
+    fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
+    }
+
     /// 会话的只读快照（F29，`/resume` 页的预览与全屏对话）：打开着的问它的 actor，否则从存储冷加载；不打开会话、
     /// 不启动 actor、不跑 SessionStart。
     async fn session_snapshot(&self, _session: &SessionId) -> Result<SessionView, KernelError> {

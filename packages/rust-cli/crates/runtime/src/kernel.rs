@@ -252,6 +252,10 @@ impl Kernel for LocalKernel {
         self.delete(session).await
     }
 
+    fn running_agent_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.agents.running_agent_sessions(sessions)
+    }
+
     /// Fork: `session/eraseTree` erased these sessions (their runtimes already closed). The agents stop their notice
     /// forwarders; every machine forgets them, cancelling their background commands and dropping pending notices, as
     /// session close does on exit (session crate `closing.rs`) and as Node's runtime close does.

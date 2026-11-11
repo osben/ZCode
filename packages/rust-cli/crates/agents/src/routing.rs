@@ -169,8 +169,9 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             }
             AgentState::Parked { .. } | AgentState::Finished(_) => (false, Vec::new(), Vec::new()),
         };
-        // Fork: an erased agent's aborted run ends here: no parking, no resume, and its leftover notices and stranded
-        // messages are dropped with its session; only a live owner hears of it.
+        // Fork: an erased agent's run ends here (it slipped past the erase guard, see `end_erased`): no parking, no
+        // resume, and its leftover notices and stranded messages are dropped with its session; only a live owner hears
+        // of it.
         if entry.erased {
             if let Some(slot) = agents.get_mut(id) {
                 slot.state = AgentState::Finished(finished.ending);
@@ -375,11 +376,13 @@ fn end_parked(agents: &mut Agents, id: &AgentId) -> Option<(LiveAgent, Notice)> 
     Some((entry, notice))
 }
 
-/// Fork: `sessions` were erased (`session/eraseTree`). Every live agent whose child session is among them ends, as a
-/// user stop does and as Node's close of an erased session's runtime cancels it: a running one is aborted (its run
-/// settles later, `settle_erased`), a parked one ends now. The ending reaches only an owner that is not erased itself,
-/// so an owner parked on an erased child resumes instead of waiting for it forever. Called under the Live lock; the
-/// wakes run outside.
+/// Fork: `sessions` were erased (`session/eraseTree`). Every live agent whose child session is among them is marked
+/// erased (no longer addressable). A parked one ends now, as a user stop of a parked agent does and as Node's close of
+/// an erased session's runtime cancels it. The ending reaches only an owner that is not erased itself, so an owner
+/// parked on an erased child resumes instead of waiting for it forever. A running one is not aborted: the erase guard
+/// refuses a tree with a running subagent (Node parity, `running_agent_sessions`), so one reaches here only when it
+/// started between the guard and the row erase; its run settles as erased. Called under the Live lock; the wakes run
+/// outside.
 pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId]) -> Vec<Wake> {
     let erased: Vec<AgentId> = agents
         .values()
@@ -392,11 +395,6 @@ pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId])
             continue;
         };
         entry.erased = true;
-        if let AgentState::Running { abort, .. } = &entry.state {
-            abort.abort(rust_cli_kernel_api::abort::AbortReason::User);
-            entry.stopped_by_user = true;
-            continue;
-        }
         notices.extend(end_parked(agents, id));
     }
     let mut wakes = Vec::new();

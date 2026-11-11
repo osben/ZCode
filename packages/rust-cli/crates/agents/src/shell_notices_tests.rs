@@ -1030,3 +1030,102 @@ async fn erasing_a_parked_child_ends_it_and_releases_its_owner() {
     assert_eq!(harness.seen().len(), 3, "the erased child ran again");
     assert_eq!(env.subscribed().len(), subscribed);
 }
+
+/// Round 4 (Node parity): a running background agent blocks the erase of its tree. The kernel reports its child session
+/// as running (Node `getDetachedChildSessionFacts().running`), a parked agent's child is not running (the erase ends it
+/// as stopped), and since the refused erase never reaches the agents, the running agent goes on: a command notice
+/// that ends meanwhile reaches it, and its own notice reaches the top-level session.
+#[tokio::test]
+async fn a_running_background_agent_blocks_the_erase_and_keeps_its_notices() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, true, machine(env.clone()));
+    let mut root = harness.agents.signals().signals(&SessionId::new(ROOT));
+    let parked = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    env.run_in(parked.clone(), shell_notice(1, "b1"));
+    gates.release(parked.as_str());
+    until(|| {
+        state_of(&harness, &parked)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Parked { .. }))
+    })
+    .await;
+    let parked_notice = next_notice(&mut root).await;
+    let running = launch_from(&harness, ROOT).await;
+    harness.started(2).await;
+    let other = SessionId::new("sess_subagent_agent_other");
+    let tree = [SessionId::new(ROOT), parked.clone(), running.clone(), other];
+    assert_eq!(
+        harness.agents.signals().running_agent_sessions(&tree),
+        std::slice::from_ref(&running),
+        "only the running agent's child blocks the erase"
+    );
+    // The erase was refused, so nothing reaches the agents: the agent keeps running and its notices are not lost.
+    env.finish_in(running.clone(), shell_notice(2, "b2"));
+    until(|| env.acked().contains(&2)).await;
+    assert!(
+        state_of(&harness, &running)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Running { .. }))
+    );
+    gates.release(running.as_str());
+    let own = next_notice(&mut root).await;
+    assert_ne!(own.agent, parked_notice.agent);
+    assert!(
+        own.text.contains("<status>completed</status>"),
+        "{}",
+        own.text
+    );
+    let absorbed = harness.absorbed.lock().unwrap().clone();
+    assert!(
+        absorbed
+            .iter()
+            .any(|(session, text)| session == &running && text.contains("<task-id>b2</task-id>")),
+        "{absorbed:?}"
+    );
+    assert_eq!(harness.seen().len(), 2, "the parked agent woke");
+    assert!(
+        harness
+            .agents
+            .signals()
+            .running_agent_sessions(&tree)
+            .is_empty()
+    );
+}
+
+/// Round 4: an erase that slips past the guard (the agent started between the guard and the row erase) does not abort a
+/// running agent. It is marked erased: no longer addressable and no longer reported as running.
+#[tokio::test]
+async fn an_erase_racing_a_running_agent_does_not_abort_it() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::default());
+    let harness = held_with_env(&gates, true, machine(env.clone()));
+    let running = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    harness.store.erase(&running);
+    harness
+        .agents
+        .signals()
+        .sessions_erased(std::slice::from_ref(&running));
+    settle_tasks().await;
+    assert!(
+        state_of(&harness, &running).is_some_and(|state| matches!(
+            state,
+            crate::live::AgentState::Running { abort, .. } if !abort.is_aborted()
+        )),
+        "{:?}",
+        state_of(&harness, &running)
+    );
+    assert!(
+        harness
+            .agents
+            .signals()
+            .running_agent_sessions(std::slice::from_ref(&running))
+            .is_empty()
+    );
+    gates.release(running.as_str());
+    until(|| {
+        state_of(&harness, &running)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Finished(_)))
+    })
+    .await;
+}

@@ -338,6 +338,20 @@ impl Live {
             .collect()
     }
 
+    /// Fork: the sessions among `sessions` that are the child session of a running agent. A parked agent is not
+    /// running (erase ends it as stopped), and neither is an erased one.
+    pub(crate) fn running_in(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.agents()
+            .values()
+            .filter(|agent| {
+                !agent.erased
+                    && matches!(agent.state, AgentState::Running { .. })
+                    && sessions.contains(&agent.child)
+            })
+            .map(|agent| agent.child.clone())
+            .collect()
+    }
+
     /// 重新开始运行（SendMessage 续跑已结束或停放的子代理）。已在跑时返回 None。
     /// `tool_use`: the call the resumed run belongs to (its notification's `<tool-use-id>`).
     /// Fork: the restart makes the agent live again, so in the same section it claims a notice forwarder for its child
