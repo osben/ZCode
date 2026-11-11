@@ -2,7 +2,9 @@
 
 Composer 语音输入的 UI 模块（`docs/chat/composer-voice-input.md`）。
 
-- `useComposerVoiceInput({ inputApiRef, sessionId, enabled })`：状态机唯一 owner，返回 `available`、`state`、`toggle`、`settle(reason)`。
+- `useComposerVoiceInput({ inputApiRef, sessionId, enabled })`：状态机唯一 owner，返回 `available`、`state`、`toggle`、`settle(reason)`、`subscribeLevel`、`permissionGuide`。
+- `permissionGuide`（`useVoicePermissionGuide`）：麦克风系统权限被拒绝（mac / Windows）时由 `permission_denied` 失败打开的引导弹层状态；不弹 toast。`phase` 为 `denied`（可重新授权或打开系统设置）或 `restart-required`（重启应用）。重新授权调用 `platform.microphone.resetAccess()`，结果 `granted` 时关闭弹层并提示 `voiceInput.permission.granted`；窗口重新获得焦点时静默复查。Linux 不提供引导，仍是文字提示。
+- `VoiceInputButton` 需要 `permissionGuide` prop（`ConversationComposer` 传入 `voiceInput.permissionGuide`）。
 - `VoiceInputButton`：纯展示组件；按下时不抢输入框焦点。
 - `adapters/pcmCapture.ts`：getUserMedia + AudioWorklet，输出 16kHz 单声道 PCM16，每 100ms 一块。
 - `domain/voiceInputFailure.ts`：失败分类、静音判定和提示文案选择，纯函数。

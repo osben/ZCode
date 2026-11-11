@@ -4524,6 +4524,7 @@ function ConversationComposerImpl({
             state={voiceInput.state}
             onToggle={voiceInput.toggle}
             subscribeLevel={voiceInput.subscribeLevel}
+            permissionGuide={voiceInput.permissionGuide}
           />
         ) : null}
         {showStopControl ? (

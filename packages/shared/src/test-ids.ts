@@ -708,6 +708,13 @@ export const TID_V4_COMPOSER_VOICE_ENTRY = "v4-composer-voice-entry";
 export const TID_V4_COMPOSER_SEND = "v4-composer-send";
 /** v4 composer voice input button (data-voice-state marks idle / requesting / recording / finishing) */
 export const TID_V4_COMPOSER_VOICE_INPUT = "v4-composer-voice-input";
+/** v4 composer voice permission guide popover (data-voice-permission-phase is denied / restart-required) */
+export const TID_V4_COMPOSER_VOICE_PERMISSION_GUIDE = "v4-composer-voice-permission-guide";
+export const TID_V4_COMPOSER_VOICE_PERMISSION_OPEN_SETTINGS =
+  "v4-composer-voice-permission-open-settings";
+export const TID_V4_COMPOSER_VOICE_PERMISSION_REAUTHORIZE =
+  "v4-composer-voice-permission-reauthorize";
+export const TID_V4_COMPOSER_VOICE_PERMISSION_RELAUNCH = "v4-composer-voice-permission-relaunch";
 /** v4 composer voice input volume dot matrix (data-voice-active-dots is the number of dots currently showing volume) */
 export const TID_V4_COMPOSER_VOICE_WAVEFORM = "v4-composer-voice-waveform";
 /** v4 paused-queue send confirmation: clear queue and send. */

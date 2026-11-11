@@ -5,10 +5,16 @@ import {
   TID_V4_COMPOSER_VOICE_WAVEFORM,
 } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
+import { Popover, PopoverTrigger } from "@/components/ui/popover.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import type { ComposerVoiceInput, VoiceInputState } from "@/voice-input/contract.js";
+import type {
+  ComposerVoiceInput,
+  VoicePermissionGuide,
+  VoiceInputState,
+} from "@/voice-input/contract.js";
+import { VoicePermissionPopover } from "@/voice-input/ui/VoicePermissionPopover.js";
 
 const TITLE_IDS: Record<VoiceInputState, string> = {
   idle: "voiceInput.button.start",
@@ -70,6 +76,7 @@ const VoiceInputWaveform = memo(function VoiceInputWaveform(props: {
  * Composer 右侧工具栏的语音输入入口，位于发送 / 停止按钮左侧。
  * 空闲时是麦克风按钮；录音中扩展为浅蓝胶囊：左侧蓝色波形，右侧蓝色停止方块（sky 色系 token）。
  * 外层容器始终渲染，按钮不会因状态切换重新挂载，键盘焦点保持在按钮上。
+ * 系统麦克风权限被拒绝时，整个入口作为权限引导弹层的触发器（phase 非空且当前系统可用时打开）。
  * 展开动画：波形外层是单列 grid，列宽从 0fr 过渡到 1fr，胶囊从按钮向左展开，
  * 同时底色和透明度渐入（200ms ease-out）。左侧模型选择随宽度平滑左移，不跳动。
  */
@@ -77,59 +84,71 @@ export const VoiceInputButton = memo(function VoiceInputButton(props: {
   state: VoiceInputState;
   onToggle: () => void;
   subscribeLevel: ComposerVoiceInput["subscribeLevel"];
+  permissionGuide: VoicePermissionGuide;
 }) {
   const { intl } = useZCodeIntl();
   const title = intl.formatMessage({ id: TITLE_IDS[props.state] });
   const active = props.state !== "idle";
+  const { permissionGuide } = props;
   return (
-    <span
-      className={
-        "flex shrink-0 items-center rounded-full transition-colors duration-200 ease-out motion-reduce:transition-none " +
-        (active ? "bg-voice-input-surface" : "")
-      }
+    <Popover
+      open={permissionGuide.available && permissionGuide.phase !== null}
+      onOpenChange={(open) => {
+        if (!open) permissionGuide.close();
+      }}
     >
-      <span
-        data-voice-pill-expanded={active}
-        className={
-          "grid transition-[grid-template-columns,opacity] duration-200 ease-out motion-reduce:transition-none " +
-          (active ? "grid-cols-[1fr] opacity-100" : "grid-cols-[0fr] opacity-0")
-        }
-      >
-        <span className="min-w-0 overflow-hidden">
-          {active ? (
-            <VoiceInputWaveform
-              active={props.state === "recording"}
-              subscribeLevel={props.subscribeLevel}
-            />
-          ) : null}
-        </span>
-      </span>
-      <ControlHintTooltip title={title}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-md"
-          data-testid={TID_V4_COMPOSER_VOICE_INPUT}
-          data-voice-state={props.state}
-          aria-label={title}
-          aria-pressed={active}
-          // 识别中等待服务端结果，不响应点击；用 aria-disabled 保留 hover 提示。
-          aria-disabled={props.state === "finishing" || undefined}
-          // 按下按钮不抢走输入框焦点：语音文字写在原光标处，用户也能直接继续打字来停止语音输入。
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={props.state === "finishing" ? undefined : props.onToggle}
-          className="shrink-0 rounded-full"
+      <PopoverTrigger asChild>
+        <span
+          className={
+            "flex shrink-0 items-center rounded-full transition-colors duration-200 ease-out motion-reduce:transition-none " +
+            (active ? "bg-voice-input-surface" : "")
+          }
         >
-          {props.state === "idle" ? (
-            <MicIcon className="size-4" />
-          ) : props.state === "recording" ? (
-            <span className="size-2.5 rounded-[3px] bg-voice-input-wave" />
-          ) : (
-            <Spinner className="size-4" />
-          )}
-          <span className="sr-only">{title}</span>
-        </Button>
-      </ControlHintTooltip>
-    </span>
+          <span
+            data-voice-pill-expanded={active}
+            className={
+              "grid transition-[grid-template-columns,opacity] duration-200 ease-out motion-reduce:transition-none " +
+              (active ? "grid-cols-[1fr] opacity-100" : "grid-cols-[0fr] opacity-0")
+            }
+          >
+            <span className="min-w-0 overflow-hidden">
+              {active ? (
+                <VoiceInputWaveform
+                  active={props.state === "recording"}
+                  subscribeLevel={props.subscribeLevel}
+                />
+              ) : null}
+            </span>
+          </span>
+          <ControlHintTooltip title={title}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-md"
+              data-testid={TID_V4_COMPOSER_VOICE_INPUT}
+              data-voice-state={props.state}
+              aria-label={title}
+              aria-pressed={active}
+              // 识别中等待服务端结果，不响应点击；用 aria-disabled 保留 hover 提示。
+              aria-disabled={props.state === "finishing" || undefined}
+              // 按下按钮不抢走输入框焦点：语音文字写在原光标处，用户也能直接继续打字来停止语音输入。
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={props.state === "finishing" ? undefined : props.onToggle}
+              className="shrink-0 rounded-full"
+            >
+              {props.state === "idle" ? (
+                <MicIcon className="size-4" />
+              ) : props.state === "recording" ? (
+                <span className="size-2.5 rounded-[3px] bg-voice-input-wave" />
+              ) : (
+                <Spinner className="size-4" />
+              )}
+              <span className="sr-only">{title}</span>
+            </Button>
+          </ControlHintTooltip>
+        </span>
+      </PopoverTrigger>
+      <VoicePermissionPopover guide={permissionGuide} />
+    </Popover>
   );
 });
