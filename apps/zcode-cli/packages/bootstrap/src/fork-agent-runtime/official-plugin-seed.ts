@@ -10,8 +10,8 @@ import { getCliStorageRoot, getPluginStorageRoot } from "../app/paths.js";
 /**
  * Fork (specs/fork-agent-runtime-selection.md, rule 3): the Rust agent `zcode-rs` only reads the
  * official plugin cache that Node seeds; it has no copy of the plugin sources. With Rust effective
- * no Node agent ever runs, so the Node storage-preparation Worker, which the Host runs before every
- * agent spawn for both runtimes, is the one owner that lays out the cache for it. With Node
+ * no Node agent ever runs, so the Node storage-preparation Worker, which the Host runs at startup for
+ * each warm-up working directory for both runtimes, is the one owner that lays out the cache for it. With Node
  * effective the agent seeds the cache itself on its first plugin resolution, so this is a no-op.
  *
  * Seeding never fails storage preparation: a broken plugin asset must not block the app start. When
