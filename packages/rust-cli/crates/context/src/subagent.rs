@@ -9,6 +9,7 @@
 //!
 //! 各段的增量逻辑与主线程相同，只看子会话自己的历史。
 
+use rust_cli_kernel_api::incognito::IncognitoKey;
 use rust_cli_kernel_api::listing::Listings;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::ContextRequest;
@@ -44,9 +45,12 @@ impl PromptAssembler {
         // （tools-files.md §3.3）。缺陷修复（F19）：以前这里与工具轮都按项目根——父会话 `cd` 之后派的子代理，
         // 环境段写的不是它的工作目录（它的文件工具与 Bash 都在派生时的目录）。
         let facts = self.facts(request).await;
+        // Fork: incognito without `environment` announces neither the environment nor the model.
+        let environment = !self.excludes(request, IncognitoKey::Environment);
         if let Some(found) = self
             .shown_facts(request, facts.as_ref())
             .await
+            .filter(|_| environment)
             .and_then(|facts| {
                 environment::announce(history, &facts, &self.config.additional_directories)
             })
@@ -55,6 +59,7 @@ impl PromptAssembler {
         }
         out.extend(
             announce::model(history, &request.selection)
+                .filter(|_| environment)
                 .map(|found| self.attachment(announce::MODEL, found)),
         );
         if request.tool_names.iter().any(|tool| tool == SKILL_TOOL) {

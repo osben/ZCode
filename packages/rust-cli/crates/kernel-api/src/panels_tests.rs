@@ -138,6 +138,7 @@ fn workspace_sessions_and_shell_details_round_trip() {
             last_outcome: Some("error".to_owned()),
             parent: None,
             title_source: None,
+            incognito: false,
         },
         activity: Some(SessionActivity::NeedsInput),
         last_reply: Some("done".to_owned()),

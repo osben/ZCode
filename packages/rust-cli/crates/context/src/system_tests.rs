@@ -16,6 +16,7 @@ fn facts<'a>(tool_names: &'a [String], surface: Surface) -> PromptFacts<'a> {
         custom: None,
         append: None,
         token_budget: true,
+        incognito: None,
         desktop: None,
     }
 }
@@ -219,6 +220,84 @@ fn every_section_has_its_name_and_they_join_into_the_system_blocks() {
     );
 }
 
+/// Fork: specs/fork-rust-agent-parity.md, "Incognito sessions". An all-off profile keeps the security notice and
+/// Caution only (no identity block, intro, harness, communication, pronouns or guidance); `identity` and `harness`
+/// each bring back only their own parts; a normal session is unchanged.
+#[test]
+fn incognito_prompt_toggles_remove_only_their_own_parts() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    let tools = names(&["Skill"]);
+    let normal = system_blocks(&facts(&tools, Surface::Interactive));
+    let with = |profile: IncognitoProfile| {
+        let mut facts = facts(&tools, Surface::Interactive);
+        facts.memory_dir = None;
+        facts.incognito = Some(profile);
+        system_blocks(&facts)
+    };
+    let joined = |blocks: &[SystemBlock]| {
+        blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+
+    let off = with(IncognitoProfile::LOCKDOWN);
+    assert_eq!(off.len(), 2, "no identity block");
+    assert!(off.iter().all(|block| !block.text.is_empty()));
+    let text = joined(&off);
+    assert!(text.contains(texts::security()));
+    assert!(text.contains(texts::action_caution()));
+    for gone in [
+        texts::identity(),
+        texts::intro(),
+        "# Harness",
+        texts::communication_lean(),
+        texts::pronouns(),
+        "# Session-specific guidance",
+    ] {
+        assert!(!text.contains(gone), "{gone}");
+    }
+    assert_eq!(off[0].cache_control, normal[1].cache_control);
+
+    let identity = with(IncognitoProfile {
+        identity: true,
+        ..IncognitoProfile::LOCKDOWN
+    });
+    assert_eq!(identity[0].text, texts::identity());
+    assert!(identity[1].text.starts_with(texts::intro()));
+    assert!(!joined(&identity).contains("# Harness"));
+
+    let harness = with(IncognitoProfile {
+        harness: true,
+        ..IncognitoProfile::LOCKDOWN
+    });
+    let text = joined(&harness);
+    assert!(text.contains("# Harness"));
+    assert!(text.contains(texts::communication_lean()));
+    assert!(text.contains(texts::pronouns()));
+    assert!(text.contains("# Session-specific guidance"));
+    assert!(!text.contains(texts::intro()));
+    // The harness block is the normal one, word for word.
+    let normal_body = &normal[1].text;
+    let at = normal_body.find("# Harness").unwrap();
+    assert!(harness[0].text.ends_with(&normal_body[at..]));
+
+    // `--system-prompt`: the identity block follows `identity` there too (Node `identityOff`).
+    let custom = |profile: Option<IncognitoProfile>| {
+        let mut facts = facts(&tools, Surface::Interactive);
+        facts.custom = Some("CUSTOM");
+        facts.incognito = profile;
+        system_blocks(&facts)
+    };
+    let normal_custom = custom(None);
+    assert_eq!(normal_custom.len(), 2);
+    assert_eq!(normal_custom[0].text, texts::identity());
+    let locked_custom = custom(Some(IncognitoProfile::LOCKDOWN));
+    assert_eq!(locked_custom.len(), 1);
+    assert_eq!(locked_custom[0].text, "CUSTOM");
+}
+
 /// Fork: Node's desktop section closes the static block (Node's stable system message: identity body, then the
 /// section), before the session sections; the block is then cached per session, like Node's stable message.
 #[test]
@@ -268,5 +347,37 @@ fn a_custom_prompt_drops_the_desktop_section() {
         sections(&custom)
             .iter()
             .all(|section| section.name != "ZCode Desktop Context")
+    );
+}
+
+/// Fork: like Node (`harnessOff` in the context builder), an incognito profile without `harness` drops the desktop
+/// section from the request and from the `/context` sections; with `harness` it stays.
+#[test]
+fn incognito_without_harness_drops_the_desktop_section() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    let tools = names(&["Skill"]);
+    let text = crate::desktop::section(None);
+    let with = |profile: IncognitoProfile| {
+        let mut facts = facts(&tools, Surface::Interactive);
+        facts.desktop = Some(&text);
+        facts.incognito = Some(profile);
+        let blocks = system_blocks(&facts);
+        let named = sections(&facts)
+            .iter()
+            .any(|section| section.name == crate::desktop::NAME);
+        (
+            blocks
+                .iter()
+                .any(|block| block.text.contains("# ZCode Desktop Context")),
+            named,
+        )
+    };
+    assert_eq!(with(IncognitoProfile::LOCKDOWN), (false, false));
+    assert_eq!(
+        with(IncognitoProfile {
+            harness: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+        (true, true)
     );
 }

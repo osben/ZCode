@@ -333,6 +333,7 @@ fn forked_view() -> rust_cli_kernel_api::session_api::SessionView {
             title: "Footer work (fork)".into(),
             trace: TraceId::new("s"),
             created_at_ms: 0,
+            incognito: None,
         },
         vec![
             Message::User(UserMessage {

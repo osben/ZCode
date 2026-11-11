@@ -70,12 +70,12 @@ async fn the_listing_hides_model_disabled_and_inactive_conditional_skills() {
         lines
     };
     assert_eq!(
-        lines(catalog.listing(&workspace(), &[], "").await),
+        lines(catalog.listing(&workspace(), None, &[], "").await),
         ["- always: Always"]
     );
     let history = read(&format!("{CWD}/src/main.ts"));
     assert_eq!(
-        lines(catalog.listing(&workspace(), &history, "").await),
+        lines(catalog.listing(&workspace(), None, &history, "").await),
         ["- always: Always", "- ts: TS"]
     );
 }

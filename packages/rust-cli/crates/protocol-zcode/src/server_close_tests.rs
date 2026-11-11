@@ -176,6 +176,14 @@ impl Kernel for CloseKernel {
         Ok(SessionId::new("s1"))
     }
 
+    /// createSession reads the requested id first (a reused or soft-deleted id is refused); the ids these tests
+    /// create are new.
+    async fn session_snapshot(&self, session: &SessionId) -> Result<SessionView, KernelError> {
+        Err(KernelError::NotFound {
+            session: session.clone(),
+        })
+    }
+
     async fn open_session(
         &self,
         _session: &SessionId,
@@ -204,6 +212,7 @@ impl Kernel for CloseKernel {
                 last_outcome: None,
                 parent: None,
                 title_source: None,
+                incognito: false,
             },
             activity,
             last_reply: None,
@@ -230,6 +239,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: rust_cli_kernel_api::ids::TraceId::new("trace"),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 

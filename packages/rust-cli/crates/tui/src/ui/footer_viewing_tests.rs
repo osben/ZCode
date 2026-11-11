@@ -138,6 +138,7 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
                 title: "Find callers".into(),
                 trace: TraceId::new("sess_main"),
                 created_at_ms: 0,
+                incognito: None,
             },
             Vec::new(),
             ModelSelection {
@@ -470,6 +471,7 @@ fn snapshot_of(view: Transcript) -> SessionView {
                 title: view.title().to_owned(),
                 trace: TraceId::new("sess_main"),
                 created_at_ms: 0,
+                incognito: None,
             },
             Vec::new(),
             view.selection().clone(),

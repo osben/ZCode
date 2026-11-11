@@ -190,6 +190,7 @@ struct OneRule;
 impl rust_cli_kernel_api::orchestration::DirectoryRules for OneRule {
     async fn directory_rules(
         &self,
+        _session: &rust_cli_kernel_api::ids::SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String> {

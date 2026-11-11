@@ -144,6 +144,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace"),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 

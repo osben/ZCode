@@ -278,6 +278,13 @@ pub enum Command {
     SetExecutionRoot {
         root: crate::env::EnvPath,
     },
+    /// Fork: the incognito profile a prepared execution worktree's activation freezes (specs/fork-rust-agent-parity.md,
+    /// "Incognito sessions"). The actor's meta takes it while it has none, so a fork of the session keeps it; the same
+    /// profile again is `Accepted`, another one `Rejected`. Sent after [`Kernel::freeze_incognito`] and before
+    /// [`Command::SetExecutionRoot`] releases the held SessionStart.
+    SetIncognito {
+        profile: crate::incognito::IncognitoProfile,
+    },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
     ChangeDirectoryRecorded {
@@ -366,6 +373,9 @@ pub struct CreateSession {
     /// plan 开关（修复线 F20；serde 缺省 false）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan: bool,
+    /// Fork: the incognito profile, frozen into the new row (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 会话的当前视图（前端重连或首次打开时用）。
@@ -619,6 +629,20 @@ pub trait Kernel: Send + Sync {
     ) -> Result<SessionId, KernelError> {
         Err(KernelError::Unsupported {
             what: "prepared worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: freezes the incognito profile of a prepared execution worktree at its activation
+    /// (specs/fork-rust-agent-parity.md, "Incognito sessions"): the row's `fork_incognito` once, then the in-memory
+    /// profile every gate reads, before the activation releases SessionStart or admits the first input. A row that
+    /// holds another profile, or a store that cannot hold one, fails it. A kernel without it refuses.
+    async fn freeze_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: crate::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        Err(KernelError::Unsupported {
+            what: "incognito profiles".to_owned(),
         })
     }
 

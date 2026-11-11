@@ -7,9 +7,15 @@ use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::orchestration::ToolRegistry;
 
 /// tool_use 块按它的工具整理输入；找不到工具或工具不整理时不动（找不到的之后回填“没有这个工具”的错误）。
-pub(crate) fn apply(tools: &dyn ToolRegistry, block: &mut ContentBlock) {
+pub(crate) fn apply(
+    tools: &dyn ToolRegistry,
+    session: &rust_cli_kernel_api::ids::SessionId,
+    block: &mut ContentBlock,
+) {
     if let ContentBlock::ToolUse { name, input, .. } = block
-        && let Some(rebuilt) = tools.find(name).and_then(|tool| tool.rewrite_input(input))
+        && let Some(rebuilt) = tools
+            .find_for(session, name)
+            .and_then(|tool| tool.rewrite_input(input))
     {
         *input = rebuilt;
     }

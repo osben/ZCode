@@ -106,6 +106,7 @@ async fn a_session_with_usage_measures_messages_from_the_anchor() {
             selection: carded(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -167,4 +168,39 @@ async fn a_session_with_usage_measures_messages_from_the_anchor() {
         kinds.contains(&"Your messages") && kinds.contains(&"Replies"),
         "{kinds:?}"
     );
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): `/context` counts the session's tools, so a session
+/// whose profile removes the automation tools does not list them; a normal session does.
+#[tokio::test]
+async fn context_usage_counts_only_the_tools_an_incognito_session_keeps() {
+    let kernel = setup(counting(Vec::new()));
+    let create = |incognito| CreateSession {
+        id: None,
+        workspace: workspace(),
+        selection: carded(),
+        mode: PermissionMode::Default,
+        plan: false,
+        incognito,
+    };
+    let normal = kernel.create_session(create(None)).await.unwrap();
+    let locked = kernel
+        .create_session(create(Some(
+            rust_cli_kernel_api::incognito::IncognitoProfile::LOCKDOWN,
+        )))
+        .await
+        .unwrap();
+    let names = |usage: &rust_cli_kernel_api::context_usage::ContextUsage| -> Vec<String> {
+        usage
+            .system_tools
+            .iter()
+            .chain(&usage.deferred_tools)
+            .map(|tool| tool.name.clone())
+            .collect()
+    };
+    let cron = rust_cli_kernel_api::tool_names::CRON_CREATE;
+    let normal = names(&kernel.context_usage(query(Some(normal))).await.unwrap());
+    assert!(normal.iter().any(|name| name == cron), "{normal:?}");
+    let locked = names(&kernel.context_usage(query(Some(locked))).await.unwrap());
+    assert!(!locked.iter().any(|name| name == cron), "{locked:?}");
 }

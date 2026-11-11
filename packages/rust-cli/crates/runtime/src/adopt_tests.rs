@@ -28,6 +28,7 @@ fn meta(id: &str, kind: SessionKind, parent: Option<&str>) -> SessionMeta {
         title: String::new(),
         trace: TraceId::new(id),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -170,6 +171,7 @@ async fn creating_a_top_level_session_runs_the_open_hook() {
                 selection: selection(),
                 mode: PermissionMode::Default,
                 plan: false,
+                incognito: None,
             },
             StartSource::Startup,
         )

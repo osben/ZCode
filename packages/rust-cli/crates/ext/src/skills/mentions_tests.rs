@@ -53,6 +53,7 @@ async fn only_skills_are_mentioned_once_each_in_order() {
         catalog
             .mentions(
                 &workspace(),
+                None,
                 "use /helper then /greet, /greet and /nope or /greet"
             )
             .await,
@@ -62,7 +63,7 @@ async fn only_skills_are_mentioned_once_each_in_order() {
     catalog.set_print_session(true);
     assert!(
         catalog
-            .mentions(&workspace(), "use /greet now")
+            .mentions(&workspace(), None, "use /greet now")
             .await
             .is_empty()
     );

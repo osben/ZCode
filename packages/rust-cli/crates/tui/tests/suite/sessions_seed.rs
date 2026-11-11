@@ -38,6 +38,7 @@ pub async fn seed(store: &MemoryStore, seeds: &[Seed]) {
                 title: seed.title.to_owned(),
                 trace: TraceId::new(seed.id),
                 created_at_ms: seed.created,
+                incognito: None,
             })
             .await
             .unwrap();

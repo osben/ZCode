@@ -166,6 +166,7 @@ async fn create(store: &NodeStore) -> Result<SessionId> {
             title: String::new(),
             trace: TraceId::new(id.as_str()),
             created_at_ms: now_ms(),
+            incognito: None,
         })
         .await?;
     let selection = ModelSelection {

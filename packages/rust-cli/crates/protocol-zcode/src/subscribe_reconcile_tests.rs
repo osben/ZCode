@@ -114,6 +114,7 @@ fn a_cold_row_reports_the_stored_creation_and_outcome() {
             last_outcome: outcome.map(str::to_owned),
             parent: None,
             title_source: None,
+            incognito: false,
         },
         activity: None,
         last_reply: None,
@@ -146,6 +147,7 @@ fn a_cold_fork_row_carries_its_parent() {
             last_outcome: None,
             parent: parent.map(SessionId::new),
             title_source: None,
+            incognito: false,
         },
         activity: None,
         last_reply: None,
@@ -154,6 +156,14 @@ fn a_cold_fork_row_carries_its_parent() {
     assert_eq!(fork["parentSessionId"], json!("sess_1"));
     let root = super::cold_row("/work/a", &session(None));
     assert!(root.get("parentSessionId").is_none());
+    // Fork: an incognito session's cold row carries the flag only (specs/fork-rust-agent-parity.md).
+    assert!(root.get("incognito").is_none());
+    let mut incognito = session(None);
+    incognito.summary.incognito = true;
+    assert_eq!(
+        super::cold_row("/work/a", &incognito)["incognito"],
+        json!(true)
+    );
 }
 
 /// Fork: a cold row reports the stored title source the way Node's cold summary normalizes it
@@ -174,6 +184,7 @@ fn a_cold_row_reports_the_stored_title_source() {
             last_outcome: None,
             parent: None,
             title_source: source.map(str::to_owned),
+            incognito: false,
         },
         activity: None,
         last_reply: None,

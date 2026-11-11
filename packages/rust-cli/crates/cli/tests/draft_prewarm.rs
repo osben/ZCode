@@ -84,6 +84,7 @@ impl Sandbox {
                 selection: selection(),
                 mode: PermissionMode::Default,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap()
@@ -310,6 +311,7 @@ async fn a_worktree_draft_answers_its_parent_and_worktree_before_its_row() {
                 selection: selection(),
                 mode: PermissionMode::Default,
                 plan: false,
+                incognito: None,
             },
             EnvPath::new(worktree.to_string_lossy()),
             Some("feat/a".to_owned()),

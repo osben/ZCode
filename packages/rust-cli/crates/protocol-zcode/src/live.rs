@@ -119,6 +119,9 @@ pub struct Live {
     /// "Draft prewarm in Rust mode"). The store owns that fact; a draft never becomes one again, so the probe is
     /// dropped the first time the store says the session has its row.
     draft_probe: Mutex<Option<Arc<dyn rust_cli_kernel_api::store::StoreQueries>>>,
+    /// Fork: the session's incognito profile, frozen at creation (the row's `fork_incognito`), or at the activation of a
+    /// prepared execution worktree, whose reserved row has none ([`Live::freeze_incognito`]). Set once.
+    incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfile>,
 }
 
 /// Fork: the stored facts a cold open restores (crate::server::Server::live). They are read before the bridge
@@ -183,6 +186,10 @@ impl Live {
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
             draft_probe: Mutex::new(None),
+            incognito: view
+                .meta
+                .incognito
+                .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
         }
     }
 
@@ -208,6 +215,20 @@ impl Live {
         }
         self.draft_probe.lock_unpoisoned().take();
         false
+    }
+
+    /// Fork: the session's incognito profile (None for a normal session).
+    pub(crate) fn incognito(&self) -> Option<rust_cli_kernel_api::incognito::IncognitoProfile> {
+        self.incognito.get().copied()
+    }
+
+    /// Fork: the profile a prepared worktree's activation froze (`worktree::activate`, after the kernel recorded it).
+    /// The summary carries the flag from the next publish on (the activation publishes the worktree facts).
+    pub(crate) fn freeze_incognito(
+        &self,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) {
+        let _ = self.incognito.set(profile);
     }
 
     /// Fork: see [`ChildWatch`]; set once when the server opens the session.
@@ -638,6 +659,10 @@ impl Live {
             permissions: state.projection.pending_permissions(),
         }
         .to_value();
+        // Fork: the sidebar marks an incognito session; only the flag is projected (Node `incognito: true`).
+        if self.incognito.get().is_some() {
+            row["incognito"] = json!(true);
+        }
         if let Some(preparation) = &state.preparation {
             row["submissionPreparation"] = preparation.clone();
             row["phase"] = json!("draft");
