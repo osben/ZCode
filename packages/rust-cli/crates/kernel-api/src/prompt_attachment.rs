@@ -9,8 +9,9 @@ use crate::message::{
 };
 use crate::persisted_output::ARTIFACT_SCHEME;
 
-/// The largest image read inline, also when an image is read back from its artifact (the Anthropic API refuses larger
-/// ones; Node resizes, the fork does not yet).
+/// The largest image read back from its artifact on a cold load (the Anthropic API refuses larger ones). An image is
+/// prepared within the model budget when it is attached (rust-cli-image), so only a reused web-remote original can be
+/// larger.
 pub const INLINE_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
 
 /// JS `decodeURIComponent` of one URI segment.
@@ -300,6 +301,18 @@ pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
         }],
         // Node `buildUserMessageEntries` skips a failed text read.
         AttachedBody::ReadFailed => Vec::new(),
+        // Node `resolvedPlaceholderAttachment`: the App's MIME and the submitted path (the file name for a web-remote
+        // ref, where Node names `attachment-<n>`).
+        AttachedBody::ImageFailed { .. } => {
+            let label = file
+                .reference
+                .as_deref()
+                .filter(|reference| !reference.contains("://"))
+                .unwrap_or(&file.name);
+            vec![ContentBlock::Text {
+                text: format!("[Attached {}: {label}]", file.mime),
+            }]
+        }
         AttachedBody::Image { source } => vec![ContentBlock::Image {
             source: source.clone(),
             name: Some(file.name.clone()),
@@ -325,7 +338,7 @@ pub fn chip(file: &AttachedFile) -> serde_json::Value {
         out["ref"] = reference.as_str().into();
     }
     if let Some(preview) = &file.preview_reference {
-        out["previewRef"] = preview.as_str().into();
+        out["previewRef"] = (**preview).into();
     }
     if let Some(material) = &file.material {
         out["sourceKind"] = serde_json::to_value(material.kind).unwrap_or_default();
@@ -352,7 +365,7 @@ pub fn part_mime(file: &AttachedFile) -> String {
         AttachedBody::PathReference { text } => path_reference_mime(text)
             .unwrap_or_else(|| mime_of_path(file.reference.as_deref().unwrap_or(&file.name)))
             .to_owned(),
-        AttachedBody::Omitted => file.mime.clone(),
+        AttachedBody::Omitted | AttachedBody::ImageFailed { .. } => file.mime.clone(),
     }
 }
 

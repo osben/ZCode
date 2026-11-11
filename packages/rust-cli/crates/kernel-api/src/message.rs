@@ -84,7 +84,8 @@ pub struct AttachedFile {
     pub reference: Option<String>,
     /// The App's `previewRef` (a smaller rendition the App previews instead), when it sent one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preview_reference: Option<String>,
+    /// `Box<str>`: keeps the block within the size of a model stream event (clippy `large_enum_variant`).
+    pub preview_reference: Option<Box<str>>,
     /// The session artifact (`zcode-artifact://`) holding an image's `data:` URL, Node's `metadata.artifactUri`: the
     /// stored part points at it instead of inlining the bytes, and a cold load reads the image back from it.
     ///
@@ -97,7 +98,29 @@ pub struct AttachedFile {
     /// Boxed: rare, and every message block pays for the field's size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<Box<Material>>,
+    /// Node's `metadata.image` of an image prepared for the model (specs/fork-agent-runtime-selection.md "Image
+    /// preparation"). Boxed: only images have it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<Box<ImageInfo>>,
     pub body: AttachedBody,
+}
+
+/// Fork: Node `PreparedImageData.metadata`, how an attached image was prepared for the model. The pixel sizes are
+/// unknown for a WebP image, which is sent as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_height: Option<u32>,
+    pub max_dimension: u32,
+    pub resized: bool,
+    /// The size of the bytes sent.
+    pub transformed_size_bytes: u64,
 }
 
 /// Fork: Node `attachmentSourceKindSchema`, the text material the App sends by reference only.
@@ -141,6 +164,9 @@ pub enum AttachedBody {
     /// Node's `attachment_read_failed` placeholder of a desktop text file that could not be read: nothing of it reaches
     /// the model (Node `isFailedTextAttachmentPlaceholder`).
     ReadFailed,
+    /// Node's placeholder of an image that could not be prepared for the model (`resolvedPlaceholderAttachment` with
+    /// `code` `attachment_image_resize_failed` or `attachment_image_invalid`): the model reads `[Attached <mime>: <path>]`.
+    ImageFailed { code: String },
 }
 
 /// Fork: the view of a desktop text file that was sent (Node's `metadata.preview` of `resolveLocalFileAttachment`).

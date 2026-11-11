@@ -69,33 +69,45 @@ fn the_real_length_decides_the_inline_form() {
     assert_eq!(inline_form("video/mp4", 1), None);
     let grown_text = vec![b'a'; 64 * 1024 + 1];
     assert!(matches!(
-        admit(Inline::Text, "text/plain", grown_text),
+        block_on(admit(Inline::Text, "text/plain", grown_text)).0,
         AttachedBody::Omitted
     ));
     assert!(matches!(
-        admit(Inline::Text, "text/plain", b"ok".to_vec()),
+        block_on(admit(Inline::Text, "text/plain", b"ok".to_vec())).0,
         AttachedBody::Text { .. }
     ));
     assert!(matches!(
-        admit(Inline::Text, "text/plain", b"a\0b".to_vec()),
+        block_on(admit(Inline::Text, "text/plain", b"a\0b".to_vec())).0,
         AttachedBody::Omitted
     ));
-    let grown_image = vec![0u8; INLINE_IMAGE_MAX_BYTES + 1];
+    assert_eq!(
+        inline_form("image/png", INLINE_MEDIA_MAX_BYTES),
+        Some(Inline::Image)
+    );
+    assert_eq!(inline_form("image/png", INLINE_MEDIA_MAX_BYTES + 1), None);
+    let grown_image = vec![0u8; INLINE_MEDIA_MAX_BYTES as usize + 1];
     assert!(matches!(
-        admit(Inline::Image, "image/png", grown_image),
+        block_on(admit(Inline::Image, "image/png", grown_image)).0,
         AttachedBody::Omitted
     ));
+}
+
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(future)
 }
 
 #[test]
 fn the_artifact_size_cap_admits_a_full_inline_image() {
     // The cap is checked on the stored data URL before it is loaded, so it must not refuse an image at the limit.
-    let image = vec![7u8; INLINE_IMAGE_MAX_BYTES];
+    let image = vec![7u8; INLINE_MEDIA_MAX_BYTES as usize];
     let stored = format!("data:image/png;base64,{}", base64().encode(&image));
-    assert!(stored.len() as u64 <= encoded_cap(INLINE_IMAGE_MAX_BYTES as u64));
+    assert!(stored.len() as u64 <= encoded_cap(INLINE_MEDIA_MAX_BYTES));
     assert_eq!(
-        from_data_url(stored.into_bytes(), "text/plain").0.len(),
-        INLINE_IMAGE_MAX_BYTES
+        from_data_url(stored.into_bytes(), "text/plain").0.len() as u64,
+        INLINE_MEDIA_MAX_BYTES
     );
 }
 
@@ -433,4 +445,78 @@ fn desktop_text_is_read_by_the_agent_whatever_its_declared_size() {
     }))
     .unwrap();
     assert!(!is_local_text(&remote));
+}
+
+fn png(width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbImage::from_pixel(width, height, image::Rgb([10, 120, 200]));
+    let mut data = Vec::new();
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(
+            &mut std::io::Cursor::new(&mut data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    data
+}
+
+/// Node `prepareImageDataUrl`: an image over 2000 px is bounded and the part records how (`metadata.image`).
+#[tokio::test]
+async fn an_attached_image_is_prepared_for_the_model_like_node() {
+    let (body, info) = prepare_image(png(3000, 30), "image/png").await;
+    let AttachedBody::Image {
+        source: ImageSource::Base64 { media_type, data },
+    } = body
+    else {
+        panic!("an image block: {body:?}");
+    };
+    // A PNG over the size limit goes to the JPEG ladder (Node keeps PNG only at its own size).
+    assert_eq!(media_type, "image/jpeg");
+    let sent = base64().decode(data).unwrap();
+    assert_eq!(
+        info.as_deref(),
+        Some(&ImageInfo {
+            width: Some(2000),
+            height: Some(20),
+            original_width: Some(3000),
+            original_height: Some(30),
+            max_dimension: 2000,
+            resized: true,
+            transformed_size_bytes: sent.len() as u64,
+        })
+    );
+    // Within the limits the original bytes are sent.
+    let small = png(40, 30);
+    let (body, info) = prepare_image(small.clone(), "image/png").await;
+    assert_eq!(
+        body,
+        AttachedBody::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/png".into(),
+                data: base64().encode(&small),
+            }
+        }
+    );
+    assert!(!info.unwrap().resized);
+}
+
+#[tokio::test]
+async fn an_image_that_cannot_be_prepared_is_nodes_placeholder() {
+    assert_eq!(
+        prepare_image(Vec::new(), "image/png").await,
+        (
+            AttachedBody::ImageFailed {
+                code: "attachment_image_invalid".into()
+            },
+            None
+        )
+    );
+    assert_eq!(
+        prepare_image(b"not an image".to_vec(), "image/png").await,
+        (
+            AttachedBody::ImageFailed {
+                code: "attachment_image_resize_failed".into()
+            },
+            None
+        )
+    );
 }

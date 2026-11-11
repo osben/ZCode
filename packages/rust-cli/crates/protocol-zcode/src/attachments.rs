@@ -10,10 +10,10 @@ use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_fs::BoundedRead;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{
-    AttachedBody, AttachedFile, ContentBlock, ImageSource, Material, MaterialKind,
+    AttachedBody, AttachedFile, ContentBlock, ImageInfo, ImageSource, Material, MaterialKind,
 };
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
-use rust_cli_kernel_api::prompt_attachment::{INLINE_IMAGE_MAX_BYTES, VIDEO_INPUT_MAX_BYTES};
+use rust_cli_kernel_api::prompt_attachment::VIDEO_INPUT_MAX_BYTES;
 use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactRef, ArtifactStore};
 use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
@@ -27,6 +27,14 @@ use crate::uploads::{Began, Begin, CHUNK_MAX_BYTES, Commit, MAX_BYTES, Target};
 
 /// Node `INLINE_TEXT_ATTACHMENT_MAX_BYTES`: larger text files are sent as a metadata-only reminder.
 const INLINE_TEXT_MAX_BYTES: u64 = 64 * 1024;
+
+/// Node `INLINE_MEDIA_ATTACHMENT_MAX_BYTES`: the largest image read and prepared for the model; a larger desktop image
+/// goes by path (`image_too_large`).
+const INLINE_MEDIA_MAX_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Node's `errorCode` of an image that could not be prepared, and of an empty one.
+const IMAGE_RESIZE_FAILED: &str = "attachment_image_resize_failed";
+const IMAGE_INVALID: &str = "attachment_image_invalid";
 
 /// A `fault.attachment.*` error: the code is the message and `data.code`, like Node's `ZCodeAttachmentFaultError`
 /// through `toProtocolError` (the Host reads either).
@@ -231,7 +239,7 @@ pub(crate) async fn content(
         });
     }
     for attachment in refs {
-        let (body, stored) = if let Some(kind) = attachment.source_kind
+        let (body, stored, image) = if let Some(kind) = attachment.source_kind
             && is_uri_ref(&attachment.reference)
         {
             let store = artifacts(server).map_err(|_| material_failed())?;
@@ -239,7 +247,7 @@ pub(crate) async fn content(
                 .await
                 .map_err(|_| material_failed())?;
             let (body, path) = write_material(store.as_ref(), session, kind, &content).await?;
-            (body, Some(path))
+            (body, Some(path), None)
         } else if let Some(video) = video(server, session, &attachment).await {
             match video {
                 AttachedBody::Video { source } => {
@@ -248,19 +256,19 @@ pub(crate) async fn content(
                     let stored = stored_image(server, session, &attachment, &source)
                         .await
                         .ok_or_else(|| fault("putFailed"))?;
-                    (AttachedBody::Video { source }, Some(stored))
+                    (AttachedBody::Video { source }, Some(stored), None)
                 }
-                other => (other, None),
+                other => (other, None, None),
             }
         } else {
-            let body = body(server, session, &attachment).await;
+            let (body, image) = body(server, session, &attachment).await;
             let stored = match &body {
                 AttachedBody::Image { source } => {
                     stored_image(server, session, &attachment, source).await
                 }
                 _ => None,
             };
-            (body, stored)
+            (body, stored, image)
         };
         let material = attachment.material();
         out.push(ContentBlock::File {
@@ -269,9 +277,10 @@ pub(crate) async fn content(
                 mime: attachment.mime,
                 bytes: attachment.bytes,
                 reference: Some(attachment.reference).filter(|reference| !reference.is_empty()),
-                preview_reference: attachment.preview_ref,
+                preview_reference: attachment.preview_ref.map(String::into_boxed_str),
                 stored,
                 material,
+                image,
                 body,
             },
         });
@@ -462,7 +471,7 @@ enum Inline {
 fn inline_form(mime: &str, declared_bytes: u64) -> Option<Inline> {
     let kind = essence(mime);
     if kind.starts_with("image/") {
-        (declared_bytes <= INLINE_IMAGE_MAX_BYTES as u64).then_some(Inline::Image)
+        (declared_bytes <= INLINE_MEDIA_MAX_BYTES).then_some(Inline::Image)
     } else if kind.starts_with("video/") || kind == "application/pdf" {
         None
     } else {
@@ -473,30 +482,78 @@ fn inline_form(mime: &str, declared_bytes: u64) -> Option<Inline> {
 impl Inline {
     fn limit(self) -> u64 {
         match self {
-            Inline::Image => INLINE_IMAGE_MAX_BYTES as u64,
+            Inline::Image => INLINE_MEDIA_MAX_BYTES,
             Inline::Text => INLINE_TEXT_MAX_BYTES,
         }
     }
 }
 
-/// The inline part of bytes that were read. Their real length is checked against the form's limit, because the declared
-/// size is the client's word. Over the limit, or text that is not UTF-8 or holds a NUL, is metadata only.
-fn admit(form: Inline, mime: &str, bytes: Vec<u8>) -> AttachedBody {
+/// What of bytes that were read reaches the model. Their real length is checked against the form's limit, because the
+/// declared size is the client's word: over it is metadata only. An image is prepared for the model ([`prepare_image`]);
+/// text that is not UTF-8 or holds a NUL is metadata only.
+async fn admit(form: Inline, mime: &str, bytes: Vec<u8>) -> (AttachedBody, Option<Box<ImageInfo>>) {
     if bytes.len() as u64 > form.limit() {
-        return AttachedBody::Omitted;
+        return (AttachedBody::Omitted, None);
     }
     match form {
-        Inline::Image => AttachedBody::Image {
-            source: ImageSource::Base64 {
-                media_type: essence(mime),
-                data: base64().encode(&bytes),
-            },
-        },
+        Inline::Image => prepare_image(bytes, mime).await,
         Inline::Text => match String::from_utf8(bytes) {
-            Ok(text) if !text.contains('\0') => AttachedBody::Text { text, read: None },
-            _ => AttachedBody::Omitted,
+            Ok(text) if !text.contains('\0') => (AttachedBody::Text { text, read: None }, None),
+            _ => (AttachedBody::Omitted, None),
         },
     }
+}
+
+/// Node `prepareImageDataUrl` with the Jimp adapter (specs/fork-agent-runtime-selection.md "Image preparation"): the
+/// image block the model gets and Node's `metadata.image`, or Node's placeholder when the image cannot be prepared.
+async fn prepare_image(bytes: Vec<u8>, mime: &str) -> (AttachedBody, Option<Box<ImageInfo>>) {
+    if bytes.is_empty() {
+        return (
+            AttachedBody::ImageFailed {
+                code: IMAGE_INVALID.to_owned(),
+            },
+            None,
+        );
+    }
+    let declared = essence(mime);
+    // Decoding and encoding are CPU bound.
+    let prepared = tokio::task::spawn_blocking(move || {
+        rust_cli_image::prepare(bytes, &declared, &rust_cli_image::MODEL)
+    })
+    .await;
+    let prepared = match prepared {
+        Ok(Ok(prepared)) => prepared,
+        failed => {
+            let reason = match failed {
+                Ok(Err(error)) => error.to_string(),
+                _ => "the preparation task ended".to_owned(),
+            };
+            tracing::warn!(event = "attachment.image_prepare_failed", %reason, "an attached image could not be prepared for the model");
+            return (
+                AttachedBody::ImageFailed {
+                    code: IMAGE_RESIZE_FAILED.to_owned(),
+                },
+                None,
+            );
+        }
+    };
+    let dimensions = prepared.dimensions;
+    let info = ImageInfo {
+        width: dimensions.map(|size| size.width),
+        height: dimensions.map(|size| size.height),
+        original_width: dimensions.map(|size| size.original_width),
+        original_height: dimensions.map(|size| size.original_height),
+        max_dimension: rust_cli_image::MAX_DIMENSION,
+        resized: prepared.resized,
+        transformed_size_bytes: prepared.data.len() as u64,
+    };
+    let body = AttachedBody::Image {
+        source: ImageSource::Base64 {
+            media_type: prepared.media_type.to_owned(),
+            data: base64().encode(&prepared.data),
+        },
+    };
+    (body, Some(Box::new(info)))
 }
 
 /// Node `resolveLocalFileAttachment` / `resolveLocalImageAttachment`: a desktop file (an absolute local path) that is
@@ -512,7 +569,7 @@ async fn path_reference(attachment: &AttachmentRef) -> Option<AttachedBody> {
     }
     let kind = essence(&attachment.mime);
     let (mime, reason) = if kind.starts_with("image/") {
-        if attachment.bytes <= INLINE_IMAGE_MAX_BYTES as u64 {
+        if attachment.bytes <= INLINE_MEDIA_MAX_BYTES {
             return None;
         }
         (kind, PathReason::ImageTooLarge)
@@ -547,18 +604,26 @@ fn is_local_text(attachment: &AttachmentRef) -> bool {
         && kind != "application/pdf"
 }
 
-/// What of one attachment reaches the model (the stored file part keeps it for both runtimes).
-async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) -> AttachedBody {
+/// What of one attachment reaches the model (the stored file part keeps it for both runtimes), with Node's
+/// `metadata.image` of a prepared image.
+async fn body(
+    server: &Server,
+    session: &SessionId,
+    attachment: &AttachmentRef,
+) -> (AttachedBody, Option<Box<ImageInfo>>) {
     if let Some(reference) = path_reference(attachment).await {
-        return reference;
+        return (reference, None);
     }
     // Node `mapAttachmentRef` → `resolveLocalFileAttachment`: a desktop file that is not media is read by the agent,
     // with no 64 KiB limit (that one is for web-remote refs).
     if is_local_text(attachment) {
-        return crate::attachment_text::local_text(&attachment.reference).await;
+        return (
+            crate::attachment_text::local_text(&attachment.reference).await,
+            None,
+        );
     }
     let Some(form) = inline_form(&attachment.mime, attachment.bytes) else {
-        return AttachedBody::Omitted;
+        return (AttachedBody::Omitted, None);
     };
     // The read is bounded by the form's limit, so a file that grew past its declared size is refused, not loaded.
     let (bytes, mime) = match read(
@@ -574,10 +639,10 @@ async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) 
         Err(error) => {
             // The fault code only: a local ref is a user path.
             tracing::warn!(event = "attachment.read_failed", mime = %attachment.mime, fault = %error.message, "an attachment could not be read");
-            return AttachedBody::Omitted;
+            return (AttachedBody::Omitted, None);
         }
     };
-    admit(form, &mime, bytes)
+    admit(form, &mime, bytes).await
 }
 
 /// `v4/attachment/begin`.

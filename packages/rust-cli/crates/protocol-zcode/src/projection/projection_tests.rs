@@ -582,6 +582,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
                     preview_reference: Some("zcode-artifact://session_1/b".into()),
                     stored: None,
                     material: None,
+                    image: None,
                     body: AttachedBody::Omitted,
                 },
             },
@@ -636,6 +637,7 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
                 preview_reference: None,
                 stored: stored.map(str::to_owned),
                 material: None,
+                image: None,
                 body,
             },
         }

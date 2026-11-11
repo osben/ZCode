@@ -9,6 +9,7 @@ fn file(body: AttachedBody) -> AttachedFile {
         preview_reference: None,
         stored: None,
         material: None,
+        image: None,
         body,
     }
 }
@@ -186,6 +187,7 @@ fn a_stored_image_has_nodes_artifact_shape() {
         reference: Some("/w/p.png".into()),
         stored: Some("zcode-artifact://sess/tool-result-1".into()),
         material: None,
+        image: None,
         ..file(AttachedBody::Image {
             source: ImageSource::Base64 {
                 media_type: "image/png".into(),
@@ -330,4 +332,102 @@ fn a_node_artifact_video_comes_back_stored() {
         Some("zcode-artifact://s/attachment-v")
     );
     assert_eq!(file.reference.as_deref(), Some("/w/clip.mp4"));
+}
+
+/// A prepared image keeps Node's `metadata.image`; a WebP one has no pixel sizes.
+#[test]
+fn a_prepared_images_metadata_round_trips_like_node() {
+    let resized = ImageInfo {
+        width: Some(2000),
+        height: Some(1000),
+        original_width: Some(4000),
+        original_height: Some(2000),
+        max_dimension: 2000,
+        resized: true,
+        transformed_size_bytes: 123_456,
+    };
+    let original = AttachedFile {
+        mime: "image/png".into(),
+        reference: Some("/w/p.png".into()),
+        stored: Some("zcode-artifact://sess/tool-result-1".into()),
+        image: Some(Box::new(resized.clone())),
+        ..file(AttachedBody::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/jpeg".into(),
+                data: "/9j/".into(),
+            },
+        })
+    };
+    let stored = part("prt_1".into(), ("sess", "msg"), &original);
+    assert_eq!(stored["mime"], "image/jpeg");
+    assert_eq!(
+        stored["metadata"]["image"],
+        json!({"width": 2000, "height": 1000, "originalWidth": 4000, "originalHeight": 2000,
+            "maxDimension": 2000, "resized": true, "transformedSizeBytes": 123_456})
+    );
+    let back = from_part(&stored).unwrap();
+    assert_eq!(back.image.as_deref(), Some(&resized));
+    let webp = ImageInfo {
+        width: None,
+        height: None,
+        original_width: None,
+        original_height: None,
+        max_dimension: 2000,
+        resized: false,
+        transformed_size_bytes: 9,
+    };
+    let stored = part(
+        "prt_2".into(),
+        ("sess", "msg"),
+        &AttachedFile {
+            image: Some(Box::new(webp.clone())),
+            ..original
+        },
+    );
+    assert_eq!(
+        stored["metadata"]["image"],
+        json!({"maxDimension": 2000, "resized": false, "transformedSizeBytes": 9})
+    );
+    assert_eq!(from_part(&stored).unwrap().image.as_deref(), Some(&webp));
+}
+
+/// Node `resolvedPlaceholderAttachment(…, "attachment_image_resize_failed")`, read back from either runtime; a web-remote
+/// one is not loaded from its artifact.
+#[test]
+fn a_failed_image_is_nodes_placeholder_both_ways() {
+    let mut desktop = file(AttachedBody::ImageFailed {
+        code: "attachment_image_resize_failed".into(),
+    });
+    desktop.mime = "image/tiff".into();
+    desktop.reference = Some("/w/scan.tiff".into());
+    let stored = part("prt_1".into(), ("sess", "msg"), &desktop);
+    assert_eq!(stored["mime"], "image/tiff");
+    assert_eq!(stored["url"], "/w/scan.tiff");
+    assert_eq!(stored["source"]["path"], "/w/scan.tiff");
+    let metadata = &stored["metadata"];
+    assert_eq!(metadata["errorCode"], "attachment_image_resize_failed");
+    assert_eq!(metadata["recoverability"], "metadata_only");
+    assert_eq!(metadata["storageKind"], "local_ref");
+    assert_eq!(from_part(&stored).unwrap(), desktop);
+
+    let mut remote = file(AttachedBody::ImageFailed {
+        code: "attachment_image_invalid".into(),
+    });
+    remote.mime = "image/png".into();
+    let stored = part("prt_2".into(), ("sess", "msg"), &remote);
+    assert_eq!(stored["metadata"]["storageKind"], "metadata_only");
+    assert_eq!(stored["source"], Value::Null);
+    let back = from_part(&stored).unwrap();
+    assert_eq!(back.body, remote.body);
+    assert_eq!(back.stored, None);
+    // Node's own part of a web-remote image (its `url` is the artifact; there is no `artifactUri`).
+    let node = json!({"type": "file", "mime": "image/png", "filename": "p.png", "url": "zcode-artifact://s/a",
+        "metadata": {"errorCode": "attachment_image_resize_failed", "originalUrl": "zcode-artifact://s/a",
+            "recoverability": "metadata_only", "storageKind": "metadata_only"}});
+    assert_eq!(
+        from_part(&node).unwrap().body,
+        AttachedBody::ImageFailed {
+            code: "attachment_image_resize_failed".into()
+        }
+    );
 }

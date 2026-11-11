@@ -10,7 +10,7 @@
 //! (`storageKind: local_ref`, `metadata.pathReferenceText`). The App's ref is kept as `metadata.originalUrl`.
 
 use rust_cli_kernel_api::message::{
-    AttachedBody, AttachedFile, ImageSource, TextRead, ToolResultContent,
+    AttachedBody, AttachedFile, ImageInfo, ImageSource, TextRead, ToolResultContent,
 };
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
 use serde_json::{Value, json};
@@ -20,6 +20,44 @@ const TEXT_MIME: &str = "text/plain";
 
 /// Node's `errorCode` of a text file that could not be read; the model gets nothing for it.
 const READ_FAILED: &str = "attachment_read_failed";
+
+/// Node's `errorCode`s of an image that could not be prepared for the model.
+const IMAGE_FAILED: [&str; 2] = ["attachment_image_resize_failed", "attachment_image_invalid"];
+
+/// Node `metadata.image` ([`ImageInfo`]).
+fn image_metadata(image: &ImageInfo) -> Value {
+    let mut out = json!({"maxDimension": image.max_dimension, "resized": image.resized,
+        "transformedSizeBytes": image.transformed_size_bytes});
+    for (key, value) in [
+        ("width", image.width),
+        ("height", image.height),
+        ("originalWidth", image.original_width),
+        ("originalHeight", image.original_height),
+    ] {
+        if let Some(value) = value {
+            out[key] = json!(value);
+        }
+    }
+    out
+}
+
+fn image_info(metadata: &Value) -> Option<Box<ImageInfo>> {
+    let image = metadata.get("image").filter(|image| image.is_object())?;
+    let dimension = |key: &str| {
+        image[key]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+    };
+    Some(Box::new(ImageInfo {
+        width: dimension("width"),
+        height: dimension("height"),
+        original_width: dimension("originalWidth"),
+        original_height: dimension("originalHeight"),
+        max_dimension: dimension("maxDimension").unwrap_or_default(),
+        resized: image["resized"].as_bool().unwrap_or(false),
+        transformed_size_bytes: image["transformedSizeBytes"].as_u64().unwrap_or_default(),
+    }))
+}
 
 /// Node `FilePartSource` of a local file: `text.value` is what the reminders name.
 fn source(path: &str, value: &str) -> Value {
@@ -165,6 +203,26 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["sizeBytes"] = json!(file.bytes);
             metadata["storageKind"] = json!("local_ref");
         }
+        // Node `resolvedPlaceholderAttachment(…, "attachment_image_resize_failed")`: the App's MIME, the path the App
+        // sent.
+        AttachedBody::ImageFailed { code } => {
+            out["mime"] = json!(file.mime);
+            out["filename"] = json!(file.name);
+            out["url"] = json!(reference.unwrap_or(&file.name));
+            if let Some(path) = reference.filter(|reference| !reference.contains("://")) {
+                out["source"] = source(path, path);
+            }
+            metadata["errorCode"] = json!(code);
+            metadata["recoverability"] = json!("metadata_only");
+            metadata["sizeBytes"] = json!(file.bytes);
+            metadata["storageKind"] = json!(if reference
+                .is_some_and(|reference| !reference.contains("://"))
+            {
+                "local_ref"
+            } else {
+                "metadata_only"
+            });
+        }
         AttachedBody::Omitted => {
             out["mime"] = json!(file.mime);
             out["filename"] = json!(file.name);
@@ -177,6 +235,9 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
                 "metadata_only"
             });
         }
+    }
+    if let Some(image) = &file.image {
+        metadata["image"] = image_metadata(image);
     }
     out["metadata"] = metadata;
     out
@@ -203,8 +264,15 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
         .as_str()
         .filter(|_| metadata["storageKind"] == "local_ref");
     let failed = metadata["errorCode"] == READ_FAILED && mime.starts_with("text/");
+    let image_failed = metadata["errorCode"]
+        .as_str()
+        .filter(|code| IMAGE_FAILED.contains(code) && mime.starts_with("image/"));
     let body = if failed {
         AttachedBody::ReadFailed
+    } else if let Some(code) = image_failed {
+        AttachedBody::ImageFailed {
+            code: code.to_owned(),
+        }
     } else if let Some(text) = path_reference {
         AttachedBody::PathReference {
             text: text.to_owned(),
@@ -238,6 +306,8 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
         .filter(|uri| {
             (mime.starts_with("image/") || mime.starts_with("video/"))
                 && uri.starts_with(ARTIFACT_SCHEME)
+                // A failed image's `url` is the App's ref: nothing of it is loaded.
+                && !matches!(body, AttachedBody::ImageFailed { .. })
         })
         .map(str::to_owned);
     let bytes = metadata["sizeBytes"]
@@ -249,9 +319,10 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
         mime,
         bytes,
         reference,
-        preview_reference: metadata["previewRef"].as_str().map(str::to_owned),
+        preview_reference: metadata["previewRef"].as_str().map(Box::from),
         stored,
         material: None,
+        image: image_info(metadata),
         body,
     })
 }

@@ -86,6 +86,7 @@ fn a_binary_local_file_goes_by_path_with_nodes_three_line_note() {
         preview_reference: None,
         stored: None,
         material: None,
+        image: None,
         body: AttachedBody::PathReference { text: note.clone() },
     };
     assert_eq!(blocks(&file), vec![ContentBlock::Text { text: note }]);
@@ -101,6 +102,7 @@ fn an_attached_image_block_carries_the_file_name() {
         preview_reference: None,
         stored: None,
         material: None,
+        image: None,
         body: AttachedBody::Image {
             source: ImageSource::Base64 {
                 media_type: "image/png".into(),
@@ -159,6 +161,7 @@ fn a_live_material_chip_carries_its_marks() {
             kind: MaterialKind::TopicHistory,
             message_count: Some(5),
         })),
+        image: None,
         body: AttachedBody::PathReference {
             text: path_reference(
                 "text/plain",
@@ -224,6 +227,7 @@ fn a_video_is_sent_as_a_named_video_block() {
         preview_reference: None,
         stored: None,
         material: None,
+        image: None,
         body: AttachedBody::Video {
             source: source.clone(),
         },
@@ -246,6 +250,7 @@ fn read_file(read: TextRead, text: &str) -> AttachedFile {
         preview_reference: None,
         stored: None,
         material: None,
+        image: None,
         body: AttachedBody::Text {
             text: text.into(),
             read: Some(Box::new(read)),
@@ -304,4 +309,35 @@ fn a_failed_text_read_reaches_the_model_as_nothing() {
     file.body = AttachedBody::ReadFailed;
     assert!(blocks(&file).is_empty());
     assert_eq!(part_mime(&file), "text/plain");
+}
+
+/// Node `resolvedPlaceholderAttachment`: the model reads the App's MIME and the submitted path.
+#[test]
+fn a_failed_image_reads_as_nodes_placeholder() {
+    let mut file = read_file(
+        TextRead {
+            path: String::new(),
+            start_line: 1,
+            total_lines: 0,
+            original_bytes: 0,
+            truncated: false,
+            truncated_by_token_cap: false,
+            notice: None,
+        },
+        "",
+    );
+    file.name = "scan.tiff".into();
+    file.mime = "image/tiff".into();
+    file.reference = Some("/w/scan.tiff".into());
+    file.body = AttachedBody::ImageFailed {
+        code: "attachment_image_resize_failed".into(),
+    };
+    let text = |file: &AttachedFile| match blocks(file).as_slice() {
+        [ContentBlock::Text { text }] => text.clone(),
+        other => panic!("one text block: {other:?}"),
+    };
+    assert_eq!(text(&file), "[Attached image/tiff: /w/scan.tiff]");
+    assert_eq!(part_mime(&file), "image/tiff");
+    file.reference = Some("zcode-artifact://s/a".into());
+    assert_eq!(text(&file), "[Attached image/tiff: scan.tiff]");
 }

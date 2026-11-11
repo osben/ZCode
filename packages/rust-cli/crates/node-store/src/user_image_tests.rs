@@ -135,6 +135,7 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
             preview_reference: None,
             stored: None,
             material: None,
+            image: None,
             body,
         },
     };
@@ -235,6 +236,7 @@ async fn stored_app_images_are_read_back_from_their_artifacts() {
             preview_reference: None,
             stored: Some(stored),
             material: None,
+            image: None,
             body: AttachedBody::Image {
                 source: image.clone(),
             },
@@ -338,6 +340,7 @@ async fn stored_app_videos_are_read_back_from_their_artifacts() {
                     preview_reference: None,
                     stored: Some(rust_cli_node_records::artifacts::uri(&artifact)),
                     material: None,
+                    image: None,
                     body: AttachedBody::Video {
                         source: video.clone(),
                     },
