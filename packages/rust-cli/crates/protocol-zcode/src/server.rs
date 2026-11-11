@@ -165,7 +165,11 @@ impl Server {
                 listed: execution
                     .as_ref()
                     .map(|worktree| worktree.directory.as_str().to_owned()),
-                worktree: crate::worktree::facts(self, session, execution.as_ref()).await,
+                worktree: crate::worktree::facts(self, session, execution.as_ref())
+                    .await
+                    .map_err(|reason| KernelError::Failed {
+                        message: reason.to_owned(),
+                    })?,
                 preparation: match crate::preparation::load(self, session).await {
                     Ok(Some(marker)) => marker.exposed(),
                     _ => None,

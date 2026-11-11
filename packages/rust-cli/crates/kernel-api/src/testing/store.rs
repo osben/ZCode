@@ -99,6 +99,8 @@ pub struct MemoryStore {
     fail_title: std::sync::atomic::AtomicBool,
     /// Fork: the next `set_execution_worktree` fails ([`Self::fail_next_execution_worktree`]).
     fail_execution: std::sync::atomic::AtomicBool,
+    /// Fork: the next `records` read fails ([`Self::fail_next_records`]).
+    fail_records: std::sync::atomic::AtomicBool,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
@@ -114,6 +116,11 @@ impl MemoryStore {
     /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
     pub fn fail_next_execution_worktree(&self) {
         self.fail_execution.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `records` read fails (a storage error), later ones work.
+    pub fn fail_next_records(&self) {
+        self.fail_records.store(true, Ordering::SeqCst);
     }
 
     /// 下一次 `load` 等到测试放行（`notify_one`）才读，之后的照常：让测试停在“会话正在打开”的窗口里（titles.md §4）。
@@ -713,6 +720,11 @@ impl StoreQueries for MemoryStore {
         session: &SessionId,
         kind: &str,
     ) -> Result<Vec<crate::store::FrontendRecord>, StoreError> {
+        if self.fail_records.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Unsupported {
+                what: "frontend records".to_owned(),
+            });
+        }
         Ok(self
             .records
             .lock_unpoisoned()

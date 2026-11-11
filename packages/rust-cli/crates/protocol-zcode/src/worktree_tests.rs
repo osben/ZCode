@@ -277,8 +277,14 @@ impl HandleOverride for TestHandle {
                 None => format!("Submit {text}"),
             },
             Command::SetModel { .. } => "SetModel".to_owned(),
-            Command::SetMode { .. } => "SetMode".to_owned(),
-            Command::SetPlan { .. } => "SetPlan".to_owned(),
+            Command::SetMode { mode } => {
+                self.view.lock().unwrap().mode = *mode;
+                "SetMode".to_owned()
+            }
+            Command::SetPlan { enabled } => {
+                self.view.lock().unwrap().plan = *enabled;
+                "SetPlan".to_owned()
+            }
             other => format!("{other:?}"),
         };
         self.sent
@@ -310,6 +316,8 @@ struct WorktreeKernel {
     prepared: StdMutex<Vec<String>>,
     /// Sessions cold-opened through `open_prepared_session` (SessionStart held until the move).
     reopened_held: StdMutex<Vec<String>>,
+    /// The mode and plan each session was created with (its view starts there, as the actor's does).
+    created: StdMutex<HashMap<SessionId, (PermissionMode, bool)>>,
 }
 
 impl WorktreeKernel {
@@ -320,14 +328,18 @@ impl WorktreeKernel {
         let meta = self.store.meta(id).ok_or_else(|| KernelError::NotFound {
             session: id.clone(),
         })?;
+        let (mode, plan) = self
+            .created
+            .lock()
+            .unwrap()
+            .get(id)
+            .copied()
+            .unwrap_or((PermissionMode::Default, false));
+        let mut view = SessionView::new(meta, Vec::new(), selection(), mode);
+        view.plan = plan;
         let handle = Arc::new(TestHandle {
             id: id.clone(),
-            view: StdMutex::new(SessionView::new(
-                meta,
-                Vec::new(),
-                selection(),
-                PermissionMode::Default,
-            )),
+            view: StdMutex::new(view),
             sent: self.sent.clone(),
             refuse_moves: self.refuse_moves.clone(),
         });
@@ -347,6 +359,10 @@ impl rust_cli_kernel_api::session_api::Kernel for WorktreeKernel {
 
     async fn create_session(&self, request: CreateSession) -> Result<SessionId, KernelError> {
         let id = request.id.unwrap_or_else(|| SessionId::new("generated"));
+        self.created
+            .lock()
+            .unwrap()
+            .insert(id.clone(), (request.mode, request.plan));
         let meta = SessionMeta {
             id: id.clone(),
             kind: SessionKind::Interactive,
@@ -446,6 +462,7 @@ fn server() -> (TaskScope, Arc<Server>, Arc<WorktreeKernel>) {
         refuse_moves: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         prepared: StdMutex::new(Vec::new()),
         reopened_held: StdMutex::new(Vec::new()),
+        created: StdMutex::new(HashMap::new()),
     });
     let server = Arc::new(Server::new(
         context,
@@ -1159,4 +1176,163 @@ async fn input_before_the_activation_is_refused_like_node() {
     .await;
     assert_eq!(ack["status"], "accepted", "{ack}");
     assert_eq!(*kernel.deleted.lock().unwrap(), [other]);
+}
+
+/// Fail closed on a cold open: a marker that cannot be read fails the open instead of opening the session like an
+/// ordinary one (SessionStart would run in the parent checkout). The kernel never opens the session; the next open,
+/// with the marker readable, holds SessionStart as before.
+#[tokio::test]
+async fn a_marker_read_failure_fails_the_cold_open() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        parent.path().join("wt-a").to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let id = SessionId::new(ack.result.as_ref().unwrap()["sessionId"].as_str().unwrap());
+    server.bridge.close(&id);
+    kernel.handles.lock().unwrap().clear();
+
+    kernel.store.fail_next_records();
+    assert!(server.live(&id).await.is_err());
+    assert!(!kernel.handles.lock().unwrap().contains_key(&id));
+    assert!(kernel.reopened_held.lock().unwrap().is_empty());
+
+    server.live(&id).await.unwrap();
+    assert_eq!(*kernel.reopened_held.lock().unwrap(), [id.as_str()]);
+}
+
+/// The first input was admitted, then the process stopped before the marker turned active. Reopened cold, the
+/// session is in its stored worktree with SessionStart held; the retried activation still sends the move (which
+/// releases the start), never a second input, and completes the marker.
+#[tokio::test]
+async fn a_retry_after_the_admitted_input_still_releases_the_start() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt-a");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = SessionId::new(&session);
+    // The state an earlier attempt left: the worktree stored, the first input admitted, the marker still preparing.
+    kernel
+        .store
+        .set_execution_worktree(&id, &EnvPath::new(&path), Some("feat/a"))
+        .await
+        .unwrap();
+    server.bridge.close(&id);
+    kernel.handles.lock().unwrap().clear();
+    {
+        let handle = kernel.handle(&id).unwrap();
+        let mut view = handle.view.lock().unwrap();
+        view.meta.workspace.root = EnvPath::new(&path);
+        view.commands.insert(
+            rust_cli_kernel_api::ids::MessageId::new("m-first"),
+            rust_cli_kernel_api::ids::CommandId::new("c2"),
+        );
+    }
+    kernel.sent.lock().unwrap().clear();
+
+    let ack = create(
+        &server,
+        "c3",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": path, "branchName": "feat/a"},
+            "firstInput": {"text": "hello"}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(ack.result.unwrap()["preparedActivation"], "input-admitted");
+    let sent: Vec<String> = kernel
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect();
+    assert_eq!(sent, [format!("SetExecutionRoot {path}")]);
+    let marker = crate::worktree::load(&server, &id).await.unwrap().unwrap();
+    assert_eq!(marker.status, PrepStatus::Active);
+}
+
+/// Node `resolveExecutionState`: the legacy `mode: "plan"` keeps the session's mode and an explicit
+/// `planEnabled: false` wins, for the first input of an ordinary createSession and of an activation alike.
+#[tokio::test]
+async fn a_legacy_plan_first_input_keeps_the_mode_and_the_plan_switch() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt-a");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let first = json!({"text": "hello", "mode": "plan", "planEnabled": false});
+    let submitted = |kernel: &WorktreeKernel| -> Vec<String> {
+        kernel
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, name)| name.starts_with("Submit hello"))
+            .map(|(_, name)| name.clone())
+            .collect()
+    };
+
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "config": {"mode": "edit"}, "firstInput": first}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(
+        submitted(&kernel),
+        ["Submit hello mode=AcceptEdits plan=false"]
+    );
+
+    kernel.sent.lock().unwrap().clear();
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let ack = create(
+        &server,
+        "c3",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": path}, "config": {"mode": "edit"}, "firstInput": first}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(
+        submitted(&kernel),
+        ["Submit hello mode=AcceptEdits plan=false"]
+    );
 }

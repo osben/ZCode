@@ -101,3 +101,59 @@ fn a_plan_switch_without_a_mode_keeps_the_session_mode() {
     let plain: Input = serde_json::from_value(serde_json::json!({"text": "x"})).unwrap();
     assert!(input_execution(&plain, Some(&view)).is_none());
 }
+
+/// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`) case by case.
+#[test]
+fn execution_state_resolves_like_node() {
+    use rust_cli_kernel_api::permission::ExecutionState;
+    let state = |mode, plan| ExecutionState { mode, plan };
+    let current = state(PermissionMode::AcceptEdits, true);
+    let cases: [(Option<&str>, Option<bool>, Option<ExecutionState>); 8] = [
+        (None, None, None),
+        (Some("unknown"), None, None),
+        // The legacy plan is no mode: the current mode stays, plan turns on unless planEnabled says otherwise.
+        (
+            Some("plan"),
+            None,
+            Some(state(PermissionMode::AcceptEdits, true)),
+        ),
+        (
+            Some("plan"),
+            Some(false),
+            Some(state(PermissionMode::AcceptEdits, false)),
+        ),
+        // A known mode turns plan off unless planEnabled says otherwise.
+        (
+            Some("build"),
+            None,
+            Some(state(PermissionMode::Default, false)),
+        ),
+        (
+            Some("yolo"),
+            Some(true),
+            Some(state(PermissionMode::BypassPermissions, true)),
+        ),
+        (
+            None,
+            Some(false),
+            Some(state(PermissionMode::AcceptEdits, false)),
+        ),
+        (
+            Some("unknown"),
+            Some(false),
+            Some(state(PermissionMode::AcceptEdits, false)),
+        ),
+    ];
+    for (mode, plan, expected) in cases {
+        assert_eq!(
+            resolve_execution(mode, plan, current),
+            expected,
+            "{mode:?} {plan:?}"
+        );
+    }
+    // Node's default current (build, plan off): `{mode: "plan"}` alone is build with plan on.
+    assert_eq!(
+        resolve_execution(Some("plan"), None, ExecutionState::default()),
+        Some(state(PermissionMode::Default, true))
+    );
+}

@@ -349,37 +349,51 @@ async fn missing(server: &Server, path: &str) -> bool {
         && !rust_cli_fs::is_dir(std::path::Path::new(path)).await
 }
 
-/// The facts of a session being opened: its marker and its stored execution worktree.
+/// The facts of a session being opened: its marker and its stored execution worktree. A marker that cannot be read
+/// fails the open (fail closed): read as "no marker", a prepared session would open like an ordinary one and run
+/// SessionStart in the parent checkout.
 pub async fn facts(
     server: &Server,
     session: &SessionId,
     execution: Option<&ExecutionWorktree>,
-) -> Facts {
+) -> Result<Facts, &'static str> {
     let preparing = load(server, session)
-        .await
-        .ok()
-        .flatten()
+        .await?
         .filter(|marker| marker.status != PrepStatus::Active);
-    let execution = match execution {
+    Ok(Facts {
+        preparing,
+        execution: execution_facts(server, execution).await,
+    })
+}
+
+async fn execution_facts(
+    server: &Server,
+    execution: Option<&ExecutionWorktree>,
+) -> Option<Execution> {
+    match execution {
         Some(worktree) => Some(Execution {
             path: worktree.path.as_str().to_owned(),
             branch: worktree.branch.clone(),
             missing: missing(server, worktree.path.as_str()).await,
         }),
         None => None,
-    };
-    Facts {
-        preparing,
-        execution,
     }
 }
 
-/// The sessions-index fields of a stored session that is not open (Node's cold summary).
+/// The sessions-index fields of a stored session that is not open (Node's cold summary). Only a display: a marker
+/// that cannot be read lists no preparation, and opening the session refuses it ([`facts`]).
 pub async fn decorate_cold_row(server: &Server, session: &SessionId, row: &mut Value) {
     let execution = stored_execution(server, session).await;
-    facts(server, session, execution.as_ref())
+    let preparing = load(server, session)
         .await
-        .decorate_row(row);
+        .ok()
+        .flatten()
+        .filter(|marker| marker.status != PrepStatus::Active);
+    Facts {
+        preparing,
+        execution: execution_facts(server, execution.as_ref()).await,
+    }
+    .decorate_row(row);
 }
 
 fn failed(envelope: &Envelope, message: &str, revision: u64) -> Ack {
@@ -705,13 +719,16 @@ pub async fn activate(
         .view()
         .await
         .is_ok_and(|view| input_admitted(&view));
-    let mut input = None;
-    if !admitted {
-        if let Err(message) = enter(server, &live, envelope, &id, &target).await {
-            return failed(envelope, &message, 0);
-        }
-        input = materialize(&live).await;
+    // The move also releases the held SessionStart, so it runs on every attempt: after a restart between the
+    // admission and the active marker, the session is already in the stored worktree and only the start is left.
+    if let Err(message) = enter(server, &live, envelope, &id, &target).await {
+        return failed(envelope, &message, 0);
     }
+    let input = if admitted {
+        None
+    } else {
+        materialize(&live).await
+    };
     let active = current.with_status(PrepStatus::Active, None, None);
     if save(server, &id, &active).await.is_err() {
         // Best effort like Node `completePreparedActivation`: the next activation heals the receipt.

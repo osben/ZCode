@@ -47,13 +47,32 @@ pub(crate) fn selection(value: Option<&Value>) -> Option<ModelSelection> {
     })
 }
 
-/// App 的模式与 plan 开关 → 内核的权限模式与 plan（README §5 的映射；`plan` 是旧写法，读成 plan 开、build）。
-fn mode(name: Option<&str>, plan: Option<bool>) -> Option<(PermissionMode, bool)> {
-    let name = name?;
-    if name == "plan" {
-        return Some((PermissionMode::Default, true));
+/// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`). A known mode (build,
+/// edit, yolo, guarded, auto) replaces the current one; the legacy `plan` is no mode and keeps it. `planEnabled` wins;
+/// without it the legacy `plan` turns plan on, a known mode turns it off, anything else keeps the current switch.
+/// `None` when the input names neither a known mode, the legacy `plan` nor `planEnabled` (nothing to change).
+pub(crate) fn resolve_execution(
+    name: Option<&str>,
+    plan: Option<bool>,
+    current: ExecutionState,
+) -> Option<ExecutionState> {
+    let legacy_plan = name == Some("plan");
+    let known = name
+        .filter(|_| !legacy_plan)
+        .and_then(PermissionMode::from_node_name);
+    if known.is_none() && !legacy_plan && plan.is_none() {
+        return None;
     }
-    Some((PermissionMode::from_node_name(name)?, plan.unwrap_or(false)))
+    Some(ExecutionState {
+        mode: known.unwrap_or(current.mode),
+        plan: plan.unwrap_or(if legacy_plan {
+            true
+        } else if known.is_some() {
+            false
+        } else {
+            current.plan
+        }),
+    })
 }
 
 /// 一次输入（sendText 的 payload、createSession 的 firstInput；只取用到的字段）。
@@ -388,8 +407,15 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
     let chosen = selection(config.model_selection.as_ref())
         .or_else(|| selection(first.model_selection.as_ref()))
         .unwrap_or_else(|| server.defaults.selection.clone());
-    let (permission, plan) =
-        mode(config.mode.as_deref(), config.plan_enabled).unwrap_or((server.defaults.mode, false));
+    let defaults = ExecutionState {
+        mode: server.defaults.mode,
+        plan: false,
+    };
+    let ExecutionState {
+        mode: permission,
+        plan,
+    } = resolve_execution(config.mode.as_deref(), config.plan_enabled, defaults)
+        .unwrap_or(defaults);
     let id = payload
         .session_id
         .as_deref()
@@ -711,7 +737,19 @@ async fn apply_draft_config(
         )
         .await;
     }
-    if let Some((permission, plan)) = mode(config.mode.as_deref(), config.plan_enabled) {
+    let current = handle
+        .view()
+        .await
+        .ok()
+        .map_or_else(ExecutionState::default, |view| ExecutionState {
+            mode: view.mode,
+            plan: view.plan,
+        });
+    if let Some(ExecutionState {
+        mode: permission,
+        plan,
+    }) = resolve_execution(config.mode.as_deref(), config.plan_enabled, current)
+    {
         send(
             handle,
             &format!("{}:mode", envelope.command_id),
@@ -909,23 +947,17 @@ fn input_execution(
     view: Option<&rust_cli_kernel_api::session_api::SessionView>,
 ) -> Option<InputExecution> {
     let chosen = selection(input.model_selection.as_ref());
-    let named = mode(input.mode.as_deref(), input.plan_enabled);
-    if chosen.is_none() && named.is_none() && input.plan_enabled.is_none() {
-        return None;
-    }
     let current = view.map_or_else(ExecutionState::default, |view| ExecutionState {
         mode: view.mode,
         plan: view.plan,
     });
     // Each field overrides the session's own (Node `resolveExecutionState(payload, current)`): a plan switch without a
-    // mode keeps the session's mode and still turns plan on.
-    let state = match named {
-        Some((mode, plan)) => ExecutionState { mode, plan },
-        None => ExecutionState {
-            mode: current.mode,
-            plan: input.plan_enabled.unwrap_or(current.plan),
-        },
-    };
+    // mode keeps the session's mode, and the legacy `mode: "plan"` keeps it too.
+    let resolved = resolve_execution(input.mode.as_deref(), input.plan_enabled, current);
+    if chosen.is_none() && resolved.is_none() {
+        return None;
+    }
+    let state = resolved.unwrap_or(current);
     Some(InputExecution {
         state,
         selection: chosen,

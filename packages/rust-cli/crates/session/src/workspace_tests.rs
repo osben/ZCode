@@ -520,3 +520,65 @@ async fn held_start_runs_in_the_worktree(opened: crate::Opened, start: StartSour
     assert_eq!(event.workspace.root.as_str(), "/work/.worktrees/a");
     assert_eq!(event.payload["source"], source);
 }
+
+/// Fork: an activation retried after a restart between the admitted first input and the active marker. The session
+/// was reopened cold in its stored worktree with SessionStart held; the same-root move releases it (source `resume`)
+/// without moving the shell, and a further same-root move is an accepted no-op.
+#[tokio::test]
+async fn a_same_root_move_releases_the_held_start_once() {
+    use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+    use rust_cli_kernel_api::session_api::{Ack, Command};
+
+    use crate::test_support::{ScriptedHooks, envelope};
+
+    let hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome::default(),
+    ));
+    let cwd_env = Arc::new(CwdEnv {
+        inner: env(),
+        cwd: Mutex::default(),
+        refuse: false,
+    });
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(cwd_env.clone().machine());
+    setup.hooks = hooks.clone();
+    setup.start_held = true;
+    setup.opened = crate::Opened::Loaded;
+    setup.start = StartSource::Resume;
+    setup.root = "/work/.worktrees/a";
+    let built = setup.build().await;
+    built.session.view().await.unwrap();
+    assert!(hooks.seen().is_empty(), "{:?}", hooks.seen());
+
+    let same_root = |id: &str| {
+        envelope(
+            id,
+            Command::SetExecutionRoot {
+                root: EnvPath::new("/work/.worktrees/a"),
+            },
+        )
+    };
+    let moved = built.session.send(same_root("c1")).await;
+    assert!(matches!(moved, Ack::Accepted { .. }), "{moved:?}");
+    let started = async {
+        loop {
+            if let Some(event) = hooks.seen().first().cloned() {
+                return event;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), started)
+        .await
+        .unwrap();
+    assert_eq!(event.name, HookEventName::SessionStart);
+    assert_eq!(event.workspace.root.as_str(), "/work/.worktrees/a");
+    assert_eq!(event.payload["source"], "resume");
+    assert!(cwd_env.cwd.lock_unpoisoned().is_empty());
+
+    let again = built.session.send(same_root("c2")).await;
+    assert!(matches!(again, Ack::Accepted { .. }), "{again:?}");
+    built.session.view().await.unwrap();
+    assert_eq!(hooks.seen().len(), 1, "{:?}", hooks.seen());
+}

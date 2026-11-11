@@ -99,7 +99,23 @@ impl Actor {
     /// Fork: `Command::SetExecutionRoot` (prepared-worktree activation, specs/fork-rust-agent-parity.md
     /// "Execution worktree"). Moves the shell cwd and the workspace without a note: Node starts the runtime in the
     /// worktree, so the model never sees a move.
+    ///
+    /// Idempotent: a session already at `root` (a retried activation, or a cold reopen in the stored worktree after
+    /// the first input was admitted) only releases the held SessionStart. Nothing held, it is a no-op even while busy.
     pub(crate) async fn set_execution_root(&mut self, root: EnvPath) -> Ack {
+        if root == self.meta.workspace.root {
+            self.execution_worktree = true;
+            if self.deferred_start.is_some() {
+                // SessionStart takes the job slot: while a turn or another job runs it stays held for a retry.
+                if self.busy() {
+                    return rejected(BUSY);
+                }
+                if let Some(source) = self.deferred_start.take() {
+                    self.start_session(source);
+                }
+            }
+            return accepted();
+        }
         if self.busy() {
             return rejected(BUSY);
         }
