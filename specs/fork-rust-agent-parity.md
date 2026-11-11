@@ -424,6 +424,16 @@ Acceptance:
 - Unit: `telemetry_tests.rs` (a plain turn, a tool turn, a wake turn, a background subagent with its child facts); every fact passes the schema field lists.
 - E2E: `conversation-session-background` telemetry cases on Rust (BG13, BG18 and the two background control cases).
 
+## Subagent child sessions stay out of the sessions index (Node `publishCurrentSummaryToIndex`)
+
+A subagent's child session (`SessionKind::Subagent`, Node `subagent_child`) is not a task. Node's cold list skips it and its gateway publishes no sessions-index row for it, so the Host task index never admits it and the sidebar lists only the parent.
+
+- Owner: `protocol-zcode` `Live`. A `Live` opened on a child session (a side tab, or the child of a reopened session) keeps its conversation topic and frames, but `write` sends no `session.upserted` row to `Topics`. The cold list (`node-store` `list`) already skips the child.
+- Before: a side tab on Rust published the child's summary, and the sidebar listed "Side tab N" / "Background side tab" next to the parent (container screenshots, 2026-11-11, on `origin/fork` too).
+- Acceptance:
+  - Unit test: `listed_in_sessions_index` excludes a subagent child and keeps interactive and forked sessions.
+  - E2E: `conversation-session-subagent-side-tabs` on Rust in the container; the sidebar screenshot lists only the parent task, like Node.
+
 ## Known differences kept on purpose
 
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.
@@ -434,7 +444,6 @@ Acceptance:
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
 - **Plan-mode specs outside the gate.** `plan-approval-feedback-user-message`, `plan-session-switch-restore` and `plan-file-compact-continuity` pass on Rust (E2E 2026-11-10). `plan-mode-mcp-permission` fails on Node too ("v4 权限弹窗没有出现"), so it does not cover "MCP tools in plan mode" yet; that section is backed by unit tests only.
-- **Subagent child sessions in the task list.** In `conversation-session-subagent-side-tabs` the Rust sidebar lists the subagent children (titled by the Agent `description`, "Side tab N", "Background side tab") as tasks of the project; Node lists only the parent. Seen on `origin/fork` and with the telemetry change alike (container screenshots, 2026-11-11), so it predates #395. Which writer admits the child rows (a sessions-index upsert from a child `Live`, or the Host) is not identified yet.
 - **Guides in a running turn (`running-guide-steer`).** One case ("guide 模式下 running 中发送引导消息…") fails on Node too; the Rust-only cases are covered by "Guides after a reply without tool calls, and guides in system turns" above.
 
 ## Order of work

@@ -23,6 +23,12 @@ use crate::wire::Purpose;
 /// Fork: the session ID prefix of a subagent's child session (node-store `NodeIds::subagent`).
 const SUBAGENT_SESSION_PREFIX: &str = "sess_subagent_";
 
+/// Fork: whether a session's summary goes to the sessions index. A subagent's child session is not a task: Node's
+/// cold list skips `subagent_child` and its gateway publishes no index row for it, so the sidebar lists only the parent.
+pub(crate) fn listed_in_sessions_index(kind: rust_cli_kernel_api::store::SessionKind) -> bool {
+    kind != rust_cli_kernel_api::store::SessionKind::Subagent
+}
+
 /// Fork: the selected model as the telemetry facts name it (crate::telemetry).
 fn provider_of(projection: &Projection) -> Provider {
     use rust_cli_kernel_api::provider::WireProtocol;
@@ -95,6 +101,8 @@ pub struct Live {
     promotions: crate::reservations::Reservations,
     /// Fork: see [`ChildWatch`].
     child_watch: std::sync::OnceLock<Box<ChildWatch>>,
+    /// Fork: the summary goes to the sessions index ([`listed_in_sessions_index`]).
+    indexed: bool,
 }
 
 impl Live {
@@ -134,6 +142,7 @@ impl Live {
             rebuilds: tokio::sync::watch::Sender::new(0),
             promotions: crate::reservations::Reservations::default(),
             child_watch: std::sync::OnceLock::new(),
+            indexed: listed_in_sessions_index(view.meta.kind),
         }
     }
 
@@ -614,7 +623,9 @@ impl Live {
                 .frame(&topic, &subscription, range, payload, Purpose::Online)
                 .await;
         }
-        if let Some(row) = outgoing.summary {
+        if let Some(row) = outgoing.summary
+            && self.indexed
+        {
             self.topics.upsert(&self.workspace, row);
         }
         for fact in outgoing.facts {
