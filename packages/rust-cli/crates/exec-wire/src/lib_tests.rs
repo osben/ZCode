@@ -22,7 +22,7 @@ fn every_method_has_one_request_whose_json_op_is_its_name() {
         .collect();
     let all: BTreeSet<&str> = Op::ALL.iter().map(|op| op.as_str()).collect();
     assert_eq!(ops, all);
-    assert_eq!(Op::ALL.len(), 41);
+    assert_eq!(Op::ALL.len(), 42);
     for request in requests {
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["op"], request.op().as_str());
@@ -392,4 +392,15 @@ fn an_older_background_reply_decodes_as_a_bash_command() {
         serde_json::from_value::<BackgroundInfo>(value).unwrap(),
         monitor
     );
+}
+
+/// Fork: the ended record of an acknowledged command is a read in the `background` capability. An executor older
+/// than the op answers it per call with `unsupported` (`an_unknown_message_is_unsupported_and_keeps_its_call`), so it
+/// needs no capability bit of its own.
+#[test]
+fn the_ended_background_command_is_a_background_read() {
+    let op = Op::EndedBackgroundCommand;
+    assert_eq!(op.as_str(), "background.ended_background_command");
+    assert_eq!(op.capability(), Capability::Background);
+    assert_eq!(op.kind(), OpKind::Read);
 }
