@@ -243,14 +243,30 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
     out
 }
 
-/// A user message's `file` part that is an App attachment (it has a `filename`; a TUI image has none) → [`AttachedFile`].
-/// An artifact-backed image comes back with [`AttachedBody::Omitted`] and [`AttachedFile::stored`] set: reading the
-/// artifact is file IO, which the store does after the database read (node-store `load`).
-pub fn from_part(part: &Value) -> Option<AttachedFile> {
-    let name = part["filename"].as_str()?.to_owned();
+/// A user message's `file` part that is an App attachment → [`AttachedFile`]; `index` is its place among the message's
+/// file parts. An artifact-backed image comes back with [`AttachedBody::Omitted`] and [`AttachedFile::stored`] set:
+/// reading the artifact is file IO, which the store does after the database read (node-store `load`).
+pub fn from_part(part: &Value, index: usize) -> Option<AttachedFile> {
     let mime = part["mime"].as_str().unwrap_or_default().to_owned();
     let metadata = &part["metadata"];
     let url = part["url"].as_str().unwrap_or_default();
+    let name = match part["filename"].as_str() {
+        Some(name) => name.to_owned(),
+        // Node's web-remote image and video parts carry no `filename`; a Rust TUI image has none either, and is the
+        // one Node never writes: inline without `sizeBytes`, or an artifact with `metadata.rustCli`.
+        None if metadata[crate::records::RUST_CLI].is_null() && metadata["sizeBytes"].is_u64() => {
+            // Node `attachmentMetasOfMessage`: `filename ?? (basenameFromUrl || attachment-${index + 1})`.
+            let basename = (!url.starts_with("data:"))
+                .then(|| url.rsplit(['/', '\\']).next().unwrap_or_default())
+                .unwrap_or_default();
+            if basename.is_empty() {
+                format!("attachment-{}", index + 1)
+            } else {
+                basename.to_owned()
+            }
+        }
+        None => return None,
+    };
     let reference = metadata["originalUrl"]
         .as_str()
         .or((!url.is_empty() && !url.starts_with("data:")).then_some(url))
