@@ -300,20 +300,24 @@ impl Server {
         // Fork: Node `shouldCloseSessionForExpectedPersistence`. The store owns draft-ness, so a
         // deferred close drops the draft in one locked step before anything closes; a first
         // send that materialized it first wins and the close answers `false`.
+        // A close without the field releases a draft too: Node disposes the runtime, and a draft has nothing else.
         let queries = self.kernel.queries();
-        match params["expectedPersistence"].as_str() {
-            Some("deferred") => {
-                if !queries.discard_draft(&session).await.unwrap_or(false) {
+        let expected = params["expectedPersistence"].as_str();
+        match expected {
+            Some("deferred") | None => {
+                if queries.discard_draft(&session).await.unwrap_or(false) {
+                    let live = self.bridge.get(&session);
+                    self.bridge.close(&session);
+                    if let Some(live) = live {
+                        // Node disposes the draft's runtime; the actor's late commits find no draft.
+                        live.handle.close(EndReason::Other).await;
+                        self.announce_lifecycle(&session, "unloaded").await;
+                    }
+                    return json!({"closed": true});
+                }
+                if expected.is_some() {
                     return json!({"closed": false});
                 }
-                let live = self.bridge.get(&session);
-                self.bridge.close(&session);
-                if let Some(live) = live {
-                    // Node disposes the draft's runtime; the actor's late commits find no draft.
-                    live.handle.close(EndReason::Other).await;
-                    self.announce_lifecycle(&session, "unloaded").await;
-                }
-                return json!({"closed": true});
             }
             Some("immediate") if queries.is_draft(&session).await.unwrap_or(false) => {
                 return json!({"closed": false});

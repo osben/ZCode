@@ -143,8 +143,9 @@ pub async fn save(server: &Server, session: &SessionId, marker: &Marker) -> Resu
 pub(crate) enum Reserve {
     /// The same submission reserved it before (a retried reservation): answer with the same session.
     Repeat,
-    /// An untouched prewarm. The UI prewarms the draft with a plain createSession before the first send and
-    /// zcode-rs persists it at once, so it is adopted the way the Node agent adopts its deferred prewarm.
+    /// An untouched prewarm. The UI prewarms the draft with a plain createSession before the first send; the
+    /// app-server store holds it as a draft until the reservation's marker persists it, so it is adopted the way
+    /// the Node agent adopts its deferred prewarm (fork-agent-runtime-selection.md "Draft prewarm in Rust mode").
     Adopt,
     Refuse(&'static str),
 }

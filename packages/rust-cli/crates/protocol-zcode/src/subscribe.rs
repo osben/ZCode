@@ -22,16 +22,30 @@ use rust_cli_protocol_core::sessions::Bridged;
 const STORED_SESSIONS_LIMIT: usize = 200;
 
 /// 存储里一个工作区的会话 → 会话列表的行。
-async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> {
+pub(crate) async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> {
     let filter = SessionFilter {
         workspace: server.workspace(workspace),
         limit: STORED_SESSIONS_LIMIT,
     };
     match server.kernel.workspace_sessions(filter).await {
-        Ok(sessions) => sessions
-            .into_iter()
-            .map(|session| cold_row(workspace, &session))
-            .collect(),
+        Ok(sessions) => {
+            let queries = server.kernel.queries();
+            let mut rows = Vec::with_capacity(sessions.len());
+            for session in sessions {
+                // Fork: the kernel lists open sessions the store has no row for; a prewarm draft is one of them and
+                // stays out of the seed like Node's gateway `isDraftSession` (fork-agent-runtime-selection.md).
+                if session.activity.is_some()
+                    && queries
+                        .is_rowless_draft(&session.summary.id)
+                        .await
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                rows.push(cold_row(workspace, &session));
+            }
+            rows
+        }
         Err(error) => {
             tracing::warn!(event = "protocol.index.read_failed", error = %error, "listing the workspace sessions failed");
             Vec::new()

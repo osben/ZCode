@@ -374,7 +374,10 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     };
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
-    if let Some(text) = first.text.clone() {
+    // Fork: Node admits a first input through `admitInputCommand`, which persists the session first.
+    let persisted =
+        first.text.is_none() || server.kernel.queries().persist_draft(&id).await.is_ok();
+    if let Some(text) = first.text.clone().filter(|_| persisted) {
         live.sink.remember_input(
             &envelope.command_id,
             input_meta(envelope, &first, "startNow", "startNow"),
@@ -932,6 +935,17 @@ async fn send_text(
         view.as_ref().is_none_or(|view| view.running),
         !refs.is_empty(),
     );
+    // Fork: Node `admitInputCommand` persists a deferred session before it accepts the input, so the accepted
+    // input can no longer be dropped with its draft; a deferred close that dropped it first refuses the input.
+    if let Err(error) = server.kernel.queries().persist_draft(handle.id()).await {
+        return Ack::refused(
+            command,
+            Status::Rejected,
+            "proto.sessionNotFound",
+            error.to_string(),
+            revision,
+        );
+    }
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();

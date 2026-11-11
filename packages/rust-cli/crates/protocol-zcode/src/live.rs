@@ -171,13 +171,15 @@ impl Live {
         *self.draft_probe.lock_unpoisoned() = Some(queries);
     }
 
-    /// Fork: whether the store still holds the session as a draft (see [`Self::set_draft_probe`]).
+    /// Fork: whether the session is still a draft without a row (see [`Self::set_draft_probe`]). A draft dropped by
+    /// a deferred close counts too: the bridge and the pump outlive the drop briefly, and a flush in that window
+    /// must not publish a session that has no row.
     async fn still_draft(&self) -> bool {
         let Some(queries) = self.draft_probe.lock_unpoisoned().clone() else {
             return false;
         };
         let session = rust_cli_kernel_api::ids::SessionId::new(self.session.as_str());
-        if queries.is_draft(&session).await.unwrap_or(false) {
+        if queries.is_rowless_draft(&session).await.unwrap_or(false) {
             return true;
         }
         self.draft_probe.lock_unpoisoned().take();

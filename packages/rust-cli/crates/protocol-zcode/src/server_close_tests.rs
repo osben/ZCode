@@ -22,10 +22,15 @@ use rust_cli_protocol_core::connection::{self, Options};
 
 use super::*;
 
-/// The store's draft set: the only part of the queries `session/close` reads.
+/// What the store and the actor saw, in order (`persist`, `send`).
+type Log = Arc<StdMutex<Vec<&'static str>>>;
+
+/// The store's draft set: the only part of the queries `session/close` and admission read.
 #[derive(Default)]
 struct DraftQueries {
     drafts: StdMutex<HashSet<String>>,
+    dropped: StdMutex<HashSet<String>>,
+    log: Log,
 }
 
 fn unsupported<T>() -> Result<T, StoreError> {
@@ -69,7 +74,31 @@ impl StoreQueries for DraftQueries {
     }
 
     async fn discard_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
-        Ok(self.drafts.lock_unpoisoned().remove(session.as_str()))
+        let dropped = self.drafts.lock_unpoisoned().remove(session.as_str());
+        if dropped {
+            self.dropped
+                .lock_unpoisoned()
+                .insert(session.as_str().to_owned());
+        }
+        Ok(dropped)
+    }
+
+    async fn is_rowless_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        Ok(self.drafts.lock_unpoisoned().contains(session.as_str())
+            || self.dropped.lock_unpoisoned().contains(session.as_str()))
+    }
+
+    async fn persist_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        if self.dropped.lock_unpoisoned().contains(session.as_str()) {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        }
+        let held = self.drafts.lock_unpoisoned().remove(session.as_str());
+        if held {
+            self.log.lock_unpoisoned().push("persist");
+        }
+        Ok(held)
     }
 }
 
@@ -77,6 +106,7 @@ struct TestHandle {
     id: SessionId,
     view: SessionView,
     closes: StdMutex<Vec<EndReason>>,
+    log: Log,
 }
 
 #[async_trait]
@@ -86,6 +116,7 @@ impl HandleOverride for TestHandle {
     }
 
     async fn send(&self, _command: CommandEnvelope) -> KernelAck {
+        self.log.lock_unpoisoned().push("send");
         KernelAck::Duplicate
     }
 
@@ -133,6 +164,32 @@ impl Kernel for CloseKernel {
     ) -> Result<Vec<SessionSummary>, KernelError> {
         Ok(Vec::new())
     }
+
+    /// Like `LocalKernel::overview`: a stored session, plus the open `s1` the store has no row for.
+    async fn workspace_sessions(
+        &self,
+        _filter: SessionFilter,
+    ) -> Result<Vec<rust_cli_kernel_api::panels::WorkspaceSession>, KernelError> {
+        let row = |id: &str, activity| rust_cli_kernel_api::panels::WorkspaceSession {
+            summary: SessionSummary {
+                id: SessionId::new(id),
+                title: String::new(),
+                updated_at_ms: 1000,
+                created_at_ms: 1000,
+                last_outcome: None,
+                parent: None,
+            },
+            activity,
+            last_reply: None,
+        };
+        Ok(vec![
+            row("stored", None),
+            row(
+                "s1",
+                Some(rust_cli_kernel_api::panels::SessionActivity::Ready),
+            ),
+        ])
+    }
 }
 
 fn meta() -> SessionMeta {
@@ -157,12 +214,17 @@ async fn open(draft: bool) -> (TaskScope, Arc<Server>, Arc<TestHandle>, Arc<Draf
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
+    let log = Log::default();
     let handle = Arc::new(TestHandle {
         id: SessionId::new("s1"),
         view: SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default),
         closes: StdMutex::new(Vec::new()),
+        log: log.clone(),
     });
-    let queries = Arc::new(DraftQueries::default());
+    let queries = Arc::new(DraftQueries {
+        log,
+        ..DraftQueries::default()
+    });
     if draft {
         queries.drafts.lock_unpoisoned().insert("s1".to_owned());
     }
@@ -250,4 +312,84 @@ async fn an_immediate_or_unconditional_close_of_a_stored_session_closes_the_brid
         assert_eq!(reply, json!({"closed": true}));
         assert!(server.bridge.get(&SessionId::new("s1")).is_none());
     }
+}
+
+/// Node `session/close` without `expectedPersistence` disposes the runtime; for a draft that is all
+/// there is, so the draft is dropped and its actor closed.
+#[tokio::test]
+async fn an_unconditional_close_releases_a_draft() {
+    let (_scope, server, handle, queries) = open(true).await;
+    let reply = server.close_session(&close(None)).await;
+    assert_eq!(reply, json!({"closed": true}));
+    assert!(queries.drafts.lock_unpoisoned().is_empty());
+    assert_eq!(*handle.closes.lock_unpoisoned(), vec![EndReason::Other]);
+    assert!(server.bridge.get(&SessionId::new("s1")).is_none());
+}
+
+/// The bridge and the pump outlive a deferred close briefly: a flush after the drop must not publish
+/// a session that has no row.
+#[tokio::test]
+async fn a_flush_after_a_deferred_close_does_not_publish_the_draft() {
+    let (_scope, server, _handle, _queries) = open(true).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let reply = server.close_session(&close(Some("deferred"))).await;
+    assert_eq!(reply, json!({"closed": true}));
+    live.sink.publish_summary().await;
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    assert!(server.topics.live_rows("/w").is_empty());
+}
+
+/// Node gateway `isDraftSession` filters the cold seed too: an open draft the kernel lists has no row.
+#[tokio::test]
+async fn the_sessions_index_seed_skips_an_open_draft() {
+    let ids = |rows: Vec<Value>| -> Vec<String> {
+        rows.iter()
+            .map(|row| row["sessionId"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let (_scope, server, _handle, queries) = open(true).await;
+    assert_eq!(
+        ids(crate::subscribe::stored_rows(&server, "/w").await),
+        vec!["stored".to_owned()]
+    );
+    queries.drafts.lock_unpoisoned().clear();
+    assert_eq!(
+        ids(crate::subscribe::stored_rows(&server, "/w").await),
+        vec!["stored".to_owned(), "s1".to_owned()]
+    );
+}
+
+fn send_text(command: &str) -> Value {
+    json!({
+        "commandId": command, "clientId": "k", "sessionId": "s1", "type": "sendText",
+        "payload": {"text": "hi"}, "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e",
+    })
+}
+
+/// Node `admitInputCommand`: a draft is persisted before its first input reaches the actor, so a later
+/// deferred close finds no draft and cannot drop the accepted input.
+#[tokio::test]
+async fn the_first_input_persists_the_draft_before_the_submit() {
+    let (_scope, server, handle, queries) = open(true).await;
+    crate::commands::command(&server, send_text("c1"))
+        .await
+        .unwrap();
+    assert_eq!(*handle.log.lock_unpoisoned(), vec!["persist", "send"]);
+    let reply = server.close_session(&close(Some("deferred"))).await;
+    assert_eq!(reply, json!({"closed": false}));
+    assert!(queries.dropped.lock_unpoisoned().is_empty());
+}
+
+/// A deferred close that dropped the draft first wins: the input is refused, not accepted and lost.
+#[tokio::test]
+async fn an_input_after_the_draft_was_dropped_is_refused() {
+    let (_scope, server, handle, _queries) = open(true).await;
+    server.close_session(&close(Some("deferred"))).await;
+    let ack = crate::commands::command(&server, send_text("c1"))
+        .await
+        .unwrap();
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert!(handle.log.lock_unpoisoned().is_empty());
 }
