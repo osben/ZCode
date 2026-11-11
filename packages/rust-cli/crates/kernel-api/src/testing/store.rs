@@ -722,6 +722,27 @@ impl StoreQueries for MemoryStore {
         }))
     }
 
+    /// Fork: the subagent sessions whose parent chain reaches `root` through subagent sessions only.
+    async fn subagent_child_ids(&self, root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        let sessions = self.sessions.lock_unpoisoned();
+        let mut found: Vec<SessionId> = Vec::new();
+        let mut frontier = vec![root.clone()];
+        while let Some(parent) = frontier.pop() {
+            let mut children: Vec<SessionId> = sessions
+                .values()
+                .filter(|(meta, _)| {
+                    meta.kind == crate::store::SessionKind::Subagent
+                        && meta.parent.as_ref() == Some(&parent)
+                })
+                .map(|(meta, _)| meta.id.clone())
+                .collect();
+            children.sort();
+            frontier.extend(children.iter().cloned());
+            found.extend(children);
+        }
+        Ok(found)
+    }
+
     /// Fork: the memory store persists no child rows.
     async fn subagent_children(&self, _ids: Vec<String>) -> Result<serde_json::Value, StoreError> {
         Ok(serde_json::json!({"children": []}))

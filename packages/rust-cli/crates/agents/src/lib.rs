@@ -72,6 +72,9 @@ pub struct AgentsPorts {
     /// 以前另存一份主 env，与注册表给的是同一份。
     pub machines: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
     pub tasks: Arc<dyn TaskListStore>,
+    /// Fork: the store's read queries; a reopened top-level session's persisted subagent children come from it
+    /// (`StoreQueries::subagent_child_ids`, shell_notices.rs).
+    pub store_queries: Arc<dyn rust_cli_kernel_api::store::StoreQueries>,
     pub queries: Arc<dyn SubagentQueries>,
     /// 主线程的上下文组装；子代理的 attachment 也由它按 `QuerySource::Subagent` 产生。
     pub context: Arc<dyn ContextBuilder>,
@@ -145,6 +148,8 @@ pub(crate) struct Core {
     pub(crate) monitors: monitors::MonitorBoard,
     /// Fork (node_desktop): the live child runs for the child sessions' actors (side tabs).
     pub(crate) mirrors: mirror::Mirrors,
+    /// Fork: the child sessions that have a notice forwarder (one each, shell_notices.rs).
+    pub(crate) forwarders: shell_notices::Forwarders,
     pub(crate) keep_alive: bool,
     pub(crate) background_prompts: bool,
     pub(crate) fork: bool,
@@ -249,6 +254,7 @@ impl Agents {
                 hub: Hub::default(),
                 monitors: monitors::MonitorBoard::default(),
                 mirrors: mirror::Mirrors::default(),
+                forwarders: shell_notices::Forwarders::default(),
                 keep_alive: config.keep_alive,
                 background_prompts: config.background_prompts,
                 fork: config.fork,
@@ -321,6 +327,10 @@ struct Signals(Arc<Core>);
 impl AgentSignals for Signals {
     fn signals(&self, session: &SessionId) -> BoxStream<'static, AgentSignal> {
         self.0.hub.subscribe(session)
+    }
+
+    fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {
+        shell_notices::adopt(&self.0, meta);
     }
 
     fn child_live(

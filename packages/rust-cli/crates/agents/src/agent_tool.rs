@@ -270,7 +270,7 @@ impl Tool for AgentTool {
                     message: error.to_string(),
                 })?;
         // 子会话里后台命令的通知送给这个子代理（agents.md §5.2）。
-        crate::shell_notices::watch(core, &entry);
+        crate::shell_notices::watch(core, &entry.child, &entry.root);
         if background {
             let output = launched_output(&entry);
             spawn::background(core, entry, opening);

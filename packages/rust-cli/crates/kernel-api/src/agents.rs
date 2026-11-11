@@ -152,6 +152,11 @@ pub trait AgentSignals: Send + Sync {
         }
     }
 
+    /// Fork: the kernel opened `meta` from the store. For a top-level session the agents start a notice forwarder
+    /// for each of its persisted subagent children that has none (specs/fork-rust-agent-parity.md, "After a restart,
+    /// and on a remote executor"). Returns at once; the work runs in the background.
+    fn session_opened(&self, _meta: &crate::store::SessionMeta) {}
+
     /// Fork (node_desktop): the feed of the subagent run whose child session is `session`. None when the agents do
     /// not mirror child runs (the TUI).
     fn child_live(&self, _session: &SessionId) -> Option<ChildLiveFeed> {

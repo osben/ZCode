@@ -278,3 +278,131 @@ async fn a_foreground_subagent_does_not_wait_for_its_command() {
     let late = next_notice(&mut root).await;
     assert_eq!(late.agent.as_str(), "b1");
 }
+
+// Fork: after a process restart (specs/fork-rust-agent-parity.md, "After a restart, and on a remote executor").
+
+fn meta(
+    id: &str,
+    kind: rust_cli_kernel_api::store::SessionKind,
+    parent: Option<&str>,
+) -> rust_cli_kernel_api::store::SessionMeta {
+    rust_cli_kernel_api::store::SessionMeta {
+        id: SessionId::new(id),
+        kind,
+        parent: parent.map(SessionId::new),
+        workspace: crate::test_support::workspace(),
+        title: String::new(),
+        trace: rust_cli_kernel_api::ids::TraceId::new(id),
+        created_at_ms: 0,
+    }
+}
+
+async fn settle_tasks() {
+    for _ in 0..1_000 {
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn until(mut done: impl FnMut() -> bool) {
+    for _ in 0..10_000 {
+        if done() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(done(), "the condition never held");
+}
+
+/// A child session persisted by an earlier process has no forwarder. Opening its top-level session starts one, and
+/// the child's notice (no live agent owns it) goes to the top-level session and is acknowledged.
+#[tokio::test]
+async fn a_reopened_top_level_session_adopts_its_persisted_subagent_children() {
+    use rust_cli_kernel_api::store::{SessionKind, SessionStore};
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::default());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let root_meta = meta(ROOT, SessionKind::Interactive, None);
+    let child = "sess_subagent_agent_old";
+    harness.store.create(root_meta.clone()).await.unwrap();
+    harness
+        .store
+        .create(meta(child, SessionKind::Subagent, Some(ROOT)))
+        .await
+        .unwrap();
+    let signals = harness.agents.signals();
+    let mut root = signals.signals(&SessionId::new(ROOT));
+    signals.session_opened(&root_meta);
+    until(|| env.subscribed() == [SessionId::new(child)]).await;
+    env.finish(shell_notice(1, "b1"));
+    let notice = next_notice(&mut root).await;
+    assert_eq!(notice.agent.as_str(), "b1");
+    assert!(notice.text.contains("<task-id>b1</task-id>"));
+    until(|| env.acked() == [1]).await;
+    // Opening it again starts no second forwarder.
+    signals.session_opened(&root_meta);
+    settle_tasks().await;
+    assert_eq!(env.subscribed(), [SessionId::new(child)]);
+}
+
+/// An agent started in this process already has its forwarder: reopening its top-level session adopts the child
+/// again, which must not subscribe a second consumer (the first to acknowledge hides the notice from the other).
+#[tokio::test]
+async fn a_child_keeps_one_forwarder_when_its_top_level_session_reopens() {
+    use rust_cli_kernel_api::store::SessionStore;
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::default());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let launched = harness
+        .call(
+            ROOT,
+            "Agent",
+            json!({"description": "Shell owner", "prompt": "Go."}),
+        )
+        .await;
+    let id = text(&launched)
+        .split("agentId: ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap()
+        .to_owned();
+    let child = SessionId::new(format!("sess_subagent_{id}"));
+    harness.started(1).await;
+    until(|| env.subscribed() == std::slice::from_ref(&child)).await;
+    let root_meta = harness
+        .store
+        .load(&SessionId::new(ROOT))
+        .await
+        .unwrap()
+        .meta;
+    harness.agents.signals().session_opened(&root_meta);
+    settle_tasks().await;
+    assert_eq!(env.subscribed(), std::slice::from_ref(&child));
+    // The live agent still owns the child's notices: its mailbox, acknowledged once.
+    env.finish(shell_notice(1, "b1"));
+    until(|| env.acked() == [1]).await;
+    gates.release(child.as_str());
+    until(|| !harness.absorbed.lock().unwrap().is_empty()).await;
+    let absorbed = harness.absorbed.lock().unwrap().clone();
+    assert_eq!(absorbed.len(), 1, "{absorbed:?}");
+    assert_eq!(absorbed[0].0, child);
+    assert!(absorbed[0].1.contains("<task-id>b1</task-id>"));
+}
+
+/// Opening a subagent child session (a side tab) adopts nothing: its forwarder belongs to its top-level session.
+#[tokio::test]
+async fn opening_a_subagent_session_adopts_nothing() {
+    use rust_cli_kernel_api::store::{SessionKind, SessionStore};
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::default());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = meta("sess_subagent_agent_old", SessionKind::Subagent, Some(ROOT));
+    harness
+        .store
+        .create(meta(ROOT, SessionKind::Interactive, None))
+        .await
+        .unwrap();
+    harness.store.create(child.clone()).await.unwrap();
+    harness.agents.signals().session_opened(&child);
+    settle_tasks().await;
+    assert!(env.subscribed().is_empty());
+}

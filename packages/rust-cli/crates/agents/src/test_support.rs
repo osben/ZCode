@@ -574,6 +574,7 @@ fn built_full(
             Arc::new(UnusedEnvironment),
         )),
         tasks: tasks.clone() as Arc<dyn TaskListStore>,
+        store_queries: store.clone(),
         queries: Arc::new(queries),
         context: Arc::new(FixedContext(Vec::new())),
         spawner: scope.spawner(),

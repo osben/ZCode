@@ -29,6 +29,8 @@ pub struct NoticeEnvironment {
     sessions: Mutex<Vec<(ShellTaskId, SessionId)>>,
     /// `close_session` 的调用（会话与 `forget`），按顺序。
     closed: Mutex<Vec<(SessionId, bool)>>,
+    /// Fork: the sessions that subscribed to notices, in order (one forwarder per child session).
+    subscribed: Mutex<Vec<SessionId>>,
 }
 
 impl Default for NoticeEnvironment {
@@ -42,6 +44,7 @@ impl Default for NoticeEnvironment {
             running: Mutex::default(),
             sessions: Mutex::default(),
             closed: Mutex::default(),
+            subscribed: Mutex::default(),
         }
     }
 }
@@ -68,6 +71,11 @@ impl NoticeEnvironment {
 
     pub fn acked(&self) -> Vec<u64> {
         self.acked.lock_unpoisoned().clone()
+    }
+
+    /// Fork: the sessions that subscribed to notices, in order.
+    pub fn subscribed(&self) -> Vec<SessionId> {
+        self.subscribed.lock_unpoisoned().clone()
     }
 
     /// 收到的 `close_session`（会话与 `forget`），按顺序。
@@ -196,9 +204,10 @@ impl Shell for NoticeEnvironment {
     /// 只支持一个订阅方（会话 actor）。
     fn shell_notices(
         &self,
-        _session: &SessionId,
+        session: &SessionId,
         _after: u64,
     ) -> BoxStream<'static, Result<ShellNotice, EnvError>> {
+        self.subscribed.lock_unpoisoned().push(session.clone());
         match self.receiver.lock_unpoisoned().take() {
             Some(mut receiver) => stream::poll_fn(move |cx| receiver.poll_recv(cx))
                 .map(Ok)

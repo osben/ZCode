@@ -7,24 +7,42 @@
 //! 修正（L18）：以前子会话的命令通知没有接收方——会话 actor 只订阅顶层会话，子代理里 `run_in_background`
 //! 的命令结束后通知一直挂在执行环境里，子代理与主线程都收不到，`-p` 也不等这些命令。
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::env_shell::ShellNotice;
 use rust_cli_kernel_api::ids::{AgentId, SessionId};
 use rust_cli_kernel_api::machine_notices::{self, all_shell_notices};
+use rust_cli_kernel_api::store::{SessionKind, SessionMeta};
 use rust_cli_prompts::notification;
 
 use crate::Core;
 use crate::live::{LiveAgent, Notice};
 use crate::routing;
 
-/// 为这个子代理的子会话起转发任务（跟随进程；执行环境的流结束时它也结束）。
-pub(crate) fn watch(core: &Arc<Core>, agent: &LiveAgent) {
+/// Fork: the child sessions that have a forwarder. The env ledger hands a notice to whichever subscriber acknowledges
+/// it first, so a child session gets exactly one forwarder however often it is started (a new agent, or its top-level
+/// session reopened; specs/fork-rust-agent-parity.md, "After a restart, and on a remote executor").
+#[derive(Default)]
+pub(crate) struct Forwarders(Mutex<HashSet<SessionId>>);
+
+impl Forwarders {
+    /// True when `child` had no forwarder and now has one.
+    fn claim(&self, child: &SessionId) -> bool {
+        self.0.lock_unpoisoned().insert(child.clone())
+    }
+}
+
+/// 为子会话 `child` 起转发任务（跟随进程；执行环境的流结束时它也结束）。`root` 是它的顶层会话。已有转发任务时什么也不做。
+pub(crate) fn watch(core: &Arc<Core>, child: &SessionId, root: &SessionId) {
+    if !core.forwarders.claim(child) {
+        return;
+    }
     let core = core.clone();
-    let id = agent.agent.clone();
-    let child = agent.child.clone();
-    let root = agent.root.clone();
+    let child = child.clone();
+    let root = root.clone();
     let _task = core
         .ports
         .spawner
@@ -40,7 +58,7 @@ pub(crate) fn watch(core: &Arc<Core>, agent: &LiveAgent) {
                 {
                     continue;
                 }
-                forward(&core, &id, &root, tagged.notice.clone()).await;
+                forward(&core, &child, &root, tagged.notice.clone()).await;
                 if let Err(error) =
                     machine_notices::ack(core.ports.machines.as_ref(), &tagged, &child).await
                 {
@@ -50,8 +68,37 @@ pub(crate) fn watch(core: &Arc<Core>, agent: &LiveAgent) {
         });
 }
 
-/// 一条命令通知交给这个子代理（或它已结束时交给顶层会话）。
-async fn forward(core: &Arc<Core>, agent: &AgentId, root: &SessionId, notice: ShellNotice) {
+/// Fork: the kernel opened `meta` from the store. A top-level session's persisted subagent children get a forwarder
+/// each (a process restart left them none; the child session actor never subscribes). Their notices go to the agent
+/// that owns the child when it is live, else to this session.
+pub(crate) fn adopt(core: &Arc<Core>, meta: &SessionMeta) {
+    if meta.kind == SessionKind::Subagent {
+        return;
+    }
+    let root = meta.id.clone();
+    let task_core = core.clone();
+    let _task = core
+        .ports
+        .spawner
+        .clone()
+        .spawn("subagent-shell-notices-adopt", async move {
+            match task_core.ports.store_queries.subagent_child_ids(&root).await {
+                Ok(children) => {
+                    for child in &children {
+                        watch(&task_core, child, &root);
+                    }
+                }
+                Err(rust_cli_kernel_api::store::StoreError::Unsupported { .. }) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "the subagent children of a reopened session were not read");
+                }
+            }
+        });
+}
+
+/// 一条命令通知交给拥有子会话 `child` 的子代理（在跑进邮箱、停放就续跑），没有在跑或停放的子代理时交给顶层会话。
+/// 子代理按子会话在交出时找（Fork：不是起转发任务时记下的 ID），所以进程重启后接管的子会话也走同一条路。
+async fn forward(core: &Arc<Core>, child: &SessionId, root: &SessionId, notice: ShellNotice) {
     let status = notice.status();
     // 入参由 kernel-api 的 `ShellNotice::task_notice` 换算（工作线 F134：以前这里与 session 各写一份）。
     let envelope = notification::task_envelope(&notice.task_notice());
@@ -62,11 +109,15 @@ async fn forward(core: &Arc<Core>, agent: &AgentId, root: &SessionId, notice: Sh
         envelope,
     };
     let wake = core.live.with(|agents| {
+        let owner = agents
+            .values()
+            .find(|entry| &entry.child == child)
+            .map(|entry| entry.agent.clone());
         // 交出与记账在同一把锁里：收尾判断“还有没交给它的命令”时去掉它（ack 之前账本还列着，agents.md §5.2 第 5 条）。
-        if let Some(entry) = agents.get_mut(agent) {
+        if let Some(entry) = owner.as_ref().and_then(|owner| agents.get_mut(owner)) {
             entry.delivered.push(notice.from.clone());
         }
-        routing::deliver(agents, &core.hub, Some(agent), root, notice)
+        routing::deliver(agents, &core.hub, owner.as_ref(), root, notice)
     });
     routing::wake(core, wake.into_iter().collect()).await;
 }

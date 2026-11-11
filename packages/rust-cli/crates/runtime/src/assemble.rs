@@ -290,6 +290,7 @@ pub(crate) fn agents(
             clock: ports.clock.clone(),
             machines: ports.environments.clone(),
             tasks,
+            store_queries: ports.store.clone(),
             queries: Arc::new(agents::LoopFactory {
                 parts: parts.clone(),
             }),

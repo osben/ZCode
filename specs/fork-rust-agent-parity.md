@@ -463,7 +463,7 @@ The env ledger notifies a background command's end once per session, and the fir
 
 - Owners:
   - Delivery: the agents forwarder is the only consumer of a `SessionKind::Subagent` session's notices. The child session actor does not subscribe, so it never starts its own turn from a notice. Only the agents crate runs turns in a child session (the desktop side tab is read-only).
-  - Command status: the env ledger. It writes the terminal record at the command's exit (`env-local` `supervise.rs` and `socket.rs`, the two exit sites), keeps the newest 64 per session, and drops them with `close_session(forget)`. Only the new read `Background::ended_background_command` answers from them (default `None`: a remote executor keeps no record and keeps the projection fallback). `background_command`, `shell_state.background` (the commands `-p` waits for) and `stop` are unchanged: TaskStop, TaskOutput and the monitors read a `background_command` record as "the notice is still pending", so it still forgets the command at the ack.
+  - Command status: the env ledger. It writes the terminal record at the command's exit (`env-local` `supervise.rs` and `socket.rs`, the two exit sites), keeps the newest 64 per session, and drops them with `close_session(forget)`. Only the new read `Background::ended_background_command` answers from them; a remote executor answers it over the exec wire (`background.ended_background_command`, below). `background_command`, `shell_state.background` (the commands `-p` waits for) and `stop` are unchanged: TaskStop, TaskOutput and the monitors read a `background_command` record as "the notice is still pending", so it still forgets the command at the ack.
   - The projection's `BackgroundWork` / `<task-notification>` status stays the fallback after a process restart.
   - A stop beats an exit that is not finalized yet. The supervisor may have seen the process exit (code 0) and still be cleaning up when TaskStop is accepted (the task is still in `background`). From the stop on, the ledger reads `killed`, like Node's `killTask`, which marks the task killed at once and for good. When the exit is then finalized under the ledger lock, a task still in `stopping` or `stopped` settles as `Outcome::Cancelled` with the kill exit code (`SessionShell::settle_stop`, at both exit sites). This covers the terminal record, the notice of a stop that notifies (`killed`, "was stopped", like Node's killed notification), and the command's receipt. Before, the finalization wrote `completed` over the `killed` the ledger had already reported.
 - Event order:
@@ -484,9 +484,71 @@ detail pane poll ──► backgroundBashOutput ──► background_command(S, 
   - Unit tests: `env-local` `shell_registry_tests.rs` (an acknowledged command still answers its terminal status and output file from `ended_command`, while `background_command`, `stop` and `shell_state.background` forget it; a silently stopped command keeps a `killed` record after its exit; the per-session bound), `session` `notice_tests.rs` (a subagent child session's actor neither records, acknowledges nor opens a turn for a notice; the top-level cases are unchanged), `session` `tasks_tests.rs` (the detail window of an acknowledged command reads its terminal record).
   - Unit test `env-local` `shell_registry_tests.rs` `a_stop_accepted_before_the_exit_is_finalized_wins`: a stop accepted after the exit was seen but before it was finalized settles `killed`, for a notifying and a silent stop; without a stop the exit stands. The test uses the session ledger directly, because the interleaving is decided under the ledger lock.
   - E2E on Rust in the container: BGV04 5 of 5; `background-bash-output`, `background` and `subagent-side-tabs` no worse than on `fork`.
-- Known gaps (not fixed here; neither case worked correctly before this change, when the side tab's actor acknowledged the notice and started a turn of its own):
-  - After a process restart, an old child session has no forwarder: `shell_notices::watch` starts only in `AgentTool::call`, and the child's session actor no longer subscribes. A command on a remote executor that ends then leaves its notice pending with no consumer. Local commands die with the process.
-  - A command that outlives its foreground child: the child run has finished, so its notice goes to the top-level session and never appears in the child's history. On a remote executor, `ended_background_command` answers `None` by default, so the child tab's detail pane reads `unavailable`. Locally the ended record covers it until a restart or until 64 newer commands of the session push it out.
+
+### After a restart, and on a remote executor
+
+Two cases the section above left open. Neither worked before it either: then the side tab's actor acknowledged the notice and started a turn of its own.
+
+- **Gap A: no consumer after a process restart.** `shell_notices::watch` started only in `AgentTool::call`, and the child session actor no longer subscribes. When a command of an old child session ends on a resident remote executor after the restart, its notice stays pending and is never acknowledged. (Local commands die with the process.)
+- **Gap B: no status on a remote executor.** A foreground child finishes, and its background command ends later. The notice goes to the top-level session, so the child's history never gets the `<task-notification>`. The remote executor answered `ended_background_command` with the default `None`, so the child tab's detail pane read `unavailable`.
+
+Owners:
+
+- **Delivery (Gap A): still one forwarder per child session, owned by the agents crate.**
+  - `Core` keeps the set of child sessions that have a forwarder (`shell_notices::Forwarders`). Starting a forwarder for a child already in the set is a no-op. That set is the "no second subscriber" invariant; the child session actor still never subscribes.
+  - Two places start forwarders:
+    - `AgentTool::call`, for a new child, as before.
+    - The kernel, when it opens a top-level session from the store (`open_session_as`). It calls `AgentSignals::session_opened(meta)`. For a session that is not `SessionKind::Subagent`, the agents crate asks the store for its persisted subagent children (`StoreQueries::subagent_child_ids`: the descendants reached through `subagent_child` rows only) and starts a forwarder for each, with this session as the top-level session.
+  - The walk stops at any other task type. A side chat or workflow child runs its own actor and is a top-level session for the agents it spawns, so its subagents are adopted when that session is opened.
+  - The forwarder finds the live agent by its child session when a notice arrives, not by an id captured at spawn. If the agent runs or is parked, the notice goes to its mailbox or resumes it, as before. If no live agent owns the child (it finished, or it ran before the restart), the notice goes to the top-level session through `signals::Hub` (`routing::deliver`). The Hub keeps the notice until the session actor commits it, so a forwarder may deliver before the actor subscribes.
+  - The trigger is the top-level session's open, not the child's. A child's notices are then consumed from the moment its top-level session opens, exactly like the top-level session's own notices. The root is known without walking parent links, and it works when no side tab is ever opened.
+  - Restored forwarders live for the process, like the ones `AgentTool::call` starts. Each is one idle task on the merged notice stream, which follows machines that connect later (`all_shell_notices` watches the registry). This matters because a resident remote executor may reconnect after the session opens. Ending a forwarder once its child has nothing running or pending would need every machine to answer, including one still reconnecting, so it is not done.
+- **Command status (Gap B): still the execution environment's ledger, now also over the exec wire.**
+  - The exec protocol gets `background.ended_background_command` (`Op::EndedBackgroundCommand`, kind `read`, capability `background`). `exec-server` answers it from the executor's own ledger. `env-remote` implements `Background::ended_background_command` with it.
+  - An executor older than this op answers it per call with `unsupported`; it does not drop the connection (`RequestHeader::parse`). So no new capability bit is needed, and `env-remote` reads `unsupported` as `None` (an executor that keeps no record).
+  - Why the wire and not the child's projection:
+    - The ledger is already the one owner of a command's terminal status (above). Writing the status into the child's projection from the agents crate would add a second writer to a session whose actor owns its log. It would also give two sources of the same fact: the ledger locally, the projection remotely.
+    - A resident executor keeps its ledger across a client restart, so the detail pane keeps its status after a restart too. A projection write would be lost if the restart came before it was stored.
+  - The projection's `BackgroundWork` / `<task-notification>` status stays the fallback when the ledger has no record: a local command after a restart, or a record pushed out by 64 newer ones.
+
+Event order:
+
+```text
+kernel open_session_as(top-level T) ──► agents.session_opened(T)
+    └─ store.subagent_child_ids(T) ──► for each child C: Forwarders.start(C, root T)   (no-op if C has one)
+AgentTool::call (new child C) ───────► Forwarders.start(C, root)                       (no-op if C has one)
+
+command of C ends on machine M ──► M's ledger (one lock): leaves `background`, notice pending, ended record
+    │ merged notice stream of C (all machines, follows reconnects)
+    ▼
+forwarder(C) ──► live agent owning C?  running: mailbox | parked: resume
+                                       none: Hub(T) ──► T's actor commits ──► Hub ack
+             ──► ack to M: notice gone, ended record stays on M
+
+child tab detail pane ──► backgroundBashOutput(C, task) ──► for each machine: background_command (running | pending)
+                                                       └─ none ──► ended_background_command
+                                                                    local: env-local ledger
+                                                                    remote: wire background.ended_background_command
+                                                                            ──► executor ledger
+                                                       └─ none ──► projection fallback
+```
+
+Known limits (stated, not fixed):
+
+- After the forwarder's ack the notice lives only in the in-memory Hub until the top-level actor commits it. A second restart in between loses it. A live forwarder has the same window.
+- A top-level session that is never opened after a restart leaves its children's remote notices pending, as it leaves its own.
+
+Acceptance:
+
+- Unit tests:
+  - `agents` `shell_notices_tests.rs`:
+    - Starting a forwarder twice for one child delivers and acknowledges each notice once.
+    - Opening a top-level session adopts its persisted subagent children, routes their notices to that session and acknowledges them.
+    - Opening a subagent session adopts nothing.
+  - `node-store` `session_tree_tests.rs`: `subagent_child_ids` returns the subagent descendants through `subagent_child` rows only. It does not return a side chat or what the side chat spawned. (The `kernel-api` memory store implements the same walk for the agents tests.)
+  - `executor-host` contract test (both executor kinds): an acknowledged command answers its ended record over the wire, while `background_command` answers `None`.
+  - `exec-wire`: the new op is a `read` in the `background` capability, and an executor that does not know an op answers that call with `unsupported`.
+- E2E on Rust in the container: `background-bash-output` (BGV04), `subagent-side-tabs` and `background` no worse than on `fork`. A resident remote executor across a process restart is not reproduced by the desktop E2E. The contract test and the agents unit tests cover it.
 
 ## Subagent child sessions stay out of the sessions index (Node `publishCurrentSummaryToIndex`)
 
