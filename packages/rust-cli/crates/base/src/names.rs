@@ -118,6 +118,8 @@ pub mod env {
     pub const IS_SANDBOX: &str = "IS_SANDBOX";
     pub const ZCODE_ENABLE_TASKS: &str = "ZCODE_ENABLE_TASKS";
     pub const ZCODE_ENABLE_TODO_TOOLS: &str = "ZCODE_ENABLE_TODO_TOOLS";
+    /// Fork: the Host's Gen UI output root (shared `GEN_UI_OUTPUT_ROOT_ENV`), named in the desktop prompt section.
+    pub const ZCODE_GEN_UI_OUTPUT_ROOT: &str = "ZCODE_GEN_UI_OUTPUT_ROOT";
 
     // 压缩与记忆（compact.md §2、memory.md）。
     pub const DISABLE_COMPACT: &str = "DISABLE_COMPACT";

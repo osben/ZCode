@@ -44,7 +44,7 @@ use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::Platform;
 use rust_cli_runtime::{
-    AutoCompactAt, ContextConfig, Defaults, LocalKernel, Ports, Surface, TitleModel,
+    AutoCompactAt, ContextConfig, Defaults, DesktopContext, LocalKernel, Ports, Surface, TitleModel,
 };
 
 use crate::assemble::deployment::Deployment;
@@ -155,6 +155,9 @@ pub(crate) struct Controller {
     /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
     /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
     pub(crate) node_desktop: bool,
+    /// Fork: Node's "ZCode Desktop Context" system section ([`ContextConfig::desktop`]); only the app-server started
+    /// with `--surface desktop` (the Host's rollout decision) turns it on.
+    pub(crate) desktop_context: bool,
     pub(crate) cli: CliInputs,
 }
 
@@ -172,6 +175,7 @@ impl Controller {
             wait_model: false,
             token_budget: true,
             node_desktop: false,
+            desktop_context: false,
             cli,
         }
     }
@@ -194,13 +198,14 @@ impl Controller {
             wait_model: true,
             token_budget: true,
             node_desktop: false,
+            desktop_context: false,
             cli,
         }
     }
 
     /// app-server（app-protocol.md §3.7）：交互形态的提示词；Fork: 标题照 Node 桌面端生成（Node 的提示词）；不登记跨会话通信、不连远端机器、只接受本地主
     /// env；账号凭据经 Host；root 下的 bypass 照 Node 不拒绝。
-    pub(crate) fn app(headers: Arc<dyn HeaderSource>) -> Self {
+    pub(crate) fn app(headers: Arc<dyn HeaderSource>, desktop_context: bool) -> Self {
         Self {
             surface: Surface::Interactive,
             titles: Titles::Node,
@@ -212,6 +217,7 @@ impl Controller {
             wait_model: true,
             token_budget: false,
             node_desktop: true,
+            desktop_context,
             cli: CliInputs::default(),
         }
     }
@@ -392,6 +398,8 @@ pub(crate) async fn open(
     })
     .await;
     env_assembly::drop_remote_plugins(&deployment, &mut config.plugins);
+    // Fork: the desktop surface has the App's inline view host, so `visualize` loads (specs/fork-rust-agent-parity.md).
+    config.plugins.view_host = spec.desktop_context;
     // 会话库与产物目录按 Node 的 `storage.sessionDbPath` / `storage.dir`（用户级 → 项目级 → 环境变量，
     // config.md §2.3）：先读配置再开库。修复线 F2：以前总在缺省位置，Node 设了这些值时两边各用一个库。
     let paths = facts.storage_paths(&config.storage.settings());
@@ -572,6 +580,12 @@ pub(crate) async fn kernel(
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
     context.token_budget = spec.token_budget;
+    // Fork: the Host decides the Gen UI output root for every agent it starts (`zcodeAgentProcessManager.ts`).
+    context.desktop = spec.desktop_context.then(|| DesktopContext {
+        gen_ui_root: env
+            .raw(rust_cli_base::names::env::ZCODE_GEN_UI_OUTPUT_ROOT)
+            .map(str::to_owned),
+    });
     context.custom_system_prompt = opened.resolved.system_prompt.clone();
     context.append_system_prompt = opened.resolved.append_system_prompt.clone();
     // 附加目录只归会话（deployment.md §21）：环境段、嵌套规则文件与权限规则读这一份。

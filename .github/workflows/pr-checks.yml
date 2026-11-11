@@ -108,6 +108,11 @@ jobs:
       - name: Frozen upstream migrations
         run: pnpm db:migrations:check
 
+      # The zcode-rs inbound schema is generated from the App's zod schemas; a zod change alone makes it stale,
+      # so this runs here rather than in the path-gated Rust job.
+      - name: zcode-rs inbound schema
+        run: pnpm rust-agent:inbound-schema:check
+
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 
