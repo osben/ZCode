@@ -116,6 +116,10 @@ struct CreateSessionPayload {
     expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
+    /// Fork: execution worktree (crate::worktree).
+    worktree_preparation: Option<crate::worktree::Request>,
+    expected_attempt_id: Option<String>,
+    execution_worktree: Option<crate::worktree::Requested>,
 }
 
 #[derive(Deserialize)]
@@ -300,7 +304,7 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     }
 }
 
-async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
+pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     let payload: CreateSessionPayload = match payload(envelope) {
         Ok(payload) => payload,
         Err(ack) => return *ack,
@@ -308,11 +312,33 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     if let Some(preparation) = &payload.submission_preparation {
         return reserve_submission(server, envelope, &payload, &preparation.submission_id).await;
     }
+    if let Some(request) = &payload.worktree_preparation {
+        return prepare_worktree(server, envelope, &payload, request).await;
+    }
     if let (Some(prepared), Some(expected)) = (
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
     ) {
         return activate_submission(server, envelope, &payload, prepared, expected).await;
+    }
+    if let Some(prepared) = payload.prepared_session_id.as_deref() {
+        let config = &payload.config;
+        return crate::worktree::activate(
+            server,
+            envelope,
+            prepared,
+            payload.expected_attempt_id.as_deref(),
+            payload.workspace_id.as_deref(),
+            payload.execution_worktree.as_ref(),
+            async |live| apply_draft_config(live.handle.as_ref(), envelope, config).await,
+        )
+        .await;
+    }
+    // Fork: the direct route refuses a dead worktree before the session exists.
+    if let Some(requested) = &payload.execution_worktree
+        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested).await
+    {
+        return *ack;
     }
     let config = &payload.config;
     let first = payload.first_input.unwrap_or_default();
@@ -372,6 +398,12 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
         Ok(live) => live,
         Err(error) => return refused(error.to_string()),
     };
+    // Fork: the direct route runs the new session in its worktree before the first input.
+    if let Some(requested) = &payload.execution_worktree
+        && let Err(ack) = crate::worktree::enter_new(server, &live, envelope, &id, requested).await
+    {
+        return *ack;
+    }
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
     if let Some(text) = first.text.clone() {
@@ -587,31 +619,7 @@ async fn activate_submission(
         "already-active"
     } else {
         // The draft's choices: the first sendText carries them too, this keeps a config-only activation right.
-        let handle = live.handle.as_ref();
-        if let Some(chosen) = selection(payload.config.model_selection.as_ref()) {
-            send(
-                handle,
-                &format!("{}:model", envelope.command_id),
-                Command::SetModel { selection: chosen },
-            )
-            .await;
-        }
-        if let Some((permission, plan)) =
-            mode(payload.config.mode.as_deref(), payload.config.plan_enabled)
-        {
-            send(
-                handle,
-                &format!("{}:mode", envelope.command_id),
-                Command::SetMode { mode: permission },
-            )
-            .await;
-            send(
-                handle,
-                &format!("{}:plan", envelope.command_id),
-                Command::SetPlan { enabled: plan },
-            )
-            .await;
-        }
+        apply_draft_config(live.handle.as_ref(), envelope, &payload.config).await;
         "input-pending"
     };
     Ack::accepted(
@@ -621,6 +629,78 @@ async fn activate_submission(
             json!({"type": "createSession", "sessionId": id.as_str(), "preparedActivation": outcome}),
         ),
     )
+}
+
+/// Fork: a prepared session takes the draft's model and mode before its first input.
+async fn apply_draft_config(
+    handle: &dyn SessionHandle,
+    envelope: &Envelope,
+    config: &SessionConfig,
+) {
+    if let Some(chosen) = selection(config.model_selection.as_ref()) {
+        send(
+            handle,
+            &format!("{}:model", envelope.command_id),
+            Command::SetModel { selection: chosen },
+        )
+        .await;
+    }
+    if let Some((permission, plan)) = mode(config.mode.as_deref(), config.plan_enabled) {
+        send(
+            handle,
+            &format!("{}:mode", envelope.command_id),
+            Command::SetMode { mode: permission },
+        )
+        .await;
+        send(
+            handle,
+            &format!("{}:plan", envelope.command_id),
+            Command::SetPlan { enabled: plan },
+        )
+        .await;
+    }
+}
+
+/// Fork: worktree preparation (Node `createSession` with `worktreePreparation`): only the workspace and the
+/// worktree request; runtime settings and input belong to the activation.
+async fn prepare_worktree(
+    server: &Server,
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+    request: &crate::worktree::Request,
+) -> Ack {
+    let refused = |message: &str| {
+        Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            message,
+            0,
+        )
+    };
+    let raw = &envelope.payload;
+    if payload.prepared_session_id.is_some()
+        || payload.first_input.is_some()
+        || payload.execution_worktree.is_some()
+        || !raw["config"].is_null()
+        || !raw["permissionScope"].is_null()
+    {
+        return refused("worktree preparation cannot include runtime or input settings");
+    }
+    if !raw["incognito"].is_null() {
+        return refused(
+            "worktree preparation cannot include an incognito profile; send it on the activation createSession",
+        );
+    }
+    let workspace = payload.workspace_id.as_deref().unwrap_or_default();
+    crate::worktree::prepare(
+        server,
+        envelope,
+        workspace,
+        request,
+        server.defaults.selection.clone(),
+    )
+    .await
 }
 
 /// Fork: the first input of a reserved session was admitted: persist the marker as active, then drop

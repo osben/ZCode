@@ -384,3 +384,72 @@ async fn delivering_moves_the_foreground_only_while_an_input_waits() {
     gate.notify_one();
     until(&mut events, finished).await;
 }
+
+/// Fork: the prepared-worktree activation (`Command::SetExecutionRoot`, specs/fork-rust-agent-parity.md "Execution
+/// worktree") moves the shell cwd and the workspace like `/cd` but commits no note: the first turn starts in the
+/// worktree with nothing about the parent in its history. A running turn refuses it.
+#[tokio::test]
+async fn the_execution_root_moves_the_session_without_a_note() {
+    use rust_cli_kernel_api::session_api::{Ack, Command, KernelEvent};
+
+    use crate::test_support::envelope;
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let cwd_env = Arc::new(CwdEnv {
+        inner: env(),
+        cwd: Mutex::default(),
+        refuse: false,
+    });
+    let mut setup = Setup::new(Arc::new(GatedModel::new(gate.clone())));
+    setup.set_machine(cwd_env.clone().machine());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    let set = |id: &str, root: &str| {
+        envelope(
+            id,
+            Command::SetExecutionRoot {
+                root: EnvPath::new(root),
+            },
+        )
+    };
+    assert!(matches!(
+        built.session.send(set("c1", "/work/.worktrees/a")).await,
+        Ack::Accepted { .. }
+    ));
+    let seen = until(&mut events, |event| {
+        matches!(event, KernelEvent::WorkspaceChanged { .. })
+    })
+    .await;
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        KernelEvent::WorkspaceChanged { workspace } if workspace.root.as_str() == "/work/.worktrees/a"
+    )));
+    let view = built.session.view().await.unwrap();
+    assert_eq!(view.meta.workspace.root.as_str(), "/work/.worktrees/a");
+    assert!(view.messages.is_empty(), "{:?}", view.messages);
+    assert_eq!(*cwd_env.cwd.lock_unpoisoned(), ["/work/.worktrees/a"]);
+
+    built.session.send(submit("c2", "go")).await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::TurnStarted { .. })
+    })
+    .await;
+    let Ack::Rejected { reason } = built.session.send(set("c3", "/elsewhere")).await else {
+        panic!("a running turn must refuse the move");
+    };
+    assert!(reason.starts_with("A turn is in progress"), "{reason}");
+    gate.notify_one();
+    until(&mut events, finished).await;
+    assert_eq!(
+        built
+            .session
+            .view()
+            .await
+            .unwrap()
+            .meta
+            .workspace
+            .root
+            .as_str(),
+        "/work/.worktrees/a"
+    );
+}

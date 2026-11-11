@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::common::{
-    FileTools, cwd, env_failure, escape_control, resolve_input, stable_path, stat, style,
-    unstable_input,
+    FileTools, cwd, env_failure, escape_control, missing_workspace, resolve_input, stable_path,
+    stat, style, unstable_input,
 };
 use crate::encoding::{Decoded, Encoding, LineEndings, decode, encode, normalize};
 use crate::file_state::{Baseline, FileState};
@@ -142,6 +142,9 @@ impl Tool for WriteTool {
         let Ok(input) = parse::<Input>(raw) else {
             return Validation::Ok;
         };
+        if let Some(message) = missing_workspace(context).await {
+            return invalid(message);
+        }
         let cwd = cwd(context).await;
         if let Some(refused) =
             unstable_input(context, &cwd, NAME, "file_path", &input.file_path).await
@@ -187,6 +190,10 @@ impl Tool for WriteTool {
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
         let input: Input = parse(&raw)?;
+        // Checked again here: the directory can go between validation and the write.
+        if let Some(message) = missing_workspace(&context).await {
+            return Err(failed(message));
+        }
         let cwd = cwd(&context).await;
         let path = stable_path(&context, &cwd, NAME, "file_path", &input.file_path).await?;
         let existing = self.existing(&context, &path).await?;

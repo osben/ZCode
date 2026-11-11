@@ -98,6 +98,13 @@ pub fn edit_too_large(size: &str, max: &str) -> String {
     format!("File is too large to edit ({size}). Maximum editable file size is {max}.")
 }
 
+/// A write while the session's working directory is gone (Node `getMissingExecutionWorktreeToolError`).
+pub fn workspace_missing(root: &str) -> String {
+    format!(
+        "Working directory is missing or unavailable: {root}. Workspace actions are blocked until it is restored."
+    )
+}
+
 /// Write 的 validateInput errorCode 17 / 18。
 pub fn write_directory(path: &str) -> String {
     format!(

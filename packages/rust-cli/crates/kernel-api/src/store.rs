@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::env::WorkspaceRef;
+use crate::env::{EnvPath, WorkspaceRef};
 use crate::ids::{
     AgentId, ArtifactId, CommandId, MessageId, OwnerEpoch, SessionId, ToolUseId, TraceId, TurnId,
 };
@@ -562,6 +562,16 @@ pub struct SessionTreeCounts {
     pub workflow_runs: u64,
 }
 
+/// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
+/// `execution_branch`, fork migration `9002_fork_session_execution_worktree`). `directory` is the row's
+/// `directory`: the parent workspace the session is listed under; `path` is where the session runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionWorktree {
+    pub directory: EnvPath,
+    pub path: EnvPath,
+    pub branch: Option<String>,
+}
+
 /// Fork: what a `session/eraseTree` deleted. `erased_roots` pairs each erased requested root with
 /// the workspace its session row carried (read inside the delete transaction), for the
 /// sessions-index announcement.
@@ -856,6 +866,29 @@ pub trait StoreQueries: Send + Sync {
     async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
         Err(StoreError::Unsupported {
             what: "reconcile row".to_owned(),
+        })
+    }
+
+    /// Fork: the session's execution worktree (`None`: an ordinary session). Stores without the columns answer
+    /// `None`: they cannot hold one.
+    async fn execution_worktree(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<ExecutionWorktree>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: store the session's execution worktree, set once like Node's `coalesce` (a stored value is kept).
+    /// `NotFound` without the session row; `Unsupported` when the store has no execution columns, so the
+    /// caller never runs a worktree session that would resume in the parent.
+    async fn set_execution_worktree(
+        &self,
+        _session: &SessionId,
+        _path: &EnvPath,
+        _branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "execution worktree".to_owned(),
         })
     }
 }

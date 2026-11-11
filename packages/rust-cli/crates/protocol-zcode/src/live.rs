@@ -66,6 +66,8 @@ struct State {
     summary: Option<Value>,
     /// Fork: `submissionPreparation` while a durable first submission is still preparing.
     preparation: Option<Value>,
+    /// Fork: the prepared worktree and the execution worktree (crate::worktree).
+    worktree: crate::worktree::Facts,
     /// Fork: events up to this seq are already in the view the projection was rebuilt from.
     skip_through: u64,
     /// Fork: the subagent table watcher ([`Live::watch_subagents`]).
@@ -116,6 +118,8 @@ pub struct Live {
 }
 
 impl Live {
+    /// `listed`: Fork: the workspace the session is listed under when it runs elsewhere (an execution worktree,
+    /// whose view root is the worktree); `None` lists it under the view's root.
     pub fn new(
         context: Arc<Context>,
         topics: Arc<Topics>,
@@ -123,16 +127,18 @@ impl Live {
         view: &SessionView,
         followup: Followup,
         catalog: Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
+        listed: Option<String>,
     ) -> Self {
         let levels = view.selection.reasoning.iter().cloned().collect();
         // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
         let telemetry = (!view.meta.id.as_str().starts_with(SUBAGENT_SESSION_PREFIX))
             .then(|| Telemetry::new(view.meta.id.as_str(), Role::Main));
         let epoch = context.fresh("epoch");
-        context.register(view.meta.id.as_str(), view.meta.workspace.root.as_str());
+        let workspace = listed.unwrap_or_else(|| view.meta.workspace.root.as_str().to_owned());
+        context.register(view.meta.id.as_str(), &workspace);
         Self {
             session: view.meta.id.as_str().to_owned(),
-            workspace: view.meta.workspace.root.as_str().to_owned(),
+            workspace,
             created_at: view.meta.created_at_ms,
             handle,
             state: Mutex::new(State {
@@ -140,6 +146,7 @@ impl Live {
                 log: TopicLog::with_base(epoch, view.last_seq),
                 summary: None,
                 preparation: None,
+                worktree: crate::worktree::Facts::default(),
                 skip_through: view.last_seq,
                 watcher: None,
                 shells_dirty: false,
@@ -300,6 +307,7 @@ impl Live {
             if let Some(preparation) = &state.preparation {
                 snapshot["meta"]["submissionPreparation"] = preparation.clone();
             }
+            state.worktree.decorate_meta(&mut snapshot["meta"]);
             ((0, seq), json!({"kind": "snapshot", "snapshot": snapshot}))
         };
         self.context
@@ -588,7 +596,49 @@ impl Live {
             row["phase"] = json!("draft");
             row["sessionEnded"] = json!(false);
         }
+        state.worktree.decorate_row(&mut row);
         row
+    }
+
+    /// Fork: the prepared worktree or the execution worktree changed (crate::worktree). Meta has no delta op, so
+    /// every started subscription gets a fresh snapshot and the sessions-index row is published again. In the
+    /// session's pump task.
+    pub async fn set_worktree(&self, facts: crate::worktree::Facts) {
+        let started = {
+            let mut state = self.state();
+            if state.worktree == facts {
+                return;
+            }
+            state.worktree = facts;
+            Self::restart_started(&mut state)
+        };
+        for subscription in started {
+            self.start(&subscription, Purpose::Recovery).await;
+        }
+        self.publish_summary().await;
+    }
+
+    /// Fork: the worktree facts before the first subscription starts (a cold open), so no frame is resent.
+    pub fn seed_worktree(&self, facts: crate::worktree::Facts) {
+        self.state().worktree = facts;
+    }
+
+    /// Fork: the current worktree facts.
+    pub fn worktree(&self) -> crate::worktree::Facts {
+        self.state().worktree.clone()
+    }
+
+    /// Every started subscription back to "no first frame yet"; the ids to start again.
+    fn restart_started(state: &mut State) -> Vec<String> {
+        // The ids are collected first: restarting needs `state.log` mutably.
+        #[allow(clippy::needless_collect)]
+        let ids: Vec<String> = state
+            .log
+            .subscribers()
+            .iter()
+            .map(|subscriber| subscriber.subscription.clone())
+            .collect();
+        ids.into_iter().filter(|id| state.log.restart(id)).collect()
     }
 
     /// Fork: set the `submissionPreparation` the snapshot and the sessions-index row carry. Called before the

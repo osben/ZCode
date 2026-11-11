@@ -691,6 +691,7 @@ impl Actor {
                 }
             }
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
+            Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
             Command::ChangeDirectoryRecorded { root, record } => {
                 self.change_directory(id, root, Some(record)).await
             }

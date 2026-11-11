@@ -263,6 +263,13 @@ pub enum Command {
     ChangeDirectory {
         root: crate::env::EnvPath,
     },
+    /// Fork: the session runs in the execution worktree `root` from now on (desktop prepared-worktree activation,
+    /// specs/fork-rust-agent-parity.md "Execution worktree"). Like [`Command::ChangeDirectory`] the actor sets the
+    /// shell cwd and the workspace and emits [`KernelEvent::WorkspaceChanged`], but it commits no note: Node starts
+    /// the runtime in the worktree, so the model sees no move. `Rejected` while a turn or compaction runs.
+    SetExecutionRoot {
+        root: crate::env::EnvPath,
+    },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
     ChangeDirectoryRecorded {

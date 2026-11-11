@@ -157,12 +157,34 @@ impl Server {
         } else {
             std::sync::Arc::from(Vec::new())
         };
+        // Fork: a session in an execution worktree is listed under its parent workspace (crate::worktree).
+        let execution = if opening {
+            crate::worktree::stored_execution(self, session).await
+        } else {
+            None
+        };
+        let listed = execution
+            .as_ref()
+            .map(|worktree| worktree.directory.as_str().to_owned());
         let live = self
             .bridge
             .open(session, move |handle, view| {
-                Live::new(context, topics, handle.clone(), view, followup, catalog)
+                Live::new(
+                    context,
+                    topics,
+                    handle.clone(),
+                    view,
+                    followup,
+                    catalog,
+                    listed,
+                )
             })
             .await?;
+        // Fork: a cold open restores the prepared worktree and the execution worktree before any subscription.
+        if opening {
+            live.sink
+                .seed_worktree(crate::worktree::facts(self, session, execution.as_ref()).await);
+        }
         // Fork: a cold open restores a still-preparing first submission before any subscription starts.
         if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
             live.sink.set_preparation(marker.exposed());

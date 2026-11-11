@@ -96,6 +96,19 @@ impl Actor {
         }
     }
 
+    /// Fork: `Command::SetExecutionRoot` (prepared-worktree activation, specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). Moves the shell cwd and the workspace without a note: Node starts the runtime in the
+    /// worktree, so the model never sees a move.
+    pub(crate) async fn set_execution_root(&mut self, root: EnvPath) -> Ack {
+        if self.busy() {
+            return rejected(BUSY);
+        }
+        match self.change_workspace(root).await {
+            Ok(()) => accepted(),
+            Err(error) => rejected(error.to_string()),
+        }
+    }
+
     /// 给模型的说明（来源 `rust-cli/cd` 的 meta 用户消息），先提交再进历史、发事件；`record` 的消息排在它前面、同一批。
     async fn commit_note(
         &mut self,

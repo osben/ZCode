@@ -99,6 +99,8 @@ pub struct MemoryStore {
     fail_title: std::sync::atomic::AtomicBool,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
+    /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
+    execution: Mutex<HashMap<SessionId, (crate::env::EnvPath, Option<String>)>>,
 }
 
 impl MemoryStore {
@@ -118,6 +120,14 @@ impl MemoryStore {
     /// （保留段接在摘要之后），之前的放进 `earlier`。缺省不切分（`messages` 是重放出的全部消息）。
     pub fn split_at_compaction(&self) {
         self.split.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the stored meta of a session (`None` when it was never created).
+    pub fn meta(&self, session: &SessionId) -> Option<SessionMeta> {
+        self.sessions
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(meta, _)| meta.clone())
     }
 
     /// 已写下的信任记录（按写入顺序，重复写只留一条）。
@@ -272,6 +282,9 @@ impl SessionStore for MemoryStore {
         let mut meta = meta.clone();
         if let Some(title) = title {
             meta.title = title;
+        }
+        if let Some((path, _)) = self.execution.lock_unpoisoned().get(session) {
+            meta.workspace.root = path.clone();
         }
         let (earlier, messages) = if self.split.load(Ordering::SeqCst) {
             split_cold(messages)
@@ -725,6 +738,43 @@ impl StoreQueries for MemoryStore {
     /// Fork: the memory store persists no child rows.
     async fn subagent_children(&self, _ids: Vec<String>) -> Result<serde_json::Value, StoreError> {
         Ok(serde_json::json!({"children": []}))
+    }
+
+    async fn execution_worktree(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::store::ExecutionWorktree>, StoreError> {
+        let directory = match self.sessions.lock_unpoisoned().get(session) {
+            Some((meta, _)) => meta.workspace.root.clone(),
+            None => return Ok(None),
+        };
+        Ok(self
+            .execution
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(path, branch)| crate::store::ExecutionWorktree {
+                directory,
+                path: path.clone(),
+                branch: branch.clone(),
+            }))
+    }
+
+    async fn set_execution_worktree(
+        &self,
+        session: &SessionId,
+        path: &crate::env::EnvPath,
+        branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        if !self.sessions.lock_unpoisoned().contains_key(session) {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        }
+        self.execution
+            .lock_unpoisoned()
+            .entry(session.clone())
+            .or_insert_with(|| (path.clone(), branch.map(str::to_owned)));
+        Ok(())
     }
 }
 

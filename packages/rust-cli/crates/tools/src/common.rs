@@ -217,6 +217,20 @@ pub(crate) async fn stable_path(
         })
 }
 
+/// The session's working directory is gone (a deleted execution worktree): a write must not recreate it as an
+/// ordinary directory, so the write fails instead (execution-worktree-missing-handling.md section 2). An error
+/// reading it is left to the write itself.
+pub(crate) async fn missing_workspace(context: &ToolUseContext) -> Option<String> {
+    let root = context.workspace.root.as_str();
+    match stat(context, root).await {
+        Ok(Some(found)) if found.kind == rust_cli_kernel_api::env_files::FileKind::Directory => {
+            None
+        }
+        Ok(_) => Some(crate::texts::workspace_missing(root)),
+        Err(_) => None,
+    }
+}
+
 pub(crate) async fn stat(
     context: &ToolUseContext,
     path: &str,
