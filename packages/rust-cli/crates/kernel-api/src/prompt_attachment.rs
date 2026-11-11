@@ -9,11 +9,6 @@ use crate::message::{
 };
 use crate::persisted_output::ARTIFACT_SCHEME;
 
-/// The largest image read back from its artifact on a cold load (the Anthropic API refuses larger ones). An image is
-/// prepared within the model budget when it is attached (rust-cli-image), so only a reused web-remote original can be
-/// larger.
-pub const INLINE_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
-
 /// JS `decodeURIComponent` of one URI segment.
 fn decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
@@ -43,14 +38,11 @@ pub fn parse_artifact_uri(reference: &str) -> Option<(SessionId, ArtifactId)> {
 }
 
 /// The image of an artifact's content, a `data:<mime>;base64,<payload>` URL (Node `persistAttachmentDataUrl`); `None`
-/// when it is not one or is larger than [`INLINE_IMAGE_MAX_BYTES`].
+/// when it is not one. Any size: the caller fits it to the model budget.
 pub fn image_of_data_url(content: &str) -> Option<ImageSource> {
     let (header, data) = content.trim_end().strip_prefix("data:")?.split_once(',')?;
     let media_type = header.strip_suffix(";base64")?;
-    if !media_type.starts_with("image/")
-        || data.is_empty()
-        || data.len() / 4 * 3 > INLINE_IMAGE_MAX_BYTES
-    {
+    if !media_type.starts_with("image/") || data.is_empty() {
         return None;
     }
     Some(ImageSource::Base64 {

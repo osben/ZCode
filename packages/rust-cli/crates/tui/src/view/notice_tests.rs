@@ -117,6 +117,7 @@ fn the_main_notice_is_replaced_and_cleared_by_the_stream() {
             turn,
             outcome: TurnOutcome::Failed {
                 message: "boom".to_owned(),
+                code: None,
             },
             usage: None,
         },

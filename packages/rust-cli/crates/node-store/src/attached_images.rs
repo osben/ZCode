@@ -4,20 +4,16 @@
 //!
 //! [`AttachedFile::stored`]: rust_cli_kernel_api::message::AttachedFile::stored
 
-use rust_cli_kernel_api::ids::SessionId;
-use rust_cli_kernel_api::message::{AttachedBody, ContentBlock, Message};
+use rust_cli_kernel_api::message::{AttachedBody, ContentBlock, ImageSource, Message};
 use rust_cli_kernel_api::prompt_attachment::{
     VIDEO_INPUT_MAX_BYTES, image_of_data_url, parse_artifact_uri, video_of_data_url,
 };
 use rust_cli_kernel_api::store::ArtifactStore;
 
-/// Fills the image or video of each stored attachment of `session`'s user messages. One that is missing, of another
-/// session, too large or not a matching data URL stays the metadata reminder.
-pub(crate) async fn resolve<S: ArtifactStore + ?Sized>(
-    store: &S,
-    session: &SessionId,
-    messages: &mut [Message],
-) {
+/// Fills the image or video of each stored attachment of a session's user messages. The artifact may belong to another
+/// session: a forked session's parts keep the parent's URIs (Node `clonePartForFork`), and Node reads any stored URI
+/// (`filePartDataUrl`). One that is missing, too large (a video) or not a matching data URL stays the metadata reminder.
+pub(crate) async fn resolve<S: ArtifactStore + ?Sized>(store: &S, messages: &mut [Message]) {
     for message in messages {
         let Message::User(user) = message else {
             continue;
@@ -33,9 +29,6 @@ pub(crate) async fn resolve<S: ArtifactStore + ?Sized>(
             let Some((owner, id)) = file.stored.as_deref().and_then(parse_artifact_uri) else {
                 continue;
             };
-            if &owner != session {
-                continue;
-            }
             let Ok(Some(artifact)) = store.find(&owner, &id).await else {
                 continue;
             };
@@ -56,10 +49,41 @@ pub(crate) async fn resolve<S: ArtifactStore + ?Sized>(
                 }
             } else {
                 match image_of_data_url(&content) {
-                    Some(source) => AttachedBody::Image { source },
+                    Some(source) => match within_budget(source).await {
+                        Some(source) => AttachedBody::Image { source },
+                        None => continue,
+                    },
                     None => continue,
                 }
             };
         }
     }
+}
+
+/// A stored image as the model may receive it. An attached image was prepared within the model budget when it was sent,
+/// but a web-remote upload keeps its original artifact (Node `existingArtifactUri`), which can be larger. Node sends
+/// that original back unchecked; here an image over the budget is prepared again with the same ladder, so a cold
+/// resume sends the image the first turn sent instead of one the provider refuses. `None` when it cannot be prepared.
+async fn within_budget(source: ImageSource) -> Option<ImageSource> {
+    use base64::Engine as _;
+    let ImageSource::Base64 { media_type, data } = &source else {
+        return Some(source);
+    };
+    if data.len() as u64 <= rust_cli_image::MAX_BASE64_BYTES {
+        return Some(source);
+    }
+    let engine = &base64::engine::general_purpose::STANDARD;
+    let bytes = engine.decode(data.as_bytes()).ok()?;
+    let declared = media_type.clone();
+    // Decoding and encoding are CPU bound.
+    let prepared = tokio::task::spawn_blocking(move || {
+        rust_cli_image::prepare(bytes, &declared, &rust_cli_image::MODEL)
+    })
+    .await
+    .ok()?
+    .ok()?;
+    Some(ImageSource::Base64 {
+        media_type: prepared.media_type.to_owned(),
+        data: engine.encode(&prepared.data),
+    })
 }

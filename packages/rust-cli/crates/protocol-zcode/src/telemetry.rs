@@ -291,7 +291,7 @@ impl Telemetry {
                         fact.insert("errorCode".into(), json!("USER_INTERRUPT"));
                         fact.insert("errorMessage".into(), json!("User stopped generation"));
                     }
-                    TurnOutcome::Failed { message } => {
+                    TurnOutcome::Failed { message, .. } => {
                         fact.insert("errorMessage".into(), json!(message));
                     }
                     _ => {}

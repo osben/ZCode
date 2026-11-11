@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::ToolUseId;
-use rust_cli_kernel_api::message::{AttachmentRole, ContentBlock, Message};
+use rust_cli_kernel_api::message::{AttachedBody, AttachmentRole, ContentBlock, Message};
 use rust_cli_kernel_api::model::{ApiContent, ApiMessage, ApiRole, CacheControl, TurnOutputConfig};
 use rust_cli_kernel_api::reminder_fold::{array_result, fold_into_tool_result};
 use rust_cli_prompts::reminder;
@@ -60,14 +60,41 @@ fn plain(blocks: Vec<ContentBlock>) -> Vec<ApiContent> {
         .map(|block| ApiContent {
             block,
             cache_control: None,
+            meta: false,
         })
         .collect()
+}
+
+fn is_attached_text(block: &ContentBlock) -> bool {
+    matches!(block, ContentBlock::File { file } if matches!(file.body, AttachedBody::Text { .. }))
+}
+
+fn has_attached_text(content: &[ContentBlock]) -> bool {
+    content.iter().any(is_attached_text)
+}
+
+/// Node `buildUserMessageEntries`: the real user message's blocks (non-empty typed text and every attachment but
+/// attached text, a failed text read dropping out) and the reminders of each attached text, in order.
+fn split_attached_text(content: &[ContentBlock]) -> (Vec<ContentBlock>, Vec<ContentBlock>) {
+    let mut real = Vec::new();
+    let mut reminders = Vec::new();
+    for block in content {
+        match block {
+            ContentBlock::Text { text } if text.is_empty() => {}
+            ContentBlock::File { file } if is_attached_text(block) => {
+                reminders.extend(rust_cli_kernel_api::prompt_attachment::blocks(file));
+            }
+            block => real.push(block.clone()),
+        }
+    }
+    (real, reminders)
 }
 
 fn text(value: String) -> ApiContent {
     ApiContent {
         block: ContentBlock::Text { text: value },
         cache_control: None,
+        meta: false,
     }
 }
 
@@ -204,15 +231,21 @@ impl Builder {
     /// 调用说明与内容块依次接在后面；否则调用说明单独一条 user 消息、内容块另起一条（这两条 meta
     /// 消息原样推入，之后的内容接在第二条后面）。
     fn push_media(&mut self, value: String, blocks: Vec<ContentBlock>) {
-        let blocks = plain(blocks);
+        // Fork: marked so the request media budget does not count these as the user's own input.
+        let meta = |mut content: ApiContent| {
+            content.meta = true;
+            content
+        };
+        let blocks: Vec<ApiContent> = plain(blocks).into_iter().map(meta).collect();
+        let value = meta(text(value));
         match self.out.last_mut() {
             Some(last) if last.role == ApiRole::User && !self.separate => {
-                last.content.push(text(value));
+                last.content.push(value);
                 last.content.extend(blocks);
                 tool_results_first(&mut last.content);
             }
             _ => {
-                self.out.push(message(ApiRole::User, vec![text(value)]));
+                self.out.push(message(ApiRole::User, vec![value]));
                 self.out.push(message(ApiRole::User, blocks));
             }
         }
@@ -337,6 +370,24 @@ pub(crate) fn normalize<'a>(
             Message::User(user) if notification_batch(user) => {
                 for block in &user.content {
                     builder.push_user(plain(vec![block.clone()]));
+                }
+            }
+            // Fork: OpenAI-compatible protocols get Node's entries apart (`buildUserMessageEntries`): the real user
+            // message, `(no content)` when it is empty, then one user message per attached text's reminders.
+            Message::User(user) if builder.separate && has_attached_text(&user.content) => {
+                let (real, reminders) = split_attached_text(&user.content);
+                // Lowered first: a failed text read lowers to nothing.
+                let real = plain(real);
+                builder.push_user(if real.is_empty() {
+                    vec![text(crate::texts::NO_CONTENT.to_owned())]
+                } else {
+                    real
+                });
+                for reminder in reminders {
+                    // Attachment content, not the user's input (see `push_media`).
+                    let mut content = plain(vec![reminder]);
+                    content.iter_mut().for_each(|item| item.meta = true);
+                    builder.push_user(content);
                 }
             }
             // Fork: Node's empty real user message goes to the provider as `(no content)`, before the reminders.

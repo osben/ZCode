@@ -134,6 +134,7 @@ pub fn request(prompt: &str, source: QuerySource) -> ModelRequest {
                     text: prompt.to_owned(),
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         }],

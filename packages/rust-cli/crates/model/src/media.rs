@@ -74,10 +74,6 @@ pub(crate) fn project(messages: &mut [ApiMessage], endpoint: &ModelEndpoint) {
 /// Fork: Node `DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES`, the media one request may carry.
 const MEDIA_BUDGET_BYTES: u64 = 40 * 1024 * 1024;
 
-/// Fork: Node's text when the latest user message's own media exceed the budget.
-pub(crate) const CURRENT_ATTACHMENTS_TOO_LARGE: &str =
-    "Current attachments are too large to send. Remove or compress attachments and try again.";
-
 /// One counted media block: `item` is its index inside a tool result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct MediaKey {
@@ -98,15 +94,22 @@ fn request_bytes(source: &ImageSource) -> u64 {
     ("data:".len() + media_type.len() + ";base64,".len()) as u64 + data
 }
 
-/// Node `findLatestRealUserMessageIndex`: a user message with content of its own, not only tool results and
-/// `<system-reminder>` text (Rust may merge those into the message that carries the user's input).
+/// Node `findLatestRealUserMessageIndex`: a user message with content of its own, not only tool results,
+/// `<system-reminder>` text and attachment blocks ([`ApiContent::meta`]; Rust may merge those into the message that
+/// carries the user's input).
+///
+/// [`ApiContent::meta`]: rust_cli_kernel_api::model::ApiContent::meta
 fn is_real_user(message: &ApiMessage) -> bool {
     message.role == ApiRole::User
-        && message.content.iter().any(|content| match &content.block {
-            ContentBlock::Text { text } => !text.trim_start().starts_with("<system-reminder>"),
-            ContentBlock::Image { .. } | ContentBlock::Video { .. } => true,
-            _ => false,
-        })
+        && message
+            .content
+            .iter()
+            .filter(|content| !content.meta)
+            .any(|content| match &content.block {
+                ContentBlock::Text { text } => !text.trim_start().starts_with("<system-reminder>"),
+                ContentBlock::Image { .. } | ContentBlock::Video { .. } => true,
+                _ => false,
+            })
 }
 
 fn collect(messages: &[ApiMessage], latest: Option<usize>) -> Vec<(MediaKey, u64, bool)> {
@@ -120,7 +123,9 @@ fn collect(messages: &[ApiMessage], latest: Option<usize>) -> Vec<(MediaKey, u64
                         block,
                         item: None,
                     };
-                    media.push((key, request_bytes(source), latest == Some(message_index)));
+                    // Node protects the real user message's own media, not an attachment merged into it.
+                    let protected = latest == Some(message_index) && !content.meta;
+                    media.push((key, request_bytes(source), protected));
                 }
                 // Node keeps tool results in their own tool messages, never the protected user message.
                 ContentBlock::ToolResult { content, .. } => {
@@ -170,9 +175,7 @@ fn budget_within(messages: &mut [ApiMessage], max_bytes: u64) -> Result<(), Mode
         .map(|(_, bytes, _)| bytes)
         .sum();
     if protected > max_bytes {
-        return Err(ModelError::InvalidRequest {
-            message: CURRENT_ATTACHMENTS_TOO_LARGE.to_owned(),
-        });
+        return Err(ModelError::CurrentAttachmentsTooLarge);
     }
     let mut remaining = max_bytes - protected;
     let mut history: Vec<_> = media
@@ -262,6 +265,7 @@ mod tests {
         ApiContent {
             block,
             cache_control: None,
+            meta: false,
         }
     }
 
@@ -565,13 +569,63 @@ mod tests {
         );
     }
 
+    /// A mention's image (an attachment, [`ApiContent::meta`]) merged into the user's message is history, not the
+    /// user's own input (Node keeps it in its own entry): it gives way instead of refusing the request.
+    #[test]
+    fn a_mention_merged_into_the_input_is_not_protected() {
+        let meta = |block: ContentBlock| ApiContent {
+            meta: true,
+            ..plain(block)
+        };
+        let mut merged = vec![ApiMessage {
+            role: ApiRole::User,
+            content: vec![
+                plain(text("look")),
+                plain(sized(60, Some("clip.png"))),
+                meta(text(
+                    "<system-reminder>\nCalled the Read tool\n</system-reminder>",
+                )),
+                meta(sized(50, None)),
+            ],
+            output_config: None,
+        }];
+        budget_within(&mut merged, 100).unwrap();
+        assert_eq!(merged[0].content[1].block, sized(60, Some("clip.png")));
+        assert_eq!(
+            merged[0].content[3].block,
+            omitted_text("[Attached image/png]")
+        );
+
+        // Separate user messages (OpenAI-compatible): the mention's own message is not the latest real input.
+        let mut separate = vec![
+            user(vec![text("look"), sized(60, Some("clip.png"))]),
+            ApiMessage {
+                role: ApiRole::User,
+                content: vec![meta(sized(50, None))],
+                output_config: None,
+            },
+        ];
+        budget_within(&mut separate, 100).unwrap();
+        assert_eq!(separate[0].content[1].block, sized(60, Some("clip.png")));
+        assert_eq!(
+            separate[1].content[0].block,
+            omitted_text("[Attached image/png]")
+        );
+    }
+
     #[test]
     fn current_attachments_over_the_budget_refuse_the_request() {
         let mut messages = vec![user(vec![text("look"), sized(60, None), sized(60, None)])];
         let error = budget_within(&mut messages, 100).unwrap_err();
+        assert_eq!(error, ModelError::CurrentAttachmentsTooLarge);
+        // Node's text and code: the App localizes the failed turn by the code.
         assert_eq!(
             error.to_string(),
-            format!("invalid request: {CURRENT_ATTACHMENTS_TOO_LARGE}")
+            rust_cli_kernel_api::model::CURRENT_ATTACHMENTS_TOO_LARGE
+        );
+        assert_eq!(
+            error.code(),
+            Some("MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE")
         );
     }
 }

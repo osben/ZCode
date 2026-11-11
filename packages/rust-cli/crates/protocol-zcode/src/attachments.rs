@@ -116,6 +116,15 @@ async fn read(
         return read_local(Path::new(reference), mime, limit).await;
     }
     let content = artifact_content(server, session, reference, limit).await?;
+    bounded_data_url(content, mime, limit)
+}
+
+/// An artifact's data URL decoded, refused over `limit` decoded bytes.
+fn bounded_data_url(
+    content: Vec<u8>,
+    mime: &str,
+    limit: u64,
+) -> Result<(Vec<u8>, String), RpcError> {
     let (bytes, media_type) = from_data_url(content, mime);
     if bytes.len() as u64 > limit {
         return Err(fault("tooLarge"));
@@ -131,11 +140,24 @@ async fn artifact_content(
     reference: &str,
     limit: u64,
 ) -> Result<Vec<u8>, RpcError> {
-    let (owner, id) = rust_cli_kernel_api::prompt_attachment::parse_artifact_uri(reference)
+    let (owner, _) = rust_cli_kernel_api::prompt_attachment::parse_artifact_uri(reference)
         .ok_or_else(|| fault("refInvalid"))?;
     if &owner != session {
         return Err(fault("previewRefNotAuthorized"));
     }
+    stored_artifact_content(server, reference, limit).await
+}
+
+/// The content of the artifact a stored `file` part holds, whichever session wrote it: a fork's part keeps its
+/// parent's artifact (Node `clonePartForFork`), and Node's `readToolResultArtifact` reads it. Only for a URI taken from
+/// the session's own part, never one the App sends.
+async fn stored_artifact_content(
+    server: &Server,
+    reference: &str,
+    limit: u64,
+) -> Result<Vec<u8>, RpcError> {
+    let (owner, id) = rust_cli_kernel_api::prompt_attachment::parse_artifact_uri(reference)
+        .ok_or_else(|| fault("refInvalid"))?;
     let store = artifacts(server)?;
     // Store errors can name storage paths, so only the fault code leaves this function.
     let artifact = store
@@ -762,6 +784,8 @@ struct ReadParams {
     session_id: String,
     #[serde(rename = "ref")]
     reference: String,
+    target: Option<crate::attachment_share::RowTarget>,
+    attachment_index: Option<usize>,
     offset: usize,
     limit: usize,
 }
@@ -776,6 +800,8 @@ fn previewable(mime: &str, material: bool) -> bool {
 }
 
 /// `v4/attachment/read`: a ref is served only when a `userInput` row of the session carries it (never a raw path).
+/// With a row target (Node `resolvePromptAttachment`) the read opens what that row's stored `file` part holds, its
+/// immutable artifact first, so a later change of the local file never changes the preview; without one, the ref.
 pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     let params: ReadParams = parse(params)?;
     if params.limit == 0 || params.limit > CHUNK_MAX_BYTES {
@@ -786,17 +812,48 @@ pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcErr
         .live(&session)
         .await
         .map_err(|error| crate::server::kernel_error(&error))?;
-    let (mime, material) = live
-        .sink
-        .attachment_mime(&params.reference)
-        .ok_or_else(|| fault("previewRefNotAuthorized"))?;
+    let denied = || fault("previewRefNotAuthorized");
+    let (mime, material, stored) = match (&params.target, params.attachment_index) {
+        (Some(target), Some(index)) => {
+            let (mime, material) = live
+                .sink
+                .row_chip_mime(target.row_id, &target.entity_id, index, &params.reference)
+                .ok_or_else(denied)?;
+            // The part may not be committed yet: the chip's authorised ref is read until it is.
+            let stored = live
+                .sink
+                .row_attachment(target.row_id, &target.entity_id, index, &params.reference)
+                .and_then(|part| Some((part.source?, part.mime)));
+            (mime, material, stored)
+        }
+        (None, None) => {
+            let (mime, material) = live
+                .sink
+                .attachment_mime(&params.reference)
+                .ok_or_else(denied)?;
+            (mime, material, None)
+        }
+        _ => {
+            return Err(RpcError::invalid_params(
+                "target and attachmentIndex must be provided together",
+            ));
+        }
+    };
     // Node `PROTOCOL_V4_LIMITS`: a video preview may be as large as the video the model takes.
     let limit = if essence(&mime).starts_with("video/") {
         VIDEO_INPUT_MAX_BYTES
     } else {
         MAX_BYTES
     };
-    let (bytes, media_type) = read(server, &session, &params.reference, &mime, limit).await?;
+    let (bytes, media_type) = match &stored {
+        Some((source, part_mime)) if source.starts_with(ARTIFACT_SCHEME) => bounded_data_url(
+            stored_artifact_content(server, source, limit).await?,
+            part_mime,
+            limit,
+        )?,
+        Some((source, part_mime)) => read_local(Path::new(source), part_mime, limit).await?,
+        None => read(server, &session, &params.reference, &mime, limit).await?,
+    };
     if !previewable(&media_type, material) {
         return Err(fault("previewUnsupported"));
     }
@@ -936,7 +993,7 @@ pub async fn preview_source(server: &Server, params: &Value) -> Result<Reply, Rp
         {
             Some(path) => {
                 let content = async || {
-                    artifact_content(server, &session, &source, VIDEO_INPUT_MAX_BYTES)
+                    stored_artifact_content(server, &source, VIDEO_INPUT_MAX_BYTES)
                         .await
                         .ok()
                 };

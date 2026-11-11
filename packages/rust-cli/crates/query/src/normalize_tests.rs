@@ -394,6 +394,10 @@ fn attachments_with_blocks_stay_in_user_messages() {
             &prompt
         ]
     );
+    // A mention's blocks are marked as attachment content, so the media budget never protects them as input.
+    let meta: Vec<bool> = api[1].content.iter().map(|item| item.meta).collect();
+    assert_eq!(meta, [true, true, true, true, false, false]);
+    assert!(api[0].content.iter().all(|item| item.meta));
     assert_eq!(api[2].role, ApiRole::System);
     assert!(texts(&api[2])[0].starts_with("call doc"));
     // 不支持对话中间 system 消息：只有文字的 attachment 留在 user 消息里，带内容块的位置不变。
@@ -804,6 +808,79 @@ fn an_input_of_only_attached_text_is_padded_like_node() {
             text(&prompt_attachment::metadata_only("a.txt", "text/plain", 3))
         ]
     );
+}
+
+/// Fork: with separate user messages (OpenAI-compatible), an attached text's reminders are their own user message after
+/// the real one, as Node's `buildUserMessageEntries` entries; an empty real message is padded with `(no content)`.
+#[test]
+fn separate_user_messages_send_attached_text_apart_like_node() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |name: &str, body| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: "text/plain".into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            material: None,
+            image: None,
+            body,
+        },
+    };
+    let inline = |name: &str| {
+        file(
+            name,
+            AttachedBody::Text {
+                text: "abc".into(),
+                read: None,
+            },
+        )
+    };
+    let send = |content: Vec<ContentBlock>| {
+        let message = Message::User(UserMessage {
+            id: MessageId::new("u1"),
+            content,
+            origin: UserOrigin::Human,
+        });
+        normalize([&message], &SEPARATE)
+    };
+    let reminder = |name: &str| prompt_attachment::text_file(name, "abc").join("\n");
+
+    let api = send(vec![
+        text(""),
+        inline("a.txt"),
+        file("b.txt", AttachedBody::ReadFailed),
+    ]);
+    let texts: Vec<&str> = api.iter().map(one_text).collect();
+    assert_eq!(texts, ["(no content)", reminder("a.txt").as_str()]);
+    assert!(!api[0].content[0].meta && api[1].content[0].meta);
+
+    let api = send(vec![text("hi"), inline("a.txt"), inline("b.txt")]);
+    let texts: Vec<&str> = api.iter().map(one_text).collect();
+    assert_eq!(
+        texts,
+        ["hi", reminder("a.txt").as_str(), reminder("b.txt").as_str()]
+    );
+
+    // Other attachments stay in the real message.
+    let api = send(vec![
+        text("hi"),
+        inline("a.txt"),
+        file("d.txt", AttachedBody::Omitted),
+    ]);
+    assert_eq!(api.len(), 2);
+    let real: Vec<&ContentBlock> = api[0].content.iter().map(|item| &item.block).collect();
+    assert_eq!(
+        real,
+        [
+            &text("hi"),
+            &text(&prompt_attachment::metadata_only("d.txt", "text/plain", 3))
+        ]
+    );
+    assert_eq!(one_text(&api[1]), reminder("a.txt"));
 }
 
 const SEPARATE: NormalizeOptions = NormalizeOptions {

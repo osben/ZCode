@@ -140,7 +140,9 @@ pub(crate) fn decode_data_url(
 }
 
 /// The decoded length and media type of an artifact's data URL, as [`decode_data_url`] would serve them, without decoding
-/// the payload (fork fix, also in Node `statPromptAttachmentDataUrl`). `None` when it is not a strict base64 data URL.
+/// the payload. `zcode-rs` rows carry the App's declared (decoded) size as the chip's `bytes`, which Share compares with
+/// the stat (Node rows carry the data URL's length, and Node states the stored object). `None` when it is not a strict
+/// base64 data URL.
 pub(crate) fn stat_data_url(content: &[u8], fallback_mime: &str) -> Option<(u64, String)> {
     let text = std::str::from_utf8(content).ok()?;
     let comma = text.find(',')?;

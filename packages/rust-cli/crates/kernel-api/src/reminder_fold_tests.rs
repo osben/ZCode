@@ -10,6 +10,7 @@ fn result(content: Vec<ToolResultContent>, is_error: bool) -> ApiContent {
             is_error,
         },
         cache_control: None,
+        meta: false,
     }
 }
 
@@ -25,6 +26,7 @@ fn plain(value: &str) -> ApiContent {
             text: value.to_owned(),
         },
         cache_control: None,
+        meta: false,
     }
 }
 

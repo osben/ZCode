@@ -407,6 +407,31 @@ impl Projection {
         index: usize,
         reference: &str,
     ) -> Option<AttachmentSource> {
+        self.row_chip(row_id, entity, index, reference)?;
+        self.attachment_sources
+            .get(entity)
+            .and_then(|sources| sources.get(index))
+            .cloned()
+    }
+
+    /// Fork: the chip at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its `ref` or
+    /// `previewRef` (Node `resolveReadableMediaAttachment` with a row target): its MIME and whether it marks text
+    /// material, as [`Self::attachment_mime`].
+    pub fn row_chip_mime(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<(String, bool)> {
+        let chip = self.row_chip(row_id, entity, index, reference)?;
+        Some((
+            chip["mime"].as_str().unwrap_or_default().to_owned(),
+            chip.get("sourceKind").is_some(),
+        ))
+    }
+
+    fn row_chip(&self, row_id: u64, entity: &str, index: usize, reference: &str) -> Option<&Value> {
         let row = self
             .rows
             .iter()
@@ -415,13 +440,7 @@ impl Projection {
             return None;
         }
         let chip = row.get("attachments")?.as_array()?.get(index)?;
-        if chip["ref"] != reference && chip["previewRef"] != reference {
-            return None;
-        }
-        self.attachment_sources
-            .get(entity)
-            .and_then(|sources| sources.get(index))
-            .cloned()
+        (chip["ref"] == reference || chip["previewRef"] == reference).then_some(chip)
     }
 
     /// 记下 sendText 的事实（行与队列项要用）。
@@ -1065,9 +1084,10 @@ impl Projection {
                 "interrupted",
                 Phase::CompletedInterrupted,
             ),
-            TurnOutcome::Failed { message } => {
+            TurnOutcome::Failed { message, code } => {
                 self.error = Some(LastError {
                     message: message.clone(),
+                    code: code.clone(),
                     at: now,
                 });
                 ("failed", "failed", Phase::Error)

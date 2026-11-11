@@ -33,6 +33,7 @@ fn failed_app(message: &str) -> App {
             turn,
             outcome: TurnOutcome::Failed {
                 message: message.to_owned(),
+                code: None,
             },
             usage: None,
         },

@@ -42,6 +42,7 @@ fn plain(block: ContentBlock) -> ApiContent {
     ApiContent {
         block,
         cache_control: None,
+        meta: false,
     }
 }
 
@@ -65,6 +66,7 @@ fn a_full_request_has_the_fixed_field_order() {
         user(vec![ApiContent {
             block: text_block("hi"),
             cache_control: cache(Some("1h"), None),
+            meta: false,
         }]),
         ApiMessage {
             role: ApiRole::Assistant,
@@ -104,6 +106,7 @@ fn a_full_request_has_the_fixed_field_order() {
             ApiContent {
                 block: text_block("next"),
                 cache_control: cache(None, None),
+                meta: false,
             },
         ]),
     ]);
@@ -341,6 +344,7 @@ fn mid_conversation_system_messages_keep_their_role() {
         content: vec![ApiContent {
             block: text_block("# Environment"),
             cache_control: cache(None, None),
+            meta: false,
         }],
         output_config: None,
     };

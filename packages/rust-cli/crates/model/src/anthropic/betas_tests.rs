@@ -37,6 +37,7 @@ fn system_message() -> ApiMessage {
                 text: "# Environment".to_owned(),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: None,
     }

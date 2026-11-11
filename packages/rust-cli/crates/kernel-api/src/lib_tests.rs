@@ -199,6 +199,7 @@ fn system_turns_carry_their_output_config() {
                 text: "# Environment".to_owned(),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: Some(TurnOutputConfig {
             effort: Some("medium".to_owned()),

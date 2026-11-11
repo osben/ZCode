@@ -24,6 +24,7 @@ pub(crate) fn user_text(text: &str) -> Vec<ApiMessage> {
                 text: text.to_owned(),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: None,
     }]

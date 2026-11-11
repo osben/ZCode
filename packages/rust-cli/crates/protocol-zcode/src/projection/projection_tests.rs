@@ -713,6 +713,20 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
         projection.row_attachment(row_id + 1, "msg_u1", 0, "/tmp/p.png"),
         None
     );
+    // `v4/attachment/read` with a row target: the chip's MIME authorises it, the stored part is what it reads.
+    let chip_mime = row["attachments"][0]["mime"].as_str().unwrap().to_owned();
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_u1", 0, "/tmp/p.png"),
+        Some((chip_mime, false))
+    );
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_u1", 1, "/tmp/p.png"),
+        None
+    );
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_a1", 0, "/tmp/p.png"),
+        None
+    );
     // Without a row target the ref alone finds its chip (Node's previewSource).
     assert_eq!(
         projection
@@ -1109,6 +1123,56 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     assert_eq!(resumed["patch"]["inputRouting"]["mode"], "startNow");
 }
 
+/// Fork: a failed turn's `lastError.code` is the failure's Node error code when it has one (the media budget's
+/// `MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE`, which the App localizes), else `fault.turn.failed`.
+#[test]
+fn a_failed_turn_carries_its_node_error_code() {
+    fn last_error(deltas: &[Value]) -> Value {
+        fn find(value: &Value) -> Option<Value> {
+            match value {
+                Value::Object(map) => map
+                    .get("lastError")
+                    .filter(|error| !error.is_null())
+                    .cloned()
+                    .or_else(|| map.values().find_map(find)),
+                Value::Array(items) => items.iter().find_map(find),
+                _ => None,
+            }
+        }
+        deltas.iter().find_map(find).expect("a lastError patch")
+    }
+    let error = rust_cli_kernel_api::model::ModelError::CurrentAttachmentsTooLarge;
+    for (n, (message, code, expected)) in [
+        (
+            error.to_string(),
+            error.code().map(str::to_owned),
+            "MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE",
+        ),
+        ("upstream 500".to_owned(), None, "fault.turn.failed"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut feed = Feed::new();
+        let turn = TurnId::new(format!("turn_{n}"));
+        feed.apply(KernelEvent::TurnStarted {
+            turn: turn.clone(),
+            command: None,
+        });
+        let deltas = feed.apply(KernelEvent::TurnFinished {
+            turn,
+            outcome: TurnOutcome::Failed {
+                message: message.clone(),
+                code,
+            },
+            usage: None,
+        });
+        let error = last_error(&deltas);
+        assert_eq!(error["code"], expected);
+        assert_eq!(error["message"], message.as_str());
+    }
+}
+
 /// Fork: a failed turn with waiting inputs pauses the queue with `pauseReason: "error"` (Node `onTurnError`); a failed
 /// manual `/compact` turn and a failed turn with an empty queue do not.
 #[test]
@@ -1127,6 +1191,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
         turn: TurnId::new(turn),
         outcome: TurnOutcome::Failed {
             message: "upstream 500".into(),
+            code: None,
         },
         usage: None,
     };
