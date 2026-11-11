@@ -9,8 +9,11 @@
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, TransactionBehavior};
+use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::ids::{OwnerEpoch, SessionId};
-use rust_cli_kernel_api::store::{CommitReceipt, Fact, FactBatch, FrontendRecord, StoreError};
+use rust_cli_kernel_api::store::{
+    CommitReceipt, ExecutionWorktree, Fact, FactBatch, FrontendRecord, StoreError,
+};
 
 use crate::ids::NodeIds;
 use crate::repo::sessions::Create;
@@ -72,6 +75,34 @@ impl Drafts {
 
     pub(crate) fn was_dropped(&self, session: &str) -> bool {
         self.dropped.contains(session)
+    }
+
+    /// The workspace key a draft's row will be listed under (Node `workspaceID ?? directory`); `None` when the
+    /// session is not a draft.
+    pub(crate) fn workspace_key(&self, session: &str) -> Option<String> {
+        self.pending.get(session).map(|draft| {
+            draft
+                .create
+                .workspace_id
+                .clone()
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| draft.create.directory.clone())
+        })
+    }
+
+    /// The execution worktree a draft's row will hold, beside the parent directory it is listed under; `None` when
+    /// the session is not a draft, `Some(None)` for a draft without a worktree.
+    pub(crate) fn execution(&self, session: &str) -> Option<Option<ExecutionWorktree>> {
+        self.pending.get(session).map(|draft| {
+            draft
+                .execution
+                .as_ref()
+                .map(|(path, branch)| ExecutionWorktree {
+                    directory: EnvPath::new(&draft.create.directory),
+                    path: EnvPath::new(path),
+                    branch: branch.clone().filter(|branch| !branch.is_empty()),
+                })
+        })
     }
 
     /// The buffered records of a draft; `None` when the session is not a draft.

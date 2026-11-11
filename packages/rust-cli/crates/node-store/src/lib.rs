@@ -605,8 +605,14 @@ impl StoreQueries for NodeStore {
         session: &SessionId,
     ) -> Result<Option<String>, StoreError> {
         let session = session.as_str().to_owned();
-        self.with_db(move |conn, _| fork_execution_worktree::workspace_key(conn, &session))
-            .await
+        // Fork: a draft answers what its row will hold, so the projection opened before the row lists it rightly.
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(key) = drafts.and_then(|drafts| drafts.workspace_key(&session)) {
+                return Ok(Some(key));
+            }
+            fork_execution_worktree::workspace_key(conn, &session)
+        })
+        .await
     }
 
     /// Fork: the session's execution worktree (`execution_directory`, `execution_branch`).
@@ -615,8 +621,13 @@ impl StoreQueries for NodeStore {
         session: &SessionId,
     ) -> Result<Option<rust_cli_kernel_api::store::ExecutionWorktree>, StoreError> {
         let session = session.as_str().to_owned();
-        self.with_db(move |conn, _| fork_execution_worktree::read(conn, &session))
-            .await
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(held) = drafts.and_then(|drafts| drafts.execution(&session)) {
+                return Ok(held);
+            }
+            fork_execution_worktree::read(conn, &session)
+        })
+        .await
     }
 
     /// Fork: stores the execution worktree once (Node `coalesce`).

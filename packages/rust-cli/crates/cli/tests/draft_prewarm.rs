@@ -278,3 +278,57 @@ async fn the_reservation_marker_persists_the_prewarm() {
         vec![marker]
     );
 }
+
+/// A worktree session created directly (`createSession` with `executionWorktree`) is a draft too. The protocol opens
+/// its projection right after the create, before the first input persists it, and reads where the session is listed
+/// and where it runs from the store: the draft must answer the parent workspace and the worktree like the row will,
+/// or the projection would list the session under the worktree for good (Node lists it under the parent).
+#[tokio::test]
+async fn a_worktree_draft_answers_its_parent_and_worktree_before_its_row() {
+    let sandbox = Sandbox::new();
+    let (kernel, store) = sandbox.kernel();
+    // Opens and migrates the database, then adds Node's fork migration 9002 columns (zcode-rs adds no migration).
+    sandbox.create(&kernel).await;
+    rusqlite::Connection::open(sandbox.paths().database().as_path())
+        .unwrap()
+        .execute_batch(
+            "alter table session add column execution_directory text;
+             alter table session add column execution_branch text;",
+        )
+        .unwrap();
+    let worktree = sandbox.work.with_file_name("work-worktrees").join("a");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let work = sandbox.work.to_string_lossy().into_owned();
+    let id = kernel
+        .create_session_in_worktree(
+            CreateSession {
+                id: None,
+                workspace: WorkspaceRef {
+                    environment: EnvironmentId::new("local"),
+                    root: EnvPath::new(&work),
+                },
+                selection: selection(),
+                mode: PermissionMode::Default,
+                plan: false,
+            },
+            EnvPath::new(worktree.to_string_lossy()),
+            Some("feat/a".to_owned()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sandbox.rows(&id), Vec::new());
+    let check = async || {
+        let execution = store.execution_worktree(&id).await.unwrap().unwrap();
+        assert_eq!(execution.directory.as_str(), work);
+        assert_eq!(execution.path.as_str(), worktree.to_string_lossy());
+        assert_eq!(execution.branch.as_deref(), Some("feat/a"));
+        assert_eq!(
+            store.session_workspace_key(&id).await.unwrap().as_deref(),
+            Some(work.as_str())
+        );
+    };
+    check().await;
+    assert!(store.persist_draft(&id).await.unwrap());
+    assert_eq!(sandbox.rows(&id), vec![None]);
+    check().await;
+}
