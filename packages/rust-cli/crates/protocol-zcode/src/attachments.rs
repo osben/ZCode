@@ -493,7 +493,7 @@ fn admit(form: Inline, mime: &str, bytes: Vec<u8>) -> AttachedBody {
             },
         },
         Inline::Text => match String::from_utf8(bytes) {
-            Ok(text) if !text.contains('\0') => AttachedBody::Text { text },
+            Ok(text) if !text.contains('\0') => AttachedBody::Text { text, read: None },
             _ => AttachedBody::Omitted,
         },
     }
@@ -534,10 +534,28 @@ async fn path_reference(attachment: &AttachmentRef) -> Option<AttachedBody> {
     })
 }
 
+/// A desktop ref (an absolute local path) whose App MIME is not an image, a video or a PDF, and that is not text
+/// material (Node maps those by MIME; [`path_reference`] takes material and non-text-like files first).
+fn is_local_text(attachment: &AttachmentRef) -> bool {
+    let kind = essence(&attachment.mime);
+    attachment.source_kind.is_none()
+        && !is_uri_ref(&attachment.reference)
+        && !attachment.reference.starts_with(ARTIFACT_SCHEME)
+        && Path::new(&attachment.reference).is_absolute()
+        && !kind.starts_with("image/")
+        && !kind.starts_with("video/")
+        && kind != "application/pdf"
+}
+
 /// What of one attachment reaches the model (the stored file part keeps it for both runtimes).
 async fn body(server: &Server, session: &SessionId, attachment: &AttachmentRef) -> AttachedBody {
     if let Some(reference) = path_reference(attachment).await {
         return reference;
+    }
+    // Node `mapAttachmentRef` → `resolveLocalFileAttachment`: a desktop file that is not media is read by the agent,
+    // with no 64 KiB limit (that one is for web-remote refs).
+    if is_local_text(attachment) {
+        return crate::attachment_text::local_text(&attachment.reference).await;
     }
     let Some(form) = inline_form(&attachment.mime, attachment.bytes) else {
         return AttachedBody::Omitted;

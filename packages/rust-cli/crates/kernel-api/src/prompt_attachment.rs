@@ -4,7 +4,9 @@
 //! typed. Also the artifact URI and `data:` URL helpers both runtimes' image parts use.
 
 use crate::ids::{ArtifactId, SessionId};
-use crate::message::{AttachedBody, AttachedFile, ContentBlock, ImageSource, MaterialKind};
+use crate::message::{
+    AttachedBody, AttachedFile, ContentBlock, ImageSource, MaterialKind, TextRead,
+};
 use crate::persisted_output::ARTIFACT_SCHEME;
 
 /// The largest image read inline, also when an image is read back from its artifact (the Anthropic API refuses larger
@@ -113,31 +115,72 @@ fn label(name: &str) -> String {
     }
 }
 
-/// `<line>\t<text>` per line (the Read tool's numbering).
-fn number_lines(content: &str) -> String {
+/// `<line>\t<text>` per line from `start` (the Read tool's numbering, Node `addReadLineNumbers`).
+fn number_lines(content: &str, start: u64) -> String {
     content
         .split('\n')
-        .enumerate()
-        .map(|(index, line)| format!("{}\t{}", index + 1, line.strip_suffix('\r').unwrap_or(line)))
+        .zip(start..)
+        .map(|(line, number)| format!("{number}\t{}", line.strip_suffix('\r').unwrap_or(line)))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 /// A text file the model reads inline: Node's Read-style pair of reminders.
 pub fn text_file(name: &str, content: &str) -> Vec<String> {
-    let input = serde_json::json!({ "file_path": label(name) }).to_string();
-    let result = if content.is_empty() {
+    read_reminders(name, content, None)
+}
+
+/// Node `buildSyntheticAttachmentReminderBodies` for a file: the Read call naming `label`, then its result
+/// (`formatReadTextOutput`: the partial view notice first, then the lines numbered from the view's first line), then
+/// Node's truncation note when a truncated view has no notice.
+fn read_reminders(label_text: &str, content: &str, read: Option<&TextRead>) -> Vec<String> {
+    let label_text = label(label_text);
+    // Node: an empty label falls back to the attachment kind.
+    let value = if label_text.is_empty() {
+        "file"
+    } else {
+        label_text.as_str()
+    };
+    let input = serde_json::json!({ "file_path": value }).to_string();
+    let notice = read
+        .and_then(|read| read.notice.as_deref())
+        .map(|notice| format!("<system-reminder>{notice}</system-reminder>\n\n"))
+        .unwrap_or_default();
+    let start = read.map_or(1, |read| read.start_line);
+    let total = read.map(|read| read.total_lines);
+    let lines = if content.is_empty() {
+        0
+    } else {
+        content.split('\n').count() as u64
+    };
+    let body = if !content.is_empty() {
+        number_lines(content, start)
+    } else if total.unwrap_or(lines) == 0 {
         "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>"
             .to_owned()
     } else {
-        number_lines(content)
+        format!(
+            "<system-reminder>Warning: the file exists but is shorter than the provided offset ({start}). The file has {} lines.</system-reminder>",
+            total.unwrap_or(lines)
+        )
     };
-    vec![
+    let mut out = vec![
         wrap(&format!(
             "Called the Read tool with the following input: {input}"
         )),
-        wrap(&format!("Result of calling the Read tool:\n{result}")),
-    ]
+        wrap(&format!("Result of calling the Read tool:\n{notice}{body}")),
+    ];
+    if read.is_some_and(|read| read.truncated && read.notice.is_none()) {
+        let named = if label_text.is_empty() {
+            String::new()
+        } else {
+            format!(" {label_text}")
+        };
+        out.push(wrap(&format!(
+            "Note: The file{named} was too large and has been truncated to the first 2000 lines. Don't tell the user about this truncation. Use Read to read more of the file if you need."
+        )));
+    }
+    out
 }
 
 /// A file whose content is not sent (too large, a PDF or a video): Node's metadata-only reminder.
@@ -248,9 +291,15 @@ pub fn path_reference_mime(text: &str) -> Option<&str> {
 /// or the metadata reminder. `query::normalize` and the token estimate use only this.
 pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
     match &file.body {
-        AttachedBody::Text { text } => vec![ContentBlock::Text {
-            text: text_file(&file.name, text).join("\n"),
+        AttachedBody::Text { text, read } => vec![ContentBlock::Text {
+            text: match read {
+                Some(view) => read_reminders(&view.path, text, Some(view)),
+                None => text_file(&file.name, text),
+            }
+            .join("\n"),
         }],
+        // Node `buildUserMessageEntries` skips a failed text read.
+        AttachedBody::ReadFailed => Vec::new(),
         AttachedBody::Image { source } => vec![ContentBlock::Image {
             source: source.clone(),
             name: Some(file.name.clone()),
@@ -291,7 +340,7 @@ pub fn chip(file: &AttachedFile) -> serde_json::Value {
 /// take the part's `mime`, not the App's).
 pub fn part_mime(file: &AttachedFile) -> String {
     match &file.body {
-        AttachedBody::Text { .. } => "text/plain".to_owned(),
+        AttachedBody::Text { .. } | AttachedBody::ReadFailed => "text/plain".to_owned(),
         AttachedBody::Image {
             source:
                 ImageSource::Base64 { media_type, .. } | ImageSource::Artifact { media_type, .. },

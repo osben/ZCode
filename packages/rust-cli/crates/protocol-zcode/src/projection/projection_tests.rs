@@ -659,7 +659,10 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
                 "n.md",
                 "/tmp/n.md",
                 None,
-                AttachedBody::Text { text: "hi".into() },
+                AttachedBody::Text {
+                    text: "hi".into(),
+                    read: None,
+                },
             ),
         ],
         origin: UserOrigin::Human,

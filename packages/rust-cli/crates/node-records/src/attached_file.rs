@@ -9,12 +9,46 @@
 //! `resolvedPlaceholderAttachment` (`recoverability: metadata_only`) and `resolvedPathReferenceAttachment`
 //! (`storageKind: local_ref`, `metadata.pathReferenceText`). The App's ref is kept as `metadata.originalUrl`.
 
-use rust_cli_kernel_api::message::{AttachedBody, AttachedFile, ImageSource, ToolResultContent};
+use rust_cli_kernel_api::message::{
+    AttachedBody, AttachedFile, ImageSource, TextRead, ToolResultContent,
+};
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
 use serde_json::{Value, json};
 
 /// The MIME Node stores for an inline text attachment.
 const TEXT_MIME: &str = "text/plain";
+
+/// Node's `errorCode` of a text file that could not be read; the model gets nothing for it.
+const READ_FAILED: &str = "attachment_read_failed";
+
+/// Node `FilePartSource` of a local file: `text.value` is what the reminders name.
+fn source(path: &str, value: &str) -> Value {
+    json!({"type": "file", "path": path,
+        "text": {"value": value, "start": 0, "end": value.encode_utf16().count()}})
+}
+
+/// The view of a stored text part (Node `metadata.preview` and `source.text.value`). `None` when it is the view a
+/// web-remote text part has (named by the file name, all of it from line 1), so such a part reads back unchanged.
+fn text_read(part: &Value, name: &str, text: &str) -> Option<Box<TextRead>> {
+    let preview = &part["metadata"]["preview"];
+    let path = part["source"]["text"]["value"].as_str().unwrap_or(name);
+    let read = TextRead {
+        path: path.to_owned(),
+        start_line: preview["startLine"].as_u64().unwrap_or(1),
+        total_lines: preview["totalLines"]
+            .as_u64()
+            .unwrap_or_else(|| text.split('\n').count() as u64),
+        original_bytes: preview["originalBytes"]
+            .as_u64()
+            .unwrap_or(text.len() as u64),
+        truncated: preview["truncated"].as_bool().unwrap_or(false),
+        truncated_by_token_cap: preview["truncatedByTokenCap"].as_bool().unwrap_or(false),
+        notice: preview["partialViewNotice"].as_str().map(str::to_owned),
+    };
+    let plain =
+        read.path == name && read.start_line == 1 && !read.truncated && read.notice.is_none();
+    (!plain).then(|| Box::new(read))
+}
 
 /// [`AttachedFile`] → Node `file` part.
 pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -> Value {
@@ -29,17 +63,54 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
         metadata["previewRef"] = json!(preview);
     }
     match &file.body {
-        AttachedBody::Text { text } => {
+        AttachedBody::Text { text, read: None } => {
             out["mime"] = json!(TEXT_MIME);
             out["filename"] = json!(file.name);
             out["url"] = json!(reference.unwrap_or(&file.name));
-            out["source"] = json!({"type": "file", "path": reference.unwrap_or(&file.name),
-                "text": {"value": file.name, "start": 0, "end": file.name.encode_utf16().count()}});
+            out["source"] = source(reference.unwrap_or(&file.name), &file.name);
             metadata["preview"] = json!({"text": text, "truncated": false,
                 "originalBytes": text.len(), "startLine": 1, "totalLines": text.split('\n').count()});
             metadata["recoverability"] = json!("provider_ready");
             metadata["sizeBytes"] = json!(file.bytes);
             metadata["storageKind"] = json!("inline");
+        }
+        // Node `resolveLocalFileAttachment`: the submitted path is the part's `url`, `source` and the Read label.
+        AttachedBody::Text {
+            text,
+            read: Some(read),
+        } => {
+            out["mime"] = json!(TEXT_MIME);
+            out["filename"] = json!(file.name);
+            out["url"] = json!(read.path);
+            out["source"] = source(&read.path, &read.path);
+            let mut preview = json!({"text": text, "truncated": read.truncated,
+                "originalBytes": read.original_bytes, "startLine": read.start_line, "totalLines": read.total_lines});
+            if read.truncated_by_token_cap {
+                preview["truncatedByTokenCap"] = json!(true);
+            }
+            if let Some(notice) = &read.notice {
+                preview["partialViewNotice"] = json!(notice);
+            }
+            metadata["preview"] = preview;
+            metadata["recoverability"] = json!(if read.truncated {
+                "preview_only"
+            } else {
+                "provider_ready"
+            });
+            metadata["sizeBytes"] = json!(read.original_bytes);
+            metadata["storageKind"] = json!("inline");
+        }
+        // Node `resolvedPlaceholderAttachment(…, "attachment_read_failed")` of a local text file.
+        AttachedBody::ReadFailed => {
+            let path = reference.unwrap_or(&file.name);
+            out["mime"] = json!(TEXT_MIME);
+            out["filename"] = json!(file.name);
+            out["url"] = json!(path);
+            out["source"] = source(path, path);
+            metadata["errorCode"] = json!(READ_FAILED);
+            metadata["recoverability"] = json!("metadata_only");
+            metadata["sizeBytes"] = json!(file.bytes);
+            metadata["storageKind"] = json!("local_ref");
         }
         // Node's artifact shape (`persistAttachmentDataUrl`): Node builds the chip's ref from a `url` that is not a data
         // URL and reads the image or video back from `metadata.artifactUri`.
@@ -131,7 +202,10 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
     let path_reference = metadata["pathReferenceText"]
         .as_str()
         .filter(|_| metadata["storageKind"] == "local_ref");
-    let body = if let Some(text) = path_reference {
+    let failed = metadata["errorCode"] == READ_FAILED && mime.starts_with("text/");
+    let body = if failed {
+        AttachedBody::ReadFailed
+    } else if let Some(text) = path_reference {
         AttachedBody::PathReference {
             text: text.to_owned(),
         }
@@ -139,6 +213,7 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
         match preview {
             Some(text) if recoverable && mime.starts_with("text/") => AttachedBody::Text {
                 text: text.to_owned(),
+                read: text_read(part, &name, text),
             },
             _ if recoverable && mime.starts_with("video/") => {
                 match rust_cli_kernel_api::prompt_attachment::video_of_data_url(url) {

@@ -20,6 +20,7 @@ fn text_parts_have_the_shape_node_reads_as_a_read_reminder() {
         ("sess", "msg"),
         &file(AttachedBody::Text {
             text: "hello".into(),
+            read: None,
         }),
     );
     assert_eq!(part["type"], "file");
@@ -47,14 +48,35 @@ fn every_body_round_trips() {
     for body in [
         AttachedBody::Text {
             text: "a\nb".into(),
+            read: None,
+        },
+        AttachedBody::Text {
+            text: "x".into(),
+            read: Some(Box::new(TextRead {
+                path: "/w/big.log".into(),
+                start_line: 1,
+                total_lines: 9,
+                original_bytes: 300_000,
+                truncated: true,
+                truncated_by_token_cap: true,
+                notice: Some("[Truncated: PARTIAL view — /w/big.log: …]".into()),
+            })),
         },
         AttachedBody::Image { source: image },
         AttachedBody::Omitted,
+        AttachedBody::ReadFailed,
     ] {
         let mut original = file(body);
         if matches!(original.body, AttachedBody::Image { .. }) {
             original.mime = "image/png".into();
             original.preview_reference = Some("zcode-artifact://sess/preview".into());
+        }
+        // A read file's size is the one on disk (Node `sizeBytes` from the read).
+        if let AttachedBody::Text {
+            read: Some(read), ..
+        } = &original.body
+        {
+            original.bytes = read.original_bytes;
         }
         let stored = part("prt_1".into(), ("sess", "msg"), &original);
         assert_eq!(from_part(&stored), Some(original));
@@ -73,9 +95,66 @@ fn reads_a_node_desktop_text_part() {
     assert_eq!(
         file.body,
         AttachedBody::Text {
-            text: "body".into()
+            text: "body".into(),
+            read: Some(Box::new(TextRead {
+                path: "/w/a.md".into(),
+                start_line: 1,
+                total_lines: 1,
+                original_bytes: 4,
+                truncated: false,
+                truncated_by_token_cap: false,
+                notice: None,
+            })),
         }
     );
+}
+
+#[test]
+fn a_read_desktop_text_part_has_nodes_shape() {
+    let mut original = file(AttachedBody::Text {
+        text: "l1\nl2".into(),
+        read: Some(Box::new(TextRead {
+            path: "/w/big.log".into(),
+            start_line: 1,
+            total_lines: 30_001,
+            original_bytes: 300_000,
+            truncated: false,
+            truncated_by_token_cap: false,
+            notice: None,
+        })),
+    });
+    original.reference = Some("/w/big.log".into());
+    original.bytes = 300_000;
+    let part = part("prt_1".into(), ("sess", "msg"), &original);
+    assert_eq!(part["url"], "/w/big.log");
+    assert_eq!(part["source"]["path"], "/w/big.log");
+    assert_eq!(part["source"]["text"]["value"], "/w/big.log");
+    let metadata = &part["metadata"];
+    assert_eq!(
+        metadata["preview"],
+        json!({"text": "l1\nl2", "truncated": false, "originalBytes": 300_000, "startLine": 1,
+            "totalLines": 30_001})
+    );
+    assert_eq!(metadata["recoverability"], "provider_ready");
+    assert_eq!(metadata["sizeBytes"], 300_000);
+    assert_eq!(from_part(&part), Some(original));
+}
+
+#[test]
+fn a_failed_text_read_is_nodes_placeholder_both_ways() {
+    let mut original = file(AttachedBody::ReadFailed);
+    original.reference = Some("/w/gone.txt".into());
+    let stored = part("prt_1".into(), ("sess", "msg"), &original);
+    assert_eq!(stored["mime"], "text/plain");
+    assert_eq!(stored["metadata"]["errorCode"], "attachment_read_failed");
+    assert_eq!(stored["metadata"]["recoverability"], "metadata_only");
+    assert_eq!(stored["metadata"]["storageKind"], "local_ref");
+    // Node's own placeholder (no `sizeBytes` for a failed read).
+    let node = json!({"type": "file", "mime": "text/plain", "filename": "gone.txt", "url": "/w/gone.txt",
+        "source": {"type": "file", "path": "/w/gone.txt", "text": {"value": "/w/gone.txt", "start": 0, "end": 11}},
+        "metadata": {"errorCode": "attachment_read_failed", "originalUrl": "/w/gone.txt",
+            "recoverability": "metadata_only", "storageKind": "local_ref"}});
+    assert_eq!(from_part(&node).unwrap().body, AttachedBody::ReadFailed);
 }
 
 #[test]

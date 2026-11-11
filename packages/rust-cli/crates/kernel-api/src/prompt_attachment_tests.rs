@@ -236,3 +236,72 @@ fn a_video_is_sent_as_a_named_video_block() {
         }]
     );
 }
+
+fn read_file(read: TextRead, text: &str) -> AttachedFile {
+    AttachedFile {
+        name: "big.log".into(),
+        mime: "text/plain".into(),
+        bytes: read.original_bytes,
+        reference: Some(read.path.clone()),
+        preview_reference: None,
+        stored: None,
+        material: None,
+        body: AttachedBody::Text {
+            text: text.into(),
+            read: Some(Box::new(read)),
+        },
+    }
+}
+
+fn view(notice: Option<&str>, truncated: bool) -> TextRead {
+    TextRead {
+        path: "/w/logs/big.log".into(),
+        start_line: 1,
+        total_lines: 9,
+        original_bytes: 300_000,
+        truncated,
+        truncated_by_token_cap: truncated,
+        notice: notice.map(str::to_owned),
+    }
+}
+
+fn only_text(blocks: Vec<ContentBlock>) -> String {
+    match blocks.as_slice() {
+        [ContentBlock::Text { text }] => text.clone(),
+        other => panic!("not one text block: {other:?}"),
+    }
+}
+
+#[test]
+fn a_read_desktop_file_is_named_by_its_path_like_node() {
+    let text = only_text(blocks(&read_file(view(None, false), "a\nb")));
+    assert_eq!(
+        text,
+        "<system-reminder>\nCalled the Read tool with the following input: {\"file_path\":\"/w/logs/big.log\"}\n</system-reminder>\n<system-reminder>\nResult of calling the Read tool:\n1\ta\n2\tb\n</system-reminder>"
+    );
+}
+
+#[test]
+fn a_partial_view_puts_nodes_notice_before_the_lines() {
+    let text = only_text(blocks(&read_file(
+        view(Some("[Truncated: PARTIAL view — x]"), true),
+        "a",
+    )));
+    assert!(text.contains(
+        "Result of calling the Read tool:\n<system_reminder>[Truncated: PARTIAL view — x]</system_reminder>\n\n1\ta"
+    ));
+    assert!(!text.contains("Note: The file"));
+    // A truncated view without a notice (a Node part) gets Node's truncation note.
+    let text = only_text(blocks(&read_file(view(None, true), "a")));
+    assert!(text.contains(
+        "Note: The file /w/logs/big.log was too large and has been truncated to the first 2000 lines."
+    ));
+}
+
+#[test]
+fn a_failed_text_read_reaches_the_model_as_nothing() {
+    let mut file = read_file(view(None, false), "");
+    file.body = AttachedBody::ReadFailed;
+    assert!(blocks(&file).is_empty());
+    assert_eq!(part_mime(&file), "text/plain");
+}

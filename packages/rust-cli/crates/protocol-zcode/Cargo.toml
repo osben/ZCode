@@ -18,6 +18,8 @@ async-trait.workspace = true
 # wire v3 的分片（dataBase64）。
 base64.workspace = true
 rust-cli-base.workspace = true
+# Fork: GBK / GB18030 detection of desktop text attachments (Node `text-metadata.ts`).
+encoding_rs.workspace = true
 # Fork: row commands wait for a preempted turn on the session's event stream.
 futures-util.workspace = true
 # Fork: desktop attachment refs are local paths (the Host's zero-copy prompt attachment transfer).

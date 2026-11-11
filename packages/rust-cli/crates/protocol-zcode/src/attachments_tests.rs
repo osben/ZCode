@@ -409,3 +409,28 @@ async fn desktop_videos_are_read_whole_or_sent_by_path_like_node() {
         Some(AttachedBody::Omitted)
     );
 }
+
+#[test]
+fn desktop_text_is_read_by_the_agent_whatever_its_declared_size() {
+    // Node `mapAttachmentRef`: the 64 KiB limit is only for web-remote refs; a desktop file goes to
+    // `resolveLocalFileAttachment`, routed by the App's MIME.
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("big.log");
+    assert!(is_local_text(&local_ref(&log, "text/plain", 16 << 20)));
+    assert!(is_local_text(&local_ref(
+        &log,
+        "application/octet-stream",
+        1
+    )));
+    assert!(!is_local_text(&local_ref(&log, "image/png", 1)));
+    assert!(!is_local_text(&local_ref(&log, "video/mp4", 1)));
+    assert!(!is_local_text(&local_ref(&log, "application/pdf", 1)));
+    let mut material = local_ref(&log, "text/plain", 1);
+    material.source_kind = Some(MaterialKind::TopicHistory);
+    assert!(!is_local_text(&material));
+    let remote: AttachmentRef = serde_json::from_value(json!({
+        "ref": "zcode-artifact://s/a", "fileName": "a.txt", "mime": "text/plain", "bytes": 1,
+    }))
+    .unwrap();
+    assert!(!is_local_text(&remote));
+}

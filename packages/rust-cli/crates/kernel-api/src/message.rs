@@ -121,8 +121,13 @@ pub struct Material {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachedBody {
-    /// A UTF-8 text file read inline (Node's Read-style reminder pair).
-    Text { text: String },
+    /// A text file read inline (Node's Read-style reminder pair). `read` is set for a desktop file the agent read
+    /// (Node `resolveLocalFileAttachment`): the submitted path and the view of the file that was sent.
+    Text {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read: Option<Box<TextRead>>,
+    },
     /// An image sent as an image block.
     Image { source: ImageSource },
     /// A video sent as a video block (Node `resolveInlineMediaAttachment` / `resolveLocalVideoAttachment`); `source`
@@ -133,6 +138,28 @@ pub enum AttachedBody {
     /// Node's path reference (`resolvedPathReferenceAttachment`): a local file the model is told to read with its
     /// tools, e.g. a binary file. `text` is the note as sent, kept so a cold load replays it unchanged.
     PathReference { text: String },
+    /// Node's `attachment_read_failed` placeholder of a desktop text file that could not be read: nothing of it reaches
+    /// the model (Node `isFailedTextAttachmentPlaceholder`).
+    ReadFailed,
+}
+
+/// Fork: the view of a desktop text file that was sent (Node's `metadata.preview` of `resolveLocalFileAttachment`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextRead {
+    /// The path the App submitted (Node `source.text.value`): the Read reminder names it.
+    pub path: String,
+    /// The first line sent, 1-based.
+    pub start_line: u64,
+    /// The lines of the whole file.
+    pub total_lines: u64,
+    /// The file's size on disk.
+    pub original_bytes: u64,
+    /// Node `truncated`: set only by the token cap's partial view (a plain 2000-line cut is not marked).
+    pub truncated: bool,
+    pub truncated_by_token_cap: bool,
+    /// Node `partialViewNotice`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// 图片来源。大图不内联在消息里，用 Artifact 引用，在发给模型的一侧物化（§6 规则 10）。

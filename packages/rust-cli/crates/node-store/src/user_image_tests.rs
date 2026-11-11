@@ -149,6 +149,7 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
                 "text/plain",
                 AttachedBody::Text {
                     text: "line one\nline two".into(),
+                    read: None,
                 },
             ),
             file(

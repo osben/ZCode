@@ -706,7 +706,10 @@ fn attached_files_expand_into_reminders_and_images() {
             file(
                 "a.txt",
                 "text/plain",
-                AttachedBody::Text { text: "abc".into() },
+                AttachedBody::Text {
+                    text: "abc".into(),
+                    read: None,
+                },
             ),
             file(
                 "p.png",
