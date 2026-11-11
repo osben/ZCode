@@ -675,11 +675,12 @@ export function createZCodeTaskIndexSyncer(
     target: ZCodeAgentSessionTarget,
     summary: SessionSummary,
   ): void {
-    void taskIndexRepo
-      .admitForkSummary({
+    void serializeSummaryWrite(target, () =>
+      taskIndexRepo.admitForkSummary({
         meta: buildBaselineMetaFromSummary(workspace, summary),
         titleSource: summary.titleSource,
-      })
+      }),
+    )
       .then(({ meta, changed }) => {
         // Steady-state summaries change nothing in the admitted facts; broadcast only the first claim or a real fact change.
         if (changed)
@@ -877,6 +878,64 @@ export function createZCodeTaskIndexSyncer(
     }
   }
 
+  /**
+   * Seeding passes of the initial snapshot: each session comes one pass after the session it was forked from, because
+   * admitForkSummary claims a fork for its parent's project only once the parent row is owned.
+   */
+  function parentsBeforeForks(candidates: SessionSummary[]): SessionSummary[][] {
+    const byId = new Map(candidates.map((summary) => [summary.sessionId, summary]));
+    const depthOf = new Map<string, number>();
+    for (const summary of candidates) {
+      const chain: SessionSummary[] = [];
+      const inChain = new Set<string>();
+      let cursor: SessionSummary | undefined = summary;
+      while (cursor && !depthOf.has(cursor.sessionId) && !inChain.has(cursor.sessionId)) {
+        chain.push(cursor);
+        inChain.add(cursor.sessionId);
+        cursor = cursor.parentSessionId ? byId.get(cursor.parentSessionId) : undefined;
+      }
+      let depth = cursor ? (depthOf.get(cursor.sessionId) ?? -1) + 1 : 0;
+      for (const link of chain.reverse()) {
+        depthOf.set(link.sessionId, depth);
+        depth += 1;
+      }
+    }
+    const passes: SessionSummary[][] = [];
+    for (const summary of candidates) {
+      const depth = depthOf.get(summary.sessionId) ?? 0;
+      (passes[depth] ??= []).push(summary);
+    }
+    return passes.filter((pass) => pass.length > 0);
+  }
+
+  function seedBaselineSummary(
+    state: WorkspaceIngestState,
+    baseline: SessionSummary,
+  ): Promise<unknown> {
+    if (baseline.phase === "draft")
+      return taskIndexRepo.seedTaskMetaIfMissing(
+        buildBaselineMetaFromSummary(state.target, baseline),
+      );
+    // Like upstream taskFacts.ingest: an existing non-draft session is admitted with its CLI facts,
+    // so a fresh task index lists it without waiting for a later summary.
+    const target = sessionTargetFrom(state.target, baseline.sessionId);
+    return serializeSummaryWrite(target, async () => {
+      // A later batch is queued after earlier batches settle, and an online summary may replace the snapshot copy
+      // meanwhile. Write the current summary: stale facts must not land after newer ones, and the current summary must
+      // still be admitted when its own online write failed.
+      const current = state.summaries.get(baseline.sessionId);
+      if (!current || current.phase === "draft") return;
+      if (isForkAdmissionCandidate(current)) {
+        await taskIndexRepo.admitForkSummary({
+          meta: buildBaselineMetaFromSummary(state.target, current),
+          titleSource: current.titleSource,
+        });
+        return;
+      }
+      await mirrorSummary(target, current);
+    });
+  }
+
   async function seedMissingRowsFromInitialSnapshot(
     state: WorkspaceIngestState,
     summaries: Iterable<SessionSummary>,
@@ -895,25 +954,17 @@ export function createZCodeTaskIndexSyncer(
     // Write in fixed small batches and summarize failures in one production log rather than creating a log storm with per-session errors.
     let failedCount = 0;
     let firstError: unknown;
-    for (let offset = 0; offset < candidates.length; offset += INITIAL_BASELINE_SEED_BATCH_SIZE) {
-      const batch = candidates.slice(offset, offset + INITIAL_BASELINE_SEED_BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map((summary) => {
-          const meta = buildBaselineMetaFromSummary(state.target, summary);
-          if (isForkAdmissionCandidate(summary))
-            return taskIndexRepo.admitForkSummary({ meta, titleSource: summary.titleSource });
-          if (summary.phase === "draft") return taskIndexRepo.seedTaskMetaIfMissing(meta);
-          // Like upstream taskFacts.ingest: an existing non-draft session is admitted with its CLI facts,
-          // so a fresh task index lists it without waiting for a later summary.
-          return serializeSummaryWrite(sessionTargetFrom(state.target, summary.sessionId), () =>
-            mirrorSummary(sessionTargetFrom(state.target, summary.sessionId), summary),
-          );
-        }),
-      );
-      for (const result of results) {
-        if (result.status === "rejected") {
-          failedCount += 1;
-          firstError ??= result.reason;
+    for (const pass of parentsBeforeForks(candidates)) {
+      for (let offset = 0; offset < pass.length; offset += INITIAL_BASELINE_SEED_BATCH_SIZE) {
+        const batch = pass.slice(offset, offset + INITIAL_BASELINE_SEED_BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map((summary) => seedBaselineSummary(state, summary)),
+        );
+        for (const result of results) {
+          if (result.status === "rejected") {
+            failedCount += 1;
+            firstError ??= result.reason;
+          }
         }
       }
     }

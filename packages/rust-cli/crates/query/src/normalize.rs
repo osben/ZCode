@@ -117,6 +117,14 @@ fn tool_results_first(content: &mut Vec<ApiContent>) {
     *content = results;
 }
 
+/// Fork: content made only of tool results.
+fn only_results(content: &[ApiContent]) -> bool {
+    !content.is_empty()
+        && content
+            .iter()
+            .all(|item| matches!(item.block, ContentBlock::ToolResult { .. }))
+}
+
 /// Fork: a meta notification message with more than one block.
 fn notification_batch(user: &rust_cli_kernel_api::message::UserMessage) -> bool {
     user.content.len() > 1
@@ -154,6 +162,16 @@ impl Builder {
         match self.out.last_mut() {
             Some(last) if last.role == ApiRole::User && !self.separate => {
                 merge_user(&mut last.content, content);
+            }
+            // The executor records each result of one reply as its own message, and pairing only reads the first user
+            // message after a reply. Separate mode therefore still keeps consecutive results together; split apart,
+            // the later results were replaced with missing-result errors and dropped as orphans.
+            Some(last)
+                if last.role == ApiRole::User
+                    && only_results(&last.content)
+                    && only_results(&content) =>
+            {
+                last.content.extend(content);
             }
             _ => self.out.push(message(ApiRole::User, content)),
         }
