@@ -139,6 +139,42 @@ pub(crate) fn decode_data_url(
     Ok((bytes, media_type))
 }
 
+/// The decoded length and media type of an artifact's data URL, as [`decode_data_url`] would serve them, without decoding
+/// the payload (fork fix, also in Node `statPromptAttachmentDataUrl`). `None` when it is not a strict base64 data URL.
+pub(crate) fn stat_data_url(content: &[u8], fallback_mime: &str) -> Option<(u64, String)> {
+    let text = std::str::from_utf8(content).ok()?;
+    let comma = text.find(',')?;
+    if !text
+        .get(..5)
+        .is_some_and(|head| head.eq_ignore_ascii_case("data:"))
+    {
+        return None;
+    }
+    let mut parts = text[5..comma].split(';');
+    let first = parts.next().map(str::trim).unwrap_or_default();
+    let media_type = essence(if first.is_empty() {
+        fallback_mime
+    } else {
+        first
+    });
+    let payload = &text[comma + 1..];
+    let body = payload.trim_end_matches('=');
+    let base64_marked = parts
+        .next_back()
+        .is_some_and(|last| last.trim().eq_ignore_ascii_case("base64"));
+    let padding = payload.len() - body.len();
+    if !base64_marked
+        || padding > 2
+        || payload.len() % 4 != 0
+        || !body
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/')
+    {
+        return None;
+    }
+    Some(((payload.len() / 4 * 3 - padding) as u64, media_type))
+}
+
 /// The bytes of an attachment source (Node `readPromptAttachment` with Share's limit). Missing → `shareStatNotFound`,
 /// the one classification Share skips on.
 async fn read_source(
@@ -211,8 +247,9 @@ pub async fn read(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     })))
 }
 
-/// `v4/conversation/attachmentStat`: the size Share checks before publishing. An artifact reports the stored object
-/// (Node `statToolResultArtifact`: its size and content type), a local file its own size and mtime.
+/// `v4/conversation/attachmentStat`: the size Share checks before publishing. An artifact reports the attachment the read
+/// serves (its data URL's decoded size and media type; the stored object's size and the part's MIME when it holds no
+/// data URL), a local file its own size and mtime.
 pub async fn stat(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     let params: StatParams = parse(params)?;
     let session = SessionId::new(&params.session_id);
@@ -228,17 +265,22 @@ pub async fn stat(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     let reference = source.source.as_deref().unwrap_or(&params.reference);
     let out = if reference.starts_with(ARTIFACT_SCHEME) {
         let (owner, id) = parse_artifact_uri(reference).ok_or_else(|| fault("refInvalid"))?;
-        let artifact = artifacts(server)?
+        let store = artifacts(server)?;
+        let artifact = store
             .find(&owner, &id)
             .await
             .map_err(|_| fault("storeFailed"))?
             .ok_or_else(|| fault("shareStatNotFound"))?;
-        let media_type = if artifact.media_type.is_empty() {
-            source.mime.clone()
-        } else {
-            artifact.media_type
-        };
-        json!({"totalBytes": artifact.size, "mediaType": media_type})
+        if artifact.size > STAT_MAX_BYTES {
+            return Err(fault("shareStatTooLarge"));
+        }
+        let content = store
+            .get(&artifact)
+            .await
+            .map_err(|_| fault("storeFailed"))?;
+        let (size, media_type) = stat_data_url(&content, &source.mime)
+            .unwrap_or_else(|| (artifact.size, essence(&source.mime)));
+        json!({"totalBytes": size, "mediaType": media_type})
     } else {
         let path = Path::new(reference);
         if !path.is_absolute() {
