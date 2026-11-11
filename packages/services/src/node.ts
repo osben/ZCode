@@ -3762,16 +3762,18 @@ export async function createServerHostServices(options: {
   providerProvisioningTargetEnabled?: boolean;
   credentialCipherProvider?: CredentialCipher;
 }) {
-  // 无桌面环境不能等到首次登录或 Provisioning 才发现系统库缺失。
+  // Validate the Source Server identity before opening the credential store: a host without a system keychain
+  // would otherwise report the storage error instead of the invalid serverId.
+  const projectStorageHostId = remoteHostIdFromWorkspaceIdentity(
+    buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath: "/" }),
+  );
+  if (!projectStorageHostId) throw new Error("Invalid Source Server storage identity");
+  // Headless hosts must find a missing system library at startup, not at first login or provisioning.
   const credentialCipherProvider =
     options.credentialCipherProvider ??
     (await createServerCredentialCipher({
       filePath: join(resolveAppConfigDir(), "credentials.json"),
     }));
-  const projectStorageHostId = remoteHostIdFromWorkspaceIdentity(
-    buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath: "/" }),
-  );
-  if (!projectStorageHostId) throw new Error("Invalid Source Server storage identity");
   // Bug cause: billing/balance treats X-Device-Mid as required, but standalone Server hosts have no Desktop main
   // writing a device identity, and buildZCodeSourceHeaders() only reads it and never generates one. The original fix
   // lived only in the legacy stdio entry, while the Core and Lite HTTP entries for SSH/WSL/Docker share this assembly
