@@ -33,6 +33,7 @@ fn assistant(content: Vec<ContentBlock>) -> Message {
 
 fn user(content: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u"),
         content,
         origin: UserOrigin::Human,

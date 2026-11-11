@@ -146,6 +146,7 @@ async fn a_cold_load_during_the_child_run_adds_no_resume_sentinel() {
     let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
     setup.opened = crate::Opened::Loaded;
     setup.messages = vec![Message::User(rust_cli_kernel_api::message::UserMessage {
+        intent: None,
         id: MessageId::new("u1"),
         content: vec![ContentBlock::Text {
             text: "E2E_SIDE_TAB_CHILD_1: read the file".to_owned(),

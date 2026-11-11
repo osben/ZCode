@@ -26,6 +26,7 @@ fn read(path: &str) -> Vec<Message> {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),

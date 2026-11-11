@@ -287,6 +287,10 @@ impl Inbox {
                 // A queued compaction has no text to edit (Node `queueEdit` refuses maintenance items).
                 && !matches!(queued.kind, InputKind::Compact)
             {
+                // Node `editPendingInputById`: the intent's text follows; its quotes stay.
+                if let Some(intent) = &mut queued.input.intent {
+                    intent.set_text(&text);
+                }
                 queued.input.text = text;
                 if queued.ledger {
                     self.journal.push(LedgerChange::Admitted(admitted(queued)));

@@ -66,6 +66,7 @@ async fn subagent_writes_settle_checkpoints_in_the_child_session() {
     })
     .await;
     sink.commit_message(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("result_1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("toolu_1"),
@@ -204,6 +205,7 @@ async fn a_nested_agent_call_links_the_grandchild_session_in_the_same_batch() {
     })
     .await;
     sink.commit_message(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("result_1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("toolu_agent"),

@@ -65,6 +65,7 @@ impl HookRunner for Evaluator {
 
 fn feedback() -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_feedback"),
         content: vec![ContentBlock::Text {
             text: "Stop hook feedback:\n[tests pass]: red".to_owned(),

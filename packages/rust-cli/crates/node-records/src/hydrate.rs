@@ -127,6 +127,11 @@ fn user(record: &WithParts) -> Option<Message> {
         return None;
     }
     Some(Message::User(UserMessage {
+        // Fork: an App input's typed text and quotes (Node `inputIntentOfMessage`).
+        intent: (!summary)
+            .then(|| crate::input_intent::of_message(info))
+            .flatten()
+            .map(Box::new),
         id: MessageId::new(record.id()),
         content,
         origin: if summary {

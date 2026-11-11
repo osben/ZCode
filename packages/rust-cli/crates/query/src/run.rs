@@ -117,6 +117,7 @@ async fn conclude(
         Outcome::Failed { message } => Ok(Some(QueryStop::ApiError { message })),
         Outcome::Retry { nudge, source, .. } => {
             let message = Message::User(UserMessage {
+                intent: None,
                 id: scope.parts.ids.message(),
                 content: vec![ContentBlock::Text {
                     text: nudge.to_owned(),
@@ -188,13 +189,26 @@ async fn commit_absorbed(
     for item in items {
         let (id, text, data, after) = match item {
             Absorbed::Prompt(steered) => {
-                let steer = queued_command::steer_attachment(
+                // Fork: the steer's quotes reach the model with its text (Node `steering.ts` composes the guide).
+                let prompt = match &steered.intent {
+                    Some(intent) => intent.compose(&steered.text),
+                    None => steered.text.clone(),
+                };
+                let mut steer = queued_command::steer_attachment(
                     scope.parts.ids.message(),
-                    &steered.text,
+                    &prompt,
                     steered.from,
                     steered.command.as_deref(),
                     None,
                 );
+                if let Some(intent) = &steered.intent
+                    && let Some(data) = steer.data.as_object_mut()
+                {
+                    data.insert(
+                        queued_command::INTENT_KEY.to_owned(),
+                        serde_json::to_value(intent).unwrap_or_default(),
+                    );
+                }
                 (Some(steer.id), steer.text, steer.data, steered.after)
             }
             // 输出端给了消息 ID 时用它：提交之后它按这个 ID 认出是哪一条通知（会话 actor 的通道，工作线 F130）。

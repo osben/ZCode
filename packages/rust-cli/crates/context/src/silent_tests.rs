@@ -5,6 +5,7 @@ use super::*;
 
 fn human() -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
             text: "go".to_owned(),
@@ -34,6 +35,7 @@ fn call(name: &str, text: Option<&str>) -> Vec<Message> {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("r"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t"),

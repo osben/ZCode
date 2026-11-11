@@ -42,6 +42,7 @@ fn fork(input: &MessageId) -> CommandEnvelope {
 
 fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -257,6 +258,7 @@ async fn only_an_input_can_be_forked_and_not_while_a_turn_runs() {
 #[test]
 fn the_turn_runs_until_the_next_input() {
     let result = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("r2"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t"),

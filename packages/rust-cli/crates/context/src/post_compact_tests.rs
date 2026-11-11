@@ -93,6 +93,7 @@ fn sources(items: &[AttachmentMessage]) -> Vec<&str> {
 
 fn human(id: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -120,6 +121,7 @@ async fn compacted(assembler: &PromptAssembler) -> Vec<Message> {
         },
     )));
     history.push(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_summary"),
         content: vec![ContentBlock::Text {
             text: "summary".to_owned(),

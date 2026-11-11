@@ -379,6 +379,9 @@ mod submit_with;
 #[path = "queue_edit_tests.rs"]
 mod queue_edit;
 
+#[path = "quote_intent_tests.rs"]
+mod quote_intent;
+
 #[path = "notice_tests.rs"]
 mod notice;
 

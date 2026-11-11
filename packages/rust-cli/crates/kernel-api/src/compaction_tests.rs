@@ -204,6 +204,7 @@ fn rough_tokens_round_the_utf16_length() {
 
 fn user(text: &str) -> crate::message::Message {
     crate::message::Message::User(crate::message::UserMessage {
+        intent: None,
         id: crate::ids::MessageId::new("u"),
         content: vec![crate::message::ContentBlock::Text {
             text: text.to_owned(),

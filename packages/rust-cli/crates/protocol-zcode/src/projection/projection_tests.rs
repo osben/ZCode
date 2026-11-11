@@ -59,6 +59,7 @@ fn view(messages: Vec<Message>) -> SessionView {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -532,6 +533,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c1"),
             text: "hi".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -578,6 +580,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
 
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
             ContentBlock::Text { text: "see".into() },
@@ -653,6 +656,7 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
         }
     };
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
             ContentBlock::Text { text: "see".into() },
@@ -1102,6 +1106,7 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -1190,6 +1195,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
     use rust_cli_kernel_api::message::CompactTrigger;
     let queued = || KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -1257,6 +1263,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
     use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
     let mut feed = Feed::new();
     let item = |id: &str, text: &str, kind, execution| QueuedInput {
+        intent: None,
         command: CommandId::new(id),
         text: text.into(),
         delivery: Delivery::Queue,
@@ -1549,6 +1556,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
     assert!(row.get("output").is_none(), "{row}");
 
     let result = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: tool,
@@ -1580,6 +1588,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
 /// A background task notification: a meta user message, no typed input (Node `task-notification` origin).
 fn notification(id: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: "<task-notification>done</task-notification>".into(),
@@ -1702,6 +1711,76 @@ fn a_notification_turn_offers_no_fork_while_running_or_interrupted() {
             .get("actions")
             .is_none()
     );
+}
+
+/// Fork: a quoted input shows its typed text and its quotes from its input intent (Node `intent.text` and
+/// `conversationQuotes`), cold and queued alike; the stored text keeps the block the model read. A text that merely
+/// ends with a quote block has no chips, and an intent's `[]` is kept.
+#[test]
+fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
+    use rust_cli_kernel_api::input_intent::InputIntent;
+    use rust_cli_kernel_api::session_api::{Delivery, QueuedKind};
+    let expected = json!([{"text": "E2E selection", "path": "/w/a.ts"}]);
+    let intent = |text: &str, quotes: Value| -> InputIntent {
+        serde_json::from_value(json!({"text": text, "conversationQuotes": quotes})).unwrap()
+    };
+    let quoted_intent = intent("explain this", expected.clone());
+    let quoted = quoted_intent.compose("explain this");
+    let with_intent = |id: &str, text: &str, intent: InputIntent| {
+        let Message::User(mut message) = user(id, text) else {
+            unreachable!()
+        };
+        message.intent = Some(Box::new(intent));
+        Message::User(message)
+    };
+    let projection = Projection::from_view(
+        &view(vec![
+            with_intent("msg_u1", &quoted, quoted_intent.clone()),
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+            user("msg_u2", "plain"),
+            assistant("msg_a2", vec![ContentBlock::Text { text: "ok".into() }]),
+            // A literal block without an intent is plain text.
+            user("msg_u3", &quoted),
+            assistant("msg_a3", vec![ContentBlock::Text { text: "ok".into() }]),
+            with_intent("msg_u4", "typed", intent("typed", json!([]))),
+            assistant("msg_a4", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs[0]["text"], "explain this");
+    assert_eq!(inputs[0]["conversationQuotes"], expected);
+    assert_eq!(inputs[1]["text"], "plain");
+    assert!(inputs[1].get("conversationQuotes").is_none());
+    assert_eq!(inputs[2]["text"], json!(quoted));
+    assert!(inputs[2].get("conversationQuotes").is_none());
+    assert_eq!(inputs[3]["text"], "typed");
+    assert_eq!(inputs[3]["conversationQuotes"], json!([]));
+
+    let mut feed = Feed::new();
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            intent: Some(Box::new(quoted_intent)),
+            command: CommandId::new("c1"),
+            text: "explain this".into(),
+            delivery: Delivery::Queue,
+            kind: QueuedKind::Text,
+            execution: None,
+        }],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert_eq!(queue["items"][0]["text"], "explain this");
+    assert_eq!(queue["items"][0]["conversationQuotes"], expected);
 }
 
 fn sequenced(seq: u64, event: KernelEvent) -> SequencedEvent {

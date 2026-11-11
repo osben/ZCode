@@ -141,6 +141,7 @@ impl Actor {
             ));
             // 排在最前（通道与队列的头部），回合结束后先开它。
             self.inbox.push_first(QueuedInput {
+                intent: None,
                 command,
                 text,
                 delivery: Delivery::Queue,

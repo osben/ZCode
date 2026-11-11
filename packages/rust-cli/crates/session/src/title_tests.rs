@@ -7,7 +7,7 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{StopReason, Usage, UserMessage};
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
 use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelPort, ModelRequest, QuerySource};
-use rust_cli_kernel_api::session_api::{Command, SessionHandle};
+use rust_cli_kernel_api::session_api::{Command, CommandEnvelope, Delivery, SessionHandle};
 use rust_cli_kernel_api::side_request::SideSource;
 use rust_cli_kernel_api::testing::{MemoryStore, ScriptedModel, text_response};
 use tokio::sync::Notify;
@@ -160,6 +160,7 @@ async fn short_inputs_and_later_turns_do_not_generate() {
     let mut setup = Setup::new(main);
     setup.titles = titles(title_model.clone());
     setup.messages = vec![Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_old"),
         content: vec![ContentBlock::Text {
             text: "earlier".to_owned(),
@@ -420,6 +421,50 @@ async fn node_desktop_titles_skip_a_failed_turn() {
     assert_eq!(title_model.requests().len(), 1);
 }
 
+/// Fork (specs/fork-agent-runtime-selection.md, Conversation quotes): a quoted input is titled, and seeds the title
+/// request, by its typed text only (Node `titleFromInput(displayInput)`).
+#[tokio::test]
+async fn a_quoted_input_is_titled_by_its_typed_text() {
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main.clone());
+    setup.titles = titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    let typed = "Explain the hook trust digest";
+    let intent: rust_cli_kernel_api::input_intent::InputIntent = serde_json::from_value(
+        serde_json::json!({"text": typed, "conversationQuotes": [{"text": "QUOTED_SELECTION"}]}),
+    )
+    .unwrap();
+    built
+        .session
+        .send(CommandEnvelope {
+            id: CommandId::new("c1"),
+            command: Command::SubmitWith {
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: typed.to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: false,
+                intent: Some(Box::new(intent)),
+            },
+        })
+        .await;
+    let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert!(
+        seen.iter()
+            .any(|event| titled(event, "Explain the hook trust digest"))
+    );
+    let requests = title_model.requests();
+    assert!(asked_with(&requests[0], "Explain the hook trust digest"));
+    assert!(!asked_with(&requests[0], "QUOTED_SELECTION"));
+    // The turn itself still reads the quotes.
+    assert!(format!("{:?}", main.requests()[0].messages).contains("QUOTED_SELECTION"));
+}
+
 fn asked_with(request: &ModelRequest, seed: &str) -> bool {
     format!("{:?}", request.messages).contains(seed)
 }
@@ -587,6 +632,7 @@ async fn node_desktop_titles_retry_a_reopened_session_only_with_an_automatic_tit
         setup.titles = node_titles(title_model.clone());
         setup.title_pending = pending;
         setup.messages = vec![Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_old"),
             content: vec![ContentBlock::Text {
                 text: "earlier".to_owned(),

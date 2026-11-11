@@ -36,6 +36,7 @@ impl HookRunner for ScriptedHooks {
 
 fn feedback(text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_hook"),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),

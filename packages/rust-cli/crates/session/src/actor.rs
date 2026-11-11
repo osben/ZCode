@@ -418,7 +418,7 @@ impl Actor {
         &mut self,
         id: CommandId,
         kind: rust_cli_kernel_api::session_api::QueuedKind,
-        text: String,
+        (text, intent): crate::steering::Typed,
         content: Vec<rust_cli_kernel_api::message::ContentBlock>,
         delivery: rust_cli_kernel_api::session_api::Delivery,
         execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
@@ -446,6 +446,7 @@ impl Actor {
             };
             self.inbox.push_input(
                 QueuedInput {
+                    intent,
                     command: id,
                     text,
                     delivery,
@@ -474,11 +475,13 @@ impl Actor {
                 text,
                 screened: None,
                 more: Vec::new(),
+                intent,
             }
         } else {
             TurnInput::Content {
                 command: id,
                 content,
+                intent,
             }
         };
         match self.start_turn(input).await {
@@ -636,6 +639,7 @@ impl Actor {
                     // 插话（Steer）进 next 通道，由主循环在下一个工具边界领取（steering.rs），其余等回合结束。
                     self.inbox.push_input(
                         QueuedInput {
+                            intent: None,
                             command: id,
                             text,
                             delivery,
@@ -653,6 +657,7 @@ impl Actor {
                         text,
                         screened: None,
                         more: Vec::new(),
+                        intent: None,
                     })
                     .await
                 {
@@ -672,6 +677,7 @@ impl Actor {
                 Err(reason) => rejected(reason),
             },
             Command::SubmitWith {
+                intent,
                 kind,
                 text,
                 content,
@@ -680,8 +686,16 @@ impl Actor {
                 behind_held,
             } => {
                 let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
-                self.submit_with(id, kind, text, content, delivery, execution, queue)
-                    .await
+                self.submit_with(
+                    id,
+                    kind,
+                    (text, intent),
+                    content,
+                    delivery,
+                    execution,
+                    queue,
+                )
+                .await
             }
             Command::PauseGoal => self.pause_goal().await,
             Command::ResumeGoal => self.resume_goal().await,

@@ -1317,6 +1317,8 @@ impl Projection {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
                 let goal_text = queued_goal_text(&item.text);
+                // Fork: a queued input's quotes come from its intent, like Node's queue item.
+                let quotes = item.intent.as_ref().and_then(|intent| intent.quotes());
                 // Fork: kind and the frozen execution state come from the kernel's item (one owner).
                 let (kind, text) = match item.kind {
                     QueuedKind::Text => ("sendText", item.text.as_str()),
@@ -1343,6 +1345,9 @@ impl Projection {
                 });
                 if let Some(origin) = meta.and_then(|meta| meta.origin.as_ref()) {
                     value["inputOrigin"] = json!(origin);
+                }
+                if let Some(quotes) = &quotes {
+                    value["conversationQuotes"] = json!(quotes);
                 }
                 if let Some(execution) = &item.execution {
                     if let Some(selection) = &execution.selection {

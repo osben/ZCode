@@ -176,6 +176,7 @@ impl Engine<'_> {
     ) -> Attempt {
         let meta = |text: &str, source: &str| {
             Message::User(UserMessage {
+                intent: None,
                 id: self.ports.ids.message(),
                 content: vec![ContentBlock::Text {
                     text: text.to_owned(),
@@ -194,6 +195,7 @@ impl Engine<'_> {
         messages.extend(split.summarize.iter().map(|m| (*m).clone()));
         // 摘要提示是一条普通 user 消息。
         messages.push(Message::User(UserMessage {
+            intent: None,
             id: self.ports.ids.message(),
             content: vec![ContentBlock::Text {
                 text: summary::prompt(instructions),
@@ -388,6 +390,7 @@ impl Engine<'_> {
             kept_tail: !split.keep.is_empty(),
         };
         let summary = UserMessage {
+            intent: None,
             id: summary_id.clone(),
             content: vec![ContentBlock::Text {
                 text: summary::message_text(&raw, shape),

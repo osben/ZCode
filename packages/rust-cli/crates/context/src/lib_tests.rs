@@ -45,6 +45,7 @@ fn assembler_with(config: ContextConfig) -> PromptAssembler {
 /// 回合从一条人类输入开始。
 fn prompt() -> Vec<Message> {
     vec![Message::User(rust_cli_kernel_api::message::UserMessage {
+        intent: None,
         id: rust_cli_kernel_api::ids::MessageId::new("msg_u"),
         content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
             text: "hi".to_owned(),
@@ -173,6 +174,7 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
                 }),
             }),
             Message::User(UserMessage {
+                intent: None,
                 id: MessageId::new(format!("r{index}")),
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: ToolUseId::new(format!("t{index}")),
@@ -198,6 +200,7 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
         },
     )));
     history.push(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("s"),
         content: vec![ContentBlock::Text {
             text: "summary".to_owned(),

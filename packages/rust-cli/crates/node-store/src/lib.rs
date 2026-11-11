@@ -798,6 +798,10 @@ mod hydrate_tests;
 mod title_tests;
 
 #[cfg(test)]
+#[path = "quote_intent_tests.rs"]
+mod quote_intent_tests;
+
+#[cfg(test)]
 #[path = "goal_target_tests.rs"]
 mod goal_target_tests;
 

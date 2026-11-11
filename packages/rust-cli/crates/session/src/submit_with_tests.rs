@@ -12,6 +12,7 @@ fn submit_with(id: &str, text: &str, mode: PermissionMode, plan: bool) -> Comman
     CommandEnvelope {
         id: CommandId::new(id),
         command: Command::SubmitWith {
+            intent: None,
             kind: QueuedKind::Text,
             text: text.to_owned(),
             content: Vec::new(),
@@ -29,6 +30,7 @@ fn compact(id: &str) -> CommandEnvelope {
     CommandEnvelope {
         id: CommandId::new(id),
         command: Command::SubmitWith {
+            intent: None,
             kind: QueuedKind::Compact,
             text: "/compact".to_owned(),
             content: Vec::new(),

@@ -1,5 +1,6 @@
 //! 行的增量（[`Projection`] 的一部分，从 mod.rs 拆出：800 行上限）：流式正文与思考、落定的消息、工具调用行与权限询问。
 
+use rust_cli_kernel_api::input_intent::InputIntent;
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
 use rust_cli_kernel_api::model::BlockDelta;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
@@ -85,7 +86,16 @@ impl Projection {
                     return;
                 }
                 let mut row = self.base(&turn.id, user.id.as_str(), RowKind::UserInput, now, seq);
-                let text = text_of(&user.content);
+                // Fork: the typed text and the quotes come from the input intent only (Node `intent.text` and
+                // `conversationQuotes`); a text that merely ends with a quote block is shown as is.
+                let intent = user.intent.as_deref();
+                let text = intent
+                    .filter(|intent| intent.shows_intent_text())
+                    .and_then(|intent| intent.text())
+                    .map_or_else(|| text_of(&user.content), str::to_owned);
+                if let Some(quotes) = intent.and_then(InputIntent::quotes) {
+                    row.insert("conversationQuotes".into(), json!(quotes));
+                }
                 // Fork: rows stored before attachments were file parts kept the reminders in the model text.
                 let shown = rust_cli_kernel_api::prompt_attachment::display(&text).unwrap_or(text);
                 // Fork: a slash command row shows what the user typed (`/goal <objective>`), like Node.
@@ -261,7 +271,17 @@ impl Projection {
                     now,
                     seq,
                 );
-                row.insert("text".into(), json!(prompt));
+                // Fork: the steer's typed text and quotes come from the intent it carries.
+                let intent = rust_cli_kernel_api::hooks::queued_command::intent(attachment);
+                let text = intent
+                    .as_ref()
+                    .filter(|intent| intent.shows_intent_text())
+                    .and_then(|intent| intent.text())
+                    .unwrap_or(prompt);
+                row.insert("text".into(), json!(text));
+                if let Some(quotes) = intent.as_ref().and_then(InputIntent::quotes) {
+                    row.insert("conversationQuotes".into(), json!(quotes));
+                }
                 row.insert("origin".into(), json!("realUser"));
                 row.insert("guided".into(), json!(true));
                 row.insert("sourceCommandId".into(), json!(command));

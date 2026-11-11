@@ -29,6 +29,7 @@ fn text(value: &str) -> ContentBlock {
 
 fn human(id: &str, value: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![text(value)],
         origin: UserOrigin::Human,
@@ -139,6 +140,7 @@ fn attachments_stop_at_tool_results_and_assistants() {
             }],
         ),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u2"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: tool_use,
@@ -198,6 +200,7 @@ fn adjacent_user_messages_join_with_a_newline_and_keep_tool_results_first() {
 #[test]
 fn a_notification_batch_message_separates_its_blocks_with_a_newline() {
     let batch = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("n1"),
         content: vec![text("a"), text("b")],
         origin: UserOrigin::Meta {
@@ -282,6 +285,7 @@ fn a_summary_request_marks_the_message_before_the_last() {
         input: serde_json::json!({"file_path": "/a"}),
     };
     let result = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t1"),
@@ -477,6 +481,7 @@ fn read_then(result: &str, tool: &str, after: Vec<Message>) -> Vec<Message> {
             }],
         ),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u2"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: tool_use,
@@ -706,6 +711,7 @@ fn attached_files_expand_into_reminders_and_images() {
         data: "iVBO".into(),
     };
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u1"),
         content: vec![
             text("look"),
@@ -781,6 +787,7 @@ fn an_input_of_only_attached_text_is_padded_like_node() {
     };
     let user = |content: Vec<ContentBlock>| {
         let message = Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u1"),
             content,
             origin: UserOrigin::Human,
@@ -844,6 +851,7 @@ fn separate_user_messages_send_attached_text_apart_like_node() {
     };
     let send = |content: Vec<ContentBlock>| {
         let message = Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u1"),
             content,
             origin: UserOrigin::Human,
@@ -968,6 +976,7 @@ fn separate_user_messages_leave_tool_results_unfolded() {
 
 fn tool_result(id: &str, tool_use: &str, value: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(tool_use),
@@ -1046,6 +1055,7 @@ fn separate_user_messages_keep_parallel_tool_results_together() {
 fn an_earlier_input_merged_into_the_next_is_not_the_current_input() {
     let input = |id: &str, value: &str| {
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new(id),
             content: vec![text(value), image()],
             origin: UserOrigin::Human,

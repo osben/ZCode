@@ -50,6 +50,7 @@ pub(crate) fn request(text: &str) -> QueryRequest {
             root: EnvPath::new("/work"),
         },
         vec![Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_user"),
             content: vec![ContentBlock::Text {
                 text: text.to_owned(),

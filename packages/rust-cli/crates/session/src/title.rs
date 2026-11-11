@@ -133,7 +133,13 @@ fn human_text(message: &Message) -> Option<String> {
         .content
         .iter()
         .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
+            // Fork: the title is the typed text, without the quote block its input intent added (Node
+            // `titleFromInput(displayInput)`).
+            ContentBlock::Text { text } => Some(
+                user.intent
+                    .as_deref()
+                    .map_or(text.as_str(), |intent| intent.typed(text)),
+            ),
             _ => None,
         })
         .collect();

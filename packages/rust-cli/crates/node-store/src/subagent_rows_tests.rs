@@ -30,6 +30,7 @@ fn tool_call(message: &str, call: &str, name: &str, input: Value) -> Fact {
 fn tool_result(message: &str, assistant: &str, call: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            intent: None,
             id: MessageId::new(message),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new(call),

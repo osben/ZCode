@@ -980,6 +980,7 @@ async fn activation_admits_the_first_input_in_the_worktree() {
         .messages
         .push(rust_cli_kernel_api::message::Message::User(
             rust_cli_kernel_api::message::UserMessage {
+                intent: None,
                 id: rust_cli_kernel_api::ids::MessageId::new("m-hook"),
                 content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
                     text: "hook context".to_owned(),

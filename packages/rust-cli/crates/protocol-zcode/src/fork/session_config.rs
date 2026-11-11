@@ -212,6 +212,7 @@ pub(super) async fn compact(
         None => None,
     };
     let command = Command::SubmitWith {
+        intent: None,
         kind: QueuedKind::Compact,
         text: "/compact".to_owned(),
         content: Vec::new(),
