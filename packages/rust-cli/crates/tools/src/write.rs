@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::common::{
-    FileTools, cwd, env_failure, escape_control, resolve_input, stable_path, stat, style,
-    unstable_input,
+    FileTools, cwd, env_failure, escape_control, missing_workspace, resolve_input, stable_path,
+    stat, style, unstable_input,
 };
 use crate::encoding::{Decoded, Encoding, LineEndings, decode, encode, normalize};
 use crate::file_state::{Baseline, FileState};
@@ -187,6 +187,11 @@ impl Tool for WriteTool {
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
         let input: Input = parse(&raw)?;
+        // Checked again here (the pipeline checks before validation): the directory can go while a permission
+        // prompt is open, and this write creates parent directories.
+        if let Some(message) = missing_workspace(&context).await {
+            return Err(failed(message));
+        }
         let cwd = cwd(&context).await;
         let path = stable_path(&context, &cwd, NAME, "file_path", &input.file_path).await?;
         let existing = self.existing(&context, &path).await?;

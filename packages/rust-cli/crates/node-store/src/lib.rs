@@ -14,6 +14,7 @@ mod compaction;
 mod facts;
 mod fork;
 mod fork_clone;
+mod fork_execution_worktree;
 mod fork_usage_query;
 mod fork_usage_rollup;
 mod frontend_records;
@@ -106,6 +107,26 @@ impl NodeStore {
 
     pub fn paths(&self) -> &StoragePaths {
         &self.paths
+    }
+
+    /// Test support (feature `testing`): makes `session` a worktree session the way the Node agent stores one
+    /// (fork migration `9002` columns, `execution_directory` / `execution_branch` set).
+    #[cfg(feature = "testing")]
+    pub async fn node_worktree_session(
+        &self,
+        session: &SessionId,
+        path: &str,
+        branch: &str,
+    ) -> Result<(), StoreError> {
+        let (session, path, branch) = (
+            session.as_str().to_owned(),
+            path.to_owned(),
+            branch.to_owned(),
+        );
+        self.with_db(move |conn, _| {
+            fork_execution_worktree::node_write(conn, &session, &path, &branch)
+        })
+        .await
     }
 
     /// 在阻塞线程里用连接执行 `work`；连接不存在时先打开并补齐迁移。
@@ -227,6 +248,7 @@ impl SessionStore for NodeStore {
     async fn load(&self, session: &SessionId) -> Result<LoadedSession, StoreError> {
         let id = session.clone();
         let (mut loaded, checkpoints) = self.with_db(move |conn, _| load::load(conn, &id)).await?;
+        fork_execution_worktree::run_in_worktree(self, session, &mut loaded).await?;
         loaded.checkpoints = node_checkpoints::resolve(self.paths.artifacts(), checkpoints).await;
         // Fork: artifact-backed App images (file IO, so not on the database thread).
         attached_images::resolve(self, session, &mut loaded.messages).await;
@@ -476,6 +498,41 @@ impl StoreQueries for NodeStore {
         let session = session.as_str().to_owned();
         self.with_db(move |conn, _| reconcile_row::row(conn, &session))
             .await
+    }
+
+    /// Fork: the row's `directory`, the workspace the session is listed under.
+    async fn session_directory(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<rust_cli_kernel_api::env::EnvPath>, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| fork_execution_worktree::directory(conn, &session))
+            .await
+    }
+
+    /// Fork: the session's execution worktree (`execution_directory`, `execution_branch`).
+    async fn execution_worktree(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<rust_cli_kernel_api::store::ExecutionWorktree>, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| fork_execution_worktree::read(conn, &session))
+            .await
+    }
+
+    /// Fork: stores the execution worktree once (Node `coalesce`).
+    async fn set_execution_worktree(
+        &self,
+        session: &SessionId,
+        path: &rust_cli_kernel_api::env::EnvPath,
+        branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let (session, path) = (session.as_str().to_owned(), path.as_str().to_owned());
+        let branch = branch.map(str::to_owned);
+        self.with_db(move |conn, _| {
+            fork_execution_worktree::write(conn, &session, &path, branch.as_deref())
+        })
+        .await
     }
 }
 

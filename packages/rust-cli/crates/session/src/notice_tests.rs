@@ -148,6 +148,8 @@ async fn session_as(
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,
