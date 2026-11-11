@@ -1564,6 +1564,10 @@ exceptions:
       - apps/zcode-cli/packages/adapters/src/mcp/node-fallback.ts
       - apps/zcode-cli/packages/bootstrap/src/app/mcp-node-fallback.ts
     reason: stdio MCP node/npm/npx fallback under Desktop Electron Node (apps/zcode-cli/docs/design/v2/mcp-node-fallback.md). The adapters file only handles the shim directory and child process env merge, injected via CreateMcpAdapterOptions.nodeFallback; the bootstrap file only detects Electron and provides the bundled npm candidate directory. Both belong to the unmanaged zcode-cli; taking over adapters/mcp or bootstrap/app needs a separate module boundary cleanup.
+  - id: share-attachment-stat-data-url-unmanaged-file
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/bootstrap/src/app/fork-prompt-attachment-stat.ts]
+    reason: Fork fix for Share's attachmentStat (specs/fork-agent-runtime-selection.md, Share reads) - a pure helper that reports a prompt attachment artifact's decoded data URL size and media type, so stat matches what attachmentRead serves; create-app's statPromptAttachment stays the only owner and calls it. Kept in its own fork file to leave the upstream create-app.ts change to one call; taking over bootstrap/app needs a separate module boundary cleanup.
   - id: workflow-unrecognized-code-cap-unmanaged-edit
     rule: unmanaged-new-file
     paths: [apps/zcode-cli/packages/adapters/src/model/workflow-model-failure-policy.ts]
