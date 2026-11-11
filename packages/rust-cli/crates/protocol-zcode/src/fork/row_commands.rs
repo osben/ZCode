@@ -65,7 +65,9 @@ struct Stored {
 }
 
 impl Stored {
-    /// The content as typed: the first text without the quote block the intent added.
+    /// The content as typed: the first text without the quote block the intent added. A bot input's text has
+    /// instructions after the block (Node `withConversationQuotes(…, botGroupSource)`), so its typed text is the
+    /// intent's `text`.
     fn typed(&self) -> Vec<ContentBlock> {
         let mut content = self.content.clone();
         if let Some(intent) = &self.intent
@@ -73,7 +75,14 @@ impl Stored {
                 .iter_mut()
                 .find(|block| matches!(block, ContentBlock::Text { .. }))
         {
-            *text = intent.typed(text).to_owned();
+            let bot = intent
+                .get(rust_cli_kernel_api::input_intent::BOT_GROUP_SOURCE)
+                .is_some()
+                && intent.str("kind") == Some("sendText");
+            *text = match intent.text().filter(|_| bot) {
+                Some(typed) => typed.to_owned(),
+                None => intent.typed(text).to_owned(),
+            };
         }
         content.retain(|block| !matches!(block, ContentBlock::Text { text } if text.is_empty()));
         content

@@ -120,8 +120,13 @@ fn a_bot_message_edit_keeps_the_quotes_from_the_intent() {
         }],
         intent: Some(stored),
     };
-    // Retry keeps the stored text: the block is not at the end, so nothing is stripped.
-    assert_eq!(bot.typed(), bot.content);
+    // Retry submits the intent's text: the session adds the block once.
+    assert_eq!(
+        bot.typed(),
+        [ContentBlock::Text {
+            text: "original".into()
+        }]
+    );
 }
 
 /// Retry submits the typed text again; the session adds the block from the intent.
