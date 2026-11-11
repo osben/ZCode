@@ -172,9 +172,10 @@ impl PromptAssembler {
         &self,
         request: &ContextRequest,
     ) -> Result<Option<String>, OrchestrationError> {
-        // Node children do not inherit the presentation surface or the Gen UI root, and `SubagentContext` replaces the
-        // system blocks anyway: a subagent neither names nor creates a directory.
-        if matches!(request.source, QuerySource::Subagent(_)) {
+        // Node children do not inherit the presentation surface or the Gen UI root: no request of a child session
+        // (its own steps, and its auto-compaction, which keeps the agent id but runs as `QuerySource::Compact` through
+        // this assembler) names or creates a directory. The node_desktop app-server has no fork subagent.
+        if request.agent.is_some() || matches!(request.source, QuerySource::Subagent(_)) {
             return Ok(None);
         }
         let Some(desktop) = self.config.desktop.as_ref() else {
