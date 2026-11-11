@@ -22,6 +22,18 @@ fn has_columns(conn: &Connection) -> Result<bool, StoreError> {
     .storage()
 }
 
+/// The workspace the row is listed under (`directory`), whatever the session runs in; `None` for an unknown session.
+pub(crate) fn directory(conn: &Connection, session: &str) -> Result<Option<EnvPath>, StoreError> {
+    conn.query_row(
+        "select directory from session where id = ?",
+        [session],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .storage()
+    .map(|directory| directory.map(EnvPath::new))
+}
+
 /// The stored worktree; `None` for an ordinary session, an unknown one, or a database without the columns.
 pub(crate) fn read(
     conn: &Connection,
@@ -61,14 +73,15 @@ pub(crate) fn read(
 pub(crate) async fn run_in_worktree(
     store: &crate::NodeStore,
     session: &rust_cli_kernel_api::ids::SessionId,
-    meta: &mut rust_cli_kernel_api::store::SessionMeta,
+    loaded: &mut rust_cli_kernel_api::store::LoadedSession,
 ) -> Result<(), StoreError> {
     let Some(worktree) =
         rust_cli_kernel_api::store::StoreQueries::execution_worktree(store, session).await?
     else {
         return Ok(());
     };
-    meta.workspace.root = worktree.path;
+    loaded.meta.workspace.root = worktree.path;
+    loaded.execution_worktree = true;
     Ok(())
 }
 

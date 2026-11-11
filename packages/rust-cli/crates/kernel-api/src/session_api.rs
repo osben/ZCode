@@ -609,6 +609,19 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
+    /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
+    /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it
+    /// refuses.
+    async fn open_prepared_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
+    }
+
     /// 同 [`Kernel::open_session`]，另给 SessionStart 的来源（刚 fork 出的会话是 `Fork`）。
     /// 会话已经打开时来源不起作用。
     async fn open_session_as(

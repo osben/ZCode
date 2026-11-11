@@ -146,6 +146,8 @@ fn spawn(
             mode: mode.into(),
             checkpoints: Vec::new(),
             start: StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,

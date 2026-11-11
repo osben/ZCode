@@ -97,6 +97,8 @@ pub struct MemoryStore {
     split: std::sync::atomic::AtomicBool,
     /// 下一个带 `TitleChanged` 的批次提交失败（[`Self::fail_next_title_change`]）。
     fail_title: std::sync::atomic::AtomicBool,
+    /// Fork: the next `set_execution_worktree` fails ([`Self::fail_next_execution_worktree`]).
+    fail_execution: std::sync::atomic::AtomicBool,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
@@ -107,6 +109,11 @@ impl MemoryStore {
     /// 下一个带 `TitleChanged` 的批次整批提交失败（`Storage` 错误），之后照常（titles.md §4：改名被拒绝时它的记录也不在）。
     pub fn fail_next_title_change(&self) {
         self.fail_title.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
+    pub fn fail_next_execution_worktree(&self) {
+        self.fail_execution.store(true, Ordering::SeqCst);
     }
 
     /// 下一次 `load` 等到测试放行（`notify_one`）才读，之后的照常：让测试停在“会话正在打开”的窗口里（titles.md §4）。
@@ -283,9 +290,13 @@ impl SessionStore for MemoryStore {
         if let Some(title) = title {
             meta.title = title;
         }
-        if let Some((path, _)) = self.execution.lock_unpoisoned().get(session) {
-            meta.workspace.root = path.clone();
-        }
+        let execution_worktree = match self.execution.lock_unpoisoned().get(session) {
+            Some((path, _)) => {
+                meta.workspace.root = path.clone();
+                true
+            }
+            None => false,
+        };
         let (earlier, messages) = if self.split.load(Ordering::SeqCst) {
             split_cold(messages)
         } else {
@@ -311,6 +322,7 @@ impl SessionStore for MemoryStore {
             goal_target: goal_target.flatten(),
             goal_verifications,
             message_models: Default::default(),
+            execution_worktree,
         })
     }
 
@@ -759,6 +771,17 @@ impl StoreQueries for MemoryStore {
             }))
     }
 
+    async fn session_directory(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::env::EnvPath>, StoreError> {
+        Ok(self
+            .sessions
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(meta, _)| meta.workspace.root.clone()))
+    }
+
     async fn set_execution_worktree(
         &self,
         session: &SessionId,
@@ -768,6 +791,11 @@ impl StoreQueries for MemoryStore {
         if !self.sessions.lock_unpoisoned().contains_key(session) {
             return Err(StoreError::NotFound {
                 session: session.clone(),
+            });
+        }
+        if self.fail_execution.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Unsupported {
+                what: "execution worktree columns".to_owned(),
             });
         }
         self.execution

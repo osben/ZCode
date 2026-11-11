@@ -87,17 +87,26 @@ fn script() -> Vec<String> {
 /// Resumes the session with `zcode-rs -p`, started from the parent checkout; returns each tool result's
 /// (text, is_error) by tool use id.
 fn resume(sandbox: &Sandbox, fixture: &sse::Fixture) -> Vec<(String, String, bool)> {
+    resume_from(sandbox, fixture, &sandbox.work)
+}
+
+/// [`resume`] started from `cwd`.
+fn resume_from(
+    sandbox: &Sandbox,
+    fixture: &sse::Fixture,
+    cwd: &Path,
+) -> Vec<(String, String, bool)> {
     let output = rust_cli_proc::std_command(env!("CARGO_BIN_EXE_zcode-rs"))
         .args([
             "-p",
             "--resume",
             SESSION,
             "go",
-            // The resumed session keeps its stored mode (default): rules allow both tools.
+            // The resumed session keeps its stored mode (default): rules allow the tools.
             "--allowedTools",
-            "Bash,Write,Edit",
+            "Bash,Write,Edit,Read",
         ])
-        .current_dir(&sandbox.work)
+        .current_dir(cwd)
         .env_clear()
         .env("HOME", &sandbox.home)
         .env("USERPROFILE", &sandbox.home)
@@ -204,4 +213,40 @@ async fn a_missing_worktree_fails_closed() {
     assert_eq!(read(&sandbox.work.join("x.txt")), None);
     assert_eq!(read(&sandbox.work.join("sub/y.txt")), None);
     assert!(!sandbox.worktree.exists());
+}
+
+/// Node guards only a session with an execution worktree. An ordinary session whose directory was deleted or renamed
+/// keeps its tools: a Read of an existing absolute path works. Before the guard was narrowed it was refused as a
+/// missing working directory.
+#[tokio::test]
+async fn an_ordinary_session_whose_directory_is_gone_keeps_its_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let (home, work) = (base.join("home"), base.join("work"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let notes = home.join("notes.txt");
+    std::fs::write(&notes, "kept outside\n").unwrap();
+    let store = compacted::store(&home);
+    compacted::seed(&store, &work, 1, &[]).await;
+    std::fs::remove_dir_all(&work).unwrap();
+    let sandbox = Sandbox {
+        _dir: dir,
+        home: home.clone(),
+        work,
+        worktree: base.join("wt"),
+    };
+    let fixture = sse::serve(vec![
+        call(
+            "toolu_read",
+            "Read",
+            &json!({"file_path": notes.to_str().unwrap()}),
+        ),
+        sse::text_reply("after tools"),
+    ]);
+    let results = resume_from(&sandbox, &fixture, &home);
+
+    let (read, error) = result(&results, "toolu_read");
+    assert!(!error, "{read}");
+    assert!(read.contains("kept outside"), "{read}");
 }

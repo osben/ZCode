@@ -248,7 +248,7 @@ impl SessionStore for NodeStore {
     async fn load(&self, session: &SessionId) -> Result<LoadedSession, StoreError> {
         let id = session.clone();
         let (mut loaded, checkpoints) = self.with_db(move |conn, _| load::load(conn, &id)).await?;
-        fork_execution_worktree::run_in_worktree(self, session, &mut loaded.meta).await?;
+        fork_execution_worktree::run_in_worktree(self, session, &mut loaded).await?;
         loaded.checkpoints = node_checkpoints::resolve(self.paths.artifacts(), checkpoints).await;
         // Fork: artifact-backed App images (file IO, so not on the database thread).
         attached_images::resolve(self, session, &mut loaded.messages).await;
@@ -488,6 +488,16 @@ impl StoreQueries for NodeStore {
     ) -> Result<Option<serde_json::Value>, StoreError> {
         let session = session.as_str().to_owned();
         self.with_db(move |conn, _| reconcile_row::row(conn, &session))
+            .await
+    }
+
+    /// Fork: the row's `directory`, the workspace the session is listed under.
+    async fn session_directory(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<rust_cli_kernel_api::env::EnvPath>, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| fork_execution_worktree::directory(conn, &session))
             .await
     }
 

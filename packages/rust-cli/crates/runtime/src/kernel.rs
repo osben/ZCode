@@ -38,7 +38,7 @@ impl Kernel for LocalKernel {
         request: CreateSession,
         start: StartSource,
     ) -> Result<SessionId, KernelError> {
-        self.create_in(request, start, None, Opened::Created).await
+        self.create_in(request, start, None, false).await
     }
 
     async fn create_session_in_worktree(
@@ -51,7 +51,7 @@ impl Kernel for LocalKernel {
             request,
             StartSource::Startup,
             Some((worktree, branch)),
-            Opened::Created,
+            false,
         )
         .await
     }
@@ -60,7 +60,7 @@ impl Kernel for LocalKernel {
         &self,
         request: CreateSession,
     ) -> Result<SessionId, KernelError> {
-        self.create_in(request, StartSource::Startup, None, Opened::Prepared)
+        self.create_in(request, StartSource::Startup, None, true)
             .await
     }
 
@@ -69,42 +69,14 @@ impl Kernel for LocalKernel {
         session: &SessionId,
         start: StartSource,
     ) -> Result<Arc<dyn SessionHandle>, KernelError> {
-        // 同 `create_session_as`：开会话也先等缺省模型定下。
-        self.defaults.selection.settled().await;
-        // 修复（F33，session-lifecycle.md §3.3.1）：以前表里有这个会话就直接给出句柄，它正在关闭时（actor 已退出、
-        // 还没移出表）打开拿到的是死句柄，`view()` 报 `the session is closed`；两个并发的打开还会各自冷加载。现在
-        // 关闭中、加载中的等它换掉；没有条目时登记 Loading，由这个调用冷加载（失败或被丢下时守卫移出 Loading）。
-        let _loading = match self.claim(session).await {
-            table::Claim::Open(open) => return Ok(open),
-            table::Claim::Load(loading) => loading,
-        };
-        // Fork: a subagent's live run is taken before the cold load, so nothing it stores falls between the two
-        // (session crate `child_live`).
-        let child_live = self.agents.child_live(session);
-        let loaded = self.ports.store.load(session).await?;
-        // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
-        // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
-        // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
-        let rules = self.ports.store.session_rules(session).await?;
-        // 会话之外按会话保存的状态（判决链的会话规则、“先读后改”记录）在启动 actor 之前恢复（table.rs 的
-        // `SessionScoped`，关闭时在同一处释放）。
-        self.closer
-            .scoped
-            .restored(
-                session,
-                &loaded,
-                rules.as_ref(),
-                self.machine().files().as_ref(),
-            )
-            .await;
-        let mut state = SessionState::from_loaded(
-            loaded,
-            &self.defaults.selection.current(),
-            self.defaults.mode,
-            start,
-        );
-        state.child_live = child_live;
-        Ok(self.start(state, Opened::Loaded))
+        self.open_in(session, start, false).await
+    }
+
+    async fn open_prepared_session(
+        &self,
+        session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        self.open_in(session, StartSource::Resume, true).await
     }
 
     async fn list_sessions(
@@ -358,15 +330,62 @@ impl Kernel for LocalKernel {
 }
 
 impl LocalKernel {
+    /// Opens a stored session; `held` (fork prepared execution worktree reopened before its activation) holds
+    /// SessionStart until `Command::SetExecutionRoot`. A session already open keeps its own state.
+    async fn open_in(
+        &self,
+        session: &SessionId,
+        start: StartSource,
+        held: bool,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        // 同 `create_session_as`：开会话也先等缺省模型定下。
+        self.defaults.selection.settled().await;
+        // 修复（F33，session-lifecycle.md §3.3.1）：以前表里有这个会话就直接给出句柄，它正在关闭时（actor 已退出、
+        // 还没移出表）打开拿到的是死句柄，`view()` 报 `the session is closed`；两个并发的打开还会各自冷加载。现在
+        // 关闭中、加载中的等它换掉；没有条目时登记 Loading，由这个调用冷加载（失败或被丢下时守卫移出 Loading）。
+        let _loading = match self.claim(session).await {
+            table::Claim::Open(open) => return Ok(open),
+            table::Claim::Load(loading) => loading,
+        };
+        // Fork: a subagent's live run is taken before the cold load, so nothing it stores falls between the two
+        // (session crate `child_live`).
+        let child_live = self.agents.child_live(session);
+        let loaded = self.ports.store.load(session).await?;
+        // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
+        // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
+        // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
+        let rules = self.ports.store.session_rules(session).await?;
+        // 会话之外按会话保存的状态（判决链的会话规则、“先读后改”记录）在启动 actor 之前恢复（table.rs 的
+        // `SessionScoped`，关闭时在同一处释放）。
+        self.closer
+            .scoped
+            .restored(
+                session,
+                &loaded,
+                rules.as_ref(),
+                self.machine().files().as_ref(),
+            )
+            .await;
+        let mut state = SessionState::from_loaded(
+            loaded,
+            &self.defaults.selection.current(),
+            self.defaults.mode,
+            start,
+        );
+        state.child_live = child_live;
+        state.start_held = held;
+        Ok(self.start(state, Opened::Loaded))
+    }
+
     /// Creates a session; with `execution` (fork execution worktree) the row keeps the requested workspace and the
-    /// session starts in the worktree. `Opened::Prepared` (fork prepared worktree) holds SessionStart until the
+    /// session starts in the worktree. `held` (fork prepared worktree) holds SessionStart until the
     /// activation moves the session.
     async fn create_in(
         &self,
         request: CreateSession,
         start: StartSource,
         execution: Option<(EnvPath, Option<String>)>,
-        opened: Opened,
+        held: bool,
     ) -> Result<SessionId, KernelError> {
         // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
         // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
@@ -383,6 +402,7 @@ impl LocalKernel {
             created_at_ms: self.ports.clock.now_ms(),
         };
         self.ports.store.create(meta.clone()).await?;
+        let in_worktree = execution.is_some();
         if let Some((worktree, branch)) = execution {
             if let Err(error) = self
                 .ports
@@ -411,10 +431,10 @@ impl LocalKernel {
             turn: None,
         };
         self.ports.store.commit(&id, batch).await?;
-        self.start(
-            SessionState::created(meta, request.selection, execution, start),
-            opened,
-        );
+        let mut state = SessionState::created(meta, request.selection, execution, start);
+        state.start_held = held;
+        state.execution_worktree = in_worktree;
+        self.start(state, Opened::Created);
         Ok(id)
     }
 }

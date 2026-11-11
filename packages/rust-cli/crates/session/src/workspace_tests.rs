@@ -9,7 +9,7 @@ use rust_cli_kernel_api::env::{EnvError, EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::machine::{MachineEnv, Shell};
 use rust_cli_kernel_api::message::{ContentBlock, Message, ToolResultContent};
-use rust_cli_kernel_api::session_api::SessionHandle;
+use rust_cli_kernel_api::session_api::{SessionHandle, StartSource};
 use rust_cli_kernel_api::testing::{
     MemoryEnvironment, ScriptedModel, text_response, tool_use_response, unsupported_machine,
 };
@@ -454,10 +454,21 @@ async fn the_execution_root_moves_the_session_without_a_note() {
     );
 }
 
-/// Fork: a session created for a prepared worktree (`Opened::Prepared`) holds SessionStart until the activation
+/// Fork: a session created for a prepared worktree (`SessionState::start_held`) holds SessionStart until the activation
 /// moves it, so the hook runs in the worktree, as Node starts the runtime there.
 #[tokio::test]
 async fn a_prepared_session_runs_session_start_in_the_worktree_after_the_move() {
+    held_start_runs_in_the_worktree(crate::Opened::Created, StartSource::Startup, "startup").await;
+}
+
+/// Fork: a prepared session reopened cold before its activation (an agent restart) still holds SessionStart, so the
+/// hook never runs in the parent checkout.
+#[tokio::test]
+async fn a_prepared_session_reopened_cold_holds_session_start_until_the_move() {
+    held_start_runs_in_the_worktree(crate::Opened::Loaded, StartSource::Resume, "resume").await;
+}
+
+async fn held_start_runs_in_the_worktree(opened: crate::Opened, start: StartSource, source: &str) {
     use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
     use rust_cli_kernel_api::session_api::{Ack, Command};
 
@@ -475,7 +486,9 @@ async fn a_prepared_session_runs_session_start_in_the_worktree_after_the_move() 
     let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
     setup.set_machine(cwd_env.clone().machine());
     setup.hooks = hooks.clone();
-    setup.opened = crate::Opened::Prepared;
+    setup.start_held = true;
+    setup.opened = opened;
+    setup.start = start;
     let built = setup.build().await;
     // A round trip through the actor: it has started, and SessionStart has not.
     let view = built.session.view().await.unwrap();
@@ -505,5 +518,5 @@ async fn a_prepared_session_runs_session_start_in_the_worktree_after_the_move() 
         .unwrap();
     assert_eq!(event.name, HookEventName::SessionStart);
     assert_eq!(event.workspace.root.as_str(), "/work/.worktrees/a");
-    assert_eq!(event.payload["source"], "startup");
+    assert_eq!(event.payload["source"], source);
 }

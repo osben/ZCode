@@ -105,6 +105,7 @@ impl Actor {
         }
         match self.change_workspace(root).await {
             Ok(()) => {
+                self.execution_worktree = true;
                 // A prepared session starts here: SessionStart runs in the worktree, after the move.
                 if let Some(source) = self.deferred_start.take() {
                     self.start_session(source);

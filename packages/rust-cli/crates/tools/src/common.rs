@@ -217,19 +217,31 @@ pub(crate) async fn stable_path(
         })
 }
 
-/// The session's working directory is gone (a deleted execution worktree): every tool that runs in the workspace is
-/// refused (the pipeline, before validation), and Write and Edit check again when they write, so nothing recreates
-/// it as an ordinary directory (execution-worktree-missing-handling.md section 2; Node
-/// `getMissingExecutionWorktreeToolError`). An error reading it is left to the tool itself.
+/// The session's execution worktree is gone: every tool that runs in the workspace is refused (the pipeline, before
+/// validation), and Write and Edit check again when they write, so nothing recreates it as an ordinary directory
+/// (execution-worktree-missing-handling.md section 2; Node `getMissingExecutionWorktreeToolError`). Like Node, only
+/// a session that runs in an execution worktree is guarded: an ordinary session whose directory is gone keeps its
+/// tools (a Read of an absolute path still works). An error reading the root is left to the tool itself.
 pub(crate) async fn missing_workspace(context: &ToolUseContext) -> Option<String> {
     let root = context.workspace.root.as_str();
     match stat(context, root).await {
         Ok(Some(found)) if found.kind == rust_cli_kernel_api::env_files::FileKind::Directory => {
             None
         }
-        Ok(_) => Some(crate::texts::workspace_missing(root)),
-        Err(_) => None,
+        // The worktree fact is asked only for a missing root, so the ordinary path costs one stat.
+        Ok(_) if in_execution_worktree(context).await => {
+            Some(crate::texts::workspace_missing(root))
+        }
+        Ok(_) | Err(_) => None,
     }
+}
+
+async fn in_execution_worktree(context: &ToolUseContext) -> bool {
+    context
+        .session_ops
+        .view()
+        .await
+        .is_some_and(|view| view.execution_worktree)
 }
 
 pub(crate) async fn stat(

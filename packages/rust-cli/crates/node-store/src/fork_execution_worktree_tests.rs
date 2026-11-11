@@ -21,6 +21,8 @@ async fn without_the_node_columns_there_is_no_worktree_and_a_write_is_refused() 
     started(&t, "sess_1").await;
     let conn = t.connection();
     assert_eq!(read(&conn, "sess_1").unwrap(), None);
+    let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
+    assert!(!loaded.execution_worktree);
     assert!(matches!(
         write(&conn, "sess_1", "/w/.worktrees/a", Some("a")),
         Err(StoreError::Unsupported { .. })
@@ -66,8 +68,19 @@ async fn a_cold_open_runs_in_the_worktree_and_lists_under_the_parent() {
         loaded.meta.workspace.root.as_str(),
         worktree.to_str().unwrap()
     );
+    assert!(loaded.execution_worktree);
     let row = crate::reconcile_row::row(&conn, "sess_1").unwrap().unwrap();
     assert_eq!(row["directory"], "/w");
+    // The listed workspace is the row's directory, never the worktree it runs in.
+    let directory = rust_cli_kernel_api::store::StoreQueries::session_directory(&t.store, &id)
+        .await
+        .unwrap();
+    assert_eq!(directory.unwrap().as_str(), "/w");
+    let unknown = SessionId::new("sess_none");
+    let none = rust_cli_kernel_api::store::StoreQueries::session_directory(&t.store, &unknown)
+        .await
+        .unwrap();
+    assert_eq!(none, None);
 }
 
 #[tokio::test]

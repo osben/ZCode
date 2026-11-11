@@ -174,6 +174,12 @@ impl Server {
         } else {
             crate::live::Restored::default()
         };
+        // Fork: a prepared worktree that is not active yet (an agent restart before the activation) keeps SessionStart
+        // held, as the live session did, so the hook never runs in the parent checkout. The kernel opens it here; the
+        // bridge's own open below finds it open.
+        if restored.worktree.preparing.is_some() {
+            self.kernel.open_prepared_session(session).await?;
+        }
         // Set by the one open that makes the projection: only it starts the session's watchers.
         let made = std::sync::atomic::AtomicBool::new(false);
         let made_here = &made;

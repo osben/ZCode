@@ -331,6 +331,10 @@ pub struct LoadedSession {
     /// cold model switch divider ([`crate::session_api::SessionView::message_models`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
+    /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
+    /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub execution_worktree: bool,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、
@@ -866,6 +870,17 @@ pub trait StoreQueries: Send + Sync {
     async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
         Err(StoreError::Unsupported {
             what: "reconcile row".to_owned(),
+        })
+    }
+
+    /// Fork: the workspace the session's row is listed under (Node's `directory`), never the directory it runs in
+    /// (an execution worktree); `None` for an unknown session. Stores without that read answer `Unsupported`.
+    async fn session_directory(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<crate::env::EnvPath>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session directory".to_owned(),
         })
     }
 

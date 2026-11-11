@@ -311,8 +311,9 @@ impl Pipeline {
             .route(tool, &mut input, context, &plan)
             .map_err(|message| Rejection::Other(wrapped(&message)))?;
         let context = &call.context;
-        // Fork: a tool that runs in the workspace is refused while the session's working directory is gone (a deleted
-        // execution worktree), like Node's `getMissingExecutionWorktreeToolError`; nothing runs in or recreates it.
+        // Fork: a tool that runs in the workspace is refused while the session's execution worktree is gone, like
+        // Node's `getMissingExecutionWorktreeToolError`; nothing runs in or recreates it. An ordinary session is not
+        // guarded (`missing_workspace`).
         if tool.machine_param() == rust_cli_kernel_api::machine_param::MachineParam::RunsThere
             && let Some(message) = crate::common::missing_workspace(context).await
         {

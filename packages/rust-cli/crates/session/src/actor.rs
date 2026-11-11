@@ -258,9 +258,11 @@ pub(crate) struct Actor {
     pub(crate) wait_started: Option<u64>,
     /// 自己的请求通道（弱引用）：交给回合的输出端，给出会话级的询问入口；不让 actor 因此不退出。
     asks: mpsc::WeakSender<Request>,
-    /// Fork: SessionStart held for a prepared execution worktree (`Opened::Prepared`) until
+    /// Fork: SessionStart held for a prepared execution worktree (`SessionState::start_held`) until
     /// `Command::SetExecutionRoot` moves the session (workspace.rs).
     pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
+    /// Fork: `SessionState::execution_worktree`; set by a successful `Command::SetExecutionRoot` (workspace.rs).
+    pub(crate) execution_worktree: bool,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -285,7 +287,6 @@ impl Actor {
         state: crate::SessionState,
         asks: mpsc::WeakSender<Request>,
         resume_pending: Vec<MessageId>,
-        defer_start: bool,
     ) -> Self {
         // 本机与连上的远端机器的通知（R3，remote-exec.md §20.7.2）。
         // Fork: a subagent's child session does not subscribe: the agents crate forwarder is the only consumer of its
@@ -303,7 +304,8 @@ impl Actor {
         let agent_stream = AgentStream::new(deps.agents.signals(&state.meta.id));
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
-        let start = state.start;
+        let (start, defer_start, execution_worktree) =
+            (state.start, state.start_held, state.execution_worktree);
         let child_live = state.child_live;
         let goal = crate::goal::Goals::restore(
             &state.messages,
@@ -356,6 +358,7 @@ impl Actor {
             wait_started: None,
             asks,
             deferred_start: None,
+            execution_worktree,
         };
         if defer_start {
             actor.deferred_start = Some(start);

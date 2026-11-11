@@ -460,17 +460,22 @@ async fn submit_first(
         &envelope.command_id,
         input_meta(envelope, first, "startNow", "startNow"),
     );
-    let submit = if refs.is_empty() {
-        Command::Submit {
-            text,
-            attachments: Vec::new(),
-            delivery: Delivery::Queue,
-        }
+    // The input's own mode, plan switch and model (Node `resolveSubmittedExecutionState`) apply when its turn starts,
+    // as for `sendText`; missing parts are the session's current state.
+    let view = live.handle.view().await.ok();
+    let execution = input_execution(first, view.as_ref());
+    let content = if refs.is_empty() {
+        Vec::new()
     } else {
-        Command::SubmitContent {
-            content: crate::attachments::content(server, id, &text, refs).await,
-            delivery: Delivery::Queue,
-        }
+        crate::attachments::content(server, id, &text, refs).await
+    };
+    let submit = Command::SubmitWith {
+        kind: QueuedKind::Text,
+        text,
+        content,
+        delivery: Delivery::Queue,
+        execution,
+        behind_held: false,
     };
     match send(live.handle.as_ref(), &envelope.command_id, submit).await {
         KernelAck::Accepted { .. } => {
@@ -901,17 +906,25 @@ fn input_execution(
     view: Option<&rust_cli_kernel_api::session_api::SessionView>,
 ) -> Option<InputExecution> {
     let chosen = selection(input.model_selection.as_ref());
-    let state = mode(input.mode.as_deref(), input.plan_enabled)
-        .map(|(mode, plan)| ExecutionState { mode, plan });
-    if chosen.is_none() && state.is_none() {
+    let named = mode(input.mode.as_deref(), input.plan_enabled);
+    if chosen.is_none() && named.is_none() && input.plan_enabled.is_none() {
         return None;
     }
     let current = view.map_or_else(ExecutionState::default, |view| ExecutionState {
         mode: view.mode,
         plan: view.plan,
     });
+    // Each field overrides the session's own (Node `resolveExecutionState(payload, current)`): a plan switch without a
+    // mode keeps the session's mode and still turns plan on.
+    let state = match named {
+        Some((mode, plan)) => ExecutionState { mode, plan },
+        None => ExecutionState {
+            mode: current.mode,
+            plan: input.plan_enabled.unwrap_or(current.plan),
+        },
+    };
     Some(InputExecution {
-        state: state.unwrap_or(current),
+        state,
         selection: chosen,
     })
 }

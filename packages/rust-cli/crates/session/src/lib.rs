@@ -192,6 +192,13 @@ pub struct SessionState {
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     /// SessionStart hook 的来源（session-lifecycle.md §3.2）。
     pub start: StartSource,
+    /// Fork: SessionStart waits for `Command::SetExecutionRoot` (a prepared execution worktree, created or reopened
+    /// before its activation), so the hook runs in the worktree, as Node starts the runtime there
+    /// (specs/fork-rust-agent-parity.md "Execution worktree").
+    pub start_held: bool,
+    /// Fork: the root is the session's execution worktree (created there, reopened there, or moved there by
+    /// `Command::SetExecutionRoot`): a root that is gone refuses the workspace tools ([`RunView::execution_worktree`]).
+    pub execution_worktree: bool,
     /// 当前轮（冷加载的 `LoadedSession.turn`；新建的会话没有）。
     pub turn: Option<rust_cli_kernel_api::store::TurnAnchor>,
     /// 当前轮以错误结束（冷加载的 `LoadedSession.last_turn_failed`）：续写时不补 assistant（session-lifecycle.md
@@ -232,6 +239,8 @@ impl SessionState {
             mode,
             checkpoints: Vec::new(),
             start,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             commands: Default::default(),
@@ -266,6 +275,8 @@ impl SessionState {
             ),
             checkpoints: loaded.checkpoints,
             start,
+            start_held: false,
+            execution_worktree: loaded.execution_worktree,
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
@@ -282,10 +293,6 @@ impl SessionState {
 pub enum Opened {
     Created,
     Loaded,
-    /// Fork: created for a prepared execution worktree. SessionStart waits for `Command::SetExecutionRoot`, so the
-    /// hook runs in the worktree at activation (Node starts the runtime there; specs/fork-rust-agent-parity.md
-    /// "Execution worktree").
-    Prepared,
 }
 
 pub struct Session {
@@ -306,7 +313,7 @@ impl Session {
         let log = Arc::new(EventLog::new());
         let mut pending = Vec::new();
         match opened {
-            Opened::Created | Opened::Prepared => {
+            Opened::Created => {
                 log.append(KernelEvent::SessionCreated {
                     meta: state.meta.clone(),
                 });
@@ -343,7 +350,6 @@ impl Session {
             state,
             requests.downgrade(),
             pending,
-            opened == Opened::Prepared,
         );
         let task = spawner.spawn_resident("session-actor", async move {
             if let Some(history) = resume {

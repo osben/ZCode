@@ -573,15 +573,16 @@ pub async fn activate(
         Err(reason) => return failed(envelope, reason, 0),
     };
     let stored = stored_execution(server, &id).await;
-    let listed = match &stored {
-        Some(worktree) => Some(worktree.directory.as_str().to_owned()),
-        None => server
-            .kernel
-            .session_snapshot(&id)
-            .await
-            .ok()
-            .map(|view| view.meta.workspace.root.as_str().to_owned()),
-    };
+    // The row's directory, never the actor's root: after a move whose column write failed, the actor already runs in
+    // the worktree while the session stays listed under the parent the client names.
+    let listed = server
+        .kernel
+        .queries()
+        .session_directory(&id)
+        .await
+        .ok()
+        .flatten()
+        .map(|directory| directory.as_str().to_owned());
     let workspace_matches = match (workspace, listed.as_deref()) {
         (Some(workspace), Some(listed)) => server.workspace(workspace).root.as_str() == listed,
         (None, Some(_)) => true,
