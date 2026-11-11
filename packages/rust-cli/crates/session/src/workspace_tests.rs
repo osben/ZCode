@@ -582,3 +582,50 @@ async fn a_same_root_move_releases_the_held_start_once() {
     built.session.view().await.unwrap();
     assert_eq!(hooks.seen().len(), 1, "{:?}", hooks.seen());
 }
+
+/// Fork: deleting a prepared session that was never activated closes its actor without SessionEnd: SessionStart is
+/// still held, and Node has no runtime for such a session, so no hook runs in the parent checkout. Once the move has
+/// released SessionStart, closing runs SessionEnd as usual.
+#[tokio::test]
+async fn a_never_activated_prepared_session_closes_without_session_end() {
+    use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+    use rust_cli_kernel_api::session_api::{Ack, Command, EndReason};
+
+    use crate::test_support::{ScriptedHooks, envelope};
+
+    for activated in [false, true] {
+        let hooks = Arc::new(ScriptedHooks::with(
+            HookEventName::SessionEnd,
+            HookOutcome::default(),
+        ));
+        let cwd_env = Arc::new(CwdEnv {
+            inner: env(),
+            cwd: Mutex::default(),
+            refuse: false,
+        });
+        let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+        setup.set_machine(cwd_env.clone().machine());
+        setup.hooks = hooks.clone();
+        setup.start_held = true;
+        let built = setup.build().await;
+        if activated {
+            let moved = built
+                .session
+                .send(envelope(
+                    "c1",
+                    Command::SetExecutionRoot {
+                        root: EnvPath::new("/work/.worktrees/a"),
+                    },
+                ))
+                .await;
+            assert!(matches!(moved, Ack::Accepted { .. }), "{moved:?}");
+        }
+        built.session.close(EndReason::Other).await;
+        let ended = hooks
+            .seen()
+            .iter()
+            .filter(|event| event.name == HookEventName::SessionEnd)
+            .count();
+        assert_eq!(ended, usize::from(activated), "activated: {activated}");
+    }
+}

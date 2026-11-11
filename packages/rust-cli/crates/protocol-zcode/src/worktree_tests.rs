@@ -239,6 +239,8 @@ struct TestHandle {
     sent: Arc<StdMutex<Vec<(String, String)>>>,
     /// How many `SetExecutionRoot` commands to refuse (the actor refuses a move while busy).
     refuse_moves: Arc<std::sync::atomic::AtomicUsize>,
+    /// How many `SetMode` commands to refuse.
+    refuse_modes: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait]
@@ -287,6 +289,19 @@ impl HandleOverride for TestHandle {
                 format!("SetModel {}", selection.model)
             }
             Command::SetMode { mode } => {
+                let refuse = self
+                    .refuse_modes
+                    .fetch_update(
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                        |left| left.checked_sub(1),
+                    )
+                    .is_ok();
+                if refuse {
+                    return KernelAck::Rejected {
+                        reason: "the mode could not be set".to_owned(),
+                    };
+                }
                 self.view.lock().unwrap().mode = *mode;
                 "SetMode".to_owned()
             }
@@ -321,6 +336,7 @@ struct WorktreeKernel {
     sent: Arc<StdMutex<Vec<(String, String)>>>,
     deleted: StdMutex<Vec<String>>,
     refuse_moves: Arc<std::sync::atomic::AtomicUsize>,
+    refuse_modes: Arc<std::sync::atomic::AtomicUsize>,
     /// Sessions created through `create_prepared_session` (SessionStart held until the move).
     prepared: StdMutex<Vec<String>>,
     /// Sessions cold-opened through `open_prepared_session` (SessionStart held until the move).
@@ -351,6 +367,7 @@ impl WorktreeKernel {
             view: StdMutex::new(view),
             sent: self.sent.clone(),
             refuse_moves: self.refuse_moves.clone(),
+            refuse_modes: self.refuse_modes.clone(),
         });
         self.handles
             .lock()
@@ -469,6 +486,7 @@ fn server() -> (TaskScope, Arc<Server>, Arc<WorktreeKernel>) {
         sent: Arc::new(StdMutex::new(Vec::new())),
         deleted: StdMutex::new(Vec::new()),
         refuse_moves: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        refuse_modes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         prepared: StdMutex::new(Vec::new()),
         reopened_held: StdMutex::new(Vec::new()),
         created: StdMutex::new(HashMap::new()),
@@ -1420,4 +1438,118 @@ async fn activation_applies_the_draft_before_session_start() {
     tokio::time::timeout(std::time::Duration::from_secs(5), guided)
         .await
         .unwrap();
+}
+
+/// Node rethrows a config failure when `guarded` was asked for (`session-mgmt.ts` `runActivation`): a refused guarded
+/// mode fails the activation before the move, so SessionStart stays held, no input is admitted with the previous
+/// permission mode, and the preparation stays retryable.
+#[tokio::test]
+async fn a_refused_guarded_mode_fails_the_activation_before_the_move() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt-a");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = SessionId::new(&session);
+    let activation = json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+        "executionWorktree": {"path": path}, "config": {"mode": "guarded"}, "firstInput": {"text": "hello"}});
+
+    kernel
+        .refuse_modes
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let ack = create(&server, "c2", activation.clone()).await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    let sent: Vec<String> = kernel
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect();
+    assert!(
+        !sent
+            .iter()
+            .any(|name| name.starts_with("SetExecutionRoot") || name.starts_with("Submit")),
+        "{sent:?}"
+    );
+    let marker = load(&server, &id).await.unwrap().unwrap();
+    assert_eq!(marker.status, PrepStatus::Preparing);
+
+    let ack = create(&server, "c3", activation).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(ack.result.unwrap()["preparedActivation"], "materialized");
+    let sent = kernel.sent.lock().unwrap().clone();
+    assert!(
+        sent.iter()
+            .any(|(_, name)| name.starts_with("Submit hello")),
+        "{sent:?}"
+    );
+    let view = kernel.handle(&id).unwrap().view.lock().unwrap().clone();
+    assert_eq!(view.mode, PermissionMode::Guarded);
+}
+
+/// The activation materialized the session but its active marker failed to store. Node has the runtime record then,
+/// so commands pass; zcode-rs lets them through the gate and heals the marker, unlike a session never activated.
+#[tokio::test]
+async fn a_materialized_session_whose_receipt_failed_still_takes_commands() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = SessionId::new(&session);
+
+    kernel.store.fail_next_put_record(KIND);
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": path}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(
+        load(&server, &id).await.unwrap().unwrap().status,
+        PrepStatus::Preparing
+    );
+
+    let ack = run(
+        &server,
+        json!({"commandId": "s1", "clientId": "k", "sessionId": session, "type": "sendText",
+            "issuedAt": 1, "payload": {"text": "hello"}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(
+        load(&server, &id).await.unwrap().unwrap().status,
+        PrepStatus::Active
+    );
 }

@@ -41,6 +41,11 @@ pub(crate) enum Request {
     Meta {
         reply: oneshot::Sender<SessionMeta>,
     },
+    /// Fork: the meta for SessionEnd, `None` while SessionStart is still held (a prepared execution worktree that
+    /// was never activated: Node has no runtime for it, so nothing ends).
+    EndMeta {
+        reply: oneshot::Sender<Option<SessionMeta>>,
+    },
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
     },
@@ -561,6 +566,9 @@ impl Actor {
             }
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());
+            }
+            Request::EndMeta { reply } => {
+                let _ = reply.send(self.deferred_start.is_none().then(|| self.meta.clone()));
             }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());

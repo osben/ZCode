@@ -61,6 +61,10 @@ pub struct Server {
     pub(crate) uploads: Mutex<crate::uploads::Registry>,
     /// Fork: serializes submission reservations (crate::preparation::ReservationGate).
     pub(crate) reservations: crate::preparation::ReservationGate,
+    /// Fork: prepared worktree sessions materialized in this process whose active marker failed to store
+    /// (`worktree::activate`). Process-local like Node's runtime record: the gate lets their commands through and
+    /// heals the marker; after a restart the durable marker decides again.
+    pub(crate) unreceipted: Mutex<std::collections::HashSet<SessionId>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
 }
@@ -127,6 +131,7 @@ impl Server {
             preferences: Mutex::new(Preferences::default()),
             uploads: Mutex::new(crate::uploads::Registry::default()),
             reservations: crate::preparation::ReservationGate::default(),
+            unreceipted: Mutex::new(std::collections::HashSet::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
         }
     }

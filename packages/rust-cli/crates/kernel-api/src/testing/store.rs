@@ -101,6 +101,8 @@ pub struct MemoryStore {
     fail_execution: std::sync::atomic::AtomicBool,
     /// Fork: the next `records` read fails ([`Self::fail_next_records`]).
     fail_records: std::sync::atomic::AtomicBool,
+    /// Fork: the next `put_record` of this kind fails ([`Self::fail_next_put_record`]).
+    fail_put_kind: Mutex<Option<String>>,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
@@ -116,6 +118,11 @@ impl MemoryStore {
     /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
     pub fn fail_next_execution_worktree(&self) {
         self.fail_execution.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `put_record` of `kind` fails (a storage error); other kinds and later writes work.
+    pub fn fail_next_put_record(&self, kind: &str) {
+        *self.fail_put_kind.lock_unpoisoned() = Some(kind.to_owned());
     }
 
     /// Fork: the next `records` read fails (a storage error), later ones work.
@@ -705,6 +712,15 @@ impl StoreQueries for MemoryStore {
             return Err(StoreError::NotFound {
                 session: session.clone(),
             });
+        }
+        {
+            let mut failing = self.fail_put_kind.lock_unpoisoned();
+            if failing.as_deref() == Some(record.kind.as_str()) {
+                *failing = None;
+                return Err(StoreError::Unsupported {
+                    what: "frontend records".to_owned(),
+                });
+            }
         }
         let mut records = self.records.lock_unpoisoned();
         let list = records.entry(session.clone()).or_default();

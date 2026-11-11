@@ -12,6 +12,8 @@
 
 use std::sync::Arc;
 
+use rust_cli_base::sync::LockUnpoisoned;
+
 use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command};
@@ -468,7 +470,20 @@ pub async fn refuse_before_activation(
     if !REQUIRES_RECORD.contains(&envelope.kind.as_str()) {
         return None;
     }
-    match load(server, &SessionId::new(session)).await {
+    let id = SessionId::new(session);
+    match load(server, &id).await {
+        // Materialized in this process while its active receipt failed to store: Node has the runtime record, so
+        // the command passes; the marker is healed here.
+        Ok(Some(marker))
+            if marker.status != PrepStatus::Active
+                && server.unreceipted.lock_unpoisoned().contains(&id) =>
+        {
+            let active = marker.with_status(PrepStatus::Active, None, None);
+            if save(server, &id, &active).await.is_ok() {
+                server.unreceipted.lock_unpoisoned().remove(&id);
+            }
+            None
+        }
         Ok(Some(marker)) if marker.status != PrepStatus::Active => Some(failed(
             envelope,
             &format!("v4 command session not found: {session}"),
@@ -639,21 +654,33 @@ pub async fn check_directory(
     Ok(())
 }
 
+/// What an activation names: the prepared session, the attempt, the parent workspace and the worktree.
+pub struct ActivationRequest<'a> {
+    pub prepared: &'a str,
+    pub expected_attempt: Option<&'a str>,
+    pub workspace: Option<&'a str>,
+    pub requested: Option<&'a Requested>,
+}
+
 /// Fork: activation of a prepared worktree (`createSession` with `preparedSessionId`, no `expectedSubmissionId`;
 /// Node `runActivation`). `configure` applies the draft's config before the move, since the move releases the held
-/// SessionStart and the hook must see the configured model (Node runs it in the first turn, after the config); after
-/// the move `materialize` admits `firstInput` and returns the result's `input`. The marker turns active within the
-/// activation, as Node completes it.
+/// SessionStart and the hook must see the configured model (Node runs it in the first turn, after the config). A
+/// refused config (`Err`, a guarded mode the session did not take) fails the activation before the move: SessionStart
+/// stays held, nothing is admitted and the preparation stays retryable. After the move `materialize` admits
+/// `firstInput` and returns the result's `input`. The marker turns active within the activation, as Node completes it.
 pub async fn activate(
     server: &Server,
     envelope: &Envelope,
-    prepared: &str,
-    expected_attempt: Option<&str>,
-    workspace: Option<&str>,
-    requested: Option<&Requested>,
-    configure: impl AsyncFnOnce(&Bridged<Live>),
+    request: ActivationRequest<'_>,
+    configure: impl AsyncFnOnce(&Bridged<Live>) -> Result<(), String>,
     materialize: impl AsyncFnOnce(&Bridged<Live>) -> Option<Value>,
 ) -> Ack {
+    let ActivationRequest {
+        prepared,
+        expected_attempt,
+        workspace,
+        requested,
+    } = request;
     let id = SessionId::new(prepared);
     let Ok(_gate) = server.reservations.acquire().await else {
         return failed(envelope, UNAVAILABLE, 0);
@@ -722,8 +749,8 @@ pub async fn activate(
         .view()
         .await
         .is_ok_and(|view| input_admitted(&view));
-    if !admitted {
-        configure(&live).await;
+    if !admitted && let Err(message) = configure(&live).await {
+        return failed(envelope, &message, 0);
     }
     // The move also releases the held SessionStart, so it runs on every attempt: after a restart between the
     // admission and the active marker, the session is already in the stored worktree and only the start is left.
@@ -737,11 +764,16 @@ pub async fn activate(
     };
     let active = current.with_status(PrepStatus::Active, None, None);
     if save(server, &id, &active).await.is_err() {
-        // Best effort like Node `completePreparedActivation`: the next activation heals the receipt.
+        // Best effort like Node `completePreparedActivation`: the session is materialized (Node has its runtime
+        // record), only the receipt is missing. The gate lets its commands through and heals the marker; the next
+        // activation heals it too.
         tracing::warn!(
             event = "protocol.worktree.complete_failed",
             "storing the active worktree marker failed"
         );
+        server.unreceipted.lock_unpoisoned().insert(id.clone());
+    } else {
+        server.unreceipted.lock_unpoisoned().remove(&id);
     }
     let execution = Execution {
         path: target.path,

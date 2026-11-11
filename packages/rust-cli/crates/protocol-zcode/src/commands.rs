@@ -362,23 +362,17 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         };
         // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
         // input follows the move into the worktree.
+        let request = crate::worktree::ActivationRequest {
+            prepared,
+            expected_attempt: payload.expected_attempt_id.as_deref(),
+            workspace: payload.workspace_id.as_deref(),
+            requested: payload.execution_worktree.as_ref(),
+        };
         return crate::worktree::activate(
             server,
             envelope,
-            prepared,
-            payload.expected_attempt_id.as_deref(),
-            payload.workspace_id.as_deref(),
-            payload.execution_worktree.as_ref(),
-            async |live| {
-                apply_draft_config(
-                    server,
-                    live,
-                    envelope,
-                    config,
-                    first.model_selection.as_ref(),
-                )
-                .await;
-            },
+            request,
+            async |live| apply_draft_config(server, live, envelope, config, first).await,
             async |live| {
                 submit_first(
                     server,
@@ -721,7 +715,18 @@ async fn activate_submission(
         "already-active"
     } else {
         // The draft's choices: the first sendText carries them too, this keeps a config-only activation right.
-        apply_draft_config(server, &live, envelope, &payload.config, None).await;
+        // A refused guarded mode fails the activation (Node rethrows it); the reservation stays for a retry.
+        if let Err(message) =
+            apply_draft_config(server, &live, envelope, &payload.config, &Input::default()).await
+        {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.executionFailed",
+                message,
+                0,
+            );
+        }
         "input-pending"
     };
     Ack::accepted(
@@ -737,23 +742,30 @@ async fn activate_submission(
 /// `applyRequestedSessionConfig`). Without a model in the config the first input's model is the session's, as an
 /// ordinary createSession chooses it, so SessionStart and later turns run on it (in Node the first turn's model
 /// becomes the session's when it starts, and SessionStart runs in that turn).
+///
+/// A refused step is logged and the session keeps its settings, except when the config or the first input asks for
+/// `guarded`: Node rethrows that failure (`session-mgmt.ts` `runActivation`), since running with the previous, possibly
+/// broader, permission mode is not an option. The `Err` carries the refusal.
 async fn apply_draft_config(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
     config: &SessionConfig,
-    first_selection: Option<&Value>,
-) {
+    first: &Input,
+) -> Result<(), String> {
     let handle = live.handle.as_ref();
-    if let Some(chosen) =
-        selection(config.model_selection.as_ref()).or_else(|| selection(first_selection))
+    let mut refusals = Vec::new();
+    if let Some(chosen) = selection(config.model_selection.as_ref())
+        .or_else(|| selection(first.model_selection.as_ref()))
     {
-        send(
-            handle,
-            &format!("{}:model", envelope.command_id),
-            Command::SetModel { selection: chosen },
-        )
-        .await;
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:model", envelope.command_id),
+                Command::SetModel { selection: chosen },
+            )
+            .await,
+        );
     }
     let current = handle
         .view()
@@ -768,18 +780,36 @@ async fn apply_draft_config(
         plan,
     }) = resolve_execution(config.mode.as_deref(), config.plan_enabled, current)
     {
-        send(
-            handle,
-            &format!("{}:mode", envelope.command_id),
-            Command::SetMode { mode: permission },
-        )
-        .await;
-        send(
-            handle,
-            &format!("{}:plan", envelope.command_id),
-            Command::SetPlan { enabled: plan },
-        )
-        .await;
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:mode", envelope.command_id),
+                Command::SetMode { mode: permission },
+            )
+            .await,
+        );
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:plan", envelope.command_id),
+                Command::SetPlan { enabled: plan },
+            )
+            .await,
+        );
+    }
+    let refused = refusals.into_iter().find_map(|ack| match ack {
+        KernelAck::Rejected { reason } => Some(reason),
+        KernelAck::Accepted { .. } | KernelAck::Duplicate => None,
+    });
+    if let Some(reason) = refused {
+        let guarded = [config.mode.as_deref(), first.mode.as_deref()].contains(&Some("guarded"));
+        if guarded {
+            return Err(reason);
+        }
+        tracing::warn!(
+            event = "protocol.create.config_failed",
+            "the draft config was refused; the session keeps its settings"
+        );
     }
     // Node writes only a non-default follow-up mode; the open session's projection and a later cold open both take it.
     if let Some(followup) = config.followup_mode.filter(|mode| *mode != Followup::Queue) {
@@ -790,6 +820,7 @@ async fn apply_draft_config(
         let sink = live.sink.clone();
         live.run(Box::pin(async move { sink.set_followup(followup).await }));
     }
+    Ok(())
 }
 
 /// Fork: worktree preparation (Node `createSession` with `worktreePreparation`): only the workspace and the
