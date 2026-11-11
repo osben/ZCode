@@ -1035,3 +1035,37 @@ fn separate_user_messages_keep_parallel_tool_results_together() {
         "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
     );
 }
+
+/// Fork: two inputs with media before any reply (the first one interrupted) merge into one user message here, where
+/// Node keeps two user messages and its media budget protects only the newest (`findLatestRealUserMessageIndex`).
+/// The earlier input's media are marked as not the current input, so the budget treats them as history.
+#[test]
+fn an_earlier_input_merged_into_the_next_is_not_the_current_input() {
+    let input = |id: &str, value: &str| {
+        Message::User(UserMessage {
+            id: MessageId::new(id),
+            content: vec![text(value), image()],
+            origin: UserOrigin::Human,
+        })
+    };
+    let api = normalize(&[input("u1", "first"), input("u2", "second")], &ON);
+    assert_eq!(api.len(), 1);
+    let meta: Vec<(bool, bool)> = api[0]
+        .content
+        .iter()
+        .map(|item| (matches!(item.block, ContentBlock::Image { .. }), item.meta))
+        .collect();
+    assert_eq!(
+        meta,
+        [(false, false), (true, true), (false, false), (true, false)]
+    );
+    // A reminder or a tool result joining the input is not a new input: the input's media stay current.
+    let api = normalize(
+        &[
+            input("u1", "first"),
+            human("u2", "<system-reminder>\nnote\n</system-reminder>"),
+        ],
+        &ON,
+    );
+    assert!(api[0].content.iter().all(|item| !item.meta));
+}

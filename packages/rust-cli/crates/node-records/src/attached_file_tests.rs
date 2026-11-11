@@ -169,7 +169,10 @@ fn a_node_artifact_image_comes_back_stored_and_a_placeholder_metadata_only() {
     assert_eq!(file.stored.as_deref(), Some("zcode-artifact://s/a"));
     let placeholder = json!({"type": "file", "mime": "application/pdf", "filename": "d.pdf",
         "url": "/w/d.pdf", "metadata": {"recoverability": "metadata_only", "sizeBytes": 3}});
-    assert_eq!(from_part(&placeholder, 0).unwrap().body, AttachedBody::Omitted);
+    assert_eq!(
+        from_part(&placeholder, 0).unwrap().body,
+        AttachedBody::Omitted
+    );
 }
 
 #[test]
