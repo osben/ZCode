@@ -603,12 +603,12 @@ impl StoreQueries for NodeStore {
         &self,
         session: &SessionId,
         input: &str,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<rust_cli_kernel_api::store::Admission, StoreError> {
         let session = session.clone();
         let input = input.to_owned();
         self.with_drafts(move |conn, ids, drafts| match drafts {
             Some(drafts) => drafts::persist_for_input(conn, drafts, &session, ids, &input),
-            None => Ok(false),
+            None => Ok(Default::default()),
         })
         .await
     }

@@ -34,6 +34,8 @@ struct DraftQueries {
     fail_persist: std::sync::atomic::AtomicBool,
     /// The input text of each admission.
     inputs: StdMutex<Vec<String>>,
+    /// The title the next admission reports as written.
+    admitted_title: StdMutex<Option<String>>,
     log: Log,
 }
 
@@ -96,7 +98,7 @@ impl StoreQueries for DraftQueries {
         &self,
         session: &SessionId,
         input: &str,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<rust_cli_kernel_api::store::Admission, StoreError> {
         self.inputs.lock_unpoisoned().push(input.to_owned());
         if self
             .fail_persist
@@ -115,7 +117,10 @@ impl StoreQueries for DraftQueries {
         if held {
             self.log.lock_unpoisoned().push("persist");
         }
-        Ok(held)
+        Ok(rust_cli_kernel_api::store::Admission {
+            persisted: held,
+            title: self.admitted_title.lock_unpoisoned().take(),
+        })
     }
 }
 
@@ -132,8 +137,12 @@ impl HandleOverride for TestHandle {
         &self.id
     }
 
-    async fn send(&self, _command: CommandEnvelope) -> KernelAck {
-        self.log.lock_unpoisoned().push("send");
+    async fn send(&self, command: CommandEnvelope) -> KernelAck {
+        let entry = match command.command {
+            rust_cli_kernel_api::session_api::Command::AdoptTitle { .. } => "title",
+            _ => "send",
+        };
+        self.log.lock_unpoisoned().push(entry);
         KernelAck::Duplicate
     }
 
@@ -411,6 +420,21 @@ async fn the_first_input_persists_the_draft_before_the_submit() {
     let reply = server.close_session(&close(Some("deferred"))).await;
     assert_eq!(reply, json!({"closed": false}));
     assert!(queries.dropped.lock_unpoisoned().is_empty());
+}
+
+/// Node emits `SessionTitleUpdated` when the admission persists the title: the stored title reaches the session actor
+/// (and so the live views) before the input, whose `UserPromptSubmit` hook may block it.
+#[tokio::test]
+async fn the_admitted_title_reaches_the_actor_before_the_input() {
+    let (_scope, server, handle, queries) = open(true).await;
+    *queries.admitted_title.lock_unpoisoned() = Some("hi".to_owned());
+    crate::commands::command(&server, send_text("c1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        *handle.log.lock_unpoisoned(),
+        vec!["persist", "title", "send"]
+    );
 }
 
 /// createSession with `firstInput` admits the input with its text, like `sendText`.

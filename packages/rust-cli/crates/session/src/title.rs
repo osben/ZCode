@@ -156,28 +156,30 @@ impl Actor {
         self.log.append(KernelEvent::TitleChanged { title, source });
     }
 
+    /// Fork: the store's admission title ([`rust_cli_kernel_api::session_api::Command::AdoptTitle`]); the stored row
+    /// already has it, so nothing is committed. A rename that won the race stays.
+    pub(crate) fn adopt_title(&mut self, title: String) {
+        if self.title_source == rust_cli_kernel_api::title::Source::Custom
+            || self.meta.title == title
+        {
+            return;
+        }
+        self.set_title(title, rust_cli_kernel_api::title::Source::FirstInput);
+    }
+
     /// 本回合的人类输入已提交（`first` 为真时它之前的活动历史里没有 user 消息）。
     pub(crate) fn after_prompt(&mut self, message: &Message, first: bool) {
         let Some(text) = human_text(message) else {
             return;
         };
-        // node-store 在同一事务里写了 first_input（Node `titleFromInput`），这里用同一个函数。
+        // node-store 在同一事务里写了 first_input（Node `titleFromInput(sanitizeTitleSeed(…))`），这里用同一个函数。
         // Fork: an input without text keeps the placeholder, which the first real input replaces (Node
         // `persistSession`, `applyFirstInputTitleForPersistedSession`).
-        let placeholder = rust_cli_kernel_api::title::PLACEHOLDER;
-        let blank = text.trim().is_empty();
-        if self.meta.title.is_empty() || (self.meta.title == placeholder && !blank) {
-            let (title, source) = if blank {
-                (
-                    placeholder.to_owned(),
-                    rust_cli_kernel_api::title::Source::Default,
-                )
-            } else {
-                (
-                    rust_cli_kernel_api::title::from_input(&text),
-                    rust_cli_kernel_api::title::Source::FirstInput,
-                )
-            };
+        let (title, source) = rust_cli_kernel_api::title::first_input(&text);
+        let real = source == rust_cli_kernel_api::title::Source::FirstInput;
+        if self.meta.title.is_empty()
+            || (self.meta.title == rust_cli_kernel_api::title::PLACEHOLDER && real)
+        {
             self.set_title(title, source);
         }
         // Fork (desktop App): a `/goal` input that set a goal; it gets a summary title either way.

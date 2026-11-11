@@ -245,7 +245,7 @@ pub(crate) fn persist(
     session: &SessionId,
     ids: &NodeIds,
 ) -> Result<bool, StoreError> {
-    persist_for_input(conn, drafts, session, ids, "")
+    Ok(persist_for_input(conn, drafts, session, ids, "")?.persisted)
 }
 
 /// Fork: the admission of a session's input (Node `admitInputCommand` →
@@ -253,30 +253,33 @@ pub(crate) fn persist(
 /// transaction, as Node `persistSession` creates the row with it; a stored row still on the `default` placeholder (a
 /// reservation persisted it) takes the title too (Node `applyFirstInputTitleForPersistedSession`). Either way the
 /// title is in place before the input's `UserPromptSubmit` hooks, so a blocked input does not leave "New session".
-/// `true` when a draft was persisted.
+/// The admission reports the title it wrote for the session actor.
 pub(crate) fn persist_for_input(
     conn: &mut Connection,
     drafts: &mut Drafts,
     session: &SessionId,
     ids: &NodeIds,
     input: &str,
-) -> Result<bool, StoreError> {
+) -> Result<rust_cli_kernel_api::store::Admission, StoreError> {
     if drafts.was_dropped(session.as_str()) {
         return Err(not_found(session));
     }
     let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
     let titled = |conn: &Connection| {
         if input.trim().is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        crate::append::first_input_title(conn, session.as_str(), input, now)
+        let title = crate::append::first_input_title(conn, session.as_str(), input, now)?;
+        // A blank shown input rewrites the placeholder; only a real title is news for the actor.
+        Ok(title.filter(|title| title != rust_cli_kernel_api::title::PLACEHOLDER))
     };
-    if !drafts.is_draft(session.as_str()) {
-        titled(conn)?;
-        return Ok(false);
-    }
-    materialize(conn, drafts, session, ids, titled)?;
-    Ok(true)
+    let persisted = drafts.is_draft(session.as_str());
+    let title = if persisted {
+        materialize(conn, drafts, session, ids, titled)?
+    } else {
+        titled(conn)?
+    };
+    Ok(rust_cli_kernel_api::store::Admission { persisted, title })
 }
 
 /// One `BEGIN IMMEDIATE` transaction: the row, the buffered batches and records, then `then`. The

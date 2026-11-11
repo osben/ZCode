@@ -360,10 +360,22 @@ async fn persist_for_input_materializes_and_a_dropped_draft_refuses() {
     let t = deferring();
     t.store.create(meta(ID, "/w", "")).await.unwrap();
     configure(&t).await;
-    assert!(t.store.persist_for_input(&sid(), "").await.unwrap());
+    assert!(
+        t.store
+            .persist_for_input(&sid(), "")
+            .await
+            .unwrap()
+            .persisted
+    );
     assert_eq!(session_rows(&t), 1);
     assert_eq!(t.store.load(&sid()).await.unwrap().model, Some(picked()));
-    assert!(!t.store.persist_for_input(&sid(), "").await.unwrap());
+    assert!(
+        !t.store
+            .persist_for_input(&sid(), "")
+            .await
+            .unwrap()
+            .persisted
+    );
     let other = SessionId::new("sess_other");
     t.store.create(meta("sess_other", "/w", "")).await.unwrap();
     assert!(t.store.discard_draft(&other).await.unwrap());
@@ -520,7 +532,13 @@ async fn a_draft_keeps_its_execution_worktree_until_its_row() {
         .await
         .unwrap();
     assert_eq!(session_rows(&t), 0);
-    assert!(t.store.persist_for_input(&sid(), "").await.unwrap());
+    assert!(
+        t.store
+            .persist_for_input(&sid(), "")
+            .await
+            .unwrap()
+            .persisted
+    );
     let stored = t.store.execution_worktree(&sid()).await.unwrap().unwrap();
     assert_eq!(stored.directory.as_str(), "/w");
     assert_eq!(stored.path.as_str(), "/w/.worktrees/a");
@@ -561,11 +579,12 @@ fn title_row(t: &TestStore, id: &str) -> Vec<serde_json::Value> {
 async fn the_first_input_admission_persists_the_title_with_the_draft() {
     let t = deferring();
     t.store.create(meta(ID, "/w", "")).await.unwrap();
-    assert!(
+    assert_eq!(
         t.store
             .persist_for_input(&sid(), "  fix   the\n login bug ")
             .await
-            .unwrap()
+            .unwrap(),
+        admitted(true, Some("fix the login bug"))
     );
     assert_eq!(
         title_row(&t, ID),
@@ -585,10 +604,84 @@ async fn the_first_input_admission_persists_the_title_with_the_draft() {
 
     t.store.create(meta("sess_blank", "/w", "")).await.unwrap();
     let blank = SessionId::new("sess_blank");
-    assert!(t.store.persist_for_input(&blank, "  ").await.unwrap());
+    assert_eq!(
+        t.store.persist_for_input(&blank, "  ").await.unwrap(),
+        admitted(true, None)
+    );
     assert_eq!(
         title_row(&t, "sess_blank"),
         [json!("New session"), json!("default")]
+    );
+}
+
+fn admitted(persisted: bool, title: Option<&str>) -> rust_cli_kernel_api::store::Admission {
+    rust_cli_kernel_api::store::Admission {
+        persisted,
+        title: title.map(str::to_owned),
+    }
+}
+
+/// Node `persistSession` titles the row with `titleFromInput(sanitizeTitleSeed(input))`: a composer file mention keeps
+/// its label, a plugin mention drops its `@`, the manual skill template becomes its request. The commit keeps it.
+#[tokio::test]
+async fn the_admission_title_is_seeded_like_nodes() {
+    let t = deferring();
+    let cases = [
+        ("sess_link", "fix [a.ts](./src/a.ts) now", "fix a.ts now"),
+        (
+            "sess_plugin",
+            "[@Linear](plugin://linear@official) list my issues",
+            "Linear list my issues",
+        ),
+        (
+            "sess_skill",
+            "[$brainstorming](/home/u/.skills/brainstorming/SKILL.md) design a cache",
+            "$brainstorming design a cache",
+        ),
+        (
+            "sess_template",
+            "Use the skill named `review` for this turn.\nFirst call the `Skill` tool with name `review` before doing the task.\nAfter the skill content is loaded, follow its instructions and continue.\n\nUser request:\ncheck the diff",
+            "check the diff",
+        ),
+    ];
+    for (id, input, title) in cases {
+        t.store.create(meta(id, "/w", "")).await.unwrap();
+        let session = SessionId::new(id);
+        assert_eq!(
+            t.store.persist_for_input(&session, input).await.unwrap(),
+            admitted(true, Some(title)),
+            "{input}"
+        );
+        t.store
+            .commit(
+                &session,
+                batch(None, vec![user(&format!("msg_{id}"), input)]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            title_row(&t, id),
+            [json!(title), json!("first_input")],
+            "{input}"
+        );
+    }
+}
+
+/// The user message commit (the TUI path, no admission) seeds the title the same way.
+#[tokio::test]
+async fn the_commit_title_is_seeded_like_nodes() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    t.store
+        .commit(
+            &sid(),
+            batch(None, vec![user("msg_1", "fix [a.ts](./src/a.ts) now")]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        title_row(&t, ID),
+        [json!("fix a.ts now"), json!("first_input")]
     );
 }
 
@@ -599,20 +692,33 @@ async fn the_first_input_admission_persists_the_title_with_the_draft() {
 async fn the_first_input_admission_titles_a_reserved_row() {
     let t = deferring();
     t.store.create(meta(ID, "/w", "")).await.unwrap();
-    assert!(t.store.persist_for_input(&sid(), "").await.unwrap());
+    assert_eq!(
+        t.store.persist_for_input(&sid(), "").await.unwrap(),
+        admitted(true, None)
+    );
     assert_eq!(title_row(&t, ID), [json!("New session"), json!("default")]);
-    assert!(!t.store.persist_for_input(&sid(), "  ").await.unwrap());
+    assert_eq!(
+        t.store.persist_for_input(&sid(), "  ").await.unwrap(),
+        admitted(false, None)
+    );
     assert_eq!(title_row(&t, ID), [json!("New session"), json!("default")]);
-    assert!(!t.store.persist_for_input(&sid(), "ship it").await.unwrap());
+    assert_eq!(
+        t.store.persist_for_input(&sid(), "ship it").await.unwrap(),
+        admitted(false, Some("ship it"))
+    );
     assert_eq!(title_row(&t, ID), [json!("ship it"), json!("first_input")]);
-    assert!(
-        !t.store
+    assert_eq!(
+        t.store
             .persist_for_input(&sid(), "a later input")
             .await
-            .unwrap()
+            .unwrap(),
+        admitted(false, None)
     );
     assert_eq!(title_row(&t, ID), [json!("ship it"), json!("first_input")]);
     t.store.rename(&sid(), "Mine").await.unwrap();
-    t.store.persist_for_input(&sid(), "again").await.unwrap();
+    assert_eq!(
+        t.store.persist_for_input(&sid(), "again").await.unwrap(),
+        admitted(false, None)
+    );
     assert_eq!(title_row(&t, ID), [json!("Mine"), json!("custom")]);
 }

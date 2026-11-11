@@ -706,6 +706,10 @@ impl Actor {
             Command::Fork { at } => self.fork(id, at).await,
             Command::ForkFromInput { input } => self.fork_from_input(input).await,
             Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
+            Command::AdoptTitle { title } => {
+                self.adopt_title(title);
+                accepted()
+            }
             Command::Rename { title } => self.rename(id, title, None).await,
             Command::RenameRecorded { title, record } => self.rename(id, title, Some(record)).await,
             Command::StopTask { task } => self.stop_task(task).await,

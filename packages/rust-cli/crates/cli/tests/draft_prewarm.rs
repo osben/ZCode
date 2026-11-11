@@ -328,7 +328,7 @@ async fn a_worktree_draft_answers_its_parent_and_worktree_before_its_row() {
         );
     };
     check().await;
-    assert!(store.persist_for_input(&id, "").await.unwrap());
+    assert!(store.persist_for_input(&id, "").await.unwrap().persisted);
     assert_eq!(sandbox.rows(&id), vec![None]);
     check().await;
 }
@@ -351,7 +351,13 @@ async fn the_admitted_title_survives_the_first_commit() {
     let sandbox = Sandbox::new();
     let (kernel, store) = sandbox.kernel();
     let id = sandbox.create(&kernel).await;
-    assert!(store.persist_for_input(&id, "fix the bug").await.unwrap());
+    assert!(
+        store
+            .persist_for_input(&id, "fix the bug")
+            .await
+            .unwrap()
+            .persisted
+    );
     assert_eq!(
         title_row(&sandbox, &id),
         ("fix the bug".to_owned(), "first_input".to_owned())

@@ -497,7 +497,7 @@ async fn submit_first(
     let Some(text) = first.text.clone() else {
         return Ok(None);
     };
-    admit_input(server, id, &text, &envelope.command_id, 0).await?;
+    admit_input(server, live.handle.as_ref(), &text, &envelope.command_id, 0).await?;
     live.sink.remember_input(
         &envelope.command_id,
         input_meta(envelope, first, "startNow", "startNow"),
@@ -533,21 +533,34 @@ async fn submit_first(
 /// the accepted input can no longer be dropped with its draft and a hook that blocks it does not leave "New session".
 /// A deferred close that dropped the draft first refuses the input; any other failure fails the command like Node's
 /// admission error (`fault.command.executionFailed`), before the input is remembered or sent. The text names no
-/// storage detail.
+/// storage detail. The title the admission wrote reaches the session actor before the input does, so the live views
+/// show the stored title even when a `UserPromptSubmit` hook blocks the input (Node emits `SessionTitleUpdated` at the
+/// persistence).
 async fn admit_input(
     server: &Server,
-    session: &SessionId,
+    handle: &dyn SessionHandle,
     text: &str,
     command: &str,
     revision: u64,
 ) -> Result<(), Box<Ack>> {
+    let session = handle.id();
     match server
         .kernel
         .queries()
         .persist_for_input(session, text)
         .await
     {
-        Ok(_) => Ok(()),
+        Ok(admission) => {
+            if let Some(title) = admission.title {
+                send(
+                    handle,
+                    &format!("{command}#title"),
+                    Command::AdoptTitle { title },
+                )
+                .await;
+            }
+            Ok(())
+        }
         Err(error @ rust_cli_kernel_api::store::StoreError::NotFound { .. }) => {
             Err(Box::new(Ack::refused(
                 command,
@@ -1241,7 +1254,7 @@ async fn send_text(
         !refs.is_empty(),
     );
     let text = input.text.clone().unwrap_or_default();
-    if let Err(ack) = admit_input(server, handle.id(), &text, command, revision).await {
+    if let Err(ack) = admit_input(server, handle, &text, command, revision).await {
         return *ack;
     }
     let requested = requested.unwrap_or(Requested::StartNow).as_str();

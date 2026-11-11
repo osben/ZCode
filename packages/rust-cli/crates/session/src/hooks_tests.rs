@@ -60,6 +60,89 @@ async fn a_blocking_prompt_hook_keeps_the_input_out() {
     assert!(model.requests().is_empty());
 }
 
+fn titles(seen: &[KernelEvent]) -> Vec<(String, rust_cli_kernel_api::title::Source)> {
+    seen.iter()
+        .filter_map(|event| match event {
+            KernelEvent::TitleChanged { title, source } => Some((title.clone(), *source)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Fork: the admission's stored title reaches the actor before the input (Node `SessionTitleUpdated` at the
+/// persistence). A hook that blocks the input leaves it, and the next committed input keeps it, as the store's
+/// compare-and-set on `default` does.
+#[tokio::test]
+async fn the_admitted_title_stays_through_a_blocked_input_and_the_next_commit() {
+    use rust_cli_kernel_api::title::Source;
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::UserPromptSubmit,
+        HookOutcome {
+            blocking_error: Some("no".into()),
+            ..HookOutcome::default()
+        },
+    ));
+    let mut setup = Setup::new(model);
+    setup.hooks = hooks.clone();
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built
+        .session
+        .send(envelope(
+            "c1#title",
+            Command::AdoptTitle {
+                title: "fix a.ts now".into(),
+            },
+        ))
+        .await;
+    built
+        .session
+        .send(submit("c1", "fix [a.ts](./src/a.ts) now"))
+        .await;
+    let seen = until(&mut events, finished).await;
+    assert_eq!(
+        titles(&seen),
+        vec![("fix a.ts now".to_owned(), Source::FirstInput)]
+    );
+    hooks.set(HookEventName::UserPromptSubmit, HookOutcome::default());
+    built.session.send(submit("c2", "something else")).await;
+    let seen = until(&mut events, finished).await;
+    assert!(titles(&seen).is_empty(), "{seen:?}");
+    let view = built.session.view().await.unwrap();
+    assert_eq!(view.meta.title, "fix a.ts now");
+    assert_eq!(view.title_source, Some(Source::FirstInput));
+}
+
+/// Fork: a rename that reached the actor before the admission's title wins.
+#[tokio::test]
+async fn an_admitted_title_does_not_replace_a_rename() {
+    let model = Arc::new(ScriptedModel::new(vec![]));
+    let built = Setup::new(model).build().await;
+    built
+        .session
+        .send(envelope(
+            "r1",
+            Command::Rename {
+                title: "Mine".into(),
+            },
+        ))
+        .await;
+    built
+        .session
+        .send(envelope(
+            "c1#title",
+            Command::AdoptTitle { title: "hi".into() },
+        ))
+        .await;
+    let view = built.session.view().await.unwrap();
+    assert_eq!(view.meta.title, "Mine");
+    assert_eq!(
+        view.title_source,
+        Some(rust_cli_kernel_api::title::Source::Custom)
+    );
+}
+
 /// prevent：提交输入与 hook 消息，不调模型；正常：hook 消息跟在输入后面一起发给模型。
 #[tokio::test]
 async fn prompt_hook_messages_follow_the_input() {

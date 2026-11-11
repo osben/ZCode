@@ -206,6 +206,14 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<MessageId>,
     },
+    /// Fork: the store wrote `title` as the session's `first_input` title at an input's admission
+    /// ([`crate::store::Admission::title`]). The actor takes it in memory and emits
+    /// [`crate::session_api_events::KernelEvent::TitleChanged`] without a commit of its own, so the live views show
+    /// the stored title before the input's `UserPromptSubmit` hooks (Node emits `SessionTitleUpdated` at the
+    /// persistence). Ignored once the title is `custom`. Always `Accepted`.
+    AdoptTitle {
+        title: String,
+    },
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
         title: String,

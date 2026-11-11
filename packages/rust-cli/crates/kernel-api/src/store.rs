@@ -440,6 +440,17 @@ pub struct SessionPage {
     pub more: bool,
 }
 
+/// Fork: what [`StoreQueries::persist_for_input`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Admission {
+    /// A draft was persisted.
+    pub persisted: bool,
+    /// The first-input title it wrote over the `default` placeholder (`first_input`); `None` when the row kept its
+    /// title or the input is blank. The caller hands it to the session actor ([`crate::session_api::Command::AdoptTitle`])
+    /// before the input's hooks, as Node emits `SessionTitleUpdated` at the persistence.
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoreError {
@@ -913,14 +924,14 @@ pub trait StoreQueries: Send + Sync {
 
     /// Fork: the admission of a session's input (Node `admitInputCommand` →
     /// `ensureSessionPersistedForExternalActivity(input.text)`): persists a draft with the input's first-input title,
-    /// or gives a stored row still on the `default` placeholder that title, before the input's hooks run. `true` when
-    /// a draft was persisted; `NotFound` when a deferred close dropped it first.
+    /// or gives a stored row still on the `default` placeholder that title, before the input's hooks run (see
+    /// [`Admission`]); `NotFound` when a deferred close dropped it first.
     async fn persist_for_input(
         &self,
         _session: &SessionId,
         _input: &str,
-    ) -> Result<bool, StoreError> {
-        Ok(false)
+    ) -> Result<Admission, StoreError> {
+        Ok(Admission::default())
     }
 
     /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the

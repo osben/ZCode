@@ -74,6 +74,30 @@ pub fn from_input(input: &str) -> String {
     text::truncate_utf16(&compact, MAX_TITLE_UNITS).into_owned()
 }
 
+#[path = "title_seed.rs"]
+mod seed;
+pub use seed::seed;
+
+/// The input as the user typed it: a skill command tag back to `/<name> <args>`, bash mode to `! <command>`, without
+/// the fork's attachment reminders. The stored message text and the first-input title both start from it.
+pub fn shown_input(text: &str) -> String {
+    crate::user_command::display(text)
+        .or_else(|| crate::user_input::display(text))
+        .or_else(|| crate::prompt_attachment::display(text))
+        .unwrap_or_else(|| text.to_owned())
+}
+
+/// The first input's title and its source (Node `persistSession`: `titleFromInput(sanitizeTitleSeed(input))`,
+/// `first_input`; a blank input keeps [`PLACEHOLDER`], `default`). The one definition: the store's admission and user
+/// message commit and the session actor's in-memory title all call it.
+pub fn first_input(text: &str) -> (String, Source) {
+    let shown = shown_input(text);
+    if rust_cli_base::js::string::trim(&shown).is_empty() {
+        return (PLACEHOLDER.to_owned(), Source::Default);
+    }
+    (from_input(&seed(&shown)), Source::FirstInput)
+}
+
 #[cfg(test)]
 #[path = "title_tests.rs"]
 mod tests;
