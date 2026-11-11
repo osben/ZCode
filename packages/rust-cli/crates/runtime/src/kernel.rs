@@ -1,6 +1,7 @@
 //! 内核会话 API 的本地实现（[`Kernel`]）：建会话、打开会话（冷加载）、列出会话。
 
 use super::*;
+use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::permission::ExecutionState;
 
 #[async_trait]
@@ -37,40 +38,17 @@ impl Kernel for LocalKernel {
         request: CreateSession,
         start: StartSource,
     ) -> Result<SessionId, KernelError> {
-        // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
-        // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
-        self.defaults.selection.settled().await;
-        let id = request.id.unwrap_or_else(|| self.ports.ids.session());
-        let meta = SessionMeta {
-            id: id.clone(),
-            kind: SessionKind::Interactive,
-            parent: None,
-            workspace: request.workspace,
-            title: String::new(),
-            // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
-            trace: TraceId::new(id.as_str()),
-            created_at_ms: self.ports.clock.now_ms(),
-        };
-        self.ports.store.create(meta.clone()).await?;
-        // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
-        let execution = ExecutionState::from_parts(request.mode, request.plan);
-        let batch = FactBatch {
-            owner_epoch: OwnerEpoch::LOCAL,
-            command: None,
-            facts: vec![
-                Fact::ModelSelected {
-                    selection: request.selection.clone(),
-                },
-                Fact::ExecutionChanged { state: execution },
-            ],
-            turn: None,
-        };
-        self.ports.store.commit(&id, batch).await?;
-        self.start(
-            SessionState::created(meta, request.selection, execution, start),
-            Opened::Created,
-        );
-        Ok(id)
+        self.create_in(request, start, None).await
+    }
+
+    async fn create_session_in_worktree(
+        &self,
+        request: CreateSession,
+        worktree: EnvPath,
+        branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        self.create_in(request, StartSource::Startup, Some((worktree, branch)))
+            .await
     }
 
     async fn open_session_as(
@@ -363,5 +341,65 @@ impl Kernel for LocalKernel {
         workspace: &rust_cli_kernel_api::env::WorkspaceRef,
     ) -> Vec<rust_cli_kernel_api::user_command::UserCommand> {
         self.ext.user_commands().commands(workspace).await
+    }
+}
+
+impl LocalKernel {
+    /// Creates a session; with `execution` (fork execution worktree) the row keeps the requested workspace and the
+    /// session starts in the worktree.
+    async fn create_in(
+        &self,
+        request: CreateSession,
+        start: StartSource,
+        execution: Option<(EnvPath, Option<String>)>,
+    ) -> Result<SessionId, KernelError> {
+        // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
+        // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
+        self.defaults.selection.settled().await;
+        let id = request.id.unwrap_or_else(|| self.ports.ids.session());
+        let mut meta = SessionMeta {
+            id: id.clone(),
+            kind: SessionKind::Interactive,
+            parent: None,
+            workspace: request.workspace,
+            title: String::new(),
+            // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
+            trace: TraceId::new(id.as_str()),
+            created_at_ms: self.ports.clock.now_ms(),
+        };
+        self.ports.store.create(meta.clone()).await?;
+        if let Some((worktree, branch)) = execution {
+            if let Err(error) = self
+                .ports
+                .store
+                .set_execution_worktree(&id, &worktree, branch.as_deref())
+                .await
+            {
+                if let Err(cleanup) = self.ports.store.delete(&id).await {
+                    tracing::warn!(error = %cleanup, "removing the refused worktree session failed");
+                }
+                return Err(error.into());
+            }
+            meta.workspace.root = worktree;
+        }
+        // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
+        let execution = ExecutionState::from_parts(request.mode, request.plan);
+        let batch = FactBatch {
+            owner_epoch: OwnerEpoch::LOCAL,
+            command: None,
+            facts: vec![
+                Fact::ModelSelected {
+                    selection: request.selection.clone(),
+                },
+                Fact::ExecutionChanged { state: execution },
+            ],
+            turn: None,
+        };
+        self.ports.store.commit(&id, batch).await?;
+        self.start(
+            SessionState::created(meta, request.selection, execution, start),
+            Opened::Created,
+        );
+        Ok(id)
     }
 }

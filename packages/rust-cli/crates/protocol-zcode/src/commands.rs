@@ -371,16 +371,28 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             .insert(id.clone(), followup);
     }
     let workspace = payload.workspace_id.as_deref().unwrap_or_default();
-    let created = server
-        .kernel
-        .create_session(CreateSession {
-            id: Some(id.clone()),
-            workspace: server.workspace(workspace),
-            selection: chosen,
-            mode: permission,
-            plan,
-        })
-        .await;
+    let request = CreateSession {
+        id: Some(id.clone()),
+        workspace: server.workspace(workspace),
+        selection: chosen,
+        mode: permission,
+        plan,
+    };
+    // Fork: the direct route starts the session in its worktree (SessionStart included); the row keeps the
+    // parent workspace, and opening it below picks up the stored worktree facts.
+    let created = match &payload.execution_worktree {
+        Some(requested) => {
+            server
+                .kernel
+                .create_session_in_worktree(
+                    request,
+                    rust_cli_kernel_api::env::EnvPath::new(&requested.path),
+                    requested.branch_name.clone(),
+                )
+                .await
+        }
+        None => server.kernel.create_session(request).await,
+    };
     let refused = |message: String| {
         Ack::refused(
             &envelope.command_id,
@@ -398,12 +410,6 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         Ok(live) => live,
         Err(error) => return refused(error.to_string()),
     };
-    // Fork: the direct route runs the new session in its worktree before the first input.
-    if let Some(requested) = &payload.execution_worktree
-        && let Err(ack) = crate::worktree::enter_new(server, &live, envelope, &id, requested).await
-    {
-        return *ack;
-    }
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
     if let Some(text) = first.text.clone() {

@@ -4,10 +4,11 @@
 //! - The prepared worktree is a marker in Node's record (`session_entry`, type `v4/worktree_preparation`, data
 //!   `{attemptId?, branchName, targetPath, baseBranch?, status, failureMessage?}`), owned here. While it is not
 //!   active the snapshot meta and the sessions-index row carry `worktreePreparation`.
-//! - The execution worktree is the Node `session` row's `execution_directory` / `execution_branch`, written once by
-//!   the activation or the direct route through `StoreQueries::set_execution_worktree`. The session actor owns the
-//!   cwd (`Command::SetExecutionRoot`); a cold open runs in the stored worktree (node-store), listed under the row's
-//!   `directory`.
+//! - The execution worktree is the Node `session` row's `execution_directory` / `execution_branch`, written once
+//!   through `StoreQueries::set_execution_worktree`: by the activation here, or by `Kernel::create_session_in_worktree`
+//!   on the direct route. The session actor owns the cwd: the root it starts with (direct route, cold open) or
+//!   `Command::SetExecutionRoot` (activation); a cold open runs in the stored worktree (node-store), listed under the
+//!   row's `directory`.
 
 use std::sync::Arc;
 
@@ -541,34 +542,6 @@ pub async fn check_directory(
             0,
         )));
     }
-    Ok(())
-}
-
-/// Fork: the direct route (`createSession` with `executionWorktree`, no `preparedSessionId`): the new session runs
-/// in the worktree before its first input. A failure removes the new session, so none is left in the parent.
-pub async fn enter_new(
-    server: &Server,
-    live: &Arc<Bridged<Live>>,
-    envelope: &Envelope,
-    id: &SessionId,
-    requested: &Requested,
-) -> Result<(), Box<Ack>> {
-    if let Err(message) = enter(server, live, envelope, id, requested).await {
-        if let Err(error) = server.kernel.delete_session(id).await {
-            tracing::warn!(event = "protocol.worktree.cleanup_failed", error = %error, "removing the worktree session failed");
-        }
-        return Err(Box::new(failed(envelope, &message, 0)));
-    }
-    let facts = Facts {
-        preparing: None,
-        execution: Some(Execution {
-            path: requested.path.clone(),
-            branch: requested.branch_name.clone(),
-            missing: false,
-        }),
-    };
-    let sink = live.sink.clone();
-    live.run(Box::pin(async move { sink.set_worktree(facts).await }));
     Ok(())
 }
 

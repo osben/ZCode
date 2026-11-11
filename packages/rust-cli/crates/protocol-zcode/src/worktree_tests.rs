@@ -334,6 +334,22 @@ impl rust_cli_kernel_api::session_api::Kernel for WorktreeKernel {
         Ok(id)
     }
 
+    async fn create_session_in_worktree(
+        &self,
+        request: CreateSession,
+        worktree: EnvPath,
+        branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        let id = self.create_session(request).await?;
+        self.store
+            .set_execution_worktree(&id, &worktree, branch.as_deref())
+            .await
+            .map_err(|error| KernelError::Failed {
+                message: error.to_string(),
+            })?;
+        Ok(id)
+    }
+
     async fn open_session(
         &self,
         session: &SessionId,
@@ -613,15 +629,18 @@ async fn the_direct_route_runs_a_new_session_in_the_worktree() {
     .await;
     assert_eq!(ack.status, Status::Accepted, "{ack:?}");
     let id = SessionId::new("s-direct");
-    let sent = kernel.sent.lock().unwrap().clone();
-    assert_eq!(
-        sent,
-        vec![("c2:worktree".to_owned(), format!("SetExecutionRoot {path}"))]
-    );
+    // The session is created in the worktree, so nothing has to move it afterwards.
+    assert!(kernel.sent.lock().unwrap().is_empty());
     let execution = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
     assert_eq!(execution.directory.as_str(), "/w");
+    assert_eq!(execution.path.as_str(), path);
     let live = server.bridge.get(&id).unwrap();
-    assert_eq!(live.sink.summary()["workspaceId"], "/w");
+    let summary = live.sink.summary();
+    assert_eq!(summary["workspaceId"], "/w");
+    assert_eq!(
+        summary["executionWorktree"],
+        json!({"path": path, "branchName": "feat/d"})
+    );
 }
 
 /// A stored worktree session (as the Node agent leaves one) whose directory was deleted: the cold row and the

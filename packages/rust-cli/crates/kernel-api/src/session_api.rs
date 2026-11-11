@@ -579,6 +579,20 @@ pub trait Kernel: Send + Sync {
         self.create_session(request).await
     }
 
+    /// Fork: a new session that runs in an execution worktree from its first moment (specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). `request.workspace` is the stored workspace the session is listed under; the worktree
+    /// is stored before the session starts, so SessionStart and every turn run in it. A kernel without it refuses.
+    async fn create_session_in_worktree(
+        &self,
+        _request: CreateSession,
+        _worktree: crate::env::EnvPath,
+        _branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "execution worktree sessions".to_owned(),
+        })
+    }
+
     /// 同 [`Kernel::open_session`]，另给 SessionStart 的来源（刚 fork 出的会话是 `Fork`）。
     /// 会话已经打开时来源不起作用。
     async fn open_session_as(
