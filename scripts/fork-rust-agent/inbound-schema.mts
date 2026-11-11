@@ -23,7 +23,16 @@ const { z } = createRequire(
 )("zod") as typeof import("zod");
 
 const current = await readFile(schemaPath, "utf8");
-const data = JSON.parse(current) as { commands: Record<string, unknown> };
+const data = JSON.parse(current) as {
+  commands: Record<string, unknown>;
+  methods: { "v4/command": { properties: { type: { enum: string[] } } } };
+};
+// The envelope's `type` enum gates `v4/command` before the payload is checked: a fork command missing there is
+// refused as invalid params. Fork commands are appended after the upstream order.
+const commandTypes = data.methods["v4/command"].properties.type.enum;
+for (const name of FORK_COMMANDS) {
+  if (!commandTypes.includes(name)) commandTypes.push(name);
+}
 for (const name of FORK_COMMANDS) {
   data.commands[name] = z.toJSONSchema(commandPayloadSchemas[name], {
     io: "input",

@@ -303,7 +303,8 @@
             "amendWorkflowRunSettings",
             "renameSession",
             "deleteSession",
-            "discardSharedContext"
+            "discardSharedContext",
+            "updateWorktreePreparation"
           ]
         },
         "payload": {},

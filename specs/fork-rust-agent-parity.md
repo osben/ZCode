@@ -508,7 +508,7 @@ The agent never runs `git worktree add`: the renderer's worktree service creates
 
 The Host gate no longer refuses `createSession` with `worktreePreparation`/`executionWorktree` or `updateWorktreePreparation` in Rust mode.
 
-**Inbound schema:** the `createSession` and `updateWorktreePreparation` entries of `protocol-zcode/schema/inbound.json` are generated from the App's zod schemas by `scripts/fork-rust-agent/inbound-schema.mts` (`--check` fails when they are out of date), the same conversion the upstream generator uses. `inbound.rs` mirrors the `createSessionPayloadSchema` superRefine rules. Without these entries `Inbound::command` answered `unknown command type` to every update.
+**Inbound schema:** the `createSession` and `updateWorktreePreparation` entries of `protocol-zcode/schema/inbound.json` are generated from the App's zod schemas by `scripts/fork-rust-agent/inbound-schema.mts` (`--check` fails when they are out of date), the same conversion the upstream generator uses. The script also appends the fork commands to the `v4/command` envelope's `type` enum, which is checked before the payload. `inbound.rs` mirrors the `createSessionPayloadSchema` superRefine rules. Without these entries every update was refused, first as invalid params (`/type`), then as `unknown command type`.
 
 **Persisted shape (shared with Node, no new migration):**
 
@@ -605,6 +605,7 @@ The `worktreePreparation` override replaces branch, path, base and attempt. Node
 **Tests:**
 
 - `cli/tests/worktree_resume.rs`: a session stored the Node way (node-store `testing` `node_worktree_session`: migration `9002` DDL and Node's column write) resumed with a real `zcode-rs -p --resume` from the parent checkout. `pwd` is the worktree and `Write x.txt` lands there. With the worktree deleted, `pwd` fails, `Write` is refused, the parent gets no file and the worktree is not recreated. Before this port the cold open loaded `directory` and ran in the parent.
+- `cli/tests/worktree_commands.rs`: a real `zcode-rs app-server --stdio` process gets `v4/command` requests: `createSession` with `worktreePreparation`, then `updateWorktreePreparation` failed and cancelled (accepted), then a late update (refused).
 - `cli/tests/worktree_resume.rs` also sends an `Edit` with an empty `old_string`: refused with the worktree gone, and the worktree is not recreated.
 - protocol-zcode `worktree_tests.rs`: the prepare → update → activate flow, the refusals, the direct route, and a stored worktree that is gone (cold row and live summary carry `executionWorktreeMissing`, listed under the parent). Through `commands::command` with real envelopes: `updateWorktreePreparation` failed and cancelled, a schema refusal, a superRefine refusal, and a submission activation with a worktree. The activation admits `firstInput` after the move and the config, with a SessionStart message already in the history; a refused move stores nothing and a retry into another worktree leaves the actor and the columns together.
 - session `workspace_tests.rs`: a prepared session runs SessionStart only after `SetExecutionRoot`, with the worktree as its workspace.
