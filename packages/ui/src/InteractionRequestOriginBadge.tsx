@@ -1,6 +1,5 @@
 import type { ZCodeInteractionRequestOrigin } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
-import { Badge } from "@/components/ui/badge.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 export function InteractionRequestOriginBadge({
@@ -34,13 +33,15 @@ export function InteractionRequestOriginBadge({
         );
 
   return (
-    <Badge
-      variant="outline"
+    <span
       title={title}
       data-interaction-origin-badge="subagent"
-      className={cn("max-w-40 align-baseline text-ui-base truncate", className)}
+      className={cn(
+        "block w-full min-w-0 basis-full whitespace-normal [overflow-wrap:anywhere] text-ui-base font-normal text-foreground-subtle",
+        className,
+      )}
     >
       {label}
-    </Badge>
+    </span>
   );
 }

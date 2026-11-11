@@ -362,7 +362,7 @@ export function ProjectComposerMenu({
         data-testid="composer-project-menu"
         align="start"
         side="top"
-        className="flex w-72 max-w-[calc(100vw-2rem)] flex-col p-0"
+        className="flex w-72 max-w-[calc(100vw-2rem)] flex-col p-0 [app-region:no-drag]"
       >
         <div
           data-slot="command-input-wrapper"

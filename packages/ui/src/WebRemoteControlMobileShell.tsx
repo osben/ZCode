@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { type WebRemoteControlMobileNavigationIntent } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
@@ -15,22 +15,31 @@ interface WebRemoteControlMobileHistoryState {
   zcodeMobilePage?: WebRemoteControlMobilePage;
 }
 
-export function isWebRemoteControlMobileChatHistoryState(
+export function isWebRemoteControlMobileHistoryState(
   state: unknown,
+  page: WebRemoteControlMobilePage,
 ): state is WebRemoteControlMobileHistoryState {
   return (
     typeof state === "object" &&
     state !== null &&
-    (state as WebRemoteControlMobileHistoryState).zcodeMobilePage === "chat"
+    "zcodeMobilePage" in state &&
+    (state as WebRemoteControlMobileHistoryState).zcodeMobilePage === page
   );
 }
 
-function pushWebRemoteControlMobileChatHistory() {
+// 进入聊天页时标记历史条目：已是 home 标记的条目就原地改为 chat，否则 push 一条 chat 条目。
+function ensureWebRemoteControlMobileChatHistory() {
   if (typeof window === "undefined") {
     return;
   }
 
-  if (isWebRemoteControlMobileChatHistoryState(window.history.state)) {
+  const state = window.history.state;
+  if (isWebRemoteControlMobileHistoryState(state, "chat")) {
+    return;
+  }
+
+  if (isWebRemoteControlMobileHistoryState(state, "home")) {
+    window.history.replaceState({ ...state, zcodeMobilePage: "chat" }, "");
     return;
   }
 
@@ -48,7 +57,7 @@ function resolveInitialWebRemoteControlMobilePage(
   // 这里复用点击进入聊天页时写入的 history state，避免刷新后只恢复 task 选中态却回到任务首页。
   if (
     typeof window !== "undefined" &&
-    isWebRemoteControlMobileChatHistoryState(window.history.state)
+    isWebRemoteControlMobileHistoryState(window.history.state, "chat")
   ) {
     return "chat";
   }
@@ -106,19 +115,15 @@ export function WebRemoteControlMobileShell({
 
   const navigateToChat = useCallback(() => {
     setCurrentPage("chat");
-    pushWebRemoteControlMobileChatHistory();
   }, []);
 
   const navigateHome = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      isWebRemoteControlMobileChatHistoryState(window.history.state)
-    ) {
-      window.history.back();
-      return;
-    }
-
     setCurrentPage("home");
+    // 回到首页时把当前聊天条目改标为 home（不 history.back()）；popstate 按条目标记决定页面。
+    const state = typeof window !== "undefined" ? window.history.state : null;
+    if (isWebRemoteControlMobileHistoryState(state, "chat")) {
+      window.history.replaceState({ ...state, zcodeMobilePage: "home" }, "");
+    }
   }, []);
 
   useEffect(() => {
@@ -126,8 +131,8 @@ export function WebRemoteControlMobileShell({
     if (initialNavigationIntent === "chat") setCurrentPage("chat");
   }, [initialNavigationIntent]);
 
-  useEffect(() => {
-    if (isMobileViewport && currentPage === "chat") pushWebRemoteControlMobileChatHistory();
+  useLayoutEffect(() => {
+    if (isMobileViewport && currentPage === "chat") ensureWebRemoteControlMobileChatHistory();
   }, [isMobileViewport, currentPage]);
 
   useEffect(() => {
@@ -136,8 +141,7 @@ export function WebRemoteControlMobileShell({
     }
 
     const handlePopState = (event: PopStateEvent) => {
-      const nextPage = isWebRemoteControlMobileChatHistoryState(event.state) ? "chat" : "home";
-      setCurrentPage(nextPage);
+      setCurrentPage(isWebRemoteControlMobileHistoryState(event.state, "chat") ? "chat" : "home");
     };
 
     window.addEventListener("popstate", handlePopState);
