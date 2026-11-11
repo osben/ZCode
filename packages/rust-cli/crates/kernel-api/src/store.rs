@@ -368,6 +368,10 @@ pub struct SessionSummary {
     pub created_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_outcome: Option<String>,
+    /// Fork: the session this one was forked from (Node cold summary `parentSessionId`). Without it the Host admits a
+    /// cold fork as an ordinary session instead of inheriting its parent's project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

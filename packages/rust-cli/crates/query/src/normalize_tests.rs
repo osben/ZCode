@@ -821,3 +821,76 @@ fn separate_user_messages_leave_tool_results_unfolded() {
         "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
     );
 }
+
+fn tool_result(id: &str, tool_use: &str, value: &str) -> Message {
+    Message::User(UserMessage {
+        id: MessageId::new(id),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: ToolUseId::new(tool_use),
+            content: vec![ToolResultContent::Text {
+                text: value.to_owned(),
+            }],
+            is_error: false,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new("m1"),
+        },
+    })
+}
+
+/// Fork: the executor records each tool result as its own user message. With separate user messages the results of
+/// one reply still travel together, so pairing keeps every real result instead of replacing the later ones with
+/// missing-result errors.
+#[test]
+fn separate_user_messages_keep_parallel_tool_results_together() {
+    let call = |id: &str| ContentBlock::ToolUse {
+        id: ToolUseId::new(id),
+        name: "Read".to_owned(),
+        input: Value::Null,
+    };
+    let messages = [
+        human("u1", "go"),
+        assistant("m1", vec![call("toolu_1"), call("toolu_2")]),
+        tool_result("r1", "toolu_1", "one"),
+        tool_result("r2", "toolu_2", "two"),
+        attachment(
+            "a1",
+            "total_tokens_reminder",
+            "<total_tokens>9 tokens left</total_tokens>",
+        ),
+    ];
+    let api = normalize(&messages, &SEPARATE);
+    assert_eq!(api.len(), 4, "{api:#?}");
+    let results: Vec<(String, Vec<String>)> = api[2]
+        .content
+        .iter()
+        .map(|item| match &item.block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } => (
+                tool_use_id.as_str().to_owned(),
+                content
+                    .iter()
+                    .map(|part| match part {
+                        ToolResultContent::Text { text } => text.clone(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect(),
+            ),
+            other => panic!("not a tool result: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        results,
+        [
+            ("toolu_1".to_owned(), vec!["one".to_owned()]),
+            ("toolu_2".to_owned(), vec!["two".to_owned()]),
+        ]
+    );
+    assert_eq!(
+        one_text(&api[3]),
+        "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
+    );
+}

@@ -95,6 +95,7 @@ impl LocalKernel {
                     updated_at_ms: meta.created_at_ms,
                     created_at_ms: meta.created_at_ms,
                     last_outcome: None,
+                    parent: meta.parent,
                 },
                 activity: Some(activity),
                 last_reply,

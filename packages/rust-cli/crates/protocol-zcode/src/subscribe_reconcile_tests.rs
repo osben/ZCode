@@ -107,6 +107,7 @@ fn a_cold_row_reports_the_stored_creation_and_outcome() {
             updated_at_ms: 3_000,
             created_at_ms,
             last_outcome: outcome.map(str::to_owned),
+            parent: None,
         },
         activity: None,
         last_reply: None,
@@ -121,4 +122,29 @@ fn a_cold_row_reports_the_stored_creation_and_outcome() {
     let unfinished = super::cold_row("/work/a", &session(None, 0));
     assert!(unfinished.get("lastOutcome").is_none());
     assert_eq!(unfinished["createdAt"], json!(3_000));
+}
+
+/// Fork: a stored fork carries its parent like Node's cold summary, so the Host admits it into the parent's project.
+#[test]
+fn a_cold_fork_row_carries_its_parent() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::panels::WorkspaceSession;
+    use rust_cli_kernel_api::store::SessionSummary;
+
+    let session = |parent: Option<&str>| WorkspaceSession {
+        summary: SessionSummary {
+            id: SessionId::new("sess_2"),
+            title: "Forked".to_owned(),
+            updated_at_ms: 3_000,
+            created_at_ms: 1_000,
+            last_outcome: None,
+            parent: parent.map(SessionId::new),
+        },
+        activity: None,
+        last_reply: None,
+    };
+    let fork = super::cold_row("/work/a", &session(Some("sess_1")));
+    assert_eq!(fork["parentSessionId"], json!("sess_1"));
+    let root = super::cold_row("/work/a", &session(None));
+    assert!(root.get("parentSessionId").is_none());
 }

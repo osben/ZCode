@@ -139,6 +139,7 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
             updated_at_ms: u64::try_from(row.time_updated).unwrap_or(0),
             created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
             last_outcome: row.last_outcome,
+            parent: row.parent_id.map(SessionId::new),
         })
         .collect())
 }
