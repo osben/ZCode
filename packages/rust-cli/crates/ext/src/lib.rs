@@ -12,6 +12,7 @@
 
 #[cfg(test)]
 mod clock_tests;
+mod incognito;
 pub mod mcp;
 pub mod plugins;
 pub mod skills;
@@ -36,8 +37,10 @@ use rust_cli_kernel_api::orchestration::{
 use rust_cli_kernel_api::tool::Tool;
 use rust_cli_kernel_api::tool_names::WAIT_FOR_MCP_SERVERS;
 
+pub use incognito::IncognitoTools;
 pub use mcp::{McpManager, McpScope, McpServer, McpServers, McpSettings};
 pub use plugins::{Plugin, PluginAgentFile, PluginSources, Plugins};
+use rust_cli_kernel_api::incognito::{IncognitoKey, IncognitoProfiles, IncognitoToolGate};
 use rust_cli_kernel_api::tool_names;
 pub use skills::{Skill, SkillCatalog, SkillCommands, SkillSource, SkillTool};
 
@@ -59,6 +62,8 @@ pub struct ExtPorts {
     pub spawner: Spawner,
     /// MCP 等待的截止时刻（ext.md §3.3.1、§3.8）。
     pub clock: Arc<dyn Clock>,
+    /// Fork: the sessions' incognito profiles (the runtime's one owner).
+    pub incognito: IncognitoProfiles,
 }
 
 /// 入口层给出的配置快照。
@@ -82,6 +87,7 @@ pub struct Ext {
     commands: Arc<SkillCommands>,
     mcp: Arc<McpManager>,
     registry: Arc<ExtRegistry>,
+    incognito: IncognitoTools,
     /// 插件目录（`--plugin-dir` 与入口给的候选，都在本机）。
     files: Arc<dyn Files>,
     config: ExtConfig,
@@ -107,17 +113,21 @@ impl Ext {
         if let Some(machines) = ports.machines.clone() {
             mcp.set_machines(machines);
         }
+        skills.set_incognito(ports.incognito.clone());
+        let incognito = IncognitoTools::new(ports.incognito, mcp.clone());
         let registry = Arc::new(ExtRegistry {
             base,
             skill: skill_tool,
             wait: Arc::new(mcp::WaitForMcpServers::new(Arc::downgrade(&mcp))),
             mcp: mcp.clone(),
+            incognito: incognito.clone(),
         });
         Self {
             skills,
             commands,
             mcp,
             registry,
+            incognito,
             files: ports.files,
             config,
         }
@@ -139,7 +149,13 @@ impl Ext {
         Arc::new(ExtListings {
             skills: self.skills.clone(),
             mcp: self.mcp.clone(),
+            incognito: self.incognito.clone(),
         })
+    }
+
+    /// Fork: the incognito tool gate (the executor's call-time check and ToolSearch read it).
+    pub fn incognito_tools(&self) -> Arc<dyn IncognitoToolGate> {
+        Arc::new(self.incognito.clone())
     }
 
     pub fn skills(&self) -> &Arc<SkillCatalog> {
@@ -192,6 +208,7 @@ struct ExtRegistry {
     /// 时由主循环去掉（tools-more.md §3.3 第 4 条）。
     wait: Arc<dyn Tool>,
     mcp: Arc<McpManager>,
+    incognito: IncognitoTools,
 }
 
 impl ExtRegistry {
@@ -238,6 +255,20 @@ impl ToolRegistry for ExtRegistry {
 
     /// MCP 工具、连接中的服务器与 instructions 在同一把锁里取（query.md §1.3，修复线 F36）。
     fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
+        if let Some(profile) = self.incognito.profile(session) {
+            // Fork: an incognito session sees only the servers and tools its profile keeps.
+            let (tools, view) = self
+                .mcp
+                .snapshot_where(|scope| incognito::keeps_scope(&profile, scope));
+            let wait = !view.pending().is_empty()
+                || (self.mcp.declared(session) && !view.servers.is_empty());
+            let mut tools = self.assemble(wait, tools);
+            tools.retain(|tool| !self.incognito.hides(session, tool.as_ref()));
+            return ToolSnapshot {
+                tools,
+                mcp: Some(view),
+            };
+        }
         let (tools, view) = self.mcp.snapshot();
         let wait = !view.pending().is_empty() || self.mcp.declared(session);
         ToolSnapshot {
@@ -254,6 +285,7 @@ impl ToolRegistry for ExtRegistry {
 struct ExtListings {
     skills: Arc<SkillCatalog>,
     mcp: Arc<McpManager>,
+    incognito: IncognitoTools,
 }
 
 #[async_trait]
@@ -267,9 +299,22 @@ impl ListingSource for ExtListings {
         request: &ContextRequest,
         history: &[Message],
     ) -> Result<Listings, OrchestrationError> {
+        // Fork: without skills the listing is empty; the Skill tool stays (Node drops only the listing).
+        if self
+            .incognito
+            .profiles()
+            .excludes(&request.session, IncognitoKey::Skills)
+        {
+            return Ok(Listings::default());
+        }
         let skills = self
             .skills
-            .listing(&request.workspace, history, &request.selection.model)
+            .listing(
+                &request.workspace,
+                Some(&request.session),
+                history,
+                &request.selection.model,
+            )
             .await;
         Ok(Listings {
             skills,
@@ -292,7 +337,10 @@ impl ListingSource for ExtListings {
         request: &ContextRequest,
         input: &str,
     ) -> Result<Vec<String>, OrchestrationError> {
-        Ok(self.skills.mentions(&request.workspace, input).await)
+        Ok(self
+            .skills
+            .mentions(&request.workspace, Some(&request.session), input)
+            .await)
     }
 
     /// 有工具快照时用快照里的（与工具同一时点，query.md §1.3）；否则取现在的。
@@ -300,10 +348,18 @@ impl ListingSource for ExtListings {
         &self,
         request: &ContextRequest,
     ) -> Result<Vec<ListingEntry>, OrchestrationError> {
-        Ok(match &request.mcp {
-            Some(view) => view.instructions.clone(),
-            None => self.mcp.instructions(),
-        })
+        Ok(
+            match (&request.mcp, self.incognito.profile(&request.session)) {
+                (Some(view), _) => view.instructions.clone(),
+                (None, None) => self.mcp.instructions(),
+                (None, Some(profile)) => {
+                    self.mcp
+                        .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
+                        .1
+                        .instructions
+                }
+            },
+        )
     }
 }
 

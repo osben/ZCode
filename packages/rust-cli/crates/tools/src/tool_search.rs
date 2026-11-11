@@ -45,6 +45,8 @@ const DEFAULT_MAX_RESULTS: usize = 5;
 pub struct ToolCatalog {
     registry: Late<Weak<dyn ToolRegistry>>,
     setting: ToolSearchSetting,
+    /// Fork: the incognito tool gate; ToolSearch finds only the tools the calling session keeps.
+    incognito: Late<Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>>,
 }
 
 impl ToolCatalog {
@@ -53,7 +55,27 @@ impl ToolCatalog {
         Self {
             registry: Late::new(),
             setting,
+            incognito: Late::new(),
         }
+    }
+
+    /// Fork: bound once by the runtime next to [`Self::bind`].
+    pub fn bind_incognito(&self, gate: Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>) {
+        if self.incognito.bind(gate).is_err() {
+            tracing::error!("the tool catalog's incognito gate was bound twice; keeping the first");
+        }
+    }
+
+    /// Fork: [`Self::tools`] without the tools `session`'s incognito profile removes.
+    fn tools_of(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<Vec<Arc<dyn Tool>>, String> {
+        let mut tools = self.tools()?;
+        if let Some(gate) = self.incognito.get() {
+            tools.retain(|tool| !gate.hides(session, tool.as_ref()));
+        }
+        Ok(tools)
     }
 
     /// 建好主线程注册表后绑定一次；再绑定是组装的缺陷，留着第一个、记 error 日志（工作线 F131：以前静默忽略）。
@@ -300,7 +322,7 @@ impl Tool for ToolSearchTool {
             .map_or(DEFAULT_MAX_RESULTS, |max| max as usize);
         let all = self
             .catalog
-            .tools()
+            .tools_of(&context.session)
             .map_err(|message| ToolError::Failed { message })?;
         let select = select_query(query);
         // 先照常搜；`select:` 时记下找不到的名字。
@@ -329,7 +351,7 @@ impl Tool for ToolSearchTool {
                 Some(_) => (missing.join(" "), Some(missing_list.as_str())),
                 None => (query.to_owned(), None),
             };
-            let tools = || self.catalog.tools();
+            let tools = || self.catalog.tools_of(&context.session);
             let search = |tools: &[Arc<dyn Tool>]| Self::search(query, list, max_results, tools);
             let found =
                 tool_search_mcp::retry(mcp.as_ref(), &all, &text_for, tools, search, &context)

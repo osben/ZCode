@@ -219,13 +219,14 @@ impl LocalKernel {
         let operations = Operations::new(ports.ids.generation(), ports.ids.clone());
         // 各能力拿会话主 env 的端口：规则文件、记忆、插件、skills 与 git 都跟着主 env（deployment.md §8、§10）。
         let machine = ports.environments.primary_machine();
-        let hooks = assemble::hooks(&ports, &operations);
+        // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
+        let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+        let hooks = assemble::hooks(&ports, &operations, &incognito);
         let traits = SurfaceTraits::new(
             matches!(context.surface, Surface::Print),
             extensions.streaming_input,
         );
         let late = Arc::new(late::LateCompactor::default());
-        let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
         let gate = assemble::gate(&ports, extensions.node_desktop);
         let base = assemble::base_tools(&ports, &defaults, &extensions, (traits, &gate));
         let ext = assemble::ext(
@@ -233,13 +234,16 @@ impl LocalKernel {
             (&gate, scope.spawner()),
             base.registry.clone(),
             (extensions.config.clone(), traits),
+            &incognito,
         );
         // agent 清单（context）与 Agent 工具共用一个目录：插件 agent 设置一次，两处同时看到（L12）。
         let agent_catalog = Arc::new(AgentCatalog::new(
             machine.info().clone(),
             machine.files().clone(),
         ));
-        let assembler = assemble::context(&ports, context, (&agent_catalog, &base, &ext));
+        agent_catalog.set_incognito(incognito.clone());
+        let assembler =
+            assemble::context(&ports, context, (&agent_catalog, &base, &ext), &incognito);
         let sessions = OpenSessions::default();
         let closer = Arc::new(Closer {
             sessions: Arc::downgrade(&sessions),
@@ -267,6 +271,7 @@ impl LocalKernel {
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
         base.catalog.bind(&tools);
+        base.catalog.bind_incognito(ext.incognito_tools());
         assembler.bind_tasks(agents.task_reader());
         let usage = Arc::new(usage::UsageAnalyzer {
             model: ports.model.clone(),

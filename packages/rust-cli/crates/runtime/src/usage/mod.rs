@@ -202,7 +202,7 @@ impl UsageAnalyzer {
         let counter = Counter { per_token };
         let custom: Vec<_> = self
             .agents
-            .definitions(&query.workspace)
+            .definitions_in(&query.workspace, query.session.as_ref())
             .await
             .into_iter()
             .filter(|agent| agent.source != AgentSource::BuiltIn)

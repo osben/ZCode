@@ -51,18 +51,25 @@ impl SurfaceTraits {
 
 /// 会话侧 hooks 与回退事务的执行环境实例：hook 命令在主 env 上跑，与工具共用同一个实例（`operations` 的 generation）。配置快照由入口层
 /// 组装后经 `HookEngine::replace` 交进来（hooks.md §2.2）。
-pub(crate) fn hooks(ports: &Ports, operations: &Operations) -> Arc<HookEngine> {
+pub(crate) fn hooks(
+    ports: &Ports,
+    operations: &Operations,
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+) -> Arc<HookEngine> {
     let machine = ports.environments.primary_machine();
-    Arc::new(HookEngine::new(HookPorts {
-        commands: machine.commands().clone(),
-        shell: machine.shell().clone(),
-        ids: ports.ids.clone(),
-        model: Some(ports.model.clone()),
-        http: None,
-        operations: operations.clone(),
-        // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
-        artifacts: ports.artifacts.clone(),
-    }))
+    Arc::new(
+        HookEngine::new(HookPorts {
+            commands: machine.commands().clone(),
+            shell: machine.shell().clone(),
+            ids: ports.ids.clone(),
+            model: Some(ports.model.clone()),
+            http: None,
+            operations: operations.clone(),
+            // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
+            artifacts: ports.artifacts.clone(),
+        })
+        .with_incognito(incognito.clone()),
+    )
 }
 
 /// 一个判决链实例：工具注册（Edit / Write 的先读规则）与执行管线共用，会话内“总是允许”的规则因此对两边都生效。规则
@@ -185,6 +192,7 @@ pub(crate) fn ext(
     (gate, spawner): (&Arc<PolicyGate>, Spawner),
     base: Arc<dyn ToolRegistry>,
     (config, traits): (rust_cli_ext::ExtConfig, SurfaceTraits),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Arc<Ext> {
     let machine = ports.environments.primary_machine();
     let ext = Arc::new(Ext::new(
@@ -197,6 +205,7 @@ pub(crate) fn ext(
             machines: Some(ports.environments.clone()),
             spawner,
             clock: ports.clock.clone(),
+            incognito: incognito.clone(),
         },
         base,
         config,
@@ -212,6 +221,7 @@ pub(crate) fn context(
     ports: &Ports,
     config: ContextConfig,
     (agent_catalog, tools, ext): (&Arc<AgentCatalog>, &BaseTools, &Ext),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Arc<PromptAssembler> {
     let machine = ports.environments.primary_machine();
     let assembler = PromptAssembler::new(
@@ -234,7 +244,8 @@ pub(crate) fn context(
         rust_cli_tools::FileChanges::new(tools.read_files.clone(), machine.files().clone())
             .with_machines(ports.environments.clone()),
     ))
-    .with_machines(ports.environments.clone());
+    .with_machines(ports.environments.clone())
+    .with_incognito(incognito.clone());
     Arc::new(assembler)
 }
 
@@ -261,7 +272,9 @@ pub(crate) fn query_parts(
         // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
         // （R3，remote-exec.md §20.6）。
         executor: Arc::new(
-            Pipeline::new(gate.clone(), hooks.clone()).with_machines(ports.environments.clone()),
+            Pipeline::new(gate.clone(), hooks.clone())
+                .with_machines(ports.environments.clone())
+                .with_incognito(ext.incognito_tools()),
         ),
         compactor: late.clone(),
         hooks: hooks.clone(),

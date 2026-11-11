@@ -128,7 +128,7 @@ impl IncognitoProfiles {
         let mut map = self
             .0
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.insert(session.clone(), profile);
     }
 
@@ -136,7 +136,7 @@ impl IncognitoProfiles {
         let map = self
             .0
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.get(session).copied()
     }
 
@@ -144,6 +144,12 @@ impl IncognitoProfiles {
     pub fn excludes(&self, session: &SessionId, key: IncognitoKey) -> bool {
         excludes(self.get(session).as_ref(), key)
     }
+}
+
+/// Fork: whether a session's incognito profile removes a tool. One predicate for the tool snapshot, ToolSearch and
+/// the call-time check in the executor, so a removed tool can neither be listed nor called.
+pub trait IncognitoToolGate: Send + Sync {
+    fn hides(&self, session: &SessionId, tool: &dyn crate::tool::Tool) -> bool;
 }
 
 #[cfg(test)]

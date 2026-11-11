@@ -108,4 +108,45 @@ async fn plugin_agents_sit_between_built_ins_and_user_agents() {
             ),
         ]
     );
+    // Fork (incognito, specs/fork-rust-agent-parity.md): without custom agents only the built-ins remain; without
+    // plugins the user's agents stay and the plugin's go.
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let profiles = IncognitoProfiles::default();
+    catalog.set_incognito(profiles.clone());
+    let locked = SessionId::new("locked");
+    let no_plugins = SessionId::new("no_plugins");
+    profiles.record(&locked, Some(IncognitoProfile::LOCKDOWN));
+    profiles.record(
+        &no_plugins,
+        Some(IncognitoProfile {
+            custom_agents: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    let sources = |session: SessionId| {
+        let catalog = &catalog;
+        let workspace = workspace.clone();
+        async move {
+            catalog
+                .definitions_in(&workspace, Some(&session))
+                .await
+                .into_iter()
+                .map(|agent| (agent.agent_type, agent.source))
+                .collect::<Vec<_>>()
+        }
+    };
+    let builtins_only = sources(locked).await;
+    assert_eq!(builtins_only.len(), 3);
+    assert!(
+        builtins_only
+            .iter()
+            .all(|(_, source)| *source == AgentSource::BuiltIn)
+    );
+    let without_plugins = sources(no_plugins).await;
+    assert_eq!(
+        &without_plugins[3..],
+        [("kit:review".to_owned(), AgentSource::User)]
+    );
+    assert_eq!(found.len(), sources(SessionId::new("normal")).await.len());
 }

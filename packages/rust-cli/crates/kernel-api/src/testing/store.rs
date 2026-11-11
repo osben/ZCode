@@ -315,7 +315,7 @@ impl SessionStore for MemoryStore {
                 created_at_ms: meta.created_at_ms,
                 last_outcome: None,
                 parent: meta.parent.clone(),
-                incognito: false,
+                incognito: meta.incognito.is_some(),
             })
             .collect())
     }
@@ -378,7 +378,7 @@ impl SessionStore for MemoryStore {
             title: format!("Fork of {title}"),
             trace: parent.trace.clone(),
             created_at_ms: fork.created_at_ms,
-            incognito: None,
+            incognito: parent.incognito,
         };
         let notice = Message::Attachment(AttachmentMessage {
             id: MessageId::new(format!("msg_fork_notice_{}", fork.child)),

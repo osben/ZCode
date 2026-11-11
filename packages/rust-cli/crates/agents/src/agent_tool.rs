@@ -75,7 +75,11 @@ impl AgentTool {
         if self.core.fork && wanted == crate::fork::FORK {
             return Ok(crate::fork::definition());
         }
-        let definitions = self.core.catalog.definitions(&context.workspace).await;
+        let definitions = self
+            .core
+            .catalog
+            .definitions_in(&context.workspace, Some(&context.session))
+            .await;
         if let Some(found) = definitions.iter().find(|agent| agent.agent_type == wanted) {
             return Ok(found.clone());
         }

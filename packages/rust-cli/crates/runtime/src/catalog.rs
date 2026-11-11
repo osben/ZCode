@@ -23,7 +23,7 @@ pub(crate) async fn catalog(usage: &UsageAnalyzer, query: &CatalogQuery) -> Sess
     tools.sort_by(|left, right| model_order(left.as_ref(), right.as_ref()));
     let agents = usage
         .agents
-        .definitions(&query.workspace)
+        .definitions_in(&query.workspace, Some(&query.session))
         .await
         .into_iter()
         .map(|agent| agent.agent_type)
