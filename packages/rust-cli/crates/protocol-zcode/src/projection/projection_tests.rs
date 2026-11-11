@@ -1628,3 +1628,59 @@ fn a_notification_turn_offers_no_fork_while_running_or_interrupted() {
             .is_none()
     );
 }
+
+/// Fork: a quoted input shows its typed text and its quotes apart (Node's `intent.text` and `conversationQuotes`),
+/// cold and queued alike; the stored text keeps the block the model read.
+#[test]
+fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
+    use rust_cli_kernel_api::conversation_quote::{Quote, compose};
+    use rust_cli_kernel_api::session_api::{Delivery, QueuedKind};
+    let quotes = vec![Quote {
+        text: "E2E selection".to_owned(),
+        path: Some("/w/a.ts".to_owned()),
+        sender_name: None,
+        sender_id: None,
+        message_id: None,
+        sent_at: None,
+    }];
+    let quoted = compose("explain this", &quotes);
+    let expected = json!([{"text": "E2E selection", "path": "/w/a.ts"}]);
+    let projection = Projection::from_view(
+        &view(vec![
+            user("msg_u1", &quoted),
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+            user("msg_u2", "plain"),
+            assistant("msg_a2", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs[0]["text"], "explain this");
+    assert_eq!(inputs[0]["conversationQuotes"], expected);
+    assert_eq!(inputs[1]["text"], "plain");
+    assert!(inputs[1].get("conversationQuotes").is_none());
+
+    let mut feed = Feed::new();
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            command: CommandId::new("c1"),
+            text: quoted,
+            delivery: Delivery::Queue,
+            kind: QueuedKind::Text,
+            execution: None,
+        }],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert_eq!(queue["items"][0]["text"], "explain this");
+    assert_eq!(queue["items"][0]["conversationQuotes"], expected);
+}

@@ -122,7 +122,15 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     }
     // 用户调用 skill 的输入是命令标签：临时标题按用户输入的样子（`/<名字> <参数>`，ext.md §2.7）。
     // Fork: an input without text keeps the `default` placeholder for a later real input (Node `persistSession`).
-    let shown = display_input(&texts.join("\n"));
+    // Fork: the title seed is the typed text without its quotes (Node titles the display input); the part keeps them,
+    // as Node's text part does, so either runtime sends them to the model.
+    let typed: Vec<&str> = texts
+        .iter()
+        .map(|&text| {
+            rust_cli_kernel_api::conversation_quote::split(text).map_or(text, |(typed, _)| typed)
+        })
+        .collect();
+    let shown = display_input(&typed.join("\n"));
     let (title, source) = if shown.trim().is_empty() {
         (
             rust_cli_kernel_api::title::PLACEHOLDER.to_owned(),

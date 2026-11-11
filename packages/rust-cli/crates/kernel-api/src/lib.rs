@@ -65,6 +65,7 @@ pub mod clock;
 pub mod compaction;
 pub mod context_usage;
 pub mod controller_services;
+pub mod conversation_quote;
 pub mod cron;
 pub mod cron_store;
 pub mod default_model;

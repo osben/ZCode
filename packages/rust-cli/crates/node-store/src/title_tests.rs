@@ -121,3 +121,39 @@ async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
         .unwrap();
     assert_eq!(row(&test)[..2], ["real question", "first_input"]);
 }
+
+/// Fork: a quoted first input is titled by its typed text (Node titles the display input), while its text part keeps
+/// the quote block for the model, as Node's part does.
+#[tokio::test]
+async fn a_quoted_first_input_is_titled_by_its_typed_text() {
+    use rust_cli_kernel_api::conversation_quote::{Quote, compose};
+    let test = TestStore::new();
+    let session = SessionId::new("sess_quoted");
+    test.store
+        .create(meta("sess_quoted", "/w", ""))
+        .await
+        .unwrap();
+    let quoted = compose(
+        "explain this",
+        &[Quote {
+            text: "E2E selection".to_owned(),
+            path: None,
+            sender_name: None,
+            sender_id: None,
+            message_id: None,
+            sent_at: None,
+        }],
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", &quoted)]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test),
+        [json!("explain this"), json!("first_input"), json!(null)]
+    );
+    let parts = test.rows("select data from part");
+    let text: serde_json::Value = serde_json::from_str(parts[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(text["text"], quoted);
+    assert!(text.get("metadata").is_none());
+}

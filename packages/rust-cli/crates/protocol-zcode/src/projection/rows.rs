@@ -86,6 +86,15 @@ impl Projection {
                 }
                 let mut row = self.base(&turn.id, user.id.as_str(), RowKind::UserInput, now, seq);
                 let text = text_of(&user.content);
+                // Fork: the typed text and the quotes the model read after it (Node's `intent.text` and
+                // `conversationQuotes`).
+                let (text, quotes) = match rust_cli_kernel_api::conversation_quote::split(&text) {
+                    Some((typed, quotes)) => (typed.to_owned(), Some(quotes)),
+                    None => (text, None),
+                };
+                if let Some(quotes) = quotes {
+                    row.insert("conversationQuotes".into(), json!(quotes));
+                }
                 // Fork: rows stored before attachments were file parts kept the reminders in the model text.
                 let shown = rust_cli_kernel_api::prompt_attachment::display(&text).unwrap_or(text);
                 // Fork: a slash command row shows what the user typed (`/goal <objective>`), like Node.
@@ -261,7 +270,15 @@ impl Projection {
                     now,
                     seq,
                 );
-                row.insert("text".into(), json!(prompt));
+                match rust_cli_kernel_api::conversation_quote::split(prompt) {
+                    Some((typed, quotes)) => {
+                        row.insert("text".into(), json!(typed));
+                        row.insert("conversationQuotes".into(), json!(quotes));
+                    }
+                    None => {
+                        row.insert("text".into(), json!(prompt));
+                    }
+                }
                 row.insert("origin".into(), json!("realUser"));
                 row.insert("guided".into(), json!(true));
                 row.insert("sourceCommandId".into(), json!(command));

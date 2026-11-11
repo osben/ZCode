@@ -8,6 +8,7 @@
 //! new session (kernel `ForkFromAssistant`).
 
 use futures_util::StreamExt;
+use rust_cli_kernel_api::conversation_quote::{self, Quote};
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::{ContentBlock, Message};
@@ -51,6 +52,22 @@ struct EditPayload {
     /// Fork: `rewind` also restores the files the rewound turns changed (Node's `workspaceMode`).
     #[serde(default)]
     workspace_mode: Option<String>,
+    /// Fork: the edited input's quotes; absent keeps the stored ones (Node `canonical-intent-replay.ts`).
+    #[serde(default)]
+    conversation_quotes: Option<Vec<Quote>>,
+}
+
+/// The quotes a stored input was sent with (its text ends with their block).
+fn stored_quotes(stored: &[ContentBlock]) -> Vec<Quote> {
+    stored
+        .iter()
+        .find_map(|block| match block {
+            ContentBlock::Text { text } => {
+                conversation_quote::split(text).map(|(_, quotes)| quotes)
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn refused(envelope: &Envelope, code: &str, message: impl Into<String>, revision: u64) -> Ack {
@@ -351,12 +368,20 @@ pub(super) async fn edit(
             revision,
         );
     };
+    let quotes = body
+        .conversation_quotes
+        .unwrap_or_else(|| stored_quotes(&stored));
+    if let Err(reason) = conversation_quote::validate(&quotes) {
+        return refused(envelope, "proto.invalidPayload", reason, revision);
+    }
+    // Node `withConversationQuotes`: the model reads the quotes after the edited text.
+    let text = conversation_quote::compose(&body.new_text, &quotes);
     let session = live.handle.id().clone();
     let content = match edited_content(
         server,
         &session,
         &stored,
-        &body.new_text,
+        &text,
         body.attachments.as_deref(),
     )
     .await
@@ -405,7 +430,7 @@ pub(super) async fn edit(
     }
     let result =
         json!({"type": "editUserQuery", "disposition": "rewind", "sessionId": session.as_str()});
-    match resubmit(live, envelope, &body.new_text, content).await {
+    match resubmit(live, envelope, &text, content).await {
         KernelAck::Accepted { .. } | KernelAck::Duplicate => {
             Ack::accepted(&envelope.command_id, revision, Some(result))
         }
@@ -522,3 +547,7 @@ pub(super) async fn fork(
     let result = json!({"type": "forkAssistant", "sessionId": forked.session.as_str()});
     Ack::accepted(&envelope.command_id, revision, Some(result))
 }
+
+#[cfg(test)]
+#[path = "row_commands_tests.rs"]
+mod tests;

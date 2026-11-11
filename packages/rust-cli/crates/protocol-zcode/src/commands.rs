@@ -73,6 +73,10 @@ struct Input {
     held_queue_disposition: Option<HeldDisposition>,
     /// Fork: the queue the client confirmed, as `queueItemId`s; a changed queue makes the confirmation stale.
     expected_held_queue_item_ids: Option<Vec<String>>,
+    /// Fork: selections quoted from the conversation, sent to the model after the text
+    /// ([`rust_cli_kernel_api::conversation_quote`]).
+    #[serde(default)]
+    conversation_quotes: Vec<rust_cli_kernel_api::conversation_quote::Quote>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -907,6 +911,22 @@ async fn send_text(
             revision,
         );
     }
+    if let Err(reason) =
+        rust_cli_kernel_api::conversation_quote::validate(&input.conversation_quotes)
+    {
+        return Ack::refused(
+            command,
+            Status::Rejected,
+            "proto.invalidPayload",
+            reason,
+            revision,
+        );
+    }
+    // Node `withConversationQuotes`: attachments and the queue see the text the model reads.
+    let typed = rust_cli_kernel_api::conversation_quote::compose(
+        input.text.as_deref().unwrap_or_default(),
+        &input.conversation_quotes,
+    );
     // Checked before any side effect (model or mode change), so a refused input changes nothing.
     let refs = match crate::attachments::parse_refs(&input.attachments) {
         Ok(refs) => refs,
@@ -925,8 +945,7 @@ async fn send_text(
     let content = if refs.is_empty() {
         Vec::new()
     } else {
-        let text = input.text.as_deref().unwrap_or_default();
-        match crate::attachments::content(server, handle.id(), text, refs).await {
+        match crate::attachments::content(server, handle.id(), &typed, refs).await {
             Ok(content) => content,
             Err(error) => {
                 return Ack::refused(
@@ -971,12 +990,11 @@ async fn send_text(
     );
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
-    let text = input.text.unwrap_or_default();
     // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
     let text = if kind == QueuedKind::Goal {
-        format!("/goal {}", text.trim())
+        format!("/goal {}", input.text.as_deref().unwrap_or_default().trim())
     } else {
-        text
+        typed
     };
     let submit = Command::SubmitWith {
         kind,
