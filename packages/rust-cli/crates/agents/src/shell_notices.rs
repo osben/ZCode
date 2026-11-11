@@ -37,7 +37,7 @@ pub(crate) fn watch(core: &Arc<Core>, child: &SessionId, root: &SessionId) {
 /// Runs the forwarder of a claimed entry. It leaves at a safe point (between notices, never between delivering a
 /// notice and acknowledging it) once its entry is no longer wanted, removing the entry in the same section; it also
 /// leaves when it refuses a notice (removed in the section that refused) or when the merged stream ends.
-fn start(core: &Arc<Core>, child: &SessionId, root: &SessionId, started: Started) {
+pub(crate) fn start(core: &Arc<Core>, child: &SessionId, root: &SessionId, started: Started) {
     let Started { id, mut wake } = started;
     let core = core.clone();
     let child = child.clone();
@@ -67,8 +67,11 @@ fn start(core: &Arc<Core>, child: &SessionId, root: &SessionId, started: Started
                     },
                 };
                 // 在看的 monitor 的终态交给它的任务：合成带剩下的行的终态、送出之后由它 ack（agents.md §5.3）。
+                // Fork: not a safe point: the entry stays until the task acknowledged it. The task waits for its event
+                // stream to end first, which follows the command's end that this notice reports.
                 if tagged.notice.kind == rust_cli_kernel_api::env_shell::BackgroundKind::Monitor
-                    && core.monitors.take(&tagged.notice)
+                    && let Some(acked) = core.monitors.take(&tagged.notice)
+                    && acked.await.is_ok()
                 {
                     continue;
                 }
@@ -143,21 +146,35 @@ pub(crate) fn closing(core: &Core, session: &SessionId) {
     core.live.routes(|routes| routes.closing(session));
 }
 
-/// Fork: `sessions` were erased. Every forwarder of theirs stops, and the Hub drops what it held for them, in the
-/// section that marks them erased: a delivery decided after it refuses. Lock order: Live, then Hub.
-pub(crate) fn erased(core: &Core, sessions: &[SessionId]) {
-    let dropped: usize = core.live.routes(|routes| {
+/// Fork: `sessions` were erased. Their live agents end (`routing::end_erased`), every forwarder of theirs stops, and
+/// the Hub drops what it held for them, in the section that marks them erased: a delivery decided after it refuses.
+/// Lock order: Live, then Hub. Owners resumed by an ending run outside the lock.
+pub(crate) fn erased(core: &Arc<Core>, sessions: &[SessionId]) {
+    let (dropped, wakes) = core.live.with_routes(|agents, routes| {
         routes.erased(sessions);
-        sessions
+        let wakes = routing::end_erased(agents, &core.hub, sessions);
+        let dropped: usize = sessions
             .iter()
             .map(|session| core.hub.forget(session))
-            .sum()
+            .sum();
+        (dropped, wakes)
     });
     tracing::info!(
         event = "agents.subagent_notice.erased",
         dropped = dropped as u64,
-        "the notices of erased sessions were dropped"
+        resumed = wakes.len() as u64,
+        "the notices of erased sessions were dropped and their live agents ended"
     );
+    if !wakes.is_empty() {
+        let task_core = core.clone();
+        let _task = core
+            .ports
+            .spawner
+            .clone()
+            .spawn("erased-agents-wake", async move {
+                routing::wake(&task_core, wakes).await;
+            });
+    }
 }
 
 /// 一条命令通知交给拥有子会话 `child` 的子代理（在跑进邮箱、停放就续跑），没有在跑或停放的子代理时交给顶层会话。

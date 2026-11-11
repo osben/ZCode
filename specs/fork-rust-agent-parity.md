@@ -496,8 +496,9 @@ Owners:
 
 - **Delivery (Gap A): still one forwarder per child session, owned by the agents crate.**
   - **Owner: one registry entry per child (`routes::Routes`), kept inside the `Live` state under the same mutex as the agents.** An entry maps a child to its top-level session. Claiming a child that has an entry is a no-op, so no second subscriber can start while the entry exists. The child session actor still never subscribes.
-  - Two places claim children:
+  - Three places claim children:
     - `AgentTool::call`, for a new child, as before. It does not mark the top-level session open: the running agent keeps the child wanted.
+    - `Live::restart` (SendMessage resumes a finished or parked agent), in the same Live section that makes the agent running again. After `/clear` a finished nested child's entry has left; the restart makes it wanted again, so it claims the child again, and SendMessage starts the forwarder before the resumed run, so a command of that run has a consumer from its first turn.
     - The kernel, when it opens a top-level session from the store (`open_session_as`) or creates one (`create_session_as`). It calls `AgentSignals::session_opened(meta)` after every step that can fail or be dropped at an await (load, session rules, restore) and in the same poll as starting the actor, so an open that fails is never open for the agents and nothing has to be undone. For a session that is not `SessionKind::Subagent`, the agents crate marks it open and asks the store for its persisted subagent children (`StoreQueries::subagent_child_ids`: the descendants reached through `subagent_child` rows only), then claims each, with this session as the top-level session.
   - The walk stops at any other task type. A side chat or workflow child runs its own actor and is a top-level session for the agents it spawns, so its subagents are adopted when that session is opened.
   - The forwarder finds the live agent by its child session when a notice arrives, not by an id captured at spawn. If the agent runs or is parked, the notice goes to its mailbox or resumes it, as before. If no live agent owns the child (it finished, or it ran before the restart), the notice goes to the top-level session through `signals::Hub` (`routing::deliver`). The Hub keeps the notice until the session actor commits it, so a forwarder may deliver before the actor subscribes.
@@ -511,13 +512,15 @@ Owners:
     - at a safe point (before waiting for the next notice, or after an ack), when the entry is inactive;
     - when it refuses a notice (`!want`), in the same section that refused it. The notice is not acknowledged and stays pending in the executor's ledger, like T's own notices while T is closed. The next open of T adopts the child again, and the new forwarder reads the pending notice from the ledger;
     - when the merged notice stream ends.
+      A monitor's terminal notice is handed to the monitor's task (`MonitorBoard::take`), which delivers it with the monitor's last lines and acknowledges it itself. That hand-over is not a safe point: the forwarder waits until the monitor's task has acknowledged it, so the entry covers the delegated ack too. The monitor's task first waits for its event stream to end, which follows the command's end that the notice reports. When the monitor's task no longer takes the notice (it had already found the command gone), the forwarder delivers and acknowledges it itself.
       The ack is network IO, so it runs outside the lock. That is safe because the entry outlives the task's last ack. A reopen between a delivery and its ack finds the entry, claims nothing, and makes it active again, so the same task carries on and the notice is not delivered twice.
   - `/clear` and `/resume` close T while its background subagents keep running (agents.md §4.1.2). Their children stay wanted through their running or parked agent and still get their command notices. When such an agent finishes, reconcile wakes its forwarder, which leaves without waiting for a notice.
   - A nested agent that a background subagent spawns after `/clear` is wanted through its own running agent. It does not reopen T, so nothing is acknowledged into the Hub of a closed session.
   - Adoption carries T's open generation and the erase epoch it read the store under. Each claim checks, in the claim's section, that T is still open at that generation (else it claims nothing) and that no erase happened since (else it reads the store again). An adoption that read the store before an erase does not claim an erased child.
   - Hub(T) keeps what it already holds across T's close; T's actor commits it when T reopens.
   - **Erase** (`session/eraseTree`, Node `deleteSessionTree`). Node closes the tree's runtimes; its `ExecutionPort.close` settles their background tasks as cancelled, and late notifications are dropped with an info log (`runtime.background_task_notification.shutdown_dropped`). Rust matches it with `Kernel::sessions_erased(ids)`, which `erase_tree` calls after the rows are gone, with every erased id:
-    - Under the Live lock, the agents crate marks the erased sessions (not open, entries of erased children or roots unwanted, erase epoch bumped) and drops their Hub channels, logging the dropped count at info. A delivery decided after that section refuses; one decided before it is already in the Hub that the erase drops. Even a child a live agent owns is no longer wanted (`erase_tree` refuses only sessions the bridge sees running, not a background subagent of a closed session).
+    - Under the Live lock, the agents crate marks the erased sessions (not open, entries of erased children or roots unwanted, erase epoch bumped), ends their live agents, and drops their Hub channels, logging the dropped count at info.
+    - Ending the live agents of erased children (`routing::end_erased`), as a user stop does and as Node's runtime close cancels an erased session: a running agent is aborted (its run settles later and ends without parking or resuming), a parked one ends now as stopped. Each is marked erased: its ending notice reaches only an owner that is not erased itself, never a Hub, and its leftover mailbox is dropped with its session. So an owner parked on an erased child resumes with the child's stop notice instead of waiting for it forever. A delivery decided after that section refuses; one decided before it is already in the Hub that the erase drops. Even a child a live agent owns is no longer wanted (`erase_tree` refuses only sessions the bridge sees running, not a background subagent of a closed session).
     - Outside the lock, the kernel closes every erased session on every machine with `forget` (`Commands::close_session(id, true)`, as session close does on exit): the children's background commands are cancelled and their pending notices dropped at the source, so a resident remote executor does not keep them. A reconnecting machine gets the close in the background, as in `closing.rs`.
     - This is new behaviour: before, erasing a tree left a subagent child's background command running.
   - Soft delete (`delete_session`) refuses an open session, so the close above already made its unowned children unwanted. A soft-deleted session is not erased; its children's notices stay pending until it is opened again.
@@ -541,10 +544,13 @@ kernel open_session_as / create_session_as(top-level T) ──► agents.session
                                          epoch changed: read the store again
                                          T closed or reopened: claim nothing
 AgentTool::call (new child C) ───────► [Live] claim C (its running agent keeps it wanted)
+SendMessage restarts C's agent ──────► [Live] agent running; claim C (no-op if C has an entry) ──► start, then resume
 kernel Closer::closing(T) ───────────► agents.session_closing(T): [Live] T closed; reconcile
 agent finishes / parks / resumes ────► [Live] state change; reconcile
 protocol erase_tree ──► rows erased ──► kernel.sessions_erased(ids):
-                                       [Live] mark erased, epoch += 1, Hub.forget(ids); reconcile
+                                       [Live] mark erased, epoch += 1, end live agents of erased children
+                                              (parked: stopped now, notice to a non-erased owner; running: abort),
+                                              Hub.forget(ids); reconcile ──► (outside) resume the woken owners
                                        then every machine: close_session(id, forget) ──► commands cancelled,
                                                                                           notices dropped
 
@@ -555,6 +561,8 @@ forwarder(C) ──► [Live] want(C)?
                    no: remove the entry; exit without ack (notice pending on M until T reopens)
                    yes: live agent owning C? running: mailbox | parked: resume
                                              none: Hub(T) ──► T's actor commits ──► Hub ack
+                 (a watched monitor's terminal notice: handed to the monitor's task, which delivers it and acks;
+                  the forwarder waits for that ack before its next safe point)
              ──► (outside the lock) ack to M: notice gone, ended record stays on M
              ──► [Live] entry inactive? remove it and exit : wait for the next notice or a wake
 
@@ -586,6 +594,8 @@ Known limits (stated, not fixed):
 - After the forwarder's ack the notice lives only in the in-memory Hub until the top-level actor commits it. A second restart in between loses it. A live forwarder has the same window.
 - A top-level session that is never opened after a restart leaves its children's remote notices pending, as it leaves its own.
 - A delivery decided just before `Closer::closing(T)` puts the notice in Hub(T) and acknowledges it; T's actor may exit before committing it. It is kept in memory until T reopens, which is the first window above.
+- The monitor's own delivery path does not check `want`: after an erase, a child's monitor that ends can still put its notice in the Hub of the erased top-level session (memory only; nothing reads it).
+- Node refuses `session/eraseTree` while a detached subagent of the tree runs (`getDetachedChildSessionFacts().running`); Rust's guard counts only the bridged sessions, so a running background subagent does not block the erase. Rust aborts it instead (above). Aligning the guard is a protocol change left open.
 
 Acceptance:
 
@@ -599,6 +609,8 @@ Acceptance:
     - A close that lands while adoption reads the store starts no forwarder.
     - Erasing stops the forwarders of erased children, including one a live agent owns, and drops the erased sessions' Hub notices.
     - Review findings of the first lifecycle (each failed on it before this design): a reopen while the forwarder acknowledges starts no second consumer (#1); erase waits for a delivery that holds the Live lock (#2); erasing a child while adoption reads the store starts no forwarder for it (#3); a forwarder kept for a running agent stops when the agent finishes, without a notice (#4); a nested agent after `/clear` does not reopen the top-level session (#5); a reopen right after a refused notice still delivers it (#6).
+    - Round 3 (each failed before its fix): a nested agent restarted with SendMessage after `/clear` gets a forwarder again and its new command is acknowledged; erasing a parked child ends it and its parked owner resumes.
+  - `agents` `monitors_tests.rs`: a close and reopen while a monitor acknowledges its terminal notice delivers it once (round 3; it was delivered twice).
   - `agents` `routes_tests.rs`: a reopen before the task looks keeps the same entry; only the entry's task removes it; an adoption claims only for its own open and erase epoch; an erased child is not wanted.
   - `runtime` `adopt_tests.rs`: the kernel's open of a top-level session starts exactly one forwarder for its persisted child (fails when the `session_opened` call is removed); an open that fails after the load (its session rules cannot be read) adopts nothing and acknowledges nothing (failed when the hook ran right after the load); creating a top-level session runs the same hook (fails when that call is removed); closing it ends that forwarder's subscription; `sessions_erased` closes each erased id on the machine with `forget`.
   - `node-store` `session_tree_tests.rs`: `subagent_child_ids` returns the subagent descendants through `subagent_child` rows only. It does not return a side chat or what the side chat spawned. (The `kernel-api` memory store implements the same walk for the agents tests.)

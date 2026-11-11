@@ -20,7 +20,7 @@ use rust_cli_kernel_api::permission::PermissionMode;
 use crate::definitions::AgentDefinition;
 use crate::doing::Doing;
 use crate::report::{Ending, Report};
-use crate::routes::Routes;
+use crate::routes::{Routes, Started};
 
 /// 发给某个子代理的一条通知：它派生的后台子代理结束了。
 #[derive(Debug, Clone)]
@@ -92,6 +92,9 @@ pub(crate) struct LiveAgent {
     /// Fork: the running agent was stopped by the user (desktop `cancelBackgroundWork`), not by TaskStop: its
     /// notification reads Node's `was stopped by user` (core `completion-notification.ts`). Cleared by each restart.
     pub(crate) stopped_by_user: bool,
+    /// Fork: its child session was erased while it was live (`routing::end_erased`). Its ending reaches only an owner
+    /// that is not erased itself, never a Hub (an erased top-level session's Hub has no reader).
+    pub(crate) erased: bool,
 }
 
 /// 列表显示用的记录：启动顺序、这次运行的开始与结束时刻、等待中的交互、子会话的提交次数、当前活动。
@@ -333,20 +336,21 @@ impl Live {
             .collect()
     }
 
-    /// 重新开始运行（SendMessage 续跑已结束或停放的子代理）。已在跑时返回 false。
+    /// 重新开始运行（SendMessage 续跑已结束或停放的子代理）。已在跑时返回 None。
     /// `tool_use`: the call the resumed run belongs to (its notification's `<tool-use-id>`).
+    /// Fork: the restart makes the agent live again, so in the same section it claims a notice forwarder for its child
+    /// session when none exists (after `/clear` its entry left once the agent finished): `Some(Some(started))` asks the
+    /// caller to start it (specs/fork-rust-agent-parity.md, "After a restart, and on a remote executor").
     pub(crate) fn restart(
         &self,
         agent: &AgentId,
         abort: Abort,
         tool_use: Option<ToolUseId>,
-    ) -> bool {
-        self.change(|agents| {
-            let Some(entry) = agents.get_mut(agent) else {
-                return false;
-            };
+    ) -> Option<Option<Started>> {
+        self.change_routed(|agents, routes| {
+            let entry = agents.get_mut(agent)?;
             if matches!(entry.state, AgentState::Running { .. }) {
-                return false;
+                return None;
             }
             entry.background = true;
             entry.tool_use = tool_use;
@@ -355,7 +359,7 @@ impl Live {
                 abort,
                 mailbox: Vec::new(),
             };
-            true
+            Some(routes.claim(&entry.child, &entry.root))
         })
     }
 

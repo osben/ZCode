@@ -109,13 +109,18 @@ impl Messaging {
         } else {
             agent.tool_use.clone()
         };
-        if !self.core.live.restart(&id, Abort::new(), tool_use) {
+        let Some(claimed) = self.core.live.restart(&id, Abort::new(), tool_use) else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
             self.core.live.enqueue(&id, input.message.clone());
             return Ok(rust_cli_kernel_api::tool::text(steered_text(
                 &self.core.ports.ids.command(),
                 input.to.trim(),
             )));
+        };
+        // Fork: the forwarder claimed by the restart starts before the resumed run, so a command of that run has a
+        // consumer from its first turn.
+        if let Some(started) = claimed {
+            crate::shell_notices::start(&self.core, &agent.child, &agent.root, started);
         }
         let origin = rust_cli_kernel_api::message::UserOrigin::Human;
         let opening = match spawn::resume(&self.core, &agent, &input.message, origin).await {

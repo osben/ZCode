@@ -916,3 +916,100 @@ fn a_reopen_right_after_a_refused_notice_still_delivers_it() {
         .await;
     });
 }
+
+fn state_of(
+    harness: &crate::test_support::Harness,
+    child: &SessionId,
+) -> Option<crate::live::AgentState> {
+    harness.agents.core.live.with(|agents| {
+        agents
+            .values()
+            .find(|agent| &agent.child == child)
+            .map(|agent| agent.state.clone())
+    })
+}
+
+/// Round 3 #1: after `/clear`, a still-running background agent restarts its finished nested child with SendMessage.
+/// The restart makes the nested child live again, so it needs a forwarder again: a command that ends in the resumed
+/// run reaches it and is acknowledged.
+#[tokio::test]
+async fn a_nested_agent_restarted_after_clear_gets_a_forwarder_again() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, false, machine(env.clone()));
+    let child = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    harness
+        .agents
+        .signals()
+        .session_closing(&SessionId::new(ROOT));
+    let nested = launch_from(&harness, child.as_str()).await;
+    harness.started(2).await;
+    gates.release(nested.as_str());
+    until(|| {
+        state_of(&harness, &nested)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Finished(_)))
+    })
+    .await;
+    // Only the running child's forwarder is left.
+    until(|| env.live_subscriptions() == 1).await;
+    let agent = nested
+        .as_str()
+        .trim_start_matches("sess_subagent_")
+        .to_owned();
+    let sent = harness
+        .call(
+            child.as_str(),
+            "SendMessage",
+            json!({"to": agent, "message": "Again."}),
+        )
+        .await;
+    assert!(text(&sent).contains("resumed"), "{}", text(&sent));
+    harness.started(3).await;
+    env.finish_in(nested.clone(), shell_notice(8, "n8"));
+    until(|| env.acked().contains(&8)).await;
+}
+
+/// Round 3 #3: erasing a child's subtree while the child is parked on a command and its owner is parked on the child.
+/// The erased child must end (as a user stop of a parked agent does), and its owner must not wait for it forever: the
+/// owner gets the child's stop notice and resumes.
+#[tokio::test]
+async fn erasing_a_parked_child_ends_it_and_releases_its_owner() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::default());
+    let harness = held_with_env(&gates, true, machine(env.clone()));
+    let owner = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    let child = launch_from(&harness, owner.as_str()).await;
+    harness.started(2).await;
+    env.run_in(child.clone(), shell_notice(1, "b1"));
+    gates.release(child.as_str());
+    until(|| {
+        state_of(&harness, &child)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Parked { .. }))
+    })
+    .await;
+    gates.release(owner.as_str());
+    until(|| {
+        state_of(&harness, &owner)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Parked { .. }))
+    })
+    .await;
+    harness.store.erase(&child);
+    harness
+        .agents
+        .signals()
+        .sessions_erased(std::slice::from_ref(&child));
+    settle_tasks().await;
+    assert!(
+        state_of(&harness, &child)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Finished(_))),
+        "the erased child is still live: {:?}",
+        state_of(&harness, &child)
+    );
+    let resumed = harness.started(3).await;
+    assert_eq!(
+        resumed[2].request.session, owner,
+        "the owner did not resume"
+    );
+}
