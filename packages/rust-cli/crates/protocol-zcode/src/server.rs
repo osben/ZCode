@@ -191,6 +191,8 @@ impl Server {
                         ),
                     ))
                 }));
+            let sink = live.sink.clone();
+            live.run(Box::pin(async move { sink.prime_child_runs().await }));
             // Fork: the background commands already running (a subagent's child session opened in a side tab, a
             // session reopened while its command runs) are listed from the open, not from the next ledger change.
             let sink = live.sink.clone();

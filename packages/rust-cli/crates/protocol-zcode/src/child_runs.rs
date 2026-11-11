@@ -224,6 +224,26 @@ impl ChildRuns {
         read
     }
 
+    /// The table read when the parent `Live` opens: settled entries are only recorded, alive ones are watched. Once
+    /// per `Live`; a no-op when a change already made the first read.
+    pub fn prime(&mut self, entries: &[SubagentEntry]) -> Plan {
+        let mut plan = Plan::default();
+        if std::mem::replace(&mut self.primed, true) {
+            return plan;
+        }
+        for entry in entries {
+            let alive = entry.status == SubagentStatus::Running || entry.parked;
+            self.table.insert(
+                entry.agent.as_str().to_owned(),
+                (entry.status, entry.parked),
+            );
+            if alive {
+                plan.open.push((entry.child.as_str().to_owned(), true));
+            }
+        }
+        plan
+    }
+
     /// A read of the kernel subagent table (nested agents included): the `subagent.lifecycle` facts of nested agents,
     /// under the owning child's session, and the watches to open and close.
     pub fn table(

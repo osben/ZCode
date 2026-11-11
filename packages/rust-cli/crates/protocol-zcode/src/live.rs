@@ -472,20 +472,24 @@ impl Live {
         let (outgoing, mut spawned, plan) = {
             let mut state = self.state();
             // Fork: the child watches follow the table before the rows do: a parked agent's wake changes the table
-            // but no row (crate::child_runs).
+            // but no row (crate::child_runs). A child session's own `Live` (a side tab) reports no telemetry.
             let seq = state.log.seq();
             let provider = provider_of(&state.projection);
             let mut facts = Vec::new();
-            let plan = state.child_runs.table(
-                &entries,
-                &Observed {
-                    scope: "table-",
-                    seq,
-                    now,
-                    provider: &provider,
-                },
-                &mut facts,
-            );
+            let plan = if state.telemetry.is_none() {
+                crate::child_runs::Plan::default()
+            } else {
+                state.child_runs.table(
+                    &entries,
+                    &Observed {
+                        scope: "table-",
+                        seq,
+                        now,
+                        provider: &provider,
+                    },
+                    &mut facts,
+                )
+            };
             state.facts.extend(facts);
             let deltas = state.projection.subagent_table(&entries, now);
             let spawned = if deltas.is_empty() {
@@ -501,6 +505,24 @@ impl Live {
         spawned.extend(plan.open);
         self.watch_children(spawned);
         self.write(outgoing).await;
+    }
+
+    /// Fork: the first read of the kernel's subagent table after the open (crate::child_runs): agents that ended
+    /// before it are only recorded, so a later change can tell a fast child that finished unread from them. In the
+    /// session's pump task.
+    pub async fn prime_child_runs(&self) {
+        if self.state().telemetry.is_none() {
+            return;
+        }
+        let entries = match self.handle.subagents().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(event = "protocol.subagents.read_failed", error = %error, "reading the subagent table failed");
+                return;
+            }
+        };
+        let plan = self.state().child_runs.prime(&entries);
+        self.watch_children(plan.open);
     }
 
     /// Fork: re-read the kernel's background ledger and publish the running shell commands as

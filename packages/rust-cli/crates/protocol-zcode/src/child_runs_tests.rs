@@ -338,3 +338,22 @@ fn settled_agents_at_the_open_get_no_watch_and_an_idle_watch_closes() {
     assert_eq!(plan.close, ["sess_subagent_agent_2"]);
     assert!(parent.facts.is_empty());
 }
+
+#[test]
+fn after_the_open_a_settled_first_sight_reads_the_kept_run() {
+    let mut runs = ChildRuns::default();
+    let mut running = entry("agent_0", SubagentStatus::Running, None);
+    running.child = SessionId::new("sess_subagent_agent_0");
+    let plan = runs.prime(&[entry("agent_9", SubagentStatus::Completed, None), running]);
+    assert_eq!(plan.open, [("sess_subagent_agent_0".to_owned(), true)]);
+    // A second prime (a change already read the table) does nothing.
+    assert_eq!(runs.prime(&[]), Plan::default());
+    let mut parent = Parent {
+        runs,
+        now: 0,
+        facts: Vec::new(),
+    };
+    // The first change after the open sees a fast child that already finished: its kept run is read.
+    let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]);
+    assert_eq!(plan.open, [(CHILD.to_owned(), false)]);
+}
