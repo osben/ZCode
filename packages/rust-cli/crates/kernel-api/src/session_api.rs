@@ -263,6 +263,13 @@ pub enum Command {
     ChangeDirectory {
         root: crate::env::EnvPath,
     },
+    /// Fork: the session runs in the execution worktree `root` from now on (desktop prepared-worktree activation,
+    /// specs/fork-rust-agent-parity.md "Execution worktree"). Like [`Command::ChangeDirectory`] the actor sets the
+    /// shell cwd and the workspace and emits [`KernelEvent::WorkspaceChanged`], but it commits no note: Node starts
+    /// the runtime in the worktree, so the model sees no move. `Rejected` while a turn or compaction runs.
+    SetExecutionRoot {
+        root: crate::env::EnvPath,
+    },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
     ChangeDirectoryRecorded {
@@ -413,6 +420,10 @@ pub struct SessionView {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
 }
+
+/// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so
+/// it is no evidence that a client's first input was admitted (fork prepared-worktree activation).
+pub const SESSION_START_INPUT: &str = "session-start-";
 
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
@@ -570,6 +581,45 @@ pub trait Kernel: Send + Sync {
         _source: StartSource,
     ) -> Result<SessionId, KernelError> {
         self.create_session(request).await
+    }
+
+    /// Fork: a new session that runs in an execution worktree from its first moment (specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). `request.workspace` is the stored workspace the session is listed under; the worktree
+    /// is stored before the session starts, so SessionStart and every turn run in it. A kernel without it refuses.
+    async fn create_session_in_worktree(
+        &self,
+        _request: CreateSession,
+        _worktree: crate::env::EnvPath,
+        _branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "execution worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: a new session reserved for a prepared execution worktree (specs/fork-rust-agent-parity.md "Execution
+    /// worktree"). It is listed under `request.workspace`; SessionStart waits for `Command::SetExecutionRoot`, so
+    /// the hook runs in the worktree at activation, as Node starts the runtime there. A kernel without it refuses.
+    async fn create_prepared_session(
+        &self,
+        _request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
+    /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
+    /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it
+    /// refuses.
+    async fn open_prepared_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
     }
 
     /// 同 [`Kernel::open_session`]，另给 SessionStart 的来源（刚 fork 出的会话是 `Fork`）。

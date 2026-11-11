@@ -303,7 +303,8 @@
             "amendWorkflowRunSettings",
             "renameSession",
             "deleteSession",
-            "discardSharedContext"
+            "discardSharedContext",
+            "updateWorktreePreparation"
           ]
         },
         "payload": {},
@@ -992,6 +993,58 @@
         "workspaceId": {
           "type": "string"
         },
+        "submissionPreparation": {
+          "type": "object",
+          "properties": {
+            "submissionId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "submissionId"
+          ]
+        },
+        "expectedSubmissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedFirstInputCommandId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreePreparation": {
+          "type": "object",
+          "properties": {
+            "branchName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "targetPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "branchName",
+            "targetPath"
+          ]
+        },
+        "expectedAttemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preparedSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
         "permissionScope": {
           "type": "string",
           "const": "session"
@@ -1144,6 +1197,23 @@
               "type": "boolean"
             }
           }
+        },
+        "executionWorktree": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "branchName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
         },
         "mcpServers": {
           "type": "array",
@@ -1388,6 +1458,66 @@
             "onDemand",
             "alwaysOn"
           ]
+        },
+        "incognito": {
+          "type": "object",
+          "properties": {
+            "projectInstructions": {
+              "type": "boolean"
+            },
+            "skills": {
+              "type": "boolean"
+            },
+            "hooks": {
+              "type": "boolean"
+            },
+            "plugins": {
+              "type": "boolean"
+            },
+            "mcp": {
+              "type": "boolean"
+            },
+            "customAgents": {
+              "type": "boolean"
+            },
+            "memory": {
+              "type": "boolean"
+            },
+            "outputStyle": {
+              "type": "boolean"
+            },
+            "systemPromptOverrides": {
+              "type": "boolean"
+            },
+            "identity": {
+              "type": "boolean"
+            },
+            "harness": {
+              "type": "boolean"
+            },
+            "environment": {
+              "type": "boolean"
+            },
+            "automationTools": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "projectInstructions",
+            "skills",
+            "hooks",
+            "plugins",
+            "mcp",
+            "customAgents",
+            "memory",
+            "outputStyle",
+            "systemPromptOverrides",
+            "identity",
+            "harness",
+            "environment",
+            "automationTools"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -3874,6 +4004,54 @@
         "enabled"
       ],
       "additionalProperties": false
+    },
+    "updateWorktreePreparation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "failureMessage": {
+          "type": "string"
+        },
+        "expectedAttemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreePreparation": {
+          "type": "object",
+          "properties": {
+            "branchName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "targetPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "branchName",
+            "targetPath"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ]
     }
   },
   "requiresBaseRevision": [

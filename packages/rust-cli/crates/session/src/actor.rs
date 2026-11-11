@@ -41,6 +41,11 @@ pub(crate) enum Request {
     Meta {
         reply: oneshot::Sender<SessionMeta>,
     },
+    /// Fork: the meta for SessionEnd, `None` while SessionStart is still held (a prepared execution worktree that
+    /// was never activated: Node has no runtime for it, so nothing ends).
+    EndMeta {
+        reply: oneshot::Sender<Option<SessionMeta>>,
+    },
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
     },
@@ -258,6 +263,11 @@ pub(crate) struct Actor {
     pub(crate) wait_started: Option<u64>,
     /// 自己的请求通道（弱引用）：交给回合的输出端，给出会话级的询问入口；不让 actor 因此不退出。
     asks: mpsc::WeakSender<Request>,
+    /// Fork: SessionStart held for a prepared execution worktree (`SessionState::start_held`) until
+    /// `Command::SetExecutionRoot` moves the session (workspace.rs).
+    pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
+    /// Fork: `SessionState::execution_worktree`; set by a successful `Command::SetExecutionRoot` (workspace.rs).
+    pub(crate) execution_worktree: bool,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -299,7 +309,8 @@ impl Actor {
         let agent_stream = AgentStream::new(deps.agents.signals(&state.meta.id));
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
-        let start = state.start;
+        let (start, defer_start, execution_worktree) =
+            (state.start, state.start_held, state.execution_worktree);
         let child_live = state.child_live;
         let goal = crate::goal::Goals::restore(
             &state.messages,
@@ -351,8 +362,14 @@ impl Actor {
             output_speed: None,
             wait_started: None,
             asks,
+            deferred_start: None,
+            execution_worktree,
         };
-        actor.start_session(start);
+        if defer_start {
+            actor.deferred_start = Some(start);
+        } else {
+            actor.start_session(start);
+        }
         actor
     }
 
@@ -550,6 +567,9 @@ impl Actor {
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());
             }
+            Request::EndMeta { reply } => {
+                let _ = reply.send(self.deferred_start.is_none().then(|| self.meta.clone()));
+            }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());
             }
@@ -691,6 +711,7 @@ impl Actor {
                 }
             }
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
+            Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
             Command::ChangeDirectoryRecorded { root, record } => {
                 self.change_directory(id, root, Some(record)).await
             }

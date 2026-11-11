@@ -8,12 +8,11 @@
  * - forkAgentRuntimeHelloOverrides: capability flags the Host must not claim in Rust mode; spread
  *   after both hello literals (base service and connection scope) so they cannot drift.
  * - forkAgentRuntimeCommandGateError: error code for a command whose fork feature zcode-rs lacks
- *   (execution worktree, ACP agents); undefined in Node mode.
+ *   (ACP agents); undefined in Node mode.
  */
 export { selectForkAgentRuntimeCommand } from "./command.js";
 export type { ForkAgentRuntimeCommand, ForkRustAgentUnavailableReason } from "./command.js";
 export {
-  FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED,
   FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED,
   forkAgentRuntimeCommandGateError,
   forkAgentRuntimeHelloOverrides,

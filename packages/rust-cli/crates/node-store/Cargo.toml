@@ -13,6 +13,10 @@ workspace = true
 [lib]
 doctest = false
 
+[features]
+# Test support for other crates' tests (`NodeStore::node_worktree_session`); only in dev-dependencies.
+testing = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
