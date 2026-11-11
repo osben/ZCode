@@ -21,7 +21,7 @@ WorkspaceHeader variant="draft"  ─────▶  WorkspaceHeader variant="ta
   caption menu; it does not show the left task title, the editor selector, workspace/branch context that
   depends on a stable task, the Task more menu, logs, rename, archive and similar actions. With the Side
   Pane collapsed the Header bottom divider is transparent; expanded, the default divider returns.
-- `variant="task"`: shows the full Task title, workspace/branch context and Task actions.
+- `variant="task"`: shows the full Task title, workspace/branch context and Task actions; the Task more-menu has no archive, archive is offered only in the sidebar (see [Task list context menu](./task-list-context-menu.md)).
 - The draft's top file drag reuses the drop target controller exposed by the main Composer, shows an overlay
   only inside the Header and registers no second attachment entry.
 - The Header error boundary resets only by workspace; when the draft's first submit yields an

@@ -8,7 +8,11 @@ import {
   BIGMODEL_PROVIDER_ID,
   CHATGPT_OAUTH_PROVIDER_ID,
   ZAI_PROVIDER_ID,
+  ZAI_CN_PROVIDER_ID,
+  isBuiltinOAuthProvider,
+  isZaiOAuthProvider,
   type OAuthCallbackResult,
+  type OAuthAccountAvailability,
   type OAuthCachedSessionRestoreResult,
   type OAuthProviderId,
   type OAuthProviderMeta,
@@ -21,19 +25,24 @@ import {
   type SiwcPlanAccountsStatus,
   type UserInfo,
   resolveJwtExpiration,
-  isCredentialDecryptError,
 } from "@zcode/shared";
 import type { ICredentialService } from "../credential/credential.js";
+import type { CredentialFileGuard } from "@zcode/shared/node";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { readApiJson } from "../providers/api/apiJson.js";
 import type { IOAuthService } from "./oauth.js";
 import { isCurrentOAuthCredentialRequest } from "#src/oauth/oauthUnauthorizedRequest.js";
 import { hasOAuthAuthorizationCode, parseOAuthLoginAttribution } from "./callbackAttribution.js";
 import {
+  mergeOAuthDisplayProfile,
   refreshLegacyBigModelCachedProfile,
   withProviderProfileSchema,
 } from "./oauthProfileSchema.js";
-import { createOAuthProviderAdapters, type OAuthProviderAdapter } from "./providers/index.js";
+import {
+  createOAuthProviderAdapters,
+  readLinkedBigModel,
+  type OAuthProviderAdapter,
+} from "./providers/index.js";
 import { OAuthCredentialRepo } from "./repo/oauthCredentialRepo.js";
 import { createOAuthRuntimeConfig } from "./runtimeConfig.js";
 import { SiwcAuthService } from "./siwc/siwcAuthService.js";
@@ -44,6 +53,7 @@ import {
 
 /** OAuth timeout (5 minutes). */
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const OAUTH_PROFILE_TIMEOUT_MS = 10_000;
 const COMPLETED_POLLING_STATE_GRACE_MS = 30 * 1000;
 const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
 const log = (...args: unknown[]) =>
@@ -51,11 +61,14 @@ const log = (...args: unknown[]) =>
 const serviceLog = createServiceLogger("oauthService");
 
 interface PendingState {
+  credentialGuard?: CredentialFileGuard;
   state: string;
   provider: OAuthProviderId;
   timeout: NodeJS.Timeout;
   phase: "awaiting-attribution-or-code" | "awaiting-code-after-attribution";
-  completionPromise?: Promise<OAuthCallbackResult | null>;
+  completions?: Set<Promise<OAuthCallbackResult | null>>;
+  expectedSession: Readonly<Record<string, string | null>>;
+  redirectUri?: string;
   polling?: {
     expiresAt: number;
     flowId: string;
@@ -73,11 +86,13 @@ interface OAuthFlowEnvelope {
 }
 
 interface OAuthServiceDependencies {
+  captureCredentialGuard?: () => Promise<CredentialFileGuard>;
   adapters?: OAuthProviderAdapter[];
   apiClient?: ApiClient;
   /** Shared with the Host's request-auth path when composed by createLocalServices. */
   siwcAuthService?: SiwcAuthService;
   now?: () => number;
+  monotonicNow?: () => number;
   env?: NodeJS.ProcessEnv;
   onProviderLogout?: (provider: OAuthProviderId, accountIdentity?: string | null) => Promise<void>;
   /** Fired after a ChatGPT plan (SIWC) login completion or logout so account overlays refresh. */
@@ -111,16 +126,6 @@ function isSameOAuthProfile(left: OAuthUserProfile, right: OAuthUserProfile): bo
   );
 }
 
-function resolveInactiveOAuthProvider(provider: OAuthProviderId): OAuthProviderId | null {
-  if (provider === ZAI_PROVIDER_ID) {
-    return BIGMODEL_PROVIDER_ID;
-  }
-  if (provider === BIGMODEL_PROVIDER_ID) {
-    return ZAI_PROVIDER_ID;
-  }
-  return null;
-}
-
 /**
  * OAuth authentication service implementation.
  *
@@ -130,9 +135,11 @@ export class OAuthService implements IOAuthService {
   private readonly sessionChanges = new Emitter<OAuthSessionState>();
   readonly onDidChangeSession = this.sessionChanges.event;
   private readonly credentialService: ICredentialService;
+  private readonly captureCredentialGuard?: () => Promise<CredentialFileGuard>;
   private readonly repo: OAuthCredentialRepo;
   private readonly adapters = new Map<OAuthProviderId, OAuthProviderAdapter>();
   private readonly now: () => number;
+  private readonly monotonicNow: () => number;
   private readonly onProviderLogout?: (
     provider: OAuthProviderId,
     accountIdentity?: string | null,
@@ -141,21 +148,27 @@ export class OAuthService implements IOAuthService {
   private readonly apiClient?: ApiClient;
   private readonly env: NodeJS.ProcessEnv;
   private readonly siwcAuth: SiwcAuthService;
+  private readonly profileRefreshes = new Map<string, Promise<OAuthAccountAvailability>>();
   private pendingState: PendingState | null = null;
   private oauthFlowStartGeneration = 0;
   private oauthFlowStartProvider: OAuthProviderId | null = null;
   private oauthSessionGeneration = 0;
   private sessionMutationQueue: Promise<unknown> = Promise.resolve();
   private recentlyCompletedPollingState: {
+    credentialGuard?: CredentialFileGuard;
     generation: number;
     expiresAt: number;
     provider: OAuthProviderId;
     state: string;
   } | null = null;
+  /** Host 定时器清除的 polling flow 的发起代次；新登录或取消推进代次后自然失效。 */
+  private expiredPollingGeneration: number | null = null;
 
   constructor(credentialService: ICredentialService, dependencies: OAuthServiceDependencies = {}) {
     this.credentialService = credentialService;
+    this.captureCredentialGuard = dependencies.captureCredentialGuard;
     this.now = dependencies.now ?? Date.now;
+    this.monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
     this.onProviderLogout = dependencies.onProviderLogout;
     this.onChatGptPlanSessionChange = dependencies.onChatGptPlanSessionChange;
     this.apiClient = dependencies.apiClient;
@@ -201,14 +214,103 @@ export class OAuthService implements IOAuthService {
     return this.repo.getActiveProvider();
   }
 
+  async getAccountAvailability(): Promise<OAuthAccountAvailability> {
+    return this.repo.loadAccountAvailability();
+  }
+
+  getWebsiteSession() {
+    return this.repo.loadWebsiteSession();
+  }
+
+  async refreshAccountProfile(
+    expected?: Pick<OAuthAccountAvailability, "loginProvider" | "userId" | "sessionRevision">,
+  ): Promise<OAuthAccountAvailability> {
+    const snapshot = await this.repo.loadSessionSnapshot();
+    const provider = snapshot["oauth:active_provider"];
+    const profile = provider ? this.repo.profileFromSnapshot(snapshot, provider) : null;
+    const tokens = provider ? this.repo.tokenSetFromSnapshot(snapshot, provider) : null;
+    const jwt = tokens?.zcodeJwtToken;
+    // 拒绝来自旧业务请求的刷新：分类后可能已在另一进程完成重登或退出。
+    if (
+      expected &&
+      (expected.loginProvider !== provider ||
+        expected.userId !== profile?.id ||
+        expected.sessionRevision !== (snapshot["oauth:session_revision"] ?? null))
+    ) {
+      return this.getAccountAvailability();
+    }
+    if (!provider || !profile || !tokens || !jwt || !this.apiClient)
+      return this.getAccountAvailability();
+    const key = JSON.stringify([provider, profile.id, snapshot["oauth:session_revision"], jwt]);
+    const existing = this.profileRefreshes.get(key);
+    if (existing) return existing;
+    const refresh = (async () => {
+      const response = await readApiJson<OAuthFlowEnvelope>(
+        this.apiClient!,
+        buildZCodeApiUrlFromEnv(this.env, "/api/v1/oauth/profile"),
+        {
+          headers: { Authorization: `Bearer ${jwt}` },
+          authFailurePolicy: "caller-handled",
+          timeoutMs: OAUTH_PROFILE_TIMEOUT_MS,
+        },
+      );
+      const data = response.data;
+      if (
+        response.code !== 0 ||
+        !isUnknownRecord(data) ||
+        !isUnknownRecord(data.user) ||
+        readTrimmedString(data.user.user_id) !== profile.id
+      ) {
+        throw new Error("账号关联响应无效或主体不一致");
+      }
+      const linkedBigModel = readLinkedBigModel(data.bigmodel);
+      // 缺失关联块尚不能证明解除关联；只接受明确合法的正向结果，不清除原有材料。
+      if (
+        linkedBigModel &&
+        JSON.stringify(linkedBigModel) !== JSON.stringify(tokens.linkedBigModel)
+      ) {
+        await this.runSessionMutation(async () => {
+          // 补关联不能抢占用户正在进行的新登录；整组 CAS 再防御另一进程的退出或换人。
+          if (this.pendingState || this.oauthFlowStartProvider) return;
+          if (
+            await this.repo.commitSession(
+              snapshot,
+              provider,
+              { ...tokens, linkedBigModel },
+              profile,
+            )
+          )
+            this.oauthSessionGeneration += 1;
+        });
+      }
+      return this.getAccountAvailability();
+    })();
+    this.profileRefreshes.set(key, refresh);
+    try {
+      return await refresh;
+    } finally {
+      if (this.profileRefreshes.get(key) === refresh) this.profileRefreshes.delete(key);
+    }
+  }
+
   async restoreCachedSession(): Promise<UserInfo | null> {
     const result = await this.restoreCachedSessionState();
     return result.status === "authenticated" ? result.userInfo : null;
   }
 
   async restoreCachedSessionState(): Promise<OAuthCachedSessionRestoreResult> {
+    return this.withCurrentCredentialStore(() => this.restoreCachedSessionStateInternal());
+  }
+
+  private async withCurrentCredentialStore<T>(operation: () => Promise<T>): Promise<T> {
+    const guard = await this.captureCredentialGuard?.();
+    return guard ? guard(operation) : operation();
+  }
+
+  private async restoreCachedSessionStateInternal(): Promise<OAuthCachedSessionRestoreResult> {
     const restoreGeneration = this.oauthSessionGeneration;
-    const activeProvider = await this.repo.getActiveProvider();
+    const snapshot = await this.repo.loadSessionSnapshot();
+    const activeProvider = snapshot["oauth:active_provider"];
     if (!activeProvider) {
       log("restoreCachedSession skipped: no active provider");
       return { status: "signed-out" };
@@ -220,11 +322,11 @@ export class OAuthService implements IOAuthService {
         "restoreCachedSession aborted: provider unavailable, clearing active provider:",
         activeProvider,
       );
-      await this.repo.setActiveProvider(null);
+      if (!(await this.repo.clearActiveSession(snapshot))) return this.restoreCachedSessionState();
       return { status: "signed-out" };
     }
 
-    const profile = await this.repo.loadActiveUserProfile();
+    const profile = this.repo.profileFromSnapshot(snapshot, activeProvider);
     if (!profile) {
       // OAuth tokens for providers such as ZAI/BigModel have short lifetimes. If startup strictly requires remote userinfo validation,
       // a user who just signed in may be misclassified as signed out because access_token has expired.
@@ -233,10 +335,10 @@ export class OAuthService implements IOAuthService {
       return { status: "signed-out" };
     }
 
-    // Startup cache restoration needs to check only the shared zcode JWT. Reading the provider access token via loadActiveTokenSet
-    // would put the BigModel profile migration, which should run in the background, back on the first-screen restoration path.
+    // Startup cache restoration checks only the shared zcode JWT. Reading the provider access token here would put the
+    // BigModel profile migration, which should run in the background, back on the first-screen restoration path.
     // Upstream also checks the business JWT here; that is deferred because the fork test pins this path to the shared JWT only.
-    const zcodeJwtToken = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim() ?? "";
+    const zcodeJwtToken = snapshot[ZCODE_JWT_TOKEN_KEY]?.trim() ?? "";
     if (zcodeJwtToken && resolveJwtExpiration(zcodeJwtToken, this.now()).kind === "expired") {
       serviceLog.info("cached session invalidated because zcode JWT expired", {
         provider: activeProvider,
@@ -246,6 +348,7 @@ export class OAuthService implements IOAuthService {
         activeProvider,
         profile,
         zcodeJwtToken,
+        snapshot,
       );
       if (!invalidated) {
         return this.restoreCachedSessionState();
@@ -263,7 +366,12 @@ export class OAuthService implements IOAuthService {
         now: this.now,
         runWithAdapterError: (run) => this.runWithAdapterError(adapter, run),
         saveProfile: (nextProfile) =>
-          this.saveBigModelCachedProfileMigration(migrationGeneration, profile, nextProfile),
+          this.saveBigModelCachedProfileMigration(
+            migrationGeneration,
+            profile,
+            nextProfile,
+            snapshot,
+          ),
       })
         .then((migratedProfile) => {
           if (migratedProfile !== profile) {
@@ -283,7 +391,7 @@ export class OAuthService implements IOAuthService {
         });
     }
 
-    if (activeProvider === ZAI_PROVIDER_ID) {
+    if (isZaiOAuthProvider(activeProvider)) {
       if (!zcodeJwtToken) {
         // The sidebar sign-in entry previously checked only cached user_info and misclassified a missing zcodejwttoken as signed in.
         // Add the zcodejwttoken requirement so missing backend JWTs are consistently treated as signed out.
@@ -301,12 +409,14 @@ export class OAuthService implements IOAuthService {
     expectedProvider: OAuthProviderId,
     expectedProfile: OAuthUserProfile,
     expectedJwt: string,
+    expectedSnapshot: Readonly<Record<string, string | null>>,
     credentialKey = ZCODE_JWT_TOKEN_KEY,
   ): Promise<boolean> {
     const invalidated = await this.runSessionMutation(async () => {
-      const currentProvider = await this.repo.getActiveProvider();
-      const currentProfile = await this.repo.loadUserProfile(expectedProvider);
-      const currentJwt = (await this.credentialService.load(credentialKey))?.trim() ?? "";
+      const snapshot = await this.repo.loadSessionSnapshot();
+      const currentProvider = snapshot["oauth:active_provider"];
+      const currentProfile = this.repo.profileFromSnapshot(snapshot, expectedProvider);
+      const currentJwt = snapshot[credentialKey]?.trim() ?? "";
       if (
         this.oauthSessionGeneration !== expectedGeneration ||
         currentProvider !== expectedProvider ||
@@ -321,8 +431,8 @@ export class OAuthService implements IOAuthService {
         });
         return false;
       }
+      if (!(await this.repo.clearActiveSession(expectedSnapshot))) return false;
       this.oauthSessionGeneration += 1;
-      await this.repo.clearActiveSession();
       this.sessionChanges.fire("signed-out");
       return true;
     });
@@ -373,6 +483,7 @@ export class OAuthService implements IOAuthService {
     expectedGeneration: number,
     expectedCachedProfile: OAuthUserProfile,
     nextProfile: OAuthUserProfile,
+    expectedSnapshot: Readonly<Record<string, string | null>>,
   ): Promise<void> {
     await this.runSessionMutation(async () => {
       if (this.oauthSessionGeneration !== expectedGeneration) {
@@ -394,7 +505,8 @@ export class OAuthService implements IOAuthService {
         return;
       }
 
-      await this.repo.saveUserProfile(BIGMODEL_PROVIDER_ID, nextProfile);
+      if (!(await this.repo.saveUserProfile(BIGMODEL_PROVIDER_ID, nextProfile, expectedSnapshot)))
+        throw new Error("OAuth session changed during cached profile migration");
     });
   }
 
@@ -410,60 +522,21 @@ export class OAuthService implements IOAuthService {
     provider: OAuthProviderId,
     tokenSet: OAuthTokenSet,
     profile: OAuthUserProfile,
-    isStillCurrent?: () => boolean,
+    expected: Readonly<Record<string, string | null>>,
+    isStillCurrent: () => boolean,
   ): Promise<void> {
-    const inactiveProvider = resolveInactiveOAuthProvider(provider);
-    const previousTokenSet = await this.repo.loadTokenSet(provider);
-    const previousProfile = await this.repo.loadUserProfile(provider);
-    const previousInactiveTokenSet = inactiveProvider
-      ? await this.repo.loadTokenSet(inactiveProvider)
-      : null;
-    const previousInactiveProfile = inactiveProvider
-      ? await this.repo.loadUserProfile(inactiveProvider)
-      : null;
-    const previousActiveProvider = await this.repo.getActiveProvider();
-    const rollback = async () => {
-      if (previousTokenSet) await this.repo.saveTokenSet(provider, previousTokenSet);
-      else await this.repo.clearProvider(provider);
-      if (previousProfile) await this.repo.saveUserProfile(provider, previousProfile);
-      else await this.repo.clearUserProfile(provider);
-      if (inactiveProvider) {
-        if (previousInactiveTokenSet)
-          await this.repo.saveTokenSet(inactiveProvider, previousInactiveTokenSet);
-        else await this.repo.clearProvider(inactiveProvider);
-        if (previousInactiveProfile)
-          await this.repo.saveUserProfile(inactiveProvider, previousInactiveProfile);
-        else await this.repo.clearUserProfile(inactiveProvider);
-      }
-      if (previousActiveProvider) await this.repo.setActiveProvider(previousActiveProvider);
-      else await this.repo.setActiveProvider(null);
-    };
-    const assertCurrent = async () => {
-      if (isStillCurrent && !isStillCurrent()) {
-        await rollback();
-        throw new Error("OAuth flow 已取消");
-      }
-    };
+    const committed = await this.repo.commitSession(
+      expected,
+      provider,
+      tokenSet,
+      withProviderProfileSchema(provider, profile),
+      () => {
+        if (!isStillCurrent()) throw new Error("OAuth flow 已取消");
+      },
+    );
+    // 条件失败表示另一写入者已经改变会话；不能用回滚再覆盖对方的新登录。
+    if (!committed) throw new Error("OAuth 会话已变化，请重新发起登录");
     this.oauthSessionGeneration += 1;
-    if (inactiveProvider) {
-      await assertCurrent();
-      // ZAI and BigModel are mutually exclusive identity domains. On provider switch, clear the old provider first,
-      // then save the current token; reversing the order would make clearProvider delete the shared zcodejwttoken.
-      await this.repo.clearProvider(inactiveProvider);
-    }
-    await assertCurrent();
-    await this.repo.saveTokenSet(provider, tokenSet);
-    await assertCurrent();
-    await this.repo.saveUserProfile(provider, withProviderProfileSchema(provider, profile));
-    await assertCurrent();
-    await this.repo.setActiveProvider(provider);
-    if (isStillCurrent && !isStillCurrent()) {
-      // The underlying credential I/O cannot cancel an active provider write; an invalidated flow cannot clean up by
-      // provider alone, or an old flow could delete a new flow for the same provider.
-      await rollback();
-      throw new Error("OAuth flow 已取消");
-    }
-    // 凭据是认证事实源；同账号重登也必须通知，不能等 renderer 的设置更新或成功计数。
     this.sessionChanges.fire("signed-in");
   }
 
@@ -472,64 +545,85 @@ export class OAuthService implements IOAuthService {
     complete: () => Promise<{ tokenSet: OAuthTokenSet; profile: OAuthUserProfile }>,
     preserveAttribution?: () => Promise<void>,
   ): Promise<OAuthCallbackResult | null> {
-    const completion = this.runSessionMutation(async () => {
-      // Polling and deep link may complete simultaneously, or a new sign-in may start while waiting.
-      // Persist only from a path that still points to the same pending object, preventing late results from overwriting a newer sign-in choice.
-      if (this.pendingState !== pending) {
-        if (
-          !this.pendingState &&
+    // The recovery generation is fixed when the flow starts; admission attribution and final commit both reuse it, so late results cannot write into the restored store.
+    const guarded = <T>(operation: () => Promise<T>): Promise<T> =>
+      pending.credentialGuard ? pending.credentialGuard(operation) : operation();
+    const completion = (async (): Promise<OAuthCallbackResult | null> => {
+      const admitted = await this.runSessionMutation(() =>
+        guarded(async () => {
+          if (this.pendingState !== pending) {
+            if (
+              !this.pendingState &&
+              this.recentlyCompletedPollingState?.state === pending.state &&
+              this.recentlyCompletedPollingState.generation === this.oauthFlowStartGeneration
+            )
+              await preserveAttribution?.();
+            return false;
+          }
+          await preserveAttribution?.();
+          return true;
+        }),
+      );
+      if (!admitted) {
+        return !this.pendingState &&
           this.recentlyCompletedPollingState?.state === pending.state &&
           this.recentlyCompletedPollingState.generation === this.oauthFlowStartGeneration
-        ) {
-          // The callback passed validity checks when queued; do not lose its attribution because queue waiting exceeded the deduplication window.
-          await preserveAttribution?.();
-          return { kind: "duplicate" as const, provider: pending.provider };
-        }
-        return null;
+          ? { kind: "duplicate", provider: pending.provider }
+          : null;
       }
-      await preserveAttribution?.();
-      if (this.pendingState !== pending) return null;
+      // Network calls do not occupy the session queue, so cancellation need not wait for slow requests; only final commit and cancellation are linearized in queue order.
       const { tokenSet, profile } = await complete();
-      // The user may cancel or switch flows while exchangeToken is running; validate again after the old request returns,
-      // or a cancelled sign-in could still write stale credentials locally.
-      if (this.pendingState !== pending) {
-        return null;
-      }
-      await this.persistOAuthSession(
-        pending.provider,
-        tokenSet,
-        profile,
-        () => this.pendingState === pending,
+      return this.runSessionMutation(() =>
+        guarded(async () => {
+          if (this.pendingState !== pending) {
+            return !this.pendingState &&
+              this.recentlyCompletedPollingState?.state === pending.state &&
+              this.recentlyCompletedPollingState.generation === this.oauthFlowStartGeneration
+              ? { kind: "duplicate", provider: pending.provider }
+              : null;
+          }
+          await this.persistOAuthSession(
+            pending.provider,
+            tokenSet,
+            profile,
+            pending.expectedSession,
+            () => this.pendingState === pending,
+          );
+          this.clearPendingState();
+          this.recentlyCompletedPollingState = {
+            credentialGuard: pending.credentialGuard,
+            generation: this.oauthFlowStartGeneration,
+            expiresAt: this.now() + COMPLETED_POLLING_STATE_GRACE_MS,
+            provider: pending.provider,
+            state: pending.state,
+          };
+          return { kind: "session", provider: pending.provider, userInfo: toUserInfo(profile) };
+        }),
       );
-      if (this.pendingState === pending) {
-        this.clearPendingState();
-      }
-      this.recentlyCompletedPollingState = {
-        generation: this.oauthFlowStartGeneration,
-        expiresAt: this.now() + COMPLETED_POLLING_STATE_GRACE_MS,
-        provider: pending.provider,
-        state: pending.state,
-      };
-      return {
-        kind: "session" as const,
-        provider: pending.provider,
-        userInfo: toUserInfo(profile),
-      };
-    });
-    // Sharing the first exchange Promise would propagate its failure to another path that already has credentials.
-    // Reuse the session's serial queue and execute each candidate independently; report a failure to the UI only after all queued candidates fail.
-    pending.completionPromise = completion;
+    })();
+    // A single "last candidate" would miss a slow earlier request, which a later failure would then cancel early.
+    // Record all in-flight candidates; wait for the original candidates rather than each other's error handling to avoid mutual waits.
+    const completions = (pending.completions ??= new Set());
+    completions.add(completion);
+    void completion.then(
+      () => completions.delete(completion),
+      () => completions.delete(completion),
+    );
     try {
       return await completion;
     } catch (error) {
-      const fallback = pending.completionPromise;
-      if (fallback && fallback !== completion) {
-        try {
-          await fallback;
-        } catch {
-          // If both paths fail, preserve each error; the fallback path must not overwrite the primary failure reason.
-          throw error;
-        }
+      if (
+        !this.pendingState &&
+        this.recentlyCompletedPollingState?.state === pending.state &&
+        this.recentlyCompletedPollingState.generation === this.oauthFlowStartGeneration
+      )
+        return { kind: "duplicate", provider: pending.provider };
+      if (this.pendingState !== pending) return null;
+      serviceLog.warn(undefined, "OAuth completion candidate failed", {
+        provider: pending.provider,
+      });
+      while (completions.size > 0 && this.pendingState === pending) {
+        await Promise.allSettled(completions);
         if (
           !this.pendingState &&
           this.recentlyCompletedPollingState?.state === pending.state &&
@@ -540,13 +634,16 @@ export class OAuthService implements IOAuthService {
         if (this.pendingState !== pending) return null;
       }
       throw error;
-    } finally {
-      if (pending.completionPromise === completion) pending.completionPromise = undefined;
     }
   }
 
   async restoreSession(): Promise<UserInfo | null> {
-    const activeProvider = await this.repo.getActiveProvider();
+    return this.withCurrentCredentialStore(() => this.restoreSessionInternal());
+  }
+
+  private async restoreSessionInternal(): Promise<UserInfo | null> {
+    const snapshot = await this.repo.loadSessionSnapshot();
+    const activeProvider = snapshot["oauth:active_provider"];
     if (!activeProvider) {
       log("restoreSession skipped: no active provider");
       return null;
@@ -560,22 +657,14 @@ export class OAuthService implements IOAuthService {
         "restoreSession aborted: provider unavailable, clearing active provider:",
         activeProvider,
       );
-      await this.repo.setActiveProvider(null);
+      await this.repo.clearActiveSession(snapshot);
       return null;
     }
 
-    let tokenSet = await this.repo.loadActiveTokenSet();
+    let tokenSet = this.repo.tokenSetFromSnapshot(snapshot, activeProvider);
     if (!tokenSet && adapter.loadLegacyTokenSet) {
       log("restoreSession fallback: trying provider legacy token set:", activeProvider);
       tokenSet = await adapter.loadLegacyTokenSet((key) => this.credentialService.load(key));
-
-      // After the multi-provider change, legacy BigModel may still have only the legacy token key.
-      // After a compatible provider read succeeds, fill the namespaced key so startup does not repeat the legacy branch each time.
-      if (tokenSet) {
-        log("restoreSession fallback hit: migrating legacy token set:", activeProvider);
-        await this.repo.saveActiveTokenSet(tokenSet);
-        await this.repo.saveTokenSet(activeProvider, tokenSet);
-      }
     }
 
     if (!tokenSet || !adapter.fetchUserInfo) {
@@ -583,13 +672,16 @@ export class OAuthService implements IOAuthService {
         "restoreSession failed: missing token or user-info capability, logging out:",
         activeProvider,
       );
-      await this.logout();
+      await this.logoutActiveSession(
+        async () =>
+          JSON.stringify(await this.repo.loadSessionSnapshot()) === JSON.stringify(snapshot),
+      );
       return null;
     }
 
     try {
       log("restoreSession validating token with provider userinfo endpoint:", activeProvider);
-      const profile = await this.runWithAdapterError(adapter, () =>
+      const fetchedProfile = await this.runWithAdapterError(adapter, () =>
         adapter.fetchUserInfo!(tokenSet, {
           providerId: activeProvider,
           state: "",
@@ -598,18 +690,51 @@ export class OAuthService implements IOAuthService {
         }),
       );
 
-      await this.repo.saveActiveUserProfile(withProviderProfileSchema(activeProvider, profile));
-      await this.repo.setActiveProvider(activeProvider);
+      const cachedProfile = this.repo.profileFromSnapshot(snapshot, activeProvider);
+      // Explicit recovery and background profile migration share one boundary: upstream userinfo may update display only, never replace the primary identity.
+      // Without trusted cache, ZCode login must be completed again; never build the primary user from customerNumber or sub.
+      if (
+        (activeProvider === BIGMODEL_PROVIDER_ID || activeProvider === ZAI_PROVIDER_ID) &&
+        (!cachedProfile || cachedProfile.id === "unknown")
+      )
+        return null;
+      const profile =
+        activeProvider === BIGMODEL_PROVIDER_ID || activeProvider === ZAI_PROVIDER_ID
+          ? mergeOAuthDisplayProfile(cachedProfile!, fetchedProfile)
+          : fetchedProfile;
+
+      // The profile may only supplement the original principal; never combine an old JWT with another user ID into a new login.
+      if (
+        activeProvider === ZAI_CN_PROVIDER_ID &&
+        profile.id !== this.repo.profileFromSnapshot(snapshot, activeProvider)?.id
+      ) {
+        throw new Error("profile 返回的账号与当前会话不一致");
+      }
+      if (
+        !(await this.repo.commitSession(
+          snapshot,
+          activeProvider,
+          {
+            ...tokenSet,
+            zcodeJwtToken: tokenSet.zcodeJwtToken ?? snapshot[ZCODE_JWT_TOKEN_KEY] ?? undefined,
+          },
+          withProviderProfileSchema(activeProvider, profile),
+        ))
+      )
+        return null;
       log("restoreSession validated:", activeProvider, profile.id);
       return toUserInfo(profile);
     } catch (error) {
       const normalized = adapter.normalizeError(error);
 
-      // Startup restoration based only on local credentials would misclassify an expired token as signed in.
-      // When the remote explicitly returns unauthorized (401/403), immediately clear local sign-in state through the logout flow.
-      if (this.isUnauthorizedError(normalized)) {
+      // Startup restoration that relies only on local credentials would misclassify an expired token as signed in.
+      // When the remote explicitly returns unauthorized (401/403), clear local sign-in state immediately through the logout flow.
+      if (activeProvider !== ZAI_CN_PROVIDER_ID && this.isUnauthorizedError(normalized)) {
         log("restoreSession unauthorized, logging out:", activeProvider, normalized.message);
-        await this.logout();
+        await this.logoutActiveSession(
+          async () =>
+            JSON.stringify(await this.repo.loadSessionSnapshot()) === JSON.stringify(snapshot),
+        );
         return null;
       }
 
@@ -620,11 +745,12 @@ export class OAuthService implements IOAuthService {
   }
 
   async startOAuth(provider: OAuthProviderId): Promise<OAuthStartResponse> {
+    if (provider === ZAI_CN_PROVIDER_ID) return this.startOAuthWithPolling(provider);
     return this.startOAuthInternal(provider);
   }
 
   async startOAuthWithPolling(provider: OAuthProviderId): Promise<OAuthStartResponse> {
-    if (provider !== ZAI_PROVIDER_ID && provider !== BIGMODEL_PROVIDER_ID) {
+    if (!isBuiltinOAuthProvider(provider)) {
       return this.startOAuthInternal(provider);
     }
 
@@ -632,11 +758,24 @@ export class OAuthService implements IOAuthService {
     if (!this.apiClient) {
       throw new Error("ApiClient 注入缺失：OAuth polling 必须通过 Providers 传入 apiClient");
     }
-    // If two init calls run concurrently, an older response that returns later could overwrite the newer pending flow.
-    // generation gives the latest user action ownership of the flow; the old response completes only its own caller.
-    const startGeneration = ++this.oauthFlowStartGeneration;
-    this.oauthFlowStartProvider = provider;
-    this.clearPendingState();
+    // If two inits run concurrently, an older response that returns later would overwrite a newer pending flow.
+    // generation lets the last user action own the flow; an old response only completes its own caller.
+    const { startGeneration, expectedSession, credentialGuard } = await this.runSessionMutation(
+      async () => {
+        const startGeneration = ++this.oauthFlowStartGeneration;
+        this.oauthFlowStartProvider = provider;
+        this.clearPendingState();
+        // Fix the restore generation before reading the session snapshot so both come from the same credential-store generation.
+        const credentialGuard = await this.captureCredentialGuard?.();
+        return {
+          startGeneration,
+          credentialGuard,
+          expectedSession: await this.repo.loadSessionSnapshot(),
+        };
+      },
+    );
+    if (this.oauthFlowStartGeneration !== startGeneration)
+      throw new Error("OAuth flow 已被新的登录请求替换");
     const pollToken = randomBytes(32).toString("hex");
     const initUrl = buildZCodeApiUrlFromEnv(this.env, "/api/v1/oauth/cli/init");
     const envelope = await readApiJson<OAuthFlowEnvelope>(this.apiClient, initUrl, {
@@ -697,22 +836,40 @@ export class OAuthService implements IOAuthService {
     }
 
     const timeoutMs = Math.min(OAUTH_TIMEOUT_MS, remainingLifetimeMs);
+    // Full-store restoration may happen during initialization; an old flow must not regain write eligibility after restoration.
+    await credentialGuard?.(() => this.credentialService.inspectStore());
+    if (this.oauthFlowStartGeneration !== startGeneration)
+      throw new Error("OAuth flow 已被新的登录请求替换");
     const timeout = setTimeout(() => {
       const pending = this.pendingState;
-      // Close a polling flow immediately on timeout rather than waiting for another UI poll; also check flowId so an old timer cannot clear a new flow.
-      if (pending?.state === state && pending.polling?.flowId === flowId) {
-        this.clearPendingState();
-      }
+      // A polling flow timeout must close immediately instead of waiting for the next UI poll; also verify flowId so an old timer cannot clear a new flow.
+      void this.runSessionMutation(async () => {
+        if (
+          this.pendingState === pending &&
+          pending?.state === state &&
+          pending.polling?.flowId === flowId
+        ) {
+          this.clearPendingState();
+          // Bug cause: this only clears the flow; pollPendingOAuth then returns null because pending is empty, and the UI treats null as still waiting,
+          // leaving the login page stuck. Record the expiry fact for this generation so the next poll throws an expired error.
+          this.expiredPollingGeneration = startGeneration;
+        }
+      });
     }, timeoutMs);
     this.pendingState = {
+      credentialGuard,
       state,
+      expectedSession,
       provider: adapter.providerId,
       timeout,
       phase: "awaiting-attribution-or-code",
+      ...(provider === ZAI_CN_PROVIDER_ID
+        ? { redirectUri: authorizeUrl.searchParams.get("redirect_uri") ?? undefined }
+        : {}),
       polling: {
         expiresAt,
         flowId,
-        nextPollAt: this.now(),
+        nextPollAt: this.monotonicNow(),
         pollIntervalMs,
         pollToken,
         pollUrl: buildZCodeApiUrlFromEnv(
@@ -738,16 +895,21 @@ export class OAuthService implements IOAuthService {
     const pending = this.pendingState;
     const polling = pending?.polling;
     if (!pending || !polling) {
+      if (this.expiredPollingGeneration === this.oauthFlowStartGeneration)
+        throw new Error("OAuth flow 已过期");
       return null;
     }
     if (this.now() >= polling.expiresAt) {
-      this.clearPendingState();
+      await this.cancelPending(pending.provider);
       throw new Error("OAuth flow 已过期");
     }
-    if (this.now() < polling.nextPollAt) {
+    // A system clock rollback would keep absolute-time intervals from expiring; schedule polling with a monotonic clock only.
+    // The server-side absolute expiry check above and the local five-minute cap still apply independently.
+    const pollNow = this.monotonicNow();
+    if (pollNow < polling.nextPollAt) {
       return null;
     }
-    polling.nextPollAt = this.now() + polling.pollIntervalMs;
+    polling.nextPollAt = pollNow + polling.pollIntervalMs;
 
     let envelope: OAuthFlowEnvelope;
     try {
@@ -769,7 +931,9 @@ export class OAuthService implements IOAuthService {
             throw error;
           });
         } catch (terminalError) {
-          if (this.pendingState === pending) this.clearPendingState();
+          await this.runSessionMutation(async () => {
+            if (this.pendingState === pending) this.clearPendingState();
+          });
           throw terminalError;
         }
       }
@@ -809,10 +973,9 @@ export class OAuthService implements IOAuthService {
         const user = isUnknownRecord(ready.user) ? ready.user : null;
         const zai = isUnknownRecord(ready.zai) ? ready.zai : null;
         const bigmodel = isUnknownRecord(ready.bigmodel) ? ready.bigmodel : null;
-        const providerAccessToken =
-          pending.provider === ZAI_PROVIDER_ID
-            ? readTrimmedString(zai?.access_token)
-            : readTrimmedString(bigmodel?.access_token) || readTrimmedString(bigmodel?.accessToken);
+        const providerAccessToken = isZaiOAuthProvider(pending.provider)
+          ? readTrimmedString(zai?.access_token)
+          : readTrimmedString(bigmodel?.access_token) || readTrimmedString(bigmodel?.accessToken);
         const zcodeJwtToken = readTrimmedString(ready.token);
         const userId = readTrimmedString(user?.user_id);
         if (!zcodeJwtToken || !providerAccessToken || !userId) {
@@ -833,15 +996,20 @@ export class OAuthService implements IOAuthService {
             ? readTrimmedString(bigmodel?.refresh_token) ||
               readTrimmedString(bigmodel?.refreshToken)
             : undefined;
+        const linkedBigModel = isZaiOAuthProvider(pending.provider)
+          ? readLinkedBigModel(ready.bigmodel)
+          : undefined;
         const tokenSet = adapter.normalizePolledTokenSet
           ? await adapter.normalizePolledTokenSet({
               accessToken: providerAccessToken,
               zcodeJwtToken,
+              linkedBigModel,
               ...(refreshToken ? { refreshToken } : {}),
             })
           : {
               accessToken: providerAccessToken,
               zcodeJwtToken,
+              linkedBigModel,
               ...(refreshToken ? { refreshToken } : {}),
             };
         return { tokenSet, profile };
@@ -851,7 +1019,9 @@ export class OAuthService implements IOAuthService {
       }
       return result;
     } catch (error) {
-      if (this.pendingState === pending) this.clearPendingState();
+      await this.runSessionMutation(async () => {
+        if (this.pendingState === pending) this.clearPendingState();
+      });
       throw error;
     }
   }
@@ -859,23 +1029,34 @@ export class OAuthService implements IOAuthService {
   private async startOAuthInternal(provider: OAuthProviderId): Promise<OAuthStartResponse> {
     const adapter = this.getEnabledAdapter(provider);
 
-    // If different providers are clicked quickly in the same window, failing to cancel the old state
-    // makes both flows share the callback channel, allowing the later callback to take over and causing a state mismatch.
-    await this.runSessionMutation(async () => {
+    // When different providers are clicked quickly in the same window, failing to cancel the old state first lets both flows share one callback channel,
+    // so a later callback takes over and causes a state mismatch.
+    const start = await this.runSessionMutation(async () => {
       this.oauthFlowStartGeneration += 1;
       this.oauthFlowStartProvider = null;
       this.clearPendingState();
+      // Fix the restore generation before reading the session snapshot so both come from the same credential-store generation.
+      const credentialGuard = await this.captureCredentialGuard?.();
+      return {
+        generation: this.oauthFlowStartGeneration,
+        credentialGuard,
+        expectedSession: await this.repo.loadSessionSnapshot(),
+      };
     });
+    if (start.generation !== this.oauthFlowStartGeneration)
+      throw new Error("OAuth flow 已被新的登录请求替换");
 
     const state = randomBytes(32).toString("hex");
     const timeout = setTimeout(() => {
-      if (this.pendingState?.state === state) {
-        this.pendingState = null;
-      }
+      void this.runSessionMutation(async () => {
+        if (this.pendingState?.state === state) this.clearPendingState();
+      });
     }, OAUTH_TIMEOUT_MS);
 
     this.pendingState = {
+      credentialGuard: start.credentialGuard,
       state,
+      expectedSession: start.expectedSession,
       provider: adapter.providerId,
       timeout,
       phase: "awaiting-attribution-or-code",
@@ -915,7 +1096,8 @@ export class OAuthService implements IOAuthService {
             completed.generation === this.oauthFlowStartGeneration &&
             attribution
           ) {
-            await this.repo.saveLoginAttribution(attribution);
+            const save = () => this.repo.saveLoginAttribution(attribution);
+            await (completed.credentialGuard ? completed.credentialGuard(save) : save());
           }
         });
         return { kind: "duplicate", provider: completed.provider };
@@ -929,7 +1111,7 @@ export class OAuthService implements IOAuthService {
       throw new Error("OAuth state 不匹配或已过期");
     }
     if (pending.polling && this.now() >= pending.polling.expiresAt) {
-      this.clearPendingState();
+      await this.cancelPending(pending.provider);
       throw new Error("OAuth flow 已过期");
     }
 
@@ -943,7 +1125,9 @@ export class OAuthService implements IOAuthService {
       // but without explicitly advancing phase, the same state could write attribution repeatedly and implicitly reuse the pending lifecycle.
       pending.phase = "awaiting-code-after-attribution";
       try {
-        await this.repo.saveLoginAttribution(attribution);
+        // A plain save claims the restored new generation; attribution-only writes must also reuse the pending old generation so late callbacks cannot write into the new store.
+        const save = () => this.repo.saveLoginAttribution(attribution);
+        await (pending.credentialGuard ? pending.credentialGuard(save) : save());
       } catch (error) {
         if (this.pendingState === pending) {
           pending.phase = "awaiting-attribution-or-code";
@@ -971,7 +1155,7 @@ export class OAuthService implements IOAuthService {
         const context = {
           providerId: adapter.providerId,
           state: callback.state,
-          redirectUri: adapter.redirectUri,
+          redirectUri: pending.redirectUri ?? adapter.redirectUri,
           now: this.now,
         };
         const tokenSet = await this.runWithAdapterError(adapter, () =>
@@ -994,6 +1178,10 @@ export class OAuthService implements IOAuthService {
   }
 
   async refreshToken(provider?: OAuthProviderId): Promise<void> {
+    return this.withCurrentCredentialStore(() => this.refreshTokenInternal(provider));
+  }
+
+  private async refreshTokenInternal(provider?: OAuthProviderId): Promise<void> {
     const generation = this.oauthSessionGeneration;
     const targetProvider = await this.resolveProvider(provider);
     if (!targetProvider) {
@@ -1007,12 +1195,13 @@ export class OAuthService implements IOAuthService {
       );
     }
 
-    const activeProvider = await this.repo.getActiveProvider();
+    const snapshot = await this.repo.loadSessionSnapshot();
+    const activeProvider = snapshot["oauth:active_provider"];
     if (targetProvider !== activeProvider) {
       throw new Error("只能刷新当前 App 登录 provider，请重新登录");
     }
 
-    const tokenSet = await this.repo.loadActiveTokenSet();
+    const tokenSet = this.repo.tokenSetFromSnapshot(snapshot, targetProvider);
     if (!tokenSet?.refreshToken) {
       throw new Error("当前账号缺少 refresh_token，请重新登录");
     }
@@ -1027,42 +1216,46 @@ export class OAuthService implements IOAuthService {
     );
 
     await this.runSessionMutation(async () => {
-      // If refresh writeback bypasses the session queue, it may race with 401 verification/cleanup or revive credentials after logout.
-      if (
-        this.oauthSessionGeneration !== generation ||
-        (await this.repo.getActiveProvider()) !== targetProvider ||
-        (await this.credentialService.load(`oauth:${targetProvider}:access_token`)) !==
-          tokenSet.accessToken
-      )
-        return;
-      await this.repo.saveActiveTokenSet(refreshed);
+      if (this.oauthSessionGeneration !== generation) return;
+      await this.repo.saveTokenSet(
+        targetProvider,
+        {
+          ...tokenSet,
+          ...refreshed,
+          zcodeJwtToken: refreshed.zcodeJwtToken ?? tokenSet.zcodeJwtToken,
+        },
+        snapshot,
+      );
     });
   }
 
   /** Host-local 401 commit entry point; does not expand the cross-platform IOAuthService contract. */
   logoutIfCurrentCredentialRequest(input: string | URL, headers: Headers): Promise<boolean> {
-    return this.logoutActiveSession(() =>
-      isCurrentOAuthCredentialRequest({
-        input,
-        headers,
-        credentialService: this.credentialService,
-        env: this.env,
-      }),
+    return this.withCurrentCredentialStore(() =>
+      this.logoutActiveSession(() =>
+        isCurrentOAuthCredentialRequest({
+          input,
+          headers,
+          credentialService: this.credentialService,
+          env: this.env,
+        }),
+      ),
     );
   }
 
   private async logoutActiveSession(isCurrent?: () => Promise<boolean>): Promise<boolean> {
     const result = await this.runSessionMutation(async () => {
-      // An asynchronous classification of true does not authorize cleanup; credential revalidation and cleanup must share the queue with sign-in writes.
+      // An async classification of true does not authorize cleanup; credential revalidation and cleanup must share the queue with sign-in writes.
+      const snapshot = await this.repo.loadSessionSnapshot();
       if (isCurrent && !(await isCurrent())) return null;
-      const activeProvider = await this.repo.getActiveProvider();
-      // Merge boundary: retain the original account identity before cleanup; do not fall back to platform-only cleanup or guess the identity after logout.
+      const activeProvider = snapshot["oauth:active_provider"];
+      // Merge boundary: keep the original account identity before cleanup; do not fall back to platform-only cleanup or guess the identity after logout.
       const accountIdentity = activeProvider
-        ? ((await this.repo.loadUserProfile(activeProvider))?.id ?? null)
+        ? (this.repo.profileFromSnapshot(snapshot, activeProvider)?.id ?? null)
         : null;
+      if (!(await this.repo.clearActiveSession(snapshot))) return null;
       this.oauthSessionGeneration += 1;
-      await this.repo.clearActiveSession();
-      // 登出已生效：后续 provider/设置清理即使失败，也必须先撤销已认证的远控连接。
+      // Logout has taken effect: even if later provider/settings cleanup fails, the authenticated remote-control connection must be revoked first.
       this.sessionChanges.fire("signed-out");
       return { activeProvider, accountIdentity };
     });
@@ -1081,21 +1274,27 @@ export class OAuthService implements IOAuthService {
   }
 
   async logout(provider?: OAuthProviderId): Promise<void> {
+    return this.withCurrentCredentialStore(() => this.logoutInternal(provider));
+  }
+
+  private async logoutInternal(provider?: OAuthProviderId): Promise<void> {
     if (!provider) {
-      await this.logoutActiveSession();
+      if (!(await this.logoutActiveSession())) throw new Error("OAuth 会话已变化，请重新退出");
       return;
     }
 
     const loggedOutIdentity = await this.runSessionMutation(async () => {
-      const activeProvider = await this.repo.getActiveProvider();
+      const snapshot = await this.repo.loadSessionSnapshot();
+      const activeProvider = snapshot["oauth:active_provider"];
       if (provider !== activeProvider) {
         return undefined;
       }
-      const accountIdentity = (await this.repo.loadUserProfile(provider))?.id ?? null;
+      const accountIdentity = this.repo.profileFromSnapshot(snapshot, provider)?.id ?? null;
+      // ZAI/BigModel provider Unlink has converged to App logout.
+      // Only the current active provider represents the login fact, preventing a legacy unlink path from deleting a non-current provider token.
+      if (!(await this.repo.clearActiveSession(snapshot)))
+        throw new Error("OAuth 会话已变化，请重新退出");
       this.oauthSessionGeneration += 1;
-      // Unlink for ZAI/BigModel providers now routes through App logout.
-      // Only the currently active provider represents the signed-in state, preventing a legacy unlink path from deleting a non-current provider token.
-      await this.repo.clearActiveSession();
       this.sessionChanges.fire("signed-out");
       return accountIdentity;
     });
@@ -1106,37 +1305,42 @@ export class OAuthService implements IOAuthService {
   }
 
   async logoutAll(): Promise<void> {
+    return this.withCurrentCredentialStore(() => this.logoutAllInternal());
+  }
+
+  private async logoutAllInternal(): Promise<void> {
     const providers = [...this.adapters.keys()];
     const accountIdentities = await this.runSessionMutation(async () => {
+      const snapshot = await this.repo.loadSessionSnapshot();
       const identities = new Map<OAuthProviderId, string | null>();
       for (const provider of providers) {
-        identities.set(provider, (await this.repo.loadUserProfile(provider))?.id ?? null);
+        identities.set(provider, this.repo.profileFromSnapshot(snapshot, provider)?.id ?? null);
       }
+      if (!(await this.repo.clearSession(snapshot)))
+        throw new Error("OAuth 会话已变化，请重新退出");
       this.oauthSessionGeneration += 1;
-      await this.repo.clearAll(providers);
       this.sessionChanges.fire("signed-out");
       return identities;
     });
+    if (!accountIdentities) return;
     await this.cancelPending();
     await this.notifyProvidersLogout(providers, accountIdentities);
   }
 
   async cancelPending(provider?: OAuthProviderId): Promise<void> {
-    if (provider === CHATGPT_OAUTH_PROVIDER_ID || provider === undefined) {
-      await this.siwcAuth.cancelLogin();
-      if (provider === CHATGPT_OAUTH_PROVIDER_ID) return;
-    }
-    if (!this.pendingState) {
-      if (provider && this.oauthFlowStartProvider && this.oauthFlowStartProvider !== provider)
-        return;
+    await this.runSessionMutation(async () => {
+      if (provider === CHATGPT_OAUTH_PROVIDER_ID || provider === undefined) {
+        await this.siwcAuth.cancelLogin();
+        if (provider === CHATGPT_OAUTH_PROVIDER_ID) return;
+      }
+      if (!this.pendingState) {
+        if (provider && this.oauthFlowStartProvider && this.oauthFlowStartProvider !== provider)
+          return;
+      } else if (provider && this.pendingState.provider !== provider) return;
       this.oauthFlowStartGeneration += 1;
       this.oauthFlowStartProvider = null;
-      return;
-    }
-    if (provider && this.pendingState.provider !== provider) return;
-    this.oauthFlowStartGeneration += 1;
-    this.oauthFlowStartProvider = null;
-    this.clearPendingState();
+      this.clearPendingState();
+    });
   }
 
   async startChatGptPlanLogin(

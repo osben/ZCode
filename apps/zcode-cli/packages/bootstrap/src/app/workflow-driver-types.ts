@@ -17,6 +17,7 @@ import type {
   SubmitVerdict as ContractsSubmitVerdict,
   ToolArtifactStorePort,
   WorkflowEscalatePort,
+  WorkflowWebSearchBudgetPort,
   WorkflowSubmitPort,
 } from "@zcode/contracts";
 import type { AgentRuntime } from "@zcode/core";
@@ -79,7 +80,12 @@ export type ActorRuntimeFactory = (input: {
    */
   escalatePort: WorkflowEscalatePort;
   /**
-   * Session seed for amend-resume, present only if this actor consumed at least one imported ask entry.
+   * 每个 ask 的 WebSearch 预算端口：计数在 driver 的会话状态里（startAsk 归零），上限取
+   * persona 的 `budget.webSearch`，缺席用默认值。恒注入，与升级端口同路下传到 runtime deps。
+   */
+  webSearchBudgetPort: WorkflowWebSearchBudgetPort;
+  /**
+   * amend-resume 的会话种子，仅当本 actor 消费了 ≥1 条导入 ask 条目时在场。
    *
    * The factory needs only one field: `resolvedModel` is the **model pin resolved from the
    * predecessor** and must override level re-resolution just like the journal pin. Silently
@@ -257,7 +263,14 @@ export interface SessionState {
    * (nudge remains in the same ask).
    */
   escalationsUsed: number;
-  /** Turn abort controller for the current ask; rebuilt for every ask by startAsk. */
+  /**
+   * 本次 ask 已发起的 WebSearch 次数（被预算拒掉的不计）。与 escalationsUsed 同族：per-ask，
+   * startAsk 归零，nudge / repair 轮不归零。
+   */
+  webSearchesUsed: number;
+  /** 本子代理每个 ask 的 WebSearch 上限：persona 的 `budget.webSearch` 或默认值，建会话时定下。 */
+  readonly webSearchLimit: number;
+  /** 当前 ask 的 turn 取消控制器；startAsk 每 ask 重建。 */
   abortController?: AbortController;
   /** The engine accepted the current ask: when its turn resolves, do not report askTurnEnded (the engine already settled it). */
   accepted: boolean;

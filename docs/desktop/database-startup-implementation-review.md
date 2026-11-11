@@ -7,7 +7,7 @@ recovery rules: [spec](./database-migration-startup-gate-plan.md); execution che
 ## Implemented
 
 - Host single-attempt coordinator; standalone Main/preload control and snapshot channels; the Renderer shows
-  real stages, duration, errors, copy-diagnostics and quit outside the business Root. No automatic migration
+  real stages, duration, errors, copy-diagnostics, export-logs and quit outside the business Root. No automatic migration
   retry.
 - The Host-owned Worker serially prepares tasks-index (original migration / original Repo post-repair), then the
   session database through the matching CLI bundle's storage-specific entry. Both end with the Host; no full

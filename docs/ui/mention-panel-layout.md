@@ -134,7 +134,7 @@ original canonical text.
 - "All workspaces" of `#` is bounded by the workspaces in the current window-scoped Tab Store that are open or
   restored and share the same session store authority as the composer. local-local and the same remote
   authority can aggregate; local-remote and different remote authorities do not share a SQLite session store,
-  and are pruned in this round, so a selected conversation is never missing for `ReadSessionContext`.
+  and are pruned in this round, so a selected conversation is never unreadable by the Agent with `ReadSession`.
 - Skill under `/` and `$`/`¥`/`￥` shares one provider-filtered catalog, with no two sets of enable/filter
   semantics.
 - Whiteboard, theme, language, task phase and model/provider are not Cartesian-multiplied with group order;
@@ -142,6 +142,12 @@ original canonical text.
 - A remote workspace verifies multi-workspace aggregation under the same `remoteSessionId`/service authority,
   and that different remote authorities and unconnected remotes do not enter candidates; no remote scope may
   fall back to the local base service.
+
+## Shared loading placeholder
+
+The home draft and the session input share MentionPanel. The loading group of `@`, the compatible reference entry, `/` and the `+` menu uniformly shows four skeleton rows, each keeping icon, name and description placeholders. Narrow screens hide the description placeholder, and the breathing animation is disabled under the reduced-motion preference; the loading hint stays available through the status accessible name.
+
+The loading rows' total height equals four candidate rows. When loading switches to results, empty state or error, the virtual list recomputes heights by row semantics so equal row counts do not reuse the old layout; the first item auto-selects while the group header stays visible. Candidate sources, ordering, selection and commit semantics are unchanged.
 
 ## Acceptance
 

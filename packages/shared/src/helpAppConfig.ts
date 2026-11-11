@@ -45,7 +45,7 @@ export function resolveHelpAppConfig(remote: unknown, local: unknown): HelpAppCo
   };
 }
 
-/** Public help config is cached in memory only; do not share rollout responses authenticated for a user. */
+/** Help config is cached in memory only; responses that differ by optional login identity must not be reused across identities. */
 export function createHelpAppConfigReader(options: {
   fetchImpl: typeof fetch;
   now?: () => number;
@@ -59,18 +59,20 @@ export function createHelpAppConfigReader(options: {
     for (const [key, entry] of entries) {
       if (!entry.pending && entry.expiresAt <= now()) entries.delete(key);
     }
-    const cached = entries.get(url);
+    const key = JSON.stringify([url, new Headers(headers).get("authorization")]);
+    const cached = entries.get(key);
     if (cached?.pending) return cached.pending;
     if (cached?.value && cached.expiresAt > now()) return cached.value;
     const entry: { expiresAt: number; value?: HelpAppConfig; pending?: Promise<HelpAppConfig> } = {
       expiresAt: 0,
     };
-    entries.set(url, entry);
+    entries.set(key, entry);
     entry.pending = (async () => {
       const response = await options.fetchImpl(url, {
         method: "GET",
         cache: "no-store",
         credentials: "omit",
+        redirect: "error",
         headers,
         signal: AbortSignal.timeout(10_000),
       });
@@ -83,7 +85,7 @@ export function createHelpAppConfigReader(options: {
     try {
       return await entry.pending;
     } catch (error) {
-      entries.delete(url);
+      entries.delete(key);
       throw error;
     } finally {
       entry.pending = undefined;

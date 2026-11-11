@@ -226,7 +226,28 @@ export async function ensureProjectExpanded(
   });
 }
 
-/** Really hover a project row; the hover action area (file tree / new task / more) mounts with hover opacity. */
+/**
+ * Moves the pointer out of the project row so the project detail hover card closes.
+ *
+ * Reason: since 738c1488f1 local projects also show a directory detail hover card. Project row actions
+ * are clicked through the DOM, but the WebDriver pointer stays on the project row, so the card stays open
+ * and covers the right-hand conversation area (for example the Composer mode selector), and later
+ * waitForClickable calls keep failing. Real users move the mouse away after clicking; here the pointer moves
+ * to an empty spot at the top-left of the viewport.
+ */
+export async function leaveProjectRowHover(): Promise<void> {
+  await browser.performActions([
+    {
+      type: "pointer",
+      id: "project-hover-leave",
+      parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerMove", origin: "viewport", x: 1, y: 1, duration: 0 }],
+    },
+  ]);
+  await browser.releaseActions();
+}
+
+/** Really hovers a project row; the hover action area (file tree / new task / more) mounts with hover opacity. */
 export async function hoverProjectRow(workspacePath: string, timeout = 15_000): Promise<void> {
   const row = $(projectRowSelector(workspacePath));
   await row.waitForDisplayed({ timeout, timeoutMsg: `侧栏没有可悬停的项目行: ${workspacePath}` });
@@ -267,6 +288,7 @@ export async function openProjectFileTree(
 ): Promise<void> {
   await hoverProjectRow(workspacePath, timeout);
   await clickProjectAction(workspacePath, TID_VIRTUAL_PROJECT_FILES, { timeout, timeoutMsg });
+  await leaveProjectRowHover();
   await browser.waitUntil(
     () =>
       browser.execute(
@@ -313,11 +335,12 @@ export async function startDraftFromProject(
       timeoutMsg: `项目 ${workspacePath} 没有可用的新建任务入口`,
     });
   }
-  // Merge adaptation: when switching projects the exit animation briefly keeps the old input
-  // box; waiting only on the navigation path would send into the old session. Count only the
-  // main pane; side chats legitimately keep their own input box, so the page must not be
-  // required to have exactly one input left. Wait for the old main-pane input to be removed,
-  // then confirm the target project's empty draft, preventing sends to the exiting session.
+  await leaveProjectRowHover();
+  // Merge adaptation: when switching projects the exit animation briefly keeps the old input box;
+  // waiting only on the navigation path would send into the old session. Count only the main pane; side
+  // chats legitimately keep their own input box, so the page must not be required to have exactly one
+  // input left. Wait for the old main-pane input to be removed, then confirm the target project's empty
+  // draft, preventing sends to the exiting session.
   await browser.waitUntil(
     () =>
       browser.execute(
@@ -428,6 +451,7 @@ export interface ProjectTaskRowState {
 export async function readProjectTaskRowState(
   taskId: string,
   workspacePath: string,
+  workspaceIdentity?: string,
 ): Promise<ProjectTaskRowState> {
   return browser.execute(
     (taskTestId, sectionSelector) => {
@@ -444,7 +468,10 @@ export async function readProjectTaskRowState(
       };
     },
     testId(TID_TASK_ITEM, taskId),
-    projectSectionSelector(workspacePath),
+    // 远端项目显示名可以包含设备信息，不能用目录 basename 推断归属；优先匹配稳定 identity。
+    workspaceIdentity
+      ? `[data-project-id][data-project-workspace-identity=${JSON.stringify(workspaceIdentity)}]`
+      : projectSectionSelector(workspacePath),
   );
 }
 

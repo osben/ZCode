@@ -136,6 +136,7 @@ subscribe → durable messages M0 → same V4 publisher → first frame enters t
 - The gateway is the sole two-phase owner; registering in context.sessions is not ready. During
   initialization, new execution commands are explicitly rejected and do not enter the accepted input queue;
   existing command query/dedupe semantics are kept.
+- When an old title/delete-intent migration arrives first, the same two-phase opening reads history and starts the runtime; the command still waits for full ready before writing persisted facts. A later historyFirst subscription reuses the history first frame and does not wait for the migration command's activation barrier; an old-capability subscription still waits for ready. Concurrent subscriptions and migration commands read M0 once and resume once, with no separate publisher or runtime.
 - Initialization events and final hydration use the same publisher; ready is declared only after aligning
   memory tail, source seq, compact repair and latest config. The UI keeps no second transcript.
 - Failure cleans only this attempt's half-initialized record, event sink and app, keeping the history
@@ -149,7 +150,28 @@ subscribe → durable messages M0 → same V4 publisher → first frame enters t
 - desktop continuous and mobile replayable share one recovery owner and keep their own gap/snapshot,
   workspaceIdentity/remoteSessionId and subscription watermark boundaries.
 
-### 4.2 UI and impact
+2026-11-09 regression: ordinary history (HF01/HF02) and the old-title handoff (HF04) are split into independent HOMEs. The title-handoff case first waits for the hook the migration starts, then subscribes to history, and checks the final title, the handoff bit, a single resume and the follow-up send. The fixture barrier subscribes to the directory event before checking the release file, so a later restart never waits on a release that already happened. Run evidence: [coverage matrix](../testing/conversation-session-e2e-coverage-matrix.md).
+
+### 4.2 Command catalog and history first-frame scheduling boundary
+
+On a cold open, the composer's `workspace/readPresentation` discovers plugins and builds the slash command catalog. It used to occupy the NDJSON ordinary-request serial queue, so the following `provider/refreshRegistry` queued behind it; the Host waits for that refresh before conversation subscribe, so the history first frame indirectly waited for the command catalog.
+
+```text
+earlier ordinary requests (including config updates) complete
+  |- workspace/readPresentation -> plugin discovery and command catalog -> independent response
+  `- Provider update -> Registry refresh ACK -> conversation subscribe -> history first frame
+```
+
+- Only `workspace/readPresentation` uses this read branch: it captures the barrier of earlier ordinary requests at receipt, waits for them to complete and then enters the handler; the catalog load's completion Promise is not appended to the ordinary-request serial queue.
+- Provider updates and refreshes still run in the original ordinary-request order; the Host's per-client-Account delivery queue, revision verification and pre-subscribe refresh barrier are unchanged. Cache, skipping the refresh or a fixed delay must not replace the consistency constraint.
+- The catalog read uses the configuration semantics at handler start; plugin material validation, change invalidation and the seed write lock stay with the original owner, and no second catalog cache is added. Later config operations may run in parallel with catalog discovery, and existing query invalidation rules still apply.
+- The NDJSON connection holds in-flight catalog reads only for close draining. EOF waits for ordinary requests and already received catalog requests, still bounded by the existing EOF drain limit; after termination a queued read must not start, and a late result must not write a response or commit the outbox.
+- desktop continuous and mobile replayable share this scheduling; workspace/remote identity, request ids, session lifecycle, ACK/initial order and subscription ownership are unchanged.
+- Regression uses controllable Promises to block, in turn, an earlier config request, a Provider update and the catalog read, and verifies earlier-request order, later Provider FIFO, zero history subscriptions before the refresh completes, history returning while the catalog is still pending, and the EOF/error/termination boundaries. Cold-open performance is measured as click to history DOM after confirming the target CLI is not running, with queueing and handler execution time reported separately.
+
+2026-11-04 on macOS arm64 in dev mode, two workspaces were measured alternately before/after, 16 valid cold opens in total. All 8 after-change runs returned history before the catalog read completed; in all samples the earlier Account update completed before the Registry refresh started. Both versions included an independent on-demand-loading experiment for the Bash registry and the TS compiler; that experiment was not kept in the final change, so only the scheduling-order evidence is kept and the earlier total timings are not taken as the final version's performance conclusion. Machine concurrent load was not isolated and startup fluctuated; no other platform was measured on real devices.
+
+### 4.3 UI and impact
 
 - SessionPane/ConversationComposer: the history snapshot controls the body, `runtimeInitialization` controls
   execution. No hint bar during initialization; only on failure an error and retry above the input box.

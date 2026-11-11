@@ -37,6 +37,7 @@ export const AMEND_WORKFLOW_ERROR_CODE = {
   RETUNE_UNCHANGED: 27,
   RUN_SETTLED: 28,
   NOT_RETUNABLE: 29,
+  HELD_ELSEWHERE: 30,
 } as const;
 
 /** Input-level violation (both sources were provided); uses the same 400 code as `CreateWorkflow`. */

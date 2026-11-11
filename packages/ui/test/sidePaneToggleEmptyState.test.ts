@@ -103,7 +103,10 @@ describe("side pane toggle empty state", () => {
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(scopeSyncSource).toContain("resolveSidePaneScopeState(");
-    expect(scopeSyncSource).toContain("setIsSidePaneCollapsed(resolved.isSidePaneCollapsed);");
+    // Upstream's draft-promotion path may keep a draft's collapsed state; the single setter
+    // still receives the value derived from the resolved scope, applied with the resolved tab.
+    expect(scopeSyncSource).toContain("resolved.isSidePaneCollapsed");
+    expect(scopeSyncSource).toContain("setIsSidePaneCollapsed(isSidePaneCollapsed);");
     expect(scopeSyncSource).toContain("return resolved.sidePaneState;");
   });
 

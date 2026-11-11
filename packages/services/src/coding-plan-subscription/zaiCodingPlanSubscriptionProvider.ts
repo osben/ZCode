@@ -17,7 +17,7 @@ import {
  * this class extends BigModelCodingPlanSubscriptionProvider and overrides only the family-specific enterprise read path:
  *   - providerId  → zaiCodingPlan
  *   - Business domain   → resolveZaiCodingPlanHost() (configured ZAI Business origin in tests / api.z.ai in production)
- *   - OAuth token → loadZaiAuthorization() (oauth:zai:access_token; reuses the parent implementation)
+ *   - OAuth token → same-session subscription material (reuses the parent class)
  *   - Authorization headers → createZaiLoginAuthHeaders()
  *
  * Scope: only the family-specific behavior for getEnterprisePricing + enrichEnterprisePricingTeamProjects
@@ -37,11 +37,6 @@ export class ZaiCodingPlanSubscriptionProvider extends BigModelCodingPlanSubscri
 
   protected resolveFamilyEnterpriseHost(): string {
     return resolveZaiCodingPlanHost();
-  }
-
-  protected async loadFamilyEnterpriseToken(): Promise<string> {
-    // Reuse the parent loadZaiAuthorization; credential key = oauth:zai:access_token.
-    return this.loadZaiAuthorization();
   }
 
   protected createFamilyEnterpriseAuthHeaders(token: string): Record<string, string> {

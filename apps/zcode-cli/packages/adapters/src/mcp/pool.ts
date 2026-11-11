@@ -22,6 +22,7 @@ export interface CreateMcpAdapterForPoolInput {
   config: McpServerConfig;
   serverName: string;
   workingDirectory?: string;
+  workspaceKey?: string;
 }
 
 export interface McpConnectionContext {
@@ -299,6 +300,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
           config,
           serverName,
           workingDirectory: connectOptions.workingDirectory,
+          ...(connectOptions.workspaceKey ? { workspaceKey: connectOptions.workspaceKey } : {}),
         });
         // The connection belongs to the pool and must not inherit the first session's close
         // signal, or it would abort the other leases along with it.
@@ -652,7 +654,10 @@ function connectionKey(input: {
   // declare workspace isolation.
   const scope =
     input.config.isolation === "workspace"
-      ? (resolveWorkspaceKey(input.connectOptions) ?? "")
+      ? [
+          resolveWorkspaceKey(input.connectOptions) ?? "",
+          input.connectOptions.workspaceKey ?? "",
+        ].join("\u0000")
       : input.leaseId;
   return [input.serverName, scope, stableStringify(input.config)].join("\u0000");
 }

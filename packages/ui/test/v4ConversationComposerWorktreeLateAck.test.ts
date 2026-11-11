@@ -25,6 +25,7 @@ import {
   replaceComposerDraftSpy,
   renderLateAckComposer,
   ROOT_DRAFT_SCOPE,
+  unmountLateAckComposers,
 } from "./v4ConversationComposerLateAckHarness.js";
 
 const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => ({
@@ -48,6 +49,24 @@ vi.mock("@/hooks/useZCodeSessionService.js", () => ({
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
   useSettings: () => ({ settings: {} }),
+}));
+vi.mock("@/hooks/useZCodeAgentService.js", () => {
+  // The draft owner subscribes to plugin startup events through this service; no-op subscription.
+  const agentService = {
+    onDynamicPluginStartupDegraded: () => () => ({ dispose: () => {} }),
+  };
+  return { useZCodeAgentService: () => agentService };
+});
+vi.mock("@/voice-input/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/voice-input/index.js")>()),
+  // Voice input needs a Host voice service and a logged-in user, neither of which these suites provide.
+  useComposerVoiceInput: () => ({
+    available: false,
+    state: "idle",
+    toggle: () => {},
+    settle: () => undefined,
+    subscribeLevel: () => () => {},
+  }),
 }));
 vi.mock("@/components/ui/dialog.js", async () => {
   const React = await import("react");
@@ -87,6 +106,7 @@ vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
       if (inputApiRef) {
         inputApiRef.current = {
           clear: editorApi.clear,
+          clearHistory: vi.fn(),
           focus: vi.fn(),
           getEditorState: () => null,
           getMarkdown: () => "",
@@ -162,6 +182,7 @@ vi.mock("@/v4/composer/V4ComposerToolbar.js", async () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  unmountLateAckComposers();
   chatPromptEditorProps.length = 0;
   attachmentState.prepareForSend.mockClear();
   editorApi.clear.mockClear();

@@ -17,31 +17,21 @@
  */
 import {
   OFFICIAL_MCP_AUTH_HEADER_NAMES,
-  getModelProviderFamilySpec,
   zcodeProviderAccountAccessSchema,
   type OfficialAuthConsumerKind,
   type OfficialMcpAuthFailureReason,
   type ZCodeAccountAccess,
   type ZCodeProviderAccountAccess,
 } from "@zcode/shared";
+import {
+  isSameOAuthAccountMaterial,
+  type OAuthAccountMaterial,
+  type OAuthIdentityMaterial,
+} from "#src/oauth/repo/oauthCredentialRepo.js";
 import type { ModelSelectionView } from "@zcode/provider";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 
 const log = createServiceLogger("official-mcp");
-
-const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
-const ACTIVE_OAUTH_PROVIDER_KEY = "oauth:active_provider";
-
-/**
- * Credential key for the MaaS login JWT (`oauth:<provider>:access_token`; see oauth/repo/oauthCredentialRepo.ts).
- *
- * Select the exact provider family and **never fall back across families**: using a ZAI business JWT for BigModel
- * Coding Plan creates a request that is guaranteed to fail, with a misleading “no plan” reason.
- * This logic is equivalent to but independent from the reset channel in bigmodelUsageQuotaProvider (see the file header).
- */
-function maasJwtCredentialKey(providerFamily: "zai" | "bigmodel"): string {
-  return `oauth:${getModelProviderFamilySpec(providerFamily).oauthProviderId}:access_token`;
-}
 
 /**
  * Compute the JWT's remaining lifetime (seconds) for logging only. **Does not participate in control flow**; returns undefined if parsing fails.
@@ -106,7 +96,9 @@ export interface OfficialMcpCredentialResolverDeps {
   accountRequestAuthService: {
     resolveAccessCurrent(access: ZCodeProviderAccountAccess): Promise<ZCodeAccountAccess | null>;
   };
-  credentialService: { load(key: string): Promise<string | null | undefined> };
+  getRegistryRevision(): number | null;
+  loadOAuthIdentityMaterial(): Promise<OAuthIdentityMaterial | null>;
+  loadOAuthAccountMaterial(family: "zai" | "bigmodel"): Promise<OAuthAccountMaterial | null>;
   modelSelectionService: {
     getView(): Promise<ModelSelectionView>;
   };
@@ -126,8 +118,8 @@ export interface OfficialMcpCredentialSnapshot {
    * buildOfficialMcpAuthHeaders adds the prefix, matching the existing reset/usage channel convention.
    */
   codingPlanAuthorization?: string;
-  providerFamily: "zai" | "bigmodel";
-  /** Product/quota ownership for the currently selected connection; null when a malformed legacy Team key cannot be assigned precisely. */
+  providerFamily: "zai" | "bigmodel" | "zai_cn";
+  /** Product/quota ownership of the currently selected connection; null when a malformed legacy Team key cannot be assigned precisely. */
   planScope: OfficialMcpPlanScope | null;
   /** Scope of identity headers sent to Server MCP; null for ZAI Team, as on the Off-Peak path. */
   wireScope: OfficialMcpWireScope;
@@ -224,10 +216,13 @@ function createSelectionFingerprint(registry: ModelSelectionView): string {
 }
 
 type OfficialMcpIdentitySnapshot = {
-  activeProvider: "zai" | "bigmodel";
+  activeProvider: "zai" | "bigmodel" | "zai_cn";
+  userId: string;
+  sessionRevision: string | null;
   jwt: string;
   registry: ModelSelectionView;
   selectionFingerprint: string;
+  registryRevision: number | null;
 };
 
 async function readIdentitySnapshot(
@@ -236,22 +231,30 @@ async function readIdentitySnapshot(
   | { ok: true; snapshot: OfficialMcpIdentitySnapshot }
   | { ok: false; reason: OfficialMcpAuthFailureReason }
 > {
-  const [registry, activeProviderValue, jwtValue] = await Promise.all([
-    deps.modelSelectionService.getView(),
-    deps.credentialService.load(ACTIVE_OAUTH_PROVIDER_KEY),
-    deps.credentialService.load(ZCODE_JWT_TOKEN_KEY),
-  ]);
-  const activeProvider = activeProviderValue?.trim();
-  const jwt = jwtValue?.trim() ?? "";
-  if ((activeProvider !== "zai" && activeProvider !== "bigmodel") || !jwt) {
-    return fail("official_auth_unavailable");
-  }
+  const registryRevision = deps.getRegistryRevision();
+  const registry = await deps.modelSelectionService.getView();
+  const identity = await deps.loadOAuthIdentityMaterial();
+  // The Coding Plan Registry may switch while identity is read; no await after the synchronous version check.
+  if (deps.getRegistryRevision() !== registryRevision) return fail("official_auth_unavailable");
+  if (!identity) return fail("official_auth_unavailable");
+  const activeProvider =
+    identity.loginProvider === "zai"
+      ? "zai"
+      : identity.loginProvider === "bigmodel"
+        ? "bigmodel"
+        : identity.loginProvider === "zai_cn"
+          ? "zai_cn"
+          : null;
+  if (!activeProvider) return fail("official_auth_unavailable");
   return {
     ok: true,
     snapshot: {
       activeProvider,
-      jwt,
+      userId: identity.zcodeUserId,
+      sessionRevision: identity.sessionRevision,
+      jwt: identity.zcodeJwtToken,
       registry,
+      registryRevision,
       selectionFingerprint: createSelectionFingerprint(registry),
     },
   };
@@ -263,7 +266,10 @@ function isSameIdentitySnapshot(
 ): boolean {
   return (
     before.activeProvider === after.activeProvider &&
+    before.userId === after.userId &&
+    before.sessionRevision === after.sessionRevision &&
     before.jwt === after.jwt &&
+    before.registryRevision === after.registryRevision &&
     before.selectionFingerprint === after.selectionFingerprint
   );
 }
@@ -287,10 +293,9 @@ function identityOnlyOutcome(identity: OfficialMcpIdentitySnapshot): OfficialMcp
 /**
  * Resolve official MCP credentials for the currently selected connection.
  *
- * Race protection: Registry, dynamic Account Access, active provider, zcode JWT, and MaaS JWT
- * may all change during resolution. Read each before and after and compare; if any differ, retry the entire operation.
- * Never combine credentials from two generations, whether “zcode JWT from ZAI and MaaS JWT from BigModel” (cross-family mixing)
- * or “old JWT + new JWT” (same-family token rotation). If two attempts remain unstable, return unavailable.
+ * Race protection: the Registry, dynamic Account Access, the active provider, the zcode JWT and the MaaS JWT
+ * may all change during resolution. The login channel does not decide the plan family; the primary identity and the linked material must match the same
+ * user ID, revision, and business JWT. Re-compare the selection and linked material before and after resolution; if two rounds remain unstable, return unavailable.
  */
 export async function resolveOfficialMcpCredentials(
   deps: OfficialMcpCredentialResolverDeps,
@@ -334,45 +339,31 @@ export async function resolveOfficialMcpCredentials(
       return identityOnlyOutcome(identity.snapshot);
     }
 
-    // The zcode JWT mirrors the global login identity; checking only selectedKey could combine a ZAI JWT with a BigModel key in one request.
-    if (identity.snapshot.activeProvider !== selected.plan.providerFamily) {
-      return fail("official_auth_unavailable");
-    }
-
-    const maasJwtKey = maasJwtCredentialKey(selected.plan.providerFamily);
-    const codingPlanAuthorization = (await deps.credentialService.load(maasJwtKey))?.trim() ?? "";
-    if (!codingPlanAuthorization) {
-      // Classify as unavailable rather than plan_required: the login state is incomplete (sign in again),
-      // not “no plan.” Both provider adapters require this token at sign-in, so the normal path does not hit this;
-      // it mainly occurs with legacy login states from migration.
-      log.warn(undefined, "official mcp maas jwt missing", {
-        providerFamily: selected.plan.providerFamily,
-        reason: "official_auth_unavailable",
-      });
-      return fail("official_auth_unavailable");
-    }
-
-    const [latestIdentity, latestMaasJwt] = await Promise.all([
-      readIdentitySnapshot(deps),
-      deps.credentialService.load(maasJwtKey),
-    ]);
-    const latestSelectedProvider = latestIdentity.ok
-      ? resolveSelectedProvider(latestIdentity.snapshot.registry)
-      : latestIdentity;
-    const latestAccountAccess = latestSelectedProvider.ok
-      ? await deps.accountRequestAuthService.resolveAccessCurrent(
-          latestSelectedProvider.provider.access,
-        )
-      : null;
+    const material = await deps.loadOAuthAccountMaterial(selected.plan.providerFamily);
+    // The login channel and the plan family may differ; only the linked material bound to the primary identity may be accepted.
+    if (
+      !material ||
+      material.loginProvider !== identity.snapshot.activeProvider ||
+      material.zcodeUserId !== identity.snapshot.userId ||
+      material.sessionRevision !== identity.snapshot.sessionRevision ||
+      material.zcodeJwtToken !== identity.snapshot.jwt
+    )
+      continue;
+    const codingPlanAuthorization = material.accessToken.trim();
+    if (!codingPlanAuthorization) return fail("official_auth_unavailable");
+    const latestAccountAccess = await deps.accountRequestAuthService.resolveAccessCurrent(
+      selectedProvider.provider.access,
+    );
+    const latestMaterial = await deps.loadOAuthAccountMaterial(selected.plan.providerFamily);
+    // The last IO reads the primary identity and the Registry again, so after an account switch no stale plan header is assembled.
+    const latestIdentity = await readIdentitySnapshot(deps);
     if (
       !latestIdentity.ok ||
       !isSameIdentitySnapshot(identity.snapshot, latestIdentity.snapshot) ||
-      !latestSelectedProvider.ok ||
       JSON.stringify(accountAccess) !== JSON.stringify(latestAccountAccess) ||
-      codingPlanAuthorization !== (latestMaasJwt?.trim() ?? "")
-    ) {
+      !isSameOAuthAccountMaterial(material, latestMaterial)
+    )
       continue;
-    }
 
     // The provider entry is only a gate confirming that the Coding Plan connection exists. The business key is no longer a credential
     // (the flow switched to the MaaS JWT channel), so do not require it to be present; otherwise a transient key refresh

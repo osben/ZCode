@@ -47,8 +47,7 @@ export interface ConversationStatusPanelSessionPlansModel {
 }
 
 export interface ConversationStatusPanelRunningSubagent extends RunningSubagentSummary {
-  controlWorkId?: string;
-  cancellable?: boolean;
+  stopControl?: { taskId: string; executionId: string };
 }
 
 /** One row in the Workflows section. Fields form three clusters because each represents an independently optional fact: `status` / `nodesSettled` / `nodesTotal` come from the `workflowRuns` projection; `title` / `startedAt` are static background-task metadata; `workId` / `cancellable` are required for Stop and appear only while background work is running. Express absence by omitting the field, not as 0 or an empty string: the renderer uses this to decide whether to show status/step counts, duration, or Stop, and a fake 0/0 would say “no steps ran.” See `buildRunningWorkflowRuns` for why the fields are grouped. */
@@ -117,7 +116,7 @@ export interface BuildConversationStatusPanelModelInput {
   workspacePath?: string;
   plan?: PlanState | null;
   backgroundWorks?: readonly BackgroundWorkSummary[];
-  runningSubagents?: readonly RunningSubagentSummary[];
+  runningSubagents?: readonly ConversationStatusPanelRunningSubagent[];
   workflowRuns?: readonly WorkflowRunState[];
 }
 
@@ -318,7 +317,6 @@ export function buildConversationStatusPanelModel(
   const plan = buildPlanModel(input.plan);
   const runningBashWorks: BackgroundWorkSummary[] = [];
   const workflowWorkByWorkId = new Map<string, BackgroundWorkSummary>();
-  const subagentControlByChildSessionId = new Map<string, BackgroundWorkSummary | null>();
   for (const work of input.backgroundWorks ?? []) {
     if (work.kind === "workflow") {
       // “workflow” (a workflow run) used to be grouped with bash under Terminals; that was a known misclassification to preserve the Stop entry.
@@ -334,47 +332,11 @@ export function buildConversationStatusPanelModel(
     if (work.status !== "running") continue;
     if (work.kind === "bash") {
       runningBashWorks.push(work);
-    } else if (work.kind === "subagent" && work.childSessionId) {
-      // When the directory projection took over Agent display, workId/cancellable from old backgroundWorks was no longer joined back,
-      // making the Stop entry disappear. Accept only an exact unique childSessionId match; if identity is duplicated or absent, omit control
-      // rather than guessing by title/time and stopping the wrong task.
-      const existing = subagentControlByChildSessionId.get(work.childSessionId);
-      subagentControlByChildSessionId.set(
-        work.childSessionId,
-        existing === undefined ? work : null,
-      );
     }
   }
-  const runningSubagentWorks: ConversationStatusPanelRunningSubagent[] = (
-    input.runningSubagents ?? []
-  ).map((subagent) => {
-    const controlWork = subagentControlByChildSessionId.get(subagent.childSessionId);
-    if (!controlWork) return subagent;
-    return {
-      ...subagent,
-      controlWorkId: controlWork.workId,
-      cancellable: controlWork.cancellable !== false,
-    };
-  });
-  const projectedChildSessionIds = new Set(
-    runningSubagentWorks.map((subagent) => subagent.childSessionId),
-  );
-  for (const [childSessionId, controlWork] of subagentControlByChildSessionId) {
-    if (!controlWork || projectedChildSessionIds.has(childSessionId)) continue;
-    // backgroundWorks already has authoritative running state with an exact childSessionId, but
-    // there may briefly be no row while the subagents cold/live projections switch. The old model hid all Agent controls
-    // during that gap. Use only a unique authoritative work item to restore the same control; still refuse to guess on duplicate identity.
-    runningSubagentWorks.push({
-      agentId: controlWork.workId,
-      childSessionId,
-      controlWorkId: controlWork.workId,
-      subagentType: "subagent",
-      title: controlWork.title,
-      status: controlWork.blocked ? "blocked" : "running",
-      startedAt: controlWork.startedAt,
-      cancellable: controlWork.cancellable !== false,
-    });
-  }
+  // 子智能体的 Stop 资格由 running 投影显式给出；旧 backgroundWorks 可能滞后或缺行，
+  // 用 childSessionId 联接会把另一条任务的控制柄误挂到目录行上。
+  const runningSubagentWorks = [...(input.runningSubagents ?? [])];
 
   const runningWorkflowRuns = buildRunningWorkflowRuns(input.workflowRuns, workflowWorkByWorkId);
 

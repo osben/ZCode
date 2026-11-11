@@ -29,6 +29,11 @@ import type {
 } from "#src/web-remote-relay/index.js";
 import type { AppSettings, Locale } from "./protocol.js";
 import type {
+  ExtensionNotificationClick,
+  ExtensionNotificationPayload,
+  NotificationsShowResult,
+} from "#src/extension-host/notifications.js";
+import type {
   ArmsCustomEventPayload,
   RendererTelemetryEventPayload,
   TelemetryRendererContext,
@@ -54,6 +59,19 @@ export type {
   UpdateCheckResultPayload,
   UpdateStatePayload,
 } from "./update.js";
+
+export interface AppNavigationTarget {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+}
+export type AppNavigationResult =
+  | { status: "opened"; uiTarget?: string }
+  | { status: "unavailable"; reason?: string; uiTarget?: string };
+export type AppNavigationHandler = (
+  target: AppNavigationTarget,
+  signal: AbortSignal,
+) => Promise<AppNavigationResult>;
 
 export interface TaskNotificationPayload {
   taskId: string;
@@ -116,6 +134,15 @@ export interface BrowserViewResidencyTransitionPayload {
 
 export interface BrowserViewCloseTabRequest {
   tabId: string;
+  workspaceKey: string;
+  remoteSessionId?: string;
+  sessionId: string;
+}
+
+export const BROWSER_VIEW_DRAFT_SESSION_ID = "unscoped";
+
+export interface BrowserViewPromoteDraftTabsRequest {
+  tabIds: string[];
   workspaceKey: string;
   remoteSessionId?: string;
   sessionId: string;
@@ -346,6 +373,42 @@ export interface PrintPageToPdfResult {
   /** PDF bytes; present on success. */
   data?: ArrayBuffer;
   /** "print_in_progress" | "print_failed" */
+  error?: string;
+}
+
+/**
+ * 系统麦克风权限检查结果（docs/chat/composer-voice-input.md「麦克风权限」）。
+ * - granted：可以调用 getUserMedia
+ * - denied：系统拒绝，需要用户到系统设置开启
+ * - unsupported：系统没有权限接口（Linux），由 getUserMedia 的错误决定
+ */
+export type MicrophoneAccessResult = "granted" | "denied" | "unsupported";
+
+/** privacy：系统麦克风隐私页；sound：系统声音输入设备页 */
+export type MicrophoneSettingsTarget = "privacy" | "sound";
+
+/** guest 视口内的裁剪区域，全部是 guest CSS px；视口宽高用于换算实际帧的像素比例。 */
+export interface CaptureBrowserGuestPageClip {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+export interface CaptureBrowserGuestPageRequest {
+  /** 内置浏览器 `<webview>` 的 guest webContents id（renderer 由 `getWebContentsId()` 取得） */
+  webContentsId: number;
+  /** 只要视口内某一块（选元素截图）；不传时返回整个可见视口 */
+  clip?: CaptureBrowserGuestPageClip;
+}
+
+export interface CaptureBrowserGuestPageResult {
+  success: boolean;
+  /** PNG 字节；success 时存在 */
+  data?: ArrayBuffer;
+  /** "guest_not_found" | "guest_not_owned" | "capture_in_progress" | "capture_timeout" | "capture_failed" | "clip_out_of_view" */
   error?: string;
 }
 
@@ -798,7 +861,24 @@ export interface IPlatformService {
   printPageToPdf?(): Promise<PrintPageToPdfResult>;
 
   /**
-   * Resolve a host-local path from a browser File object; only Desktop preload can implement this safely.
+   * Microphone system permission (Desktop only). On macOS, shows the system authorization prompt if it has not been asked yet;
+   * openSettings opens only a fixed system settings address; false means the current system has no page to jump to.
+   */
+  microphone?: {
+    ensureAccess(): Promise<MicrophoneAccessResult>;
+    openSettings(target: MicrophoneSettingsTarget): Promise<boolean>;
+  };
+
+  /**
+   * Captures the currently visible viewport of the built-in browser guest as PNG in the main process. Calling `<webview>.capturePage()` on the renderer side
+   * crashes the renderer natively (V8 FATAL), so frames can only be taken by main, as with Agent screenshots; Desktop only.
+   */
+  captureBrowserGuestPage?(
+    payload: CaptureBrowserGuestPageRequest,
+  ): Promise<CaptureBrowserGuestPageResult>;
+
+  /**
+   * Resolves a host-local path from a browser File object; only Desktop preload can implement this safely.
    * Web/mobile return null so the UI does not depend on Electron's non-standard File.path.
    */
   getPathForFile?(file: unknown): string | null;
@@ -994,6 +1074,17 @@ export interface IPlatformService {
   /** Trigger a system notification for the task state; the host decides whether to display it. */
   showTaskNotification(payload: TaskNotificationPayload): void;
 
+  /**
+   * Extension system notification (docs/plugins/extension-host.md §18.1 H8): Main decides based on window focus and platform support whether to show it,
+   * and returns whether it was shown and why. Not implemented by Web or mobile remote control.
+   */
+  showExtensionNotification?(
+    payload: ExtensionNotificationPayload,
+  ): Promise<NotificationsShowResult>;
+
+  /** The user clicked an extension notification: called back after Main restores and focuses the window, carrying the view to open. Returns a disposer. */
+  onExtensionNotificationClick?(handler: (click: ExtensionNotificationClick) => void): () => void;
+
   /** Sync the current UI context for host launch/daily-active events; Web may omit it. */
   syncTelemetryContext?(context: TelemetryRendererContext): void;
 
@@ -1186,6 +1277,9 @@ export interface IPlatformService {
   /** Register a callback to navigate to the relevant task after the user clicks a system notification; returns a disposer. */
   onTaskNotificationClick(handler: (taskId: string) => void): () => void;
 
+  /** Explicit App navigation capability: registered only when the desktop navigation owner is mounted; returns the real navigation commit result. */
+  onAppControlNavigation?(handler: AppNavigationHandler): () => void;
+
   /** Export logs: zip ~/.zcode/v2 and external Agent logs, then reveal the archive in the system file manager. */
   exportLogs(): Promise<{ success: boolean; path?: string; error?: string }>;
 
@@ -1215,6 +1309,9 @@ export interface IPlatformService {
 
   /** Report selected/visible/loading state and recovery metadata. */
   browserViewReportResidency?(payload: BrowserViewResidencyReportPayload): Promise<void>;
+
+  /** Draft first send: upgrades the main owner of draft human tabs from unscoped to the new session; returns the upgraded tabIds. */
+  browserViewPromoteDraftTabs?(payload: BrowserViewPromoteDraftTabsRequest): Promise<string[]>;
 
   /** Renderer unloaded the guest for the specified generation. */
   browserViewSuspendReady?(payload: { tabId: string; generation: number }): Promise<void>;

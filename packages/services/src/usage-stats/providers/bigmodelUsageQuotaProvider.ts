@@ -1,5 +1,9 @@
 /* eslint-disable max-lines -- Quota, entitlement, and monitor requests share provider authentication logic; splitting the file would make Coding Plan strict-key boundaries harder to trace. */
 import { z } from "zod";
+import {
+  isSameOAuthAccountMaterial,
+  type OAuthAccountMaterial,
+} from "#src/oauth/repo/oauthCredentialRepo.js";
 import type {
   ApiClient,
   ApiRequestInit,
@@ -32,7 +36,6 @@ import {
 } from "@zcode/shared";
 import type { ProviderFamilyDomain } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
-import type { ICredentialService } from "../../credential/credential.js";
 import type { IAccountRequestAuthService } from "../../model-provider/accountRequestAuthService.js";
 import { readApiJson } from "../../providers/api/apiJson.js";
 import { readEnv } from "../../oauth/providers/configUtils.js";
@@ -72,9 +75,6 @@ import { normalizeLimits, pickPrimaryLimit } from "./bigmodelUsageQuotaMapper.js
 
 const BIGMODEL_QUOTA_PATH = "/api/monitor/usage/quota/limit";
 const CODING_PLAN_RESET_BASE_PATH = "/api/v1/coding-plan/reset";
-const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
-const ZAI_OAUTH_ACCESS_TOKEN_KEY = "oauth:zai:access_token";
-const BIGMODEL_OAUTH_ACCESS_TOKEN_KEY = "oauth:bigmodel:access_token";
 const REQUEST_TIMEOUT_MS = 15_000;
 const log = createServiceLogger("usage-stats");
 const EMPTY_MODEL_USAGE_PAYLOAD = {} satisfies BigModelUsageModelUsagePayload;
@@ -125,14 +125,14 @@ export interface UsageApiAuthorization {
 
 interface BigModelUsageQuotaProviderOptions {
   apiClient: ApiClient;
+  loadOAuthAccountMaterial(family: "zai" | "bigmodel"): Promise<OAuthAccountMaterial | null>;
   accountRequestAuthService: Pick<
     IAccountRequestAuthService,
-    "resolveAccessCurrent" | "resolveCurrent" | "assertCurrent"
+    "resolveAccessCurrent" | "resolveCurrent"
   >;
   resolveApiAuthorization?: (
     request: UsageApiAuthorizationRequest,
   ) => Promise<UsageApiAuthorization | null>;
-  credentialService?: Pick<ICredentialService, "load">;
   env?: NodeJS.ProcessEnv;
   /**
    * Credential source for the official Server MCP. When omitted, mcpQuota in the entitlement snapshot is always null,
@@ -173,20 +173,20 @@ type ZaiStartPlanBalance = NonNullable<
 
 export class BigModelUsageQuotaProvider {
   private readonly apiClient: ApiClient;
+  private readonly loadOAuthAccountMaterial: BigModelUsageQuotaProviderOptions["loadOAuthAccountMaterial"];
   private readonly accountRequestAuthService: Pick<
     IAccountRequestAuthService,
-    "resolveAccessCurrent" | "resolveCurrent" | "assertCurrent"
+    "resolveAccessCurrent" | "resolveCurrent"
   >;
   private readonly resolveApiAuthorization?: BigModelUsageQuotaProviderOptions["resolveApiAuthorization"];
-  private readonly credentialService?: Pick<ICredentialService, "load">;
   private readonly env: NodeJS.ProcessEnv;
   private readonly officialMcpCredentialSource?: OfficialMcpCredentialSource;
 
   constructor(options: BigModelUsageQuotaProviderOptions) {
     this.apiClient = options.apiClient;
+    this.loadOAuthAccountMaterial = options.loadOAuthAccountMaterial;
     this.accountRequestAuthService = options.accountRequestAuthService;
     this.resolveApiAuthorization = options.resolveApiAuthorization;
-    this.credentialService = options.credentialService;
     this.env = options.env ?? process.env;
     this.officialMcpCredentialSource = options.officialMcpCredentialSource;
   }
@@ -216,7 +216,11 @@ export class BigModelUsageQuotaProvider {
     const generatedAt = Date.now();
     const teamContext = accountAccess ? resolveTeamPlanContext(accountAccess) : null;
     const providerId = request.preferredProviderId?.trim() ?? "";
-    // Team entitlements do not require a call Key; preserve a confirmed subscription even if creating/copying the Key fails.
+    const account = accountAccess
+      ? await this.loadOAuthAccountMaterial(accountAccess.family)
+      : null;
+    if (teamContext && !account) throw new Error("coding_plan_account_required");
+    // Team entitlements do not require a call Key; keep a confirmed subscription even if creating or copying the Key fails.
     const teamEntitlement = teamContext
       ? await fetchBigModelSubscriptionSummary({
           apiClient: this.apiClient,
@@ -227,9 +231,7 @@ export class BigModelUsageQuotaProvider {
               ? buildZaiQuotaUrl(this.env)
               : buildBigModelQuotaUrl(this.env)),
           teamContext,
-          businessToken: await this.credentialService?.load(
-            `oauth:${teamContext.family}:access_token`,
-          ),
+          businessToken: account?.accessToken,
           timeoutMs: REQUEST_TIMEOUT_MS,
         })
       : null;
@@ -275,11 +277,13 @@ export class BigModelUsageQuotaProvider {
     const limits = normalizeLimits(quotaData?.limits);
     const primaryLimit = pickPrimaryLimit(limits);
     if (accountAccess && providerId) {
-      await this.accountRequestAuthService.assertCurrent({
-        providerId,
-        accountAccess,
-      });
+      await this.assertUnchangedRequestAccess(request.accountAccess, accountAccess);
     }
+    if (
+      account &&
+      !isSameOAuthAccountMaterial(account, await this.loadOAuthAccountMaterial(account.family))
+    )
+      throw new Error("coding_plan_account_changed");
     return {
       generatedAt,
       authenticated: true,
@@ -320,6 +324,27 @@ export class BigModelUsageQuotaProvider {
     if (!accountAccess) return undefined;
     if (!("mode" in accountAccess)) return accountAccess;
     return (await this.accountRequestAuthService.resolveAccessCurrent(accountAccess)) ?? undefined;
+  }
+
+  private async assertUnchangedRequestAccess(
+    requested: UsageEntitlementRequest["accountAccess"],
+    expected: ZCodeAccountAccess,
+  ): Promise<void> {
+    // A static request represents the current connection and must re-resolve the original request; the concrete access only browses the specified plan and must not be bound to it.
+    if (!requested || !("mode" in requested)) return;
+    const current = await this.resolveRequestAccountAccess(requested);
+    const scope = (access: ZCodeAccountAccess | undefined) =>
+      access
+        ? [
+            access.family,
+            access.planKind,
+            access.planKind === "team-coding-plan"
+              ? [access.organizationId, access.projectId, access.productId]
+              : null,
+          ]
+        : null;
+    if (JSON.stringify(scope(current)) !== JSON.stringify(scope(expected)))
+      throw new Error("coding_plan_account_changed");
   }
 
   /**
@@ -653,26 +678,22 @@ export class BigModelUsageQuotaProvider {
     if (!accountAccess) {
       throw new Error("coding_plan_reset_account_access_required");
     }
-    await this.accountRequestAuthService.assertCurrent({
-      providerId: request.preferredProviderId,
-      accountAccess,
-    });
-    const zcodeJwt = (await this.credentialService?.load(ZCODE_JWT_TOKEN_KEY))?.trim() ?? "";
-    if (!zcodeJwt) {
-      throw new Error("coding_plan_reset_zcode_jwt_required");
-    }
-    // reset supports both Z.ai and BigModel Coding Plan. Always reading oauth:bigmodel:access_token
-    // makes requests from users logged in only to Z.ai fail before sending. Select the business JWT strictly by the current provider family
-    // and forbid cross-family fallback. Pass the header through according to the backend contract without a Bearer prefix.
-    const codingPlanJwtKey =
-      accountAccess.family === "zai" ? ZAI_OAUTH_ACCESS_TOKEN_KEY : BIGMODEL_OAUTH_ACCESS_TOKEN_KEY;
-    const codingPlanJwt = (await this.credentialService?.load(codingPlanJwtKey))?.trim() ?? "";
-    if (!codingPlanJwt) {
-      throw new Error("coding_plan_reset_maas_jwt_required");
-    }
+    const account = await this.loadOAuthAccountMaterial(accountAccess.family);
+    if (!account?.zcodeJwtToken) throw new Error("coding_plan_reset_zcode_jwt_required");
+    if (!account.accessToken.trim()) throw new Error("coding_plan_reset_maas_jwt_required");
+    await this.assertUnchangedRequestAccess(request.accountAccess, accountAccess);
+    // The linked plan does not necessarily share the name of the primary login channel; both JWTs must come from the same session snapshot to prevent mixing across an account switch.
+    if (
+      !isSameOAuthAccountMaterial(
+        account,
+        await this.loadOAuthAccountMaterial(accountAccess.family),
+      )
+    )
+      throw new Error("coding_plan_reset_account_changed");
+    const zcodeJwt = account.zcodeJwtToken;
     return {
       zcodeAuthorization: /^Bearer\s/i.test(zcodeJwt) ? zcodeJwt : `Bearer ${zcodeJwt}`,
-      codingPlanAuthorization: codingPlanJwt,
+      codingPlanAuthorization: account.accessToken.trim(),
       teamContext: resolveTeamPlanContext(accountAccess),
     };
   }

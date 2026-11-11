@@ -1,10 +1,7 @@
 /**
- * MCP Apps protocol contract: constants, tool UI metadata types, sandbox handles, and registration
- * payloads shared by agent, host, renderer, and main.
- * The page-host wire protocol (`ui/*` methods, handshake, version negotiation, JSON-RPC) is defined
- * by the official `@modelcontextprotocol/ext-apps`;
- * only ZCode's own extension keys and limits live here. Types and constants only; normalization
- * and schemas are in the other files of this directory, exported via index.ts.
+ * MCP Apps protocol contract shared by agent, host, renderer and main: constants, tool UI metadata, sandbox handles,
+ * registration payloads. The `ui/*` wire protocol comes from the official `@modelcontextprotocol/ext-apps`; only
+ * ZCode extension keys and limits live here. Normalization and schemas are in sibling files, exported via index.ts.
  */
 
 /** MCP extension identifier (spec "Extension Identifier"); matches the official SDK's `EXTENSION_ID`. */
@@ -15,10 +12,8 @@ export const MCP_APPS_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 export const MCP_APPS_LEGACY_RESOURCE_URI_META_KEY = "ui/resourceUri";
 
 /**
- * The ui extension capability declaration inside the MCP client `initialize` (spec
- * "Client (Host) Capabilities").
- * A type rather than an interface: the MCP SDK's `ClientCapabilities.extensions` requires values to
- * carry a string index signature.
+ * The ui extension capability in MCP client `initialize` (spec "Client (Host) Capabilities"). A type, not an
+ * interface: the MCP SDK's `ClientCapabilities.extensions` requires a string index signature.
  */
 export type McpAppsClientCapability = { mimeTypes: string[] };
 /** Capability fragment the agent declares to each MCP server; goes into the `Client` constructor's `capabilities.extensions`. */
@@ -48,11 +43,8 @@ export interface McpToolUiCsp {
 }
 
 /**
- * Resource-level `_meta["zcode/csp"]`: by default the host blocks down to the spec baseline
- * (only 'self' 'unsafe-inline') and does not allow `'unsafe-eval'` /
- * `'wasm-unsafe-eval'`; resources needing eval / WebAssembly declare it explicitly here. The host
- * announces the supported keys via
- * `hostCapabilities.experimental["zcode/csp"].flags`.
+ * Resource-level `_meta["zcode/csp"]`: the host defaults to the spec baseline ('self' 'unsafe-inline', no eval /
+ * wasm eval); resources needing them declare it here. Supported keys: `hostCapabilities.experimental["zcode/csp"].flags`.
  */
 export const MCP_APPS_CSP_RELAXATION_META_KEY = "zcode/csp";
 export const MCP_APPS_CSP_RELAXATION_FLAGS = ["unsafeEval", "wasmUnsafeEval"] as const;
@@ -65,10 +57,9 @@ export function buildMcpAppsCspExperimentalCapability(): {
 }
 
 /**
- * Browser permissions a resource may declare (the four keys of the spec draft's
- * `UIResourceMeta.permissions`); declaration order is the normalization order.
- * Host behavior: undeclared is always denied; camera / microphone / geolocation get a native
- * confirmation dialog on first use, clipboardWrite is allowed per declaration.
+ * Browser permissions a resource may declare (the four keys of the spec draft's `UIResourceMeta.permissions`);
+ * declaration order is the normalization order. Host behavior: undeclared is always denied; camera / microphone /
+ * geolocation get a native confirmation dialog on first use, clipboardWrite is allowed per declaration.
  */
 export const MCP_APPS_RESOURCE_PERMISSIONS = [
   "camera",
@@ -95,9 +86,9 @@ export function buildMcpAppsIframeAllow(
 }
 
 /**
- * A `ui://` HTML resource's own `_meta` (`resources/read` content items take priority).
- * `heightHint` / `minFrameHeight` are the initial and minimum heights (px); when `showInline` is
- * true the card is forced always-visible and stays out of the collapsed area.
+ * A `ui://` HTML resource's own `_meta` (`resources/read` content items take priority). `heightHint` / `minFrameHeight`
+ * are the initial and minimum heights (px); when `showInline` is true the card is forced always-visible and stays out
+ * of the collapsed area.
  */
 export interface McpAppResourceMeta {
   csp?: McpToolUiCsp;
@@ -133,26 +124,21 @@ export const MCP_APPS_SURFACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 export const MCP_APPS_UI_RESOURCE_SCHEME = "ui://";
 export const MCP_APPS_RESOURCE_URI_MAX_CHARS = 2048;
 /**
- * Persistence limits of `display.ui.structuredContent` / `widgetMeta` / `content` (UTF-8 bytes of
- * the JSON text).
- * Oversized strings are not truncated (half a JSON document is meaningless): the field is omitted
- * entirely, `truncated: true` and `truncatedBytes` record the dropped byte count;
- * the page side gets a null `toolOutput` plus `toolResponseMetadata["zcode/truncated"] = { bytes }`
- * and can re-fetch via tools/call.
+ * Persistence limits of `display.ui.structuredContent` / `widgetMeta` / `content` (UTF-8 bytes of the JSON text). An
+ * oversized field is omitted, not truncated; `truncated: true` and `truncatedBytes` record it, and the page gets a null
+ * `toolOutput` plus `toolResponseMetadata["zcode/truncated"] = { bytes }` and can re-fetch via tools/call.
  */
 export const MCP_APPS_STRUCTURED_CONTENT_MAX_BYTES = 64 * 1024;
 export const MCP_APPS_WIDGET_META_MAX_BYTES = 16 * 1024;
 export const MCP_APPS_CONTENT_MAX_BYTES = 32 * 1024;
 export const MCP_APPS_TRUNCATED_META_KEY = "zcode/truncated";
 /** Host-side size limit and mimeType allowlist for accepted `ui://` HTML (the spec only recognizes the profiled one; profile-less text/html is a deliberately lenient superset). */
-// The official pdf-server example's single-file page (inlined pdf.js) is 4.3 MB on its own; a
-// 4 MiB cap would reject it, hence 16 MiB.
+// 16 MiB: the official pdf-server example page (inlined pdf.js) alone is 4.3 MB.
 export const MCP_APPS_HTML_MAX_BYTES = 16 * 1024 * 1024;
 export const MCP_APPS_HTML_MIME_TYPES = [MCP_APPS_RESOURCE_MIME_TYPE, "text/html"] as const;
 /**
- * Image blocks the page sends via ui/update-model-context and ui/message: three allowlisted
- * bitmaps, each ≤ 4 MiB after decoding;
- * anything not allowlisted or oversized rejects the whole request with -32602 `unsupported_content`.
+ * Image blocks the page sends via ui/update-model-context and ui/message: three allowlisted bitmaps, each ≤ 4 MiB after
+ * decoding; anything not allowlisted or oversized rejects the whole request with -32602 `unsupported_content`.
  */
 export const MCP_APPS_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 export const MCP_APPS_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
@@ -163,24 +149,20 @@ export {
 } from "./resourceMime.js";
 
 /**
- * ZCode extension keys inside `hostCapabilities.experimental`. The official SDK's zod strips
- * unknown capability keys outside the standard slots,
- * so extensions always go in experimental (the spec's reserved slot) and the page feature-detects
- * by key.
+ * ZCode extension keys in `hostCapabilities.experimental`: the official SDK's zod strips unknown keys elsewhere, so
+ * extensions go in experimental (the spec's reserved slot) and the page feature-detects by key.
  */
 export const MCP_APPS_WIDGET_STATE_EXPERIMENTAL_KEY = "zcode/widgetState";
 export const MCP_APPS_RESOURCE_SUBSCRIBE_EXPERIMENTAL_KEY = "zcode/resourceSubscribe";
 export const MCP_APPS_SURFACE_EXPERIMENTAL_KEY = "zcode/surface";
 /**
- * The host lets a plugin document create child frames internally (srcdoc / about:blank previews, declared frameDomains) without treating it as a page reload that revokes the instance.
- * Older hosts stop the page on child-frame navigation; plugins needing nested previews degrade on this key instead of creating a frame and then being released.
+ * The host lets a plugin document create child frames (srcdoc / about:blank previews, frameDomains) without revoking
+ * the instance as a reload. Older hosts stop the page on child-frame navigation; plugins degrade on this key.
  */
 export const MCP_APPS_NESTED_FRAMES_EXPERIMENTAL_KEY = "zcode/nestedFrames";
 /**
- * ZCode extension method `ui/set-widget-state { widgetState }` (MCP Apps has no widgetState): the
- * page hands UI state to the host
- * renderer to keep in memory (not persisted; restorable on re-mount within the session); the
- * initial value is delivered with the handshake via the hostContext's `zcode/widgetState` key.
+ * ZCode method `ui/set-widget-state { widgetState }` (MCP Apps has none): the host renderer keeps UI state in memory
+ * for re-mounts within the session; the initial value arrives in the handshake hostContext's `zcode/widgetState` key.
  */
 export const MCP_APPS_SET_WIDGET_STATE_METHOD = "ui/set-widget-state";
 export const MCP_APPS_WIDGET_STATE_CONTEXT_KEY = "zcode/widgetState";
@@ -203,10 +185,8 @@ export interface PluginSandboxPortsEvent {
   port: PluginSandboxTransportPort;
 }
 /**
- * Sandbox platform port available to the renderer, mounted as the optional
- * `IPlatformService.pluginSandbox` field; undefined on web, and the UI falls back accordingly.
- * Sandbox registration does not happen here: the host does it via parentPort, and the renderer
- * only receives the handle.
+ * Renderer sandbox port, the optional `IPlatformService.pluginSandbox` (undefined on web; the UI falls back). The host
+ * registers sandboxes via parentPort; the renderer only receives the handle.
  */
 export interface PluginSandboxPlatformPort {
   /** preload has installed the restricted sandbox atomic-move adaptation. */
@@ -218,9 +198,8 @@ export interface PluginSandboxPlatformPort {
   /** Host window webContents id; prepareSandbox uses it as owner and main validates it on will-attach. */
   getOwnerWebContentsId(): Promise<number>;
   /**
-   * Release the sandbox. With initId, only the captured registration is released: a new page uses
-   * a new Agent credential and sandboxId,
-   * the two IPC paths differ (host parentPort vs ipcMain), and a late old dispose must not
+   * Release the sandbox. With initId, only the captured registration is released: a new page uses a new Agent
+   * credential and sandboxId, the two IPC paths differ (host parentPort vs ipcMain), and a late old dispose must not
    * mistakenly kill the new registration.
    */
   disposeSandbox(sandboxId: string, initId?: number): Promise<void>;
@@ -236,9 +215,8 @@ export interface PluginSandboxCaptureRequest {
 }
 
 /**
- * Sandbox scope. Tool cards by toolCallId, panels (manifest `ui.surfaces[]`) by surfaceId;
- * both map to a string scopeId that keys the registry's idempotency and widgetState routing, so
- * main / host never need to know the "panel" concept.
+ * Sandbox scope. Tool cards by toolCallId, panels (manifest `ui.surfaces[]`) by surfaceId; both map to a string scopeId
+ * that keys the registry's idempotency and widgetState routing, so main / host never need to know the "panel" concept.
  */
 export type PluginUiScopeRef =
   | { kind: "toolCall"; toolCallId: string }
@@ -247,21 +225,14 @@ export function buildPluginSandboxScopeId(scope: PluginUiScopeRef): string {
   return scope.kind === "toolCall" ? `tool:${scope.toolCallId}` : `surface:${scope.surfaceId}`;
 }
 
-/** Message payload for host → main sandbox content registration (same pattern as LocalMediaPreviewPathAuthorize*). */
-export interface PluginSandboxRegisterRequestPayload {
+interface PluginSandboxRegisterRequestBase {
   instance: import("./instance.js").McpAppInstance;
   requestId: string;
   /** Workspace isolation; legacy callers may omit it, new host registrations must carry the actual workspace scope. */
   workspacePath?: string;
   workspaceIdentity?: string;
   ownerWebContentsId: number;
-  sessionId: string;
-  /** Gen UI has Host provenance and never impersonates an MCP plugin. */
-  contentKind?: "gen-ui";
-  pluginId?: string;
-  /** The MCP server runtime name the resource belongs to; the sandbox partition is derived from it (pages of the same server share one persistent store). */
-  serverName?: string;
-  /** Result of `buildPluginSandboxScopeId`: `tool:<toolCallId>` or `surface:<surfaceId>`. */
+  /** Result of `buildPluginSandboxScopeId`: `tool:<toolCallId>` or `surface:<surfaceId>`; extension views use `extension-view:<instance id>`. */
   scopeId: string;
   html: string;
   /** Effective CSP: resource-level first, tool-level fallback (already merged by the host's plugin-ui-bridge). */
@@ -278,8 +249,42 @@ export interface PluginSandboxRegisterRequestPayload {
   showInline?: boolean;
   backgroundRetention?: boolean;
 }
+
+/**
+ * Host → main sandbox registration payload. Only extension views (docs/plugins/extension-host.md §8) leave sessionId
+ * unset; MCP Apps and Gen UI carry a session. Validated by the schema in validation.ts and the Main registry.
+ */
+export type PluginSandboxRegisterRequestPayload = PluginSandboxRegisterRequestBase &
+  (
+    | {
+        contentKind?: undefined;
+        sessionId: string;
+        pluginId: string;
+        /** Runtime name of the MCP server the resource belongs to; the sandbox partition is derived from it (pages of the same server share one persistent store). */
+        serverName: string;
+      }
+    | {
+        /** Gen UI has Host provenance and never impersonates an MCP plugin. */
+        contentKind: "gen-ui";
+        sessionId: string;
+        pluginId?: undefined;
+        serverName?: undefined;
+      }
+    | {
+        /** Extension view: credentials issued by the Window Host, appIdentity derived per plugin; no session and no MCP server name. */
+        contentKind: "extension";
+        sessionId?: undefined;
+        pluginId: string;
+        serverName?: undefined;
+      }
+  );
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 /** Registration input used inside the host: strips the transport-level requestId. */
-export type PluginSandboxRegisterInput = Omit<PluginSandboxRegisterRequestPayload, "requestId">;
+export type PluginSandboxRegisterInput = DistributiveOmit<
+  PluginSandboxRegisterRequestPayload,
+  "requestId"
+>;
 export interface PluginSandboxHandle {
   instance: import("./instance.js").McpAppInstance;
   sandboxId: string;

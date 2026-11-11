@@ -1,12 +1,12 @@
 # Current Configuration and Maintenance State
 
-The current Git configuration is revision 43, clarifying that TokenHub is the Guangzhou / Singapore API under the China-site account; revision 42 turned off video for the GLM-5.3 standard edition on the Coding Plan and speed-up card entries, keeping image and Flash; earlier, `doubao-seed-evolving` was added default enabled. The three Pro/Lite/Turbo members of the Ark ordinary API are default disabled for video input because the current Messages entry rejects video content blocks; the remaining capabilities are unchanged. On 2026-10-27 it was confirmed that the native JSON Schema declaration of OpenCode Go Chat is uniformly turned off; template members and same-site self-built vendors follow that policy, with other capabilities and entries unchanged. On 2026-10-26 the four entry members of MiniMax M3.1 Flash were added default enabled; the original vendor's two M2.7 entries and the plan Preview were default disabled, and the three M2/M2.1 members explicitly retired by the original vendor were deleted — exact differences and evidence are in the [M3.1 Flash spec](./minimax-m31-flash.md). Revision 37 tidied the template brand order; revision 36 added the eight Kimi K3.1 Pro/Highspeed entries, see the [K3.1 Pro spec](./kimi-k3-1-pro.md). The earlier mainstream-vendor and plan expansions are in the [implementation spec](./expansion-2026-10-15.md). Account configuration and shared model rules are unchanged; the text below is the Git state and does not represent being live or that all real calls passed.
+The current Git configuration is revision 44: the OpenAI official template adds `gpt-6.1-terra`, default enabled, and the Luna configuration is unchanged; both get a separate pending regression list and the real API was not tested this round (see the [Terra maintenance spec](./openai-terra.md)). Revision 43 clarified that TokenHub is the Guangzhou / Singapore API under the China-site account; revision 42 turned off video for the GLM-5.3 standard edition on the Coding Plan and speed-up card entries, keeping image and Flash; earlier, `doubao-seed-evolving` was added default enabled. The three Pro/Lite/Turbo members of the Ark ordinary API are default disabled for video input because the current Messages entry rejects video content blocks; the remaining capabilities are unchanged. On 2026-10-27 it was confirmed that the native JSON Schema declaration of OpenCode Go Chat is uniformly turned off; template members and same-site self-built vendors follow that policy, with other capabilities and entries unchanged. On 2026-10-26 the four entry members of MiniMax M3.1 Flash were added default enabled; the original vendor's two M2.7 entries and the plan Preview were default disabled, and the three M2/M2.1 members explicitly retired by the original vendor were deleted — exact differences and evidence are in the [M3.1 Flash spec](./minimax-m31-flash.md). Revision 37 tidied the template brand order; revision 36 added the eight Kimi K3.1 Pro/Highspeed entries, see the [K3.1 Pro spec](./kimi-k3-1-pro.md). The earlier mainstream-vendor and plan expansions are in the [implementation spec](./expansion-2026-10-15.md). Account configuration and shared model rules are unchanged; the text below is the Git state and does not represent being live or that all real calls passed.
 
-On top of upstream revision 43, this fork's build carries one additional local provider entry `account:chatgpt-plan` (ChatGPT Plan). It is fork-only and not present upstream, so it is not part of the upstream figures and lists below.
+On top of upstream revision 44, this fork's build carries one additional local provider entry `account:chatgpt-plan` (ChatGPT Plan). It is fork-only and not present upstream, so it is not part of the upstream figures and lists below.
 
-## Current issue handling (2026-10-27)
+## Historical issue handling (2026-10-27)
 
-This round's default configuration has no remaining confirmed onboarding blockers, which does not mean all capabilities and service stability are validated.
+The conclusions below are for the 2026-10-27 batch. They do not cover the newly added Terra and do not mean all capabilities and service stability are validated.
 
 | Item                                   | Current evidence and handling                                                                                                                                                                                                                        | Blocks this round's default configuration           |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
@@ -22,12 +22,12 @@ Externally reported issues resume investigation only when new evidence appears o
 
 ## Baseline and scope of figures
 
-- Check date: 2026-10-26. The latest merged baseline is staging `e06710b7bd`, product source version 3.16.3; the text below is this round's working-branch configuration and does not mean that version has shipped.
-- Production and test are both schemaVersion 1, revision 43; the test file is generated from the production file.
-- 34 ordinary API/plan templates, 10 fixed-account Providers; 314 template members in total, of which 127 are default enabled, including models duplicated across templates. Relative to the original revision 33, 13 templates and 71 members were added cumulatively (Preview has moved to general maintenance); 22 default-disable changes accumulated in total, and 3 members explicitly retired by the original vendor were deleted.
-- Model rules 83, Model+API rules 73, production Site rules 58, test Site rules 70, template exact rules 316, fixed Provider exact rules 30.
-- Production file SHA-256: `e537b380df05656e3757c2b220ae1044fe8a32c0ac148de265a05a94cc24b3a9`.
-- Test file SHA-256: `10df0ce6d9a6ae68e4d6bbb4e8984974be8b0899ced2e48ecc36d8c6d32a7890`. The hashes are for the Git content (LF); a local CRLF checkout must be normalized to the repository line endings before comparing.
+- Check date: 2026-11-04. The maintenance baseline is staging `7f3165500d`, product source version 3.17.1; the text below is this round's working-branch configuration and does not mean that version has shipped.
+- Production and test are both schemaVersion 1, revision 44; the test file is generated from the production file.
+- 34 ordinary API/plan templates, 10 fixed-account Providers; 315 template members in total, of which 128 are default enabled, including models duplicated across templates. Relative to the original revision 33, 13 templates and 72 members were added cumulatively (Preview has moved to general maintenance); 22 default-disable changes accumulated in total, and 3 members explicitly retired by the original vendor were deleted.
+- Model rules 83, Model+API rules 73, production Site rules 58, test Site rules 70, template exact rules 317, fixed Provider exact rules 30.
+- Production file SHA-256: `2af7b0cac658e9507413f5b1f5f9754e17c18fd29745522592d8b6ae699030ab`.
+- Test file SHA-256: `5a2ba4d7bf05eef50b479196a198cbe493c908a75fbc80d3db6d2acd80e459df`. The hashes are for the Git content (LF); a local CRLF checkout must be normalized to the repository line endings before comparing.
 
 The list is extracted directly from the [production JSON](../../config/provider/zcode-builtin.json). The enablement below comes from template exact rules and excludes user overrides or actual keys/entitlements; being in the list does not mean the entry was validated for real in this round.
 
@@ -58,7 +58,7 @@ The list is extracted directly from the [production JSON](../../config/provider/
 | `volcengine-agent-plan`          | `anthropic-messages`      | 2       | 2               |
 | `stepfun`                        | `anthropic-messages`      | 2       | 2               |
 | `stepfun-step-plan`              | `anthropic-messages`      | 2       | 2               |
-| `openai`                         | `openai-responses`        | 12      | 4               |
+| `openai`                         | `openai-responses`        | 13      | 5               |
 | `anthropic`                      | `anthropic-messages`      | 8       | 4               |
 | `xai`                            | `openai-responses`        | 4       | 2               |
 | `siliconflow-cn`                 | `openai-chat-completions` | 3       | 3               |
@@ -143,7 +143,7 @@ The list is generated directly from the production configuration. Full capabilit
 ### openai
 
 - Base URL: `https://api.openai.com/v1`; Access: `api-key`.
-- Default enabled: `gpt-6-astra`, `gpt-5.6-terra`, `gpt-6.1-sol`, `gpt-6-luna`.
+- Default enabled: `gpt-6-astra`, `gpt-5.6-terra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna`.
 - Default disabled: `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6`, `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.3-codex`.
 
 ### anthropic

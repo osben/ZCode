@@ -1,20 +1,20 @@
 import { createHash } from "node:crypto";
 import type { ConversationShareCapabilities } from "@zcode/shared";
-import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+import type { WireConversationRow } from "@zcode/shared/zcode-protocol-v4";
 import type { ConversationShareFailureIssue } from "./conversationShare.js";
 
 /** Inline images become existing artifacts; precheck and publish share one deterministic conversion, with no new file-read channel. */
 export function materializeConversationShareInlineImages(
-  sourceRows: readonly ConversationRow[],
+  sourceRows: readonly WireConversationRow[],
   capabilities: ConversationShareCapabilities,
   turnOrdinals: ReadonlyMap<string, number>,
 ): {
-  rows: ConversationRow[];
+  rows: WireConversationRow[];
   bytesBySourceRef: Map<string, Uint8Array>;
   warnings: ConversationShareFailureIssue[];
   toolImages: Map<number, Array<{ resourceId: string; mimeType: string }>>;
 } {
-  const rows: ConversationRow[] = [];
+  const rows: WireConversationRow[] = [];
   const toolImages = new Map<number, Array<{ resourceId: string; mimeType: string }>>();
   const bytesBySourceRef = new Map<string, Uint8Array>();
   const warnings: ConversationShareFailureIssue[] = [];

@@ -57,7 +57,8 @@ export async function drainPendingRuntimeCommandsForActiveLoop(
     // active-loop does not create a new TurnStarted; carry the consumed fact into the current turn's terminal state, accepting only structured subagent sources to exclude Bash.
     if (
       removed.mode === "task-notification" &&
-      removed.originMeta?.backgroundSource === "subagent"
+      removed.originMeta?.backgroundSource === "subagent" &&
+      removed.originMeta.subagentStall === undefined
     ) {
       backgroundSubagentResultConsumed = true;
     }

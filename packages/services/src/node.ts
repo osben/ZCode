@@ -1,3 +1,52 @@
+import {
+  createRemoteProjectService,
+  IRemoteProjectService,
+  projectWorkspaceSettings,
+  readRemoteProjectDirectory,
+} from "#src/remote-projects/index.js";
+export {
+  createRemoteProjectConnectionAdmission,
+  releaseRemoteProjectProfileHost,
+  findRemoteProjectHostIdForProfile,
+  remoteProjectHostIdForProfile,
+  remoteProjectHostIdForTarget,
+  prepareRemoteServerConnection,
+} from "#src/remote-projects/index.js";
+import {
+  createProjectDataPort,
+  createProjectService,
+  createTaskAutoArchiveScheduler,
+  IProjectService,
+  shouldRescanTaskAutoArchive,
+} from "#src/project/index.js";
+import {
+  createManagedWorktreeService,
+  createWorktreeRemovalGate,
+  IManagedWorktreeService,
+} from "#src/managed-worktree-tasks/index.js";
+export { createLegacySingleRootProjectService } from "#src/project/index.js";
+import { createAppControlService } from "#src/app-control/index.js";
+import {
+  createAppControlDiscoveryDirectory,
+  type AppControlDiscoveryConnection,
+} from "#src/app-control/discovery-directory.js";
+import type {
+  AppControlNavigationPort,
+  AppControlService,
+  AppControlServiceHandle,
+} from "#src/app-control/contract.js";
+export type {
+  AppControlNavigationPort,
+  AppControlBinding,
+  AppControlServiceHandle,
+} from "#src/app-control/contract.js";
+export { createRemoteProjectService } from "#src/remote-projects/index.js";
+import { getZCodeDataRootDir as projectDataRoot } from "#src/paths.js";
+import { getDataBaseDir } from "#src/paths.js";
+import { createGitWorktreeRepo } from "#src/git/managed-worktree/index.js";
+import { createGitCommandProvider } from "#src/git/providers/gitCommandProvider.js";
+import { HOST_WORKTREE_COMMAND } from "#src/zcode-agent/zcodeAgent.js";
+import { createTaskGroupService, ITaskGroupService, groupTaskKey } from "#src/task-groups/index.js";
 import { IGenUiService } from "./gen-ui/contract.js";
 import { createGenUiService } from "./gen-ui/node.js";
 import { IDefinitionPreviewService } from "./definition-preview/contract.js";
@@ -25,10 +74,19 @@ import {
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
 import {
+  createSystemCredentialCipher,
+  createServerCredentialCipher,
+  type CredentialCipher,
+} from "@zcode/shared/credential-security";
+import {
   buildLocalMediaPreviewUrl,
+  OAUTH_LINKED_BIGMODEL_KEY,
+  OAUTH_SESSION_REVISION_KEY,
   parseChatGptPlanAccountProviderId,
   type DynamicWorkflowMode,
   type ProviderProvisioningSourceTrigger,
+  toBearerAuthorization,
+  ZCODE_CLIENT_LANGUAGE_ENV,
 } from "@zcode/shared";
 
 // Stable only for this process: revisions are cache keys, and a per-process random HMAC key
@@ -44,14 +102,13 @@ export {
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
 } from "@zcode/provider-node";
 import { randomUUID } from "node:crypto";
-import {
-  getAppConfigDir as getContentAppConfigDir,
-  getZCodeDataRootDir as projectDataRoot,
-} from "#src/paths.js";
+import { getAppConfigDir as getContentAppConfigDir } from "#src/paths.js";
 import { ICloudContentService } from "#src/cloud-content/cloudContent.js";
 import { createCloudContentService } from "#src/cloud-content/cloudContentService.js";
 import { IMarketingTouchService } from "#src/marketing-touch/marketingTouch.js";
 import { createMarketingTouchService } from "#src/marketing-touch/marketingTouchService.js";
+import { IVoiceInputService } from "#src/voice-input/contract.js";
+import { createVoiceInputService } from "#src/voice-input/voiceInputService.js";
 import { createMarketingAssetRegistry } from "#src/marketing-touch/marketingAssetRegistry.js";
 import type { IChannel } from "@zcode/rpc";
 import {
@@ -67,7 +124,6 @@ export { createTopicResourceRelayChannel } from "./zcode-agent/topicResourceRela
 export { createFileService } from "./file/fileService.js";
 export {
   bindRemoteProjectIdentities,
-  createLegacySingleRootProjectService,
   createRemoteIdentityRegistrationCache,
 } from "#src/project/index.js";
 export {
@@ -141,6 +197,11 @@ export {
 export { createCredentialService } from "./credential/credentialService.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
+export type {
+  PluginUserOptionsReader,
+  ZCodeAgentPluginUserOptionsResult,
+  ZCodeAgentReadPluginUserOptionsParams,
+} from "./zcode-agent/pluginHostQueriesClient.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";
 export { createZCodeSessionService } from "./zcode-session/zcodeSessionService.js";
 export {
@@ -271,6 +332,7 @@ export { createSkillsService } from "./skills/skillsService.js";
 export { createSkillSyncService } from "./skill-sync/skillSyncService.js";
 export { createDeviceSyncStateService, createUserConfigSyncService } from "./data-sync/node.js";
 export { createHostProviderProvisioningStatus } from "./provider-provisioning-status/node.js";
+export { createWindowHostExtensions, type WindowHostExtensions } from "./extensions/node.js";
 export { createMcpSyncService } from "./mcp-sync/mcpSyncService.js";
 export { createPluginSyncService } from "./plugin-sync/pluginSyncService.js";
 export { createPluginsService } from "./plugins/pluginsService.js";
@@ -349,6 +411,13 @@ export {
   isValidCronExpr,
 } from "./session/automationCron.js";
 
+import {
+  buildServerRemoteWorkspaceIdentity,
+  DEFAULT_APP_TOOL_SEARCH_MODE,
+  remoteHostIdFromWorkspaceIdentity,
+} from "@zcode/shared";
+import { SourceServerWorkspaceAliasRepo } from "./session/sourceServerWorkspaceAliasRepo.js";
+import { SourceServerWorkspaceIdentityMapper } from "./source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
 import { ServiceCollection } from "./collection.js";
 import { IFileService } from "./file/file.js";
 import { IMediaPreviewService } from "./media-preview/mediaPreview.js";
@@ -402,18 +471,12 @@ import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/p
 import { createFileService } from "./file/fileService.js";
 import { createMediaPreviewService } from "./media-preview/mediaPreview.js";
 import type { WorkspaceFileSearchFilter } from "./file/workspaceFileMentionFilter.js";
-import { IProjectService } from "./project/contract.js";
-import { IRemoteProjectService } from "./remote-projects/contract.js";
-import { createProjectDataPort, createProjectService } from "./project/index.js";
-import { createTaskGroupService, groupTaskKey } from "#src/task-groups/index.js";
-import { ITaskGroupService } from "./task-groups/contract.js";
 import {
   createQuickPromptService,
   IQuickPromptService,
   QUICK_PROMPTS_CHANGED_CHANNEL,
 } from "#src/quick-prompts/index.js";
-import type { BotProjectConnection } from "./bot-project-runtime/contract.js";
-import { createRemoteProjectService } from "#src/remote-projects/index.js";
+import { type BotProjectConnection } from "#src/bot-project-runtime/index.js";
 import { createGitService } from "./git/gitService.js";
 import { GitCommitMessageGenerator } from "./git/gitCommitMessageGenerator.js";
 import { createGitCheckpointService } from "./git/gitCheckpointService.js";
@@ -423,18 +486,16 @@ import { createTerminalService } from "./terminal/terminalService.js";
 import { createSettingServiceWithMigrations } from "./setting/settingService.js";
 import { createSourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspaceService.js";
 import { ISourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspace.js";
-import { SourceServerWorkspaceAliasRepo } from "./session/sourceServerWorkspaceAliasRepo.js";
-import { SourceServerWorkspaceIdentityMapper } from "./source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
-import {
-  buildServerRemoteWorkspaceIdentity,
-  remoteHostIdFromWorkspaceIdentity,
-} from "@zcode/shared";
 import { createOnboardingRecordService } from "./onboarding/onboardingRecordService.js";
 import { createLegacyTeamOrganizationResolver } from "./model-provider/legacyTeamOrganizationResolver.js";
 import { createObservableSettingService } from "./setting/observableSettingService.js";
 import { createCredentialService } from "./credential/credentialService.js";
 import { createBroadcastService } from "./broadcast/broadcastService.js";
-import { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
+import {
+  createZCodeAgentService,
+  getInProcessPluginUserOptionsReader,
+} from "./zcode-agent/zcodeAgentService.js";
+import type { PluginUserOptionsReader } from "./zcode-agent/pluginHostQueriesClient.js";
 import type { ZCodeAgentCommandResolver } from "./zcode-agent/zcodeAgentProcessManager.js";
 import { buildAgentTelemetrySpawnEnv } from "./zcode-agent/agentTelemetryEnv.js";
 import { resolveZCodeAgentPresentationSurface } from "./zcode-agent/zcodeAgentPresentationSurface.js";
@@ -450,6 +511,7 @@ import { createOAuthService } from "./oauth/oauthService.js";
 import {
   isOAuthBusinessRequest,
   isCurrentOAuthCredentialRequest,
+  resolveAssociatedOAuthCredentialRequest,
 } from "#src/oauth/oauthUnauthorizedRequest.js";
 import { createOAuthProviderLogoutHandler } from "./oauth/oauthProviderLogout.js";
 import { OAuthCredentialRepo } from "./oauth/repo/oauthCredentialRepo.js";
@@ -624,10 +686,12 @@ import {
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   ZCODE_JWT_INVALID_BROADCAST_CHANNEL,
   isCredentialDecryptError,
+  isBuiltinOAuthProvider,
   isStartPlanModelProviderId,
   OFF_PEAK_PROVIDER_IDS,
   BIGMODEL_PROVIDER_ID,
   type ProviderFamilyDomain,
+  type OAuthAccountAvailability,
   type ServiceAuthorityMode,
   resolveRuntimeZCodeEndpointOrigin,
   resolveSafeTelemetryHostname,
@@ -748,6 +812,20 @@ export function getOffPeakRequestAuthBuilder(
   services: ServiceCollection,
 ): OffPeakRequestAuthBuilder | undefined {
   return offPeakRequestAuthBuilders.get(services);
+}
+
+const pluginUserOptionsReaders = new WeakMap<ServiceCollection, PluginUserOptionsReader>();
+
+/**
+ * Local Host 进程内：扩展 settings 能力读本插件 user 层有效值（含敏感值，docs/plugins/extension-host.md
+ * §16.7）。不登记为服务、不挂在任何服务对象上，所以不会随 ServiceCollection 暴露到任何 RPC 频道
+ * （桌面 Renderer、手机远控、远程 workspace）。Window Host 把它作为依赖交给扩展网关，网关只给调用方
+ * 自己的插件。只有 createLocalServices 的集合有值；其他集合返回 undefined（调用方按「不支持」处理）。
+ */
+export function getPluginUserOptionsReader(
+  services: ServiceCollection,
+): PluginUserOptionsReader | undefined {
+  return pluginUserOptionsReaders.get(services);
 }
 const managedHostApiNetworkTransports = new WeakMap<ServiceCollection, HostApiNetworkTransport>();
 
@@ -1211,6 +1289,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *        events across windows. Pass null to make broadcasts a no-op.
  */
 export function createLocalServices(options: {
+  /** Desktop-injected private encryption/decryption bridge; the system master key never enters the Host or the CLI. */
+  credentialCipherProvider?: CredentialCipher;
   /** Private callback channel provided by an authenticated Desktop stdio connection; not exposed as a public service. */
   topicResourceRelayChannel?: (request: unknown) => IChannel;
   parentPort?: Parameters<typeof createBroadcastService>[0];
@@ -1261,8 +1341,19 @@ export function createLocalServices(options: {
   reportPluginTelemetryEvent?: (
     event: import("@zcode/shared").RendererTelemetryEventPayload,
   ) => void | Promise<void>;
+  /**
+   * 插件管理变更成功返回（Window Host 侧信号），桌面 Host 用它重推扩展进程的插件清单，
+   * 配置与重置还通知该插件的扩展设置订阅者（docs/plugins/extension-host.md §16.7）。
+   */
+  onPluginManagementMutated?: (
+    event: import("./plugins/pluginManagementService.js").PluginMutationSucceededEvent,
+  ) => void;
   processLifecycleReporter?: RuntimeProcessLifecycleReporter;
   taskRuntimeReporter?: RuntimeTaskReporter;
+  /** Changes to the reasons that block quitting (docs/git/worktree.md §6.4); the desktop Host forwards them to main for aggregated confirmation. */
+  quitBlockerReporter?: {
+    onQuitBlockersChanged(blockers: import("@zcode/shared").HostQuitBlocker[]): void;
+  };
   /** Workspace file search uses the built-in filter by default; Host assembly can inject the final implementation when another rule source is added. */
   workspaceFileSearchFilter?: WorkspaceFileSearchFilter;
   forwardSessionMessageSendRequested?: (
@@ -1301,11 +1392,20 @@ export function createLocalServices(options: {
   projectStorageHostId?: string;
   /** Standalone Source Server workspace service; when omitted no Source Server workspace service is registered. */
   sourceServerWorkspaceService?: ISourceServerWorkspaceService;
+  /** Reads only the raw project snapshot of an already-online source; does not trigger identity migration, connection, or Agent startup. */
+  resolveAppControlDiscoverySource?: (hostId: string) => Promise<AppControlDiscoveryConnection>;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
   agentTelemetry?: {
     getDeviceMid?: () => string | undefined;
     runtimeSurface?: "desktop_local_host" | "remote_workspace_host";
   };
+  /** Narrow App navigation port, injected by the actual window/phone navigation owner; returns unavailable when absent. */
+  appControlNavigation?: AppControlNavigationPort;
+  /**
+   * Hands this Host's AppControlService to trusted in-process components (session capabilities of the extension gateway,
+   * docs/plugins/extension-host.md §17.2). It is not registered in ServiceCollection and is not on any RPC channel.
+   */
+  onAppControlServiceCreated?: (handle: AppControlServiceHandle) => void;
   /** browser-use execution bridge (host→main WebContentsView+CDP), injected by the desktop host. Browser is unavailable when omitted. */
   browserControlExecutor?: {
     list(input: {
@@ -1375,12 +1475,24 @@ export function createLocalServices(options: {
   let invalidateProjectTokens = () => {};
   let invalidatePluginUiAccounts: (() => void) | undefined;
   const provisioningOAuthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
+  const credentialCipherProvider =
+    options.credentialCipherProvider ??
+    createSystemCredentialCipher({ filePath: join(resolveAppConfigDir(), "credentials.json") });
   const credentialService = createCredentialService({
-    onDidMutate: ({ key }) => {
-      if (key === "oauth:active_provider" || /^oauth:[^:]+:user_info$/.test(key))
+    cipherProvider: credentialCipherProvider,
+    onDidMutate: ({ keys, operation }) => {
+      if (operation === "recover") {
         invalidatePluginUiAccounts?.();
-      if (provisioningOAuthKeys.has(key)) invalidateProjectTokens();
-      if (provisioningOAuthKeys.has(key)) {
+        invalidateProjectTokens();
+        options.onProviderProvisioningSourceChanged?.("credential");
+        return;
+      }
+      if (
+        keys.some((key) => key === "oauth:active_provider" || /^oauth:[^:]+:user_info$/.test(key))
+      )
+        invalidatePluginUiAccounts?.();
+      if (keys.some((key) => provisioningOAuthKeys.has(key))) invalidateProjectTokens();
+      if (keys.some((key) => provisioningOAuthKeys.has(key))) {
         options.onProviderProvisioningSourceChanged?.("credential");
       }
     },
@@ -1403,8 +1515,30 @@ export function createLocalServices(options: {
   const zcodeJwtLogoutHandlerRef: {
     current: ((input: string | URL, headers: Headers) => void) | null;
   } = { current: null };
+  const associatedProfileRefreshRef: {
+    current:
+      | ((
+          expected: Pick<OAuthAccountAvailability, "loginProvider" | "userId" | "sessionRevision">,
+        ) => Promise<void>)
+      | null;
+  } = { current: null };
   const apiClient = createNodeApiClient({
     fetchImpl: hostApiNetworkTransport.fetch,
+    resolveAssociatedCredentialRefresh: async (input, headers) => {
+      const material = await resolveAssociatedOAuthCredentialRequest({
+        input,
+        headers,
+        loadMaterial: () => oauthCredentialRepo.loadFamilyMaterial("bigmodel"),
+      });
+      if (!material) return null;
+      return async () => {
+        await associatedProfileRefreshRef.current?.({
+          loginProvider: material.loginProvider,
+          userId: material.zcodeUserId,
+          sessionRevision: material.sessionRevision,
+        });
+      };
+    },
     onZcodeJwtInvalid: (input, headers) => zcodeJwtLogoutHandlerRef.current?.(input, headers),
     isZcodeJwtRequest: (input, headers) =>
       isCurrentOAuthCredentialRequest({ input, headers, credentialService }),
@@ -1427,6 +1561,21 @@ export function createLocalServices(options: {
   // had to wait. Recovery deletes the OAuth keys itself; derived provider state reconciles on the next login,
   // logout or settings refresh (specs/oauth-corrupt-session-recovery.md).
   const oauthCredentialRepo = new OAuthCredentialRepo(credentialService);
+  const loadOAuthAccountMaterial = (family: ProviderFamilyDomain) =>
+    oauthCredentialRepo.loadFamilyMaterial(family);
+  const loadOAuthFamilyTokenSet = async (providerId: string) => {
+    if (providerId !== ZAI_PROVIDER_ID && providerId !== BIGMODEL_PROVIDER_ID) return null;
+    const account = await loadOAuthAccountMaterial(providerId);
+    return account
+      ? {
+          accessToken: account.accessToken,
+          zcodeJwtToken: account.zcodeJwtToken,
+          sessionRevision: account.sessionRevision,
+          accountIdentity: account.accountIdentity,
+          zcodeUserId: account.zcodeUserId,
+        }
+      : null;
+  };
   const projectTokenClient = createAccountProjectTokenClient(apiClient, credentialService);
   invalidateProjectTokens = () => projectTokenClient.clear();
   const accountProviderApiKeyRemoteClient = new AccountProviderApiClient(apiClient);
@@ -1435,10 +1584,7 @@ export function createLocalServices(options: {
     projectTokenClient,
   );
   const accountProviderCredentialService = createAccountProviderCredentialService({
-    async loadOAuthAccessToken(family) {
-      const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
-      return (await oauthCredentialRepo.loadTokenSet(oauthProviderId))?.accessToken ?? null;
-    },
+    loadOAuthAccountMaterial,
     resolveProviderMaterial: (
       family,
       accessToken,
@@ -1454,8 +1600,7 @@ export function createLocalServices(options: {
   });
   const resolveLegacyTeamOrganization = createLegacyTeamOrganizationResolver({
     apiClient,
-    loadOAuthTokenSet: (family) =>
-      oauthCredentialRepo.loadTokenSet(family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID),
+    loadOAuthTokenSet: loadOAuthFamilyTokenSet,
   });
   const readAccountProviderSettings = async () => {
     // Coordinate migration only at the account-facts entry point. ApiClient proxy/endpoint settings still
@@ -1472,10 +1617,8 @@ export function createLocalServices(options: {
       unresolvedFamilies,
     };
   };
-  const loadAccountIdentity = async (family: ProviderFamilyDomain) => {
-    const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
-    return (await oauthCredentialRepo.loadUserProfile(oauthProviderId))?.id ?? null;
-  };
+  const loadAccountIdentity = async (family: ProviderFamilyDomain) =>
+    (await loadOAuthAccountMaterial(family))?.accountIdentity ?? null;
   // ChatGPT plan (SIWC) host-side request auth: local credentials only, routed per account
   // (providerId → accountKey → that account's slot); the stable scope fingerprint matches the
   // CLI resolver (per-account provider id + issued client id + subject).
@@ -1530,10 +1673,9 @@ export function createLocalServices(options: {
           readSettings: readAccountProviderSettings,
           loadAccountIdentity,
         }),
-      loadOAuthTokenSet: (providerId) => oauthCredentialRepo.loadTokenSet(providerId),
+      loadOAuthTokenSet: loadOAuthFamilyTokenSet,
       async loadIndividualPlanMaterial(providerId, family, rejectedProjectTokenFingerprint) {
-        const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
-        const accountIdentity = (await oauthCredentialRepo.loadUserProfile(oauthProviderId))?.id;
+        const accountIdentity = (await loadOAuthAccountMaterial(family))?.accountIdentity;
         if (!accountIdentity) return null;
         return accountProviderCredentialService.loadCodingPlanMaterial({
           providerId,
@@ -1547,7 +1689,7 @@ export function createLocalServices(options: {
         if (!accountIdentity) return null;
         return resolveAccountTeamPlanRuntimeMaterial({
           apiClient,
-          credentialService,
+          loadOAuthAccountMaterial,
           access,
           accountIdentity,
           tokenClient: projectTokenClient,
@@ -1573,6 +1715,7 @@ export function createLocalServices(options: {
       fetchRelease: (endpointOrigin, signal) =>
         fetchZCodeBuiltinRemoteRelease({
           apiClient,
+          resolveZcodeJwtToken: () => credentialService.load("zcodejwttoken"),
           endpointOrigin,
           signal,
           appVersion: ZCODE_VERSION,
@@ -1604,6 +1747,8 @@ export function createLocalServices(options: {
     readLegacyProviders: () => readLegacyZCodeConfigProviders(),
   });
   const accountProviderConfigSource = createAccountProviderConfigSource({
+    loadSessionRevision: async () =>
+      (await oauthCredentialRepo.loadSessionSnapshot())[OAUTH_SESSION_REVISION_KEY] ?? null,
     configSource: chatGptPlanConfigSourceWrapper(providerConfigRuntime.configService),
     readSettings: readAccountProviderSettings,
     loadChatGptPlanEntitlement: async () => {
@@ -1627,6 +1772,7 @@ export function createLocalServices(options: {
     resolveFamilyAvailability: createCodingPlanFamilyAvailabilityResolver({
       apiClient,
       credentialService,
+      loadOAuthAccountMaterial,
     }),
   });
   const accountProviderRuntimeLog = createServiceLogger("account-provider-runtime");
@@ -1634,6 +1780,7 @@ export function createLocalServices(options: {
     personalRepository: providerConfigRuntime.personalRepository,
   });
   const providerProvisioningSource = createProviderProvisioningSource({
+    cipherProvider: credentialCipherProvider,
     personalRepository: providerConfigRuntime.personalRepository,
     settingService,
     credentialFilePath: resolveCredentialFilePath(resolveAppConfigDir()),
@@ -1739,6 +1886,8 @@ export function createLocalServices(options: {
       accountProviderConfigSource.dispose();
     },
   });
+  const sourceServerWorkspaceService =
+    options?.sourceServerWorkspaceService ?? createSourceServerWorkspaceService();
   handleOAuthProviderLogout = createOAuthProviderLogoutHandler({
     accountProviderCredentialStore,
     refreshAccountProviders: (reason: string) => accountProviderConfigSource.refresh(reason),
@@ -1753,7 +1902,10 @@ export function createLocalServices(options: {
     resolve: () =>
       resolveOfficialMcpCredentials({
         accountRequestAuthService,
-        credentialService,
+        getRegistryRevision: () =>
+          providerRuntime.registryService.getSnapshot()?.registry.revision ?? null,
+        loadOAuthIdentityMaterial: () => oauthCredentialRepo.loadIdentityMaterial(),
+        loadOAuthAccountMaterial,
         modelSelectionService: providerRuntime.modelSelection,
       }),
   };
@@ -2240,6 +2392,7 @@ export function createLocalServices(options: {
     : async () => (await settingService.get()).dynamicWorkflowMode;
   const codingPlanSubscriptionService = createCodingPlanSubscriptionService({
     apiClient,
+    loadOAuthAccountMaterial,
     credentialService,
     ...(resolveDynamicWorkflowUserMode ? { resolveDynamicWorkflowUserMode } : {}),
     resolveOffPeakModelSelectionView: async () => {
@@ -2266,7 +2419,93 @@ export function createLocalServices(options: {
     hostId: options?.projectStorageHostId ?? "local",
     workspaceIdentity: undefined,
   });
+  const setWorkspaceProjection =
+    options?.setWorkspaceProjection ?? localSettings?.setWorkspaceProjection;
+  setWorkspaceProjection?.(async (settings) => {
+    const db = await taskIndexRepo.getOrganizationDatabase();
+    const repository = await taskIndexRepo.getProjectRepository();
+    db.exec("BEGIN");
+    try {
+      const directory =
+        !options?.projectStorageHostId || options.projectStorageHostId === "local"
+          ? readRemoteProjectDirectory(db)
+          : { hosts: [], entries: [] };
+      const projection = projectWorkspaceSettings(
+        repository.readTree({ includeTasks: false }).projects,
+        directory,
+        settings,
+      );
+      db.exec("COMMIT");
+      return projection;
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  });
+  const publishProjectChange = async () => {
+    // SQLite is committed; the legacy settings field is derived from the latest directory under the settings owner lock.
+    if (setWorkspaceProjection) await settingService.update({});
+    await broadcastService.send({ channel: "state:projects", payload: {} });
+  };
+  // Project storage services over the tasks-index database (upstream wiring).
+  const remoteProjectService = createRemoteProjectService({
+    ...options?.remoteProjectConnection,
+    controller: !options?.projectStorageHostId || options.projectStorageHostId === "local",
+    database: () => taskIndexRepo.getOrganizationDatabase(),
+    afterChange: publishProjectChange,
+  });
+  const projectService = createProjectService({
+    directories: {
+      home: async () => (await systemService.info()).homedir,
+      read: (params) => fileService.readdir(params),
+    },
+    ownerHostId: options?.projectStorageHostId,
+    resolveHost: options?.resolveProjectHostService,
+    repository: () => taskIndexRepo.getProjectRepository(),
+    workspaceDirectory: join(projectDataRoot(), "workspace"),
+    afterChange: publishProjectChange,
+    // The port calls zcodeAgentService lazily, only when a project data command runs.
+    data: {
+      repository: () => taskIndexRepo.getProjectDataRepository(),
+      port: createProjectDataPort({
+        agent: {
+          measure: (params) => {
+            if (!zcodeAgentService.measureSessionData) throw new Error("project.data-unavailable");
+            return zcodeAgentService.measureSessionData(params);
+          },
+          purge: (params) => {
+            if (!zcodeAgentService.purgeSessionData) throw new Error("project.data-unavailable");
+            return zcodeAgentService.purgeSessionData(params);
+          },
+        },
+        checkpointDirectory: (workspacePath) => getWorkspaceCheckpointDirectory(workspacePath),
+      }),
+    },
+  });
+  let appControlService: AppControlService | undefined;
+  // 受管 worktree 的删除租约：worktree 服务取得，Agent 服务与终端服务据此拒绝新操作（§8.3）。
+  // 租约只在本 Host 内生效，前提是一台机器只有一个本地 Host：应用持有单实例锁，主窗口只经
+  // primaryWindowCoordinator 创建并复用已有窗口，renderer 刷新复用原 Host。以后支持多个主窗口时，
+  // 删除需要改由 main 跨 Host 协调（docs/git/worktree.md §8.3）。
+  const worktreeRemovalGate = createWorktreeRemovalGate();
   const zcodeAgentService = createZCodeAgentService({
+    credentialCipherProvider,
+    runSessionOperation: (target, operation) =>
+      worktreeRemovalGate.runSessionOperation(
+        target.sessionId,
+        async () => {
+          // 只有本地任务可能运行在受管 worktree 中；cwd 只经 tasks-index 同一行得到（§2.1）。
+          // 没有任务行时返回 null（未知），由闸门在删除期间拒绝，不回退为 workspace 目录。
+          if (target.workspaceIdentity?.trim()) return target.workspacePath;
+          return (await taskIndexRepo.getProjectRepository()).readTaskCwd({
+            workspacePath: target.workspacePath,
+            taskId: target.sessionId,
+          });
+        },
+        operation,
+      ),
+    resolveAppControlService: () => appControlService,
+    appControlSourceServerId: options?.projectStorageHostId ?? "local",
     useSharedTaskRuntime: async (target) => {
       if (options?.projectStorageHostId && options.projectStorageHostId !== "local") return false;
       return !(await taskIndexRepo.getProjectRepository()).hasProjectWorkspace(target);
@@ -2396,7 +2635,10 @@ export function createLocalServices(options: {
     // View; do not restore the old Provider Snapshot.
     officialMcpAuthHeadersResolver: createOfficialMcpAuthHeadersResolver({
       accountRequestAuthService,
-      credentialService,
+      getRegistryRevision: () =>
+        providerRuntime.registryService.getSnapshot()?.registry.revision ?? null,
+      loadOAuthIdentityMaterial: () => oauthCredentialRepo.loadIdentityMaterial(),
+      loadOAuthAccountMaterial,
       modelSelectionService: providerRuntime.modelSelection,
     }),
     // The host is the identity authority boundary: validate provenance/origin here as well rather than
@@ -2482,6 +2724,10 @@ export function createLocalServices(options: {
         // Agent. Otherwise the Agent derives it only from env, and a test environment with a custom
         // endpoint makes the two sides validate different inputs, causing official MCP to fail closed.
         ...buildAgentEndpointOriginEnv(await resolveCurrentZCodeEndpointOrigin()),
+        // The Agent model request's X-Client-Language defaults to the Agent process Intl (falling back to en-US when launched from the Dock without LANG),
+        // and is unrelated to the interface language. Here the Host's live interface language is sent at spawn time, so after a language switch it takes effect on the next Agent launch.
+        // The remote Host does not inject resolveClientLanguage, so it keeps the remote Intl behavior.
+        ...buildAgentClientLanguageEnv(options?.resolveClientLanguage?.()),
         // Inject broker credentials (socket/token) into the Agent spawn environment so the built-in
         // zcode-cua plugin's computer-use MCP server can reconnect to the broker after __zcode-plugin-host restores its token.
         ...cuaProductHelperEnv,
@@ -2519,6 +2765,7 @@ export function createLocalServices(options: {
               askUserQuestionAutoResolutionEnabled:
                 settings.askUserQuestionAutoResolutionEnabled !== false,
               nativeSearchEnhancementsEnabled: settings.nativeSearchEnhancementsEnabled !== false,
+              toolSearchMode: settings.toolSearchMode ?? DEFAULT_APP_TOOL_SEARCH_MODE,
               memoryEnabled: settings.memoryEnabled === true,
               memoryIndexAsContext: settings.memoryIndexAsContext === true,
               modelContextBudgetStrategy,
@@ -2544,6 +2791,28 @@ export function createLocalServices(options: {
   const zcodeTaskIndexSyncer = createZCodeTaskIndexSyncer({
     agentService: zcodeAgentService,
     taskIndexRepo,
+  });
+  // Automatic archiving is triggered only by this scheduled scan (at first start, hourly, and on a settings change); neither readTree nor a task click
+  // runs archiveInactive any more. The criteria still exclude non-terminal sessions observed by the syncer, and the scan never starts a CLI.
+  const taskAutoArchiveScheduler = createTaskAutoArchiveScheduler({
+    readPolicy: async () => {
+      const settings = await settingService.get();
+      if (!settings.taskAutoArchiveEnabled) return null;
+      const days = Math.max(1, Math.floor(settings.taskAutoArchiveOlderThanDays ?? 30));
+      return {
+        cutoff: Date.now() - days * 86_400_000,
+        activeTasks: zcodeTaskIndexSyncer.activeTaskRefs(),
+      };
+    },
+    repository: () => taskIndexRepo.getProjectRepository(),
+    afterChange: async (archived) => {
+      // Bug root cause: auto-archive writes sqlite directly and only broadcasts a project change, without task_archived.
+      // The Controller closes the tabs of archived tasks from the task fact stream; without the event, an audible Browser guest stays in the background.
+      for (const task of archived) {
+        zcodeTaskIndexSyncer.emitWorkspaceTaskListChanged(task, undefined, "task_archived");
+      }
+      await publishProjectChange();
+    },
   });
   // The plugin can be toggled at runtime. Do not let a previously created resolver continue
   // health-checking/restarting Helper after disable, and create it lazily after enable.
@@ -2594,6 +2863,47 @@ export function createLocalServices(options: {
   // The ZCode task service adapter provides the task wrapper; the ZCode agent server owns core session state.
   // The fork repository owns its tasks-index.sqlite connection for sidebar project pins.
   const forkWorkspacePinRepo = new ForkWorkspacePinRepo();
+  // The terminal instance must be registered both with the renderer and for the occupancy check before worktree removal, so it must be one instance.
+  const terminalService = createTerminalService({
+    settingService,
+    isCwdBlocked: (cwd) => worktreeRemovalGate.isRemoving(cwd),
+  });
+  const isLocalProjectHost =
+    !options?.projectStorageHostId || options.projectStorageHostId === "local";
+  const managedWorktreeService = createManagedWorktreeService({
+    isLocalHost: isLocalProjectHost,
+    repository: () => taskIndexRepo.getProjectRepository(),
+    git: createGitWorktreeRepo({
+      commandProvider: createGitCommandProvider(),
+      dataBaseDir: getDataBaseDir,
+    }),
+    removalGate: worktreeRemovalGate,
+    runtime: {
+      hasTerminalsUnder: async (path) =>
+        (await terminalService.listTerminalIdsUnderPath({ path })).length > 0,
+      releaseSessionsUnder: async (target) => {
+        if (!zcodeAgentService.releaseSessionsUnderDirectory)
+          throw new Error("worktree.release-unsupported");
+        return await zcodeAgentService.releaseSessionsUnderDirectory(target);
+      },
+    },
+    agent: {
+      supportsWorktreeCwd: async (target) =>
+        (await zcodeAgentService.supportsWorktreeCwd?.(target)) ?? false,
+      // Only this service can set HOST_WORKTREE_COMMAND; the renderer cannot carry it over RPC (§5.1).
+      sendCommand: (command) =>
+        zcodeAgentService.sendConversationCommandV4({ ...command, [HOST_WORKTREE_COMMAND]: true }),
+      queryCommandResult: async (target) => {
+        if (!zcodeAgentService.queryCommandResult) throw new Error("worktree.query-unsupported");
+        return await zcodeAgentService.queryCommandResult(target);
+      },
+    },
+    reportCreatingCount: (count) =>
+      options?.quitBlockerReporter?.onQuitBlockersChanged(
+        count > 0 ? [{ kind: "worktree-creating", count }] : [],
+      ),
+    afterChange: publishProjectChange,
+  });
   const zcodeTaskService = createZCodeTaskServiceAdapter({
     zcodeAgentService,
     taskIndexRepo,
@@ -2613,7 +2923,45 @@ export function createLocalServices(options: {
     settingService,
     credentialService,
   });
+  appControlService = createAppControlService({
+    sourceServerId: options?.projectStorageHostId ?? "local",
+    projects: projectService,
+    discovery: createAppControlDiscoveryDirectory({
+      sourceServerId: options?.projectStorageHostId ?? "local",
+      projects: projectService,
+      ...(!options?.projectStorageHostId || options.projectStorageHostId === "local"
+        ? { remoteProjects: remoteProjectService }
+        : {}),
+      resolveSource: options?.resolveAppControlDiscoverySource,
+    }),
+    resolveWorkspaceIdentity:
+      options?.projectStorageHostId && options.projectStorageHostId !== "local"
+        ? async (workspacePath) =>
+            (await sourceServerWorkspaceService.resolveWorkspace({ workspacePath }))
+              .canonicalWorkspaceKey
+        : undefined,
+    tasks: zcodeTaskService,
+    agent: zcodeAgentService,
+    models: providerRuntime.modelSelection,
+    navigation: options?.appControlNavigation,
+    prepareCreation: ({ projectId }) => projectService.prepareSession({ projectId }),
+    findCreationReceipts: async (creationCommand) =>
+      (await taskIndexRepo.getProjectRepository()).findCreationReceipts({ creationCommand }),
+    reserveFork: async (target) => {
+      // The CLI creates the fork body; product ownership still goes through the Host's existing atomic reservation owner.
+      (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
+        task: target,
+        projectId: target.projectId,
+        forkedFromTaskId: target.forkedFromTaskId,
+      });
+    },
+  });
+  options?.onAppControlServiceCreated?.({
+    service: appControlService,
+    sourceServerId: options?.projectStorageHostId ?? "local",
+  });
   const oauthService = createOAuthService(credentialService, {
+    captureCredentialGuard: () => credentialService.captureRecoveryGuard(),
     apiClient,
     siwcAuthService,
     onProviderLogout: handleOAuthProviderLogout,
@@ -2623,6 +2971,9 @@ export function createLocalServices(options: {
       await accountProviderConfigSource.refresh("chatgpt-plan-session-changed");
     },
   });
+  associatedProfileRefreshRef.current = async (expected) => {
+    await oauthService.refreshAccountProfile(expected);
+  };
   const zcodeJwtLogoutLogger = createServiceLogger("zcode-jwt-logout");
   zcodeJwtLogoutHandlerRef.current = (input, headers) => {
     // Conditional logout is already serialized and deduplicated. Do not discard a new credential 401
@@ -2647,7 +2998,9 @@ export function createLocalServices(options: {
   // Registry's entitlement/executable facts and could not choose uniquely when multiple plans were
   // visible. Off-peak services and Host dispatch must share the same Registry-backed credential resolver.
   const offPeakCredentialResolverDeps = {
-    credentialService,
+    loadOAuthAccountMaterial,
+    getRegistryRevision: () =>
+      providerRuntime.registryService.getSnapshot()?.registry.revision ?? null,
     accountRequestAuthService,
     resolveAccountProvider: async () => {
       await providerRuntime.start();
@@ -2718,41 +3071,6 @@ export function createLocalServices(options: {
   const marketingAssets = createMarketingAssetRegistry({
     allowLoopback: ZCODE_ENV === "test" || process.env.NODE_ENV === "development",
   });
-  // Project storage services over the tasks-index database (upstream wiring).
-  const remoteProjectService = createRemoteProjectService({
-    ...options?.remoteProjectConnection,
-    controller: !options?.projectStorageHostId || options.projectStorageHostId === "local",
-    database: () => taskIndexRepo.getOrganizationDatabase(),
-    afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
-  });
-  const projectService = createProjectService({
-    directories: {
-      home: async () => (await systemService.info()).homedir,
-      read: (params) => fileService.readdir(params),
-    },
-    ownerHostId: options?.projectStorageHostId,
-    resolveHost: options?.resolveProjectHostService,
-    repository: () => taskIndexRepo.getProjectRepository(),
-    workspaceDirectory: join(projectDataRoot(), "workspace"),
-    afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
-    // The port calls zcodeAgentService lazily, only when a project data command runs.
-    data: {
-      repository: () => taskIndexRepo.getProjectDataRepository(),
-      port: createProjectDataPort({
-        agent: {
-          measure: (params) => {
-            if (!zcodeAgentService.measureSessionData) throw new Error("project.data-unavailable");
-            return zcodeAgentService.measureSessionData(params);
-          },
-          purge: (params) => {
-            if (!zcodeAgentService.purgeSessionData) throw new Error("project.data-unavailable");
-            return zcodeAgentService.purgeSessionData(params);
-          },
-        },
-        checkpointDirectory: (workspacePath) => getWorkspaceCheckpointDirectory(workspacePath),
-      }),
-    },
-  });
   const taskGroupService = createTaskGroupService({
     database: () => taskIndexRepo.getOrganizationDatabase(),
     resolveTasks: async (refs) => {
@@ -2812,6 +3130,15 @@ export function createLocalServices(options: {
         onSnapshot: (snapshot) => marketingAssets.accept(snapshot),
       }),
     )
+    .register(
+      IVoiceInputService,
+      createVoiceInputService({
+        apiClient,
+        getToken: () => credentialService.load("zcodejwttoken"),
+        resolveOrigin: resolveCurrentZCodeEndpointOrigin,
+        createSocket: (url) => hostApiNetworkTransport.createWebSocket(url),
+      }),
+    )
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
     .register(
@@ -2822,12 +3149,30 @@ export function createLocalServices(options: {
       }),
     )
     .register(IGitService, gitService)
+    .register(IManagedWorktreeService, managedWorktreeService)
     .register(IGitCheckpointService, gitCheckpointService)
     .register(ISystemService, systemService)
-    .register(ITerminalService, createTerminalService({ settingService }))
+    .register(ITerminalService, terminalService)
     .register(ISettingService, settingService)
     .register(IOnboardingRecordService, onboardingRecordService)
-    .register(ICredentialService, credentialService)
+    // RPC 根据运行时方法名分发，不能把 Host 私有批量凭据端口直接注册给 Renderer。
+    .register(ICredentialService, {
+      // 整库检查/恢复不按键读写；是否对当前连接开放由 exposeOnChannelServer 的恢复策略决定。
+      inspectStore: () => credentialService.inspectStore(),
+      recoverStore: (fingerprint) => credentialService.recoverStore(fingerprint),
+      load: (key) => {
+        if (key === OAUTH_LINKED_BIGMODEL_KEY) throw new Error("Host private credential");
+        return credentialService.load(key);
+      },
+      save: (key, value) => {
+        if (key === OAUTH_LINKED_BIGMODEL_KEY) throw new Error("Host private credential");
+        return credentialService.save(key, value);
+      },
+      delete: (key) => {
+        if (key === OAUTH_LINKED_BIGMODEL_KEY) throw new Error("Host private credential");
+        return credentialService.delete(key);
+      },
+    })
     .register(IBroadcastService, broadcastService)
     .register(IZCodeTaskService, zcodeTaskService)
     .register(IZCodeAgentService, zcodeAgentService)
@@ -2862,8 +3207,8 @@ export function createLocalServices(options: {
       IUsageStatsService,
       createUsageStatsService({
         apiClient,
+        loadOAuthAccountMaterial,
         accountRequestAuthService,
-        credentialService,
         zcodeAgentService,
         officialMcpCredentialSource,
       }),
@@ -2873,6 +3218,7 @@ export function createLocalServices(options: {
       IClientConfigService,
       createClientConfigService({
         apiClient,
+        resolveZcodeJwtToken: () => credentialService.load("zcodejwttoken"),
         resolveRequestContext: async () => ({
           endpointOrigin: await resolveCurrentZCodeEndpointOrigin(),
           appVersion: ZCODE_VERSION,
@@ -2905,6 +3251,7 @@ export function createLocalServices(options: {
             resolveOrigin: originResolver.resolveOrigin,
             resolveCredentials,
             logger: offPeakLogger,
+            resolveClientLanguage: options?.resolveClientLanguage,
           }),
           resolveCodingPlanSupport: () =>
             resolveOffPeakCodingPlanSupport(offPeakCredentialResolverDeps),
@@ -2982,10 +3329,17 @@ export function createLocalServices(options: {
         const mockScenario = mockScenarios.has(rawMockScenario as HighspeedMockScenario)
           ? (rawMockScenario as HighspeedMockScenario)
           : null;
-        const resolveHighspeedLoginHeaders = async (): Promise<Record<string, string>> => {
-          const jwt = (await credentialService.load("zcodejwttoken"))?.trim() ?? "";
-          if (!jwt) throw new Error("highspeed request requires zcode jwt");
-          return { Authorization: /^Bearer\s/i.test(jwt) ? jwt : `Bearer ${jwt}` };
+        const ownerKeyForUser = (userId: string) =>
+          `v1:${createHash("sha256").update(userId).digest("hex")}`;
+        const resolveHealthyIdentity = async () => {
+          const identity = await oauthCredentialRepo.loadIdentityMaterial();
+          return identity
+            ? {
+                ownerKey: ownerKeyForUser(identity.zcodeUserId),
+                sessionScope: JSON.stringify(identity),
+                zcodeJwt: identity.zcodeJwtToken,
+              }
+            : null;
         };
         const transport = mockScenario
           ? createHighspeedMockTransport({ scenario: mockScenario })
@@ -2997,13 +3351,9 @@ export function createLocalServices(options: {
                 const credentials = await resolveOffPeakCredentials(offPeakCredentialResolverDeps, {
                   allowMockCredentials: false,
                 });
-                const codingPlanAuthorization =
-                  (
-                    await credentialService.load(`oauth:${credentials.providerFamily}:access_token`)
-                  )?.trim() ?? "";
                 return buildHighspeedCodingPlanAuthHeaders({
                   zcodeJwt: credentials.jwt,
-                  codingPlanAuthorization,
+                  codingPlanAuthorization: credentials.codingPlanAuthorization,
                   targetType:
                     credentials.organizationId && credentials.projectId ? "TEAM" : "PERSONAL",
                   ...(credentials.organizationId
@@ -3012,11 +3362,21 @@ export function createLocalServices(options: {
                   ...(credentials.projectId ? { projectId: credentials.projectId } : {}),
                 });
               },
-              healthyHeaders: resolveHighspeedLoginHeaders,
+              healthyHeaders: async () => {
+                throw new Error("highspeed healthy requires captured identity");
+              },
             });
         return new HighspeedCardService({
           transport,
-          inferenceMode: mockScenario ? "session-default" : "highspeed",
+          resolveHealthyIdentity,
+          // The plain mock only verifies the draw UI and does not depend on a hidden execution Provider; the out-of-catalog model and queue-edit scenarios
+          // must go through a real Highspeed execution Selection to cover the fallback at creation and the queue model isolation.
+          inferenceMode:
+            mockScenario &&
+            mockScenario !== "hit-invalid-model" &&
+            mockScenario !== "hit-queue-edit"
+              ? "session-default"
+              : "highspeed",
           // Rule 11: draw is open to Coding Plan users only; the mock scenario is allowed through for local verification.
           resolveCodingPlanSupported: mockScenario
             ? async () => true
@@ -3039,14 +3399,14 @@ export function createLocalServices(options: {
             const credentials = await resolveOffPeakCredentials(offPeakCredentialResolverDeps, {
               allowMockCredentials: false,
             });
-            const codingPlanAuthorization =
-              (
-                await credentialService.load(`oauth:${credentials.providerFamily}:access_token`)
-              )?.trim() ?? "";
             return {
               zcodeJwt: credentials.jwt,
               family: credentials.providerFamily,
-              codingPlanAuthorization,
+              accountScope: credentials.accountScope,
+              ...(credentials.zcodeUserId
+                ? { ownerKey: ownerKeyForUser(credentials.zcodeUserId) }
+                : {}),
+              codingPlanAuthorization: credentials.codingPlanAuthorization,
               targetType: credentials.organizationId && credentials.projectId ? "TEAM" : "PERSONAL",
               ...(credentials.organizationId ? { organizationId: credentials.organizationId } : {}),
               ...(credentials.projectId ? { projectId: credentials.projectId } : {}),
@@ -3072,11 +3432,16 @@ export function createLocalServices(options: {
     // Data sync: the user-config sync channel shared by sub-agents, commands, and hooks; both the local Host and remote Hosts register through here.
     .register(IUserConfigSyncService, createUserConfigSyncService())
     .register(IPluginsService, createPluginsService({ isDesktopRuntime: true }))
-    // Thin plugin-management service for Settings; the only host-side consumer of the legacy plugins/*
-    // protocol terms.
-    .register(IPluginManagementService, createPluginManagementService({ zcodeAgentService }))
     .register(ISubagentsService, subagentsService)
     .register(ICommandsService, commandsService)
+    .register(
+      // Thin plugin-management service for Settings; the only host-side consumer of the legacy plugins/* protocol terms.
+      IPluginManagementService,
+      createPluginManagementService({
+        zcodeAgentService,
+        onMutationSucceeded: options?.onPluginManagementMutated,
+      }),
+    )
     .register(
       IDefinitionPreviewService,
       createDefinitionPreviewService({
@@ -3140,6 +3505,8 @@ export function createLocalServices(options: {
 
   accountRequestAuthServices.set(services, accountRequestAuthService);
   offPeakRequestAuthBuilders.set(services, buildOffPeakRequestAuthForTicket);
+  const pluginUserOptionsReader = getInProcessPluginUserOptionsReader(zcodeAgentService);
+  if (pluginUserOptionsReader) pluginUserOptionsReaders.set(services, pluginUserOptionsReader);
 
   providerRuntimes.set(services, providerRuntime);
   providerProvisioningSources.set(services, providerProvisioningSource);
@@ -3223,19 +3590,19 @@ export function createTelemetryAuthorizationLoader(
     if (!userId) return null;
     try {
       const provider = (await credentialService.load("oauth:active_provider"))?.trim();
-      if (provider !== "zai" && provider !== "bigmodel") return null;
+      // 中国区同样持有 ZCode 主 JWT；不能用旧的两渠道白名单阻断远控和上报。
+      if (!provider || !isBuiltinOAuthProvider(provider)) return null;
       const readUserId = async () =>
         readTelemetryOAuthUserId(await credentialService.load(`oauth:${provider}:user_info`));
       if ((await readUserId()) !== userId) return null;
-      const jwt = (await credentialService.load("zcodejwttoken"))?.trim();
-      // Logout or account switching may happen during the async read. Never attach a token for the old
-      // identity to an event for another account.
+      const jwt = await credentialService.load("zcodejwttoken");
+      // Logout or an account switch can happen during the async reads above; never attach an old identity's token to another account's event.
       if (
         (await credentialService.load("oauth:active_provider"))?.trim() !== provider ||
         (await readUserId()) !== userId
       )
         return null;
-      return jwt && /^[\x21-\x7e]+$/.test(jwt) ? `Bearer ${jwt}` : null;
+      return toBearerAuthorization(jwt);
     } catch {
       return null;
     }
@@ -3321,10 +3688,10 @@ export async function disposeServiceResourcesAndWait(services: ServiceCollection
   // The old synchronous dispose dropped the force-kill timer when the host exited, leaving zcode-cli or
   // app-server as orphan processes.
   const disposableServices = [
+    services.getOptional(IZCodeAgentService),
     services.getOptional(ICloudContentService),
     services.getOptional(ITerminalService),
     services.getOptional(IZCodeTaskService),
-    services.getOptional(IZCodeAgentService),
     services.getOptional(IZCodeSessionService),
     services.getOptional(IBotsService),
     services.getOptional(IFileWatcherService),
@@ -3360,13 +3727,11 @@ export async function disposeServiceResourcesAndWait(services: ServiceCollection
     ?.disposeAndWait()
     .catch(() => {});
 }
-export { localRuntimeNetworkCapture } from "./zcode-agent/localRuntimeNetworkCapture.js";
 export { SourceServerWorkspaceAliasRepo } from "./session/sourceServerWorkspaceAliasRepo.js";
 export {
   SourceServerWorkspaceIdentityChannelServer,
   SourceServerWorkspaceIdentityMapper,
 } from "./source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
-export { scopeConversationShareServiceForAttachment } from "./conversation-share/conversationShareConnectionScope.js";
 
 /**
  * Tasks-index startup for the Source Server host. Desktop keeps its own barrier
@@ -3395,7 +3760,14 @@ export async function createServerHostServices(options: {
   sourceServerId: string;
   zcodeBuiltinProviderConfigFilePath: string;
   providerProvisioningTargetEnabled?: boolean;
+  credentialCipherProvider?: CredentialCipher;
 }) {
+  // 无桌面环境不能等到首次登录或 Provisioning 才发现系统库缺失。
+  const credentialCipherProvider =
+    options.credentialCipherProvider ??
+    (await createServerCredentialCipher({
+      filePath: join(resolveAppConfigDir(), "credentials.json"),
+    }));
   const projectStorageHostId = remoteHostIdFromWorkspaceIdentity(
     buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath: "/" }),
   );
@@ -3431,6 +3803,7 @@ export async function createServerHostServices(options: {
   });
   const migrationFailedPathCount = await workspaceAliasRepo.getFailedPathCount();
   const services = createLocalServices({
+    credentialCipherProvider,
     zcodeBuiltinProviderConfigFilePath: options.zcodeBuiltinProviderConfigFilePath,
     providerProvisioningTargetEnabled: options.providerProvisioningTargetEnabled,
     serviceAuthorityMode: "standalone-server",
@@ -3441,14 +3814,15 @@ export async function createServerHostServices(options: {
   return { services, workspaceIdentityMapper, migrationFailedPathCount };
 }
 
+export { scopeConversationShareServiceForAttachment } from "./conversation-share/conversationShareConnectionScope.js";
+export { localRuntimeNetworkCapture } from "./zcode-agent/localRuntimeNetworkCapture.js";
+
+/** Only printable-ASCII interface languages are sent; when missing, the key is not written and the Agent falls back to its own Intl. */
+function buildAgentClientLanguageEnv(locale: string | undefined): Record<string, string> {
+  const value = locale?.trim();
+  return value && /^[\x20-\x7e]+$/.test(value) ? { [ZCODE_CLIENT_LANGUAGE_ENV]: value } : {};
+}
 // Upstream 3.16.1 barrel exports (module contracts are fork-present; these lines only expose them to the hosts).
-export { createRemoteProjectService } from "#src/remote-projects/index.js";
-export {
-  createRemoteProjectConnectionAdmission,
-  remoteProjectHostIdForProfile,
-  remoteProjectHostIdForTarget,
-  prepareRemoteServerConnection,
-} from "#src/remote-projects/index.js";
 export { createProjectWorkspaceNavigation } from "#src/project-workspace-navigation/index.js";
 export { migrateControllerRemoteWorkspaceIdentity } from "./session/controllerRemoteIdentityMigration.js";
 export type { ControllerRemoteIdentityMigrationReport } from "./session/controllerRemoteIdentityMigration.js";

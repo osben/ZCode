@@ -18,6 +18,8 @@ export function createErrorResult(
   error: Error,
   durationMs?: number,
   options?: {
+    /** 工具补充给模型的说明，接在模型可见原文之后；不改 `error.message`。 */
+    modelNote?: string;
     preserveReasonFormatting?: boolean;
   },
 ): ToolExecutionResult {
@@ -64,9 +66,13 @@ export function createErrorResult(
     ownModelContent === undefined && reasonSource === undefined
       ? formatTerminalProviderFailureFacts(attribution)
       : undefined;
-  const modelContent =
+  const errorModelContent =
     ownModelContent ??
     (providerFactsLine ? `${fullErrorText ?? message}\n\n${providerFactsLine}` : fullErrorText);
+  // Tool-supplied notes follow the model-visible original text; without a separate model text the model sees message.
+  const modelContent = options?.modelNote
+    ? `${errorModelContent ?? message}\n\n${options.modelNote}`
+    : errorModelContent;
   return {
     toolCallId: toolCall.id,
     toolName: toolCall.name,
@@ -132,6 +138,37 @@ function formatTerminalProviderFailureFacts(
     "retryable=false",
   ];
   return `Provider failure: ${parts.join(" ")}`;
+}
+
+/**
+ * Spec 0.15: appends the tool-supplied reconciliation note to timeout and in-flight cancellation errors.
+ *
+ * Only these two errors are matched: only they can interrupt the handler after the request may already
+ * have been accepted. An error the handler throws itself happens where it can return a structured
+ * result, so it is not matched here. The annotated error is a new error of the same type that copies the
+ * original's fields; the original object is not mutated (a handler-thrown error may be shared), and no
+ * extra cause layer is added, since that would repeat the text twice in the error details.
+ */
+export function annotateUnsettledCall(
+  error: Error,
+  entry: { describeUnsettledCall?: (input: unknown, toolCallId: string) => string | undefined },
+  input: unknown,
+  toolCallId: string,
+): Error {
+  if (!isCoreError(error)) return error;
+  if (error.type !== CoreErrorType.ToolTimeout && error.type !== CoreErrorType.ToolCancelled) {
+    return error;
+  }
+  const note = entry.describeUnsettledCall?.(input, toolCallId);
+  if (!note) return error;
+  const annotated = createCoreError(error.type, `${error.message} ${note}`, {
+    ...(error.cause instanceof Error ? { cause: error.cause } : {}),
+    ...(error.context ? { context: error.context } : {}),
+    recoverable: error.recoverable,
+    retryable: error.retryable,
+  });
+  annotated.stack = error.stack;
+  return annotated;
 }
 
 export function createToolHandlerFailureError(

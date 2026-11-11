@@ -69,6 +69,10 @@ App                  init A                  init B                  Host pendin
   request is made.
 - Only `zai` and `bigmodel` poll; extension providers keep the original deep-link process and do not
   start empty Root polling.
+- The interval between consecutive polls uses the Host monotonic clock, so a system clock set back cannot stop the next
+  query after it is due. The `expires_at` checks at init, polling and callback still use the system time, and the local
+  wait is still capped at five minutes. This split does not let an expired response through and does not replace the
+  server's absolute deadline with a fixed TTL.
 - The BigModel browser callback uses the official `/app/oauth/login?redirect=zcode://oauth/callback`
   and must not display the success or failure pages of `/oauth/cli/callback/bigmodel`. Changing the
   callback address does not cancel Host polling.

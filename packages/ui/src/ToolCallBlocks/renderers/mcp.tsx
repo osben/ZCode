@@ -187,20 +187,12 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
   const progress = toolCall.status === "in_progress" ? readToolCallProgress(toolCall.raw) : null;
   const stoppedSummaryStatus =
     toolCall.status === "stopped" ? (
-      <span className="inline-flex items-center gap-2">
-        <span className="text-foreground-subtlest">·</span>
-        <span>{context.statusLabel}</span>
-      </span>
+      <span>{context.statusLabel}</span>
     ) : progress ? (
       <ToolCallProgressIndicator progress={progress} />
     ) : undefined;
   const failedSummaryStatus =
-    toolCall.status === "failed" ? (
-      <span className="inline-flex items-center gap-2">
-        <span className="text-foreground-subtlest">·</span>
-        <span>{context.statusLabel}</span>
-      </span>
-    ) : undefined;
+    toolCall.status === "failed" ? <span>{context.statusLabel}</span> : undefined;
   const handleLoadFullToolCallFields = context.onLoadFullToolCallFields;
   const renderContent = useCallback(
     () => (
@@ -354,10 +346,8 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
         serverLabel ? <span className="text-foreground-subtle">{serverLabel}</span> : undefined
       }
       primaryText={toolLabel}
-      summaryContentSeparator="·"
-      // Pending/Running/Completed are normal lifecycle states and are not repeated in the summary.
-      // Stopped is an abnormal terminal state; use an explicit separator so text nodes do not run
-      // together in non-animated summaries. Failed uses the dedicated error-status slot.
+      // Pending/Running/Completed 都是正常生命周期，不在摘要重复状态；Stopped 是异常终态，
+      // 状态作为独立节点交给公共 gap 分隔；Failed 使用专用错误状态槽位。
       secondaryText={stoppedSummaryStatus}
       statusLabel={failedSummaryStatus}
       statusTooltip={toolCall.status === "failed" ? context.errorText : undefined}

@@ -7,7 +7,26 @@ import { zcodeExecutionWorktreeSchema } from "./execution-worktree.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
 import { createSessionRequestedConfigSchema } from "./create-session-config.js";
 import { submissionModeSchema } from "./submission.js";
+import { conversationInputSourceSchema } from "./input-intent.js";
 import * as worktreePreparationCommand from "./worktree-preparation-command.js";
+
+/**
+ * Result of managed worktree creation (docs/git/worktree.md §6.6.4). The CLI writes it as a
+ * timeline part in session history (timelineType = "worktree_creation"); V4 projects it as a worktreeCreated marker.
+ */
+export const worktreeCreationRecordSchema = z
+  .object({
+    /** Worktree root directory. */
+    path: z.string().trim().min(1),
+    /** Checked-out commit. */
+    sha: z.string().trim().min(1),
+    /** Start point chosen by the user; null = current HEAD of the source directory. */
+    ref: z.string().min(1).nullable(),
+    /** Tail of the git and copy output. */
+    output: z.string().max(64 * 1024),
+  })
+  .strict();
+export type WorktreeCreationRecord = z.infer<typeof worktreeCreationRecordSchema>;
 
 /** `createSession` command payload (§6.4), split out of command.ts. */
 export const createSessionPayloadSchema = z
@@ -16,6 +35,13 @@ export const createSessionPayloadSchema = z
     sessionId: z.string().min(1).optional(),
     additionalDirectories: z.array(z.string().min(1)).max(256).optional(),
     workspaceId: z.string(),
+    // Session cwd differs from the workspace (managed worktree, docs/git/worktree.md §1.1). Local
+    // workspaces only; only the Host worktree service may set it, and the Host rejects a renderer
+    // createSession that carries it. Older CLI z.object schemas silently drop it, so the Host must
+    // check capabilities.worktreeCwd first.
+    cwd: z.string().trim().min(1).optional(),
+    // Sent together with cwd: the CLI writes it as the first turn's "worktree created" timeline part.
+    worktreeCreation: worktreeCreationRecordSchema.optional(),
     /** Reserve a submitted conversation before runtime startup or attachment upload. */
     submissionPreparation: z.object({ submissionId: z.string().min(1) }).optional(),
     /** Frozen submission identity required when materializing a generic reservation. */
@@ -35,6 +61,10 @@ export const createSessionPayloadSchema = z
         modelSelection: modelSelectionSchema.optional(),
         mode: submissionModeSchema.optional(),
         planEnabled: z.boolean().optional(),
+        // Same contract as sendText.source (the first message of a session an extension creates).
+        // Older CLI z.object schemas silently strip it and the message is created without a source,
+        // so with an extension source the Host must check runtime/capabilities.extensionInputSource.
+        source: conversationInputSourceSchema.optional(),
       })
       .optional(),
     config: createSessionRequestedConfigSchema.optional(),

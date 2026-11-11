@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { build, type Plugin } from "esbuild";
-import { validateRemoteServerBundle } from "./buildRemoteValidation.js";
+import {
+  REMOTE_SERVER_NATIVE_EXTERNALS,
+  validateRemoteServerBundle,
+} from "./buildRemoteValidation.js";
 import { loadBuiltinProviderConfig } from "../../scripts/builtin-provider-config.mjs";
 import { stageThirdPartyNotices } from "../../scripts/third-party-notices.mjs";
 
@@ -39,6 +42,7 @@ const buildResult = await build({
   format: "cjs",
   target: "node22",
   plugins: [nativeAddonPlugin],
+  external: REMOTE_SERVER_NATIVE_EXTERNALS,
   // CJS does not have import.meta.url, so inject an equivalent variable through the banner
   // and replace it globally with define. This keeps source code independent of the final bundle format.
   banner: {

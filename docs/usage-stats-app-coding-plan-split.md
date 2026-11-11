@@ -1,5 +1,9 @@
 # Usage statistics: App Usage / Coding Plan split
 
+## Data retention
+
+App usage `model_usage`, `turn_usage` and `tool_usage` are kept permanently and no longer auto-cleaned after 30 days. Write, update, startup and query never delete data by record age. The full overview reads all retained data; 7 days / 30 days only limit the query range. Existing explicit session deletion or data clearing is unchanged. No database migration is needed; data already cleaned by older versions cannot be recovered. CLI contract and acceptance: [Usage Observability](../apps/zcode-cli/docs/design/v2/usage-observability.md).
+
 ## Goal
 
 The Settings "Usage statistics" page is split into two independent chains:

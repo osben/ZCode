@@ -92,6 +92,7 @@ export function DynamicWorkflowModeSetting() {
   // No wrapping element: SettingsRow draws row separators via first:border-t-0; wrapping would make this the first row and drop the top border.
   return (
     <SettingsRow
+      searchId="settings.dynamicWorkflow"
       label={label}
       description={intl.formatMessage({ id: "settings.dynamicWorkflowDescription" })}
       // Bugfix: the default control column is only 192px and flex would squeeze the 260px trigger down to 192px, making the list that follows the trigger width too narrow;

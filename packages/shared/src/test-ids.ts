@@ -12,7 +12,9 @@ export const TID_LOGIN_TRIGGER = "login-trigger";
 export const TID_LOGIN_MENU_ITEM = "login-menu-item";
 /** Button to switch to API Key login on the login page. */
 export const TID_LOGIN_USE_API_KEY_BUTTON = "login-use-api-key-button";
-/** API Key login provider-selection trigger. */
+/** Login page region switch button (mainland China / overseas) */
+export const TID_LOGIN_REGION_SWITCH = "login-region-switch";
+/** API Key login provider-selection trigger */
 export const TID_LOGIN_API_KEY_PROVIDER_TRIGGER = "login-api-key-provider-trigger";
 /** API Key login provider choice (dynamic suffix is the provider choice). */
 export const TID_LOGIN_API_KEY_PROVIDER_ITEM = "login-api-key-provider-item";
@@ -117,6 +119,8 @@ export const TID_BROWSER_RESPONSIVE_WIDTH_INPUT = "browser-responsive-width-inpu
 export const TID_BROWSER_RESPONSIVE_HEIGHT_INPUT = "browser-responsive-height-input";
 /** Browser free-size zoom selector. */
 export const TID_BROWSER_RESPONSIVE_ZOOM_SELECT = "browser-responsive-zoom-select";
+export const TID_BROWSER_RESPONSIVE_PRESET_SELECT = "browser-responsive-preset-select";
+export const TID_BROWSER_RESPONSIVE_PRESET_OPTION = "browser-responsive-preset-option";
 /** Browser free-size zoom option (dynamic suffix is the zoom value). */
 export const TID_BROWSER_RESPONSIVE_ZOOM_OPTION = "browser-responsive-zoom-option";
 /** Canvas placeholder after browser free-size zoom. */
@@ -148,8 +152,29 @@ export const TID_BROWSER_MORE_BUTTON = "browser-more-button";
 export const TID_BROWSER_OPEN_EXTERNAL_ITEM = "browser-open-external-item";
 /** Browser developer-tools button. */
 export const TID_BROWSER_DEVTOOLS_BUTTON = "browser-devtools-button";
+export const TID_BROWSER_EXPORT_PNG_ITEM = "browser-export-png-item";
+export const TID_BROWSER_EXPORT_PDF_ITEM = "browser-export-pdf-item";
+export const TID_BROWSER_SITE_SETTINGS_ITEM = "browser-site-settings-item";
+/** Browser design mode (docs/browser-use/2026-11-03-browser-design-mode-spec.md) */
+export const TID_BROWSER_DESIGN_TOOLBAR = "browser-design-toolbar";
+export const TID_BROWSER_DESIGN_PANEL_BUTTON = "browser-design-panel-button";
+export const TID_BROWSER_DESIGN_VARIANT_SELECT = "browser-design-variant-select";
+export const TID_BROWSER_DESIGN_VARIANT_OPTION = "browser-design-variant-option";
+export const TID_BROWSER_DESIGN_SLIDE_PREV = "browser-design-slide-prev";
+export const TID_BROWSER_DESIGN_SLIDE_NEXT = "browser-design-slide-next";
+export const TID_BROWSER_DESIGN_SLIDE_COUNTER = "browser-design-slide-counter";
+/** Inspector panel on the right of the canvas; fields carry data-design-field (element attributes) or data-design-variable (page variables) */
+export const TID_BROWSER_DESIGN_INSPECTOR = "browser-design-inspector";
+export const TID_BROWSER_DESIGN_INSPECTOR_CLOSE = "browser-design-inspector-close";
+export const TID_BROWSER_DESIGN_SELECT_PARENT = "browser-design-select-parent";
+/** Row in the panel showing which file is written back to and why it cannot be written back (data-writable) */
+export const TID_BROWSER_DESIGN_SOURCE_STATUS = "browser-design-source-status";
+/** Web element chip in the input box (data-count is the number of elements) */
+export const TID_WEB_ELEMENT_CONTEXT_CHIP = "web-element-context-chip";
 /** Browser web view. */
 export const TID_BROWSER_WEBVIEW = "browser-webview";
+/** Recent visits list on the blank browser page */
+export const TID_BROWSER_RECENT_VISITS = "browser-recent-visits";
 /** Built-in browser permission prompt bar container. */
 export const TID_BROWSER_PERMISSION_PROMPTS = "browser-permission-prompts";
 /** Permission bar "allow just this once" button. */
@@ -681,6 +706,10 @@ export const TID_V4_COMPOSER_CUA_ENTRY = "v4-composer-cua-entry";
 export const TID_V4_COMPOSER_VOICE_ENTRY = "v4-composer-voice-entry";
 /** v4 Composer send button. */
 export const TID_V4_COMPOSER_SEND = "v4-composer-send";
+/** v4 composer voice input button (data-voice-state marks idle / requesting / recording / finishing) */
+export const TID_V4_COMPOSER_VOICE_INPUT = "v4-composer-voice-input";
+/** v4 composer voice input volume dot matrix (data-voice-active-dots is the number of dots currently showing volume) */
+export const TID_V4_COMPOSER_VOICE_WAVEFORM = "v4-composer-voice-waveform";
 /** v4 paused-queue send confirmation: clear queue and send. */
 export const TID_V4_COMPOSER_CLEAR_QUEUE_SEND = "v4-composer-clear-queue-send";
 /** v4 paused-queue send confirmation: keep queue and send. */
@@ -697,6 +726,26 @@ export const TID_V4_ATTACHMENT_UPLOAD_RETRY = "v4-attachment-upload-retry";
 export const TID_V4_STOP = "v4-stop";
 /** Fork button on a v4 assistant row (dynamic suffix is rowId). */
 export const TID_V4_FORK = "v4-fork";
+/** v4 fork destination menu: fork in the current directory (dynamic suffix is rowId) */
+export const TID_V4_FORK_HERE = "v4-fork-here";
+/** v4 fork destination menu: fork into a new worktree (dynamic suffix is rowId) */
+export const TID_V4_FORK_TO_WORKTREE = "v4-fork-to-worktree";
+/** Worktree checkbox in the new-task composer header */
+export const TID_WORKTREE_TOGGLE = "composer-worktree-toggle";
+/** Progress card of the worktree creation view (data-phase = creating / starting-session / failed) */
+export const TID_WORKTREE_CREATION_CARD = "worktree-creation-card";
+/** Creation failed: retry */
+export const TID_WORKTREE_CREATION_RETRY = "worktree-creation-retry";
+/** Creation failed: continue without a worktree */
+export const TID_WORKTREE_CREATION_CONTINUE_LOCAL = "worktree-creation-continue-local";
+/** Creation failed: dismiss */
+export const TID_WORKTREE_CREATION_DISMISS = "worktree-creation-dismiss";
+/** "Worktree created" marker in session history */
+export const TID_WORKTREE_CREATED_MARKER = "worktree-created-marker";
+/** Sidebar task row for a worktree being created */
+export const TID_WORKTREE_CREATING_ROW = "worktree-creating-row";
+/** Worktree icon on a sidebar task row */
+export const TID_TASK_ROW_WORKTREE_ICON = "task-row-worktree-icon";
 /** Retry button on a v4 assistant row (dynamic suffix is rowId). */
 export const TID_V4_RETRY = "v4-retry";
 /** Like button on a v4 assistant row (dynamic suffix is rowId). */
@@ -731,6 +780,24 @@ export const TID_V4_EDIT_WORKSPACE_CONFLICT_DIALOG = "v4-edit-workspace-conflict
 /** Fallback to conversation-only trimming after a v4 edit file conflict. */
 export const TID_V4_EDIT_WORKSPACE_CONFLICT_CONVERSATION_ONLY =
   "v4-edit-workspace-conflict-conversation-only";
+/**
+ * v4 composer edit-mode status bar. Attributes: data-edit-target-kind (userQuery|queueItem),
+ * data-edit-target-id (rowId|queueItemId), data-edit-state (editing|invalid),
+ * data-edit-invalid-reason (notLatest|queueItemRemoved|editLockLost)
+ */
+export const TID_V4_COMPOSER_EDIT_BAR = "v4-composer-edit-bar";
+/** v4 composer edit-mode "Cancel" button */
+export const TID_V4_COMPOSER_EDIT_CANCEL = "v4-composer-edit-cancel";
+/** Unsaved-changes confirmation dialog when switching the target in v4 composer edit mode (reuses ConfirmDialog; the confirm button is TID_CONFIRM_DIALOG_CONFIRM) */
+export const TID_V4_COMPOSER_EDIT_SWITCH_DIALOG = "v4-composer-edit-switch-dialog";
+/** Dialog asking whether to also apply the edit to all queued messages after submitting a v4 composer edit (reuses ConfirmDialog; confirm = apply to queued messages) */
+export const TID_V4_COMPOSER_EDIT_APPLY_QUEUE_DIALOG = "v4-composer-edit-apply-queue-dialog";
+/** Placeholder on the edited user row saying it is being edited below (dynamic suffix is rowId) */
+export const TID_V4_EDIT_IN_COMPOSER_HINT = "v4-edit-in-composer-hint";
+/** Outer wrapper for the v4 file summary "Undo" that carries the hover hint when disabled by the session lock */
+export const TID_V4_FILE_SUMMARY_UNDO_LOCKED = "v4-file-summary-undo-locked";
+/** Outer wrapper for the v4 file rewind dialog's "Undo file" that carries the hover hint when disabled by the session lock */
+export const TID_V4_FILE_REWIND_CONFIRM_LOCKED = "v4-file-rewind-confirm-locked";
 /** v4 queue panel container. */
 export const TID_V4_QUEUE = "v4-queue";
 /** v4 paused-queue reason/resume banner. */
@@ -744,7 +811,14 @@ export const TID_V4_QUEUE_ITEM = "v4-queue-item";
 export const TID_V4_QUEUE_ITEM_DELETE = "v4-queue-item-delete";
 /** Edit button for a v4 queue item (dynamic suffix is queueItemId). */
 export const TID_V4_QUEUE_ITEM_EDIT = "v4-queue-item-edit";
-/** Send-now button for a v4 queue item (dynamic suffix is queueItemId). */
+/**
+ * v4 queue item edit-lock placeholder (dynamic suffix is queueItemId). data-edit-lock-owner=self means this editor
+ * holds it and shows "being edited below"; other means another window or device holds it.
+ */
+export const TID_V4_QUEUE_ITEM_EDIT_LOCK = "v4-queue-item-edit-lock";
+/** v4 queue item button to manually release the edit lock (dynamic suffix is queueItemId; shown only when owner=other) */
+export const TID_V4_QUEUE_ITEM_RELEASE_EDIT = "v4-queue-item-release-edit";
+/** v4 queue item send-now button (dynamic suffix is queueItemId) */
 export const TID_V4_QUEUE_ITEM_SEND_NOW = "v4-queue-item-send-now";
 /** Move-up button for a v4 queue item (dynamic suffix is queueItemId). */
 export const TID_V4_QUEUE_ITEM_UP = "v4-queue-item-up";
@@ -959,3 +1033,46 @@ export const TID_PROJECT_ADD = "project-add";
 export const TID_SIDEBAR_USAGE_REMAINING_TRIGGER = "sidebar-usage-remaining-trigger";
 /** Sidebar open-workspace-file-tree button (dynamic suffix is workspacePath). */
 export const TID_WORKSPACE_FILE_TREE_BUTTON = "workspace-file-tree-button";
+/** Extension slots (docs/plugins/extension-host.md §6): composer.status item in the input box and the "Extensions" section on the start page. */
+export const TID_EXTENSION_COMPOSER_STATUS = "extension-composer-status";
+export const TID_SIDE_PANE_EXTENSIONS = "side-pane-extensions";
+export const TID_SIDE_PANE_EXTENSIONS_STOPPED = "side-pane-extensions-stopped";
+export const TID_SIDE_PANE_EXTENSION_PROBLEM = "side-pane-extension-problem";
+/** Extension views (docs/plugins/extension-host.md §8): view items on the start page and the extension-view tab. */
+export const TID_SIDE_PANE_EXTENSION_VIEW_ITEM = "side-pane-extension-view-item";
+export const TID_EXTENSION_VIEW = "extension-view";
+/**
+ * Extension log console (docs/plugins/extension-host.md §16.8): the "Extension logs" row on the start page and the extension-logs tab.
+ * Each row carries `data-seq`, `data-level`, `data-gen`, and `data-plugin-id` (rows from the extension process and supervisor do not).
+ */
+export const TID_SIDE_PANE_EXTENSION_LOGS_ITEM = "side-pane-extension-logs-item";
+export const TID_EXTENSION_LOGS = "extension-logs";
+export const TID_EXTENSION_LOGS_ROW = "extension-logs-row";
+export const TID_EXTENSION_LOGS_SOURCE_FILTER = "extension-logs-source-filter";
+export const TID_EXTENSION_LOGS_LEVEL_FILTER = "extension-logs-level-filter";
+export const TID_EXTENSION_LOGS_AUTO_SCROLL = "extension-logs-auto-scroll";
+export const TID_EXTENSION_LOGS_COPY = "extension-logs-copy";
+export const TID_EXTENSION_LOGS_CLEAR = "extension-logs-clear";
+/**
+ * Extension grants (docs/plugins/extension-host.md §17.7): the "Needs authorization" row on the start page (`data-side-pane-open-tab-item`
+ * is `extension-grant:<pluginId>`), the grant dialog and enable confirmation (reuses ConfirmDialog; the confirm button is
+ * TID_CONFIRM_DIALOG_CONFIRM), and the "Permissions" section of the plugin detail page (with `data-plugin-id` and `data-grant-status`).
+ */
+export const TID_SIDE_PANE_EXTENSION_GRANT = "side-pane-extension-grant";
+export const TID_EXTENSION_GRANT_DIALOG = "extension-grant-dialog";
+export const TID_EXTENSION_ENABLE_CONFIRM_DIALOG = "extension-enable-confirm-dialog";
+/**
+ * Confirmation after installing from the plugin store and before activation (§17.7, P3b): the "Needs confirmation" row on the start page (`data-side-pane-open-tab-item`
+ * is `extension-activation:<pluginId>`) and the confirm dialog (confirm button TID_CONFIRM_DIALOG_CONFIRM; cancel means "do not activate").
+ */
+export const TID_SIDE_PANE_EXTENSION_ACTIVATION = "side-pane-extension-activation";
+export const TID_EXTENSION_ACTIVATION_DIALOG = "extension-activation-dialog";
+export const TID_EXTENSION_PERMISSIONS = "extension-permissions";
+export const TID_EXTENSION_PERMISSIONS_GRANT = "extension-permissions-grant";
+export const TID_EXTENSION_PERMISSIONS_REVOKE = "extension-permissions-revoke";
+/** "System notifications" toggle in the "Permissions" section of the plugin detail page (§18.1 H8) */
+export const TID_EXTENSION_PERMISSIONS_NOTIFICATIONS = "extension-permissions-notifications";
+/** A row in "Recent actions": `data-capability`, `data-grant`. */
+export const TID_EXTENSION_PERMISSIONS_ACTION = "extension-permissions-action";
+/** nav.primary slot item in the left main navigation (docs/plugins/extension-host.md §16.4); `data-extension-item` is the global item id. */
+export const TID_NAV_PRIMARY_ITEM = "nav-primary-slot-item";

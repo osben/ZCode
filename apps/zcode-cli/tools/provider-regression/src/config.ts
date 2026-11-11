@@ -90,7 +90,8 @@ export async function loadConfiguration(providersFile: string, listFile: string)
   const rules = original.toJSON().map((rule) => {
     const access = rule.config.access;
     if (access?.type === "zhipu-account") throw new Error("此测试入口只支持 API Key Provider");
-    const key = access?.apiKey?.trim();
+    // Fork access types (chatgpt-account and others) carry no API key; they count as a missing key.
+    const key = access && "apiKey" in access ? access.apiKey?.trim() : undefined;
     if (key) secrets.push(key);
     else missingKeys.add(rule.providerId);
     for (const value of Object.values(rule.config.api?.headers ?? {}))

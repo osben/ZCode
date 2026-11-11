@@ -1,4 +1,15 @@
 import { installPluginSandboxHostBridge } from "./pluginSandbox/hostBridge.js";
+import type {
+  ExtensionNotificationClick,
+  ExtensionNotificationPayload,
+  NotificationsShowResult,
+} from "@zcode/shared/extension-host";
+import {
+  APP_NAVIGATION_IPC,
+  appNavigationRendererMessageSchema,
+  appNavigationRendererIpcSchema,
+  type AppNavigationRendererMessage,
+} from "#src/app-control-navigation/contract.js";
 import {
   databaseStartupControlSchema,
   databaseStartupStateSchema,
@@ -46,6 +57,7 @@ import type {
   BrowserViewViewportChangedPayload,
   BrowserViewCloseTabNotification,
   BrowserViewCloseTabRequest,
+  BrowserViewPromoteDraftTabsRequest,
   BrowserViewResidencyReportPayload,
   BrowserViewResidencyTransitionPayload,
   BrowserViewRestoredTabShell,
@@ -84,6 +96,10 @@ import type {
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
+  MicrophoneAccessResult,
+  MicrophoneSettingsTarget,
+  CaptureBrowserGuestPageRequest,
+  CaptureBrowserGuestPageResult,
   SSHConfigAliasOption,
   WebRemoteControlContext,
   WebRemoteControlReconnectWorkspaceRequest,
@@ -367,6 +383,17 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Export the current page's print media layout to PDF (Chromium print engine, vector text) */
   printPageToPdf: (): Promise<PrintPageToPdfResult> =>
     ipcRenderer.invoke(PlatformChannels.PrintToPdf),
+  /** Voice input: check and request system microphone permission on demand */
+  ensureMicrophoneAccess: (): Promise<MicrophoneAccessResult> =>
+    ipcRenderer.invoke(PlatformChannels.MicrophoneAccess),
+  /** Voice input: open the system microphone / sound input settings page */
+  openMicrophoneSettings: (target: MicrophoneSettingsTarget): Promise<boolean> =>
+    ipcRenderer.invoke(PlatformChannels.OpenMicrophoneSettings, target),
+  /** Capture the built-in browser guest's current viewport as PNG in main (renderer-side <webview>.capturePage crashes) */
+  captureBrowserGuestPage: (
+    payload: CaptureBrowserGuestPageRequest,
+  ): Promise<CaptureBrowserGuestPageResult> =>
+    ipcRenderer.invoke(PlatformChannels.CaptureBrowserGuestPage, payload),
   /** Resolve the real local path of a Web File from system drag-and-drop or file input */
   getPathForFile: (file: File): string | null => {
     // Since Electron 32 the non-standard File.path was removed; the renderer can no longer read a path directly from a dragged File.
@@ -731,11 +758,30 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.DesktopZoomLevelChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.DesktopZoomLevelChanged, handler);
   },
+  /** User clicked an extension notification (§18.1 H8): Main has focused the window; carries the plugin id and the view to open. Returns a disposer. */
+  onExtensionNotificationClick: (
+    callback: (click: ExtensionNotificationClick) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, click: ExtensionNotificationClick) => callback(click);
+    ipcRenderer.on(PlatformChannels.ExtensionNotificationClick, handler);
+    return () => ipcRenderer.removeListener(PlatformChannels.ExtensionNotificationClick, handler);
+  },
   /** Register a callback that navigates to the corresponding task when the user clicks a system notification; returns a disposer */
   onTaskNotificationClick: (callback: (taskId: string) => void): (() => void) => {
     const handler = (_event: unknown, taskId: string) => callback(taskId);
     ipcRenderer.on(PlatformChannels.TaskNotificationClick, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.TaskNotificationClick, handler);
+  },
+  onAppControlNavigationMessage: (callback: (message: AppNavigationRendererMessage) => void) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      const parsed = appNavigationRendererMessageSchema.safeParse(payload);
+      if (parsed.success) callback(parsed.data);
+    };
+    ipcRenderer.on(APP_NAVIGATION_IPC, listener);
+    return () => ipcRenderer.removeListener(APP_NAVIGATION_IPC, listener);
+  },
+  sendAppControlNavigation: (payload: unknown) => {
+    ipcRenderer.send(APP_NAVIGATION_IPC, appNavigationRendererIpcSchema.parse(payload));
   },
   /** Open an external URL (used for OAuth redirects to the browser) */
   openExternal: (url: string) => ipcRenderer.send(PlatformChannels.OpenExternal, url),
@@ -847,6 +893,10 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Trigger a native task notification through the main process */
   showTaskNotification: (payload: TaskNotificationPayload) =>
     ipcRenderer.send(PlatformChannels.ShowTaskNotification, payload),
+  showExtensionNotification: (
+    payload: ExtensionNotificationPayload,
+  ): Promise<NotificationsShowResult> =>
+    ipcRenderer.invoke(PlatformChannels.ShowExtensionNotification, payload),
   /** Export logs: zip ~/.zcode/v2 and external agent logs and reveal them in Finder */
   exportLogs: (): Promise<{
     success: boolean;
@@ -875,6 +925,8 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.invoke(PlatformChannels.BrowserViewCloseTabFromRenderer, payload),
   browserViewReportResidency: (payload: BrowserViewResidencyReportPayload): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewReportResidency, payload),
+  browserViewPromoteDraftTabs: (payload: BrowserViewPromoteDraftTabsRequest): Promise<string[]> =>
+    ipcRenderer.invoke(PlatformChannels.BrowserViewPromoteDraftTabs, payload),
   browserViewSuspendReady: (payload: { tabId: string; generation: number }): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewSuspendReady, payload),
   browserViewEnsureResident: (payload: BrowserViewCloseTabRequest): Promise<void> =>
@@ -1030,6 +1082,12 @@ ipcRenderer.on(InternalChannels.ScopedServicePort, (event, payload: unknown) => 
     "*",
     [port],
   );
+});
+
+ipcRenderer.on(InternalChannels.ScopedServicePortReleased, (_event, payload: unknown) => {
+  // 与 port 一样交给 renderer world；是否释放由 renderer 按当前登记判断。
+  if (!payload || typeof payload !== "object") return;
+  window.postMessage({ ...payload, type: InternalChannels.ScopedServicePortReleased }, "*");
 });
 
 ipcRenderer.on(

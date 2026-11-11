@@ -35,6 +35,21 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
 type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
 
+/** Pauses every bound task inside the caller's archive transaction, without revoking claimed turns or changing terminal states. */
+export function pauseAutomationsForArchivedTask(
+  db: DatabaseSyncInstance,
+  workspaceKey: string,
+  taskId: string,
+): void {
+  // Archiving alone would leave tasks that can still be scheduled; sharing the original connection commits or rolls back archive and pause together.
+  db.prepare(`UPDATE automations SET enabled=0, lifecycle_status='paused', updated_at=?
+    WHERE workspace_key=? AND target_task_id=? AND enabled=1 AND lifecycle_status='active'`).run(
+    Date.now(),
+    workspaceKey,
+    taskId,
+  );
+}
+
 /** Backoff constants for dispatch failures. */
 export const DISPATCH_RETRY_BASE_MS = 30_000;
 export const DISPATCH_RETRY_CAP_MS = 15 * 60_000;

@@ -42,7 +42,8 @@ export function scheduleProjectMemoryExtraction(
   // Bash cd changes only the execution cwd; project Memory identity must continue to use the session workspace root.
   const memoryRoot = resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot);
   if (!memoryRoot) return;
-  if (runtime.isRemoteWorkspace()) return;
+  // 原因：这里曾按 remote workspace 跳过提取，把“本进程只是瘦客户端”和“工作区在远端”混为一谈。
+  // remote CLI 运行在远端机器上，本身就是执行 agent loop 的一侧，所以和本地一样提取。
   if (!runtime.sessionStore || !runtime.fileSystemPort) return;
 
   const snapshotBase = captureProjectMemoryAgentContext(runtime, {
@@ -79,6 +80,7 @@ export function scheduleProjectMemoryExtraction(
 
   runtime.memoryExtractionScheduler ??= createMemoryExtractionScheduler((extraction) =>
     executeProjectMemoryExtraction(runtime, extraction),
+    () => { for (const notify of runtime.workChanged) notify(); },
   );
   runtime.memoryExtractionScheduler.schedule(snapshot);
 }

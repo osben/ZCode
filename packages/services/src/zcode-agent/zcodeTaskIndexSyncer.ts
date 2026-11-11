@@ -2168,9 +2168,10 @@ function hasUserVisibleContent(snapshot: ZCodeSessionStateSnapshot): boolean {
 
 const TASK_SEARCH_TEXT_MAX_CHARS = 200_000;
 
-// Global session search indexes only chat content visible by default, excluding reasoning, tool calls, and collapsed compaction sections.
-// Assistant parts may contain both historical and latest content; take only the final text part here,
-// matching the range shown in the UI's default collapsed view.
+// Global session search indexes only default-visible chat text, excluding reasoning, tool calls, and the collapsed compaction section.
+// An assistant message stores one text part per text block (apps/zcode-cli/docs/design/v2/model/assistant-block-order.md).
+// Concatenate them in order to restore the content of the single text part from before that change, then apply the original rule;
+// taking only the last part would drop the body text before a tool call.
 function buildSearchableTextFromSnapshot(snapshot: ZCodeSessionStateSnapshot): string {
   const parts: string[] = [];
   let total = 0;
@@ -2185,9 +2186,12 @@ function buildSearchableTextFromSnapshot(snapshot: ZCodeSessionStateSnapshot): s
     if (textParts.length === 0) {
       continue;
     }
-    const chosen = message.info.role === "assistant" ? textParts.slice(-1) : textParts;
-    for (const part of chosen) {
-      const content = part.text.trim();
+    const texts =
+      message.info.role === "assistant"
+        ? [textParts.map((part) => part.text).join("")]
+        : textParts.map((part) => part.text);
+    for (const text of texts) {
+      const content = text.trim();
       if (!content) {
         continue;
       }

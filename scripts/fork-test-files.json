@@ -234,7 +234,6 @@
   "packages/ui/test/draftBranchIntent.test.ts",
   "packages/ui/test/draftIncognitoIntent.test.ts",
   "packages/ui/test/executeToolCallBlock.test.tsx",
-  "packages/ui/test/exploreToolCallBlock.test.ts",
   "packages/ui/test/externalAgentConfig.test.ts",
   "packages/ui/test/featureRequestDialog.test.ts",
   "packages/ui/test/feedbackCenter.test.ts",

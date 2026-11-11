@@ -215,6 +215,9 @@ All done 2026-07-07 except the last item.
   prop converged into max-md responsive).
 - Centered draft layout (composer vertically centered): SessionPane draft branch, greeting + composer
   (`centered`, max-w-2xl, no sticky).
+
+  A new conversation uses the centered draft layout from the first visible frame. When switching into an empty draft, the composer dock runs no `width/max-width/transform` transition: the inner composer has already narrowed at once, and a slow outer narrowing would drag it from the left to the middle. The layout is decided directly by the existing `centeredEmptyLayout`, without waiting for the model catalog or adding timing state. The message column and input area of ordinary sessions also take the final width and offset directly, see [Conversation column layout stability](../ui/chat-summary-panel.md#conversation-column-layout-stability); desktop and mobile Web share this rule (SP01 / SP07).
+
 - `TID_CHAT_EMPTY` e2e anchor: carried by the centered draft container.
 - Scratch workspace entry (`ChatEmptyScratchWorkspaceDialog`): **not wired** (component alive; the old entry
   is not inside the menu component); pending, first confirm who owned the old trigger.
@@ -282,6 +285,7 @@ Implementation (`useDraftSessionPrewarm` + SessionPane wiring):
    `draftRuntimeInvalidationVersion` changes repeatedly only the latest target generation is kept; if an old
    create is in flight, wait for its ACK, send cleanup, then create the latest generation; at most one
    `createSession` per owner is in flight at any time.
+   Registry lifecycle: the coordinator is registered only in a committed effect with prewarm enabled, and acquires/releases in that same effect; ordinary history sessions, drafts without prewarm and aborted renders do not register. With no subscription, no page keep-alive and no in-flight create, it must leave the transport/owner Map, releasing the dispatch closure's references to the closed store and history projection. A StrictMode synchronous remount keeps reusing the original owner; no cache, reclaim timeout or second lifecycle state machine is added. Acceptance is a heap snapshot after: cross-workspace history switch -> return to empty draft -> keep-warm expiry -> GC. Idle coordinators are zero every round, and after several switch rounds and after switching stops, history snapshots and closed stores must be released; intermediate checkpoints still keep full counts and snapshots to tell current-editor-closure retention from registry accumulation. An RSS drop cannot replace the release assertions.
 2. **Binding semantics unchanged.** The pane is still a draft outwardly (shell activeTaskId stays null;
    shell-level draft checks such as WorkspaceHeader are unaffected); the prewarm session is the pane-internal
    effectiveSessionId and lease/projection subscribe as usual. Draft UX (greeting / centering / workspace

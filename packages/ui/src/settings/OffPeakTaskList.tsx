@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type SVGProps,
 } from "react";
-import { CircleCheck, Loader2, TriangleAlert } from "lucide-react";
+import { CircleCheck, LoaderCircle, TriangleAlert } from "lucide-react";
 import { type ZCodeOffPeakTask } from "@zcode/shared";
 import {
   TID_OFFPEAK_ACTION_CONTINUE,
@@ -136,7 +136,7 @@ const STATUS_ICON: Record<OffPeakStatusIconKind, ComponentType<SVGProps<SVGSVGEl
   moon: AutomationIdleTimeIcon,
   // In the design, Paused uses a circular stop icon; the old pause bars looked like a media pause control.
   pause: AutomationPausedIcon,
-  spinner: Loader2,
+  spinner: LoaderCircle,
   success: CircleCheck,
   warning: TriangleAlert,
   stopped: AutomationPausedIcon,

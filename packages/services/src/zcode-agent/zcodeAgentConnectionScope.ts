@@ -37,6 +37,7 @@ export interface ZCodeAgentV4ConnectionContext {
    * **connection**, not a preference a subscription can choose. Missing means treat it as a legacy consumer.
    */
   workflowRunDeltas?: boolean;
+  pluginDiscoveryUi?: boolean;
   historyFirst?: boolean;
 }
 
@@ -88,6 +89,7 @@ export function readTrustedZCodeAgentV4Connection(
     clientMode: context.clientMode,
     // Accept only true: absent and false both mean “legacy consumer”; downstream readers use key presence as the signal.
     ...(context.workflowRunDeltas === true ? { workflowRunDeltas: true } : {}),
+    ...(context.pluginDiscoveryUi === true ? { pluginDiscoveryUi: true } : {}),
     ...(context.historyFirst === true ? { historyFirst: true } : {}),
   };
 }
@@ -108,6 +110,7 @@ function withTrustedConnection<T extends object>(
   delete forwarded["subscriberScope"];
   // A trusted flag like clientMode: the UI subscribe surface cannot choose its own delta encoding.
   delete forwarded["workflowRunDeltas"];
+  delete forwarded["pluginDiscoveryUi"];
   delete forwarded["historyFirst"];
   forwarded[TRUSTED_CONNECTION_FIELD] = context;
   return forwarded as T;
@@ -123,6 +126,20 @@ function withTrustedUnsubscribeRoute<T extends object>(
   delete forwarded[TRUSTED_UNSUBSCRIBE_ROUTE_FIELD];
   forwarded[TRUSTED_UNSUBSCRIBE_ROUTE_FIELD] = route;
   return forwarded as T;
+}
+
+/** sendText.source 或 createSession.firstInput.source 是 extension（CLI 契约 conversation-input-source.md §2）。 */
+function carriesExtensionInputSource(envelope: { type: string; payload: unknown }): boolean {
+  const payload =
+    envelope.payload && typeof envelope.payload === "object"
+      ? (envelope.payload as {
+          source?: { kind?: unknown };
+          firstInput?: { source?: { kind?: unknown } } | null;
+        })
+      : undefined;
+  if (envelope.type === "sendText") return payload?.source?.kind === "extension";
+  if (envelope.type === "createSession") return payload?.firstInput?.source?.kind === "extension";
+  return false;
 }
 
 function workspaceKey(target: ZCodeAgentWorkspaceTarget): string {
@@ -230,6 +247,7 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       // This Host forwards `workflowRun.*` key-level deltas, so clients can see them and declare support in clientHello
       // (that capabilities object is .strict(), which would otherwise prevent handshakes with older Hosts).
       workflowRunDeltas: true,
+      pluginDiscovery: true,
       historyFirst: true,
       // Mobile remote input prediction: gated by the Host switch; when absent or false, mobile must not start inputPrediction.
       inputPrediction: isRemoteInputPredictionEnabled(),
@@ -269,6 +287,7 @@ export function createZCodeAgentConnectionScope(
   let boundClientId: string | null = null;
   /** Delta capability declared by clientHello; a trusted relay has no clientHello of its own and only forwards the downstream declaration. */
   let clientWorkflowRunDeltas = false;
+  let pluginDiscoveryUiSupported = false;
   let clientHistoryFirst = false;
   let commandQueryWorkspaceKey: string | null = null;
   let currentTransportFlowState: V4ConnectionFlowState = "drained";
@@ -287,6 +306,7 @@ export function createZCodeAgentConnectionScope(
         clientMode: downstream.clientMode,
         // Delta support belongs to the **downstream endpoint**: the relay does not consume frames and only forwards the downstream clientHello declaration.
         ...(downstream.workflowRunDeltas === true ? { workflowRunDeltas: true } : {}),
+        ...(downstream.pluginDiscoveryUi === true ? { pluginDiscoveryUi: true } : {}),
         ...(downstream.historyFirst === true ? { historyFirst: true } : {}),
       };
     }
@@ -294,6 +314,9 @@ export function createZCodeAgentConnectionScope(
       connectionId: context.connectionId,
       clientMode: context.clientMode,
       ...(clientWorkflowRunDeltas ? { workflowRunDeltas: true } : {}),
+      ...(role === "terminal-client" && pluginDiscoveryUiSupported
+        ? { pluginDiscoveryUi: true }
+        : {}),
       ...(clientHistoryFirst ? { historyFirst: true } : {}),
     };
   };
@@ -721,6 +744,7 @@ export function createZCodeAgentConnectionScope(
       }
       boundClientId = parsed.clientId;
       clientWorkflowRunDeltas = clientSupportsWorkflowRunDeltas(parsed);
+      pluginDiscoveryUiSupported = parsed.capabilities?.pluginDiscoveryUi === true;
       clientHistoryFirst = parsed.capabilities?.historyFirst === true;
       handshakeComplete = true;
     },
@@ -744,6 +768,11 @@ export function createZCodeAgentConnectionScope(
     },
     async sendConversationCommandV4(params) {
       assertOpen();
+      // extension 来源只由扩展网关经 app-control 注入（docs/plugins/extension-host.md §17.8）；app-control 直接调
+      // 基础 agent 服务，不经任何连接作用域。渲染进程、手机与 relay 的命令都从这里进入，带这个来源就是伪造。
+      if (carriesExtensionInputSource(params.envelope)) {
+        throw new Error("fault.command.extensionSourceUntrusted");
+      }
       if (role === "terminal-client") {
         assertReady();
         if (params.envelope.clientId !== boundClientId) {

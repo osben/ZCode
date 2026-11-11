@@ -70,28 +70,24 @@ export async function migrateUserSubagentMarkdown(
   userRoot: string,
 ): Promise<SubagentMarkdownMigrationResult> {
   const result: SubagentMarkdownMigrationResult = { migrated: [], failures: [] };
-  async function visit(directory: string): Promise<void> {
-    try {
-      // Do not follow links inside the user directory to write into project/plugin or other directories.
-      const rootStat = await lstat(directory);
-      if (!rootStat.isDirectory()) return;
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        const path = join(directory, entry.name);
-        if (entry.isDirectory()) await visit(path);
-        else if (entry.isFile() && /\.(md|markdown)$/iu.test(entry.name)) {
-          try {
-            if (await migrateFile(path, migrateSubagentMarkdownProvider))
-              result.migrated.push(path);
-          } catch (error) {
-            result.failures.push({ path, error });
-          }
-        }
+  try {
+    // Do not write through links inside the user directory into project/plugin or other directories.
+    const rootStat = await lstat(userRoot);
+    if (!rootStat.isDirectory()) return result;
+    // The old migration recursively scanned historical CLI install directories, slowing workspace cold start.
+    // Matches the custom Agent loading scope: only direct files of the root directory are checked; subdirectories are not entered.
+    for (const entry of await readdir(userRoot, { withFileTypes: true })) {
+      if (!entry.isFile() || !/\.(md|markdown)$/iu.test(entry.name)) continue;
+      const path = join(userRoot, entry.name);
+      try {
+        if (await migrateFile(path, migrateSubagentMarkdownProvider)) result.migrated.push(path);
+      } catch (error) {
+        result.failures.push({ path, error });
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        result.failures.push({ path: directory, error });
     }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      result.failures.push({ path: userRoot, error });
   }
-  await visit(userRoot);
   return result;
 }

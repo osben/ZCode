@@ -6,6 +6,8 @@
  */
 "use client";
 
+import { SummaryPreviewContext } from "@/v4/conversationRowContext.js";
+
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible.js";
 import { cn } from "../lib/utils.js";
@@ -14,13 +16,7 @@ import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { QueuedSummaryContent } from "@/ToolCallBlocks/QueuedSummaryContent.js";
 import type { ComponentProps, CSSProperties, ReactNode } from "react";
-import {
-  EMPTY_SCROLL_MASK_STATE,
-  getVerticalScrollMaskStyle,
-  resolveVerticalScrollMaskState,
-  type ScrollMetrics,
-  type ScrollMaskState,
-} from "@/mentions/components/scrollMask.js";
+import { useBottomFollowingScroll } from "@/mentions/components/scrollMask.js";
 import {
   createContext,
   memo,
@@ -61,7 +57,6 @@ export type ReasoningProps = ComponentProps<typeof Collapsible> & {
 
 const MS_IN_S = 1000;
 const REASONING_CONTENT_COLLAPSE_UNMOUNT_DELAY_MS = 300;
-const REASONING_BOTTOM_LOCK_DISTANCE_PX = 2;
 
 export function shouldAutoCollapseReasoning({
   autoCollapseKey,
@@ -73,18 +68,6 @@ export function shouldAutoCollapseReasoning({
   userInteracted: boolean;
 }) {
   return autoCollapseKey != null && autoCollapseKey !== previousAutoCollapseKey && !userInteracted;
-}
-
-export function getReasoningBottomDistance({
-  clientHeight,
-  scrollHeight,
-  scrollTop,
-}: ScrollMetrics) {
-  return Math.max(0, scrollHeight - clientHeight - scrollTop);
-}
-
-export function isReasoningScrollAtBottom(metrics: ScrollMetrics) {
-  return getReasoningBottomDistance(metrics) <= REASONING_BOTTOM_LOCK_DISTANCE_PX;
 }
 
 export const Reasoning = memo(
@@ -99,11 +82,12 @@ export const Reasoning = memo(
     children,
     ...props
   }: ReasoningProps) => {
-    const isOpenControlled = open !== undefined;
+    const preview = useContext(SummaryPreviewContext);
+    const isOpenControlled = preview || open !== undefined;
     const [isOpen, setIsOpen] = useControllableState<boolean>({
       defaultProp: defaultOpen,
       onChange: onOpenChange,
-      prop: open,
+      prop: preview ? false : open,
     });
     const [duration, setDuration] = useControllableState<number | undefined>({
       defaultProp: undefined,
@@ -290,6 +274,7 @@ export const ReasoningTrigger = memo(
     streamingText = "",
     ...props
   }: ReasoningTriggerProps) => {
+    const preview = useContext(SummaryPreviewContext);
     const { isStreaming, isOpen, duration } = useReasoning();
     const { intl } = useZCodeIntl();
     const streamingSummary =
@@ -326,60 +311,60 @@ export const ReasoningTrigger = memo(
       return () => resizeObserver.disconnect();
     }, [streamingSummary?.text]);
 
+    // 末尾思考完成后，未闭合的收起组头仍需扫光；保留真实完成文案和耗时。
+    const thoughtLabelClassName = cn(
+      "font-normal text-foreground-subtle",
+      preview && "animated-gradient-text animated-gradient-text-foreground",
+    );
     const thinkingMessage =
       getThinkingMessage?.(isStreaming, duration) ??
       (isStreaming && !isOpen ? (
-        <span className="animated-gradient-text font-medium">
+        <span className="animated-gradient-text animated-gradient-text-foreground font-normal text-foreground-subtle">
           {intl.formatMessage({ id: "chat.reasoning.thinking" })}
         </span>
       ) : duration === undefined ? (
         <span className="inline-flex items-center gap-2">
-          {/* The completed “Thinking” label used semibold, making it heavier than tool-type labels in the same column.
-              Use medium consistently to preserve the visual hierarchy of the conversation timeline. */}
-          <span className="font-medium text-foreground-subtlest">
+          <span className={thoughtLabelClassName}>
             {intl.formatMessage({ id: "chat.reasoning.thought" })}
           </span>
-          <span className="font-normal text-foreground-subtlest">·</span>
           <span className="font-normal text-foreground-subtlest">
             {intl.formatMessage({ id: "chat.reasoning.durationFewSeconds" })}
           </span>
         </span>
       ) : (
         <span className="inline-flex items-center gap-2">
-          <span className="font-medium text-foreground-subtlest">
+          <span className={thoughtLabelClassName}>
             {intl.formatMessage({ id: "chat.reasoning.thought" })}
           </span>
-          <span className="font-normal text-foreground-subtlest">·</span>
           <span className="font-normal text-foreground-subtlest">
             {intl.formatPlural({ id: "chat.reasoning.durationSeconds" }, duration)}
           </span>
         </span>
       ));
 
-    return (
-      <CollapsibleTrigger
-        data-testid={TID_CHAT_REASONING_TRIGGER}
-        className={cn(
-          "group/reasoning inline-flex max-w-full min-w-0 items-center gap-2 self-start text-ui-base transition-colors",
-          className,
-        )}
-        {...props}
-      >
+    const summaryClassName = cn(
+      "summary-hover-text group/reasoning inline-flex max-w-full min-w-0 items-center gap-2 self-start text-ui-base transition-colors",
+      className,
+    );
+    const summaryContent = (
+      <>
         {children ?? (
           <>
             {/* Thinking can remain visible during long streaming replies, so a rotating loader would consume rendering resources for a long time.
             Keep the text shimmer while running, and use a static thinking icon. */}
-            <BrainIcon className="size-4 shrink-0 text-foreground-subtlest" />
+            <BrainIcon
+              data-summary-leading-icon
+              className="size-4 shrink-0 text-foreground-subtle group-hover/reasoning:text-foreground"
+            />
             {/* The streaming summary on the right can shrink; if the label on the left also shrinks,
                 a long summary can wrap the Thinking label onto multiple lines. Keep the semantic label fixed-width and let only the summary use the remaining space. */}
             <span className="shrink-0 whitespace-nowrap" data-reasoning-label="true">
               {thinkingMessage}
             </span>
-            {streamingSummary ? <span className="shrink-0 text-foreground-subtlest">·</span> : null}
             {streamingSummary ? (
               <span
                 ref={streamingSummaryRef}
-                className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-foreground-subtle"
+                className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-foreground-subtlest"
                 data-reasoning-streaming-mask={isStreamingSummaryOverflowing ? "both" : "none"}
                 data-reasoning-streaming-line="true"
                 data-reasoning-streaming-roll="true"
@@ -397,20 +382,33 @@ export const ReasoningTrigger = memo(
                       {streamingSummary.text}
                     </span>
                   }
-                  enabled
+                  enabled={!preview}
                 />
               </span>
             ) : null}
-            <ChevronRightIcon
-              className={cn(
-                "size-4 shrink-0 text-foreground-subtlest transition-opacity transition-transform",
-                isOpen
-                  ? "rotate-90 opacity-100"
-                  : "rotate-0 opacity-0 group-hover/reasoning:opacity-100",
-              )}
-            />
+            {!preview ? (
+              <ChevronRightIcon
+                data-summary-chevron
+                className={cn(
+                  "size-4 shrink-0 text-foreground-subtlest transition-opacity transition-transform",
+                  isOpen
+                    ? "rotate-90 opacity-100"
+                    : "rotate-0 opacity-0 group-hover/reasoning:opacity-100",
+                )}
+              />
+            ) : null}
           </>
         )}
+      </>
+    );
+    if (preview) return <div className={summaryClassName}>{summaryContent}</div>;
+    return (
+      <CollapsibleTrigger
+        data-testid={TID_CHAT_REASONING_TRIGGER}
+        className={summaryClassName}
+        {...props}
+      >
+        {summaryContent}
       </CollapsibleTrigger>
     );
   },
@@ -425,107 +423,13 @@ export const ReasoningContent = memo(
   ({ className, children, forceMount, variant = "default", ...props }: ReasoningContentProps) => {
     const { isOpen, shouldRenderContent } = useReasoning();
     const shouldRenderChildren = isOpen || shouldRenderContent || Boolean(forceMount);
-    const scrollRef = useRef<HTMLDivElement | null>(null);
-    const contentRef = useRef<HTMLDivElement | null>(null);
-    const autoFollowBottomRef = useRef(true);
-    const [scrollMaskState, setScrollMaskState] =
-      useState<ScrollMaskState>(EMPTY_SCROLL_MASK_STATE);
-    const updateScrollMaskState = useCallback(() => {
-      const scrollNode = scrollRef.current;
-      if (!scrollNode) {
-        setScrollMaskState(EMPTY_SCROLL_MASK_STATE);
-        return;
-      }
-
-      setScrollMaskState(
-        resolveVerticalScrollMaskState({
-          clientHeight: scrollNode.clientHeight,
-          scrollHeight: scrollNode.scrollHeight,
-          scrollTop: scrollNode.scrollTop,
-        }),
-      );
-    }, []);
-    const scrollToReasoningBottom = useCallback(() => {
-      const scrollNode = scrollRef.current;
-      if (!scrollNode) {
-        return;
-      }
-
-      scrollNode.scrollTop = scrollNode.scrollHeight;
-      updateScrollMaskState();
-    }, [updateScrollMaskState]);
-    const handleScroll = useCallback(() => {
-      const scrollNode = scrollRef.current;
-      if (!scrollNode) {
-        return;
-      }
-
-      autoFollowBottomRef.current = isReasoningScrollAtBottom({
-        clientHeight: scrollNode.clientHeight,
-        scrollHeight: scrollNode.scrollHeight,
-        scrollTop: scrollNode.scrollTop,
-      });
-      updateScrollMaskState();
-    }, [updateScrollMaskState]);
-
-    useEffect(() => {
-      if (!shouldRenderChildren) {
-        autoFollowBottomRef.current = true;
-        setScrollMaskState(EMPTY_SCROLL_MASK_STATE);
-        return;
-      }
-
-      const scrollNode = scrollRef.current;
-      if (!scrollNode || typeof ResizeObserver === "undefined") {
-        if (autoFollowBottomRef.current) {
-          scrollToReasoningBottom();
-        } else {
-          updateScrollMaskState();
-        }
-        return;
-      }
-
-      // scrollHeight changes as thought content streams in; observe both container and content sizes.
-      // Follow the latest thought at the bottom by default; pause after the user scrolls away and resume only when they return to the bottom.
-      const syncScrollPosition = () => {
-        if (autoFollowBottomRef.current) {
-          scrollToReasoningBottom();
-          return;
-        }
-        updateScrollMaskState();
-      };
-      syncScrollPosition();
-      const resizeObserver = new ResizeObserver(syncScrollPosition);
-      resizeObserver.observe(scrollNode);
-      if (contentRef.current) {
-        resizeObserver.observe(contentRef.current);
-      }
-
-      return () => {
-        resizeObserver.disconnect();
-      };
-    }, [scrollToReasoningBottom, shouldRenderChildren, updateScrollMaskState]);
-
-    useEffect(() => {
-      if (!shouldRenderChildren) {
-        return;
-      }
-      if (autoFollowBottomRef.current) {
-        scrollToReasoningBottom();
-        return;
-      }
-      updateScrollMaskState();
-    }, [children, scrollToReasoningBottom, shouldRenderChildren, updateScrollMaskState]);
-
-    const scrollMaskStyle = getVerticalScrollMaskStyle(scrollMaskState);
-    const scrollMaskData =
-      scrollMaskState.showTop && scrollMaskState.showBottom
-        ? "both"
-        : scrollMaskState.showTop
-          ? "top"
-          : scrollMaskState.showBottom
-            ? "bottom"
-            : "none";
+    const {
+      scrollRef,
+      contentRef,
+      onScroll: handleScroll,
+      maskData: scrollMaskData,
+      maskStyle: scrollMaskStyle,
+    } = useBottomFollowingScroll(shouldRenderChildren, children);
 
     return (
       <CollapsibleContent

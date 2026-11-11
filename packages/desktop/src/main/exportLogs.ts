@@ -172,12 +172,46 @@ const SENSITIVE_KEY_SUBSTRING_PATTERN = [
   "db(?:_|-)?url",
 ].join("|");
 const SENSITIVE_KEY_NAME_REGEX = new RegExp(`(?:${SENSITIVE_KEY_SUBSTRING_PATTERN})`, "i");
-// Allowlist common key names that match a sensitive substring but are not secrets, preserving troubleshooting context.
-// Do not allowlist every "*_tokens" key, or access_tokens/session_tokens would be exported as-is.
-// max_tokens/budget_tokens are model output and reasoning budgets, not credentials; keep them to diagnose provider limits.
-// Therefore, allow only explicit LLM token count/budget fields and ordinary words containing "auth" such as author/authority.
-const NON_SENSITIVE_KEY_NAME_ALLOWLIST_REGEX =
-  /^(?:public(?:_|-)?key|keywords?|tokenizer|token(?:_|-)?count|(?:prompt|completion|total|input|output|cached|reasoning|max|budget|accepted(?:_|-)?prediction|rejected(?:_|-)?prediction|tool(?:_|-)?use(?:_|-)?prompt)(?:_|-)?tokens|author(?:s|ity|ed)?)$/i;
+// Allowlist: common key names that contain a sensitive substring but are not secrets, so the context needed for troubleshooting is not stripped.
+// Not every "*_tokens" may be allowlisted, or access_tokens/session_tokens would be exported verbatim;
+// max_tokens/budget_tokens are model output and thinking budgets, not credentials, and are kept to judge whether a provider request hit a limit;
+// so only explicit LLM token count/budget fields are allowed here, plus ordinary words containing "auth" such as author/authority.
+// Numbers under sensitive keys are also redacted, so counting keys must be listed one by one: the prefix is made only of counting words (no bare access/session/
+// refresh/id/read/write), covering each provider's usage fields (cache_read_input_tokens,
+// ephemeral_5m_input_tokens, *_tokens_details, max_completion_tokens, *TokenCount) and ZCode's internal
+// camelCase counters (cacheReadTokens, maxOutputTokens). buildSnapshot is snapshot timing and falsely matched the "dsn" substring.
+// The "_" below is a placeholder for the key-name separator; after the full regex is assembled it is uniformly replaced with "optional _ or -" (to support camelCase).
+const TOKEN_COUNT_KEY_PREFIX_PATTERN = [
+  "prompt",
+  "completion",
+  "total",
+  "input",
+  "output",
+  "reasoning",
+  "max",
+  "budget",
+  "audio",
+  "candidates",
+  "thoughts",
+  "accepted_prediction",
+  "rejected_prediction",
+  "tool_use_prompt",
+  "max_output",
+  "max_completion",
+  "prompt_cache_(?:hit|miss)",
+  "(?:un)?cached(?:_(?:read|write|content))?(?:_input)?",
+  "cache_(?:read|write|creation)(?:_input)?",
+  "ephemeral_\\d+[mh]_input",
+].join("|");
+const NON_SENSITIVE_KEY_NAME_ALLOWLIST_REGEX = new RegExp(
+  [
+    "^(?:public_key|keywords?|tokenizer|token_count|build_snapshot|author(?:s|ity|ed)?",
+    `|(?:total_)?(?:${TOKEN_COUNT_KEY_PREFIX_PATTERN})_(?:tokens(?:_details)?|token_count))$`,
+  ]
+    .join("")
+    .replaceAll("_", "(?:_|-)?"),
+  "i",
+);
 
 function isSensitiveKeyName(keyName: string): boolean {
   if (NON_SENSITIVE_KEY_NAME_ALLOWLIST_REGEX.test(keyName)) {
@@ -186,14 +220,19 @@ function isSensitiveKeyName(keyName: string): boolean {
   return SENSITIVE_KEY_NAME_REGEX.test(keyName);
 }
 
-// These regexes loosely capture "key + value" first, then isSensitiveKeyName decides whether to redact.
-// This replaces a hard-coded key blacklist with sensitive families, wildcard matching, and allowlist exceptions.
+// The regexes below first loosely capture "key name + value"; isSensitiveKeyName then decides whether to redact,
+// so the key-name blocklist is no longer a hardcoded list but "sensitive families + wildcards + allowlist exceptions".
+// The third branch captures only the opening bracket of an object/array; redactJsonStyleValues replaces the whole value by bracket matching (see that function).
 const JSON_STYLE_SENSITIVE_VALUE_REGEX =
-  /(["'])([A-Za-z0-9_.-]+)\1(\s*:\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\r\n}\]]+)/g;
+  /(["'])([A-Za-z0-9_.-]+)\1(\s*:\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[[{]|[^,\r\n}\]]+)/g;
 const ASSIGNMENT_STYLE_SENSITIVE_VALUE_REGEX =
   /((?:^|\n)[ \t]*)([A-Za-z0-9_.-]+)([ \t]*=[ \t]*)([^\r\n#]+)/g;
 const HEADER_STYLE_SENSITIVE_VALUE_REGEX =
   /((?:^|\n)[ \t]*)([A-Za-z0-9-]+)([ \t]*:[ \t]*)([^\r\n]+)/g;
+// The Bearer, URL query and connection-string rules match staging: quotes and backslashes inside values are always treated as content.
+// JSONL lines are already redacted structurally; this handles only decoded strings and text lines that fail to parse. Stopping at quotes to protect embedded JSON in text
+// would export passwords such as `p"a"s` and `ex'ample` whole or partly verbatim (reproduced twice in review).
+// The cost is that embedded JSON in a text line may be over-replaced (for example swallowing up to the next field's @); only context is lost, nothing leaks.
 const BEARER_TOKEN_REGEX = /(Bearer\s+)([^\s"']+)/g;
 const QUERY_TOKEN_REGEX =
   /([?&](?:key|api(?:_|-)?key|access(?:_|-)?token|refresh(?:_|-)?token|token|password|passwd|pwd|secret|client(?:_|-)?secret|auth(?:_|-)?token|session(?:_|-)?token)=)([^&#\s]+)/gi;
@@ -203,6 +242,12 @@ const QUERY_TOKEN_REGEX =
 // so passwords with a literal @ (such as P@ssw0rd) are fully redacted without leaving fragments.
 const CONNECTION_STRING_CREDENTIALS_REGEX =
   /\b([a-z][a-z0-9+.-]*:\/\/)([^:/\s]*):([^/\s]+)@(?=[^@/\s])/gi;
+// Recursion depth limit for structured redaction. Real logs are only a few dozen levels deep; lines over the limit are replaced whole with a placeholder line so a stack overflow does not abort the export.
+const MAX_JSON_REDACTION_DEPTH = 256;
+const JSON_DEPTH_EXCEEDED = Symbol("json-redaction-depth-exceeded");
+const JSON_DEPTH_EXCEEDED_LINE = JSON.stringify({
+  exportRedaction: `line replaced: JSON nested deeper than ${MAX_JSON_REDACTION_DEPTH} levels`,
+});
 const TEXT_DETECTION_SAMPLE_BYTES = 64 * 1024;
 const EMPTY_BOM = Buffer.alloc(0);
 
@@ -219,16 +264,19 @@ interface TextDecodingScore {
   invalidCharRatio: number;
 }
 
-function redactValue(rawValue: string): string {
+function redactValue(rawValue: string, quoteBareValue = false): string {
   const leadingSpaces = rawValue.match(/^\s*/)?.[0] ?? "";
   const trailingSpaces = rawValue.match(/\s*$/)?.[0] ?? "";
   const core = rawValue.trim();
+  // Bare values (numbers, booleans, null) under JSON keys (double-quoted) become quoted placeholders, so the line stays valid JSON.
   const quote =
     core.startsWith('"') && core.endsWith('"')
       ? '"'
       : core.startsWith("'") && core.endsWith("'")
         ? "'"
-        : "";
+        : quoteBareValue
+          ? '"'
+          : "";
   const redacted = quote ? `${quote}${REDACTED_PLACEHOLDER}${quote}` : REDACTED_PLACEHOLDER;
   return `${leadingSpaces}${redacted}${trailingSpaces}`;
 }
@@ -249,20 +297,75 @@ function redactConnectionStringCredentials(rawContent: string): string {
   );
 }
 
+/** From the opening bracket, find the end position (after the closing bracket) by string-aware bracket matching; returns -1 when no match is found on the same line. */
+function findBracketedValueEnd(content: string, start: number): number {
+  let depth = 0;
+  let stringQuote = "";
+  for (let index = start; index < content.length; index += 1) {
+    const char = content[index];
+    if (char === "\n" || char === "\r") return -1;
+    if (stringQuote) {
+      if (char === "\\") index += 1;
+      else if (char === stringQuote) stringQuote = "";
+      continue;
+    }
+    if (char === '"' || char === "'") stringQuote = char;
+    else if (char === "{" || char === "[") depth += 1;
+    else if (char === "}" || char === "]") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Sensitive values in the form `"key": value` in text. Object/array values cannot look only at the first field: when the inner key name is not sensitive
+ * (`{"token":{"value":"…"}}`), the credential would be exported verbatim, so the whole value is replaced by a quoted placeholder via bracket matching;
+ * if it does not match on the same line (truncated JSON), replace through the end of the line. Only a line that ends with an opening bracket and has nothing after it is the start of multi-line formatted JSON
+ * (config.json); it is left as is, and subsequent lines are still redacted line by line by key name, so the file structure is not broken.
+ */
+function redactJsonStyleValues(content: string): string {
+  const pattern = JSON_STYLE_SENSITIVE_VALUE_REGEX;
+  pattern.lastIndex = 0;
+  let output = "";
+  let cursor = 0;
+  for (let match = pattern.exec(content); match; match = pattern.exec(content)) {
+    // All four capture groups are required in the regex; the defaults exist only to satisfy noUncheckedIndexedAccess.
+    const [whole, quote = '"', keyName = "", , rawValue = ""] = match;
+    if (!isSensitiveKeyName(keyName)) continue;
+    const valueStart = match.index + whole.length - rawValue.length;
+    let valueEnd = valueStart + rawValue.length;
+    let replacement: string;
+    if (rawValue === "{" || rawValue === "[") {
+      const bracketEnd = findBracketedValueEnd(content, valueStart);
+      if (bracketEnd === -1) {
+        const lineBreak = content.slice(valueStart).search(/[\r\n]/);
+        const lineEnd = lineBreak === -1 ? content.length : valueStart + lineBreak;
+        if (content.slice(valueStart + 1, lineEnd).trim() === "") continue;
+        valueEnd = lineEnd;
+      } else {
+        valueEnd = bracketEnd;
+      }
+      replacement = `${quote}${REDACTED_PLACEHOLDER}${quote}`;
+    } else {
+      replacement = redactValue(rawValue, quote === '"');
+    }
+    output += content.slice(cursor, valueStart) + replacement;
+    cursor = valueEnd;
+    pattern.lastIndex = valueEnd;
+  }
+  pattern.lastIndex = 0;
+  return output + content.slice(cursor);
+}
+
 function sanitizeSensitiveLogContent(rawContent: string): string {
-  // Do not copy log files as-is; that would expose tokens/apiKeys from user configuration and protocol logs.
-  // Production troubleshooting needs file structure and context without secret values.
-  // Redact common sensitive values during export while preserving fields and log lines for diagnosis.
-  // Key matching uses sensitive-name families, substring wildcards, and allowlist exceptions (isSensitiveKeyName)
-  // rather than a hard-coded blacklist, plus value-based connection-string redaction for custom database connection names.
-  return redactConnectionStringCredentials(rawContent)
-    .replace(
-      JSON_STYLE_SENSITIVE_VALUE_REGEX,
-      (match, quote: string, keyName: string, separator: string, rawValue: string) =>
-        isSensitiveKeyName(keyName)
-          ? `${quote}${keyName}${quote}${separator}${redactValue(rawValue)}`
-          : match,
-    )
+  // Log export cannot copy files verbatim: that would carry token/apiKey values from user config and protocol logs along with them.
+  // Production troubleshooting needs the file structure and context kept, but must not leak the key values themselves;
+  // common sensitive values are redacted uniformly at export time, while fields and log lines are kept intact so problems can still be traced.
+  // Key names are no longer a hardcoded blocklist but "sensitive key-name families + substring wildcards + allowlist exceptions" (isSensitiveKeyName),
+  // plus value-shape connection-string redaction, to cover sensitive information with custom naming such as database connection strings.
+  return redactJsonStyleValues(redactConnectionStringCredentials(rawContent))
     .replace(
       ASSIGNMENT_STYLE_SENSITIVE_VALUE_REGEX,
       (match, prefix: string, keyName: string, separator: string, rawValue: string) =>
@@ -279,6 +382,196 @@ function sanitizeSensitiveLogContent(rawContent: string): string {
     )
     .replace(BEARER_TOKEN_REGEX, `$1${REDACTED_PLACEHOLDER}`)
     .replace(QUERY_TOKEN_REGEX, `$1${REDACTED_PLACEHOLDER}`);
+}
+
+interface JsonRedactionState {
+  changed: boolean;
+}
+
+type JsonRedactionResult =
+  | { kind: "invalid" }
+  | { kind: "unchanged" }
+  | { kind: "changed"; text: string };
+
+// TS 6's lib does not yet declare JSON.rawJSON / JSON.isRawJSON; Electron 44 (V8 15) supports them.
+const RAW_JSON = JSON as unknown as {
+  rawJSON?: (text: string) => unknown;
+  isRawJSON?: (value: unknown) => boolean;
+};
+
+function isRawJsonNumber(value: unknown): boolean {
+  return RAW_JSON.isRawJSON?.(value) === true;
+}
+
+/**
+ * When a line is rewritten, numbers are written back as their original literals: integers above 2^53 (request ids, nanosecond timestamps) and forms like `1.50`
+ * would be changed by a round trip through Number. Only numbers that would change on a round trip are wrapped; the rest remain plain numbers.
+ */
+function parseJsonPreservingNumbers(text: string): unknown {
+  const rawJSON = RAW_JSON.rawJSON;
+  if (!rawJSON) return JSON.parse(text) as unknown;
+  return JSON.parse(text, (_key, value: unknown, context?: { source?: string }) =>
+    typeof value === "number" && context?.source !== undefined && String(value) !== context.source
+      ? rawJSON(context.source)
+      : value,
+  ) as unknown;
+}
+
+/**
+ * Parse and redact a JSON text. First use plain JSON.parse to decide whether it needs changing; only when it does is it re-parsed with original numeric literals
+ * and written back, so unmatched lines pay no reviver cost and are never re-serialized.
+ */
+function redactJsonText(text: string, depth: number): JsonRedactionResult {
+  const parsed = parseJsonLine(text);
+  if (parsed === undefined) return { kind: "invalid" };
+  const probe: JsonRedactionState = { changed: false };
+  redactJsonValue(parsed.value, false, probe, depth);
+  if (!probe.changed) return { kind: "unchanged" };
+  const state: JsonRedactionState = { changed: false };
+  const redacted = redactJsonValue(parseJsonPreservingNumbers(text), false, state, depth);
+  return { kind: "changed", text: JSON.stringify(redacted) };
+}
+
+function redactJsonStringValue(value: string, state: JsonRedactionState, depth: number): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    // JSON embedded in strings (request bodies, tool arguments) is recursed structurally; otherwise an inner api_key would be missed as plain text.
+    // Nested JSON shares the depth budget with the outer level, so layers nested inside strings cannot bypass the limit.
+    const nested = redactJsonText(trimmed, depth + 1);
+    if (nested.kind === "unchanged") return value;
+    if (nested.kind === "changed") {
+      state.changed = true;
+      return nested.text;
+    }
+  }
+  const sanitized = sanitizeSensitiveLogContent(value);
+  if (sanitized !== value) state.changed = true;
+  return sanitized;
+}
+
+/**
+ * Object keys can also be credentials: connection strings, URLs with tokens, and `Bearer …` used as keys are redacted by value shape and then written back.
+ * Two keys may become identical after redaction, so a sequence number prevents a later write from overwriting an earlier one.
+ *
+ * `nextSuffix` records, per object, which sequence number to try next for each redacted result: when keys under a sensitive parent field all redact to the same placeholder,
+ * retrying from ` (2)` for every key would be O(n²), and a line with thousands of keys would block the main process for a long time. Every candidate tried is already taken,
+ * and occupancy only grows (the result object only gains keys and the source object is unchanged), so continuing from the last attempt gives exactly the same result as retrying from the start each time.
+ */
+function redactJsonObjectKey(
+  key: string,
+  source: object,
+  result: Record<string, unknown>,
+  nextSuffix: Map<string, number>,
+  state: JsonRedactionState,
+  sensitive: boolean,
+): string {
+  let sanitized: string;
+  if (sensitive) {
+    // Keys under a sensitive parent field can themselves be credentials (maps such as `{"token":{"tok_…":{…}}}` keyed by token);
+    // they cannot be expected to carry recognizable shapes such as connection strings, URLs or Bearer: like values, they are replaced whole by a placeholder, with a sequence number for duplicates.
+    sanitized = REDACTED_PLACEHOLDER;
+  } else {
+    // Most keys are identifiers: the text rules all require one of `://`, `=`, `:`, a space, `?`, `&` or a quote, so a pure identifier
+    // can never match; skip it so that every key does not run all the regexes (in a 100k-line local log this step was most of the added cost).
+    if (!/[^\w.$-]/.test(key)) return key;
+    sanitized = sanitizeSensitiveLogContent(key);
+    if (sanitized === key) return key;
+  }
+  state.changed = true;
+  // Sequence 1 means the unsuffixed result as-is.
+  let index = nextSuffix.get(sanitized) ?? 1;
+  let candidate = index === 1 ? sanitized : `${sanitized} (${index})`;
+  while (Object.hasOwn(result, candidate) || Object.hasOwn(source, candidate)) {
+    index += 1;
+    candidate = `${sanitized} (${index})`;
+  }
+  nextSuffix.set(sanitized, index + 1);
+  return candidate;
+}
+
+function redactJsonValue(
+  value: unknown,
+  sensitive: boolean,
+  state: JsonRedactionState,
+  depth = 0,
+): unknown {
+  if (depth > MAX_JSON_REDACTION_DEPTH) throw JSON_DEPTH_EXCEEDED;
+  if (typeof value === "string") {
+    if (sensitive) {
+      state.changed = true;
+      return REDACTED_PLACEHOLDER;
+    }
+    return redactJsonStringValue(value, state, depth);
+  }
+  const isNumber = typeof value === "number" || isRawJsonNumber(value);
+  if (isNumber && sensitive) {
+    // A number may itself be the credential (a numeric-only password or PIN): under a sensitive key it becomes a string placeholder, and the line stays valid JSON.
+    // Numbers under non-sensitive keys (token counts, durations) are kept as-is; counting keys are spared false positives by the allowlist above.
+    state.changed = true;
+    return REDACTED_PLACEHOLDER;
+  }
+  if (isNumber) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactJsonValue(item, sensitive, state, depth + 1));
+  }
+  if (value !== null && typeof value === "object") {
+    // Rebuild with a prototype-less object: writing `__proto__` onto a plain {} triggers the prototype setter, and that key would vanish from the export.
+    const result = Object.create(null) as Record<string, unknown>;
+    const nextSuffix = new Map<string, number>();
+    for (const [key, item] of Object.entries(value)) {
+      // Key-name sensitivity is judged on the original key; when the parent field is already sensitive, the key itself is treated as sensitive.
+      const outputKey = redactJsonObjectKey(key, value, result, nextSuffix, state, sensitive);
+      result[outputKey] = redactJsonValue(
+        item,
+        sensitive || isSensitiveKeyName(key),
+        state,
+        depth + 1,
+      );
+    }
+    return result;
+  }
+  // Booleans and null have only the values true/false/null and cannot carry a credential, so they are kept verbatim even under sensitive keys (auth switches,
+  // token: null meaning not configured), so troubleshooting can show whether something is configured.
+  return value;
+}
+
+function parseJsonLine(line: string): { value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(line) as unknown };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * When a whole line is JSON (model-io / CLI logs in JSONL), it is redacted structurally and re-serialized, so every exported line still parses with JSON.parse.
+ * Root cause: text regexes that edit JSON text leave unquoted placeholders, swallow the backslash of `\"`, and cut object values in half.
+ * Lines without sensitive content are output unchanged; when a matching line is rewritten, numbers keep their original literals.
+ * Lines whose top level is a JSON string (`"{\"password\":…}"`) are also handled structurally; otherwise escaped inner credentials would only pass through the text rules.
+ */
+function sanitizeSensitiveJsonLine(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (!/^[[{"]/.test(trimmed)) return undefined;
+  let result: JsonRedactionResult;
+  try {
+    result = redactJsonText(trimmed, 0);
+  } catch (error) {
+    // Lines that are too deeply nested cannot be judged safely level by level, so the whole line is replaced by an explanatory placeholder (still valid JSON); the export continues and the original text is not archived.
+    if (error === JSON_DEPTH_EXCEEDED) return JSON_DEPTH_EXCEEDED_LINE;
+    throw error;
+  }
+  if (result.kind === "invalid") return undefined;
+  if (result.kind === "unchanged") return line;
+  const leading = line.match(/^\s*/)?.[0] ?? "";
+  const trailing = line.match(/\s*$/)?.[0] ?? "";
+  return `${leading}${result.text}${trailing}`;
+}
+
+function sanitizeSensitiveLogChunk(chunk: string): string {
+  return chunk.replace(
+    /[^\r\n]+/g,
+    (line) => sanitizeSensitiveJsonLine(line) ?? sanitizeSensitiveLogContent(line),
+  );
 }
 
 function detectUtf16EncodingByNullPattern(sample: Buffer): SupportedTextEncoding | null {
@@ -622,7 +915,7 @@ function createSensitiveContentSanitizerTransform(encoding: SupportedTextEncodin
           callback();
           return;
         }
-        const sanitizedChunk = sanitizeSensitiveLogContent(completeChunk);
+        const sanitizedChunk = sanitizeSensitiveLogChunk(completeChunk);
         callback(null, encodeTextWithEncoding(sanitizedChunk, encoding));
       } catch (error) {
         callback(error as Error);
@@ -635,7 +928,7 @@ function createSensitiveContentSanitizerTransform(encoding: SupportedTextEncodin
           callback();
           return;
         }
-        const sanitizedChunk = sanitizeSensitiveLogContent(remainingContent);
+        const sanitizedChunk = sanitizeSensitiveLogChunk(remainingContent);
         callback(null, encodeTextWithEncoding(sanitizedChunk, encoding));
       } catch (error) {
         callback(error as Error);
@@ -817,7 +1110,7 @@ function logSkippedLogArchiveDirectory(
   archivePath: string,
   error: unknown,
 ): void {
-  logger.warn("[export-logs] 日志目录不可读，已在导出时自动跳过", {
+  logger.warn("[export-logs] Log directory is unreadable; skipped automatically during export", {
     absolutePath,
     archivePath,
     error: formatErrorMessage(error),
@@ -1086,7 +1379,7 @@ function logSkippedLogArchiveFiles(skippedFiles: LogArchiveSkippedFileEntry[]): 
     return;
   }
 
-  logger.warn("[export-logs] 检测到不可读日志文件，已在导出时自动跳过", {
+  logger.warn("[export-logs] Unreadable log file detected; skipped automatically during export", {
     skippedCount: skippedFiles.length,
     skippedFiles: skippedFiles.slice(0, 10),
   });
@@ -1194,7 +1487,7 @@ export async function exportLogs(
     const zipPath = join(outputDir, `${exportBaseName}.zip`);
     const directoryPath = join(outputDir, exportBaseName);
 
-    logger.info("[export-logs] 开始打包日志", {
+    logger.info("[export-logs] Start packaging logs", {
       source: sourceDir,
       zipDest: zipPath,
       directoryDest: directoryPath,
@@ -1205,7 +1498,7 @@ export async function exportLogs(
       await writeZip(zipPath, artifacts, { stageRootDir: getStageRootDir() });
       await showItemInFolder(zipPath);
 
-      logger.info("[export-logs] 日志导出完成", {
+      logger.info("[export-logs] Log export complete", {
         path: zipPath,
         format: "zip",
       });
@@ -1215,7 +1508,7 @@ export async function exportLogs(
 
       // Windows compression no longer depends on PowerShell/.NET, but archive writes can still be interrupted by antivirus,
       // disk policy, or other external factors. Fall back to directory export so users can still reliably get the raw logs instead of an error.
-      logger.warn("[export-logs] zip 导出失败，回退到目录导出", {
+      logger.warn("[export-logs] zip export failed; falling back to directory export", {
         error: zipErrorMessage,
         zipPath,
         fallbackPath: directoryPath,
@@ -1227,11 +1520,13 @@ export async function exportLogs(
       } catch (directoryError) {
         const directoryErrorMessage =
           directoryError instanceof Error ? directoryError.message : String(directoryError);
-        throw new Error(`zip 导出失败：${zipErrorMessage}；目录导出失败：${directoryErrorMessage}`);
+        throw new Error(
+          `zip export failed: ${zipErrorMessage}; directory export failed: ${directoryErrorMessage}`,
+        );
       }
 
       await showItemInFolder(directoryPath);
-      logger.info("[export-logs] 日志导出完成", {
+      logger.info("[export-logs] Log export complete", {
         path: directoryPath,
         format: "directory",
       });
@@ -1239,7 +1534,7 @@ export async function exportLogs(
     }
   } catch (err) {
     const message = formatErrorMessage(err);
-    logger.error("[export-logs] 日志导出失败", { error: message });
+    logger.error("[export-logs] Log export failed", { error: message });
     return { success: false, error: message };
   }
 }

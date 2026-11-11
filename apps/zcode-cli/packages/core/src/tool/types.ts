@@ -3,6 +3,7 @@ import type {
   ModelCallWrapper,
   ToolSearchExecutionContext,
 } from "@zcode/contracts";
+import type { SessionControlBinding } from "./session-control/contract.js";
 import type { McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 // ============================================================
 // Tool Types - Core tool types for registry and executor
@@ -16,6 +17,7 @@ import type {
   CoordinatorResponsePort,
   DynamicWorkflowRunPort,
   DynamicWorkflowSnippetPort,
+  PluginDiscoveryPort,
   EmbeddedSearchBackend,
   ExecutionPort,
   ExecutionShellSelection,
@@ -23,6 +25,7 @@ import type {
   HttpClientPort,
   ImageProcessorPort,
   JsonSchema,
+  Logger,
   Model,
   ModelCatalogPort,
   ModelContentProtection,
@@ -59,6 +62,7 @@ import type {
   TraceId,
   TurnId,
   WorkflowEscalatePort,
+  WorkflowWebSearchBudgetPort,
   WorkflowPort,
   WorkflowSubmitPort,
 } from "@zcode/contracts";
@@ -151,7 +155,12 @@ export interface ToolExecutionContext {
    * Live observability writer for the current Tool. Handlers can write facts only through this narrow interface, not access raw OTel spans.
    */
   telemetry?: ToolExecutionSpanWriter;
-  /** Whether this tool call belongs to an automation dispatch turn; write-tool handlers use it for final permission checks. */
+  /**
+   * Runtime 日志。只给需要记录工具内部事实（如 Bash 子进程 pid）的 handler 用，
+   * 工具调用开始/结束的通用日志仍由 executor 写。
+   */
+  logger?: Logger;
+  /** 当前工具调用是否属于 automation 派发轮；写工具 handler 用它做最终权限校验。 */
   automationTurn?: boolean;
   /** The automationId of this turn injected by Host admission; the only pause target of CronPauseSelf, never taken from model input. */
   automationId?: string;
@@ -189,10 +198,15 @@ export interface ToolExecutionContext {
   workflowSubmitPort?: WorkflowSubmitPort;
   /** Port for a workflow actor to escalate a blocking question and await the main agent's response; injected only into workflow-actor sessions. */
   workflowEscalatePort?: WorkflowEscalatePort;
+  /** 工作流 actor 每个 ask 的 WebSearch 预算；仅在 workflow actor 会话注入，缺席即无上限。 */
+  webSearchBudget?: WorkflowWebSearchBudgetPort;
   artifactStore?: ToolArtifactStorePort;
+  /** 仅可信根会话装配；子代理不继承此控制权。 */
+  sessionControl?: SessionControlBinding;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
   topicResourcePort?: TopicResourcePort;
+  pluginDiscoveryPort?: PluginDiscoveryPort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;
@@ -215,6 +229,8 @@ export interface ToolExecutionContext {
   workingDirectory: string;
   workspaceRoot: string;
   workspaceIdentity?: string;
+  /** 会话所属 workspace 的 key；受管 worktree 会话 = 项目，不等于 workingDirectory。 */
+  workspaceKey?: string;
   remoteSessionId?: string;
   clientMode?: "desktop-continuous" | "web-remote-replayable";
   deliveryKind?: "desktop-continuous" | "web-remote-replayable";
@@ -353,7 +369,19 @@ export interface ToolEntry extends ToolContractDeclaration {
   executionMode?: ToolExecutionMode;
   providerNative?: ProviderNativeToolSpec;
   handler: ToolHandler;
-  /** Projection of the current turn's model capabilities shared by the provider descriptor and executor schema. */
+  /**
+   * 调用在 handler 返回之前超时或取消时，追加给模型的对账说明（规格 0.15）；返回 undefined 不追加。
+   *
+   * 只服务「请求可能已被受理、但回执没能送回」的写操作：它们靠回执把请求身份交给模型，回执送不回来，
+   * 模型就拿不到身份，只能另起新请求，于是重复执行。执行器只在超时与执行中取消这两种错误上调用它。
+   */
+  describeUnsettledCall?: (input: unknown, toolCallId: string) => string | undefined;
+  /**
+   * handler 抛错后追加给模型的补充文本，接在错误原文之后；返回 undefined 不追加。
+   * 只进入 `ToolExecutionResult.modelContent`，不改 `error.message`、工具错误事件和日志。
+   */
+  formatErrorModelContent?: (error: unknown) => string | undefined;
+  /** 当前 turn 模型能力对 provider descriptor 与 executor schema 的同源投影。 */
   resolveModelContract?: (context: ToolExecutionModelContext) => {
     description?: string;
     inputSchema?: JsonSchema;

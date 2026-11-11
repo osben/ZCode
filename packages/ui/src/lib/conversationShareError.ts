@@ -33,6 +33,7 @@ const PUBLISH_ERROR_MESSAGE_BY_KIND: Readonly<Record<string, string>> = {
   safety_check_unavailable: "conversationShare.error.safetyCheckUnavailable",
   not_found: "conversationShare.error.preparationNotFound",
   expired: "conversationShare.error.preparationExpired",
+  revoked: "conversationShare.error.shareRevoked",
   unsupported_schema_version: "conversationShare.import.unsupportedVersion",
   safety_check_timeout: "conversationShare.error.safetyCheckTimeout",
   invalid_selection: "conversationShare.error.invalidSelection",
@@ -332,7 +333,7 @@ const WARNING_MESSAGE_IDS: Readonly<
   input_attachment_unavailable: "conversationShare.warning.inputAttachmentUnavailable",
 };
 
-const ARTIFACT_TYPE_LABELS: Readonly<Record<string, Record<Locale, string>>> = {
+const ARTIFACT_TYPE_LABELS: Readonly<Record<string, Partial<Record<Locale, string>>>> = {
   pdf: { "zh-CN": "PDF", "en-US": "PDF", "uk-UA": "PDF" },
   pptx: { "zh-CN": "PPT", "en-US": "PowerPoint", "uk-UA": "PowerPoint" },
   docx: { "zh-CN": "Word 文档", "en-US": "Word document", "uk-UA": "документ Word" },
@@ -345,7 +346,7 @@ const ARTIFACT_TYPE_LABELS: Readonly<Record<string, Record<Locale, string>>> = {
   audio: { "zh-CN": "音频", "en-US": "audio", "uk-UA": "аудіо" },
 };
 
-const UNAVAILABLE_LABEL: Record<Locale, string> = {
+const UNAVAILABLE_LABEL: Partial<Record<Locale, string>> = {
   "zh-CN": "暂时无法获取",
   "en-US": "temporarily unavailable",
   "uk-UA": "тимчасово недоступно",
@@ -355,9 +356,17 @@ function resolveLabelLocale(locale: string): Locale {
   return isLocale(locale) ? locale : "en-US";
 }
 
+// Only zh-CN, en-US and uk-UA have share copy; other UI languages (ja-JP/ru-RU/ko-KR) fall back to English.
+function pickShareLabel(
+  labels: Partial<Record<Locale, string>> | undefined,
+  locale: string,
+): string | undefined {
+  return labels?.[resolveLabelLocale(locale)] ?? labels?.["en-US"];
+}
+
 function artifactLabel(value: string, locale: string): string {
   const key = value.replace(/^\./u, "").toLowerCase();
-  return ARTIFACT_TYPE_LABELS[key]?.[resolveLabelLocale(locale)] ?? value.toUpperCase();
+  return pickShareLabel(ARTIFACT_TYPE_LABELS[key], locale) ?? value.toUpperCase();
 }
 
 export function formatConversationShareArtifactType(
@@ -381,7 +390,7 @@ export function formatConversationShareAllowedArtifacts(
   if (issue.allowedFormats && issue.allowedFormats.length > 0) {
     return issue.allowedFormats.join(locale === "zh-CN" ? "、" : ", ");
   }
-  return UNAVAILABLE_LABEL[resolveLabelLocale(locale)];
+  return pickShareLabel(UNAVAILABLE_LABEL, locale) ?? "temporarily unavailable";
 }
 
 export function resolveConversationShareWarningMessageId(

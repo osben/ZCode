@@ -37,8 +37,15 @@ import {
 import type { AgentRuntimeInternal } from "../internal.js";
 import { runModelBackedTurnStep } from "./turn-model-step.js";
 import { settleLspPreferences } from "./lsp.js";
-import { querySourceForTask } from "./turn-model-step-usage.js";
-import { inputRoleOf } from "../helpers/provider-entry-origins.js";
+import { latestContextTokens, querySourceForTask } from "./turn-model-step-usage.js";
+import { inputRoleOf, isRealUserPrompt } from "../helpers/provider-entry-origins.js";
+import {
+  consumeTotalTokensBudget,
+  decideTotalTokensReminder,
+  reanchorTotalTokensBudget,
+  type InputAttachmentCollectionReason,
+} from "../helpers/total-tokens-budget.js";
+import { formatTotalTokensReminder } from "../../context/total-tokens.js";
 import {
   evaluateRapidRefill,
   MAX_CONSECUTIVE_RAPID_REFILLS,
@@ -56,6 +63,7 @@ import {
   filterOutputTokenContinuationEntries,
 } from "./turn-output-token-continuation.js";
 import { recordSessionFeatureFromToolSearchExposure } from "../session-features/contract.js";
+import { recordPromptSnapshot } from "../helpers/prompt-snapshot.js";
 
 export async function runRegularTurnLoop(
   this: AgentRuntimeInternal,
@@ -104,16 +112,26 @@ export async function runRegularTurnLoop(
     const tools = getTurnTools(this, state);
     finishTools();
 
-    // Input attachments run before compaction: entries produced by this turn's input or the previous tool batch belong
-    // to the history that compaction keeps or summarizes. Collect only when there is new input (turn start, after a
-    // complete tool batch, a guide following a text reply); the first request of a new-turn notification skips it.
-    // Stop hook continuation, model fallback, stream recovery, queued Start Plan retry, context-overflow recovery and
-    // off-peak ticket swap all resend the same input and do not collect: each collection adds non-deduplicated
-    // attachments such as output_style.
-    if (state.inputAttachmentCollectionPending) {
+    // 输入附件在 compaction 之前运行：本轮输入或上一批工具结果产生的项属于 compaction
+    // 保留或摘要的历史。只在有新输入时收集（轮首、完整工具批次之后、文本回复后续上 guide）；
+    // 新轮通知的首个请求跳过。
+    // Stop hook 续跑、模型降级、流恢复、Start Plan 排队重试、上下文超限恢复、闲时换票
+    // 都重发同一份输入，不收集：每次收集都会多出一条 output_style 等不去重的附件。
+    const collectionReason = state.inputAttachmentCollectionPending;
+    if (collectionReason) {
       state.inputAttachmentCollectionPending = false;
-      if (!endsWithNewTurnInput(state.turnRequestState.entries)) {
-        await collectInputAttachments(this, state, tools);
+      // 收集只追加附件，最新的非附件 entry 在收集期间不变；只查一次，跳过规则和预算提醒共用。
+      const latestMessage = state.turnRequestState.entries.findLast(
+        (entry) => !isRuntimeAttachmentEntry(entry),
+      );
+      if (!isNewTurnInput(latestMessage)) {
+        // 触发收集的输入是否出自用户本人：纯文本回复后看本次取出的 guide（历史 metadata 不可靠，
+        // 见 isUserSteer），其余看最新输入。
+        const fromUser =
+          collectionReason === "text_guide"
+            ? drainedSteerForNextRequest?.userSteered === true
+            : latestMessage !== undefined && isRealUserPrompt(latestMessage);
+        await collectInputAttachments(this, state, tools, collectionReason, fromUser);
       }
     }
 
@@ -183,6 +201,13 @@ export async function runRegularTurnLoop(
       entries: requestEntries,
       applyCacheControl: true,
     });
+    // 主会话没有可用的 prompt 快照时，按本次请求的前缀记录 system。
+    await recordPromptSnapshot(this, {
+      model: state.model,
+      modelSelectionScope: state.modelSelectionScope,
+      entries: requestEntries,
+      traceContext: state.turnTraceContext,
+    });
     this.logger?.debug("ToolSearch request exposure", {
       event: "tool.search.exposure",
       enabled: prepared.toolSearch.enabled,
@@ -236,6 +261,7 @@ export async function runRegularTurnLoop(
       latestRealUserMessageIndex: providerProjection.diagnostics.latestRealUserMessageIndex,
       messages,
       sourceEntries: providerProjection.sourceEntries,
+      originEntries: providerProjection.originEntries,
       requestEntries,
       recordedMessages: recordableProjection.messages,
       tools: prepared.request.tools,
@@ -254,9 +280,8 @@ export async function runRegularTurnLoop(
  * The check reads history only, so it stays consistent after resume/fork/rewind; once a tool is called the latest
  * entry becomes a tool result and later requests collect as usual.
  */
-function endsWithNewTurnInput(entries: readonly RuntimeMessageEntry[]): boolean {
-  const latest = entries.findLast((entry) => !isRuntimeAttachmentEntry(entry));
-  return latest !== undefined && inputRoleOf(latest) === "new_turn";
+function isNewTurnInput(latestMessage: RuntimeMessageEntry | undefined): boolean {
+  return latestMessage !== undefined && inputRoleOf(latestMessage) === "new_turn";
 }
 
 /**
@@ -268,6 +293,8 @@ async function collectInputAttachments(
   runtime: AgentRuntimeInternal,
   state: RegularTurnLoopState,
   tools: ReturnType<typeof getTurnTools>,
+  reason: InputAttachmentCollectionReason,
+  fromUser: boolean,
 ): Promise<void> {
   await appendRuntimeContextAnnouncements(
     runtime,
@@ -291,6 +318,18 @@ async function collectInputAttachments(
         systemReminderAttachmentEntry("diagnostics", lspDiagnosticsBody),
       ]);
     }
+  }
+  // A background agent interrupted when the previous runtime exited: recovery only records it, and it is
+  // delivered with the next persisted turn (no separate turn is opened for it).
+  const previousRuntimeAgentNotice = runtime.pendingPreviousRuntimeAgentNotice;
+  if (previousRuntimeAgentNotice) {
+    await persistAnnouncements(
+      runtime,
+      state.turnRequestState,
+      [systemReminderAttachmentEntry("task_status", previousRuntimeAgentNotice)],
+      state.turnTraceContext,
+    );
+    runtime.pendingPreviousRuntimeAgentNotice = undefined;
   }
   // The exit reminder is derived from history (no exit reminder after the latest plan reminder); the in-memory flag is
   // only an extra trigger. Fix reason: with only the flag, a cold resume lost it and the plan-mode exit reminder never fired.
@@ -356,10 +395,11 @@ async function collectInputAttachments(
       state.turnTraceContext,
     );
   }
-  // (2026-09-12): the former "inject plugin_ui_state reminder at turn start" was removed; information plugins give the
-  // model always goes through ui/update-model-context.
-  // output_style is produced on every collection and is not deduplicated. Fix reason: when sent only on the first step
-  // and not persisted to the session, requests after a tool batch lacked it and the prefix changed after resume.
+  await appendTotalTokensReminder(runtime, state, reason, fromUser);
+  // （2026-09-12）：原"回合开始注入 plugin_ui_state reminder"已删除，插件给模型的信息
+  // 一律走 ui/update-model-context。
+  // output_style 每次收集都产出，不去重。修复原因：只在首步发且不落 session 时，
+  // 工具批次后的请求缺少它，resume 后的前缀也会变化。
   const outputStyleReminderBody = buildRuntimeOutputStyleReminderBody(state.turnOutputStyle);
   // Dream may finish during the first model request of the same turn; check on every collection so the one-time update
   // goes into the next request. Fix reason: as an entry owned by a single request, later requests lacked it and the
@@ -384,6 +424,53 @@ async function collectInputAttachments(
     runtime.pendingMemoryUpdate ??= pendingMemoryUpdate;
     throw error;
   }
+  // UserPromptSubmit 的上下文是本轮输入附件批次的最后一项，在请求前公告之前；只在本轮第一次收集时写入。
+  // 新轮通知跳过首次收集，但这类轮次不运行 UserPromptSubmit，所以不会被推迟。
+  if (state.userPromptHookContext) {
+    await persistAnnouncements(
+      runtime,
+      state.turnRequestState,
+      [state.userPromptHookContext],
+      state.turnTraceContext,
+    );
+    state.userPromptHookContext = undefined;
+  }
+}
+
+/**
+ * token 预算倒数：数值来自 runtime 计数器与最近一条带 usage 的 assistant。
+ * 先写库再提交并更新计数器；写库失败时计数器保持原值，错误向上冒泡。
+ */
+async function appendTotalTokensReminder(
+  runtime: AgentRuntimeInternal,
+  state: RegularTurnLoopState,
+  reason: InputAttachmentCollectionReason,
+  fromUser: boolean,
+): Promise<void> {
+  const entries = state.turnRequestState.entries;
+  const decision = decideTotalTokensReminder({
+    reason,
+    mainSession: querySourceForTask(runtime.config.taskType) === "main_turn",
+    fromUser,
+  });
+  if (!decision.emit) return;
+  const context = latestContextTokens(entries);
+  const budget = decision.reanchor
+    ? reanchorTotalTokensBudget(runtime.totalTokensBudget, context)
+    : runtime.totalTokensBudget;
+  const consumed = consumeTotalTokensBudget(budget, context);
+  await persistAnnouncements(
+    runtime,
+    state.turnRequestState,
+    [
+      systemReminderAttachmentEntry(
+        "total_tokens_reminder",
+        formatTotalTokensReminder(consumed.remaining),
+      ),
+    ],
+    state.turnTraceContext,
+  );
+  runtime.totalTokensBudget = consumed.state;
 }
 
 async function appendToolSearchAnnouncement(

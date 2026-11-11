@@ -15,6 +15,7 @@ This directory provides on its own the background, concepts, rules, rationale an
 | See current templates, the full model list, default enablement and known gaps          | [Current state](./current-state.md)              |
 | See the latest expansion advice, rule differences and batch plan                       | [2026-10-14 expansion plan](./expansion-plan.md) |
 | Keep tracking news, official catalogs and retirement notices                           | [Research tracking and findings](./research.md)  |
+| See the OpenAI Terra addition and the pending Luna/Terra regression                    | [Terra maintenance spec](./openai-terra.md)      |
 | Move from a candidate to a configuration MR, assign manual collaboration               | [Maintenance workflow](./workflow.md)            |
 | Obtain API keys, run real validation, leave reviewable evidence                        | [Validation spec](./validation.md)               |
 | Merge MRs, ship with a version, go live dynamically and roll back if needed            | [Delivery spec](./delivery.md)                   |

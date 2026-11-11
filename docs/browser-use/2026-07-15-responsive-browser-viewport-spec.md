@@ -16,6 +16,13 @@ Status: implemented. Dated 2026-07-15 and extended through 2026-08-30 (screensho
 | Existing code owners  | `BrowserToolbar`, `UnifiedBrowserView`, the renderer `<webview>`, `BrowserGuestManager`, browser-client `Tab`                                                                                                                                                                                                                                                                              |
 | Out of scope          | UA, touch, orientation sensors, network throttling, device list, page-level zoom, Browser Tab/URL/history cross-restart recovery, independent Web/mobile Browser runtime                                                                                                                                                                                                                   |
 
+## 工具栏选中态
+
+- “自由尺寸”和“选择元素”启用时，统一使用 `bg-accent text-icon-blue`：蓝色图标配合主题对应的蓝色底色，避免灰色选中态与普通悬停混淆。
+- 悬停在已启用按钮上时保留同一蓝色前景和底色；取消后恢复普通 ghost 按钮样式。
+- 保留现有 `aria-pressed`、提示文案、禁用态、按钮尺寸及点击行为；人类 Browser 与 Agent Browser Use 共用此样式。
+- 视觉验收使用真实 `BrowserToolbar`，覆盖 Zai Light / Zai Dark、宽屏 / 390px 窄宽度、中英文，以及未选中、选中、悬停和取消。Web / 手机端不因此新增内置浏览器能力。
+
 ## Clarification Log
 
 Each round: question -> user answer -> fixed boundary.

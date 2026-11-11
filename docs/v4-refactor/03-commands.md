@@ -43,6 +43,8 @@ Cross-restart idempotency relies on persisted facts the command already produced
 
 `v4/commands/query` first checks in-memory pinned/LRU, then looks up exactly by the sources above. A miss returns `unknown`; the client shows it and lets the user decide whether to resend. Silently resending side-effecting commands (stop, fork, input) is forbidden.
 
+A session-bucket query item may carry an optional `turn: { turnId, state }`: the first `turnHeader` in the owner's full projection whose `sourceCommandId` equals that commandId (the same matching rule the client uses on the tail window). A snapshot ships only the tail window, so a long turn's header may be outside it; the client uses this to decide the current state of the command's turn, and when the tail window has the row, the tail window wins. The global bucket does not carry this field.
+
 `session_input` is the input lifecycle ledger, not a recoverable execution queue. `startNow`, `queue` and `guide` all durably admit before execution; promotion and user-message persistence are atomically linked. On CLI restart an input still `admitted` becomes `discarded(session_resumed)` explicitly, so input never silently evaporates or auto-reruns.
 
 ## Queue and blocking interactions
