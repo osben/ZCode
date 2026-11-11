@@ -145,6 +145,8 @@ fn a_retry_strips_only_the_intents_own_block() {
             text: "original".into()
         }]
     );
+    // Quotes alone: the intent's text is empty.
+    let stored = stored_intent(json!({"text": ""}));
     let alone = Stored {
         content: vec![ContentBlock::Text {
             text: stored.compose(""),
@@ -164,4 +166,58 @@ fn quotes_alone_are_an_edited_input() {
         &[ContentBlock::Text { text: "  ".into() }],
         &empty
     ));
+}
+
+/// Node `retryTurn` submits `editTarget.intent.text`: a slash input's stored content is its expansion (the stored part's
+/// `metadata.modelInput`), but the retry types `/greet Ada` again, so the hook, the new intent and the row read it.
+#[test]
+fn a_retry_types_the_intents_text_again() {
+    let stored = stored_intent(json!({"text": "/greet Ada"}));
+    let tags = rust_cli_kernel_api::user_command::command_tags("greet", "Ada");
+    let command = Stored {
+        content: vec![ContentBlock::Text {
+            text: stored.compose(&format!("{tags}\nHello, Ada")),
+        }],
+        intent: Some(stored),
+    };
+    assert_eq!(
+        command.typed(),
+        [ContentBlock::Text {
+            text: "/greet Ada".into()
+        }]
+    );
+    // Without an intent (TUI) the stored text is the input.
+    let plain = Stored {
+        content: vec![ContentBlock::Text {
+            text: "hello".into(),
+        }],
+        intent: None,
+    };
+    assert_eq!(
+        plain.typed(),
+        [ContentBlock::Text {
+            text: "hello".into()
+        }]
+    );
+}
+
+/// Node `buildCanonicalIntent` carries the stored `genUiContext`; it passes no `inputOrigin`, `sharedContextRefs` or
+/// `source`, so the replay's origin is the envelope's alone.
+#[test]
+fn a_replay_carries_gen_ui_context_and_takes_the_envelopes_origin() {
+    let stored = stored_intent(
+        json!({"genUiContext": {"surface": "card"}, "inputOrigin": "mobile",
+        "sharedContextRefs": [{"id": "r"}], "source": "share"}),
+    );
+    let replayed = replayed_intent((2, 3), &envelope(), Some(&stored), "x", None, None);
+    assert_eq!(
+        replayed.get("genUiContext"),
+        Some(&json!({"surface": "card"}))
+    );
+    assert_eq!(replayed.str("inputOrigin"), Some("desktop"));
+    assert!(replayed.get("sharedContextRefs").is_none() && replayed.get("source").is_none());
+    let mut bare = envelope();
+    bare.input_origin = None;
+    let replayed = replayed_intent((2, 3), &bare, Some(&stored), "x", None, None);
+    assert_eq!(replayed.get("inputOrigin"), None);
 }

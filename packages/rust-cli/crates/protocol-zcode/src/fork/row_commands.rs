@@ -65,9 +65,9 @@ struct Stored {
 }
 
 impl Stored {
-    /// The content as typed: the first text without the quote block the intent added. A bot input's text has
-    /// instructions after the block (Node `withConversationQuotes(…, botGroupSource)`), so its typed text is the
-    /// intent's `text`.
+    /// The content as typed (Node `retryTurn` submits `editTarget.intent.text`): the intent's `text`, not the stored
+    /// text, which is a slash input's expansion and has the quote block (and a bot input's instructions after it).
+    /// An intent without `text` keeps the stored text without the block it added.
     fn typed(&self) -> Vec<ContentBlock> {
         let mut content = self.content.clone();
         if let Some(intent) = &self.intent
@@ -75,11 +75,7 @@ impl Stored {
                 .iter_mut()
                 .find(|block| matches!(block, ContentBlock::Text { .. }))
         {
-            let bot = intent
-                .get(rust_cli_kernel_api::input_intent::BOT_GROUP_SOURCE)
-                .is_some()
-                && intent.str("kind") == Some("sendText");
-            *text = match intent.text().filter(|_| bot) {
+            *text = match intent.text() {
                 Some(typed) => typed.to_owned(),
                 None => intent.typed(text).to_owned(),
             };
@@ -153,6 +149,11 @@ fn replayed_intent(
         .filter(|refs| refs.as_array().is_some_and(|refs| !refs.is_empty()));
     if let Some(refs) = refs {
         fields.insert("attachmentRefs".into(), refs);
+    }
+    // Node `buildCanonicalIntent` passes the stored `genUiContext` (kept when not undefined, null included), but no
+    // `inputOrigin`, `sharedContextRefs` or `source`: the origin above is the envelope's alone.
+    if let Some(context) = canonical.get("genUiContext") {
+        fields.insert("genUiContext".into(), context.clone());
     }
     let provenance = get("provenance").cloned().or_else(|| {
         let mut original = serde_json::Map::new();
