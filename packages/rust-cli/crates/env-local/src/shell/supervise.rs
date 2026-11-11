@@ -758,6 +758,17 @@ async fn supervise(
         let shell = state.sessions.entry(job.session.clone()).or_default();
         shell.background.remove(&job.request.task);
         shell.stopping.remove(&job.request.task);
+        // Fork: the terminal record outlives the notice's ack (also for a stop that records no notice).
+        shell.record_ended(
+            &job.request.task,
+            &job.request.command,
+            background,
+            EnvPath::new(job.plan.output.to_string_lossy()),
+            rust_cli_kernel_api::env_shell::BackgroundStatus::ended(
+                &finish.outcome,
+                finish.exit_code,
+            ),
+        );
         // TaskStop 停掉的命令不记通知：停止时任务已标成已通知，结束时不再发 task-notification
         // （docs/specs/rust-cli/shell-permissions.md §2.6）。终态仍照常写进回执。
         if !shell.stopped.remove(&job.request.task) {

@@ -55,6 +55,19 @@ impl Shells {
         lookup(&self.shared.state(), request)
     }
 
+    /// Fork: the terminal record of a background command that ended in this session ([`super::SessionShell::ended`]).
+    pub(crate) fn ended_command(&self, request: &BackgroundTask) -> Option<BackgroundInfo> {
+        let state = self.shared.state();
+        state
+            .sessions
+            .get(&request.session)?
+            .ended
+            .iter()
+            .rev()
+            .find(|(task, _)| task == &request.task)
+            .map(|(_, info)| info.clone())
+    }
+
     /// 还在跑的后台命令从开始到现在的毫秒数；已结束、已停止或不认识时为 None（tui-panels.md §3.3）。
     pub(crate) fn background_elapsed(&self, request: &BackgroundTask) -> Option<u64> {
         let state = self.shared.state();

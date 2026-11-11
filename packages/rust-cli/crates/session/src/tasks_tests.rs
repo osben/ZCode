@@ -124,6 +124,18 @@ impl Files for Shells {
                 path: path.to_owned(),
             });
         }
+        // Fork: `e1` ended and its notice was acknowledged; only its terminal record is left.
+        if path == format!("{outputs}/e1.output") {
+            return Ok(TextRead::Text(TextSlice {
+                content: "ended output".to_owned(),
+                line_count: 1,
+                total_lines: 1,
+                total_bytes: 0,
+                read_bytes: 0,
+                mtime_ms: 0,
+                version: rust_cli_kernel_api::env::FileVersion::new("v1"),
+            }));
+        }
         assert_eq!(path, format!("{outputs}/{prefix}1.output"));
         if self.ticks {
             let content: String = (1..=12).map(|n| format!("tick-{n}\n")).collect();
@@ -244,6 +256,22 @@ impl Background for Shells {
             command: format!("run {}", task.task),
             status,
             output,
+            ..BackgroundInfo::default()
+        }))
+    }
+
+    /// Fork: `e1` ended and its notice was acknowledged: `background_command` no longer knows it, the terminal
+    /// record does.
+    async fn ended_background_command(
+        &self,
+        task: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        Ok((task.task.as_str() == "e1").then(|| BackgroundInfo {
+            command: "run e1".to_owned(),
+            status: BackgroundStatus::Failed,
+            output: Some(rust_cli_kernel_api::env::EnvPath::new(
+                "/logs/s1/toolu_e1-stdout.log",
+            )),
             ..BackgroundInfo::default()
         }))
     }
@@ -678,6 +706,28 @@ async fn the_bash_output_window_reads_the_output_file() {
         built.session.background_bash_output("b3").await.unwrap(),
         Some(BashOutputRead::ReadFailed {
             code: Some("ENOENT".to_owned())
+        })
+    );
+}
+
+/// Fork: after the notice's ack the detail pane still reads the command's status and file from the ledger's terminal
+/// record, whichever subscriber acknowledged the notice (specs/fork-rust-agent-parity.md, "Subagent child sessions: one
+/// owner for background-command notices"). Before, a subagent child read `unavailable` here when the agents forwarder
+/// acknowledged first.
+#[tokio::test]
+async fn the_bash_output_window_reads_an_acknowledged_command() {
+    use rust_cli_kernel_api::panels::BashOutputRead;
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let read = built.session.background_bash_output("e1").await.unwrap();
+    assert_eq!(
+        read,
+        Some(BashOutputRead::Window {
+            status: Some(BackgroundStatus::Failed),
+            text: "ended output".to_owned(),
+            truncated: false,
+            path: rust_cli_kernel_api::env::EnvPath::new("/logs/s1/toolu_e1-stdout.log"),
         })
     );
 }

@@ -197,6 +197,14 @@ pub(crate) async fn run(shared: Arc<Shared>, job: SocketJob) {
         let shell = state.sessions.entry(job.session.clone()).or_default();
         shell.background.remove(&job.request.task);
         shell.stopping.remove(&job.request.task);
+        // Fork: the terminal record outlives the notice's ack (same as `supervise.rs`).
+        shell.record_ended(
+            &job.request.task,
+            &job.request.command,
+            background,
+            EnvPath::new(job.plan.output.to_string_lossy()),
+            rust_cli_kernel_api::env_shell::BackgroundStatus::ended(&finish.outcome, None),
+        );
         // 被停掉的不记通知（同命令，shell-permissions.md §2.6）。
         if !shell.stopped.remove(&job.request.task) {
             shell.next_seq = shell.next_seq.max(shell.acked) + 1;

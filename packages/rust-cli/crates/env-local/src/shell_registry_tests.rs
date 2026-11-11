@@ -195,3 +195,144 @@ async fn a_stopped_command_reads_killed_until_it_exits() {
             .is_empty()
     );
 }
+
+/// Fork: a finished command's terminal record outlives its notice's ack (`ended_background_command`), so the desktop
+/// detail pane reads its status whichever subscriber acknowledged the notice. `background_command`, `stop` and
+/// `shell_state.background` still forget it at the ack: their callers read a record as "the notice is pending".
+#[tokio::test]
+async fn an_acked_command_keeps_its_terminal_record() {
+    let fixture = fixture(Vec::new());
+    let mut start = request("echo done", &fixture.root, CwdScope::Pinned);
+    start.kind = CommandKind::Background {
+        background: BackgroundCommand {
+            description: "Done".to_owned(),
+            tool_use: None,
+            kind: Default::default(),
+        },
+    };
+    let session = SessionId::new("s1");
+    let key = BackgroundTask {
+        session: session.clone(),
+        task: start.task.clone(),
+        notify_stop: false,
+    };
+    let events = fixture
+        .shells
+        .start(context("op_bg_ended"), start)
+        .await
+        .unwrap();
+    collect(events).await;
+    let notice = fixture
+        .shells
+        .notices(&session, 0)
+        .next()
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.shells.ack(&session, notice.seq);
+
+    let ended = fixture
+        .shells
+        .ended_command(&key)
+        .expect("kept after the ack");
+    assert_eq!(ended.status, BackgroundStatus::Completed);
+    assert_eq!(ended.command, "echo done");
+    assert_eq!(ended.description, "Done");
+    assert_eq!(ended.output, Some(notice.output));
+    assert!(fixture.shells.background_command(&key).is_none());
+    assert!(matches!(
+        fixture.shells.stop(&key),
+        BackgroundStop::NotFound
+    ));
+    let workspace = rust_cli_kernel_api::env::WorkspaceRef {
+        environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        root: rust_cli_kernel_api::env::EnvPath::new(fixture.root.to_string_lossy()),
+    };
+    assert!(
+        fixture
+            .shells
+            .shell_state(&workspace, &session)
+            .background
+            .is_empty()
+    );
+    // Another session never reads it.
+    let other = BackgroundTask {
+        session: SessionId::new("s2"),
+        ..key
+    };
+    assert!(fixture.shells.ended_command(&other).is_none());
+}
+
+/// Fork: a TaskStop that asks for no notice records none, but the command's terminal record still reads `killed`
+/// after the exit (before, the detail pane read it unknown once the process exited).
+#[tokio::test]
+async fn a_silently_stopped_command_keeps_a_killed_record() {
+    let fixture = fixture(Vec::new());
+    let mut start = request("sleep 30", &fixture.root, CwdScope::Pinned);
+    start.kind = CommandKind::Background {
+        background: BackgroundCommand {
+            description: "Sleep".to_owned(),
+            tool_use: None,
+            kind: Default::default(),
+        },
+    };
+    let key = BackgroundTask {
+        session: SessionId::new("s1"),
+        task: start.task.clone(),
+        notify_stop: false,
+    };
+    let events = fixture
+        .shells
+        .start(context("op_bg_silent_stop"), start)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.shells.stop(&key),
+        BackgroundStop::Stopped { .. }
+    ));
+    collect(events).await;
+    assert!(fixture.shells.background_command(&key).is_none());
+    let ended = fixture
+        .shells
+        .ended_command(&key)
+        .expect("kept after the exit");
+    assert_eq!(ended.status, BackgroundStatus::Killed);
+}
+
+/// Fork: a session keeps the records of its newest `ENDED_KEPT` ended commands; a task recorded again moves to the end.
+#[test]
+fn ended_records_are_bounded_per_session() {
+    use rust_cli_kernel_api::env::EnvPath;
+    use rust_cli_kernel_api::ids::ShellTaskId;
+
+    use crate::shell::{ENDED_KEPT, SessionShell};
+
+    let background = BackgroundCommand {
+        description: String::new(),
+        tool_use: None,
+        kind: Default::default(),
+    };
+    let mut shell = SessionShell::default();
+    for n in 0..=ENDED_KEPT {
+        shell.record_ended(
+            &ShellTaskId::new(format!("t{n}")),
+            "true",
+            &background,
+            EnvPath::new(format!("/out/t{n}")),
+            BackgroundStatus::Completed,
+        );
+    }
+    assert_eq!(shell.ended.len(), ENDED_KEPT);
+    assert_eq!(shell.ended.front().unwrap().0, ShellTaskId::new("t1"));
+    shell.record_ended(
+        &ShellTaskId::new("t1"),
+        "false",
+        &background,
+        EnvPath::new("/out/t1"),
+        BackgroundStatus::Failed,
+    );
+    assert_eq!(shell.ended.len(), ENDED_KEPT);
+    let (task, info) = shell.ended.back().unwrap();
+    assert_eq!(task, &ShellTaskId::new("t1"));
+    assert_eq!(info.status, BackgroundStatus::Failed);
+}
