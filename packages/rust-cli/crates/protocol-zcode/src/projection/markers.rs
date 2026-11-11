@@ -2,7 +2,7 @@
 //! `zcode-protocol-v4/product-projection.ts`; specs/fork-rust-agent-parity.md). One `timelineMarker` row per
 //! compaction, in the `assistantWork` lane of the current (or latest) turn: `running` when it starts, then `success`,
 //! `failed`, or `cancelled` when its turn ends first. A skipped compaction (too little history) is one `noop` row.
-//! A cold projection shows each stored compact boundary as a `success` marker.
+//! A cold projection shows each stored compact boundary as a `success` marker. A forked session shows its fork divider.
 
 use rust_cli_kernel_api::message::CompactTrigger;
 use serde_json::{Value, json};
@@ -20,7 +20,41 @@ fn marker_key(count: u64) -> String {
     format!("compact:{count}")
 }
 
+/// The source of the fork notice attachment (node-records `FORK_NOTICE_SOURCE`).
+pub(super) const FORK_NOTICE_SOURCE: &str = "fork";
+
 impl Projection {
+    /// Node `onSessionForked` on the child: the fork divider in the latest turn, from the notice's `forkContext`
+    /// (the session's parent when the context does not name it). The UI draws it as the link to the parent.
+    pub(super) fn fork_notice(
+        &mut self,
+        context: &Value,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) {
+        let Some(parent) = context["parentSessionId"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| self.fork_parent.clone())
+        else {
+            return;
+        };
+        let target = context["targetMessageId"].as_str().unwrap_or("unknown");
+        let key = format!("fork:{parent}:{target}");
+        if self.index.contains_key(&key) {
+            return;
+        }
+        let turn = self.marker_turn();
+        let mut row = self.base(&turn, &key, RowKind::TimelineMarker, now, seq);
+        row.insert("lane".into(), json!("turnTailBoundary"));
+        row.insert(
+            "marker".into(),
+            json!({"type": "forkNotice", "parentSessionId": parent, "parentRowId": 0}),
+        );
+        self.append(key, row, out);
+    }
+
     /// Node's `turnIdOf`: the running turn, else the latest one.
     fn marker_turn(&self) -> String {
         if let Some(turn) = &self.turn {

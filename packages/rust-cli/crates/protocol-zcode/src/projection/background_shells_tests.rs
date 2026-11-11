@@ -116,3 +116,116 @@ fn a_command_moved_to_the_background_is_titled_by_its_description() {
         "auto timeout bash sleep"
     );
 }
+
+/// Fork: the kernel's `BackgroundWork` event (the notice reached the session, before its message is committed and
+/// the ledger acks it) records the terminal status for the detail pane; a running status records nothing.
+#[test]
+fn a_background_work_event_records_its_terminal_status() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::BackgroundWork {
+        work: "b1".into(),
+        status: BackgroundStatus::Running,
+    });
+    assert_eq!(feed.projection.notified_status("b1"), None);
+    feed.apply(KernelEvent::BackgroundWork {
+        work: "b1".into(),
+        status: BackgroundStatus::Killed,
+    });
+    assert_eq!(feed.projection.notified_status("b1"), Some("killed"));
+}
+
+/// Fork: a notification absorbed at a tool boundary records its status and output file, live and cold, and leaves
+/// the Bash row as the launch acknowledgement settled it (Node settles rows only for a turn a notification opens).
+#[test]
+fn an_absorbed_notification_records_status_and_output_without_settling_rows() {
+    use rust_cli_kernel_api::hooks::queued_command;
+    use rust_cli_kernel_api::ids::MessageId;
+    use rust_cli_kernel_api::message::{
+        AttachmentMessage, ContentBlock, Message, ToolResultContent, UserMessage, UserOrigin,
+    };
+
+    let ack =
+        "Command running in background with ID: b1. Output is being written to: /t/b1.output.";
+    let text = "<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_bash</tool-use-id>\n<output-file>/logs/s1/toolu_bash-stdout.log</output-file>\n<status>completed</status>\n<summary>Background command \"Sleep a while\" completed (exit code 0)</summary>\n</task-notification>";
+    let absorbed = Message::Attachment(AttachmentMessage {
+        id: MessageId::new("msg_n1"),
+        source: queued_command::SOURCE.to_owned(),
+        text: text.to_owned(),
+        data: json!({
+            queued_command::PROMPT_KEY: text,
+            queued_command::MODE_KEY: queued_command::TASK_NOTIFICATION,
+        }),
+    });
+    let messages = vec![
+        super::user("msg_u1", "run it"),
+        super::assistant(
+            "msg_a1",
+            vec![ContentBlock::ToolUse {
+                id: ToolUseId::new("toolu_bash"),
+                name: "Bash".into(),
+                input: json!({"command": "sleep 1", "description": "Sleep a while", "run_in_background": true}),
+            }],
+        ),
+        Message::User(UserMessage {
+            id: MessageId::new("msg_r1"),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: ToolUseId::new("toolu_bash"),
+                content: vec![ToolResultContent::Text { text: ack.into() }],
+                is_error: false,
+            }],
+            origin: UserOrigin::ToolResult {
+                assistant: MessageId::new("msg_a1"),
+            },
+        }),
+        absorbed.clone(),
+    ];
+
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_bash");
+    feed.apply(KernelEvent::ToolStarted {
+        tool_use: tool.clone(),
+        name: "Bash".into(),
+        input: json!({"command": "sleep 1", "description": "Sleep a while", "run_in_background": true}),
+    });
+    feed.apply(KernelEvent::ToolDone {
+        tool_use: tool,
+        output: ToolOutput {
+            content: vec![ToolResultContent::Text { text: ack.into() }],
+            is_error: false,
+            display: serde_json::Value::Null,
+        },
+    });
+    let bash_row = |projection: &super::Projection| {
+        projection
+            .rows
+            .iter()
+            .find(|row| row.get("toolCallId").is_some_and(|id| id == "toolu_bash"))
+            .cloned()
+            .expect("the Bash row")
+    };
+    let before = bash_row(&feed.projection);
+    let deltas = feed.apply(KernelEvent::MessageDone { message: absorbed });
+    assert!(
+        deltas.iter().all(|delta| delta["op"] == "state.updated"),
+        "{deltas:?}"
+    );
+    assert_eq!(bash_row(&feed.projection), before);
+    assert_eq!(feed.projection.notified_status("b1"), Some("completed"));
+    assert_eq!(
+        feed.projection.notified_output("b1"),
+        Some("/logs/s1/toolu_bash-stdout.log")
+    );
+
+    let cold =
+        super::Projection::from_view(&super::view(messages), super::Followup::Queue, Vec::new());
+    assert_eq!(cold.notified_status("b1"), Some("completed"));
+    assert_eq!(
+        cold.notified_output("b1"),
+        Some("/logs/s1/toolu_bash-stdout.log")
+    );
+    assert_eq!(bash_row(&cold)["status"], before["status"]);
+}

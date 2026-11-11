@@ -106,6 +106,15 @@ pub(super) async fn bash_output(
             truncated,
             path,
         }) => {
+            // Fork: while the ledger lists the command it names the file; afterwards the notification's
+            // `<output-file>` does.
+            let path = match status {
+                Some(_) => path.as_str().to_owned(),
+                None => live
+                    .sink
+                    .notified_output(work)
+                    .unwrap_or_else(|| path.as_str().to_owned()),
+            };
             let status = status
                 .map(|status| status.as_str().to_owned())
                 .or_else(|| live.sink.notified_status(work));
@@ -116,7 +125,7 @@ pub(super) async fn bash_output(
                     "status": node_status(&status),
                     "output": text,
                     "truncated": truncated,
-                    "outputPath": path.as_str(),
+                    "outputPath": path,
                 }),
                 None => unavailable,
             }

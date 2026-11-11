@@ -313,8 +313,13 @@ pub(crate) async fn bash_output(
         .ok()
         .and_then(|state| state.outputs)?;
     let path = output_path(&dir, task);
+    // Fork: the pane shows the file the command writes (Node's path), not the `.output` link read here.
+    let shown = info
+        .as_ref()
+        .and_then(|info| info.output.clone())
+        .unwrap_or_else(|| path.clone());
     let request = ReadText {
-        path: path.clone(),
+        path,
         start_line: 0,
         max_lines: None,
         max_bytes: Some(OUTPUT_MAX_BYTES),
@@ -348,7 +353,7 @@ pub(crate) async fn bash_output(
         status: info.map(|info| info.status),
         truncated: start > 0,
         text: content[start..].to_owned(),
-        path,
+        path: shown,
     })
 }
 

@@ -196,6 +196,7 @@ pub(crate) async fn run(shared: Arc<Shared>, job: SocketJob) {
     if let Some(background) = job.request.kind.background() {
         let shell = state.sessions.entry(job.session.clone()).or_default();
         shell.background.remove(&job.request.task);
+        shell.stopping.remove(&job.request.task);
         // 被停掉的不记通知（同命令，shell-permissions.md §2.6）。
         if !shell.stopped.remove(&job.request.task) {
             shell.next_seq = shell.next_seq.max(shell.acked) + 1;

@@ -4,9 +4,12 @@
 use rust_cli_base::js::string::collapse_spaces;
 use rust_cli_base::text;
 
-/// 没有可用标题时的缺省（Node `titleFromInput` 的空输入）：首条输入为空、fork 的原会话还没有标题时都用它（F55：
-/// 以前这里、session 与 node-store 的 fork 各写一份）。
+/// 没有可用标题时的缺省（Node `titleFromInput` 的空输入）：fork 的原会话还没有标题时用它（F55：以前这里、session 与
+/// node-store 的 fork 各写一份）。Fork: a blank first input takes [`PLACEHOLDER`] instead, like Node.
 pub const UNTITLED: &str = "Untitled session";
+/// Fork: the title of a session whose first input had no text (an attachment-only message), source `default`, until a
+/// real input replaces it (Node `persistSession`, specs/fork-rust-agent-parity.md, Blank first input title).
+pub const PLACEHOLDER: &str = "New session";
 /// 临时标题最多这么多个 UTF-16 码元（超过时截断加 `...`，titles.md §4）。
 const MAX_TITLE_UNITS: usize = 60;
 

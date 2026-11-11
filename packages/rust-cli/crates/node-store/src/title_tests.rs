@@ -88,3 +88,36 @@ async fn a_command_input_titles_the_session_as_typed() {
         [json!("/greet Ada"), json!("first_input"), json!(null)]
     );
 }
+
+/// Fork: an input without text (an attachment-only message) keeps the `New session` placeholder as `default`, and the
+/// first real input replaces it (Node `persistSession`, specs/fork-rust-agent-parity.md, Blank first input title).
+#[tokio::test]
+async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
+    let test = TestStore::new();
+    let session = SessionId::new("sess_title");
+    test.store
+        .create(meta("sess_title", "/w", ""))
+        .await
+        .unwrap();
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", "  \n ")]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test),
+        [json!("New session"), json!("default"), json!(null)]
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_2", "real question")]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test),
+        [json!("real question"), json!("first_input"), json!(null)]
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_3", " ")]))
+        .await
+        .unwrap();
+    assert_eq!(row(&test)[..2], ["real question", "first_input"]);
+}

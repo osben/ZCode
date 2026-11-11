@@ -85,6 +85,14 @@ struct Turn {
     output_tokens: Option<u64>,
     /// Fork: the turn makes no model call (`KernelEvent::TurnControlOnly`, Node `executionKind: "controlOnly"`).
     control_only: bool,
+    /// Fork: the text and reasoning rows of the turn's latest assistant message when it was stored without a stop
+    /// reason (a reply cut off by Stop, `finish_aborted`). An interrupted turn closes them `interrupted`, like Node's
+    /// `closeStreamingRows`.
+    unstopped: Vec<String>,
+    /// Fork: tool rows whose result is the rejection text (`REJECT_MESSAGE`, an error result). An interrupted turn
+    /// settles them `cancelled` without output, like Node's `ToolCancelled` (the query answers a call cut off by Stop
+    /// with that text).
+    rejected: Vec<String>,
 }
 
 /// 一个会话的投影。
@@ -135,6 +143,11 @@ pub struct Projection {
     compactions: u64,
     /// Fork: the provider and model of the last started turn (Node `lastTurnModel`, projection/model_change.rs).
     last_turn_model: Option<(String, String)>,
+    /// Fork: a subagent child session whose first turn has not started; it gets the source-less "Using" marker
+    /// (Node `lastTurnModel` `sourceLess`, projection/model_change.rs).
+    initial_model_marker: bool,
+    /// Fork: the parent of a forked session, for its fork divider (projection/markers.rs).
+    fork_parent: Option<String>,
     /// Fork: the start time of the running goal completion verification (projection/goal_verify.rs).
     goal_verifier: Option<u64>,
     /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
@@ -270,6 +283,14 @@ impl Projection {
             compact_turn: false,
             compactions: 0,
             last_turn_model: None,
+            initial_model_marker: view.meta.kind
+                == rust_cli_kernel_api::store::SessionKind::Subagent,
+            fork_parent: view
+                .meta
+                .parent
+                .as_ref()
+                .filter(|_| view.meta.kind == rust_cli_kernel_api::store::SessionKind::Fork)
+                .map(|parent| parent.as_str().to_owned()),
             streaming_tools: HashMap::new(),
             goal_verifier: None,
             goal_verifier_failed: false,
@@ -638,6 +659,12 @@ impl Projection {
                 } else {
                     ToolStatus::Success
                 };
+                if status == ToolStatus::Error
+                    && text == rust_cli_kernel_api::tool::REJECT_MESSAGE
+                    && let Some(turn) = self.turn.as_mut()
+                {
+                    turn.rejected.push(tool_key(tool_use.as_str()));
+                }
                 self.upsert(
                     &tool_key(tool_use.as_str()),
                     |row| {
@@ -842,6 +869,7 @@ impl Projection {
                 turn_input.as_ref().map(|input| input.as_str().to_owned()),
                 &mut out,
             ),
+            KernelEvent::BackgroundWork { work, status } => self.remember_ended(work, *status),
             KernelEvent::TurnFilesReverted { turn_input } => {
                 self.turn_files_reverted(turn_input.as_str(), &mut out);
             }
@@ -854,7 +882,6 @@ impl Projection {
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
             | KernelEvent::TasksChanged { .. }
-            | KernelEvent::BackgroundWork { .. }
             | KernelEvent::HistoryRewritten { .. }
             | KernelEvent::ScheduledFire { .. }
             | KernelEvent::SystemNotice { .. }
@@ -916,6 +943,8 @@ impl Projection {
             notified: Vec::new(),
             output_tokens: None,
             control_only: false,
+            unstopped: Vec::new(),
+            rejected: Vec::new(),
         });
         self.model_change(turn, selection, now, seq, out);
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
@@ -981,18 +1010,39 @@ impl Projection {
         self.active = None;
         let started = self.turn.as_ref().map_or(now, |turn| turn.started_at);
         let summed = self.turn.as_ref().and_then(|turn| turn.output_tokens);
-        let keys = self.turn.take().map(|turn| turn.keys).unwrap_or_default();
+        let (keys, unstopped, rejected) = self
+            .turn
+            .take()
+            .map(|turn| (turn.keys, turn.unstopped, turn.rejected))
+            .unwrap_or_default();
+        if row_state == "interrupted" {
+            for key in &rejected {
+                self.upsert(
+                    key,
+                    |row| {
+                        if ToolStatus::of(row) == Some(ToolStatus::Error) {
+                            row.insert("status".into(), json!(ToolStatus::Cancelled.as_str()));
+                            row.remove("output");
+                            row.remove("error");
+                        }
+                    },
+                    out,
+                );
+            }
+        }
         for key in &keys {
+            // Fork: a stopped turn's cut-off reply settled `complete` on commit; Node closes it `interrupted`.
+            let cut_off = row_state == "interrupted" && unstopped.contains(key);
             self.upsert(
                 key,
                 |row| match RowKind::of(row) {
                     Some(RowKind::AssistantText) => {
-                        if row["state"] == "streaming" {
+                        if row["state"] == "streaming" || cut_off {
                             row.insert("state".into(), json!(row_state));
                         }
                     }
                     Some(RowKind::Reasoning) => {
-                        if row["state"] == "streaming" {
+                        if row["state"] == "streaming" || cut_off {
                             let reasoning = if row_state == "failed" {
                                 "interrupted"
                             } else {

@@ -325,6 +325,11 @@ pub struct BackgroundInfo {
     /// 启动时的说明（`BackgroundCommand.description`：Bash 的说明、Monitor 的 description；修复线 F117 新增，缺省空）。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// Fork: the file the command writes (under node_desktop `<root>/<session>/<toolCallId>-stdout.log`, which the
+    /// `<outputs>/<task>.output` name links to), shown as the detail pane's output path like Node's. `None` from an
+    /// executor that does not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<crate::env::EnvPath>,
 }
 
 /// 缺省：在跑的 Bash 命令，命令原文与说明为空（替身与测试按需改字段）。
@@ -335,6 +340,7 @@ impl Default for BackgroundInfo {
             status: BackgroundStatus::Running,
             kind: BackgroundKind::Bash,
             description: String::new(),
+            output: None,
         }
     }
 }

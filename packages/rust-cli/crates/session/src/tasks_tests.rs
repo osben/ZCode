@@ -222,6 +222,7 @@ impl Background for Shells {
                     status: BackgroundStatus::Running,
                     kind: *kind,
                     description: (*description).to_owned(),
+                    output: None,
                 }));
         }
         if !task.task.as_str().starts_with(self.prefix) {
@@ -232,9 +233,17 @@ impl Background for Shells {
         } else {
             BackgroundStatus::Completed
         };
+        // Fork: the running command reports the file it writes; the others predate the field.
+        let output = (status == BackgroundStatus::Running).then(|| {
+            rust_cli_kernel_api::env::EnvPath::new(format!(
+                "/logs/s1/toolu_{}-stdout.log",
+                task.task
+            ))
+        });
         Ok(Some(BackgroundInfo {
             command: format!("run {}", task.task),
             status,
+            output,
             ..BackgroundInfo::default()
         }))
     }
@@ -663,7 +672,8 @@ async fn the_bash_output_window_reads_the_output_file() {
         "{text}"
     );
     assert!(!truncated);
-    assert!(path.as_str().ends_with("/b1.output"), "{path:?}");
+    // Fork: the path shown is the file the command writes, read through the `.output` link.
+    assert_eq!(path.as_str(), "/logs/s1/toolu_b1-stdout.log");
     assert_eq!(
         built.session.background_bash_output("b3").await.unwrap(),
         Some(BashOutputRead::ReadFailed {

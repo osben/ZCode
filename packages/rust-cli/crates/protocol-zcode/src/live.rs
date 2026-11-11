@@ -384,6 +384,14 @@ impl Live {
             .map(str::to_owned)
     }
 
+    /// Fork: the output file the notification of background command `task` named.
+    pub fn notified_output(&self, task: &str) -> Option<String> {
+        self.state()
+            .projection
+            .notified_output(task)
+            .map(str::to_owned)
+    }
+
     pub fn plans(&self) -> Value {
         let state = self.state();
         json!({"plans": state.projection.plans(), "atSeq": state.log.seq(),

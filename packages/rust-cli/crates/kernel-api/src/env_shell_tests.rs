@@ -193,6 +193,7 @@ fn background_task_dtos_round_trip() {
         status: BackgroundStatus::Running,
         kind: Default::default(),
         description: String::new(),
+        output: None,
     }));
     round_trip(&BackgroundStop::Stopped {
         command: "sleep 30".to_owned(),
@@ -226,6 +227,7 @@ fn background_info_carries_the_kind_and_the_description() {
         status: BackgroundStatus::Running,
         kind: BackgroundKind::Monitor,
         description: "build log".to_owned(),
+        output: None,
     };
     assert_eq!(
         serde_json::to_value(&monitor).unwrap(),

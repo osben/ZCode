@@ -143,6 +143,9 @@ impl Projection {
                 let Some(turn) = self.turn.clone() else {
                     return;
                 };
+                if let Some(live) = self.turn.as_mut() {
+                    live.unstopped.clear();
+                }
                 let response = turn.response.unwrap_or(u32::MAX);
                 for (index, block) in assistant.content.iter().enumerate() {
                     match block {
@@ -210,6 +213,20 @@ impl Projection {
             }
             // Fork: a steer absorbed into the running turn is a guided user row inside it (Node's drained guide row).
             Message::Attachment(attachment) => {
+                // Fork: a notification absorbed at a tool boundary (`queued_command`, `task-notification` mode) records
+                // the statuses and output files it reports for the detail pane. It does not settle tool rows: Node
+                // applies notification blocks only to a turn they open (`onTurnStarted`).
+                if attachment.source == rust_cli_kernel_api::hooks::queued_command::SOURCE
+                    && attachment.data[rust_cli_kernel_api::hooks::queued_command::MODE_KEY]
+                        == rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION
+                {
+                    self.remember_notified(&attachment.text);
+                    return;
+                }
+                if attachment.source == super::markers::FORK_NOTICE_SOURCE {
+                    self.fork_notice(&attachment.data, now, seq, out);
+                    return;
+                }
                 let Some((prompt, command)) =
                     rust_cli_kernel_api::hooks::queued_command::guided(attachment)
                 else {
@@ -278,6 +295,11 @@ impl Projection {
             self.append(key.clone(), row, out);
         }
         let (message_id, model) = (assistant.id.as_str().to_owned(), assistant.model.clone());
+        if assistant.stop_reason.is_none()
+            && let Some(live) = self.turn.as_mut()
+        {
+            live.unstopped.push(key.clone());
+        }
         let assistant_text = kind == RowKind::AssistantText;
         self.upsert(
             &key,

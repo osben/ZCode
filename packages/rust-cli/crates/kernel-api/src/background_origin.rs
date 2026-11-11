@@ -35,6 +35,18 @@ pub fn notified_statuses(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Fork: every `(task id, output file)` of the `<task-notification>` blocks in a notification message.
+pub fn notified_outputs(text: &str) -> Vec<(String, String)> {
+    text.split("<task-notification>")
+        .skip(1)
+        .filter_map(|block| {
+            let task = between(block, "<task-id>", "</task-id>")?.trim();
+            let output = between(block, "<output-file>", "</output-file>")?.trim();
+            (!task.is_empty() && !output.is_empty()).then(|| (task.to_owned(), output.to_owned()))
+        })
+        .collect()
+}
+
 /// `originMeta` of the first `<task-notification>` in a notification message; `None` for a
 /// notification the UI does not title (a Monitor, a workflow).
 pub fn origin_meta(text: &str) -> Option<Value> {

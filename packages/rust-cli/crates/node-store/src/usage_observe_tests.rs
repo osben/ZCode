@@ -192,6 +192,10 @@ async fn the_skipped_usage_is_logged_with_its_reason() {
     started(&t, "sess_1").await;
     commit(&t, vec![user("msg_u1", "hi")]).await;
     break_schema(&t, RENAMED_VARIANT);
+    // With a single registered dispatcher, tracing-core computes a new callsite's interest from the registering
+    // thread's default; a parallel test reaching the warning first, without a subscriber, would cache it as "never".
+    // A second live dispatcher makes the interest come from the registered dispatchers instead.
+    let _second = tracing::Dispatch::new(Warnings::default());
     let warnings = Warnings::default();
     let facts = vec![
         assistant("msg_a1", vec![text("hello")], None),
