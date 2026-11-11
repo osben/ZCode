@@ -52,7 +52,7 @@ Fork agent-side features write agent-owned `fork_` columns in `db.sqlite` (`apps
 | Independent plan state                               | agent                                                                                      | `v4/conversation/plans`                                                                  | runtime capability `independentPlanState` (`zcode-rs`: true)                                            | on: plan is frozen per queued input (`Command::SubmitWith`)                                                                                                                                           |
 | Execution worktree                                   | agent (`session.execution_directory`/`execution_branch`, marker `v4/worktree_preparation`) | `createSession` `worktreePreparation` / `executionWorktree`, `updateWorktreePreparation` | none upstream                                                                                           | implemented in `zcode-rs` with Node's columns and marker (see `fork-rust-agent-parity.md` "Execution worktree"); the model-context notice and the per-tool missing-worktree guard are not ported      |
 | ACP agent binding / config / pending choice          | agent (`fork_session_acp_*`)                                                               | `modelSelection.providerId = "acp:<id>"`, `setExternalAgentConfigOption`                 | none upstream                                                                                           | refused by the Host command gate                                                                                                                                                                      |
-| Usage rollup / detached usage                        | agent, internal                                                                            | none (agent-internal pruning)                                                            | none                                                                                                    | **lost**: usage older than 30 days and totals of deleted sessions are not rolled up. Whether Rust-side pruning also removes rows the Node agent would have rolled up is unverified.                   |
+| Usage rollup / detached usage                        | agent, internal                                                                            | none (agent-internal pruning)                                                            | none                                                                                                    | implemented in `zcode-rs` with Node's tables and checksums (see "Usage rollup in Rust mode"): raw rows are pruned only below the last recompute's window, after the protected reconcile               |
 | Draft prewarm                                        | agent (`session` row)                                                                      | plain `createSession` before the first send                                              | none                                                                                                    | `zcode-rs` persists every prewarm: an abandoned new task leaves an empty `session` row (not shown in the sidebar in the 2026-11-07 run); draft cleanup returns `proto.unsupportedCommand`             |
 | File attachments                                     | agent (session artifacts + user message)                                                   | `v4/attachment/{begin,chunk,commit,abort,read,previewSource}`, `sendText` `attachments`  | none                                                                                                    | implemented in `zcode-rs` (see "Attachments in Rust mode"); video, image resizing, `topic-history`/`clipboard-text` refs, Share reads (`v4/conversation/attachmentRead`/`attachmentStat`) are missing |
 | ChatGPT Plan provider (`account:chatgpt-plan`)       | agent (`chatgpt-account` access, account layer)                                            | `modelSelection.providerId`                                                              | none                                                                                                    | listed but closed: `zcode-rs` has no `chatgpt-account` access, so the model has no credentials and the provider reports an `access` issue                                                             |
@@ -81,6 +81,51 @@ Responses from the agent are parsed with `.parse` (unknown keys stripped) and no
 
 - **Rows and preview**: a `userInput` row, live or cold, carries chips built from its `file` parts (`{fileName, mime, bytes, ref?, previewRef?}`, Node `attachmentMetasOfMessage`); a queued input shows the refs it was sent with. `attachmentRead` serves a ref only if a row of that session carries it, so it keeps working after an agent restart. `previewSource` always answers `{kind: "chunked"}`.
 - **Command correlation after a restart**: a cold `userInput` row and its turn header carry `sourceCommandId`, read from the stored `anchor.sourceCommandId` (Node writes the same anchor). The kernel keeps a `message id → command id` map: the store loads it, and the session actor adds an entry when it commits a typed user message (Human, not an interrupt, not bash output; the same filter as the store's anchor) under a command. `v4/commands/query` can still answer a pending command from the stored command facts; the row is what settles a held first-submission copy (`commandRowProjected`) and a pending entry from the snapshot alone.
+
+## Usage rollup in Rust mode
+
+App Usage (`v4/usage/stats`, and the session totals behind `v4/conversation/usage`) reads the same `db.sqlite` tables whichever runtime wrote them. Both runtimes own the same facts in the same shape, with no new migrations:
+
+- **raw rows** (`model_usage`, `turn_usage`, `tool_usage`) are kept for 30 days;
+- **the rollup** (`fork_usage_bucket`, `fork_usage_turn`, `fork_usage_tool`, ledger `9001_fork_usage_rollup`) holds 15-minute buckets for two years. `fork_usage_meta.watermark_ms` records the last recompute; a recompute replaces buckets from `watermark − 7 days` and keeps a bucket whose raw rows were already pruned;
+- **detached and protected usage** (`fork_usage_detached_turn`, `fork_usage_protected_*`, ledger `9002_fork_usage_detached`) keeps the totals of erased sessions.
+
+`zcode-rs` (node-store `fork_usage_rollup.rs`, `fork_usage_query.rs`, `session_tree.rs`) uses Node's DDL strings byte for byte, so the ledger checksums match. It recomputes before an App Usage read and inside the session-tree erase (followed by the detached hand-over). It does not recompute on the usage write path: a recompute there moves the watermark in the middle of a turn, and a `turn_usage` row written later with an older `started_at` (a turn longer than 7 days) then falls outside every later replace window.
+
+**The gap that was closed.** `zcode-rs` pruned raw rows older than 30 days on every usage batch, but recomputed only on a read or an erase. If App Usage was not opened and nothing was erased for 30 days, rows written after the last watermark were pruned before any rollup saw them. They were then missing from both runtimes' totals. A pruned raw row also dropped its protected snapshot (`fork_usage_protected_*_raw`) before the reconcile applied a pending change from another process (Node updates a live row in a bucket that also holds an erased session's baseline), so that change was lost.
+
+**Rule.** The raw prune deletes only rows the last recompute covered, and reconciles the protected rows first.
+
+- Cutoff: `started_at < min(now − 30 days, align_down(watermark − 7 days))`. A recompute at watermark `W` rebuilt every bucket from `align_down(W − 7 days)` on, so a row below that bound that existed at `W` is in the rollup. Without a watermark (no build has rolled up yet) the prune deletes nothing.
+- Before the delete, the usage batch's transaction always runs the protected reconcile (`sync_protected_raw_rows`, Node `syncForkUsageProtectedRawRows`), whatever the watermark's age. It needs the raw row to compute the difference, and it drops the snapshot of a row that is gone.
+- A reconcile error rolls the usage savepoint back and that batch prunes nothing (`usage.prune.failed` warning).
+- A `tool_usage` row still `running` is not pruned. Node upserts a tool row by id from `ToolCallScheduled` until its result (`completed`, `error`, `cancelled`); `model_usage` and `turn_usage` are written once, at the end. A pruned row loses its protected snapshot at the next reconcile while the bucket keeps its contribution, so a later upsert of the same id would re-create the row and count it a second time. Residual, the same as Node's own prune: Node writes a terminal tool row twice, from the `ToolCallResult` event and again when the tool batch settles (`recordToolUsageFromResult`, after the slowest tool of the batch). A call that started more than 30 days ago and is pruned between those two writes is still counted twice.
+- Residual, shared with Node: a usage row written once at the end (`turn_usage`, `model_usage`) whose `started_at` is already older than the replace window when it is first written (a turn that waited weeks for an approval) is never rolled up. The recompute rebuilds only buckets from `align_down(watermark − 7 days)` on, so it does not count the row even if no prune deletes it, and the 30-day prune then removes it (Rust's in the same write batch, Node's at its next due prune). Checked on Node's own `upsertTurnUsage` / `recomputeForkUsageRollup` with a turn started 31 days before its end, right after an App Usage recompute: no rolled-up turn whether the prune was due at the write or not. Keeping such a row needs a different recompute window (for example a per-row insert watermark), which neither runtime has.
+- Rust deletes a subset of what Node's prune deletes (`started_at < now − 30 days`, any status), so the two never conflict. A user who never opens App Usage keeps raw rows until the first read or erase moves the watermark. That is the 3.18 behavior, where raw rows are never pruned.
+- Upstream 3.18 stops pruning raw usage in Node (`USAGE_RETENTION_MS` and `pruneUsage` are gone). The raw prune in `zcode-rs` has a single switch, `repo::usage::RETENTION_MS` (`Some(30 days)` while the fork is on 3.17). The 3.18 sync sets it to `None`, which turns off the prune and its reconcile.
+- Known Node gap (3.17, not fixed: the 3.18 sync removes the prune): `pruneUsageIfDue` deletes `started_at < now − 30 days` hourly with no watermark bound and no protected reconcile. Node usually recomputes within 5 minutes of a write (`scheduleForkUsageRollup`), so the window is a process that exits before its debounced recompute and is not reopened for 30 days.
+
+```text
+usage batch (zcode-rs, one BEGIN IMMEDIATE)
+  insert model_usage / turn_usage / tool_usage rows
+  savepoint "usage"
+    watermark missing?                 → no prune
+    sync_protected_raw_rows            (error → roll back the savepoint, warn usage.prune.failed)
+    delete raw rows started_at < min(now − 30 d, align_down(watermark − 7 d)), except running tool_usage
+  release
+commit
+App Usage read  → recompute (window watermark − 7 d … now), watermark := now → rollup query (raw fallback as in Node)
+session erase   → recompute → preserve detached / protected → prune rollup older than 2 years → delete
+```
+
+Acceptance:
+
+- Rows written by `zcode-rs` give the same `v4/usage/stats` totals under Node's `queryAppUsageWithRollup` and Rust's `query_with_rollup`, for a window older than 30 days and after an erase.
+- A raw row written after the last recompute is not pruned until a recompute covered it, and is then counted.
+- A turn longer than 7 days that ends after a read is still counted by the next read.
+- A live row updated by another process in a protected bucket keeps its new value after the prune.
+- A tool call still running in a protected bucket is not pruned; when it completes it is counted once.
+- Without a watermark no raw row is pruned.
 
 ## State owners
 
