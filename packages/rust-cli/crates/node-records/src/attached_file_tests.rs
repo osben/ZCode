@@ -431,3 +431,59 @@ fn a_failed_image_is_nodes_placeholder_both_ways() {
         }
     );
 }
+
+/// The `file` parts of web-remote uploads carry what Node's `resolveTurnAttachments` resolved for the same input (its
+/// output for a 68-byte PNG data URL artifact and a 29-byte video artifact, below): Share compares the chip's `bytes`,
+/// which is `metadata.sizeBytes`, with its stat of the artifact, in either runtime.
+#[test]
+fn web_remote_upload_parts_match_nodes_resolved_metadata() {
+    let node = serde_json::json!([
+        {"mime": "image/png", "url": "zcode-artifact://s1/img", "metadata": {"recoverability": "provider_ready",
+            "sizeBytes": 114, "storageKind": "artifact", "artifactUri": "zcode-artifact://s1/img"}},
+        {"mime": "video/mp4", "url": "zcode-artifact://s1/vid", "metadata": {"recoverability": "provider_ready",
+            "sizeBytes": 29, "storageKind": "artifact", "artifactUri": "zcode-artifact://s1/vid"}},
+    ]);
+    // `zcode-rs` resolves these with Node's measures (protocol-zcode `web_remote_uploads_carry_nodes_size_bytes`).
+    let upload = |mime: &str, uri: &str, bytes: u64, body: AttachedBody| AttachedFile {
+        mime: mime.into(),
+        bytes,
+        reference: Some(uri.into()),
+        stored: Some(uri.into()),
+        ..file(body)
+    };
+    let base64 = |media_type: &str| ImageSource::Base64 {
+        media_type: media_type.into(),
+        data: "AAAA".into(),
+    };
+    let rust = [
+        upload(
+            "image/png",
+            "zcode-artifact://s1/img",
+            114,
+            AttachedBody::Image {
+                source: base64("image/png"),
+            },
+        ),
+        upload(
+            "video/mp4",
+            "zcode-artifact://s1/vid",
+            29,
+            AttachedBody::Video {
+                source: base64("video/mp4"),
+            },
+        ),
+    ];
+    for (node, rust) in node.as_array().unwrap().iter().zip(&rust) {
+        let stored = part("prt_1".into(), ("s1", "msg"), rust);
+        assert_eq!(stored["mime"], node["mime"]);
+        assert_eq!(stored["url"], node["url"]);
+        for (key, value) in node["metadata"].as_object().unwrap() {
+            assert_eq!(&stored["metadata"][key], value, "{key}");
+        }
+        // Read back by either runtime, the chip keeps Node's size.
+        assert_eq!(
+            from_part(&stored).unwrap().bytes,
+            node["metadata"]["sizeBytes"]
+        );
+    }
+}

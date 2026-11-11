@@ -63,33 +63,3 @@ fn malformed_or_oversized_artifacts_are_refused() {
         "fault.attachment.previewTooLarge"
     );
 }
-
-/// A stat reports what the read serves, the decoded size this runtime's chips carry, not the stored data URL.
-#[test]
-fn a_stat_reports_the_decoded_attachment() {
-    for length in [0usize, 1, 2, 3, 4, 1000] {
-        let content = format!(
-            "data:image/PNG;base64,{}",
-            base64().encode(vec![7u8; length])
-        );
-        assert_eq!(
-            stat_data_url(content.as_bytes(), "image/png"),
-            Some((length as u64, "image/png".to_owned()))
-        );
-    }
-    assert_eq!(
-        stat_data_url(b"data:;base64,JVBERg==", "application/pdf"),
-        Some((4, "application/pdf".to_owned()))
-    );
-    for content in [
-        "plain text",
-        "data:image/png,AAAA",
-        "data:image/png;base64,AAA",
-    ] {
-        assert_eq!(
-            stat_data_url(content.as_bytes(), "image/png"),
-            None,
-            "{content}"
-        );
-    }
-}

@@ -261,15 +261,17 @@ pub(crate) async fn content(
         });
     }
     for attachment in refs {
-        let (body, stored, image) = if let Some(kind) = attachment.source_kind
+        // `size` is the `metadata.sizeBytes` Node writes for the same input, when it is not the App's declared size.
+        let (body, stored, image, size) = if let Some(kind) = attachment.source_kind
             && is_uri_ref(&attachment.reference)
         {
             let store = artifacts(server).map_err(|_| material_failed())?;
             let content = artifact_content(server, session, &attachment.reference, MAX_BYTES)
                 .await
                 .map_err(|_| material_failed())?;
-            let (body, path) = write_material(store.as_ref(), session, kind, &content).await?;
-            (body, Some(path), None)
+            let (body, path, size) =
+                write_material(store.as_ref(), session, kind, &content).await?;
+            (body, Some(path), None, Some(size))
         } else if let Some(video) = video(server, session, &attachment).await {
             match video {
                 AttachedBody::Video { source } => {
@@ -278,26 +280,34 @@ pub(crate) async fn content(
                     let stored = stored_image(server, session, &attachment, &source)
                         .await
                         .ok_or_else(|| fault("putFailed"))?;
-                    (AttachedBody::Video { source }, Some(stored), None)
+                    let size = decoded_len(&source);
+                    (AttachedBody::Video { source }, Some(stored), None, size)
                 }
-                other => (other, None, None),
+                other => (other, None, None, None),
             }
         } else {
-            let (body, image) = body(server, session, &attachment).await;
+            let (body, image, read_size) = body(server, session, &attachment).await;
             let stored = match &body {
                 AttachedBody::Image { source } => {
                     stored_image(server, session, &attachment, source).await
                 }
                 _ => None,
             };
-            (body, stored, image)
+            // Node: a prepared image states what it read (a web-remote data URL's length, a desktop file's size); an
+            // image that cannot be prepared states the file's size on the desktop and nothing for a web-remote ref.
+            let size = match &body {
+                AttachedBody::Image { .. } => read_size,
+                AttachedBody::ImageFailed { .. } if !is_uri_ref(&attachment.reference) => read_size,
+                _ => None,
+            };
+            (body, stored, image, size)
         };
         let material = attachment.material();
         out.push(ContentBlock::File {
             file: AttachedFile {
                 name: attachment.file_name,
                 mime: attachment.mime,
-                bytes: attachment.bytes,
+                bytes: size.unwrap_or(attachment.bytes),
                 reference: Some(attachment.reference).filter(|reference| !reference.is_empty()),
                 preview_reference: attachment.preview_ref.map(String::into_boxed_str),
                 stored,
@@ -349,15 +359,16 @@ fn material_text(content: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Node's web-remote text material: the decoded text is written as a new session artifact (raw text, `.txt`) and the
-/// model gets the deferred path reference naming that file. Returns the body and the file's path.
+/// model gets the deferred path reference naming that file. Returns the body, the file's path and the text's length.
 async fn write_material(
     store: &dyn ArtifactStore,
     session: &SessionId,
     kind: MaterialKind,
     content: &[u8],
-) -> Result<(AttachedBody, String), RpcError> {
+) -> Result<(AttachedBody, String, u64), RpcError> {
     use rust_cli_kernel_api::prompt_attachment::{PathReason, path_reference};
     let text = material_text(content).ok_or_else(material_failed)?;
+    let size = text.len() as u64;
     let artifact = store
         .put(
             session,
@@ -374,7 +385,7 @@ async fn write_material(
     let body = AttachedBody::PathReference {
         text: path_reference("text/plain", &path, PathReason::deferred(kind)),
     };
-    Ok((body, path))
+    Ok((body, path, size))
 }
 
 /// The session artifact holding an inline image's or video's data URL (Node `persistAttachmentDataUrl`): a web-remote
@@ -627,14 +638,15 @@ fn is_local_text(attachment: &AttachmentRef) -> bool {
 }
 
 /// What of one attachment reaches the model (the stored file part keeps it for both runtimes), with Node's
-/// `metadata.image` of a prepared image.
+/// `metadata.image` of a prepared image and the length of what was read: a web-remote artifact's stored data URL, a
+/// desktop file's bytes.
 async fn body(
     server: &Server,
     session: &SessionId,
     attachment: &AttachmentRef,
-) -> (AttachedBody, Option<Box<ImageInfo>>) {
+) -> (AttachedBody, Option<Box<ImageInfo>>, Option<u64>) {
     if let Some(reference) = path_reference(attachment).await {
-        return (reference, None);
+        return (reference, None, None);
     }
     // Node `mapAttachmentRef` → `resolveLocalFileAttachment`: a desktop file that is not media is read by the agent,
     // with no 64 KiB limit (that one is for web-remote refs).
@@ -642,29 +654,53 @@ async fn body(
         return (
             crate::attachment_text::local_text(&attachment.reference).await,
             None,
+            None,
         );
     }
     let Some(form) = inline_form(&attachment.mime, attachment.bytes) else {
-        return (AttachedBody::Omitted, None);
+        return (AttachedBody::Omitted, None, None);
     };
     // The read is bounded by the form's limit, so a file that grew past its declared size is refused, not loaded.
-    let (bytes, mime) = match read(
-        server,
-        session,
-        &attachment.reference,
-        &attachment.mime,
-        form.limit(),
-    )
-    .await
-    {
+    let read = if attachment.reference.starts_with(ARTIFACT_SCHEME) {
+        match artifact_content(server, session, &attachment.reference, form.limit()).await {
+            Ok(content) => {
+                let size = content.len() as u64;
+                bounded_data_url(content, &attachment.mime, form.limit())
+                    .map(|(bytes, mime)| (bytes, mime, size))
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        read_local(
+            Path::new(&attachment.reference),
+            &attachment.mime,
+            form.limit(),
+        )
+        .await
+        .map(|(bytes, mime)| {
+            let size = bytes.len() as u64;
+            (bytes, mime, size)
+        })
+    };
+    let (bytes, mime, size) = match read {
         Ok(read) => read,
         Err(error) => {
             // The fault code only: a local ref is a user path.
             tracing::warn!(event = "attachment.read_failed", mime = %attachment.mime, fault = %error.message, "an attachment could not be read");
-            return (AttachedBody::Omitted, None);
+            return (AttachedBody::Omitted, None, None);
         }
     };
-    admit(form, &mime, bytes).await
+    let (body, image) = admit(form, &mime, bytes).await;
+    (body, image, Some(size))
+}
+
+/// Node `base64PayloadByteLength`: the bytes a base64 video payload holds.
+fn decoded_len(source: &ImageSource) -> Option<u64> {
+    let ImageSource::Base64 { data, .. } = source else {
+        return None;
+    };
+    let padding = data.len() - data.trim_end_matches('=').len();
+    Some((data.len() * 3 / 4 - padding.min(2)) as u64)
 }
 
 /// `v4/attachment/begin`.
