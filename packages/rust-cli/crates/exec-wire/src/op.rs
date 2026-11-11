@@ -27,6 +27,9 @@ pub enum Op {
     AckShellNotice,
     SetShellCwd,
     BackgroundCommand,
+    /// Fork: the terminal record of an acknowledged background command (`Background::ended_background_command`).
+    /// An older executor answers it per call with `unsupported`, so it shares the `background` capability.
+    EndedBackgroundCommand,
     BackgroundElapsed,
     StopBackgroundCommand,
     RewindPrepare,
@@ -66,7 +69,7 @@ pub enum OpKind {
 }
 
 impl Op {
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 42] = [
         Self::Facts,
         Self::PathFacts,
         Self::ReadFile,
@@ -88,6 +91,7 @@ impl Op {
         Self::AckShellNotice,
         Self::SetShellCwd,
         Self::BackgroundCommand,
+        Self::EndedBackgroundCommand,
         Self::BackgroundElapsed,
         Self::StopBackgroundCommand,
         Self::RewindPrepare,
@@ -134,6 +138,7 @@ impl Op {
             Self::AckShellNotice => "shell.ack_shell_notice",
             Self::SetShellCwd => "shell.set_shell_cwd",
             Self::BackgroundCommand => "background.background_command",
+            Self::EndedBackgroundCommand => "background.ended_background_command",
             Self::BackgroundElapsed => "background.background_elapsed",
             Self::StopBackgroundCommand => "background.stop_background_command",
             Self::RewindPrepare => "checkpoints.rewind_prepare",
@@ -179,9 +184,10 @@ impl Op {
             Self::ShellState | Self::ShellNotices | Self::AckShellNotice | Self::SetShellCwd => {
                 Capability::Shell
             }
-            Self::BackgroundCommand | Self::BackgroundElapsed | Self::StopBackgroundCommand => {
-                Capability::Background
-            }
+            Self::BackgroundCommand
+            | Self::EndedBackgroundCommand
+            | Self::BackgroundElapsed
+            | Self::StopBackgroundCommand => Capability::Background,
             Self::RewindPrepare | Self::RewindApply | Self::RewindFinish => Capability::Checkpoints,
             Self::PdfPageCount | Self::RenderPdfPages => Capability::Pdf,
             Self::McpConnect
@@ -215,6 +221,7 @@ impl Op {
             | Self::Grep
             | Self::ShellState
             | Self::BackgroundCommand
+            | Self::EndedBackgroundCommand
             | Self::BackgroundElapsed
             | Self::PdfPageCount
             | Self::RenderPdfPages

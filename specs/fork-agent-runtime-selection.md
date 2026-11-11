@@ -15,6 +15,15 @@ The desktop Host always runs the Node agent (`zcode.cjs app-server --stdio`), wh
    3. The fork setting `agentRuntime`.
    4. The default, `node`.
 3. **Storage preparation always stays on Node.** The Rust agent is spawned only as the conversation process. Database preparation and migrations, including fork `9001_fork_*`, keep running in the Host Worker from the bundled `zcode.cjs` (`storagePreparationEntry`). If no Node bundle is available, Rust is not selectable, because a Rust agent without prepared storage would open an unmigrated database.
+   - **The same step seeds the official plugins in Rust mode.** `zcode-rs` only reads the official plugin store (`platform/src/local/plugin_inventory.rs`: `cache/zcode-plugins-official/<name>/<version>` and `marketplaces/zcode-plugins-official/bundled-marketplace.json`) and has no copy of the plugin sources. Node's agent seeds that store itself on its first plugin resolution (`bundled-plugins.ts` `resolveOfficialPluginRoots`). With Rust effective no Node agent runs, so on a fresh home Rust would list no official plugin skill. The storage Worker already ships the plugin sources, so when its env has `ZCODE_FORK_AGENT_RUNTIME=rust` it runs the same `resolveOfficialPluginRoots` once the database is prepared (`bootstrap/src/fork-agent-runtime/`, called from the `prepareStorageOnly` branch of `runZCodeProtocolAgent`).
+     - **Rust only.** With Node effective it does nothing, and the Node agent stays the only seeder. Measured on the dev bundle (Apple M-series, 17 plugins, 66 MB): a cold seed adds ~230 ms to the Worker, a warm one ~70 ms, because each Worker re-hashes every bundled plugin file (the hash memo is per process). Doing it in Node mode would add the warm cost to every default start for nothing.
+     - **Store root.** The one the Rust agent reads (`StoragePaths::plugin_storage`): the merged `storage.dir` with `~/` expanded, a relative path resolved against the workspace, then `<cli storage root>/plugins`.
+     - **Never fails preparation.** A seed error is logged at `warn` and the Worker still exits `0`; the Rust agent then sees whatever usable cache already exists. The seed writes nothing to stdout, the Host's control channel.
+     - **Degraded plugins load the same cache as Node.** When a plugin's new version cannot be laid out, the seeder falls back to the last usable older cache, which Node passes to discovery beside the catalog. `zcode-rs` reads only the catalog's `cachePath`, so the seed points that entry's `cachePath` at the fallback cache (the entry keeps the bundled version). Rust and Node then load the same plugin set.
+     - **Known limits (follow-ups).**
+       - The Host prepares storage once, at startup, for its warm-up working directories (`hostDatabaseStartup.ts`). A workspace opened later whose `zcode.json` sets a `storage.dir` no warm-up directory uses stays unseeded until the Host restarts; Node seeds it when that workspace's app is created. Closing this needs a seed at Rust spawn time in the Host, which changes the Host's startup ownership.
+       - The catalog pointer to a fallback cache is shared state. Every seed (another Host's prepare, any Node bootstrap on the same home) first republishes the entry at the bundled version. If that version is still not laid out, a Rust agent reading in between, or after a Node bootstrap, misses the plugin until the next prepare. Node does not hit this, because it computes the fallback per process. The proper fix is for `zcode-rs` discovery to fall back to the newest usable sibling version itself when `cachePath` is not usable; then the pointer is no longer needed.
+     - **Same content as Node.** Seeding writes every bundled plugin, including `computer-use`; `suppressedBuiltins`, default enablement and the Node-only plugins are filtered when `zcode-rs` discovers plugins (`ext/src/plugins/select.rs`), as Node filters at discovery.
 4. **No silent lie about the runtime.**
    - Main resolves which runtime is in effect. If `rust` is selected but no `zcode-rs` binary is found, Main runs Node and logs at `warn`: `selected=rust effective=node reason=binary_missing`.
    - Main writes only the effective runtime into the Host env.
@@ -43,7 +52,7 @@ Fork agent-side features write agent-owned `fork_` columns in `db.sqlite` (`apps
 | Independent plan state                               | agent                                                                                      | `v4/conversation/plans`                                                                  | runtime capability `independentPlanState` (`zcode-rs`: true)                       | on: plan is frozen per queued input (`Command::SubmitWith`)                                                                                                                                           |
 | Execution worktree                                   | agent (`session.execution_directory`/`execution_branch`, marker `v4/worktree_preparation`) | `createSession` `worktreePreparation` / `executionWorktree`, `updateWorktreePreparation` | none upstream                                                                      | implemented in `zcode-rs` with Node's columns and marker (see `fork-rust-agent-parity.md` "Execution worktree"); the model-context notice and the per-tool missing-worktree guard are not ported      |
 | ACP agent binding / config / pending choice          | agent (`fork_session_acp_*`)                                                               | `modelSelection.providerId = "acp:<id>"`, `setExternalAgentConfigOption`                 | none upstream                                                                      | refused by the Host command gate                                                                                                                                                                      |
-| Usage rollup / detached usage                        | agent, internal                                                                            | none (agent-internal pruning)                                                            | none                                                                               | **lost**: usage older than 30 days and totals of deleted sessions are not rolled up. Whether Rust-side pruning also removes rows the Node agent would have rolled up is unverified.                   |
+| Usage rollup / detached usage                        | agent, internal                                                                            | none (agent-internal pruning)                                                            | none                                                                               | implemented in `zcode-rs` with Node's tables and checksums (see "Usage rollup in Rust mode"): raw rows are pruned only below the last recompute's window, after the protected reconcile               |
 | Draft prewarm                                        | agent (`session` row)                                                                      | plain `createSession` before the first send                                              | none                                                                               | implemented in `zcode-rs` (see "Draft prewarm in Rust mode"): the app-server keeps a prewarm in memory until the first send or reservation; an abandoned new task leaves no row                       |
 | File attachments                                     | agent (session artifacts + user message)                                                   | `v4/attachment/{begin,chunk,commit,abort,read,previewSource}`, `sendText` `attachments`  | none                                                                               | implemented in `zcode-rs` (see "Attachments in Rust mode"); video, image resizing, `topic-history`/`clipboard-text` refs, Share reads (`v4/conversation/attachmentRead`/`attachmentStat`) are missing |
 | ChatGPT Plan provider (`account:chatgpt-plan`)       | agent (`chatgpt-account` access, account layer)                                            | `modelSelection.providerId`                                                              | none                                                                               | listed but closed: `zcode-rs` has no `chatgpt-account` access, so the model has no credentials and the provider reports an `access` issue                                                             |
@@ -141,6 +150,51 @@ Acceptance:
 - **Rows and preview**: a `userInput` row, live or cold, carries chips built from its `file` parts (`{fileName, mime, bytes, ref?, previewRef?}`, Node `attachmentMetasOfMessage`); a queued input shows the refs it was sent with. `attachmentRead` serves a ref only if a row of that session carries it, so it keeps working after an agent restart. `previewSource` always answers `{kind: "chunked"}`.
 - **Command correlation after a restart**: a cold `userInput` row and its turn header carry `sourceCommandId`, read from the stored `anchor.sourceCommandId` (Node writes the same anchor). The kernel keeps a `message id → command id` map: the store loads it, and the session actor adds an entry when it commits a typed user message (Human, not an interrupt, not bash output; the same filter as the store's anchor) under a command. `v4/commands/query` can still answer a pending command from the stored command facts; the row is what settles a held first-submission copy (`commandRowProjected`) and a pending entry from the snapshot alone.
 
+## Usage rollup in Rust mode
+
+App Usage (`v4/usage/stats`, and the session totals behind `v4/conversation/usage`) reads the same `db.sqlite` tables whichever runtime wrote them. Both runtimes own the same facts in the same shape, with no new migrations:
+
+- **raw rows** (`model_usage`, `turn_usage`, `tool_usage`) are kept for 30 days;
+- **the rollup** (`fork_usage_bucket`, `fork_usage_turn`, `fork_usage_tool`, ledger `9001_fork_usage_rollup`) holds 15-minute buckets for two years. `fork_usage_meta.watermark_ms` records the last recompute; a recompute replaces buckets from `watermark − 7 days` and keeps a bucket whose raw rows were already pruned;
+- **detached and protected usage** (`fork_usage_detached_turn`, `fork_usage_protected_*`, ledger `9002_fork_usage_detached`) keeps the totals of erased sessions.
+
+`zcode-rs` (node-store `fork_usage_rollup.rs`, `fork_usage_query.rs`, `session_tree.rs`) uses Node's DDL strings byte for byte, so the ledger checksums match. It recomputes before an App Usage read and inside the session-tree erase (followed by the detached hand-over). It does not recompute on the usage write path: a recompute there moves the watermark in the middle of a turn, and a `turn_usage` row written later with an older `started_at` (a turn longer than 7 days) then falls outside every later replace window.
+
+**The gap that was closed.** `zcode-rs` pruned raw rows older than 30 days on every usage batch, but recomputed only on a read or an erase. If App Usage was not opened and nothing was erased for 30 days, rows written after the last watermark were pruned before any rollup saw them. They were then missing from both runtimes' totals. A pruned raw row also dropped its protected snapshot (`fork_usage_protected_*_raw`) before the reconcile applied a pending change from another process (Node updates a live row in a bucket that also holds an erased session's baseline), so that change was lost.
+
+**Rule.** The raw prune deletes only rows the last recompute covered, and reconciles the protected rows first.
+
+- Cutoff: `started_at < min(now − 30 days, align_down(watermark − 7 days))`. A recompute at watermark `W` rebuilt every bucket from `align_down(W − 7 days)` on, so a row below that bound that existed at `W` is in the rollup. Without a watermark (no build has rolled up yet) the prune deletes nothing.
+- Before the delete, the usage batch's transaction always runs the protected reconcile (`sync_protected_raw_rows`, Node `syncForkUsageProtectedRawRows`), whatever the watermark's age. It needs the raw row to compute the difference, and it drops the snapshot of a row that is gone.
+- A reconcile error rolls the usage savepoint back and that batch prunes nothing (`usage.prune.failed` warning).
+- A `tool_usage` row still `running` is not pruned. Node upserts a tool row by id from `ToolCallScheduled` until its result (`completed`, `error`, `cancelled`); `model_usage` and `turn_usage` are written once, at the end. A pruned row loses its protected snapshot at the next reconcile while the bucket keeps its contribution, so a later upsert of the same id would re-create the row and count it a second time. Residual, the same as Node's own prune: Node writes a terminal tool row twice, from the `ToolCallResult` event and again when the tool batch settles (`recordToolUsageFromResult`, after the slowest tool of the batch). A call that started more than 30 days ago and is pruned between those two writes is still counted twice.
+- Residual, shared with Node: a usage row written once at the end (`turn_usage`, `model_usage`) whose `started_at` is already older than the replace window when it is first written (a turn that waited weeks for an approval) is never rolled up. The recompute rebuilds only buckets from `align_down(watermark − 7 days)` on, so it does not count the row even if no prune deletes it, and the 30-day prune then removes it (Rust's in the same write batch, Node's at its next due prune). Checked on Node's own `upsertTurnUsage` / `recomputeForkUsageRollup` with a turn started 31 days before its end, right after an App Usage recompute: no rolled-up turn whether the prune was due at the write or not. Keeping such a row needs a different recompute window (for example a per-row insert watermark), which neither runtime has.
+- Rust deletes a subset of what Node's prune deletes (`started_at < now − 30 days`, any status), so the two never conflict. A user who never opens App Usage keeps raw rows until the first read or erase moves the watermark. That is the 3.18 behavior, where raw rows are never pruned.
+- Upstream 3.18 stops pruning raw usage in Node (`USAGE_RETENTION_MS` and `pruneUsage` are gone). The raw prune in `zcode-rs` has a single switch, `repo::usage::RETENTION_MS` (`Some(30 days)` while the fork is on 3.17). The 3.18 sync sets it to `None`, which turns off the prune and its reconcile.
+- Known Node gap (3.17, not fixed: the 3.18 sync removes the prune): `pruneUsageIfDue` deletes `started_at < now − 30 days` hourly with no watermark bound and no protected reconcile. Node usually recomputes within 5 minutes of a write (`scheduleForkUsageRollup`), so the window is a process that exits before its debounced recompute and is not reopened for 30 days.
+
+```text
+usage batch (zcode-rs, one BEGIN IMMEDIATE)
+  insert model_usage / turn_usage / tool_usage rows
+  savepoint "usage"
+    watermark missing?                 → no prune
+    sync_protected_raw_rows            (error → roll back the savepoint, warn usage.prune.failed)
+    delete raw rows started_at < min(now − 30 d, align_down(watermark − 7 d)), except running tool_usage
+  release
+commit
+App Usage read  → recompute (window watermark − 7 d … now), watermark := now → rollup query (raw fallback as in Node)
+session erase   → recompute → preserve detached / protected → prune rollup older than 2 years → delete
+```
+
+Acceptance:
+
+- Rows written by `zcode-rs` give the same `v4/usage/stats` totals under Node's `queryAppUsageWithRollup` and Rust's `query_with_rollup`, for a window older than 30 days and after an erase.
+- A raw row written after the last recompute is not pruned until a recompute covered it, and is then counted.
+- A turn longer than 7 days that ends after a read is still counted by the next read.
+- A live row updated by another process in a protected bucket keeps its new value after the prune.
+- A tool call still running in a protected bucket is not pruned; when it completes it is counted once.
+- Without a watermark no raw row is pruned.
+
 ## State owners
 
 - **Setting:** the fork settings sidecar `~/.zcode/v2/fork-settings.json`. The key `agentRuntime: "node" | "rust"` goes in `FORK_SETTING_KEYS`. The default `node` is materialised by `forkAppSettingsSchema` and never written back. It must not go into `setting.json`, because upstream writes strip unknown keys.
@@ -157,6 +211,7 @@ Acceptance:
   It must not live under `resources/glm/`: `findZCodeAgentRuntimeBinary` scans that directory and would pick `zcode-rs` up as the native fallback, without storage startup.
 
 - **Command, hello overrides, command gate:** the managed Host module `services-fork-agent-runtime` (`packages/services/src/zcode-agent/fork-agent-runtime/`). All three read the Host env (`ZCODE_FORK_AGENT_RUNTIME`), which Main writes once per Host.
+- **Official plugin seed for the Rust agent:** the managed CLI module `cli-fork-agent-runtime` (`apps/zcode-cli/packages/bootstrap/src/fork-agent-runtime/`), called from the `prepareStorageOnly` branch of `runZCodeProtocolAgent` (fork patch). It reads the same Host env, inherited by the storage Worker.
 - **Command:**
   - It takes the bundled Node command and returns either that same command or the Rust command: `[app-server, --stdio]`, plus `--surface desktop` added by the existing presentation step. The Rust command reuses the Node command's `storagePreparationEntry`.
   - Upstream `resolveDefaultZCodeAgentCommand` gets a one-line wrap around its bundled branch. `prepareSessionStorage` and the process manager both call that resolver, so storage preparation and agent spawn see the same decision with no further edits.
@@ -178,6 +233,7 @@ Host (utility process)
     prepareHostStorage (tasks-index)                       Node Worker
     prepareSessionStorage → resolveDefaultZCodeAgentCommand
                              → storagePreparationEntry = bundled zcode.cjs   Node Worker, migrations
+                               → effective=rust: seed official plugins        same Worker, after storagePrepared, before exit
   getClient → resolveDefaultZCodeAgentCommand
                → effective=rust ? zcode-rs app-server --stdio : zcode.cjs   conversation process
 ```
@@ -219,6 +275,7 @@ The Rust agent lives in this repository at `packages/rust-cli`, the same path it
 10. Rust effective, web-remote and desktop, in a fresh session: attaching a text file with a secret word on a line the model has not echoed, and asking for it, gives the word in the reply. The chip shows the file name, and the bubble shows only the typed text. After an agent restart the chip is still there and an attached image still previews. Reopening the task under `ZCODE_FORK_AGENT_RUNTIME=node` shows the same bubble and chips, and a follow-up question quoting the unechoed line exactly is answered from history.
 
 11. Rust effective: after a full agent restart, subscribing to a task (`v4/conversation/subscribe` with `topic: conversation/<session>`, `connectionId`, `clientMode`) gives `userInput` rows and turn headers whose `sourceCommandId` equals the stored `anchor.sourceCommandId` of that input. An image attached under Rust shows a chip with a ref when the task is reopened under Node, and an image attached under Node reaches the Rust model as an image.
+12. Rust effective on a fresh home (no `~/.zcode/cli/plugins`): after the first start the plugin store has `bundled-marketplace.json` and the `visualize` cache, and the first model request of a new task lists the `visualize` skill. With Node effective the storage Worker leaves the plugin store untouched.
 
 ## Tests
 
@@ -228,6 +285,9 @@ Fork unit tests go in `scripts/fork-test-files.json`:
 - Host env injection, including removal of inherited values;
 - the Host resolver returning Rust with the Node storage entry, and the Node command unchanged by default;
 - the schema default;
-- the hello overrides (empty for Node) and the command gate (ACP refused in Rust mode only; worktree commands admitted).
+- the hello overrides (empty for Node) and the command gate (ACP refused in Rust mode only; worktree commands admitted);
+- prepare-storage seeding the official plugins in Rust mode only, without failing preparation when the seed throws, and pointing the catalog at the last usable cache when a new plugin version cannot be laid out (`apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/official-plugin-seed.test.ts`, which drives the database step and the seed directly because the entrypoint's module graph needs every CLI package built).
+
+Acceptance scenario 12 is the desktop E2E case `conversation-session-fork-official-plugins-fresh-home`, run on both runtimes. It checks the plugin store and the first request's skill listing (`visualize:visualize`, `skill-creator:skill-creator`), and it covers the call in the entrypoint.
 
 Desktop E2E stays on Node. `wdio.conf.ts` already removes `ZCODE_AGENT_SERVER_COMMAND`, and it should also remove `ZCODE_FORK_AGENT_RUNTIME` unless an explicit opt-in is set.

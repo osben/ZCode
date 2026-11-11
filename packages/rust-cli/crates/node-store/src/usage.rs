@@ -27,9 +27,24 @@ pub fn touches_usage(facts: &[Fact]) -> bool {
 }
 
 /// Node `pruneUsage`：`started_at` 早于提交时间 30 天的行。
+///
+/// Fork: only rows the last rollup recompute covered, after the protected reconcile
+/// (`fork_usage_rollup::raw_prune_cutoff`), so a pruned raw row is already counted in the rollup;
+/// a failed reconcile fails this call and the caller's savepoint keeps every raw row.
 pub fn prune(ctx: &Commit<'_>) -> Result<(), StoreError> {
+    let Some(retention) = usage::RETENTION_MS else {
+        return Ok(());
+    };
     let now = i64::try_from(ctx.now).unwrap_or(i64::MAX);
-    usage::prune(ctx.conn, now.saturating_sub(usage::RETENTION_MS)).storage()
+    let Some(cutoff) = crate::fork_usage_rollup::raw_prune_cutoff(
+        ctx.conn,
+        now.saturating_sub(retention),
+        ctx.now,
+    )?
+    else {
+        return Ok(());
+    };
+    usage::prune(ctx.conn, cutoff).storage()
 }
 
 /// 用量是观测（usage.md §2.5，工作线 F77）：`write` 在一个 savepoint 里执行；失败时只回退这个 savepoint、记 warn
