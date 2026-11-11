@@ -111,6 +111,8 @@ windows-sys = { workspace = true, features = ["Win32_System_Registry"] }
 futures-util.workspace = true
 rust-cli-context.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
+# The Node-written worktree session in tests/worktree_resume.rs.
+rust-cli-node-store = { workspace = true, features = ["testing"] }
 # 测试直接组装判决链（产品代码经 runtime 组装；规则语法在 kernel-api，F125）。
 rust-cli-policy.workspace = true
 rust-cli-tools.workspace = true

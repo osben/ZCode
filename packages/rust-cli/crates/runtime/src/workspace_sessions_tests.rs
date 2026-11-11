@@ -125,3 +125,40 @@ async fn open_sessions_carry_their_state_and_stored_ones_are_inactive() {
     let other = current.workspace_sessions(elsewhere).await.unwrap();
     assert!(other.iter().all(|session| session.activity.is_none()));
 }
+
+/// Fork execution worktree, direct route: the row keeps the parent workspace (the listing), the worktree is stored,
+/// and the session starts in the worktree, so SessionStart and the first turn never run in the parent.
+#[tokio::test]
+async fn a_session_created_in_a_worktree_starts_there_and_is_stored_under_the_parent() {
+    use rust_cli_kernel_api::store::StoreQueries as _;
+
+    let store = Arc::new(MemoryStore::default());
+    let kernel = kernel(store.clone(), Arc::new(ScriptedModel::new(Vec::new())));
+    let id = kernel
+        .create_session_in_worktree(
+            create(),
+            EnvPath::new("/Users/dev/work/.worktrees/a"),
+            Some("feat/a".to_owned()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.meta(&id).unwrap().workspace.root.as_str(),
+        "/Users/dev/work"
+    );
+    let stored = store.execution_worktree(&id).await.unwrap().unwrap();
+    assert_eq!(stored.path.as_str(), "/Users/dev/work/.worktrees/a");
+    assert_eq!(stored.branch.as_deref(), Some("feat/a"));
+    let view = kernel
+        .open_session(&id)
+        .await
+        .unwrap()
+        .view()
+        .await
+        .unwrap();
+    assert_eq!(
+        view.meta.workspace.root.as_str(),
+        "/Users/dev/work/.worktrees/a"
+    );
+}

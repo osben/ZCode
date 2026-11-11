@@ -73,6 +73,8 @@ pub fn load(
             }
             None => false,
         },
+        // Fork: set by `fork_execution_worktree::run_in_worktree` after the load.
+        execution_worktree: false,
     };
     Ok((loaded, crate::rewind::active_checkpoints(conn, session)?))
 }

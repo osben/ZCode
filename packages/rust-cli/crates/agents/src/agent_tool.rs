@@ -225,6 +225,12 @@ impl Tool for AgentTool {
             .and_then(|owner| core.live.get(owner))
             .map_or(1, |owner| owner.depth + 1);
         let (agent, child) = spawn::ids(core);
+        // Fork: the child runs in the same workspace, so a deleted execution worktree refuses its tools too.
+        let execution_worktree = context
+            .session_ops
+            .view()
+            .await
+            .is_some_and(|view| view.execution_worktree);
         let entry = LiveAgent {
             agent,
             child,
@@ -248,6 +254,7 @@ impl Tool for AgentTool {
             mode: spawn::mode(parent.mode, definition.permission_mode),
             definition: Arc::new(definition),
             workspace: context.workspace.clone(),
+            execution_worktree,
             // 执行管线已按 Agent 的 `machine` 换好了机器（R3）：远端时记下它，子代理的工具缺省在那里跑。
             machine: context.machine.name().clone(),
             background,

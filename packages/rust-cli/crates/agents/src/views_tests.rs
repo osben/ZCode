@@ -35,6 +35,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
                 .unwrap(),
         ),
         workspace: crate::test_support::workspace(),
+        execution_worktree: false,
         selection: rust_cli_kernel_api::testing::selection(),
         mode: rust_cli_kernel_api::permission::PermissionMode::Default,
         background: true,

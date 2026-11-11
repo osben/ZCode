@@ -28,10 +28,16 @@ async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> {
         limit: STORED_SESSIONS_LIMIT,
     };
     match server.kernel.workspace_sessions(filter).await {
-        Ok(sessions) => sessions
-            .into_iter()
-            .map(|session| cold_row(workspace, &session))
-            .collect(),
+        Ok(sessions) => {
+            let mut rows = Vec::with_capacity(sessions.len());
+            for session in sessions {
+                let mut row = cold_row(workspace, &session);
+                // Fork: the prepared worktree and the execution worktree of the stored row (crate::worktree).
+                crate::worktree::decorate_cold_row(server, &session.summary.id, &mut row).await;
+                rows.push(row);
+            }
+            rows
+        }
         Err(error) => {
             tracing::warn!(event = "protocol.index.read_failed", error = %error, "listing the workspace sessions failed");
             Vec::new()

@@ -24,8 +24,6 @@ export function forkAgentRuntimeHelloOverrides(
   return {};
 }
 
-export const FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED =
-  "proto.forkRustAgent.executionWorktreeUnsupported";
 export const FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED =
   "proto.forkRustAgent.externalAgentUnsupported";
 
@@ -45,8 +43,8 @@ function isAcpSelection(value: unknown): boolean {
 
 /**
  * Fork features with no agent capability flag. The Node agent implements them; zcode-rs drops the
- * fields, which would run a worktree session in the main checkout or send an ACP prompt to an
- * unknown provider. Refuse them before the command reaches the Rust agent.
+ * fields, which would send an ACP prompt to an unknown provider. Refuse them before the command
+ * reaches the Rust agent.
  */
 export function forkAgentRuntimeCommandGateError(
   envelope: CommandEnvelopeLike,
@@ -54,20 +52,11 @@ export function forkAgentRuntimeCommandGateError(
 ): string | undefined {
   if (!isForkRustAgentRuntime(env)) return undefined;
   const payload = (envelope.payload ?? {}) as {
-    worktreePreparation?: unknown;
-    executionWorktree?: unknown;
     modelSelection?: unknown;
     provider?: unknown;
     config?: { modelSelection?: unknown; provider?: unknown };
     firstInput?: { modelSelection?: unknown };
   };
-  if (
-    envelope.type === "updateWorktreePreparation" ||
-    (envelope.type === "createSession" &&
-      (payload.worktreePreparation !== undefined || payload.executionWorktree !== undefined))
-  ) {
-    return FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED;
-  }
   if (
     envelope.type === "setExternalAgentConfigOption" ||
     isAcpSelection(payload.modelSelection) ||

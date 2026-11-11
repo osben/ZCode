@@ -1,6 +1,7 @@
 //! 内核会话 API 的本地实现（[`Kernel`]）：建会话、打开会话（冷加载）、列出会话。
 
 use super::*;
+use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::permission::ExecutionState;
 
 #[async_trait]
@@ -37,42 +38,30 @@ impl Kernel for LocalKernel {
         request: CreateSession,
         start: StartSource,
     ) -> Result<SessionId, KernelError> {
-        // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
-        // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
-        self.defaults.selection.settled().await;
-        let id = request.id.unwrap_or_else(|| self.ports.ids.session());
-        let meta = SessionMeta {
-            id: id.clone(),
-            kind: SessionKind::Interactive,
-            parent: None,
-            workspace: request.workspace,
-            title: String::new(),
-            // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
-            trace: TraceId::new(id.as_str()),
-            created_at_ms: self.ports.clock.now_ms(),
-            incognito: request.incognito,
-        };
-        self.ports.store.create(meta.clone()).await?;
-        self.incognito.record(&id, meta.incognito);
-        // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
-        let execution = ExecutionState::from_parts(request.mode, request.plan);
-        let batch = FactBatch {
-            owner_epoch: OwnerEpoch::LOCAL,
-            command: None,
-            facts: vec![
-                Fact::ModelSelected {
-                    selection: request.selection.clone(),
-                },
-                Fact::ExecutionChanged { state: execution },
-            ],
-            turn: None,
-        };
-        self.ports.store.commit(&id, batch).await?;
-        self.start(
-            SessionState::created(meta, request.selection, execution, start),
-            Opened::Created,
-        );
-        Ok(id)
+        self.create_in(request, start, None, false).await
+    }
+
+    async fn create_session_in_worktree(
+        &self,
+        request: CreateSession,
+        worktree: EnvPath,
+        branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        self.create_in(
+            request,
+            StartSource::Startup,
+            Some((worktree, branch)),
+            false,
+        )
+        .await
+    }
+
+    async fn create_prepared_session(
+        &self,
+        request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        self.create_in(request, StartSource::Startup, None, true)
+            .await
     }
 
     async fn open_session_as(
@@ -80,44 +69,14 @@ impl Kernel for LocalKernel {
         session: &SessionId,
         start: StartSource,
     ) -> Result<Arc<dyn SessionHandle>, KernelError> {
-        // 同 `create_session_as`：开会话也先等缺省模型定下。
-        self.defaults.selection.settled().await;
-        // 修复（F33，session-lifecycle.md §3.3.1）：以前表里有这个会话就直接给出句柄，它正在关闭时（actor 已退出、
-        // 还没移出表）打开拿到的是死句柄，`view()` 报 `the session is closed`；两个并发的打开还会各自冷加载。现在
-        // 关闭中、加载中的等它换掉；没有条目时登记 Loading，由这个调用冷加载（失败或被丢下时守卫移出 Loading）。
-        let _loading = match self.claim(session).await {
-            table::Claim::Open(open) => return Ok(open),
-            table::Claim::Load(loading) => loading,
-        };
-        // Fork: a subagent's live run is taken before the cold load, so nothing it stores falls between the two
-        // (session crate `child_live`).
-        let child_live = self.agents.child_live(session);
-        let loaded = self.ports.store.load(session).await?;
-        // Fork: the incognito gates read the profile by session id from here on.
-        self.incognito.record(session, loaded.meta.incognito);
-        // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
-        // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
-        // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
-        let rules = self.ports.store.session_rules(session).await?;
-        // 会话之外按会话保存的状态（判决链的会话规则、“先读后改”记录）在启动 actor 之前恢复（table.rs 的
-        // `SessionScoped`，关闭时在同一处释放）。
-        self.closer
-            .scoped
-            .restored(
-                session,
-                &loaded,
-                rules.as_ref(),
-                self.machine().files().as_ref(),
-            )
-            .await;
-        let mut state = SessionState::from_loaded(
-            loaded,
-            &self.defaults.selection.current(),
-            self.defaults.mode,
-            start,
-        );
-        state.child_live = child_live;
-        Ok(self.start(state, Opened::Loaded))
+        self.open_in(session, start, false).await
+    }
+
+    async fn open_prepared_session(
+        &self,
+        session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        self.open_in(session, StartSource::Resume, true).await
     }
 
     async fn list_sessions(
@@ -367,5 +326,119 @@ impl Kernel for LocalKernel {
         workspace: &rust_cli_kernel_api::env::WorkspaceRef,
     ) -> Vec<rust_cli_kernel_api::user_command::UserCommand> {
         self.ext.user_commands().commands(workspace).await
+    }
+}
+
+impl LocalKernel {
+    /// Opens a stored session; `held` (fork prepared execution worktree reopened before its activation) holds
+    /// SessionStart until `Command::SetExecutionRoot`. A session already open keeps its own state.
+    async fn open_in(
+        &self,
+        session: &SessionId,
+        start: StartSource,
+        held: bool,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        // 同 `create_session_as`：开会话也先等缺省模型定下。
+        self.defaults.selection.settled().await;
+        // 修复（F33，session-lifecycle.md §3.3.1）：以前表里有这个会话就直接给出句柄，它正在关闭时（actor 已退出、
+        // 还没移出表）打开拿到的是死句柄，`view()` 报 `the session is closed`；两个并发的打开还会各自冷加载。现在
+        // 关闭中、加载中的等它换掉；没有条目时登记 Loading，由这个调用冷加载（失败或被丢下时守卫移出 Loading）。
+        let _loading = match self.claim(session).await {
+            table::Claim::Open(open) => return Ok(open),
+            table::Claim::Load(loading) => loading,
+        };
+        // Fork: a subagent's live run is taken before the cold load, so nothing it stores falls between the two
+        // (session crate `child_live`).
+        let child_live = self.agents.child_live(session);
+        let loaded = self.ports.store.load(session).await?;
+        // Fork: the incognito gates read the profile by session id from here on.
+        self.incognito.record(session, loaded.meta.incognito);
+        // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
+        // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
+        // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
+        let rules = self.ports.store.session_rules(session).await?;
+        // 会话之外按会话保存的状态（判决链的会话规则、“先读后改”记录）在启动 actor 之前恢复（table.rs 的
+        // `SessionScoped`，关闭时在同一处释放）。
+        self.closer
+            .scoped
+            .restored(
+                session,
+                &loaded,
+                rules.as_ref(),
+                self.machine().files().as_ref(),
+            )
+            .await;
+        let mut state = SessionState::from_loaded(
+            loaded,
+            &self.defaults.selection.current(),
+            self.defaults.mode,
+            start,
+        );
+        state.child_live = child_live;
+        state.start_held = held;
+        Ok(self.start(state, Opened::Loaded))
+    }
+
+    /// Creates a session; with `execution` (fork execution worktree) the row keeps the requested workspace and the
+    /// session starts in the worktree. `held` (fork prepared worktree) holds SessionStart until the
+    /// activation moves the session.
+    async fn create_in(
+        &self,
+        request: CreateSession,
+        start: StartSource,
+        execution: Option<(EnvPath, Option<String>)>,
+        held: bool,
+    ) -> Result<SessionId, KernelError> {
+        // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
+        // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
+        self.defaults.selection.settled().await;
+        let id = request.id.unwrap_or_else(|| self.ports.ids.session());
+        let mut meta = SessionMeta {
+            id: id.clone(),
+            kind: SessionKind::Interactive,
+            parent: None,
+            workspace: request.workspace,
+            title: String::new(),
+            // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
+            trace: TraceId::new(id.as_str()),
+            created_at_ms: self.ports.clock.now_ms(),
+            incognito: request.incognito,
+        };
+        self.ports.store.create(meta.clone()).await?;
+        self.incognito.record(&id, meta.incognito);
+        let in_worktree = execution.is_some();
+        if let Some((worktree, branch)) = execution {
+            if let Err(error) = self
+                .ports
+                .store
+                .set_execution_worktree(&id, &worktree, branch.as_deref())
+                .await
+            {
+                if let Err(cleanup) = self.ports.store.delete(&id).await {
+                    tracing::warn!(error = %cleanup, "removing the refused worktree session failed");
+                }
+                return Err(error.into());
+            }
+            meta.workspace.root = worktree;
+        }
+        // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
+        let execution = ExecutionState::from_parts(request.mode, request.plan);
+        let batch = FactBatch {
+            owner_epoch: OwnerEpoch::LOCAL,
+            command: None,
+            facts: vec![
+                Fact::ModelSelected {
+                    selection: request.selection.clone(),
+                },
+                Fact::ExecutionChanged { state: execution },
+            ],
+            turn: None,
+        };
+        self.ports.store.commit(&id, batch).await?;
+        let mut state = SessionState::created(meta, request.selection, execution, start);
+        state.start_held = held;
+        state.execution_worktree = in_worktree;
+        self.start(state, Opened::Created);
+        Ok(id)
     }
 }
