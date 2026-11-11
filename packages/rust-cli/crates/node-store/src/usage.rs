@@ -27,7 +27,12 @@ pub fn touches_usage(facts: &[Fact]) -> bool {
 }
 
 /// Node `pruneUsage`：`started_at` 早于提交时间 30 天的行。
+///
+/// Fork: the usage rollup is recomputed first (`fork_usage_rollup::recompute_before_raw_prune`), so
+/// a pruned raw row is already counted in the rollup; a failed recompute fails this call and the
+/// caller's savepoint keeps every raw row.
 pub fn prune(ctx: &Commit<'_>) -> Result<(), StoreError> {
+    crate::fork_usage_rollup::recompute_before_raw_prune(ctx.conn, ctx.now)?;
     let now = i64::try_from(ctx.now).unwrap_or(i64::MAX);
     usage::prune(ctx.conn, now.saturating_sub(usage::RETENTION_MS)).storage()
 }

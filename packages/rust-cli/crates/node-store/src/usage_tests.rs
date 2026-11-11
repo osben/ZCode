@@ -4,7 +4,7 @@ use rust_cli_kernel_api::ids::{MessageId, SessionId, ToolUseId};
 use rust_cli_kernel_api::message::{StopReason, Usage};
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall, ToolCall};
 use rust_cli_kernel_api::model::{ModelError, ModelSelection, QuerySource};
-use rust_cli_kernel_api::store::{Fact, SessionKind, SessionStore};
+use rust_cli_kernel_api::store::{Fact, SessionKind, SessionStore, StoreQueries};
 use serde_json::{Value, json};
 
 use crate::tests::{TestStore, assistant, batch, meta, started, text, user};
@@ -490,5 +490,89 @@ async fn usage_writes_prune_rows_older_than_thirty_days() {
     assert_eq!(
         t.rows("select logical_request_id from model_usage"),
         vec![vec![json!("msg_a2")]]
+    );
+}
+
+/// Every token over the whole history, as App Usage answers it (rollup first).
+async fn all_time_tokens(t: &TestStore) -> i64 {
+    let span = rust_cli_kernel_api::store::AppUsageSpan {
+        since_ms: 0,
+        until_ms: i64::MAX / 4,
+        tz_offset_ms: 0,
+        filters: rust_cli_kernel_api::store::AppUsageFilters::default(),
+        include_facets: false,
+        hourly: false,
+        top_sessions: false,
+    };
+    let rows = t.store.app_usage(span).await.unwrap();
+    assert_eq!(rows.rollup_fallback_reason, None);
+    rows.totals.total_tokens
+}
+
+/// Fork (specs/fork-agent-runtime-selection.md "Usage rollup in Rust mode"): a raw row written
+/// after the last recompute is rolled up before the 30-day prune removes it, even when App Usage
+/// is never opened in between (Node schedules the recompute after every usage write).
+#[tokio::test]
+async fn usage_rows_are_rolled_up_before_the_raw_prune_removes_them() {
+    let t = TestStore::new();
+    let day = 86_400_000_u64;
+    started(&t, "sess_1").await;
+    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
+    // A read leaves the watermark at `base`.
+    let base = 40 * day;
+    t.source.at(base);
+    assert_eq!(all_time_tokens(&t).await, 0);
+    // Written right after the watermark, inside the write debounce.
+    t.source.at(base + 60_000);
+    let mut early = call("msg_a1", CallStatus::Completed);
+    early.started_at_ms = base + 30_000;
+    early.completed_at_ms = base + 50_000;
+    commit(&t, &sid(), vec![Fact::ModelCalled { call: early }]).await;
+    // A month later another usage batch prunes the first row.
+    let later = base + 31 * day;
+    t.source.at(later);
+    let mut fresh = call("msg_a2", CallStatus::Completed);
+    fresh.started_at_ms = later - 10_000;
+    fresh.completed_at_ms = later - 5_000;
+    commit(&t, &sid(), vec![Fact::ModelCalled { call: fresh }]).await;
+    assert_eq!(
+        t.rows("select logical_request_id from model_usage"),
+        vec![vec![json!("msg_a2")]]
+    );
+    // Both requests are still counted (20 tokens each).
+    assert_eq!(all_time_tokens(&t).await, 40);
+}
+
+/// A failed recompute keeps the raw rows: that batch does not prune.
+#[tokio::test]
+async fn a_failed_rollup_skips_the_raw_prune() {
+    let t = TestStore::new();
+    let day = 86_400_000_u64;
+    started(&t, "sess_1").await;
+    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
+    commit(
+        &t,
+        &sid(),
+        vec![Fact::ModelCalled {
+            call: call("msg_a1", CallStatus::Completed),
+        }],
+    )
+    .await;
+    // Break the rollup: a view in place of a bucket table makes the replacement fail.
+    {
+        let conn = t.connection();
+        conn.execute_batch(
+            "drop table if exists fork_usage_tool;
+             create view fork_usage_tool as select 1 as bucket_start;",
+        )
+        .unwrap();
+    }
+    t.source.at(2_000 + 30 * day + 1);
+    let mut fresh = call("msg_a2", CallStatus::Completed);
+    fresh.started_at_ms = 30 * day;
+    commit(&t, &sid(), vec![Fact::ModelCalled { call: fresh }]).await;
+    assert_eq!(
+        t.rows("select logical_request_id from model_usage order by started_at"),
+        vec![vec![json!("msg_a1")], vec![json!("msg_a2")]]
     );
 }
