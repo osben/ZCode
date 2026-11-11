@@ -644,6 +644,71 @@ async fn the_prune_keeps_another_process_update_in_a_protected_bucket() {
     assert_eq!(all_time(&t).await.totals.total_tokens, 65);
 }
 
+/// A `tool_usage` row Node still upserts (`running` until its result) is not pruned: a pruned row
+/// loses its protected snapshot at the next reconcile, and Node's completing upsert would then
+/// re-create it and count it again (3 calls instead of 2).
+#[tokio::test]
+async fn a_running_tool_row_is_not_pruned_until_it_completes() {
+    let t = TestStore::new();
+    let erased = SessionId::new("sess_erased");
+    started(&t, "sess_erased").await;
+    started(&t, "sess_1").await;
+    commit(&t, &erased, vec![user("msg_e1", "hi")]).await;
+    commit(
+        &t,
+        &erased,
+        vec![Fact::ToolCalled {
+            call: tool("toolu_e", CallStatus::Completed),
+        }],
+    )
+    .await;
+    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
+    commit(
+        &t,
+        &sid(),
+        vec![Fact::ToolCalled {
+            call: tool("toolu_l", CallStatus::Completed),
+        }],
+    )
+    .await;
+    // Node's row of a call still running: `upsertToolUsage` with `status: "running"`.
+    t.connection()
+        .execute_batch(
+            "update tool_usage set status = 'running', completed_at = null, duration_ms = null
+             where tool_call_id = 'toolu_l'",
+        )
+        .unwrap();
+    t.source.at(10_000);
+    assert_eq!(all_time(&t).await.tool_totals.tool_call_count, 2);
+    // A month later the erase protects the shared bucket.
+    let later = 31 * DAY;
+    t.source.at(later);
+    StoreQueries::erase_session_tree(&t.store, vec!["sess_erased".to_owned()])
+        .await
+        .unwrap();
+    // Two Rust usage batches: a prune, then a reconcile that drops snapshots of missing rows.
+    t.source.at(later + 60_000);
+    commit(&t, &sid(), vec![model_call_at("msg_a1", later + 30_000)]).await;
+    t.source.at(later + 120_000);
+    commit(&t, &sid(), vec![model_call_at("msg_a2", later + 90_000)]).await;
+    assert_eq!(
+        t.rows("select status from tool_usage where tool_call_id = 'toolu_l'"),
+        vec![vec![json!("running")]]
+    );
+    // Node completes the call (the same id upserted), then App Usage reads.
+    t.source.at(later + 180_000);
+    commit(
+        &t,
+        &sid(),
+        vec![Fact::ToolCalled {
+            call: tool("toolu_l", CallStatus::Completed),
+        }],
+    )
+    .await;
+    t.source.at(later + 240_000);
+    assert_eq!(all_time(&t).await.tool_totals.tool_call_count, 2);
+}
+
 /// A failed reconcile keeps the raw rows: that batch does not prune.
 #[tokio::test]
 async fn a_failed_reconcile_skips_the_raw_prune() {

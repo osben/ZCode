@@ -91,7 +91,8 @@ App Usage (`v4/usage/stats`, and the session totals behind `v4/conversation/usag
 - Cutoff: `started_at < min(now − 30 days, align_down(watermark − 7 days))`. A recompute at watermark `W` rebuilt every bucket from `align_down(W − 7 days)` on, so a row below that bound that existed at `W` is in the rollup. Without a watermark (no build has rolled up yet) the prune deletes nothing.
 - Before the delete, the usage batch's transaction always runs the protected reconcile (`sync_protected_raw_rows`, Node `syncForkUsageProtectedRawRows`), whatever the watermark's age. It needs the raw row to compute the difference, and it drops the snapshot of a row that is gone.
 - A reconcile error rolls the usage savepoint back and that batch prunes nothing (`usage.prune.failed` warning).
-- Rust deletes a subset of what Node's prune deletes (`started_at < now − 30 days`), so the two never conflict. A user who never opens App Usage keeps raw rows until the first read or erase moves the watermark. That is the 3.18 behavior, where raw rows are never pruned.
+- A `tool_usage` row still `running` is not pruned. Node upserts a tool row by id from `ToolCallScheduled` until its result (`completed`, `error`, `cancelled`); `model_usage` and `turn_usage` are written once, at the end. A pruned row loses its protected snapshot at the next reconcile while the bucket keeps its contribution, so a later upsert of the same id would re-create the row and count it a second time. Rows Node can no longer change are the only ones Rust prunes.
+- Rust deletes a subset of what Node's prune deletes (`started_at < now − 30 days`, any status), so the two never conflict. A user who never opens App Usage keeps raw rows until the first read or erase moves the watermark. That is the 3.18 behavior, where raw rows are never pruned.
 - Upstream 3.18 stops pruning raw usage in Node (`USAGE_RETENTION_MS` and `pruneUsage` are gone). The raw prune in `zcode-rs` has a single switch, `repo::usage::RETENTION_MS` (`Some(30 days)` while the fork is on 3.17). The 3.18 sync sets it to `None`, which turns off the prune and its reconcile.
 - Known Node gap (3.17, not fixed: the 3.18 sync removes the prune): `pruneUsageIfDue` deletes `started_at < now − 30 days` hourly with no watermark bound and no protected reconcile. Node usually recomputes within 5 minutes of a write (`scheduleForkUsageRollup`), so the window is a process that exits before its debounced recompute and is not reopened for 30 days.
 
@@ -101,7 +102,7 @@ usage batch (zcode-rs, one BEGIN IMMEDIATE)
   savepoint "usage"
     watermark missing?                 → no prune
     sync_protected_raw_rows            (error → roll back the savepoint, warn usage.prune.failed)
-    delete raw rows started_at < min(now − 30 d, align_down(watermark − 7 d))
+    delete raw rows started_at < min(now − 30 d, align_down(watermark − 7 d)), except running tool_usage
   release
 commit
 App Usage read  → recompute (window watermark − 7 d … now), watermark := now → rollup query (raw fallback as in Node)
@@ -114,6 +115,7 @@ Acceptance:
 - A raw row written after the last recompute is not pruned until a recompute covered it, and is then counted.
 - A turn longer than 7 days that ends after a read is still counted by the next read.
 - A live row updated by another process in a protected bucket keeps its new value after the prune.
+- A tool call still running in a protected bucket is not pruned; when it completes it is counted once.
 - Without a watermark no raw row is pruned.
 
 ## State owners

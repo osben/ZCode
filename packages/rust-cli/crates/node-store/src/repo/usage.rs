@@ -466,7 +466,9 @@ pub fn prune(conn: &Connection, before: i64) -> Result<()> {
         .execute([before])?;
     conn.prepare_cached("delete from turn_usage where started_at < ?")?
         .execute([before])?;
-    conn.prepare_cached("delete from tool_usage where started_at < ?")?
+    // Fork: a running tool row is still upserted by id (Node `upsertToolUsage` until its result);
+    // pruned, it would lose its protected snapshot and be counted again when the upsert re-creates it.
+    conn.prepare_cached("delete from tool_usage where started_at < ? and status != 'running'")?
         .execute([before])?;
     Ok(())
 }
