@@ -22,16 +22,20 @@ fn has_columns(conn: &Connection) -> Result<bool, StoreError> {
     .storage()
 }
 
-/// The workspace the row is listed under (`directory`), whatever the session runs in; `None` for an unknown session.
-pub(crate) fn directory(conn: &Connection, session: &str) -> Result<Option<EnvPath>, StoreError> {
+/// The workspace key the row is listed under (Node `workspaceID ?? directory`), whatever the session runs in; `None`
+/// for an unknown session.
+pub(crate) fn workspace_key(
+    conn: &Connection,
+    session: &str,
+) -> Result<Option<String>, StoreError> {
+    // An empty workspace_id is no identity, as the session repo reads it (`nonempty`).
     conn.query_row(
-        "select directory from session where id = ?",
+        "select coalesce(nullif(workspace_id, ''), directory) from session where id = ?",
         [session],
         |row| row.get::<_, String>(0),
     )
     .optional()
     .storage()
-    .map(|directory| directory.map(EnvPath::new))
 }
 
 /// The stored worktree; `None` for an ordinary session, an unknown one, or a database without the columns.
