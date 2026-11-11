@@ -16,6 +16,7 @@ fn facts<'a>(tool_names: &'a [String], surface: Surface) -> PromptFacts<'a> {
         custom: None,
         append: None,
         token_budget: true,
+        desktop: None,
     }
 }
 
@@ -215,5 +216,57 @@ fn every_section_has_its_name_and_they_join_into_the_system_blocks() {
     assert!(
         !names.contains(&"Memory") && !names.contains(&"Session guidance"),
         "{names:?}"
+    );
+}
+
+/// Fork: Node's desktop section closes the static block (Node's stable system message: identity body, then the
+/// section), before the session sections; the block is then cached per session, like Node's stable message.
+#[test]
+fn the_desktop_section_closes_the_static_block() {
+    let tools = names(&["Skill"]);
+    let plain = system_blocks(&facts(&tools, Surface::Interactive));
+    let mut desktop = facts(&tools, Surface::Interactive);
+    let text = crate::desktop::section(None);
+    desktop.desktop = Some(&text);
+    let blocks = system_blocks(&desktop);
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[0], plain[0]);
+    assert_eq!(blocks[1].text, format!("{}\n\n{text}", plain[1].text));
+    assert_eq!(blocks[1].cache_control, cache(None));
+    assert_eq!(plain[1].cache_control, cache(Some("global")));
+    assert_eq!(blocks[2], plain[2]);
+    assert!(!blocks[2].text.contains("# ZCode Desktop Context"));
+    let named: Vec<&str> = sections(&desktop)
+        .iter()
+        .map(|section| section.name)
+        .collect();
+    assert_eq!(
+        &named[..3],
+        [
+            "Core instructions",
+            "ZCode Desktop Context",
+            "Communication"
+        ]
+    );
+}
+
+/// Fork: like Node (`hasCustomSystemPrompt` skips the default dynamic sections), a custom prompt drops the section.
+#[test]
+fn a_custom_prompt_drops_the_desktop_section() {
+    let tools = names(&["Skill"]);
+    let mut custom = facts(&tools, Surface::Interactive);
+    custom.custom = Some("You are a terse test assistant.");
+    let text = crate::desktop::section(None);
+    custom.desktop = Some(&text);
+    let blocks = system_blocks(&custom);
+    assert!(
+        blocks
+            .iter()
+            .all(|block| !block.text.contains("# ZCode Desktop Context"))
+    );
+    assert!(
+        sections(&custom)
+            .iter()
+            .all(|section| section.name != "ZCode Desktop Context")
     );
 }

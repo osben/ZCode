@@ -39,6 +39,10 @@ texts! {
     memory_lean => "system/memory_lean",
     context_management => "system/context_management",
     act_dont_rederive => "system/act_dont_rederive",
+    // Fork: Node's "ZCode Desktop Context" section (core `context/sections/desktop.ts`), byte for byte.
+    desktop_context => "system/desktop_context",
+    desktop_gen_ui => "system/desktop_gen_ui",
+    desktop_gen_ui_none => "system/desktop_gen_ui_none",
     total_tokens => "context/total_tokens",
     environment => "context/environment",
     environment_cwd => "context/environment_cwd",

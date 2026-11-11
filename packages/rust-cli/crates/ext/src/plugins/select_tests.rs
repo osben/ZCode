@@ -97,6 +97,7 @@ async fn enablement_follows_enabled_plugins_and_the_defaults() {
         ],
         enabled_plugins: enabled(&[("off@inline", false), ("on-kit@market", true)]),
         suppressed_builtins: vec![format!("zcode-guide@{OFFICIAL}")],
+        view_host: false,
     };
     let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
     // 配置目录缺省启用；官方插件只有缺省名单里的启用；已安装插件要 `enabledPlugins` 打开。
@@ -265,5 +266,30 @@ async fn bundled_plugins_that_need_the_node_runtime_are_skipped() {
                 &SkipReason::Disabled
             ),
         ]
+    );
+}
+
+/// Fork: on the desktop surface (`view_host`) `visualize` loads, like Node's protocol entry; the other Node
+/// dependencies are still skipped.
+#[tokio::test]
+async fn visualize_loads_with_the_desktop_view_host() {
+    let files = [
+        official_manifest("visualize", ""),
+        official_manifest("computer-use", ""),
+    ];
+    let sources = PluginSources {
+        candidates: vec![official("visualize"), official("computer-use")],
+        enabled_plugins: enabled(&[("computer-use@zcode-plugins-official", true)]),
+        view_host: true,
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+    assert_eq!(names(&loaded), ["visualize"]);
+    assert_eq!(
+        reasons(&loaded),
+        [(
+            Some("computer-use@zcode-plugins-official"),
+            &SkipReason::NodeRuntime(NodeDependency::NodeRepl)
+        )]
     );
 }
