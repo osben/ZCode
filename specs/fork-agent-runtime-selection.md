@@ -94,6 +94,7 @@ App Usage (`v4/usage/stats`, and the session totals behind `v4/conversation/usag
 
 - In `zcode-rs`, the usage batch's transaction recomputes before it prunes. To keep the write path short, the recompute is skipped while the watermark is less than 5 minutes old (Node's write debounce). The watermark is the shared database fact, not process memory.
 - If the recompute fails, that batch does not prune: the rows stay for the next batch.
+- Upstream 3.18 stops pruning raw usage in Node (`USAGE_RETENTION_MS` and `pruneUsage` are gone). The raw prune in `zcode-rs` has a single switch, `repo::usage::RETENTION_MS` (`Some(30 days)` while the fork is on 3.17). The 3.18 sync sets it to `None`, which turns off both the prune and the recompute that guards it. Reads and erases keep recomputing.
 - Proof that no row is lost: a row is written at time `t`, and its prune happens after `t + 30 days`.
   - If the watermark is more than 5 minutes old when the prune runs, the recompute runs first. Its window starts at `watermark − 7 days`, and the row was written after that watermark, so the window covers it.
   - If the watermark is fresher, it comes from a recompute that ran after `t`, so the row is already rolled up.

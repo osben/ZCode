@@ -6,8 +6,10 @@
 use anyhow::Result;
 use rusqlite::{Connection, params};
 
-/// Node `USAGE_RETENTION_DAYS`。
-pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// Node `USAGE_RETENTION_MS` (upstream up to 3.17): raw usage rows older than this are pruned.
+/// Upstream 3.18 keeps raw usage forever; its sync sets this to `None`, the only switch for the
+/// raw prune (specs/fork-agent-runtime-selection.md "Usage rollup in Rust mode").
+pub const RETENTION_MS: Option<i64> = Some(30 * 24 * 60 * 60 * 1000);
 
 /// 一个用量事实写入之前：开 savepoint（usage.md §2.5，工作线 F77）。
 pub fn savepoint(conn: &Connection) -> Result<()> {
