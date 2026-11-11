@@ -130,6 +130,25 @@ pub(crate) fn absent_if_not_found<T>(
     }
 }
 
+/// Fork: whether `session` has a soft-deleted row. A deleted session reads as "no such session", but its row still
+/// exists: Node's createSession reads `getSession` (deleted rows included) and refuses before any write, while a
+/// create here would upsert over the row (title, directory, and possibly the incognito profile) before failing. A
+/// store without the row read cannot hold one.
+pub(crate) async fn deleted(server: &Server, session: &SessionId) -> Result<bool, &'static str> {
+    match server.kernel.queries().reconcile_row(session).await {
+        Ok(row) => Ok(row_deleted(row.as_ref())),
+        Err(rust_cli_kernel_api::store::StoreError::Unsupported { .. }) => Ok(false),
+        // No error text: a storage error can name the storage path.
+        Err(_) => Err("reading the session failed"),
+    }
+}
+
+/// Fork: a reconcile row (`StoreQueries::reconcile_row`) with a deletion time.
+pub(crate) fn row_deleted(row: Option<&Value>) -> bool {
+    row.and_then(|row| row.get("timeDeleted"))
+        .is_some_and(|time| !time.is_null())
+}
+
 pub async fn save(server: &Server, session: &SessionId, marker: &Marker) -> Result<(), String> {
     server
         .kernel
@@ -344,6 +363,16 @@ mod tests {
             let incognito = ReserveIncognito { stored, requested };
             assert!(recreate_existing(None, true, false, incognito).is_err());
         }
+    }
+
+    #[test]
+    fn only_a_row_with_a_deletion_time_is_deleted() {
+        assert!(!row_deleted(None));
+        assert!(!row_deleted(Some(
+            &json!({"timeDeleted": null, "title": "t"})
+        )));
+        assert!(!row_deleted(Some(&json!({"title": "t"}))));
+        assert!(row_deleted(Some(&json!({"timeDeleted": 4_000}))));
     }
 
     fn normal() -> ReserveIncognito {

@@ -126,3 +126,51 @@ async fn a_server_outside_the_sessions_snapshot_is_not_waited_for() {
     assert_eq!(ran.elapsed, 0);
     assert!(ran.results[0].contains("No such tool available"));
 }
+
+/// Fork: the wait judges only the servers in the session's snapshot. A hidden plugin server whose name normalizes to
+/// the same `mcp__` prefix as a visible one (`plugin:demo:api` and `plugin_demo_api`) does not keep the call waiting.
+#[tokio::test(start_paused = true)]
+async fn a_hidden_server_with_the_same_normalized_name_does_not_prolong_the_wait() {
+    let registry = McpRegistry::new(
+        Vec::new(),
+        FakeConnections::new(
+            vec![
+                server("plugin_demo_api", McpServerState::Pending),
+                server("plugin:demo:api", McpServerState::Pending),
+            ],
+            3_000,
+        ),
+    );
+    registry
+        .hidden
+        .lock()
+        .unwrap()
+        .push("plugin:demo:api".to_owned());
+    const PLUGIN_TOOL: &str = "mcp__plugin_demo_api__lookup";
+    let model = Arc::new(ScriptedModel::new(vec![
+        tool_use_response("toolu_0", PLUGIN_TOOL, &json!({})),
+        text_response(&["done"]),
+    ]));
+    let clock = Arc::new(TokioClock::new(0));
+    let mut parts = parts(model, Vec::new());
+    parts.tools = registry.clone();
+    parts.clock = clock.clone();
+    let request = request("go");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    let connecting = registry.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        connecting.connect(
+            "plugin_demo_api",
+            vec![Arc::new(FakeTool::new(
+                PLUGIN_TOOL,
+                true,
+                "value for alpha",
+            ))],
+        );
+    });
+    let start = clock.now_ms();
+    crate::run::run(scope, request).await.unwrap();
+    assert_eq!(results(&sink.messages()), ["value for alpha"]);
+    assert_eq!(clock.now_ms() - start, 500);
+}

@@ -67,9 +67,25 @@ pub(crate) async fn wait_for_tool(
         return registry.find(name);
     }
     let started = scope.parts.clock.now_ms();
-    let done = |view: &McpView| waiting(view, name, &scope.exhausted).is_empty();
+    // Fork: the connection signals every change, but only the servers in the session's snapshot are judged, so a
+    // server an incognito profile removes (even one whose name normalizes to the same prefix) never prolongs the wait.
+    let shown: Vec<String> = scope
+        .parts
+        .tools
+        .snapshot(&scope.session)
+        .mcp
+        .map(|view| view.servers.into_iter().map(|server| server.name).collect())
+        .unwrap_or_default();
+    let visible = |view: &McpView| {
+        let mut narrowed = view.clone();
+        narrowed
+            .servers
+            .retain(|server| shown.contains(&server.name));
+        narrowed
+    };
+    let done = |view: &McpView| waiting(&visible(view), name, &scope.exhausted).is_empty();
     let view = tokio::select! {
-        view = mcp.wait(budget, &done) => view,
+        view = mcp.wait(budget, &done) => visible(&view),
         () = cancel.cancelled() => return None,
     };
     let elapsed = scope.parts.clock.now_ms().saturating_sub(started);

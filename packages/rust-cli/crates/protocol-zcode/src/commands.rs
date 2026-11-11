@@ -420,6 +420,22 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             // No error text: a storage error can name the storage path.
             Err(_) => return failed("reading the session failed"),
         };
+    // Fork: a soft-deleted id is not free (Node refuses it before any write).
+    if existing.is_none() {
+        match crate::preparation::deleted(server, &id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    "sessionId already exists".to_owned(),
+                    0,
+                );
+            }
+            Err(reason) => return failed(reason),
+        }
+    }
     if let Some(view) = &existing {
         let marker = match crate::preparation::load(server, &id).await {
             Ok(marker) => marker,
@@ -560,6 +576,27 @@ async fn reserve_submission(
                 );
             }
         };
+    // Fork: a soft-deleted id is not free (Node refuses it before any write).
+    if existing.is_none() {
+        match crate::preparation::deleted(server, &id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return refused(
+                    "proto.invalidPayload",
+                    format!("session {} cannot be reserved: it was deleted", id.as_str()),
+                );
+            }
+            Err(reason) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.createSessionFailed",
+                    reason.to_owned(),
+                    0,
+                );
+            }
+        }
+    }
     if let Some(view) = &existing {
         let marker = match crate::preparation::load(server, &id).await {
             Ok(marker) => marker,

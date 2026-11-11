@@ -172,3 +172,33 @@ async fn without_the_column_normal_sessions_work_and_an_incognito_create_fails()
             .is_empty()
     );
 }
+
+/// Fork: a soft-deleted session loads as not found, but its row stays and a create upserts over it (here the title).
+/// The reconcile row still reports the deletion, so the protocol refuses the id before any write
+/// (`protocol-zcode` `preparation::deleted`, Node "sessionId already exists").
+#[tokio::test]
+async fn a_soft_deleted_row_is_reported_by_the_reconcile_read() {
+    use rust_cli_kernel_api::store::StoreQueries;
+    let t = TestStore::new();
+    with_column(&t).await;
+    t.connection()
+        .execute(
+            "update session set title = 'kept', time_deleted = 4000 where id = 'sess_0'",
+            [],
+        )
+        .unwrap();
+    assert!(t.store.load(&SessionId::new("sess_0")).await.is_err());
+    let row = t
+        .store
+        .reconcile_row(&SessionId::new("sess_0"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["timeDeleted"], json!(4000));
+    t.store.create(meta("sess_0", "/w", "")).await.unwrap();
+    assert_ne!(stored_title(&t, "sess_0"), json!("kept"));
+}
+
+fn stored_title(t: &TestStore, id: &str) -> serde_json::Value {
+    t.rows(&format!("select title from session where id = '{id}'"))[0][0].clone()
+}
