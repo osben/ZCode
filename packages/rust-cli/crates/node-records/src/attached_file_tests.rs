@@ -530,3 +530,35 @@ fn a_tui_artifact_image_is_not_an_attachment() {
         "rustCli": {"artifact": {"id": "a"}}}});
     assert_eq!(from_part(&part, 0), None);
 }
+
+/// Read back through the history, an unnamed attachment takes its place among the message's file parts, a TUI image
+/// included: the second file part here is `attachment-2`.
+#[test]
+fn the_history_names_an_unnamed_attachment_by_its_place() {
+    let record = crate::row::WithParts {
+        info: json!({"id": "msg_1", "role": "user"}),
+        parts: vec![
+            json!({"type": "text", "text": "look"}),
+            json!({"type": "file", "mime": "image/png", "url": "data:image/png;base64,iVBO"}),
+            json!({"type": "file", "mime": "video/mp4", "url": "data:video/mp4;base64,AAAA",
+                "metadata": {"recoverability": "provider_ready", "sizeBytes": 3, "storageKind": "inline"}}),
+        ],
+    };
+    let messages = crate::hydrate::hydrate(&[std::borrow::Cow::Owned(record)]);
+    let [rust_cli_kernel_api::message::Message::User(user)] = messages.as_slice() else {
+        panic!("one user message: {messages:?}");
+    };
+    let names: Vec<&str> = user
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            rust_cli_kernel_api::message::ContentBlock::File { file } => Some(file.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, ["attachment-2"]);
+    assert!(matches!(
+        user.content[1],
+        rust_cli_kernel_api::message::ContentBlock::Image { .. }
+    ));
+}
