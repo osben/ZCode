@@ -98,15 +98,22 @@ fn request_bytes(source: &ImageSource) -> u64 {
     ("data:".len() + media_type.len() + ";base64,".len()) as u64 + data
 }
 
-/// Node `findLatestRealUserMessageIndex`: a user message with content of its own, not only tool results and
-/// `<system-reminder>` text (Rust may merge those into the message that carries the user's input).
+/// Node `findLatestRealUserMessageIndex`: a user message with content of its own, not only tool results,
+/// `<system-reminder>` text and attachment blocks ([`ApiContent::meta`]; Rust may merge those into the message that
+/// carries the user's input).
+///
+/// [`ApiContent::meta`]: rust_cli_kernel_api::model::ApiContent::meta
 fn is_real_user(message: &ApiMessage) -> bool {
     message.role == ApiRole::User
-        && message.content.iter().any(|content| match &content.block {
-            ContentBlock::Text { text } => !text.trim_start().starts_with("<system-reminder>"),
-            ContentBlock::Image { .. } | ContentBlock::Video { .. } => true,
-            _ => false,
-        })
+        && message
+            .content
+            .iter()
+            .filter(|content| !content.meta)
+            .any(|content| match &content.block {
+                ContentBlock::Text { text } => !text.trim_start().starts_with("<system-reminder>"),
+                ContentBlock::Image { .. } | ContentBlock::Video { .. } => true,
+                _ => false,
+            })
 }
 
 fn collect(messages: &[ApiMessage], latest: Option<usize>) -> Vec<(MediaKey, u64, bool)> {
@@ -120,7 +127,9 @@ fn collect(messages: &[ApiMessage], latest: Option<usize>) -> Vec<(MediaKey, u64
                         block,
                         item: None,
                     };
-                    media.push((key, request_bytes(source), latest == Some(message_index)));
+                    // Node protects the real user message's own media, not an attachment merged into it.
+                    let protected = latest == Some(message_index) && !content.meta;
+                    media.push((key, request_bytes(source), protected));
                 }
                 // Node keeps tool results in their own tool messages, never the protected user message.
                 ContentBlock::ToolResult { content, .. } => {
@@ -262,6 +271,7 @@ mod tests {
         ApiContent {
             block,
             cache_control: None,
+            meta: false,
         }
     }
 
@@ -563,6 +573,42 @@ mod tests {
                 text: "[Attached image/png]\n[Media omitted from provider request to keep the request body under the configured media budget.]".to_owned()
             }]
         );
+    }
+
+    /// A mention's image (an attachment, [`ApiContent::meta`]) merged into the user's message is history, not the
+    /// user's own input (Node keeps it in its own entry): it gives way instead of refusing the request.
+    #[test]
+    fn a_mention_merged_into_the_input_is_not_protected() {
+        let meta = |block: ContentBlock| ApiContent {
+            meta: true,
+            ..plain(block)
+        };
+        let mut merged = vec![ApiMessage {
+            role: ApiRole::User,
+            content: vec![
+                plain(text("look")),
+                plain(sized(60, Some("clip.png"))),
+                meta(text("<system-reminder>\nCalled the Read tool\n</system-reminder>")),
+                meta(sized(50, None)),
+            ],
+            output_config: None,
+        }];
+        budget_within(&mut merged, 100).unwrap();
+        assert_eq!(merged[0].content[1].block, sized(60, Some("clip.png")));
+        assert_eq!(merged[0].content[3].block, omitted_text("[Attached image/png]"));
+
+        // Separate user messages (OpenAI-compatible): the mention's own message is not the latest real input.
+        let mut separate = vec![
+            user(vec![text("look"), sized(60, Some("clip.png"))]),
+            ApiMessage {
+                role: ApiRole::User,
+                content: vec![meta(sized(50, None))],
+                output_config: None,
+            },
+        ];
+        budget_within(&mut separate, 100).unwrap();
+        assert_eq!(separate[0].content[1].block, sized(60, Some("clip.png")));
+        assert_eq!(separate[1].content[0].block, omitted_text("[Attached image/png]"));
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub(crate) fn content(block: ContentBlock) -> ApiContent {
             ttl: None,
             scope: None,
         }),
+        meta: false,
     }
 }
 

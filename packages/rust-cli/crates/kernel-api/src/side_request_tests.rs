@@ -113,6 +113,7 @@ fn a_side_request_has_no_tools_and_carries_the_requester() {
                     text: "hello".to_owned(),
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         }],

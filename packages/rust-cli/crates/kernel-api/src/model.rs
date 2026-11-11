@@ -50,6 +50,11 @@ pub struct ApiContent {
     pub block: ContentBlock,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    /// Fork: a block of an attachment (a mention's Read result), not the user's own input, even when it is merged
+    /// into the user's message. Node keeps such entries apart from the real user message, so its request media
+    /// budget never protects them. Not sent.
+    #[serde(skip)]
+    pub meta: bool,
 }
 
 /// 每轮的输出设置（Anthropic beta `per-turn-control`）：挂在对话中间的 system 消息上，

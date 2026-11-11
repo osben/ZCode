@@ -363,6 +363,7 @@ fn item(block: ContentBlock, cache_control: Option<CacheControl>) -> ApiContent 
     ApiContent {
         block,
         cache_control,
+        meta: false,
     }
 }
 

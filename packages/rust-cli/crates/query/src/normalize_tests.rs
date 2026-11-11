@@ -394,6 +394,10 @@ fn attachments_with_blocks_stay_in_user_messages() {
             &prompt
         ]
     );
+    // A mention's blocks are marked as attachment content, so the media budget never protects them as input.
+    let meta: Vec<bool> = api[1].content.iter().map(|item| item.meta).collect();
+    assert_eq!(meta, [true, true, true, true, false, false]);
+    assert!(api[0].content.iter().all(|item| item.meta));
     assert_eq!(api[2].role, ApiRole::System);
     assert!(texts(&api[2])[0].starts_with("call doc"));
     // 不支持对话中间 system 消息：只有文字的 attachment 留在 user 消息里，带内容块的位置不变。

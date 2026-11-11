@@ -60,6 +60,7 @@ fn plain(blocks: Vec<ContentBlock>) -> Vec<ApiContent> {
         .map(|block| ApiContent {
             block,
             cache_control: None,
+            meta: false,
         })
         .collect()
 }
@@ -68,6 +69,7 @@ fn text(value: String) -> ApiContent {
     ApiContent {
         block: ContentBlock::Text { text: value },
         cache_control: None,
+        meta: false,
     }
 }
 
@@ -204,15 +206,21 @@ impl Builder {
     /// 调用说明与内容块依次接在后面；否则调用说明单独一条 user 消息、内容块另起一条（这两条 meta
     /// 消息原样推入，之后的内容接在第二条后面）。
     fn push_media(&mut self, value: String, blocks: Vec<ContentBlock>) {
-        let blocks = plain(blocks);
+        // Fork: marked so the request media budget does not count these as the user's own input.
+        let meta = |mut content: ApiContent| {
+            content.meta = true;
+            content
+        };
+        let blocks: Vec<ApiContent> = plain(blocks).into_iter().map(meta).collect();
+        let value = meta(text(value));
         match self.out.last_mut() {
             Some(last) if last.role == ApiRole::User && !self.separate => {
-                last.content.push(text(value));
+                last.content.push(value);
                 last.content.extend(blocks);
                 tool_results_first(&mut last.content);
             }
             _ => {
-                self.out.push(message(ApiRole::User, vec![text(value)]));
+                self.out.push(message(ApiRole::User, vec![value]));
                 self.out.push(message(ApiRole::User, blocks));
             }
         }

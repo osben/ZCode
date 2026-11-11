@@ -146,6 +146,7 @@ impl ApiMessage {
             content: vec![ApiContent {
                 block: ContentBlock::Text { text },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         }
