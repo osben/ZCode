@@ -256,6 +256,16 @@ async fn the_reservation_marker_materializes_the_draft() {
         vec![marker]
     );
     assert_eq!(t.store.load(&sid()).await.unwrap().model, Some(picked()));
+    // The cold sessions-index row reads the stored source, not one derived from the title.
+    let listed = t
+        .store
+        .list(SessionFilter {
+            workspace: workspace(),
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed[0].title_source.as_deref(), Some("default"));
 }
 
 #[tokio::test]

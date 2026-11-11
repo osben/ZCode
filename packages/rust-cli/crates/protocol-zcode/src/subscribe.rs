@@ -91,6 +91,11 @@ fn cold_row(workspace: &str, session: &WorkspaceSession) -> Value {
         if let Some(parent) = &summary.parent {
             fields.insert("parentSessionId".to_owned(), json!(parent.as_str()));
         }
+        // Fork: the stored title source as Node's cold summary normalizes it; deriving it from the title reported a
+        // persisted untouched prewarm ("New session", `default`) as `generated`.
+        if let Some(source) = summary.title_source.as_deref() {
+            fields.insert("titleSource".to_owned(), json!(title_source(Some(source))));
+        }
     }
     row
 }

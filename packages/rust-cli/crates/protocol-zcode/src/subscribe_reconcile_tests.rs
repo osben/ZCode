@@ -113,6 +113,7 @@ fn a_cold_row_reports_the_stored_creation_and_outcome() {
             created_at_ms,
             last_outcome: outcome.map(str::to_owned),
             parent: None,
+            title_source: None,
         },
         activity: None,
         last_reply: None,
@@ -144,6 +145,7 @@ fn a_cold_fork_row_carries_its_parent() {
             created_at_ms: 1_000,
             last_outcome: None,
             parent: parent.map(SessionId::new),
+            title_source: None,
         },
         activity: None,
         last_reply: None,
@@ -152,4 +154,38 @@ fn a_cold_fork_row_carries_its_parent() {
     assert_eq!(fork["parentSessionId"], json!("sess_1"));
     let root = super::cold_row("/work/a", &session(None));
     assert!(root.get("parentSessionId").is_none());
+}
+
+/// Fork: a cold row reports the stored title source the way Node's cold summary normalizes it
+/// (`normalizeStoredTitleSource`), not one guessed from the title: a persisted untouched prewarm is
+/// "New session" with `default`, a renamed session is `custom`.
+#[test]
+fn a_cold_row_reports_the_stored_title_source() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::panels::WorkspaceSession;
+    use rust_cli_kernel_api::store::SessionSummary;
+
+    let session = |title: &str, source: Option<&str>| WorkspaceSession {
+        summary: SessionSummary {
+            id: SessionId::new("sess_1"),
+            title: title.to_owned(),
+            updated_at_ms: 3_000,
+            created_at_ms: 1_000,
+            last_outcome: None,
+            parent: None,
+            title_source: source.map(str::to_owned),
+        },
+        activity: None,
+        last_reply: None,
+    };
+    let source =
+        |title, stored| super::cold_row("/work/a", &session(title, stored))["titleSource"].clone();
+    assert_eq!(source("New session", Some("default")), json!("default"));
+    assert_eq!(source("Renamed", Some("custom")), json!("custom"));
+    assert_eq!(
+        source("Fix the bug", Some("first_input")),
+        json!("generated")
+    );
+    // A row without a stored source (an open session the store has no row for) keeps the derived one.
+    assert_eq!(source("", None), json!("default"));
 }

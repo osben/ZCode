@@ -376,6 +376,10 @@ pub struct SessionSummary {
     /// cold fork as an ordinary session instead of inheriting its parent's project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
+    /// Fork: the stored `title_source` (`default`, `first_input`, `generated`, `custom`), which Node's cold summary
+    /// normalizes into its `titleSource`. `None` for a session the store keeps no row or no source for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

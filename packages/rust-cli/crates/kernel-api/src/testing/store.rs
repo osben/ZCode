@@ -363,6 +363,7 @@ impl SessionStore for MemoryStore {
                 created_at_ms: meta.created_at_ms,
                 last_outcome: None,
                 parent: meta.parent.clone(),
+                title_source: None,
             })
             .collect())
     }
