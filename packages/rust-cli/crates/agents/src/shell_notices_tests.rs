@@ -1129,3 +1129,50 @@ async fn an_erase_racing_a_running_agent_does_not_abort_it() {
     })
     .await;
 }
+
+/// Review of df5d9c772: an agent that already finished when its subtree is erased is not addressable either. Before the
+/// fix only live agents were marked erased, so SendMessage restarted the finished one: it claimed a new forwarder for
+/// the erased child and its resume failed on the deleted row.
+#[tokio::test]
+async fn a_finished_agent_of_an_erased_subtree_is_not_restarted() {
+    let gates = Gates::default();
+    let env = Arc::new(NoticeEnvironment::replaying());
+    let harness = held_with_env(&gates, true, machine(env.clone()));
+    let mut root = harness.agents.signals().signals(&SessionId::new(ROOT));
+    let child = launch_from(&harness, ROOT).await;
+    harness.started(1).await;
+    gates.release(child.as_str());
+    let _own = next_notice(&mut root).await;
+    until(|| {
+        state_of(&harness, &child)
+            .is_some_and(|state| matches!(state, crate::live::AgentState::Finished(_)))
+    })
+    .await;
+    settle_tasks().await;
+    let subscribed = env.subscribed().len();
+    harness.store.erase(&child);
+    harness
+        .agents
+        .signals()
+        .sessions_erased(std::slice::from_ref(&child));
+    settle_tasks().await;
+    let agent = child
+        .as_str()
+        .trim_start_matches("sess_subagent_")
+        .to_owned();
+    let sent = harness
+        .call(
+            ROOT,
+            "SendMessage",
+            json!({"to": agent, "message": "Again."}),
+        )
+        .await;
+    settle_tasks().await;
+    assert!(!text(&sent).contains("resumed"), "{}", text(&sent));
+    assert_eq!(harness.seen().len(), 1, "the erased agent ran again");
+    assert_eq!(
+        env.subscribed().len(),
+        subscribed,
+        "a forwarder was claimed for the erased child"
+    );
+}

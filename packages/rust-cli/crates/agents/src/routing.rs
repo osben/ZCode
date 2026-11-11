@@ -376,17 +376,19 @@ fn end_parked(agents: &mut Agents, id: &AgentId) -> Option<(LiveAgent, Notice)> 
     Some((entry, notice))
 }
 
-/// Fork: `sessions` were erased (`session/eraseTree`). Every live agent whose child session is among them is marked
-/// erased (no longer addressable). A parked one ends now, as a user stop of a parked agent does and as Node's close of
+/// Fork: `sessions` were erased (`session/eraseTree`). Every agent whose child session is among them is marked erased
+/// (no longer addressable), a finished one too. A parked one ends now, as a user stop of a parked agent does and as Node's close of
 /// an erased session's runtime cancels it. The ending reaches only an owner that is not erased itself, so an owner
 /// parked on an erased child resumes instead of waiting for it forever. A running one is not aborted: the erase guard
 /// refuses a tree with a running subagent (Node parity, `running_agent_sessions`), so one reaches here only when it
 /// started between the guard and the row erase; its run settles as erased. Called under the Live lock; the wakes run
 /// outside.
 pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId]) -> Vec<Wake> {
+    // Every entry of an erased child is marked, a finished one too: SendMessage would restart it into the deleted
+    // session. Only a parked one also ends here (`end_parked` leaves the others).
     let erased: Vec<AgentId> = agents
         .values()
-        .filter(|agent| sessions.contains(&agent.child) && agent.is_live())
+        .filter(|agent| sessions.contains(&agent.child))
         .map(|agent| agent.agent.clone())
         .collect();
     let mut notices = Vec::new();
