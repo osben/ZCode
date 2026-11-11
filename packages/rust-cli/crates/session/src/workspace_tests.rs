@@ -453,3 +453,57 @@ async fn the_execution_root_moves_the_session_without_a_note() {
         "/work/.worktrees/a"
     );
 }
+
+/// Fork: a session created for a prepared worktree (`Opened::Prepared`) holds SessionStart until the activation
+/// moves it, so the hook runs in the worktree, as Node starts the runtime there.
+#[tokio::test]
+async fn a_prepared_session_runs_session_start_in_the_worktree_after_the_move() {
+    use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+    use rust_cli_kernel_api::session_api::{Ack, Command};
+
+    use crate::test_support::{ScriptedHooks, envelope};
+
+    let hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome::default(),
+    ));
+    let cwd_env = Arc::new(CwdEnv {
+        inner: env(),
+        cwd: Mutex::default(),
+        refuse: false,
+    });
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(cwd_env.clone().machine());
+    setup.hooks = hooks.clone();
+    setup.opened = crate::Opened::Prepared;
+    let built = setup.build().await;
+    // A round trip through the actor: it has started, and SessionStart has not.
+    let view = built.session.view().await.unwrap();
+    assert!(!view.running);
+    assert!(hooks.seen().is_empty(), "{:?}", hooks.seen());
+
+    let moved = built
+        .session
+        .send(envelope(
+            "c1",
+            Command::SetExecutionRoot {
+                root: EnvPath::new("/work/.worktrees/a"),
+            },
+        ))
+        .await;
+    assert!(matches!(moved, Ack::Accepted { .. }), "{moved:?}");
+    let started = async {
+        loop {
+            if let Some(event) = hooks.seen().first().cloned() {
+                return event;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), started)
+        .await
+        .unwrap();
+    assert_eq!(event.name, HookEventName::SessionStart);
+    assert_eq!(event.workspace.root.as_str(), "/work/.worktrees/a");
+    assert_eq!(event.payload["source"], "startup");
+}

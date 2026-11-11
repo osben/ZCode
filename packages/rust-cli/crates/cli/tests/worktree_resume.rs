@@ -69,6 +69,12 @@ fn script() -> Vec<String> {
             "Bash",
             &json!({"command": "pwd", "description": "where"}),
         ),
+        // An edit with an empty `old_string` creates the file and its parent directories.
+        call(
+            "toolu_edit",
+            "Edit",
+            &json!({"file_path": "sub/y.txt", "old_string": "", "new_string": "edited\n"}),
+        ),
         call(
             "toolu_write",
             "Write",
@@ -89,7 +95,7 @@ fn resume(sandbox: &Sandbox, fixture: &sse::Fixture) -> Vec<(String, String, boo
             "go",
             // The resumed session keeps its stored mode (default): rules allow both tools.
             "--allowedTools",
-            "Bash,Write",
+            "Bash,Write,Edit",
         ])
         .current_dir(&sandbox.work)
         .env_clear()
@@ -164,6 +170,10 @@ async fn a_node_worktree_session_resumes_in_the_worktree() {
         read(&sandbox.worktree.join("x.txt")).as_deref(),
         Some("from the session\n")
     );
+    assert_eq!(
+        read(&sandbox.worktree.join("sub/y.txt")).as_deref(),
+        Some("edited\n")
+    );
     assert_eq!(read(&sandbox.work.join("x.txt")), None);
 }
 
@@ -178,7 +188,13 @@ async fn a_missing_worktree_fails_closed() {
     let (pwd, error) = result(&results, "toolu_pwd");
     assert!(error, "{pwd}");
     assert_ne!(pwd.trim(), sandbox.work.to_str().unwrap());
-    // Write neither lands in the parent nor recreates the worktree as an ordinary directory.
+    // Neither Edit nor Write lands in the parent or recreates the worktree as an ordinary directory.
+    let (edit, error) = result(&results, "toolu_edit");
+    assert!(error, "{edit}");
+    assert!(
+        edit.contains("Working directory is missing or unavailable"),
+        "{edit}"
+    );
     let (write, error) = result(&results, "toolu_write");
     assert!(error, "{write}");
     assert!(
@@ -186,5 +202,6 @@ async fn a_missing_worktree_fails_closed() {
         "{write}"
     );
     assert_eq!(read(&sandbox.work.join("x.txt")), None);
+    assert_eq!(read(&sandbox.work.join("sub/y.txt")), None);
     assert!(!sandbox.worktree.exists());
 }

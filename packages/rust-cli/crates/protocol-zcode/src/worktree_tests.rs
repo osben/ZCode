@@ -237,6 +237,8 @@ struct TestHandle {
     id: SessionId,
     view: StdMutex<SessionView>,
     sent: Arc<StdMutex<Vec<(String, String)>>>,
+    /// How many `SetExecutionRoot` commands to refuse (the actor refuses a move while busy).
+    refuse_moves: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait]
@@ -248,9 +250,23 @@ impl HandleOverride for TestHandle {
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
         let name = match &envelope.command {
             Command::SetExecutionRoot { root } => {
+                let refuse = self
+                    .refuse_moves
+                    .fetch_update(
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                        |left| left.checked_sub(1),
+                    )
+                    .is_ok();
+                if refuse {
+                    return KernelAck::Rejected {
+                        reason: "A turn is in progress".to_owned(),
+                    };
+                }
                 self.view.lock().unwrap().meta.workspace.root = root.clone();
                 format!("SetExecutionRoot {}", root.as_str())
             }
+            Command::Submit { text, .. } => format!("Submit {text}"),
             Command::SetModel { .. } => "SetModel".to_owned(),
             Command::SetMode { .. } => "SetMode".to_owned(),
             Command::SetPlan { .. } => "SetPlan".to_owned(),
@@ -280,6 +296,9 @@ struct WorktreeKernel {
     handles: StdMutex<HashMap<SessionId, Arc<TestHandle>>>,
     sent: Arc<StdMutex<Vec<(String, String)>>>,
     deleted: StdMutex<Vec<String>>,
+    refuse_moves: Arc<std::sync::atomic::AtomicUsize>,
+    /// Sessions created through `create_prepared_session` (SessionStart held until the move).
+    prepared: StdMutex<Vec<String>>,
 }
 
 impl WorktreeKernel {
@@ -299,6 +318,7 @@ impl WorktreeKernel {
                 PermissionMode::Default,
             )),
             sent: self.sent.clone(),
+            refuse_moves: self.refuse_moves.clone(),
         });
         self.handles
             .lock()
@@ -331,6 +351,15 @@ impl rust_cli_kernel_api::session_api::Kernel for WorktreeKernel {
             .map_err(|error| KernelError::Failed {
                 message: error.to_string(),
             })?;
+        Ok(id)
+    }
+
+    async fn create_prepared_session(
+        &self,
+        request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        let id = self.create_session(request).await?;
+        self.prepared.lock().unwrap().push(id.as_str().to_owned());
         Ok(id)
     }
 
@@ -387,6 +416,8 @@ fn server() -> (TaskScope, Arc<Server>, Arc<WorktreeKernel>) {
         handles: StdMutex::new(HashMap::new()),
         sent: Arc::new(StdMutex::new(Vec::new())),
         deleted: StdMutex::new(Vec::new()),
+        refuse_moves: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        prepared: StdMutex::new(Vec::new()),
     });
     let server = Arc::new(Server::new(
         context,
@@ -686,4 +717,256 @@ async fn a_stored_worktree_that_is_gone_is_reported_missing() {
     let summary = live.sink.summary();
     assert_eq!(summary["workspaceId"], "/w");
     assert_eq!(summary["executionWorktreeMissing"], true);
+}
+
+async fn run(server: &Server, params: Value) -> Value {
+    crate::commands::command(server, params).await.unwrap()
+}
+
+/// The worktree commands through the real command path (`commands::command`, the inbound schema first): the schema
+/// knows `updateWorktreePreparation` and the createSession worktree fields, and the superRefine rules are mirrored.
+#[tokio::test]
+async fn worktree_commands_pass_the_inbound_schema() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let target = parent.path().join("wt").to_str().unwrap().to_owned();
+    let ack = run(
+        &server,
+        json!({"commandId": "p1", "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "worktreePreparation": {
+                "branchName": "feat/a", "targetPath": target, "attemptId": "a1"}}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let session = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    // SessionStart waits for the activation (the kernel's prepared create).
+    assert_eq!(
+        *kernel.prepared.lock().unwrap(),
+        std::slice::from_ref(&session)
+    );
+    let update = |id: &str, payload: Value| {
+        json!({"commandId": id, "clientId": "k", "sessionId": session,
+            "type": "updateWorktreePreparation", "issuedAt": 1, "payload": payload})
+    };
+
+    let ack = run(
+        &server,
+        update(
+            "u1",
+            json!({"status": "failed", "failureMessage": "git failed", "expectedAttemptId": "a1"}),
+        ),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(ack["result"]["status"], "failed");
+    let marker = load(&server, &SessionId::new(&session))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.status, PrepStatus::Failed);
+    assert_eq!(marker.failure_message.as_deref(), Some("git failed"));
+
+    let ack = run(
+        &server,
+        update(
+            "u2",
+            json!({"status": "cancelled", "expectedAttemptId": "a1"}),
+        ),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let marker = load(&server, &SessionId::new(&session))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.status, PrepStatus::Cancelled);
+
+    // The schema: `active` is not an update status.
+    let ack = run(&server, update("u3", json!({"status": "active"}))).await;
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(ack["reasonCode"], "proto.invalidPayload");
+
+    // The superRefine mirror: a submission activation needs its prepared session.
+    let ack = run(
+        &server,
+        json!({"commandId": "p2", "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "expectedSubmissionId": "sub"}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert!(
+        ack["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("/payload/expectedSubmissionId"),
+        "{ack}"
+    );
+
+    // A submission activation that names a worktree is refused like Node, never activated without it.
+    let ack = run(
+        &server,
+        json!({"commandId": "p3", "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "preparedSessionId": session,
+                "expectedSubmissionId": "sub", "executionWorktree": {"path": target}}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(
+        ack["message"],
+        "Prepared submission does not match the requested workspace or submission"
+    );
+    assert!(kernel.sent.lock().unwrap().is_empty());
+}
+
+/// Node `runActivation`: the move, the draft's config, then `firstInput` under the activation's command id; the
+/// result carries the input. A SessionStart message already in the history is not the client's input.
+#[tokio::test]
+async fn activation_admits_the_first_input_in_the_worktree() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = SessionId::new(&session);
+    // A hook message (no command) in the history, as a SessionStart hook on a cold open leaves one.
+    kernel
+        .handle(&id)
+        .unwrap()
+        .view
+        .lock()
+        .unwrap()
+        .messages
+        .push(rust_cli_kernel_api::message::Message::User(
+            rust_cli_kernel_api::message::UserMessage {
+                id: rust_cli_kernel_api::ids::MessageId::new("m-hook"),
+                content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                    text: "hook context".to_owned(),
+                }],
+                origin: rust_cli_kernel_api::message::UserOrigin::Meta {
+                    source: "hook".to_owned(),
+                },
+            },
+        ));
+
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": path, "branchName": "feat/a"},
+            "config": {"mode": "build"}, "firstInput": {"text": "hello"}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let result = ack.result.unwrap();
+    assert_eq!(result["preparedActivation"], "materialized");
+    assert_eq!(
+        result["input"],
+        json!({"delivery": "startNow", "inputId": "c2"})
+    );
+    let sent: Vec<String> = kernel
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect();
+    assert_eq!(sent.first(), Some(&format!("SetExecutionRoot {path}")));
+    let mode = sent.iter().position(|name| name == "SetMode").unwrap();
+    let input = sent.iter().position(|name| name == "Submit hello").unwrap();
+    assert!(mode < input, "{sent:?}");
+}
+
+/// A refused move stores nothing, so a retry into another worktree leaves the actor and the stored fact together.
+#[tokio::test]
+async fn a_refused_move_stores_nothing_and_a_retry_elsewhere_wins() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let (a, b) = (parent.path().join("wt-a"), parent.path().join("wt-b"));
+    rust_cli_fs::create_dir_all(&a).await.unwrap();
+    rust_cli_fs::create_dir_all(&b).await.unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let (a, b) = (
+        a.to_str().unwrap().to_owned(),
+        b.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": a, "attemptId": "a1"}}),
+    )
+    .await;
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = SessionId::new(&session);
+
+    kernel
+        .refuse_moves
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": a}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert!(
+        kernel
+            .store
+            .execution_worktree(&id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        load(&server, &id).await.unwrap().unwrap().status,
+        PrepStatus::Preparing
+    );
+
+    // The client prepares again elsewhere, then activates there.
+    let live = server.bridge.get(&id).unwrap();
+    let retried = crate::worktree::update(
+        &server,
+        &live,
+        &envelope(
+            "c3",
+            Some(&session),
+            "updateWorktreePreparation",
+            json!({"status": "preparing", "expectedAttemptId": "a1", "worktreePreparation": {
+                "branchName": "feat/b", "targetPath": b, "attemptId": "a2"}}),
+        ),
+        0,
+    )
+    .await;
+    assert_eq!(retried.status, Status::Accepted, "{retried:?}");
+    let ack = create(
+        &server,
+        "c4",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a2",
+            "executionWorktree": {"path": b}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let stored = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
+    assert_eq!(stored.path.as_str(), b);
+    let view = kernel.handle(&id).unwrap().view.lock().unwrap().clone();
+    assert_eq!(view.meta.workspace.root.as_str(), b);
 }

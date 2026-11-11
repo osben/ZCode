@@ -421,6 +421,10 @@ pub struct SessionView {
     pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
 }
 
+/// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so
+/// it is no evidence that a client's first input was admitted (fork prepared-worktree activation).
+pub const SESSION_START_INPUT: &str = "session-start-";
+
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
 /// Fork: `Command::ResumeGoal` with plan on (Node `guard.planGoalMutuallyExclusive`).
@@ -590,6 +594,18 @@ pub trait Kernel: Send + Sync {
     ) -> Result<SessionId, KernelError> {
         Err(KernelError::Unsupported {
             what: "execution worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: a new session reserved for a prepared execution worktree (specs/fork-rust-agent-parity.md "Execution
+    /// worktree"). It is listed under `request.workspace`; SessionStart waits for `Command::SetExecutionRoot`, so
+    /// the hook runs in the worktree at activation, as Node starts the runtime there. A kernel without it refuses.
+    async fn create_prepared_session(
+        &self,
+        _request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
         })
     }
 

@@ -142,9 +142,6 @@ impl Tool for WriteTool {
         let Ok(input) = parse::<Input>(raw) else {
             return Validation::Ok;
         };
-        if let Some(message) = missing_workspace(context).await {
-            return invalid(message);
-        }
         let cwd = cwd(context).await;
         if let Some(refused) =
             unstable_input(context, &cwd, NAME, "file_path", &input.file_path).await
@@ -190,7 +187,8 @@ impl Tool for WriteTool {
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
         let input: Input = parse(&raw)?;
-        // Checked again here: the directory can go between validation and the write.
+        // Checked again here (the pipeline checks before validation): the directory can go while a permission
+        // prompt is open, and this write creates parent directories.
         if let Some(message) = missing_workspace(&context).await {
             return Err(failed(message));
         }

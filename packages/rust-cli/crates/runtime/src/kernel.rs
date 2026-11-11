@@ -38,7 +38,7 @@ impl Kernel for LocalKernel {
         request: CreateSession,
         start: StartSource,
     ) -> Result<SessionId, KernelError> {
-        self.create_in(request, start, None).await
+        self.create_in(request, start, None, Opened::Created).await
     }
 
     async fn create_session_in_worktree(
@@ -47,7 +47,20 @@ impl Kernel for LocalKernel {
         worktree: EnvPath,
         branch: Option<String>,
     ) -> Result<SessionId, KernelError> {
-        self.create_in(request, StartSource::Startup, Some((worktree, branch)))
+        self.create_in(
+            request,
+            StartSource::Startup,
+            Some((worktree, branch)),
+            Opened::Created,
+        )
+        .await
+    }
+
+    async fn create_prepared_session(
+        &self,
+        request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        self.create_in(request, StartSource::Startup, None, Opened::Prepared)
             .await
     }
 
@@ -346,12 +359,14 @@ impl Kernel for LocalKernel {
 
 impl LocalKernel {
     /// Creates a session; with `execution` (fork execution worktree) the row keeps the requested workspace and the
-    /// session starts in the worktree.
+    /// session starts in the worktree. `Opened::Prepared` (fork prepared worktree) holds SessionStart until the
+    /// activation moves the session.
     async fn create_in(
         &self,
         request: CreateSession,
         start: StartSource,
         execution: Option<(EnvPath, Option<String>)>,
+        opened: Opened,
     ) -> Result<SessionId, KernelError> {
         // 工作线 F140（performance.md §12.3）：先等新会话的缺省模型定下。TUI 不等目录就画第一帧，缺省模型在后台选；
         // 这里是唯一的等待点，所以回合都在它定下之后（任务工具的开关、旁路模型的兜底读的都是定下的值）。
@@ -398,7 +413,7 @@ impl LocalKernel {
         self.ports.store.commit(&id, batch).await?;
         self.start(
             SessionState::created(meta, request.selection, execution, start),
-            Opened::Created,
+            opened,
         );
         Ok(id)
     }

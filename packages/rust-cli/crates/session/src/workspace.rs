@@ -104,7 +104,13 @@ impl Actor {
             return rejected(BUSY);
         }
         match self.change_workspace(root).await {
-            Ok(()) => accepted(),
+            Ok(()) => {
+                // A prepared session starts here: SessionStart runs in the worktree, after the move.
+                if let Some(source) = self.deferred_start.take() {
+                    self.start_session(source);
+                }
+                accepted()
+            }
             Err(error) => rejected(error.to_string()),
         }
     }

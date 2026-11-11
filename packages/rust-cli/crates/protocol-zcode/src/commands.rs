@@ -323,6 +323,22 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
     }
     if let Some(prepared) = payload.prepared_session_id.as_deref() {
         let config = &payload.config;
+        let empty = Input::default();
+        let first = payload.first_input.as_ref().unwrap_or(&empty);
+        // Refused before anything moves, so a malformed attachment leaves the prepared session as it was.
+        let refs = match crate::attachments::parse_refs(&first.attachments) {
+            Ok(refs) => refs,
+            Err(error) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    error.message,
+                    0,
+                );
+            }
+        };
+        // Node `runActivation`: the draft's config, then the first input, both after the move into the worktree.
         return crate::worktree::activate(
             server,
             envelope,
@@ -330,7 +346,18 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             payload.expected_attempt_id.as_deref(),
             payload.workspace_id.as_deref(),
             payload.execution_worktree.as_ref(),
-            async |live| apply_draft_config(live.handle.as_ref(), envelope, config).await,
+            async |live| {
+                apply_draft_config(live.handle.as_ref(), envelope, config).await;
+                submit_first(
+                    server,
+                    live,
+                    envelope,
+                    &SessionId::new(prepared),
+                    first,
+                    refs,
+                )
+                .await
+            },
         )
         .await;
     }
@@ -412,30 +439,45 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
     };
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
-    if let Some(text) = first.text.clone() {
-        live.sink.remember_input(
-            &envelope.command_id,
-            input_meta(envelope, &first, "startNow", "startNow"),
-        );
-        let submit = if refs.is_empty() {
-            Command::Submit {
-                text,
-                attachments: Vec::new(),
-                delivery: Delivery::Queue,
-            }
-        } else {
-            Command::SubmitContent {
-                content: crate::attachments::content(server, &id, &text, refs).await,
-                delivery: Delivery::Queue,
-            }
-        };
-        if let KernelAck::Accepted { .. } =
-            send(live.handle.as_ref(), &envelope.command_id, submit).await
-        {
-            result["input"] = json!({"delivery": "startNow", "inputId": envelope.command_id});
-        }
+    if let Some(input) = submit_first(server, &live, envelope, &id, &first, refs).await {
+        result["input"] = input;
     }
     Ack::accepted(&envelope.command_id, 0, Some(result))
+}
+
+/// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
+/// createSession command id. The `input` field of the result; `None` without text or when the session refused it.
+async fn submit_first(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    id: &SessionId,
+    first: &Input,
+    refs: Vec<crate::attachments::AttachmentRef>,
+) -> Option<Value> {
+    let text = first.text.clone()?;
+    live.sink.remember_input(
+        &envelope.command_id,
+        input_meta(envelope, first, "startNow", "startNow"),
+    );
+    let submit = if refs.is_empty() {
+        Command::Submit {
+            text,
+            attachments: Vec::new(),
+            delivery: Delivery::Queue,
+        }
+    } else {
+        Command::SubmitContent {
+            content: crate::attachments::content(server, id, &text, refs).await,
+            delivery: Delivery::Queue,
+        }
+    };
+    match send(live.handle.as_ref(), &envelope.command_id, submit).await {
+        KernelAck::Accepted { .. } => {
+            Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
+        }
+        _ => None,
+    }
 }
 
 /// Fork: reservation. Creates the session with the draft's selection and stores a preparing marker; a repeat with
@@ -583,6 +625,16 @@ async fn activate_submission(
     prepared: &str,
     expected: &str,
 ) -> Ack {
+    // Node `v4-bridge.ts`: a submission activation names no worktree; a worktree is never silently dropped.
+    if payload.execution_worktree.is_some() || payload.expected_attempt_id.is_some() {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the requested workspace or submission",
+            0,
+        );
+    }
     let id = SessionId::new(prepared);
     let marker = match crate::preparation::load(server, &id).await {
         Ok(Some(marker)) if marker.submission_id == expected => marker,

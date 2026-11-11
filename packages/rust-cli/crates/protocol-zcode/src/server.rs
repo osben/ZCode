@@ -157,18 +157,30 @@ impl Server {
         } else {
             std::sync::Arc::from(Vec::new())
         };
-        // Fork: a session in an execution worktree is listed under its parent workspace (crate::worktree).
-        let execution = if opening {
-            crate::worktree::stored_execution(self, session).await
+        // Fork: the stored worktree and submission facts, read for a cold open only and handed to the projection when
+        // it is made, so a later concurrent open cannot write them again over an activation.
+        let restored = if opening {
+            let execution = crate::worktree::stored_execution(self, session).await;
+            crate::live::Restored {
+                listed: execution
+                    .as_ref()
+                    .map(|worktree| worktree.directory.as_str().to_owned()),
+                worktree: crate::worktree::facts(self, session, execution.as_ref()).await,
+                preparation: match crate::preparation::load(self, session).await {
+                    Ok(Some(marker)) => marker.exposed(),
+                    _ => None,
+                },
+            }
         } else {
-            None
+            crate::live::Restored::default()
         };
-        let listed = execution
-            .as_ref()
-            .map(|worktree| worktree.directory.as_str().to_owned());
+        // Set by the one open that makes the projection: only it starts the session's watchers.
+        let made = std::sync::atomic::AtomicBool::new(false);
+        let made_here = &made;
         let live = self
             .bridge
             .open(session, move |handle, view| {
+                made_here.store(true, std::sync::atomic::Ordering::Relaxed);
                 Live::new(
                     context,
                     topics,
@@ -176,20 +188,11 @@ impl Server {
                     view,
                     followup,
                     catalog,
-                    listed,
+                    restored,
                 )
             })
             .await?;
-        // Fork: a cold open restores the prepared worktree and the execution worktree before any subscription.
-        if opening {
-            live.sink
-                .seed_worktree(crate::worktree::facts(self, session, execution.as_ref()).await);
-        }
-        // Fork: a cold open restores a still-preparing first submission before any subscription starts.
-        if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
-            live.sink.set_preparation(marker.exposed());
-        }
-        if opening {
+        if made.load(std::sync::atomic::Ordering::Relaxed) {
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(
                 "subagent-table-watch",

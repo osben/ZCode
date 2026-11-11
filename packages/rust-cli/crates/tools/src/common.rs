@@ -217,9 +217,10 @@ pub(crate) async fn stable_path(
         })
 }
 
-/// The session's working directory is gone (a deleted execution worktree): a write must not recreate it as an
-/// ordinary directory, so the write fails instead (execution-worktree-missing-handling.md section 2). An error
-/// reading it is left to the write itself.
+/// The session's working directory is gone (a deleted execution worktree): every tool that runs in the workspace is
+/// refused (the pipeline, before validation), and Write and Edit check again when they write, so nothing recreates
+/// it as an ordinary directory (execution-worktree-missing-handling.md section 2; Node
+/// `getMissingExecutionWorktreeToolError`). An error reading it is left to the tool itself.
 pub(crate) async fn missing_workspace(context: &ToolUseContext) -> Option<String> {
     let root = context.workspace.root.as_str();
     match stat(context, root).await {

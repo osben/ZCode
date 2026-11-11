@@ -258,6 +258,9 @@ pub(crate) struct Actor {
     pub(crate) wait_started: Option<u64>,
     /// 自己的请求通道（弱引用）：交给回合的输出端，给出会话级的询问入口；不让 actor 因此不退出。
     asks: mpsc::WeakSender<Request>,
+    /// Fork: SessionStart held for a prepared execution worktree (`Opened::Prepared`) until
+    /// `Command::SetExecutionRoot` moves the session (workspace.rs).
+    pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -282,6 +285,7 @@ impl Actor {
         state: crate::SessionState,
         asks: mpsc::WeakSender<Request>,
         resume_pending: Vec<MessageId>,
+        defer_start: bool,
     ) -> Self {
         // 本机与连上的远端机器的通知（R3，remote-exec.md §20.7.2）。
         // Fork: a subagent's child session does not subscribe: the agents crate forwarder is the only consumer of its
@@ -351,8 +355,13 @@ impl Actor {
             output_speed: None,
             wait_started: None,
             asks,
+            deferred_start: None,
         };
-        actor.start_session(start);
+        if defer_start {
+            actor.deferred_start = Some(start);
+        } else {
+            actor.start_session(start);
+        }
         actor
     }
 

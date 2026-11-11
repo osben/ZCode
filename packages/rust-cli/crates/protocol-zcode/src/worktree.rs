@@ -402,9 +402,10 @@ pub async fn prepare(
     selection: rust_cli_kernel_api::model::ModelSelection,
 ) -> Ack {
     let id = crate::inbox::new_session_id();
+    // SessionStart waits for the activation, so the hook runs in the worktree (Node has no runtime before it).
     let created = server
         .kernel
-        .create_session(rust_cli_kernel_api::session_api::CreateSession {
+        .create_prepared_session(rust_cli_kernel_api::session_api::CreateSession {
             id: Some(id.clone()),
             workspace: server.workspace(workspace),
             selection,
@@ -425,13 +426,8 @@ pub async fn prepare(
         return failed(envelope, reason, 0);
     }
     match server.live(&id).await {
-        Ok(live) => {
-            live.sink.seed_worktree(Facts {
-                preparing: Some(marker),
-                execution: None,
-            });
-            crate::subscribe::announce(&live);
-        }
+        // The open restores the marker stored above (crate::server::Server::live).
+        Ok(live) => crate::subscribe::announce(&live),
         Err(error) => {
             tracing::warn!(event = "protocol.worktree.open_failed", error = %error, "opening the prepared worktree session failed");
         }
@@ -494,34 +490,45 @@ pub async fn update(
     )
 }
 
-/// The cwd and the stored fact of a session that starts running in `requested`. The directory must exist (Node
-/// `resolveRecordExecutionWorktree` refuses a create into a dead cwd); the fact is stored before the actor moves,
-/// so a restart resumes in the worktree.
+/// Moves the session into `target`, then stores the fact. The move comes first: a refused move stores nothing, so a
+/// retry may name another worktree. The fact is set once, so the caller passes the stored worktree as the target
+/// when there is one, and the actor and the store never disagree. A store that fails after the move fails the
+/// activation; the marker stays preparing and a retry moves and stores again.
 async fn enter(
     server: &Server,
     live: &Bridged<Live>,
     envelope: &Envelope,
     id: &SessionId,
-    requested: &Requested,
+    target: &Requested,
 ) -> Result<(), String> {
-    let path = EnvPath::new(&requested.path);
-    server
-        .kernel
-        .queries()
-        .set_execution_worktree(id, &path, requested.branch_name.as_deref())
-        .await
-        .map_err(|error| error.to_string())?;
-    let command = Command::SetExecutionRoot { root: path };
-    match crate::commands::send(
+    let path = EnvPath::new(&target.path);
+    let command = Command::SetExecutionRoot { root: path.clone() };
+    if let KernelAck::Rejected { reason } = crate::commands::send(
         live.handle.as_ref(),
         &format!("{}:worktree", envelope.command_id),
         command,
     )
     .await
     {
-        KernelAck::Rejected { reason } => Err(reason),
-        _ => Ok(()),
+        return Err(reason);
     }
+    server
+        .kernel
+        .queries()
+        .set_execution_worktree(id, &path, target.branch_name.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Typed input reached the session: a committed or queued input that a client sent. SessionStart's own messages and
+/// its `initial_user_message` are no evidence (Node checks the durable admission of the client's input).
+fn input_admitted(view: &rust_cli_kernel_api::session_api::SessionView) -> bool {
+    let typed = |command: &rust_cli_kernel_api::ids::CommandId| {
+        !command
+            .as_str()
+            .starts_with(rust_cli_kernel_api::session_api::SESSION_START_INPUT)
+    };
+    view.commands.values().any(typed) || view.queue.iter().any(|queued| typed(&queued.command))
 }
 
 /// Refuses a worktree path that is not a directory (Node's exact text).
@@ -545,9 +552,9 @@ pub async fn check_directory(
     Ok(())
 }
 
-/// Fork: activation of a prepared worktree (`createSession` with `preparedSessionId`, no `expectedSubmissionId`).
-/// The marker turns active within the activation, as Node completes it when no first input is expected; the first
-/// input arrives as a separate `sendText`.
+/// Fork: activation of a prepared worktree (`createSession` with `preparedSessionId`, no `expectedSubmissionId`;
+/// Node `runActivation`). After the move, `materialize` applies the draft's config and admits `firstInput`, and
+/// returns the result's `input`; the marker turns active within the activation, as Node completes it.
 pub async fn activate(
     server: &Server,
     envelope: &Envelope,
@@ -555,7 +562,7 @@ pub async fn activate(
     expected_attempt: Option<&str>,
     workspace: Option<&str>,
     requested: Option<&Requested>,
-    configure: impl AsyncFnOnce(&Bridged<Live>),
+    materialize: impl AsyncFnOnce(&Bridged<Live>) -> Option<Value>,
 ) -> Ack {
     let id = SessionId::new(prepared);
     let Ok(_gate) = server.reservations.acquire().await else {
@@ -589,40 +596,47 @@ pub async fn activate(
         Ok(activation) => activation,
         Err(reason) => return failed(envelope, reason, 0),
     };
-    let accepted = |outcome: &str| {
-        Ack::accepted(
-            &envelope.command_id,
-            0,
-            Some(
-                json!({"type": "createSession", "sessionId": id.as_str(), "preparedActivation": outcome}),
-            ),
-        )
+    let accepted = |outcome: &str, input: Option<Value>| {
+        let mut result = json!({"type": "createSession", "sessionId": id.as_str(), "preparedActivation": outcome});
+        if let Some(input) = input {
+            result["input"] = input;
+        }
+        Ack::accepted(&envelope.command_id, 0, Some(result))
     };
     if activation == Activation::AlreadyActive {
-        return accepted("already-active");
+        return accepted("already-active", None);
     }
     let (Some(current), Some(requested)) = (current, requested) else {
         return failed(envelope, UNAVAILABLE, 0);
     };
-    if let Err(ack) = check_directory(server, envelope, requested).await {
+    // The stored fact is set once: a worktree an earlier attempt entered and stored wins over this request.
+    let target = match &stored {
+        Some(worktree) => Requested {
+            path: worktree.path.as_str().to_owned(),
+            branch_name: worktree.branch.clone(),
+        },
+        None => requested.clone(),
+    };
+    if let Err(ack) = check_directory(server, envelope, &target).await {
         return *ack;
     }
     let live = match server.live(&id).await {
         Ok(live) => live,
         Err(error) => return failed(envelope, &error.to_string(), 0),
     };
-    // An earlier attempt whose completion did not persist may already have admitted the first input: never let the
-    // client send it again under a new command id.
+    // An earlier attempt whose completion did not persist may already have admitted the first input: never send it
+    // again under a new command id.
     let admitted = live
         .handle
         .view()
         .await
-        .is_ok_and(|view| !view.messages.is_empty() || !view.queue.is_empty() || view.running);
+        .is_ok_and(|view| input_admitted(&view));
+    let mut input = None;
     if !admitted {
-        if let Err(message) = enter(server, &live, envelope, &id, requested).await {
+        if let Err(message) = enter(server, &live, envelope, &id, &target).await {
             return failed(envelope, &message, 0);
         }
-        configure(&live).await;
+        input = materialize(&live).await;
     }
     let active = current.with_status(PrepStatus::Active, None, None);
     if save(server, &id, &active).await.is_err() {
@@ -632,18 +646,10 @@ pub async fn activate(
             "storing the active worktree marker failed"
         );
     }
-    // The stored fact is set once: a fact an earlier attempt stored wins over this request.
-    let execution = match stored {
-        Some(worktree) => Execution {
-            path: worktree.path.as_str().to_owned(),
-            branch: worktree.branch,
-            missing: false,
-        },
-        None => Execution {
-            path: requested.path.clone(),
-            branch: requested.branch_name.clone(),
-            missing: false,
-        },
+    let execution = Execution {
+        path: target.path,
+        branch: target.branch_name,
+        missing: false,
     };
     let facts = Facts {
         preparing: None,
@@ -651,11 +657,12 @@ pub async fn activate(
     };
     let sink = live.sink.clone();
     live.run(Box::pin(async move { sink.set_worktree(facts).await }));
-    accepted(if admitted {
+    let outcome = if admitted {
         "input-admitted"
     } else {
         "materialized"
-    })
+    };
+    accepted(outcome, input)
 }
 
 #[cfg(test)]

@@ -508,6 +508,8 @@ The agent never runs `git worktree add`: the renderer's worktree service creates
 
 The Host gate no longer refuses `createSession` with `worktreePreparation`/`executionWorktree` or `updateWorktreePreparation` in Rust mode.
 
+**Inbound schema:** the `createSession` and `updateWorktreePreparation` entries of `protocol-zcode/schema/inbound.json` are generated from the App's zod schemas by `scripts/fork-rust-agent/inbound-schema.mts` (`--check` fails when they are out of date), the same conversion the upstream generator uses. `inbound.rs` mirrors the `createSessionPayloadSchema` superRefine rules. Without these entries `Inbound::command` answered `unknown command type` to every update.
+
 **Persisted shape (shared with Node, no new migration):**
 
 - the `session` row columns `execution_directory` / `execution_branch` (fork migration `9002_fork_session_execution_worktree`, applied by Node storage preparation). They are set once: a write keeps a non-NULL value (Node's `coalesce(session.execution_*, excluded.execution_*)`). `directory`/`path`/`project_id` stay the parent workspace, so the session is listed under it;
@@ -515,36 +517,39 @@ The Host gate no longer refuses `createSession` with `worktreePreparation`/`exec
 
 **Owners:**
 
-| Fact                                             | Owner                                                                                                                                                                                                                       | Readers                                                                                                                                                                                                                                                                                    |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| marker                                           | protocol-zcode `worktree.rs`: reserve, update and activate, serialized per session by one gate                                                                                                                              | snapshot `meta.worktreePreparation` and the sessions-index row while the status is `preparing`, `failed` or `cancelled`                                                                                                                                                                    |
-| execution columns                                | protocol-zcode activation or `Kernel::create_session_in_worktree` (direct route), both through `StoreQueries::set_execution_worktree` (node-store `fork_execution_worktree.rs`; the call fails when the columns are absent) | node-store `load` (the cwd); `StoreQueries::execution_worktree` (the listing workspace, the `executionWorktree` summary)                                                                                                                                                                   |
-| cwd (`meta.workspace.root`)                      | session actor: the root it starts with (`create_session_in_worktree`, a cold open) or `Command::SetExecutionRoot` (prepared activation)                                                                                     | tools, shell, context. A cold open loads `execution_directory ?? directory` (node-store `run_in_worktree`). A worktree that is gone stays the root, as in Node's resume (`execution-worktree-missing-handling.md` §2), so tools fail on the missing directory and never run in the parent. |
-| listing workspace (sessions-index topic)         | `Live`, set at open from the stored row's `directory`                                                                                                                                                                       | the sessions index, `context.register`                                                                                                                                                                                                                                                     |
-| `executionWorktree` / `executionWorktreeMissing` | `Live` (live row); `cold_row` (stored row). A directory stat when the summary is built: Node's observation, not a session event                                                                                             | the Host task index (sidebar badge, PR row, worktree cleanup and erase)                                                                                                                                                                                                                    |
+| Fact                                             | Owner                                                                                                                                                                                                                            | Readers                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| marker                                           | protocol-zcode `worktree.rs`: reserve, update and activate, serialized per session by one gate                                                                                                                                   | snapshot `meta.worktreePreparation` and the sessions-index row while the status is `preparing`, `failed` or `cancelled`                                                                                                                                                                    |
+| execution columns                                | protocol-zcode activation or `Kernel::create_session_in_worktree` (direct route), both through `StoreQueries::set_execution_worktree` (node-store `fork_execution_worktree.rs`; the call fails when the columns are absent)      | node-store `load` (the cwd); `StoreQueries::execution_worktree` (the listing workspace, the `executionWorktree` summary)                                                                                                                                                                   |
+| cwd (`meta.workspace.root`)                      | session actor: the root it starts with (`create_session_in_worktree`, a cold open) or `Command::SetExecutionRoot` (prepared activation; a session from `Kernel::create_prepared_session` runs SessionStart only after this move) | tools, shell, context. A cold open loads `execution_directory ?? directory` (node-store `run_in_worktree`). A worktree that is gone stays the root, as in Node's resume (`execution-worktree-missing-handling.md` §2), so tools fail on the missing directory and never run in the parent. |
+| listing workspace (sessions-index topic)         | `Live`, set at open from the stored row's `directory`                                                                                                                                                                            | the sessions index, `context.register`                                                                                                                                                                                                                                                     |
+| `executionWorktree` / `executionWorktreeMissing` | `Live` (live row); `cold_row` (stored row). A directory stat when the summary is built: Node's observation, not a session event                                                                                                  | the Host task index (sidebar badge, PR row, worktree cleanup and erase)                                                                                                                                                                                                                    |
 
 **Event order (prepared worktree):**
 
 ```text
 Renderer                 Host gate        protocol-zcode (worktree.rs)            node-store / actor
-   | createSession{worktreePreparation} ->|-> reserve (gate held) ---------------> create session (parent root,
-   |                                      |                                         title "Worktree <branch>")
+   | createSession{worktreePreparation} ->|-> reserve (gate held) ---------------> create_prepared_session (parent
+   |                                      |                                         root, SessionStart held)
    |                                      |   put marker preparing --------------> session_entry
-   |<---------------- {sessionId} --------|   Live: meta + row carry worktreePreparation (phase draft)
-   | subscribe conversation/<id>          |   (actor opens at the parent root; no input is admitted)
+   |<---------------- {sessionId} --------|   Live: meta + row carry worktreePreparation (phase draft), restored
+   |                                      |   from the store by the open that makes the projection
+   | subscribe conversation/<id>          |   (actor at the parent root, idle; no input is admitted)
    | git worktree add (Host Git service)  |
    | updateWorktreePreparation{status} -->|-> CAS on attemptId/status ------------> put marker
    |<-- {worktreePreparationUpdated} -----|   fresh snapshot + row
    | createSession{preparedSessionId,     |
-   |   expectedAttemptId, executionWorktree, config}
+   |   expectedAttemptId, executionWorktree, config, firstInput?}
    |                                    ->|-> activate (gate held): check the marker, workspace, path == targetPath,
-   |                                      |   branch, path is a directory
+   |                                      |   branch; target = the stored worktree if any, else the path;
+   |                                      |   the target is a directory
+   |                                      |   SetExecutionRoot(target) -----------> actor: shell cwd + meta root,
+   |                                      |                                         then SessionStart (in the worktree)
    |                                      |   set_execution_worktree -------------> session.execution_* (set once)
-   |                                      |   SetExecutionRoot(path) -------------> actor: shell cwd + meta root
    |                                      |   config (model / mode / plan)
+   |                                      |   firstInput (createSession command id) -> actor queue (behind SessionStart)
    |                                      |   put marker active -----------------> session_entry
-   |<-- {sessionId, preparedActivation: "materialized"}   meta/row drop worktreePreparation, row gains executionWorktree
-   | sendText (first input) ------------->|   ordinary admission (runs in the worktree)
+   |<-- {sessionId, preparedActivation: "materialized", input?}   meta/row drop worktreePreparation, row gains executionWorktree
 ```
 
 Activation outcomes follow Node's `createSessionRecord` prepared branch:
@@ -553,10 +558,16 @@ Activation outcomes follow Node's `createSessionRecord` prepared branch:
 - **refused:** a different workspace, a missing path, a `path` other than `targetPath`, or a mismatched `branchName`. The message is `Prepared worktree session does not match the requested workspace`.
 - **refused:** a path that is not a directory. The message is `Execution worktree path does not exist or is not a directory: <path>`.
 - **`already-active`:** the marker is `active` (a repeat, warm or cold). Nothing is re-applied.
-- **`input-admitted`:** the session already holds an accepted input. The marker is healed to `active`.
-- **`materialized`:** otherwise.
+- **`input-admitted`:** the session already holds a client's input: a committed typed message with its command, or a queued input. SessionStart's messages and its `initial_user_message` (command prefix `session-start-`, kernel-api `SESSION_START_INPUT`) do not count. The marker is healed to `active`.
+- **`materialized`:** otherwise. The config, then `firstInput` (text and attachments, Node `runActivation`), are applied after the move; the result carries `input` when the session accepted it.
 
-As in Node's handler (`preparedSessionId && (!expectedSubmissionId || firstInput)`), a worktree activation completes the marker before the ACK, not on the later `sendText`.
+The move comes before the column write: a refused move (a busy actor) stores nothing, so a retry may name another worktree. A column write that fails after the move fails the activation; the marker stays `preparing` and a retry moves and stores again. Because the columns are set once, a worktree an earlier attempt stored is the target of every later attempt, so the actor and the store always agree.
+
+As in Node's handler (`preparedSessionId && (!expectedSubmissionId || firstInput)`), a worktree activation completes the marker before the ACK.
+
+A submission activation (`preparedSessionId` + `expectedSubmissionId`) with `executionWorktree` or `expectedAttemptId` is refused with Node's `Prepared submission does not match the requested workspace or submission` (`v4-bridge.ts`), never activated without the worktree.
+
+A cold open reads the marker, the execution facts and a preparing submission before the bridge opens and hands them to the projection when it is made (`live::Restored`). Only the open that makes the projection uses them and starts the session's watchers, so a concurrent open never writes them again over an activation.
 
 **`updateWorktreePreparation`:** ports `assertWorktreePreparationMutation`:
 
@@ -579,25 +590,24 @@ The `worktreePreparation` override replaces branch, path, base and attempt. Node
 **Not ported yet (follow-ups):**
 
 - the model-context `Execution worktree` system section (`execution-worktree-model-context.md`);
-- Node's per-tool guard keyed on the tool's side-effect scope (`execution-worktree-guard.ts`). Rust fails closed through the cwd instead:
-  - Bash, and every relative path, fails on the missing directory and never runs in the parent;
-  - `Write` and the approved plan file refuse to write while the session root is not a directory (`tools` `missing_workspace`, message `Working directory is missing or unavailable: <root>. …`), so the worktree is never recreated as an ordinary directory. This holds for any session whose root is gone.
-
-  The row's `executionWorktreeMissing` is reported.
-
 - Forks and subagent children of a worktree session follow the existing Rust copy rules.
+
+**Missing worktree guard** (Node `getMissingExecutionWorktreeToolError`): the tool pipeline refuses every tool that runs in the workspace (`MachineParam::RunsThere`: Bash, Read, Write, Edit, NotebookEdit, Glob, Grep, Monitor; the same set as Node's workspace, git and system scopes plus Read, Grep and Glob) before validation while the session root is not a directory (`tools` `missing_workspace`, message `Working directory is missing or unavailable: <root>. Workspace and terminal actions are blocked until it is restored.`). Write and Edit check again when they write, since the directory can go while a permission prompt is open and both create parent directories. The worktree is never recreated as an ordinary directory. Node guards only sessions with an execution worktree; Rust guards any session whose root is gone. The row's `executionWorktreeMissing` is reported.
 
 **Known differences:**
 
 - `executionWorktreeMissing` is a `stat` when the actor opens, at activation, and when a stored row is built; it is not re-read on each live summary. A remote environment is not checked from this machine.
-- Prepared route: the actor opens at the parent while the worktree is prepared (the renderer subscribes), so a SessionStart hook runs in the parent; Node starts its runtime only at activation, in the worktree. A hook still running at activation keeps the actor busy, `SetExecutionRoot` is refused and the activation fails (`fault.command.executionFailed`).
+- Prepared route: the actor exists at the parent while the worktree is prepared (the renderer subscribes), idle, with SessionStart held until the activation moves it. A prepared session reopened cold before its activation (an agent restart) runs SessionStart (`resume`) at the parent, as any cold open does. A retry after a move whose SessionStart hook still runs is refused while the actor is busy (`fault.command.executionFailed`).
+- A client's input that a turn has taken but not yet committed (UserPromptSubmit still running) is not seen by the `input-admitted` check; it matters only when an earlier activation admitted the input and could not store the active marker.
 - After activation the title is the Rust default until the auto title (Node keeps `Worktree <branch>`).
 - A database without Node's execution columns (a Rust-only database that Node storage preparation never migrated) refuses worktree sessions: `set_execution_worktree` returns `Unsupported`, and no session is left behind.
 
 **Tests:**
 
 - `cli/tests/worktree_resume.rs`: a session stored the Node way (node-store `testing` `node_worktree_session`: migration `9002` DDL and Node's column write) resumed with a real `zcode-rs -p --resume` from the parent checkout. `pwd` is the worktree and `Write x.txt` lands there. With the worktree deleted, `pwd` fails, `Write` is refused, the parent gets no file and the worktree is not recreated. Before this port the cold open loaded `directory` and ran in the parent.
-- protocol-zcode `worktree_tests.rs`: the prepare → update → activate flow, the refusals, the direct route, and a stored worktree that is gone (cold row and live summary carry `executionWorktreeMissing`, listed under the parent).
+- `cli/tests/worktree_resume.rs` also sends an `Edit` with an empty `old_string`: refused with the worktree gone, and the worktree is not recreated.
+- protocol-zcode `worktree_tests.rs`: the prepare → update → activate flow, the refusals, the direct route, and a stored worktree that is gone (cold row and live summary carry `executionWorktreeMissing`, listed under the parent). Through `commands::command` with real envelopes: `updateWorktreePreparation` failed and cancelled, a schema refusal, a superRefine refusal, and a submission activation with a worktree. The activation admits `firstInput` after the move and the config, with a SessionStart message already in the history; a refused move stores nothing and a retry into another worktree leaves the actor and the columns together.
+- session `workspace_tests.rs`: a prepared session runs SessionStart only after `SetExecutionRoot`, with the worktree as its workspace.
 - node-store `fork_execution_worktree_tests.rs`: set-once, no columns, cold open in the worktree, missing worktree stays the root.
 
 **Interop:** `node_interop` `worktree-write` writes an activated session (marker and execution columns) through `NodeStore` into a database that Node storage preparation migrated; Node's `createSqliteSessionStore` (`getSession`, `sessionEntries`, `listSessions`) reads it with `directory` = parent and the execution fields set. The reverse: a session that Node's store writes with `executionDirectory` and a marker is read by `worktree-read` with the root on the worktree and the same marker. Checked on 2026-11-11 with a scratch `tsx` script; it is not part of a suite.

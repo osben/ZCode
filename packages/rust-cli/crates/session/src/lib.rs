@@ -282,6 +282,10 @@ impl SessionState {
 pub enum Opened {
     Created,
     Loaded,
+    /// Fork: created for a prepared execution worktree. SessionStart waits for `Command::SetExecutionRoot`, so the
+    /// hook runs in the worktree at activation (Node starts the runtime there; specs/fork-rust-agent-parity.md
+    /// "Execution worktree").
+    Prepared,
 }
 
 pub struct Session {
@@ -302,7 +306,7 @@ impl Session {
         let log = Arc::new(EventLog::new());
         let mut pending = Vec::new();
         match opened {
-            Opened::Created => {
+            Opened::Created | Opened::Prepared => {
                 log.append(KernelEvent::SessionCreated {
                     meta: state.meta.clone(),
                 });
@@ -339,6 +343,7 @@ impl Session {
             state,
             requests.downgrade(),
             pending,
+            opened == Opened::Prepared,
         );
         let task = spawner.spawn_resident("session-actor", async move {
             if let Some(history) = resume {

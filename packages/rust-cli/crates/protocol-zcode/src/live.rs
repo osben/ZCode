@@ -117,9 +117,21 @@ pub struct Live {
     indexed: bool,
 }
 
+/// Fork: the stored facts a cold open restores (crate::server::Server::live). They are read before the bridge
+/// opens and set when the projection is made, so a concurrent open of the same session never writes them a second
+/// time over a later change (an activation, a completed submission).
+#[derive(Debug, Default)]
+pub struct Restored {
+    /// The workspace the session is listed under when it runs elsewhere (an execution worktree, whose view root is
+    /// the worktree); `None` lists it under the view's root.
+    pub listed: Option<String>,
+    /// The prepared worktree and the execution worktree (crate::worktree).
+    pub worktree: crate::worktree::Facts,
+    /// A still-preparing first submission (crate::preparation), as exposed in the snapshot.
+    pub preparation: Option<Value>,
+}
+
 impl Live {
-    /// `listed`: Fork: the workspace the session is listed under when it runs elsewhere (an execution worktree,
-    /// whose view root is the worktree); `None` lists it under the view's root.
     pub fn new(
         context: Arc<Context>,
         topics: Arc<Topics>,
@@ -127,8 +139,13 @@ impl Live {
         view: &SessionView,
         followup: Followup,
         catalog: Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
-        listed: Option<String>,
+        restored: Restored,
     ) -> Self {
+        let Restored {
+            listed,
+            worktree,
+            preparation,
+        } = restored;
         let levels = view.selection.reasoning.iter().cloned().collect();
         // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
         let telemetry = (!view.meta.id.as_str().starts_with(SUBAGENT_SESSION_PREFIX))
@@ -145,8 +162,8 @@ impl Live {
                 projection: Projection::from_view(view, followup, levels).with_catalog(catalog),
                 log: TopicLog::with_base(epoch, view.last_seq),
                 summary: None,
-                preparation: None,
-                worktree: crate::worktree::Facts::default(),
+                preparation,
+                worktree,
                 skip_through: view.last_seq,
                 watcher: None,
                 shells_dirty: false,
@@ -616,11 +633,6 @@ impl Live {
             self.start(&subscription, Purpose::Recovery).await;
         }
         self.publish_summary().await;
-    }
-
-    /// Fork: the worktree facts before the first subscription starts (a cold open), so no frame is resent.
-    pub fn seed_worktree(&self, facts: crate::worktree::Facts) {
-        self.state().worktree = facts;
     }
 
     /// Fork: the current worktree facts.

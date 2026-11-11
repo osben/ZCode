@@ -243,6 +243,11 @@ impl Tool for EditTool {
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
         let input: Input = parse(&raw)?;
+        // Fork: checked again here (the pipeline checks before validation): the directory can go while a permission
+        // prompt is open, and an edit with an empty `old_string` creates parent directories.
+        if let Some(message) = crate::common::missing_workspace(&context).await {
+            return Err(failed(message));
+        }
         let cwd = cwd(&context).await;
         let path = stable_path(&context, &cwd, NAME, "file_path", &input.file_path).await?;
         let current = self.current(&context, &path).await?;

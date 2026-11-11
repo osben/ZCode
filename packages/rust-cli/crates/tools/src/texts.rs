@@ -101,7 +101,7 @@ pub fn edit_too_large(size: &str, max: &str) -> String {
 /// A write while the session's working directory is gone (Node `getMissingExecutionWorktreeToolError`).
 pub fn workspace_missing(root: &str) -> String {
     format!(
-        "Working directory is missing or unavailable: {root}. Workspace actions are blocked until it is restored."
+        "Working directory is missing or unavailable: {root}. Workspace and terminal actions are blocked until it is restored."
     )
 }
 
