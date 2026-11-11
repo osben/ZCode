@@ -297,7 +297,7 @@ pub(crate) async fn content(
             // image that cannot be prepared states the file's size on the desktop and nothing for a web-remote ref.
             let size = match &body {
                 AttachedBody::Image { .. } => read_size,
-                AttachedBody::ImageFailed { .. } if !is_uri_ref(&attachment.reference) => read_size,
+                AttachedBody::Placeholder { .. } if !is_uri_ref(&attachment.reference) => read_size,
                 _ => None,
             };
             (body, stored, image, size)
@@ -555,8 +555,10 @@ async fn admit(form: Inline, mime: &str, bytes: Vec<u8>) -> (AttachedBody, Optio
 async fn prepare_image(bytes: Vec<u8>, mime: &str) -> (AttachedBody, Option<Box<ImageInfo>>) {
     if bytes.is_empty() {
         return (
-            AttachedBody::ImageFailed {
-                code: IMAGE_INVALID.to_owned(),
+            AttachedBody::Placeholder {
+                code: IMAGE_INVALID.into(),
+                label: None,
+                url: None,
             },
             None,
         );
@@ -576,8 +578,10 @@ async fn prepare_image(bytes: Vec<u8>, mime: &str) -> (AttachedBody, Option<Box<
             };
             tracing::warn!(event = "attachment.image_prepare_failed", %reason, "an attached image could not be prepared for the model");
             return (
-                AttachedBody::ImageFailed {
-                    code: IMAGE_RESIZE_FAILED.to_owned(),
+                AttachedBody::Placeholder {
+                    code: IMAGE_RESIZE_FAILED.into(),
+                    label: None,
+                    url: None,
                 },
                 None,
             );

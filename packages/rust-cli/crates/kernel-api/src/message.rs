@@ -171,9 +171,19 @@ pub enum AttachedBody {
     /// Node's `attachment_read_failed` placeholder of a desktop text file that could not be read: nothing of it reaches
     /// the model (Node `isFailedTextAttachmentPlaceholder`).
     ReadFailed,
-    /// Node's placeholder of an image that could not be prepared for the model (`resolvedPlaceholderAttachment` with
-    /// `code` `attachment_image_resize_failed` or `attachment_image_invalid`): the model reads `[Attached <mime>: <path>]`.
-    ImageFailed { code: String },
+    /// Node's placeholder of a file that could not be read or prepared for the model (`resolvedPlaceholderAttachment`,
+    /// `code` its `errorCode`, e.g. `attachment_image_resize_failed`): the model reads `[Attached <mime>: <label>]`.
+    /// `label` is Node's (`path ?? attachment-<n>`) for a part Node wrote without a name; `None` labels it by the
+    /// submitted path, else the file name. `url` is the part's `url` when no ref holds it (Node keeps an inline data URL
+    /// there), so the part is written back as Node stored it.
+    #[serde(alias = "image_failed")]
+    Placeholder {
+        code: Box<str>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<Box<str>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<Box<str>>,
+    },
 }
 
 /// Fork: the view of a desktop text file that was sent (Node's `metadata.preview` of `resolveLocalFileAttachment`).

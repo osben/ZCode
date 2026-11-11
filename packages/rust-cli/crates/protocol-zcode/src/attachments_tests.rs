@@ -507,8 +507,10 @@ async fn an_image_that_cannot_be_prepared_is_nodes_placeholder() {
     assert_eq!(
         prepare_image(Vec::new(), "image/png").await,
         (
-            AttachedBody::ImageFailed {
-                code: "attachment_image_invalid".into()
+            AttachedBody::Placeholder {
+                code: "attachment_image_invalid".into(),
+                label: None,
+                url: None,
             },
             None
         )
@@ -516,8 +518,10 @@ async fn an_image_that_cannot_be_prepared_is_nodes_placeholder() {
     assert_eq!(
         prepare_image(b"not an image".to_vec(), "image/png").await,
         (
-            AttachedBody::ImageFailed {
-                code: "attachment_image_resize_failed".into()
+            AttachedBody::Placeholder {
+                code: "attachment_image_resize_failed".into(),
+                label: None,
+                url: None,
             },
             None
         )
