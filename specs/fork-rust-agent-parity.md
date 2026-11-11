@@ -149,6 +149,7 @@ sequenceDiagram
   S->>L: MessageDone(reply) -> same row as the draft
   S->>L: TurnFinished(T) -> header T completed
 ```
+
 - A child session cold-loaded while its run is live ends on the run's own unanswered input. The resume repairs (interrupted tool results, the `No response requested.` sentinel) are skipped for it: the run stores its reply. Before this, the side tab showed a `No response requested.` row next to the streamed reply.
 
 ```mermaid
