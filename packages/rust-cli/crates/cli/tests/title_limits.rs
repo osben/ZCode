@@ -162,7 +162,7 @@ impl Sandbox {
             let (mut titled, mut finished) = (false, false);
             while let Some(event) = events.next().await {
                 match &event.event {
-                    KernelEvent::TitleChanged { title } if title == GENERATED => titled = true,
+                    KernelEvent::TitleChanged { title, .. } if title == GENERATED => titled = true,
                     KernelEvent::TurnFinished { .. } => finished = true,
                     _ => {}
                 }

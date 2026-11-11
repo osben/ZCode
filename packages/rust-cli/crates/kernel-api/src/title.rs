@@ -10,6 +10,53 @@ pub const UNTITLED: &str = "Untitled session";
 /// Fork: the title of a session whose first input had no text (an attachment-only message), source `default`, until a
 /// real input replaces it (Node `persistSession`, specs/fork-rust-agent-parity.md, Blank first input title).
 pub const PLACEHOLDER: &str = "New session";
+/// Fork: where a session title came from (Node `titleSource`). The store, the session actor's events and the
+/// protocol's views all carry it, so a renamed session never reads as `generated` (Node keeps `custom` sticky).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    /// The placeholder before any real input ([`PLACEHOLDER`] or an empty title).
+    Default,
+    /// The first input's title ([`from_input`]).
+    FirstInput,
+    /// A generated title; also what an unknown stored value reads as (Node `normalizeStoredTitleSource`).
+    #[default]
+    Generated,
+    /// A user rename or a hook title.
+    Custom,
+}
+
+impl Source {
+    /// The stored `title_source` column; anything unknown is `Generated`, as Node normalizes it.
+    pub fn stored(value: &str) -> Self {
+        match value {
+            "default" => Self::Default,
+            "first_input" => Self::FirstInput,
+            "custom" => Self::Custom,
+            _ => Self::Generated,
+        }
+    }
+
+    /// The App's three-valued `titleSource` (Node `normalizeStoredTitleSource`, the v4 projection's
+    /// `onSessionTitleUpdated`): `first_input` shows as `generated`.
+    pub fn shown(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Custom => "custom",
+            Self::FirstInput | Self::Generated => "generated",
+        }
+    }
+
+    /// Without a known source: an empty title is `Default`, any other `Generated`.
+    pub fn derived(title: &str) -> Self {
+        if title.is_empty() {
+            Self::Default
+        } else {
+            Self::Generated
+        }
+    }
+}
+
 /// 临时标题最多这么多个 UTF-16 码元（超过时截断加 `...`，titles.md §4）。
 const MAX_TITLE_UNITS: usize = 60;
 

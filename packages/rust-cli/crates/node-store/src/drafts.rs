@@ -245,13 +245,37 @@ pub(crate) fn persist(
     session: &SessionId,
     ids: &NodeIds,
 ) -> Result<bool, StoreError> {
+    persist_for_input(conn, drafts, session, ids, "")
+}
+
+/// Fork: the admission of a session's input (Node `admitInputCommand` →
+/// `ensureSessionPersistedForExternalActivity(input.text)`). A draft is persisted with the input's title in the same
+/// transaction, as Node `persistSession` creates the row with it; a stored row still on the `default` placeholder (a
+/// reservation persisted it) takes the title too (Node `applyFirstInputTitleForPersistedSession`). Either way the
+/// title is in place before the input's `UserPromptSubmit` hooks, so a blocked input does not leave "New session".
+/// `true` when a draft was persisted.
+pub(crate) fn persist_for_input(
+    conn: &mut Connection,
+    drafts: &mut Drafts,
+    session: &SessionId,
+    ids: &NodeIds,
+    input: &str,
+) -> Result<bool, StoreError> {
     if drafts.was_dropped(session.as_str()) {
         return Err(not_found(session));
     }
+    let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
+    let titled = |conn: &Connection| {
+        if input.trim().is_empty() {
+            return Ok(());
+        }
+        crate::append::first_input_title(conn, session.as_str(), input, now)
+    };
     if !drafts.is_draft(session.as_str()) {
+        titled(conn)?;
         return Ok(false);
     }
-    materialize(conn, drafts, session, ids, |_| Ok(()))?;
+    materialize(conn, drafts, session, ids, titled)?;
     Ok(true)
 }
 

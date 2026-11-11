@@ -630,6 +630,7 @@ impl Live {
             session: &self.session,
             workspace: &self.workspace,
             title: state.projection.title(),
+            title_source: state.projection.title_source(),
             phase: state.projection.phase(),
             created_at: self.created_at,
             activity_at: self.context.now(),

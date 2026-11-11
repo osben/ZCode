@@ -320,6 +320,10 @@ pub struct LoadedSession {
     /// `isAutoTitlePending`), so a later input may retry the generated title.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub title_pending: bool,
+    /// Fork: the stored `title_source`, so the session actor's view reports a renamed session as `custom` (Node
+    /// `normalizeStoredTitleSource`). `None` when the store does not keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
     /// Fork (desktop App): the stored goal row (Node `session_target`), an interrupted active stretch already counted
     /// into `time_used_seconds` (Node `recoverInterruptedSessionTargetRun`); `iteration` is not stored (0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -907,10 +911,15 @@ pub trait StoreQueries: Send + Sync {
         Ok(false)
     }
 
-    /// Fork: persists a draft before its first input is admitted (Node `admitInputCommand` →
-    /// `ensureSessionPersistedForExternalActivity`). `false` when the session is not a draft;
-    /// `NotFound` when a deferred close dropped it first.
-    async fn persist_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+    /// Fork: the admission of a session's input (Node `admitInputCommand` →
+    /// `ensureSessionPersistedForExternalActivity(input.text)`): persists a draft with the input's first-input title,
+    /// or gives a stored row still on the `default` placeholder that title, before the input's hooks run. `true` when
+    /// a draft was persisted; `NotFound` when a deferred close dropped it first.
+    async fn persist_for_input(
+        &self,
+        _session: &SessionId,
+        _input: &str,
+    ) -> Result<bool, StoreError> {
         Ok(false)
     }
 

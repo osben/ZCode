@@ -629,7 +629,7 @@ async fn a_later_desktop_goal_asks_for_its_summary_only() {
         .await;
     until(
         &mut events,
-        |event| matches!(event, KernelEvent::TitleChanged { title } if title == "Seed chat"),
+        |event| matches!(event, KernelEvent::TitleChanged { title, .. } if title == "Seed chat"),
     )
     .await;
     built

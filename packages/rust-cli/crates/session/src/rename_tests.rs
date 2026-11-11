@@ -91,7 +91,7 @@ async fn the_model_names_the_session() {
     assert_eq!(renamed(&facts(&built)), ["flaky-login-test"]);
     until(
         &mut events,
-        |event| matches!(event, KernelEvent::TitleChanged { title } if title == "flaky-login-test"),
+        |event| matches!(event, KernelEvent::TitleChanged { title, .. } if title == "flaky-login-test"),
     )
     .await;
     assert_eq!(

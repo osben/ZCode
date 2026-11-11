@@ -354,6 +354,7 @@ impl SessionStore for MemoryStore {
                 .and_then(|turns| turns.iter().rev().find_map(Clone::clone)),
             last_turn_failed: last_turn_failed(facts),
             title_pending,
+            title_source: None,
             goal_target: goal_target.flatten(),
             goal_verifications,
             message_models: Default::default(),

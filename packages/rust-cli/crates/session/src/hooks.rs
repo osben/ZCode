@@ -11,9 +11,7 @@ use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::interaction::NOTIFY_AFTER as PERMISSION_NOTIFY_DELAY;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
-use rust_cli_kernel_api::session_api::{
-    Delivery, EndReason, KernelEvent, QueuedInput, StartSource,
-};
+use rust_cli_kernel_api::session_api::{Delivery, EndReason, QueuedInput, StartSource};
 use rust_cli_kernel_api::store::{Fact, SessionMeta};
 use serde_json::{Map, Value, json};
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -165,8 +163,7 @@ impl Actor {
         }
         // hook 给的标题按 Node 记为 custom：之后不再自动生成（titles.md §4）。
         self.titles.mark_custom();
-        self.meta.title.clone_from(&title);
-        self.log.append(KernelEvent::TitleChanged { title });
+        self.set_title(title, rust_cli_kernel_api::title::Source::Custom);
     }
 
     /// UserPromptSubmit 的事件：`{prompt, session_title?}`，带当前模式（hooks.md §7）。

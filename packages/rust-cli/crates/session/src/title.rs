@@ -148,6 +148,14 @@ fn human_text(message: &Message) -> Option<String> {
 }
 
 impl Actor {
+    /// Fork: the one place the title changes: memory, its source and the event (Node `SessionTitleUpdated` carries
+    /// the source, so a projection never reports a rename as generated).
+    pub(crate) fn set_title(&mut self, title: String, source: rust_cli_kernel_api::title::Source) {
+        self.meta.title.clone_from(&title);
+        self.title_source = source;
+        self.log.append(KernelEvent::TitleChanged { title, source });
+    }
+
     /// 本回合的人类输入已提交（`first` 为真时它之前的活动历史里没有 user 消息）。
     pub(crate) fn after_prompt(&mut self, message: &Message, first: bool) {
         let Some(text) = human_text(message) else {
@@ -159,13 +167,18 @@ impl Actor {
         let placeholder = rust_cli_kernel_api::title::PLACEHOLDER;
         let blank = text.trim().is_empty();
         if self.meta.title.is_empty() || (self.meta.title == placeholder && !blank) {
-            let title = if blank {
-                placeholder.to_owned()
+            let (title, source) = if blank {
+                (
+                    placeholder.to_owned(),
+                    rust_cli_kernel_api::title::Source::Default,
+                )
             } else {
-                rust_cli_kernel_api::title::from_input(&text)
+                (
+                    rust_cli_kernel_api::title::from_input(&text),
+                    rust_cli_kernel_api::title::Source::FirstInput,
+                )
             };
-            self.meta.title.clone_from(&title);
-            self.log.append(KernelEvent::TitleChanged { title });
+            self.set_title(title, source);
         }
         // Fork (desktop App): a `/goal` input that set a goal; it gets a summary title either way.
         let goal = self.goal_set_by(message.id());
@@ -395,8 +408,7 @@ impl Actor {
         }
         self.titles.settled = true;
         self.titles.pending = false;
-        self.meta.title.clone_from(&title);
-        self.log.append(KernelEvent::TitleChanged { title });
+        self.set_title(title, rust_cli_kernel_api::title::Source::Generated);
     }
 
     /// 用户改名（Node `setCustomSessionTitle`）：先提交，再改内存、发事件。`record` 是 TUI `/rename <名字>` 的命令记录
@@ -426,8 +438,7 @@ impl Actor {
             Err(reason) => return rejected(reason),
         };
         self.titles.mark_custom();
-        self.meta.title.clone_from(&title);
-        self.log.append(KernelEvent::TitleChanged { title });
+        self.set_title(title, rust_cli_kernel_api::title::Source::Custom);
         self.after_commit(appended).await;
         self.held_records.extend(held);
         accepted()

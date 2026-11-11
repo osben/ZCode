@@ -485,7 +485,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
 
 /// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
 /// createSession command id. The `input` field of the result; `None` without text or when the session refused it;
-/// `Err` when the draft could not be persisted for it ([`admit_draft`]).
+/// `Err` when the draft could not be persisted for it ([`admit_input`]).
 async fn submit_first(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
@@ -497,7 +497,7 @@ async fn submit_first(
     let Some(text) = first.text.clone() else {
         return Ok(None);
     };
-    admit_draft(server, id, &envelope.command_id, 0).await?;
+    admit_input(server, id, &text, &envelope.command_id, 0).await?;
     live.sink.remember_input(
         &envelope.command_id,
         input_meta(envelope, first, "startNow", "startNow"),
@@ -529,17 +529,24 @@ async fn submit_first(
     )
 }
 
-/// Fork: Node `admitInputCommand` persists a deferred session before it accepts an input, so the accepted input can
-/// no longer be dropped with its draft. A deferred close that dropped the draft first refuses the input; any other
-/// failure fails the command like Node's admission error (`fault.command.executionFailed`), before the input is
-/// remembered or sent. The text names no storage detail.
-async fn admit_draft(
+/// Fork: Node `admitInputCommand` persists a deferred session with the input's title before it accepts an input, so
+/// the accepted input can no longer be dropped with its draft and a hook that blocks it does not leave "New session".
+/// A deferred close that dropped the draft first refuses the input; any other failure fails the command like Node's
+/// admission error (`fault.command.executionFailed`), before the input is remembered or sent. The text names no
+/// storage detail.
+async fn admit_input(
     server: &Server,
     session: &SessionId,
+    text: &str,
     command: &str,
     revision: u64,
 ) -> Result<(), Box<Ack>> {
-    match server.kernel.queries().persist_draft(session).await {
+    match server
+        .kernel
+        .queries()
+        .persist_for_input(session, text)
+        .await
+    {
         Ok(_) => Ok(()),
         Err(error @ rust_cli_kernel_api::store::StoreError::NotFound { .. }) => {
             Err(Box::new(Ack::refused(
@@ -1233,12 +1240,12 @@ async fn send_text(
         view.as_ref().is_none_or(|view| view.running),
         !refs.is_empty(),
     );
-    if let Err(ack) = admit_draft(server, handle.id(), command, revision).await {
+    let text = input.text.clone().unwrap_or_default();
+    if let Err(ack) = admit_input(server, handle.id(), &text, command, revision).await {
         return *ack;
     }
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
-    let text = input.text.unwrap_or_default();
     let content = if !refs.is_empty() {
         crate::attachments::content(server, handle.id(), &text, refs).await
     } else {

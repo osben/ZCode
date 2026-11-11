@@ -25,7 +25,7 @@ fn titles(model: Arc<dyn ModelPort>) -> Option<TitleModel> {
 }
 
 fn titled(event: &KernelEvent, expected: &str) -> bool {
-    matches!(event, KernelEvent::TitleChanged { title } if title == expected)
+    matches!(event, KernelEvent::TitleChanged { title, .. } if title == expected)
 }
 
 fn generated(facts: &[Fact]) -> Vec<Fact> {

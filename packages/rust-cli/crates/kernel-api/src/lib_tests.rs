@@ -113,6 +113,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         last_turn_failed: true,
         earlier: vec![assistant()],
         title_pending: true,
+        title_source: None,
         goal_target: None,
         goal_verifications: Vec::new(),
         message_models: Default::default(),

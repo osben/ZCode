@@ -328,7 +328,82 @@ async fn a_worktree_draft_answers_its_parent_and_worktree_before_its_row() {
         );
     };
     check().await;
-    assert!(store.persist_draft(&id).await.unwrap());
+    assert!(store.persist_for_input(&id, "").await.unwrap());
     assert_eq!(sandbox.rows(&id), vec![None]);
     check().await;
+}
+
+/// The stored `title` and `title_source` of the session.
+fn title_row(sandbox: &Sandbox, id: &SessionId) -> (String, String) {
+    let conn = rusqlite::Connection::open(sandbox.paths().database().as_path()).unwrap();
+    conn.query_row(
+        "select title, title_source from session where id = ?",
+        [id.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .unwrap()
+}
+
+/// The first input's admission (protocol `admit_input`) persists the draft with the input's title, as Node's
+/// admission does; the user message commit that follows keeps it, so the turn still runs and stores its messages.
+#[tokio::test]
+async fn the_admitted_title_survives_the_first_commit() {
+    let sandbox = Sandbox::new();
+    let (kernel, store) = sandbox.kernel();
+    let id = sandbox.create(&kernel).await;
+    assert!(store.persist_for_input(&id, "fix the bug").await.unwrap());
+    assert_eq!(
+        title_row(&sandbox, &id),
+        ("fix the bug".to_owned(), "first_input".to_owned())
+    );
+    let submit = Command::Submit {
+        text: "fix the bug".into(),
+        attachments: Vec::new(),
+        delivery: Delivery::Queue,
+    };
+    send(&kernel, &id, "cmd_send", submit).await;
+    stored_messages(&sandbox, &id, 2).await;
+    assert_eq!(
+        title_row(&sandbox, &id),
+        ("fix the bug".to_owned(), "first_input".to_owned())
+    );
+}
+
+/// Rename, reopen in a restarted agent, then a live turn: the session's view keeps `custom` (Node keeps the stored
+/// source), so the protocol's live summary that replaces the cold row does not regress it to `generated`.
+#[tokio::test]
+async fn a_renamed_session_reopens_custom_and_stays_custom_after_a_turn() {
+    use rust_cli_kernel_api::title::Source;
+    let sandbox = Sandbox::new();
+    let (kernel, _store) = sandbox.kernel();
+    let id = sandbox.create(&kernel).await;
+    let submit = |text: &str| Command::Submit {
+        text: text.into(),
+        attachments: Vec::new(),
+        delivery: Delivery::Queue,
+    };
+    send(&kernel, &id, "cmd_1", submit("hello")).await;
+    stored_messages(&sandbox, &id, 2).await;
+    kernel
+        .rename_session(&id, "Renamed".to_owned())
+        .await
+        .unwrap();
+    let view = kernel.session_snapshot(&id).await.unwrap();
+    assert_eq!(view.title_source, Some(Source::Custom));
+    kernel
+        .open_session(&id)
+        .await
+        .unwrap()
+        .close(EndReason::Other)
+        .await;
+
+    let (fresh, _) = sandbox.kernel();
+    let view = fresh.session_snapshot(&id).await.unwrap();
+    assert_eq!(view.meta.title, "Renamed");
+    assert_eq!(view.title_source, Some(Source::Custom));
+    send(&fresh, &id, "cmd_2", submit("again")).await;
+    stored_messages(&sandbox, &id, 4).await;
+    let view = fresh.session_snapshot(&id).await.unwrap();
+    assert_eq!(view.meta.title, "Renamed");
+    assert_eq!(view.title_source, Some(Source::Custom));
 }

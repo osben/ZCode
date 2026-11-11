@@ -30,8 +30,10 @@ type Log = Arc<StdMutex<Vec<&'static str>>>;
 struct DraftQueries {
     drafts: StdMutex<HashSet<String>>,
     dropped: StdMutex<HashSet<String>>,
-    /// The next `persist_draft` fails as a full disk would.
+    /// The next `persist_for_input` fails as a full disk would.
     fail_persist: std::sync::atomic::AtomicBool,
+    /// The input text of each admission.
+    inputs: StdMutex<Vec<String>>,
     log: Log,
 }
 
@@ -90,7 +92,12 @@ impl StoreQueries for DraftQueries {
             || self.dropped.lock_unpoisoned().contains(session.as_str()))
     }
 
-    async fn persist_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+    async fn persist_for_input(
+        &self,
+        session: &SessionId,
+        input: &str,
+    ) -> Result<bool, StoreError> {
+        self.inputs.lock_unpoisoned().push(input.to_owned());
         if self
             .fail_persist
             .swap(false, std::sync::atomic::Ordering::Relaxed)
@@ -220,6 +227,18 @@ fn meta() -> SessionMeta {
 /// An open session `s1`; `draft` says whether the store still holds it as a draft. The scope must
 /// outlive the test (the session pump runs on it).
 async fn open(draft: bool) -> (TaskScope, Arc<Server>, Arc<TestHandle>, Arc<DraftQueries>) {
+    open_view(
+        draft,
+        SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default),
+    )
+    .await
+}
+
+/// [`open`] on a given view of `s1`.
+async fn open_view(
+    draft: bool,
+    view: SessionView,
+) -> (TaskScope, Arc<Server>, Arc<TestHandle>, Arc<DraftQueries>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
@@ -227,7 +246,7 @@ async fn open(draft: bool) -> (TaskScope, Arc<Server>, Arc<TestHandle>, Arc<Draf
     let log = Log::default();
     let handle = Arc::new(TestHandle {
         id: SessionId::new("s1"),
-        view: SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default),
+        view,
         closes: StdMutex::new(Vec::new()),
         log: log.clone(),
     });
@@ -387,9 +406,37 @@ async fn the_first_input_persists_the_draft_before_the_submit() {
         .await
         .unwrap();
     assert_eq!(*handle.log.lock_unpoisoned(), vec!["persist", "send"]);
+    // Node `ensureSessionPersistedForExternalActivity(input.text)`: the store titles the row from the input.
+    assert_eq!(*queries.inputs.lock_unpoisoned(), vec!["hi".to_owned()]);
     let reply = server.close_session(&close(Some("deferred"))).await;
     assert_eq!(reply, json!({"closed": false}));
     assert!(queries.dropped.lock_unpoisoned().is_empty());
+}
+
+/// createSession with `firstInput` admits the input with its text, like `sendText`.
+#[tokio::test]
+async fn a_create_with_its_first_input_admits_the_text() {
+    let (_scope, server, _handle, queries) = open(true).await;
+    let ack = crate::commands::command(&server, create_with_input("c1"))
+        .await
+        .unwrap();
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(*queries.inputs.lock_unpoisoned(), vec!["hi".to_owned()]);
+}
+
+/// Fork: a session renamed while closed (stored `custom`) is opened again; the live sessions-index row, which
+/// replaces the cold one, keeps `custom` after a live update instead of deriving `generated` from the title.
+#[tokio::test]
+async fn a_reopened_renamed_session_keeps_its_custom_source_in_the_live_summary() {
+    let mut view = SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default);
+    view.meta.title = "Renamed".into();
+    view.title_source = Some(rust_cli_kernel_api::title::Source::Custom);
+    let (_scope, server, _handle, _queries) = open_view(false, view).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    live.sink.publish_summary().await;
+    let summary = live.sink.summary();
+    assert_eq!(summary["title"], "Renamed");
+    assert_eq!(summary["titleSource"], "custom");
 }
 
 /// A deferred close that dropped the draft first wins: the input is refused, not accepted and lost.

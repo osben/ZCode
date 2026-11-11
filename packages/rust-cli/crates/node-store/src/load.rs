@@ -62,6 +62,10 @@ pub fn load(
             row.title_source.as_deref().unwrap_or("first_input"),
             "default" | "first_input"
         ),
+        title_source: row
+            .title_source
+            .as_deref()
+            .map(rust_cli_kernel_api::title::Source::stored),
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。

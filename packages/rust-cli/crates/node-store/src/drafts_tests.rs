@@ -356,18 +356,18 @@ async fn a_repeated_create_of_a_draft_keeps_its_buffer() {
 /// The first input's admission persists the draft (Node `admitInputCommand`); after a deferred
 /// close dropped it, the admission is `NotFound`.
 #[tokio::test]
-async fn persist_draft_materializes_and_a_dropped_draft_refuses() {
+async fn persist_for_input_materializes_and_a_dropped_draft_refuses() {
     let t = deferring();
     t.store.create(meta(ID, "/w", "")).await.unwrap();
     configure(&t).await;
-    assert!(t.store.persist_draft(&sid()).await.unwrap());
+    assert!(t.store.persist_for_input(&sid(), "").await.unwrap());
     assert_eq!(session_rows(&t), 1);
     assert_eq!(t.store.load(&sid()).await.unwrap().model, Some(picked()));
-    assert!(!t.store.persist_draft(&sid()).await.unwrap());
+    assert!(!t.store.persist_for_input(&sid(), "").await.unwrap());
     let other = SessionId::new("sess_other");
     t.store.create(meta("sess_other", "/w", "")).await.unwrap();
     assert!(t.store.discard_draft(&other).await.unwrap());
-    assert!(not_found(t.store.persist_draft(&other).await));
+    assert!(not_found(t.store.persist_for_input(&other, "").await));
 }
 
 /// A held or dropped draft has no row; a persisted one and an unknown id do.
@@ -382,7 +382,7 @@ async fn a_rowless_draft_is_held_or_dropped() {
     let other = SessionId::new("sess_other");
     assert!(!t.store.is_rowless_draft(&other).await.unwrap());
     t.store.create(meta("sess_other", "/w", "")).await.unwrap();
-    t.store.persist_draft(&other).await.unwrap();
+    t.store.persist_for_input(&other, "").await.unwrap();
     assert!(!t.store.is_rowless_draft(&other).await.unwrap());
 }
 
@@ -520,7 +520,7 @@ async fn a_draft_keeps_its_execution_worktree_until_its_row() {
         .await
         .unwrap();
     assert_eq!(session_rows(&t), 0);
-    assert!(t.store.persist_draft(&sid()).await.unwrap());
+    assert!(t.store.persist_for_input(&sid(), "").await.unwrap());
     let stored = t.store.execution_worktree(&sid()).await.unwrap().unwrap();
     assert_eq!(stored.directory.as_str(), "/w");
     assert_eq!(stored.path.as_str(), "/w/.worktrees/a");
@@ -545,4 +545,74 @@ async fn a_draft_worktree_is_refused_without_the_columns() {
         .await;
     assert!(matches!(refused, Err(StoreError::Unsupported { .. })));
     assert!(t.store.is_draft(&sid()).await.unwrap());
+}
+
+fn title_row(t: &TestStore, id: &str) -> Vec<serde_json::Value> {
+    t.rows(&format!(
+        "select title, title_source from session where id = '{id}'"
+    ))
+    .remove(0)
+}
+
+/// Node `admitInputCommand` persists a draft with the input's title (`persistSession(input)`), so an input its
+/// `UserPromptSubmit` hook blocks does not leave "New session"; a blank input keeps the placeholder. The user message
+/// commit afterwards keeps that title (its compare-and-set on `default` is a no-op).
+#[tokio::test]
+async fn the_first_input_admission_persists_the_title_with_the_draft() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    assert!(
+        t.store
+            .persist_for_input(&sid(), "  fix   the\n login bug ")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        title_row(&t, ID),
+        [json!("fix the login bug"), json!("first_input")]
+    );
+    t.store
+        .commit(
+            &sid(),
+            batch(None, vec![user("msg_1", "fix the login bug")]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        title_row(&t, ID),
+        [json!("fix the login bug"), json!("first_input")]
+    );
+
+    t.store.create(meta("sess_blank", "/w", "")).await.unwrap();
+    let blank = SessionId::new("sess_blank");
+    assert!(t.store.persist_for_input(&blank, "  ").await.unwrap());
+    assert_eq!(
+        title_row(&t, "sess_blank"),
+        [json!("New session"), json!("default")]
+    );
+}
+
+/// A reservation persists the prewarm as "New session" (`default`); its first input's admission then gives the row the
+/// input's title (Node `applyFirstInputTitleForPersistedSession`, before the hooks). A title that is no longer the
+/// placeholder is kept.
+#[tokio::test]
+async fn the_first_input_admission_titles_a_reserved_row() {
+    let t = deferring();
+    t.store.create(meta(ID, "/w", "")).await.unwrap();
+    assert!(t.store.persist_for_input(&sid(), "").await.unwrap());
+    assert_eq!(title_row(&t, ID), [json!("New session"), json!("default")]);
+    assert!(!t.store.persist_for_input(&sid(), "  ").await.unwrap());
+    assert_eq!(title_row(&t, ID), [json!("New session"), json!("default")]);
+    assert!(!t.store.persist_for_input(&sid(), "ship it").await.unwrap());
+    assert_eq!(title_row(&t, ID), [json!("ship it"), json!("first_input")]);
+    assert!(
+        !t.store
+            .persist_for_input(&sid(), "a later input")
+            .await
+            .unwrap()
+    );
+    assert_eq!(title_row(&t, ID), [json!("ship it"), json!("first_input")]);
+    t.store.rename(&sid(), "Mine").await.unwrap();
+    t.store.persist_for_input(&sid(), "again").await.unwrap();
+    assert_eq!(title_row(&t, ID), [json!("Mine"), json!("custom")]);
 }

@@ -364,6 +364,11 @@ pub struct CreateSession {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionView {
     pub meta: SessionMeta,
+    /// Fork: where `meta.title` came from (the stored `title_source`, then each `TitleChanged`), so a projection
+    /// opened on a renamed session reports `custom`. `None` when the producer does not know it (derived from the
+    /// title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,

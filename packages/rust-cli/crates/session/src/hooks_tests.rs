@@ -98,7 +98,7 @@ async fn prompt_hook_messages_follow_the_input() {
     let seen = until(&mut events, finished).await;
     assert!(
         seen.iter()
-            .any(|e| matches!(e, KernelEvent::TitleChanged { title } if title == "Named"))
+            .any(|e| matches!(e, KernelEvent::TitleChanged { title, .. } if title == "Named"))
     );
     let view = built.session.view().await.unwrap();
     assert_eq!(

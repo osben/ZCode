@@ -119,9 +119,22 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         };
         messages::save_part(ctx.conn, &part, ctx.now as i64).storage()?;
     }
+    first_input_title(ctx.conn, ctx.session, &texts.join("\n"), ctx.now as i64)
+}
+
+/// The first input's title over the `default` placeholder (Node `titleFromInput`); a later input, a generated or a
+/// custom title is kept. The user message commit and, fork, the admission of a session's input (Node
+/// `ensureSessionPersistedForExternalActivity`, before its `UserPromptSubmit` hooks) both write it here, so the rule
+/// has one owner.
+pub(crate) fn first_input_title(
+    conn: &rusqlite::Connection,
+    session: &str,
+    text: &str,
+    now: i64,
+) -> Result<(), StoreError> {
     // 用户调用 skill 的输入是命令标签：临时标题按用户输入的样子（`/<名字> <参数>`，ext.md §2.7）。
     // Fork: an input without text keeps the `default` placeholder for a later real input (Node `persistSession`).
-    let shown = display_input(&texts.join("\n"));
+    let shown = display_input(text);
     let (title, source) = if shown.trim().is_empty() {
         (
             rust_cli_kernel_api::title::PLACEHOLDER.to_owned(),
@@ -131,13 +144,13 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         (records::title_from_input(&shown), "first_input")
     };
     let title = sessions::Update {
-        id: ctx.session.to_owned(),
+        id: session.to_owned(),
         title: Some(title),
         expected_title_sources: vec!["default".to_owned()],
         title_source: Some(source.to_owned()),
         ..Default::default()
     };
-    sessions::update(ctx.conn, &title, ctx.now as i64).storage()?;
+    sessions::update(conn, &title, now).storage()?;
     Ok(())
 }
 

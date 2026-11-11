@@ -7,6 +7,7 @@ use std::sync::Arc;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::panels::WorkspaceSession;
 use rust_cli_kernel_api::store::SessionFilter;
+use rust_cli_kernel_api::title::Source;
 use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
@@ -75,6 +76,12 @@ fn cold_row(workspace: &str, session: &WorkspaceSession) -> Value {
         session: summary.id.as_str(),
         workspace,
         title: &summary.title,
+        // Fork: the stored title source as Node's cold summary normalizes it; deriving it from the title reported a
+        // persisted untouched prewarm ("New session", `default`) as `generated`.
+        title_source: summary
+            .title_source
+            .as_deref()
+            .map_or_else(|| Source::derived(&summary.title), Source::stored),
         phase,
         created_at,
         activity_at: summary.updated_at_ms,
@@ -90,11 +97,6 @@ fn cold_row(workspace: &str, session: &WorkspaceSession) -> Value {
         // project instead of as an ordinary session.
         if let Some(parent) = &summary.parent {
             fields.insert("parentSessionId".to_owned(), json!(parent.as_str()));
-        }
-        // Fork: the stored title source as Node's cold summary normalizes it; deriving it from the title reported a
-        // persisted untouched prewarm ("New session", `default`) as `generated`.
-        if let Some(source) = summary.title_source.as_deref() {
-            fields.insert("titleSource".to_owned(), json!(title_source(Some(source))));
         }
     }
     row
@@ -245,6 +247,9 @@ pub async fn reconcile(server: &Server, params: &Value) -> Result<Reply, RpcErro
                                 session: id,
                                 workspace,
                                 title: &view.meta.title,
+                                title_source: view
+                                    .title_source
+                                    .unwrap_or_else(|| Source::derived(&view.meta.title)),
                                 phase: Phase::CompletedSuccess,
                                 created_at: view.meta.created_at_ms,
                                 activity_at: view.meta.created_at_ms,
@@ -287,15 +292,6 @@ fn summary_entry(id: &str, deleted: bool, row: &Value) -> Value {
     entry
 }
 
-/// Node `normalizeStoredTitleSource`.
-fn title_source(source: Option<&str>) -> &'static str {
-    match source {
-        Some("custom") => "custom",
-        Some("default") => "default",
-        _ => "generated",
-    }
-}
-
 /// Node `reconcileSessions` for one stored row (`StoreQueries::reconcile_row`). The workspace
 /// check is Node's local branch (`directory === workspaceId`, no foreign `workspaceID`); zcode-rs
 /// serves local workspaces only, so the remote-identity branch is not ported.
@@ -331,7 +327,8 @@ pub(crate) fn stored_entry(
         "exists": true,
         "deleted": deleted,
         "title": row["title"],
-        "titleSource": title_source(row["titleSource"].as_str()),
+        // Node `normalizeStoredTitleSource`.
+        "titleSource": row["titleSource"].as_str().map_or(Source::Generated, Source::stored).shown(),
         "titleUpdatedAt": title_updated_at,
         "createdAt": row["timeCreated"],
         "updatedAt": row["timeUpdated"],

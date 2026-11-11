@@ -324,6 +324,9 @@ fn turns_asks_and_background_work_change_the_state() {
         status: rust_cli_kernel_api::env_shell::BackgroundStatus::Running,
     };
     assert!(touches_activity(&work));
-    let renamed = KernelEvent::TitleChanged { title: "x".into() };
+    let renamed = KernelEvent::TitleChanged {
+        title: "x".into(),
+        source: Default::default(),
+    };
     assert!(!touches_activity(&renamed));
 }

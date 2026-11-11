@@ -599,10 +599,15 @@ impl StoreQueries for NodeStore {
         }))
     }
 
-    async fn persist_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+    async fn persist_for_input(
+        &self,
+        session: &SessionId,
+        input: &str,
+    ) -> Result<bool, StoreError> {
         let session = session.clone();
+        let input = input.to_owned();
         self.with_drafts(move |conn, ids, drafts| match drafts {
-            Some(drafts) => drafts::persist(conn, drafts, &session, ids),
+            Some(drafts) => drafts::persist_for_input(conn, drafts, &session, ids, &input),
             None => Ok(false),
         })
         .await
