@@ -25,6 +25,7 @@ mod monitors;
 mod peer_send;
 mod plugin;
 mod report;
+mod routes;
 mod routing;
 mod runs;
 mod shell_notices;
@@ -72,6 +73,9 @@ pub struct AgentsPorts {
     /// 以前另存一份主 env，与注册表给的是同一份。
     pub machines: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
     pub tasks: Arc<dyn TaskListStore>,
+    /// Fork: the store's read queries; a reopened top-level session's persisted subagent children come from it
+    /// (`StoreQueries::subagent_child_ids`, shell_notices.rs).
+    pub store_queries: Arc<dyn rust_cli_kernel_api::store::StoreQueries>,
     pub queries: Arc<dyn SubagentQueries>,
     /// 主线程的上下文组装；子代理的 attachment 也由它按 `QuerySource::Subagent` 产生。
     pub context: Arc<dyn ContextBuilder>,
@@ -335,6 +339,22 @@ struct Signals(Arc<Core>);
 impl AgentSignals for Signals {
     fn signals(&self, session: &SessionId) -> BoxStream<'static, AgentSignal> {
         self.0.hub.subscribe(session)
+    }
+
+    fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {
+        shell_notices::adopt(&self.0, meta);
+    }
+
+    fn session_closing(&self, session: &SessionId) {
+        shell_notices::closing(&self.0, session);
+    }
+
+    fn sessions_erased(&self, sessions: &[SessionId]) {
+        shell_notices::erased(&self.0, sessions);
+    }
+
+    fn running_agent_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.0.live.running_in(sessions)
     }
 
     fn child_live(

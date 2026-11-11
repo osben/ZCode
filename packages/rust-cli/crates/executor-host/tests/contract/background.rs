@@ -117,6 +117,50 @@ async fn background_commands_report_until_acked(kind: Kind) {
     assert!(pending.is_err(), "acked notices are not delivered again");
 }
 
+/// Fork: an acknowledged command keeps its terminal record, and a remote executor answers it over the wire
+/// (`background.ended_background_command`), while `background_command` forgets it at the ack.
+async fn an_acked_command_answers_its_ended_record(kind: Kind) {
+    let shell = shell(kind, Vec::new()).await;
+    let task = background(&shell, "op1", "echo bg").await;
+    let notice = next_notice(&shell).await;
+    let session = SessionId::new("s1");
+    shell
+        .machine
+        .shell()
+        .ack_shell_notice(&session, notice.seq)
+        .await
+        .unwrap();
+    assert_eq!(info(&shell, "s1", &task).await, None);
+    let ended = shell
+        .machine
+        .background()
+        .ended_background_command(key("s1", &task))
+        .await
+        .unwrap()
+        .map(|info| BackgroundInfo {
+            output: None,
+            ..info
+        });
+    assert_eq!(
+        ended,
+        Some(BackgroundInfo {
+            command: "echo bg".to_owned(),
+            status: BackgroundStatus::Completed,
+            kind: BackgroundKind::Bash,
+            description: "Wait a while".to_owned(),
+            output: None,
+        })
+    );
+    // Only the session that ran it.
+    let other = shell
+        .machine
+        .background()
+        .ended_background_command(key("s2", &task))
+        .await
+        .unwrap();
+    assert_eq!(other, None);
+}
+
 async fn a_stopped_command_leaves_the_background_without_a_notice(kind: Kind) {
     let shell = shell(kind, Vec::new()).await;
     let task = background(&shell, "op1", "sleep 30").await;
@@ -449,6 +493,7 @@ async fn background_commands_report_their_kind_and_description(kind: Kind) {
 
 contract!(
     background_commands_report_until_acked,
+    an_acked_command_answers_its_ended_record,
     background_commands_report_their_kind_and_description,
     a_stopped_command_leaves_the_background_without_a_notice,
     an_ended_command_is_not_running_until_its_notice_is_acked,

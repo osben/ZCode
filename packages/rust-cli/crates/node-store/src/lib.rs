@@ -435,6 +435,15 @@ impl StoreQueries for NodeStore {
             .await
     }
 
+    /// Fork: the persisted subagent children of `root` (the agents crate's notice forwarders).
+    async fn subagent_child_ids(&self, root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        let root = root.as_str().to_owned();
+        let ids = self
+            .with_db(move |conn, _| session_tree::list_subagent_child_ids(conn, &root))
+            .await?;
+        Ok(ids.into_iter().map(SessionId::new).collect())
+    }
+
     async fn session_tree_ids_with_surviving_children(
         &self,
         root_ids: Vec<String>,

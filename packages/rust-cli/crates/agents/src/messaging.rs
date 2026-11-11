@@ -79,7 +79,9 @@ impl Messaging {
             .core
             .live
             .get(&id)
-            .filter(|agent| agent.parent == context.session);
+            // Fork: an erased agent's session rows are gone; it is no longer addressable (a restart would write into
+            // the erased session).
+            .filter(|agent| agent.parent == context.session && !agent.erased);
         let Some(agent) = known else {
             // 进程内没有：按本机的同伴会话寻址（cross-session.md §1.4）。都没有时是打开跨会话后的
             // `No agent named '<to>' is reachable.`（结果 `success: false`、不标 is_error）。以前是关闭跨会话时的
@@ -109,13 +111,18 @@ impl Messaging {
         } else {
             agent.tool_use.clone()
         };
-        if !self.core.live.restart(&id, Abort::new(), tool_use) {
+        let Some(claimed) = self.core.live.restart(&id, Abort::new(), tool_use) else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
             self.core.live.enqueue(&id, input.message.clone());
             return Ok(rust_cli_kernel_api::tool::text(steered_text(
                 &self.core.ports.ids.command(),
                 input.to.trim(),
             )));
+        };
+        // Fork: the forwarder claimed by the restart starts before the resumed run, so a command of that run has a
+        // consumer from its first turn.
+        if let Some(started) = claimed {
+            crate::shell_notices::start(&self.core, &agent.child, &agent.root, started);
         }
         let origin = rust_cli_kernel_api::message::UserOrigin::Human;
         let opening = match spawn::resume(&self.core, &agent, &input.message, origin).await {

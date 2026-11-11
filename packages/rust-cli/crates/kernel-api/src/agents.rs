@@ -152,6 +152,27 @@ pub trait AgentSignals: Send + Sync {
         }
     }
 
+    /// Fork: the kernel opened `meta` (from the store, or created it). For a top-level session the agents start a notice forwarder
+    /// for each of its persisted subagent children that has none (specs/fork-rust-agent-parity.md, "After a restart,
+    /// and on a remote executor"). Returns at once; the work runs in the background.
+    fn session_opened(&self, _meta: &crate::store::SessionMeta) {}
+
+    /// Fork: the kernel started closing `session` (before its actor exits). When it is a top-level session, the
+    /// forwarders of its children that no running or parked agent owns stop; their later notices stay pending in the
+    /// executor until the session opens again.
+    fn session_closing(&self, _session: &SessionId) {}
+
+    /// Fork: these sessions were erased from the store (`session/eraseTree`). Their children's forwarders stop, even
+    /// one a live agent owns, and the agents drop what they still hold for them (Node `deleteSessionTree`).
+    fn sessions_erased(&self, _sessions: &[SessionId]) {}
+
+    /// Fork: the sessions among `sessions` that are the child session of a running agent (not a parked one).
+    /// `session/eraseTree` refuses to erase them, as Node's `findRunningSessionIds` refuses a running detached
+    /// subagent (`getDetachedChildSessionFacts().running`).
+    fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
+    }
+
     /// Fork (node_desktop): the feed of the subagent run whose child session is `session`. None when the agents do
     /// not mirror child runs (the TUI).
     fn child_live(&self, _session: &SessionId) -> Option<ChildLiveFeed> {

@@ -240,6 +240,7 @@ impl Tool for AgentTool {
             depth,
             tool_use: Some(context.tool_use.clone()),
             stopped_by_user: false,
+            erased: false,
             description: input.description.clone(),
             // fork 总用父运行的模型与档位（`effort` 参数忽略）。
             selection: if fork {
@@ -281,7 +282,7 @@ impl Tool for AgentTool {
                     message: error.to_string(),
                 })?;
         // 子会话里后台命令的通知送给这个子代理（agents.md §5.2）。
-        crate::shell_notices::watch(core, &entry);
+        crate::shell_notices::watch(core, &entry.child, &entry.root);
         if background {
             let output = launched_output(&entry);
             spawn::background(core, entry, opening);

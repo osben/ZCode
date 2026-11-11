@@ -15,6 +15,15 @@ The desktop Host always runs the Node agent (`zcode.cjs app-server --stdio`), wh
    3. The fork setting `agentRuntime`.
    4. The default, `node`.
 3. **Storage preparation always stays on Node.** The Rust agent is spawned only as the conversation process. Database preparation and migrations, including fork `9001_fork_*`, keep running in the Host Worker from the bundled `zcode.cjs` (`storagePreparationEntry`). If no Node bundle is available, Rust is not selectable, because a Rust agent without prepared storage would open an unmigrated database.
+   - **The same step seeds the official plugins in Rust mode.** `zcode-rs` only reads the official plugin store (`platform/src/local/plugin_inventory.rs`: `cache/zcode-plugins-official/<name>/<version>` and `marketplaces/zcode-plugins-official/bundled-marketplace.json`) and has no copy of the plugin sources. Node's agent seeds that store itself on its first plugin resolution (`bundled-plugins.ts` `resolveOfficialPluginRoots`). With Rust effective no Node agent runs, so on a fresh home Rust would list no official plugin skill. The storage Worker already ships the plugin sources, so when its env has `ZCODE_FORK_AGENT_RUNTIME=rust` it runs the same `resolveOfficialPluginRoots` once the database is prepared (`bootstrap/src/fork-agent-runtime/`, called from the `prepareStorageOnly` branch of `runZCodeProtocolAgent`).
+     - **Rust only.** With Node effective it does nothing, and the Node agent stays the only seeder. Measured on the dev bundle (Apple M-series, 17 plugins, 66 MB): a cold seed adds ~230 ms to the Worker, a warm one ~70 ms, because each Worker re-hashes every bundled plugin file (the hash memo is per process). Doing it in Node mode would add the warm cost to every default start for nothing.
+     - **Store root.** The one the Rust agent reads (`StoragePaths::plugin_storage`): the merged `storage.dir` with `~/` expanded, a relative path resolved against the workspace, then `<cli storage root>/plugins`.
+     - **Never fails preparation.** A seed error is logged at `warn` and the Worker still exits `0`; the Rust agent then sees whatever usable cache already exists. The seed writes nothing to stdout, the Host's control channel.
+     - **Degraded plugins load the same cache as Node.** When a plugin's new version cannot be laid out, the seeder falls back to the last usable older cache, which Node passes to discovery beside the catalog. `zcode-rs` reads only the catalog's `cachePath`, so the seed points that entry's `cachePath` at the fallback cache (the entry keeps the bundled version). Rust and Node then load the same plugin set.
+     - **Known limits (follow-ups).**
+       - The Host prepares storage once, at startup, for its warm-up working directories (`hostDatabaseStartup.ts`). A workspace opened later whose `zcode.json` sets a `storage.dir` no warm-up directory uses stays unseeded until the Host restarts; Node seeds it when that workspace's app is created. Closing this needs a seed at Rust spawn time in the Host, which changes the Host's startup ownership.
+       - The catalog pointer to a fallback cache is shared state. Every seed (another Host's prepare, any Node bootstrap on the same home) first republishes the entry at the bundled version. If that version is still not laid out, a Rust agent reading in between, or after a Node bootstrap, misses the plugin until the next prepare. Node does not hit this, because it computes the fallback per process. The proper fix is for `zcode-rs` discovery to fall back to the newest usable sibling version itself when `cachePath` is not usable; then the pointer is no longer needed.
+     - **Same content as Node.** Seeding writes every bundled plugin, including `computer-use`; `suppressedBuiltins`, default enablement and the Node-only plugins are filtered when `zcode-rs` discovers plugins (`ext/src/plugins/select.rs`), as Node filters at discovery.
 4. **No silent lie about the runtime.**
    - Main resolves which runtime is in effect. If `rust` is selected but no `zcode-rs` binary is found, Main runs Node and logs at `warn`: `selected=rust effective=node reason=binary_missing`.
    - Main writes only the effective runtime into the Host env.
@@ -89,6 +98,7 @@ Responses from the agent are parsed with `.parse` (unknown keys stripped) and no
   It must not live under `resources/glm/`: `findZCodeAgentRuntimeBinary` scans that directory and would pick `zcode-rs` up as the native fallback, without storage startup.
 
 - **Command, hello overrides, command gate:** the managed Host module `services-fork-agent-runtime` (`packages/services/src/zcode-agent/fork-agent-runtime/`). All three read the Host env (`ZCODE_FORK_AGENT_RUNTIME`), which Main writes once per Host.
+- **Official plugin seed for the Rust agent:** the managed CLI module `cli-fork-agent-runtime` (`apps/zcode-cli/packages/bootstrap/src/fork-agent-runtime/`), called from the `prepareStorageOnly` branch of `runZCodeProtocolAgent` (fork patch). It reads the same Host env, inherited by the storage Worker.
 - **Command:**
   - It takes the bundled Node command and returns either that same command or the Rust command: `[app-server, --stdio]`, plus `--surface desktop` added by the existing presentation step. The Rust command reuses the Node command's `storagePreparationEntry`.
   - Upstream `resolveDefaultZCodeAgentCommand` gets a one-line wrap around its bundled branch. `prepareSessionStorage` and the process manager both call that resolver, so storage preparation and agent spawn see the same decision with no further edits.
@@ -110,6 +120,7 @@ Host (utility process)
     prepareHostStorage (tasks-index)                       Node Worker
     prepareSessionStorage → resolveDefaultZCodeAgentCommand
                              → storagePreparationEntry = bundled zcode.cjs   Node Worker, migrations
+                               → effective=rust: seed official plugins        same Worker, after storagePrepared, before exit
   getClient → resolveDefaultZCodeAgentCommand
                → effective=rust ? zcode-rs app-server --stdio : zcode.cjs   conversation process
 ```
@@ -151,6 +162,7 @@ The Rust agent lives in this repository at `packages/rust-cli`, the same path it
 10. Rust effective, web-remote and desktop, in a fresh session: attaching a text file with a secret word on a line the model has not echoed, and asking for it, gives the word in the reply. The chip shows the file name, and the bubble shows only the typed text. After an agent restart the chip is still there and an attached image still previews. Reopening the task under `ZCODE_FORK_AGENT_RUNTIME=node` shows the same bubble and chips, and a follow-up question quoting the unechoed line exactly is answered from history.
 
 11. Rust effective: after a full agent restart, subscribing to a task (`v4/conversation/subscribe` with `topic: conversation/<session>`, `connectionId`, `clientMode`) gives `userInput` rows and turn headers whose `sourceCommandId` equals the stored `anchor.sourceCommandId` of that input. An image attached under Rust shows a chip with a ref when the task is reopened under Node, and an image attached under Node reaches the Rust model as an image.
+12. Rust effective on a fresh home (no `~/.zcode/cli/plugins`): after the first start the plugin store has `bundled-marketplace.json` and the `visualize` cache, and the first model request of a new task lists the `visualize` skill. With Node effective the storage Worker leaves the plugin store untouched.
 
 ## Tests
 
@@ -160,6 +172,9 @@ Fork unit tests go in `scripts/fork-test-files.json`:
 - Host env injection, including removal of inherited values;
 - the Host resolver returning Rust with the Node storage entry, and the Node command unchanged by default;
 - the schema default;
-- the hello overrides (empty for Node) and the command gate (ACP refused in Rust mode only; worktree commands admitted).
+- the hello overrides (empty for Node) and the command gate (ACP refused in Rust mode only; worktree commands admitted);
+- prepare-storage seeding the official plugins in Rust mode only, without failing preparation when the seed throws, and pointing the catalog at the last usable cache when a new plugin version cannot be laid out (`apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/official-plugin-seed.test.ts`, which drives the database step and the seed directly because the entrypoint's module graph needs every CLI package built).
+
+Acceptance scenario 12 is the desktop E2E case `conversation-session-fork-official-plugins-fresh-home`, run on both runtimes. It checks the plugin store and the first request's skill listing (`visualize:visualize`, `skill-creator:skill-creator`), and it covers the call in the entrypoint.
 
 Desktop E2E stays on Node. `wdio.conf.ts` already removes `ZCODE_AGENT_SERVER_COMMAND`, and it should also remove `ZCODE_FORK_AGENT_RUNTIME` unless an explicit opt-in is set.

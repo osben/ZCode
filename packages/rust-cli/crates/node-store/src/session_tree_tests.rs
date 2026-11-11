@@ -141,6 +141,32 @@ async fn missing_roots_count_zero() {
     );
 }
 
+/// Fork: the subagent children of a top-level session are walked through `subagent_child` rows only; the side chat's
+/// nested subagent belongs to the side chat (its own top-level session for the agents it spawns).
+#[tokio::test]
+async fn lists_subagent_children_through_subagent_rows_only() {
+    let family = Family::new().await;
+    let conn = family.store.connection();
+    let grandchild = "sess_sub_grandchild";
+    seed_session(&conn, grandchild, Some(SUB), "subagent_child");
+    drop(conn);
+    let ids = |root: &str| {
+        let store = &family.store.store;
+        let root = rust_cli_kernel_api::ids::SessionId::new(root);
+        async move {
+            StoreQueries::subagent_child_ids(store, &root)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|id| id.as_str().to_owned())
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(ids(ROOT).await, vec![SUB.to_owned(), grandchild.to_owned()]);
+    assert_eq!(ids(CHAT).await, vec![NESTED_SUB.to_owned()]);
+    assert!(ids(OTHER).await.is_empty());
+}
+
 /// A root list of only unknown ids yields no ids; duplicate roots resolve once.
 #[tokio::test]
 async fn dedups_roots_and_lists_surviving_children() {

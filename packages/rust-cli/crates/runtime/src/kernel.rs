@@ -263,6 +263,45 @@ impl Kernel for LocalKernel {
         self.delete(session).await
     }
 
+    fn running_agent_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.agents.running_agent_sessions(sessions)
+    }
+
+    /// Fork: `session/eraseTree` erased these sessions (their runtimes already closed). The agents stop their notice
+    /// forwarders; every machine forgets them, cancelling their background commands and dropping pending notices, as
+    /// session close does on exit (session crate `closing.rs`) and as Node's runtime close does.
+    async fn sessions_erased(&self, sessions: Vec<SessionId>) {
+        self.agents.sessions_erased(&sessions);
+        let registry = &self.ports.environments;
+        let primary = registry.primary_machine();
+        for session in &sessions {
+            if let Err(error) = primary.commands().close_session(session, true).await {
+                tracing::warn!(%error, %session, "the environment could not forget an erased session");
+            }
+        }
+        for remote in registry.machines().machines {
+            let name = rust_cli_kernel_api::ids::MachineName::new(remote.name);
+            let Some(machine) = registry.machine(&name) else {
+                continue;
+            };
+            let reconnecting = registry.reconnecting(&name);
+            let sessions = sessions.clone();
+            let close = async move {
+                for session in &sessions {
+                    if let Err(error) = machine.commands().close_session(session, true).await {
+                        tracing::warn!(%error, %session, machine = %name, "a remote machine could not forget an erased session");
+                    }
+                }
+            };
+            // A reconnecting machine is not awaited (as in `closing.rs`): the close goes out when it is back.
+            if reconnecting {
+                drop(self.scope.spawner().spawn("forget-erased-sessions", close));
+            } else {
+                close.await;
+            }
+        }
+    }
+
     async fn session_snapshot(
         &self,
         session: &SessionId,
@@ -387,6 +426,10 @@ impl LocalKernel {
         );
         state.child_live = child_live;
         state.start_held = held;
+        // Fork: a reopened top-level session adopts its persisted subagent children's notices (one forwarder each).
+        // Only here, after every step that can fail or be dropped at an await, and in the same poll as `start`: an open
+        // that fails leaves no actor and is never open for the agents, and no close can come before its actor exists.
+        self.agents.session_opened(&state.meta);
         Ok(self.start(state, Opened::Loaded))
     }
 
@@ -449,6 +492,9 @@ impl LocalKernel {
         let mut state = SessionState::created(meta, request.selection, execution, start);
         state.start_held = held;
         state.execution_worktree = in_worktree;
+        // Fork: a created top-level session is open for the agents' notice forwarders, as an opened one is (after
+        // the fallible steps, in the same poll as `start`).
+        self.agents.session_opened(&state.meta);
         self.start(state, Opened::Created);
         Ok(id)
     }

@@ -97,6 +97,8 @@ pub struct MemoryStore {
     split: std::sync::atomic::AtomicBool,
     /// 下一个带 `TitleChanged` 的批次提交失败（[`Self::fail_next_title_change`]）。
     fail_title: std::sync::atomic::AtomicBool,
+    /// Fork: the next `session_rules` fails ([`Self::fail_next_session_rules`]).
+    fail_rules: std::sync::atomic::AtomicBool,
     /// Fork: the next `set_execution_worktree` fails ([`Self::fail_next_execution_worktree`]).
     fail_execution: std::sync::atomic::AtomicBool,
     /// Fork: the next `records` read fails ([`Self::fail_next_records`]).
@@ -115,6 +117,11 @@ impl MemoryStore {
     /// 下一个带 `TitleChanged` 的批次整批提交失败（`Storage` 错误），之后照常（titles.md §4：改名被拒绝时它的记录也不在）。
     pub fn fail_next_title_change(&self) {
         self.fail_title.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `session_rules` read fails (`Storage`), later ones succeed: an open that fails after its load.
+    pub fn fail_next_session_rules(&self) {
+        self.fail_rules.store(true, Ordering::SeqCst);
     }
 
     /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
@@ -190,6 +197,11 @@ impl MemoryStore {
     }
 
     /// 已删除的会话（修复线 F29）。
+    /// Fork: removes the session row, as `erase_session_tree` hard-deletes it.
+    pub fn erase(&self, session: &SessionId) {
+        self.sessions.lock_unpoisoned().remove(session);
+    }
+
     pub fn is_deleted(&self, session: &SessionId) -> bool {
         self.deleted.lock_unpoisoned().contains(session)
     }
@@ -590,6 +602,11 @@ impl LocalSettings for MemoryStore {
         &self,
         _session: &SessionId,
     ) -> Result<Option<crate::permission::ProjectRules>, StoreError> {
+        if self.fail_rules.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "injected session rules failure".to_owned(),
+            });
+        }
         Ok(None)
     }
 
@@ -784,6 +801,27 @@ impl StoreQueries for MemoryStore {
             "parent": {"id": session.as_str(), "timeUpdated": time_updated},
             "parts": [],
         }))
+    }
+
+    /// Fork: the subagent sessions whose parent chain reaches `root` through subagent sessions only.
+    async fn subagent_child_ids(&self, root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        let sessions = self.sessions.lock_unpoisoned();
+        let mut found: Vec<SessionId> = Vec::new();
+        let mut frontier = vec![root.clone()];
+        while let Some(parent) = frontier.pop() {
+            let mut children: Vec<SessionId> = sessions
+                .values()
+                .filter(|(meta, _)| {
+                    meta.kind == crate::store::SessionKind::Subagent
+                        && meta.parent.as_ref() == Some(&parent)
+                })
+                .map(|(meta, _)| meta.id.clone())
+                .collect();
+            children.sort();
+            frontier.extend(children.iter().cloned());
+            found.extend(children);
+        }
+        Ok(found)
     }
 
     /// Fork: the memory store persists no child rows.
