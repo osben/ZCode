@@ -69,7 +69,7 @@ impl Reply {
 
 /// Fork: the text a title request is made of (Node `normalizeTitleInput(sanitizeTitleSeed(input))`, used for both the
 /// length guard and the request): composer mentions keep their label, the manual skill template becomes its request.
-fn request_input(input: &str) -> String {
+pub(crate) fn request_input(input: &str) -> String {
     normalize_input(&rust_cli_kernel_api::title::seed(input))
 }
 

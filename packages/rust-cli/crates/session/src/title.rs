@@ -191,7 +191,9 @@ impl Actor {
             return;
         };
         if node_titles && goal.is_none() && self.titles.seed.is_none() && !text.trim().is_empty() {
-            self.titles.seed = Some((message.id().clone(), text.clone()));
+            // Node `sessionTitleSeed.input`: seeded and normalized here, seeded again by the retry's request.
+            let seed = crate::title_model::request_input(&text);
+            self.titles.seed = Some((message.id().clone(), seed));
         }
         let Some((prompt, text)) =
             self.title_seed(message, text, first, node_titles, goal.is_some())
