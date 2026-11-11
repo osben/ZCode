@@ -126,6 +126,7 @@ pub(crate) fn meta(id: &str, root: &str, title: &str) -> SessionMeta {
         title: title.to_owned(),
         trace: TraceId::new(id),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 

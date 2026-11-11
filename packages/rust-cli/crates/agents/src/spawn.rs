@@ -95,6 +95,8 @@ pub(crate) async fn create(
     parent: &RunInfo,
     prompt: &str,
 ) -> Result<(LiveAgent, Opening), StoreError> {
+    // Fork: the child inherits its parent's incognito profile; its row stores it, like Node's child rows.
+    let incognito = core.ports.incognito.get(&parent.session);
     let meta = SessionMeta {
         id: agent.child.clone(),
         kind: SessionKind::Subagent,
@@ -103,8 +105,10 @@ pub(crate) async fn create(
         title: agent.description.clone(),
         trace: TraceId::new(agent.root.as_str()),
         created_at_ms: core.ports.clock.now_ms(),
+        incognito,
     };
     core.ports.store.create(meta).await?;
+    core.ports.incognito.record(&agent.child, incognito);
     inherit_directory(core, &agent).await;
     let first = user(core, prompt, UserOrigin::Human);
     let mut facts = vec![
@@ -377,7 +381,10 @@ async fn run_loop(
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),
-                system: report::system(&agent.definition.prompt),
+                system: report::system(
+                    &agent.definition.prompt,
+                    core.ports.incognito.get(&agent.child).as_ref(),
+                ),
             }),
         )
     };

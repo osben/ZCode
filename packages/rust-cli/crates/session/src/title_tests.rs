@@ -25,7 +25,7 @@ fn titles(model: Arc<dyn ModelPort>) -> Option<TitleModel> {
 }
 
 fn titled(event: &KernelEvent, expected: &str) -> bool {
-    matches!(event, KernelEvent::TitleChanged { title } if title == expected)
+    matches!(event, KernelEvent::TitleChanged { title, .. } if title == expected)
 }
 
 fn generated(facts: &[Fact]) -> Vec<Fact> {
@@ -511,6 +511,47 @@ async fn node_desktop_titles_retry_once_with_the_first_input_as_seed() {
     until(&mut events, finished).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert_eq!(title_model.requests().len(), 2);
+}
+
+/// Fork (Node desktop titles): the retry's seed is stored seeded and normalized (Node `sessionTitleSeed.input =
+/// normalizeTitleInput(sanitizeTitleSeed(input))`), and the request seeds it again (`buildTitleMessages`), so a nested
+/// mention is reduced twice.
+#[tokio::test]
+async fn node_desktop_titles_retry_with_the_stored_seed_seeded_again() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["a"]),
+        text_response(&["b"]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![
+        text_response(&[""]),
+        text_response(&["{\"title\":\"Parser module\"}"]),
+    ]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit(
+            "c1",
+            "[[x](./a.ts)](./b.ts) explain the parser module",
+        ))
+        .await;
+    until(&mut events, finished).await;
+    until_title_call(&built.store).await;
+    built
+        .session
+        .send(submit("c2", "and now the second part please"))
+        .await;
+    until(&mut events, |event| titled(event, "Parser module")).await;
+    let requests = title_model.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].messages[0].content[0].block,
+        ContentBlock::Text {
+            text: "x explain the parser module".to_owned()
+        }
+    );
 }
 
 /// Fork (scenario 2): a short first input makes no request; the next long input is titled from itself.

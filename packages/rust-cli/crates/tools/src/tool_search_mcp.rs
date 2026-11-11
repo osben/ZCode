@@ -62,22 +62,24 @@ fn settled(view: &McpView, targets: &[String]) -> bool {
 }
 
 /// 搜不到时的重试：工具有新增或有 Pending 的服务器才做；新增时先在新的工具里搜；仍没有结果、有 Pending、
-/// 点名的服务器为空或在 Pending 时等，再取一次工具重新搜。`tools` 取当前的工具（按名字排序），`search` 在给出的
+/// 点名的服务器为空或在 Pending 时等，再取一次工具重新搜。`current` 取会话此刻的工具（按名字排序）与 MCP 状态，`search` 在给出的
 /// 工具里搜，`text` 是用来找点名的文本。返回新找到的工具名。
+///
+/// Fork: `current` is the session's snapshot, so the servers named, waited for and reported are only the ones the
+/// session sees; `mcp` only signals changes, and its global view is narrowed to those servers before it is judged.
 pub(crate) async fn retry(
     mcp: &dyn McpConnections,
     before: &[Arc<dyn Tool>],
     text: &str,
-    tools: impl Fn() -> Result<Vec<Arc<dyn Tool>>, String>,
+    current: impl Fn() -> Result<(Vec<Arc<dyn Tool>>, McpView), String>,
     search: impl Fn(&[Arc<dyn Tool>]) -> Vec<String>,
     context: &ToolUseContext,
 ) -> Result<Vec<String>, ToolError> {
     let failed = |message| ToolError::Failed { message };
-    let fresh = tools().map_err(failed)?;
+    let (fresh, view) = current().map_err(failed)?;
     let added = fresh
         .iter()
         .any(|tool| !before.iter().any(|old| old.name() == tool.name()));
-    let view = mcp.view();
     let pending = view.pending();
     if !added && pending.is_empty() {
         return Ok(Vec::new());
@@ -92,17 +94,26 @@ pub(crate) async fn retry(
     if !matches.is_empty() || pending.is_empty() || !targets_pending(&targets, &pending) {
         return Ok(matches);
     }
-    let done = |view: &McpView| settled(view, &targets);
+    let done = |global: &McpView| settled(&visible(global, &names), &targets);
     tokio::select! {
         _ = mcp.wait(WAIT_MS, &done) => {}
         () = context.cancel.cancelled() => return Err(ToolError::Cancelled),
     }
-    Ok(search(&tools().map_err(failed)?))
+    Ok(search(&current().map_err(failed)?.0))
+}
+
+/// Fork: `view` narrowed to the servers the session sees.
+fn visible(view: &McpView, servers: &[String]) -> McpView {
+    let mut narrowed = view.clone();
+    narrowed
+        .servers
+        .retain(|server| servers.contains(&server.name));
+    narrowed
 }
 
 /// 没有结果时的补充句：此刻还有 Pending 的服务器时才有。
-pub(crate) fn pending_note(mcp: Option<&dyn McpConnections>) -> String {
-    let pending = mcp.map(|mcp| mcp.view().pending()).unwrap_or_default();
+pub(crate) fn pending_note(view: Option<&McpView>) -> String {
+    let pending = view.map(McpView::pending).unwrap_or_default();
     if pending.is_empty() {
         return String::new();
     }

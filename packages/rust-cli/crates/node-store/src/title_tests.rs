@@ -157,3 +157,25 @@ async fn a_quote_block_without_an_intent_is_plain_text() {
     assert_eq!(text["text"], quoted);
     assert!(text.get("metadata").is_none());
 }
+
+/// Fork: a cold load carries the stored `title_source`, so the reopened session's actor and projection report a
+/// rename as `custom` (Node `normalizeStoredTitleSource`).
+#[tokio::test]
+async fn a_load_reports_the_stored_title_source() {
+    use rust_cli_kernel_api::title::Source;
+    let test = TestStore::new();
+    let session = SessionId::new("sess_source");
+    test.store
+        .create(meta("sess_source", "/w", ""))
+        .await
+        .unwrap();
+    let source = async || test.store.load(&session).await.unwrap().title_source;
+    assert_eq!(source().await, Some(Source::Default));
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", "hello there")]))
+        .await
+        .unwrap();
+    assert_eq!(source().await, Some(Source::FirstInput));
+    test.store.rename(&session, "Renamed").await.unwrap();
+    assert_eq!(source().await, Some(Source::Custom));
+}

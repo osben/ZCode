@@ -12,7 +12,7 @@ use rust_cli_kernel_api::store::{ExecutionWorktree, StoreError};
 
 use crate::OrStorage;
 
-fn has_columns(conn: &Connection) -> Result<bool, StoreError> {
+pub(crate) fn has_columns(conn: &Connection) -> Result<bool, StoreError> {
     conn.query_row(
         "select count(*) = 2 from pragma_table_info('session')
          where name in ('execution_directory', 'execution_branch')",

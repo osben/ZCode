@@ -97,6 +97,8 @@ impl Actor {
             title: fork_title(&parent_title),
             trace: self.meta.trace.clone(),
             created_at_ms: self.deps.clock.now_ms(),
+            // Fork: a fork keeps its source session's incognito profile (Node fork inherits it).
+            incognito: self.meta.incognito,
         };
         if let Err(error) = self.deps.store.create(meta).await {
             return rejected(error.to_string());

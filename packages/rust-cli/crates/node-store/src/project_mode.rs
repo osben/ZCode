@@ -59,13 +59,28 @@ pub(crate) fn write(ctx: &Commit<'_>, mode: PermissionMode) -> Result<(), StoreE
         return Ok(());
     }
     let project = session_project(ctx)?;
+    write_setting(ctx, &project, "mode", &setting_value(mode))
+}
+
+/// Fork: a draft's mode change (Node `setMode` → `saveProjectPermissionMode` runs before the
+/// session has a row). A draft is never a group session, so the scoped check above does not apply.
+pub(crate) fn write_for_project(
+    conn: &Connection,
+    now: u64,
+    project: &str,
+    mode: PermissionMode,
+) -> Result<(), StoreError> {
+    crate::project_rules::write_project_setting(conn, now, project, "mode", &setting_value(mode))
+}
+
+fn setting_value(mode: PermissionMode) -> Value {
     let mut value = Map::new();
     value.insert("mode".into(), mode::permission_value(mode).into());
     value.insert(
         keys::named(keys::PERMISSION_MODE),
         mode::entry_name(mode).into(),
     );
-    write_setting(ctx, &project, "mode", &Value::Object(value))
+    Value::Object(value)
 }
 
 #[cfg(test)]

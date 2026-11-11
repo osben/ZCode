@@ -108,6 +108,8 @@ pub struct Projection {
     error: Option<LastError>,
     executions: u64,
     title: String,
+    /// Fork: where `title` came from (the view's, then each `TitleChanged`), for the meta and the summary.
+    title_source: rust_cli_kernel_api::title::Source,
     selection: ModelSelection,
     mode: PermissionMode,
     plan: bool,
@@ -276,6 +278,9 @@ impl Projection {
             error: None,
             executions: 0,
             title: view.meta.title.clone(),
+            title_source: view
+                .title_source
+                .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&view.meta.title)),
             selection: view.selection.clone(),
             mode: view.mode,
             plan: view.plan,
@@ -338,6 +343,10 @@ impl Projection {
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    pub fn title_source(&self) -> rust_cli_kernel_api::title::Source {
+        self.title_source
     }
 
     /// 最后一条 assistant 正文（会话列表的预览）。
@@ -873,9 +882,14 @@ impl Projection {
                 });
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
             }
-            KernelEvent::TitleChanged { title } => {
-                self.title.clone_from(title);
-                patch.insert("meta".into(), state::meta(&self.title, true));
+            KernelEvent::TitleChanged { title, source } => {
+                // Node `onSessionTitleUpdated`: once custom, an automatic title does not replace it.
+                let custom = rust_cli_kernel_api::title::Source::Custom;
+                if self.title_source != custom || source.shown() != "generated" {
+                    self.title.clone_from(title);
+                    self.title_source = *source;
+                    patch.insert("meta".into(), state::meta(&self.title, self.title_source));
+                }
             }
             KernelEvent::ModelChanged { selection } => {
                 self.selection = selection.clone();
@@ -1364,7 +1378,7 @@ impl Projection {
             "control": self.control(),
             "availability": self.availability(),
             "inputRouting": self.input_routing(),
-            "meta": state::meta(&self.title, true),
+            "meta": state::meta(&self.title, self.title_source),
             "config": self.config(),
             "modelTransition": null,
             "usage": state::usage(self.context, &self.total),

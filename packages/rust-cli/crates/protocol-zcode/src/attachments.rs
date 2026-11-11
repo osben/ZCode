@@ -322,9 +322,10 @@ pub(crate) async fn content(
                 bytes: size.unwrap_or(attachment.bytes),
                 reference: Some(attachment.reference).filter(|reference| !reference.is_empty()),
                 preview_reference: attachment.preview_ref.map(String::into_boxed_str),
-                stored,
+                stored: stored.map(Box::from),
                 material,
                 image,
+                unnamed: false,
                 body,
             },
         });

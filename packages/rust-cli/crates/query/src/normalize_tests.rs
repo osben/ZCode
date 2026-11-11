@@ -702,6 +702,7 @@ fn attached_files_expand_into_reminders_and_images() {
             stored: None,
             material: None,
             image: None,
+            unnamed: false,
             body,
         },
     };
@@ -774,6 +775,7 @@ fn an_input_of_only_attached_text_is_padded_like_node() {
             stored: None,
             material: None,
             image: None,
+            unnamed: false,
             body,
         },
     };
@@ -834,6 +836,7 @@ fn separate_user_messages_send_attached_text_apart_like_node() {
             stored: None,
             material: None,
             image: None,
+            unnamed: false,
             body,
         },
     };

@@ -54,3 +54,35 @@ fn failed_notifications_carry_the_error_and_escape_markup() {
     );
     assert!(!unknown.contains("<result>"));
 }
+
+/// Fork: an incognito child (Node `buildSubagentContextSections`): without `identity` no identity block; without
+/// `harness` the Notes give way to the confirm-first paragraph, while the launcher-messages note stays.
+#[test]
+fn an_incognito_child_drops_identity_and_keeps_the_confirmation_floor() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    use rust_cli_prompts::agents as texts;
+    use rust_cli_prompts::texts as context_texts;
+    let normal = super::system("PROMPT", None);
+    assert_eq!(normal.len(), 2);
+    assert_eq!(normal[0].text, context_texts::identity());
+    assert!(normal[1].text.contains(texts::notes()));
+
+    let locked = super::system("PROMPT", Some(&IncognitoProfile::LOCKDOWN));
+    assert_eq!(locked.len(), 1);
+    let body = &locked[0].text;
+    assert!(body.starts_with("PROMPT"));
+    assert!(body.contains(texts::authority()));
+    assert!(body.contains(context_texts::action_caution()));
+    assert!(!body.contains(texts::notes()));
+    assert!(!body.contains(context_texts::identity()));
+
+    let kept = super::system(
+        "PROMPT",
+        Some(&IncognitoProfile {
+            identity: true,
+            harness: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    assert_eq!(kept, normal);
+}

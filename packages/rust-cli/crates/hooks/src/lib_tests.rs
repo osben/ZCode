@@ -206,3 +206,52 @@ async fn http_and_agent_hooks() {
     let body: Value = serde_json::from_str(&request.body).unwrap();
     assert_eq!(body["hook_event_name"], "Stop");
 }
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): without hooks an incognito session runs none;
+/// without plugins it runs only the settings hooks. Other sessions are unchanged.
+#[tokio::test]
+async fn an_incognito_profile_drops_all_hooks_or_the_plugin_hooks() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let env = Arc::new(ScriptedEnv::with(&[
+        ("user.sh", script("", "", 0)),
+        ("kit.sh", script("", "", 0)),
+    ]));
+    let profiles = IncognitoProfiles::default();
+    let engine = engine(env.clone(), &command_settings("Stop", "", "user.sh"))
+        .with_incognito(profiles.clone());
+    let (kit, warnings) = PluginHooks::from_json(
+        "kit",
+        "/Users/dev/plugins/kit",
+        &[json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "kit.sh"}]}]}})],
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    engine.register_plugins(vec![kit]);
+    let ran = |session: &'static str| {
+        let engine = &engine;
+        let env = env.clone();
+        async move {
+            let before = env.started().len();
+            let mut stop = event(HookEventName::Stop, json!({"stop_hook_active": false}));
+            stop.session = rust_cli_kernel_api::ids::SessionId::new(session);
+            engine.run(stop, CancellationToken::new()).await;
+            env.started().len() - before
+        }
+    };
+    profiles.record(
+        &rust_cli_kernel_api::ids::SessionId::new("no_hooks"),
+        Some(IncognitoProfile {
+            plugins: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    profiles.record(
+        &rust_cli_kernel_api::ids::SessionId::new("no_plugins"),
+        Some(IncognitoProfile {
+            hooks: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    assert_eq!(ran("sess_1").await, 2);
+    assert_eq!(ran("no_hooks").await, 0);
+    assert_eq!(ran("no_plugins").await, 1);
+}

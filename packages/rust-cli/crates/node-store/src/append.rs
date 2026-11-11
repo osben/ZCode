@@ -139,29 +139,39 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         };
         messages::save_part(ctx.conn, &part, ctx.now as i64).storage()?;
     }
-    // 用户调用 skill 的输入是命令标签：临时标题按用户输入的样子（`/<名字> <参数>`，ext.md §2.7）。
-    // Fork: an input without text keeps the `default` placeholder for a later real input (Node `persistSession`).
     // Fork: the title seed is the typed text without its quotes (Node titles the display input); the part keeps them,
     // as Node's text part does, so either runtime sends them to the model.
     let typed: Vec<String> = texts.iter().map(|text| typed(text)).collect();
-    let shown = display_input(&typed.join("\n"));
-    let (title, source) = if shown.trim().is_empty() {
-        (
-            rust_cli_kernel_api::title::PLACEHOLDER.to_owned(),
-            "default",
-        )
-    } else {
-        (records::title_from_input(&shown), "first_input")
+    first_input_title(ctx.conn, ctx.session, &typed.join("\n"), ctx.now as i64)?;
+    Ok(())
+}
+
+/// The first input's title over the `default` placeholder (kernel-api `title::first_input`, Node
+/// `titleFromInput(sanitizeTitleSeed(input))`); a later input, a generated or a custom title is kept. The user message
+/// commit and, fork, the admission of a session's input (Node `ensureSessionPersistedForExternalActivity`, before its
+/// `UserPromptSubmit` hooks) both write it here. The title it wrote, `None` when the row kept its title.
+pub(crate) fn first_input_title(
+    conn: &rusqlite::Connection,
+    session: &str,
+    text: &str,
+    now: i64,
+) -> Result<Option<String>, StoreError> {
+    // 用户调用 skill 的输入是命令标签：临时标题按用户输入的样子（`/<名字> <参数>`，ext.md §2.7）。
+    // Fork: an input without text keeps the `default` placeholder for a later real input (Node `persistSession`).
+    let (title, source) = rust_cli_kernel_api::title::first_input(text);
+    let source = match source {
+        rust_cli_kernel_api::title::Source::FirstInput => "first_input",
+        _ => "default",
     };
-    let title = sessions::Update {
-        id: ctx.session.to_owned(),
-        title: Some(title),
+    let update = sessions::Update {
+        id: session.to_owned(),
+        title: Some(title.clone()),
         expected_title_sources: vec!["default".to_owned()],
         title_source: Some(source.to_owned()),
         ..Default::default()
     };
-    sessions::update(ctx.conn, &title, ctx.now as i64).storage()?;
-    Ok(())
+    let written = sessions::update(conn, &update, now).storage()?;
+    Ok((written > 0).then_some(title))
 }
 
 /// Node 流式请求没有收到停止原因时的 `finishReason`。
@@ -331,11 +341,8 @@ fn append_assistant(ctx: &Commit<'_>, assistant: &AssistantMessage) -> Result<()
     Ok(())
 }
 
-/// 命令标签还原成用户输入（kernel-api `user_command::display`），其余原样。
+/// 命令标签还原成用户输入（kernel-api `user_command::display`），其余原样。Fork: attachment reminders stay in
+/// `metadata.modelInput`, not in the bubble.
 fn display_input(text: &str) -> String {
-    rust_cli_kernel_api::user_command::display(text)
-        .or_else(|| rust_cli_kernel_api::user_input::display(text))
-        // Fork: attachment reminders stay in `metadata.modelInput`, not in the bubble.
-        .or_else(|| rust_cli_kernel_api::prompt_attachment::display(text))
-        .unwrap_or_else(|| text.to_owned())
+    rust_cli_kernel_api::title::shown_input(text)
 }

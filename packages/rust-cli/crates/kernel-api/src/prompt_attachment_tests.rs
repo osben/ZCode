@@ -82,6 +82,7 @@ fn a_binary_local_file_goes_by_path_with_nodes_three_line_note() {
         stored: None,
         material: None,
         image: None,
+        unnamed: false,
         body: AttachedBody::PathReference { text: note.clone() },
     };
     assert_eq!(blocks(&file), vec![ContentBlock::Text { text: note }]);
@@ -98,6 +99,7 @@ fn an_attached_image_block_carries_the_file_name() {
         stored: None,
         material: None,
         image: None,
+        unnamed: false,
         body: AttachedBody::Image {
             source: ImageSource::Base64 {
                 media_type: "image/png".into(),
@@ -157,6 +159,7 @@ fn a_live_material_chip_carries_its_marks() {
             message_count: Some(5),
         })),
         image: None,
+        unnamed: false,
         body: AttachedBody::PathReference {
             text: path_reference(
                 "text/plain",
@@ -223,6 +226,7 @@ fn a_video_is_sent_as_a_named_video_block() {
         stored: None,
         material: None,
         image: None,
+        unnamed: false,
         body: AttachedBody::Video {
             source: source.clone(),
         },
@@ -246,6 +250,7 @@ fn read_file(read: TextRead, text: &str) -> AttachedFile {
         stored: None,
         material: None,
         image: None,
+        unnamed: false,
         body: AttachedBody::Text {
             text: text.into(),
             read: Some(Box::new(read)),

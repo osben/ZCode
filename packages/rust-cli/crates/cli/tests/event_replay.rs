@@ -333,6 +333,7 @@ async fn a_late_subscriber_folds_the_same_screen_from_fewer_events() {
             selection: selection(),
             mode: PermissionMode::BypassPermissions,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

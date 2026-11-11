@@ -36,6 +36,7 @@ async fn subagent_writes_settle_checkpoints_in_the_child_session() {
             title: "edit".to_owned(),
             trace: TraceId::new("trace"),
             created_at_ms: 1,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -109,6 +110,7 @@ async fn subagent_calls_are_committed_with_their_messages_in_the_child_session()
             title: "look".to_owned(),
             trace: TraceId::new("trace"),
             created_at_ms: 1,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -176,6 +178,7 @@ async fn a_nested_agent_call_links_the_grandchild_session_in_the_same_batch() {
             title: "nest".to_owned(),
             trace: TraceId::new("trace"),
             created_at_ms: 1,
+            incognito: None,
         })
         .await
         .unwrap();

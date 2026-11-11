@@ -95,6 +95,7 @@ mod denied_tools {
                 selection: selection(),
                 mode: PermissionMode::DontAsk,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();

@@ -418,9 +418,11 @@ pub trait ContextBuilder: Send + Sync {
 /// context 实现；会话 actor 判定可以移动后用自己的活动历史调用（不复制历史）。
 #[async_trait]
 pub trait DirectoryRules: Send + Sync {
-    /// `workspace.root` 的规则文件文字（`instructions` 的格式）；没有新文件时为 None。
+    /// `workspace.root` 的规则文件文字（`instructions` 的格式）；没有新文件时为 None。Fork: `session` is the moving
+    /// session, so an incognito profile without `projectInstructions` loads none (specs/fork-rust-agent-parity.md).
     async fn directory_rules(
         &self,
+        session: &SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String>;
@@ -433,6 +435,7 @@ pub struct NoDirectoryRules;
 impl DirectoryRules for NoDirectoryRules {
     async fn directory_rules(
         &self,
+        _session: &SessionId,
         _workspace: &WorkspaceRef,
         _history: &[Message],
     ) -> Option<String> {
@@ -448,6 +451,11 @@ impl DirectoryRules for NoDirectoryRules {
 pub trait ToolRegistry: Send + Sync {
     fn tools(&self) -> Vec<Arc<dyn Tool>>;
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>>;
+
+    /// Fork: [`Self::find`] for one session: a name two servers share resolves to the tool of the server the session's
+    /// snapshot keeps (an incognito profile hides the other), never the hidden one. Every call of a tool by its name in
+    /// a run looks it up here (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>>;
 
     /// 注册了、但按暴露规则不出现在 [`Self::tools`] 里的工具（有 Bash 时的 Glob / Grep，内嵌搜索，
     /// docs/specs/rust-cli/tools-files.md §1.1）。子代理的工具清单点名它们、又没有 Bash 时补回（

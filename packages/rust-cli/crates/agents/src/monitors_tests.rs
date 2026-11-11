@@ -553,6 +553,7 @@ async fn a_reopen_while_a_monitor_acknowledges_its_terminal_notice_delivers_it_o
         title: String::new(),
         trace: rust_cli_kernel_api::ids::TraceId::new(ROOT),
         created_at_ms: 0,
+        incognito: None,
     };
     signals.session_opened(&root_meta);
     for _ in 0..1_000 {

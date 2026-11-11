@@ -91,8 +91,10 @@ pub struct AttachedFile {
     ///
     /// For text material it is the local file holding the text (Node writes the decoded web-remote text as a session
     /// artifact and names its path), so the chip keeps the App's ref.
+    ///
+    /// `Box<str>`, like `preview_reference`: keeps the block within the size of a model stream event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stored: Option<String>,
+    pub stored: Option<Box<str>>,
     /// The App's `sourceKind` / `messageCount` of text material. Only the live row shows it: the stored part does not
     /// hold it (Node puts the input refs on the live row and builds a cold chip from the part).
     /// Boxed: rare, and every message block pays for the field's size.
@@ -102,6 +104,11 @@ pub struct AttachedFile {
     /// preparation"). Boxed: only images have it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<Box<ImageInfo>>,
+    /// The stored part has no `filename` (Node's web-remote image and video resolvers write none): `name` is then only
+    /// the chip's (Node `attachmentMetasOfMessage`), and the model gets no name (Node's cold media block takes
+    /// `placeholder: source.text.value ?? filename`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unnamed: bool,
     pub body: AttachedBody,
 }
 

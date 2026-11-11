@@ -72,6 +72,17 @@ impl Kernel for LocalKernel {
         self.open_in(session, start, false).await
     }
 
+    async fn freeze_incognito(
+        &self,
+        session: &SessionId,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        // The row first: a session whose profile could not be stored never runs gated in memory only.
+        self.ports.store.set_incognito(session, &profile).await?;
+        self.incognito.record(session, Some(profile));
+        Ok(())
+    }
+
     async fn open_prepared_session(
         &self,
         session: &SessionId,
@@ -390,6 +401,8 @@ impl LocalKernel {
         // (session crate `child_live`).
         let child_live = self.agents.child_live(session);
         let loaded = self.ports.store.load(session).await?;
+        // Fork: the incognito gates read the profile by session id from here on.
+        self.incognito.record(session, loaded.meta.incognito);
         // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
         // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
         // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
@@ -443,8 +456,10 @@ impl LocalKernel {
             // 顶层会话的链路 ID 取会话 ID；子会话、子代理继承父会话的链路 ID。
             trace: TraceId::new(id.as_str()),
             created_at_ms: self.ports.clock.now_ms(),
+            incognito: request.incognito,
         };
         self.ports.store.create(meta.clone()).await?;
+        self.incognito.record(&id, meta.incognito);
         let in_worktree = execution.is_some();
         if let Some((worktree, branch)) = execution {
             if let Err(error) = self

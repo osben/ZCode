@@ -208,6 +208,7 @@ pub async fn seed(store: &NodeStore, root: &Path, turns: usize, after: &[(usize,
             title: "Compacted work".to_owned(),
             trace: TraceId::new(SESSION),
             created_at_ms: 1_000_000,
+            incognito: None,
         })
         .await
         .unwrap();

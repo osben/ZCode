@@ -65,6 +65,12 @@ pub struct Server {
     /// (`worktree::activate`). Process-local like Node's runtime record: the gate lets their commands through and
     /// heals the marker; after a restart the durable marker decides again.
     pub(crate) unreceipted: Mutex<std::collections::HashSet<SessionId>>,
+    /// Fork: the incognito choice a prepared worktree session's first activation froze in this process (Node's
+    /// in-memory `prepared.incognito`): `None` a normal session, `Some(profile)` an incognito one. It covers a warm
+    /// retry of a failed activation; the row's set-once `fork_incognito` is the durable fact, and the stored marker
+    /// never carries the choice (Node `persistPreparedWorktreeStatus`).
+    pub(crate) prepared_incognito:
+        Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
 }
@@ -132,6 +138,7 @@ impl Server {
             uploads: Mutex::new(crate::uploads::Registry::default()),
             reservations: crate::preparation::ReservationGate::default(),
             unreceipted: Mutex::new(std::collections::HashSet::new()),
+            prepared_incognito: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
         }
     }
@@ -208,6 +215,11 @@ impl Server {
             })
             .await?;
         if made.load(std::sync::atomic::Ordering::Relaxed) {
+            // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
+            let queries = self.kernel.queries();
+            if queries.is_draft(session).await.unwrap_or(false) {
+                live.sink.set_draft_probe(queries);
+            }
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(
                 "subagent-table-watch",
@@ -330,6 +342,33 @@ impl Server {
 
     async fn close_session(&self, params: &Value) -> Value {
         let session = SessionId::new(params["sessionId"].as_str().unwrap_or_default());
+        // Fork: Node `shouldCloseSessionForExpectedPersistence`. The store owns draft-ness, so a
+        // deferred close drops the draft in one locked step before anything closes; a first
+        // send that materialized it first wins and the close answers `false`.
+        // A close without the field releases a draft too: Node disposes the runtime, and a draft has nothing else.
+        let queries = self.kernel.queries();
+        let expected = params["expectedPersistence"].as_str();
+        match expected {
+            Some("deferred") | None => {
+                if queries.discard_draft(&session).await.unwrap_or(false) {
+                    let live = self.bridge.get(&session);
+                    self.bridge.close(&session);
+                    if let Some(live) = live {
+                        // Node disposes the draft's runtime; the actor's late commits find no draft.
+                        live.handle.close(EndReason::Other).await;
+                        self.announce_lifecycle(&session, "unloaded").await;
+                    }
+                    return json!({"closed": true});
+                }
+                if expected.is_some() {
+                    return json!({"closed": false});
+                }
+            }
+            Some("immediate") if queries.is_draft(&session).await.unwrap_or(false) => {
+                return json!({"closed": false});
+            }
+            _ => {}
+        }
         let open = self.bridge.get(&session).is_some();
         self.bridge.close(&session);
         if open {
@@ -353,6 +392,10 @@ impl Server {
                 "genUiContext": false,
                 "sessionWorkspaceRouting": true,
                 "residentRowsRange": true,
+                // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,
+                // specs/fork-rust-agent-parity.md "Incognito sessions").
+                "incognitoSession": true,
+                "incognitoPromptToggles": true,
             })),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({
@@ -442,3 +485,7 @@ impl Service for Handler {
         self.0.dispatch(method, params).await
     }
 }
+
+#[cfg(test)]
+#[path = "server_close_tests.rs"]
+mod close_tests;

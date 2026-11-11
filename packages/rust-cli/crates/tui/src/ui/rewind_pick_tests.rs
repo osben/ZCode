@@ -264,6 +264,7 @@ fn enter_forks_on_the_answer_above_and_a_refusal_comes_back() {
             revision: 0,
             event: KernelEvent::TitleChanged {
                 title: "Footer work".into(),
+                source: Default::default(),
             },
         },
         0,
@@ -333,6 +334,7 @@ fn forked_view() -> rust_cli_kernel_api::session_api::SessionView {
             title: "Footer work (fork)".into(),
             trace: TraceId::new("s"),
             created_at_ms: 0,
+            incognito: None,
         },
         vec![
             Message::User(UserMessage {

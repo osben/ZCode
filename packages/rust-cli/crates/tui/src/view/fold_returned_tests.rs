@@ -60,6 +60,7 @@ fn snapshot(messages: Vec<Message>) -> SessionView {
             title: String::new(),
             trace: TraceId::new("s1"),
             created_at_ms: 0,
+            incognito: None,
         },
         messages,
         selection(),

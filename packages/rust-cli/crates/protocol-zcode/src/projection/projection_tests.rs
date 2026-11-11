@@ -49,6 +49,7 @@ fn view(messages: Vec<Message>) -> SessionView {
             title: String::new(),
             trace: TraceId::new("trace"),
             created_at_ms: 1000,
+            incognito: None,
         },
         messages,
         selection(),
@@ -458,7 +459,14 @@ fn the_revision_comes_from_the_events_only() {
         revision,
     };
     let deltas = projection.apply(
-        &event(1, 4, KernelEvent::TitleChanged { title: "t".into() }),
+        &event(
+            1,
+            4,
+            KernelEvent::TitleChanged {
+                title: "t".into(),
+                source: Default::default(),
+            },
+        ),
         0,
     );
     assert_eq!(deltas[0]["patch"]["revision"], 4);
@@ -586,6 +594,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
                     stored: None,
                     material: None,
                     image: None,
+                    unnamed: false,
                     body: AttachedBody::Omitted,
                 },
             },
@@ -638,9 +647,10 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
                 bytes: 4,
                 reference: Some(reference.into()),
                 preview_reference: None,
-                stored: stored.map(str::to_owned),
+                stored: stored.map(Box::from),
                 material: None,
                 image: None,
+                unnamed: false,
                 body,
             },
         }
@@ -1771,4 +1781,70 @@ fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
         .unwrap();
     assert_eq!(queue["items"][0]["text"], "explain this");
     assert_eq!(queue["items"][0]["conversationQuotes"], expected);
+}
+
+fn sequenced(seq: u64, event: KernelEvent) -> SequencedEvent {
+    SequencedEvent {
+        seq,
+        event,
+        revision: seq,
+    }
+}
+
+/// Fork: a session renamed while closed is opened with its stored source; a live update that is not a title keeps
+/// `custom` in the meta (it used to derive `generated` from any title).
+#[test]
+fn a_stored_custom_title_stays_custom_after_a_live_update() {
+    use rust_cli_kernel_api::title::Source;
+    let mut opened = view(Vec::new());
+    opened.meta.title = "Renamed".into();
+    opened.title_source = Some(Source::Custom);
+    let mut projection = Projection::from_view(&opened, Followup::Queue, Vec::new());
+    assert_eq!(projection.title_source(), Source::Custom);
+    let update = KernelEvent::ContextUsage {
+        used_tokens: 5,
+        max_tokens: 10,
+        compact_at: None,
+        window_tokens: None,
+    };
+    projection.apply(&sequenced(1, update), 0);
+    assert_eq!(
+        projection.snapshot(1, "e")["meta"],
+        json!({"title": "Renamed", "titleSource": "custom"})
+    );
+}
+
+/// Fork: Node `onSessionTitleUpdated`: the event's source reaches the meta (`first_input` shows as `generated`), and
+/// once the title is custom an automatic one does not replace it.
+#[test]
+fn a_live_rename_is_custom_and_an_automatic_title_does_not_replace_it() {
+    use rust_cli_kernel_api::title::Source;
+    let mut projection = Projection::from_view(&view(Vec::new()), Followup::Queue, Vec::new());
+    let titled = |seq, title: &str, source| {
+        sequenced(
+            seq,
+            KernelEvent::TitleChanged {
+                title: title.into(),
+                source,
+            },
+        )
+    };
+    let deltas = projection.apply(&titled(1, "fix the bug", Source::FirstInput), 0);
+    assert_eq!(
+        deltas[0]["patch"]["meta"],
+        json!({"title": "fix the bug", "titleSource": "generated"})
+    );
+    let deltas = projection.apply(&titled(2, "Mine", Source::Custom), 0);
+    assert_eq!(
+        deltas[0]["patch"]["meta"],
+        json!({"title": "Mine", "titleSource": "custom"})
+    );
+    projection.apply(&titled(3, "Generated", Source::Generated), 0);
+    assert_eq!(projection.title(), "Mine");
+    assert_eq!(projection.title_source(), Source::Custom);
+    projection.apply(&titled(4, "Mine again", Source::Custom), 0);
+    assert_eq!(
+        projection.snapshot(4, "e")["meta"],
+        json!({"title": "Mine again", "titleSource": "custom"})
+    );
 }

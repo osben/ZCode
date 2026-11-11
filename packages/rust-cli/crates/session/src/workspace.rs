@@ -74,7 +74,7 @@ impl Actor {
             if let Some(rules) = self
                 .deps
                 .directory_rules
-                .directory_rules(&moved, &self.messages)
+                .directory_rules(&self.meta.id, &moved, &self.messages)
                 .await
             {
                 note.push_str("\n\n");
@@ -129,6 +129,19 @@ impl Actor {
                 accepted()
             }
             Err(error) => rejected(error.to_string()),
+        }
+    }
+
+    /// Fork: `Command::SetIncognito` (a prepared worktree's activation): the meta takes the frozen profile once, so a
+    /// fork of the session keeps it (the gates read the kernel's `IncognitoProfiles`, recorded before this command).
+    pub(crate) fn set_incognito(
+        &mut self,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Ack {
+        if *self.meta.incognito.get_or_insert(profile) == profile {
+            accepted()
+        } else {
+            rejected("the session already has another incognito profile".to_owned())
         }
     }
 

@@ -81,6 +81,7 @@ async fn seeded() -> Arc<MemoryStore> {
             title: "Compacted work".into(),
             trace: TraceId::new(SESSION),
             created_at_ms: 1_000_000,
+            incognito: None,
         })
         .await
         .unwrap();
