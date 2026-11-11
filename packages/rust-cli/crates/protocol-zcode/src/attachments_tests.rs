@@ -692,8 +692,6 @@ impl rust_cli_kernel_api::session_api::Kernel for UploadKernel {
 /// video's → 29 (the decoded payload). `zcode-rs` writes the same value, not the App's declared size.
 #[tokio::test]
 async fn web_remote_uploads_carry_nodes_size_bytes() {
-    use rust_cli_kernel_api::testing::{FixedClock, selection};
-    use rust_cli_protocol_core::connection::{self, Options};
     // The same input Node's resolver was run on.
     let png = base64()
         .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=")
@@ -709,20 +707,7 @@ async fn web_remote_uploads_carry_nodes_size_bytes() {
         ]
         .into(),
     ));
-    let scope = rust_cli_base::TaskScope::root("test", |_| {});
-    let (out, _reader) = tokio::io::duplex(1 << 16);
-    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
-    let context = Arc::new(crate::context::Context::new(peer, Arc::new(FixedClock(5))));
-    let server = Server::new(
-        context,
-        Arc::new(UploadKernel(store.clone())),
-        scope.spawner(),
-        crate::server::Defaults {
-            selection: selection(),
-            mode: rust_cli_kernel_api::permission::PermissionMode::Default,
-            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
-        },
-    );
+    let (server, _guards) = upload_server(store.clone());
     // The App's declared sizes are deliberately not Node's measure.
     let refs = parse_refs(&[
         json!({"ref": "zcode-artifact://s/img", "fileName": "dot.png", "mime": "image/png", "bytes": png.len()}),
@@ -752,4 +737,60 @@ async fn web_remote_uploads_carry_nodes_size_bytes() {
         .unwrap()
         .unwrap();
     assert_eq!(found.size, files[0].bytes);
+}
+
+/// A server over [`UploadKernel`]; the guards keep its connection and task scope alive.
+fn upload_server(store: Arc<Uploaded>) -> (Server, Box<dyn std::any::Any>) {
+    use rust_cli_kernel_api::testing::{FixedClock, selection};
+    use rust_cli_protocol_core::connection::{self, Options};
+    let scope = rust_cli_base::TaskScope::root("test", |_| {});
+    let (out, reader) = tokio::io::duplex(1 << 16);
+    let (peer, writer) = connection::start(out, &scope.spawner(), Options::default());
+    let context = Arc::new(crate::context::Context::new(peer, Arc::new(FixedClock(5))));
+    let server = Server::new(
+        context,
+        Arc::new(UploadKernel(store)),
+        scope.spawner(),
+        crate::server::Defaults {
+            selection: selection(),
+            mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        },
+    );
+    (server, Box::new((scope, reader, writer)))
+}
+
+/// Node's local path references (`resolveLocalFileAttachment`, `resolveLocalImageAttachment`, …) state the file's
+/// `stat` size, not the App's declared one, so Share's stat of the same file agrees with the chip.
+#[tokio::test]
+async fn desktop_path_references_carry_the_files_stat_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let pasted = dir.path().join("pasted.txt");
+    rust_cli_fs::append(&pasted, b"long pasted text")
+        .await
+        .unwrap();
+    let zip = dir.path().join("bundle.zip");
+    rust_cli_fs::append(&zip, b"binary fixture").await.unwrap();
+    let mut material = local_ref(&pasted, "text/plain", 1);
+    material.source_kind = Some(MaterialKind::ClipboardText);
+    let (server, _guards) = upload_server(Arc::new(Uploaded(Default::default())));
+    let blocks = content(
+        &server,
+        &SessionId::new("s"),
+        "",
+        vec![material, local_ref(&zip, "application/zip", 2)],
+    )
+    .await
+    .unwrap();
+    let sizes: Vec<(bool, u64)> = blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::File { file } => (
+                matches!(file.body, AttachedBody::PathReference { .. }),
+                file.bytes,
+            ),
+            other => panic!("file block expected: {other:?}"),
+        })
+        .collect();
+    assert_eq!(sizes, [(true, 16), (true, 14)]);
 }
