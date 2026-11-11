@@ -122,6 +122,9 @@ impl Inbound {
                 );
             }
         }
+        if kind == "createSession" {
+            create_session_rules(payload)?;
+        }
         Ok(())
     }
 
@@ -132,6 +135,46 @@ impl Inbound {
             None => Ok(()),
         }
     }
+}
+
+/// Fork: the superRefine of `createSessionPayloadSchema` (shared `create-session-command.ts`).
+fn create_session_rules(payload: &Value) -> Result<(), String> {
+    let has = |field: &str| payload.get(field).is_some_and(|value| !value.is_null());
+    if has("submissionPreparation")
+        && [
+            "worktreePreparation",
+            "preparedSessionId",
+            "expectedSubmissionId",
+            "firstInput",
+            "config",
+            "executionWorktree",
+            "permissionScope",
+        ]
+        .iter()
+        .any(|field| has(field))
+    {
+        return Err(
+            "/payload/submissionPreparation: submission reservation cannot include runtime or input settings"
+                .to_owned(),
+        );
+    }
+    if has("expectedSubmissionId")
+        && (!has("preparedSessionId") || has("expectedAttemptId") || has("worktreePreparation"))
+    {
+        return Err("/payload/expectedSubmissionId: submission activation requires only a prepared session and submission identity".to_owned());
+    }
+    if has("expectedFirstInputCommandId")
+        && (!has("expectedSubmissionId") || has("executionWorktree") || has("firstInput"))
+    {
+        return Err("/payload/expectedFirstInputCommandId: expectedFirstInputCommandId is valid only for a reserved submission activation (no worktree, no firstInput)".to_owned());
+    }
+    if has("worktreePreparation") && has("incognito") {
+        return Err(
+            "/payload/incognito: worktree preparation cannot include an incognito profile"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

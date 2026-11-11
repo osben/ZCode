@@ -61,6 +61,10 @@ pub struct Server {
     pub(crate) uploads: Mutex<crate::uploads::Registry>,
     /// Fork: serializes submission reservations (crate::preparation::ReservationGate).
     pub(crate) reservations: crate::preparation::ReservationGate,
+    /// Fork: prepared worktree sessions materialized in this process whose active marker failed to store
+    /// (`worktree::activate`). Process-local like Node's runtime record: the gate lets their commands through and
+    /// heals the marker; after a restart the durable marker decides again.
+    pub(crate) unreceipted: Mutex<std::collections::HashSet<SessionId>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
 }
@@ -127,6 +131,7 @@ impl Server {
             preferences: Mutex::new(Preferences::default()),
             uploads: Mutex::new(crate::uploads::Registry::default()),
             reservations: crate::preparation::ReservationGate::default(),
+            unreceipted: Mutex::new(std::collections::HashSet::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
         }
     }
@@ -157,17 +162,52 @@ impl Server {
         } else {
             std::sync::Arc::from(Vec::new())
         };
+        // Fork: the stored worktree and submission facts, read for a cold open only and handed to the projection when
+        // it is made, so a later concurrent open cannot write them again over an activation.
+        let restored = if opening {
+            let execution = crate::worktree::stored_execution(self, session).await;
+            crate::live::Restored {
+                listed: execution
+                    .as_ref()
+                    .map(|worktree| worktree.directory.as_str().to_owned()),
+                worktree: crate::worktree::facts(self, session, execution.as_ref())
+                    .await
+                    .map_err(|reason| KernelError::Failed {
+                        message: reason.to_owned(),
+                    })?,
+                preparation: match crate::preparation::load(self, session).await {
+                    Ok(Some(marker)) => marker.exposed(),
+                    _ => None,
+                },
+            }
+        } else {
+            crate::live::Restored::default()
+        };
+        // Fork: a prepared worktree that is not active yet (an agent restart before the activation) keeps SessionStart
+        // held, as the live session did, so the hook never runs in the parent checkout. The kernel opens it here; the
+        // bridge's own open below finds it open.
+        if restored.worktree.preparing.is_some() {
+            self.kernel.open_prepared_session(session).await?;
+        }
+        // Set by the one open that makes the projection: only it starts the session's watchers.
+        let made = std::sync::atomic::AtomicBool::new(false);
+        let made_here = &made;
         let live = self
             .bridge
             .open(session, move |handle, view| {
-                Live::new(context, topics, handle.clone(), view, followup, catalog)
+                made_here.store(true, std::sync::atomic::Ordering::Relaxed);
+                Live::new(
+                    context,
+                    topics,
+                    handle.clone(),
+                    view,
+                    followup,
+                    catalog,
+                    restored,
+                )
             })
             .await?;
-        // Fork: a cold open restores a still-preparing first submission before any subscription starts.
-        if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
-            live.sink.set_preparation(marker.exposed());
-        }
-        if opening {
+        if made.load(std::sync::atomic::Ordering::Relaxed) {
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(
                 "subagent-table-watch",

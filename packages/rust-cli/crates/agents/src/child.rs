@@ -285,6 +285,7 @@ impl SessionOps for ChildSink {
         };
         Some(RunView {
             selection,
+            execution_worktree: agent.execution_worktree,
             ..RunView::new(agent.mode, agent.workspace)
         })
     }

@@ -14,6 +14,7 @@ mod auto_mode;
 mod auxiliary;
 mod changed;
 mod config;
+mod desktop;
 mod directory;
 mod environment;
 mod input_reminders;
@@ -59,7 +60,7 @@ use rust_cli_prompts::{models, reminder};
 use serde_json::Value;
 
 pub use analysis::{Analysis, MemoryFile, PromptSection};
-pub use config::{Attribution, ContextConfig, OutputStyle, Surface};
+pub use config::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
 
 use crate::instructions::{Lookup, Memo};
 use crate::render::since_boundary;
@@ -107,6 +108,8 @@ pub struct PromptAssembler {
     tasks: Late<Arc<dyn TaskReader>>,
     /// 连上的远端机器（R3，remote-exec.md §20.5.3）：机器清单提醒读它的快照；没有时不提醒。
     machines: Option<Arc<dyn EnvironmentRegistry>>,
+    /// Fork: Gen UI output directories already created (Node creates its one once, at context initialization).
+    gen_ui_dirs: desktop::Directories,
 }
 
 /// 当步 attachment 属于哪个循环（docs/specs/rust-cli/agents.md §4.3）。
@@ -158,7 +161,36 @@ impl PromptAssembler {
             changed: None,
             tasks: Late::new(),
             machines: None,
+            gen_ui_dirs: desktop::Directories::default(),
         }
+    }
+
+    /// Fork: Node's desktop section for this request's session ([`ContextConfig::desktop`]), rendered. A Gen UI
+    /// directory is named only after it exists: like Node (`ensureGenUiOutputDirectory`), a failure to create it fails
+    /// the request instead of sending the model elsewhere.
+    async fn desktop_section(
+        &self,
+        request: &ContextRequest,
+    ) -> Result<Option<String>, OrchestrationError> {
+        // Node children do not inherit the presentation surface or the Gen UI root: no request of a child session
+        // (its own steps, and its auto-compaction, which keeps the agent id but runs as `QuerySource::Compact` through
+        // this assembler) names or creates a directory. The node_desktop app-server has no fork subagent.
+        if request.agent.is_some() || matches!(request.source, QuerySource::Subagent(_)) {
+            return Ok(None);
+        }
+        let Some(desktop) = self.config.desktop.as_ref() else {
+            return Ok(None);
+        };
+        let directory = self
+            .gen_ui_dirs
+            .for_session(
+                desktop,
+                self.ports.files.as_ref(),
+                &request.workspace,
+                request.session.as_str(),
+            )
+            .await?;
+        Ok(Some(desktop::section(directory.as_deref())))
     }
 
     /// 接上执行环境的注册表：连上、断开远端机器时发机器清单提醒（remote-exec.md §20.5.3）。
@@ -471,6 +503,7 @@ impl ContextBuilder for PromptAssembler {
             .listings
             .listings_for(&request, since_boundary(history))
             .await?;
+        let desktop = self.desktop_section(&request).await?;
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(&request),
@@ -481,6 +514,7 @@ impl ContextBuilder for PromptAssembler {
             custom: self.config.custom_system_prompt.as_deref(),
             append: self.config.append_system_prompt.as_deref(),
             token_budget: self.config.token_budget,
+            desktop: desktop.as_deref(),
         };
         let system = system_blocks(&facts);
         // 当步的 attachment 在 `start_attachments` / `turn_attachments`（query.md §1.1；子代理同样，F16）；摘要请求见

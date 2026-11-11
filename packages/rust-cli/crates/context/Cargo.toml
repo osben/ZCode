@@ -24,6 +24,8 @@ rust-cli-memory.workspace = true
 rust-cli-prompts.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# Fork: the Gen UI output directory name (Node `getGenUiOutputDirectory`).
+sha2.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

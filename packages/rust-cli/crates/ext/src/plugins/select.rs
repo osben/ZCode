@@ -66,6 +66,9 @@ pub struct PluginSources {
     pub enabled_plugins: BTreeMap<String, bool>,
     /// 合并后的 `plugins.suppressedBuiltins`。
     pub suppressed_builtins: Vec<String>,
+    /// Fork: the App's inline view host is there (the app-server started with `--surface desktop`), so `visualize`
+    /// loads, like Node's protocol entry (`filterVisualizeSkillRoots(roots, true)`). False everywhere else.
+    pub view_host: bool,
 }
 
 /// 官方插件依赖的 Node 运行时或宿主（ext.md §4.4）。
@@ -89,7 +92,7 @@ impl NodeDependency {
             Self::OfficialAuth => {
                 "its MCP server needs the official auth injected by the Node host"
             }
-            Self::ViewHost => "the terminal has no inline view host",
+            Self::ViewHost => "there is no inline view host (only the desktop surface has one)",
         }
     }
 }
@@ -174,7 +177,12 @@ fn manifest_name(manifest: &Value) -> Result<String, String> {
 }
 
 /// 官方插件依赖 Node 运行时或宿主的判定（ext.md §4.4）；`tables` 是 MCP 服务器声明。
-fn node_dependency(name: &str, marketplace: &str, tables: &[Value]) -> Option<NodeDependency> {
+fn node_dependency(
+    name: &str,
+    marketplace: &str,
+    tables: &[Value],
+    view_host: bool,
+) -> Option<NodeDependency> {
     if marketplace != OFFICIAL {
         return None;
     }
@@ -198,7 +206,7 @@ fn node_dependency(name: &str, marketplace: &str, tables: &[Value]) -> Option<No
             return Some(NodeDependency::OfficialAuth);
         }
     }
-    (name == VIEW_HOST).then_some(NodeDependency::ViewHost)
+    (name == VIEW_HOST && !view_host).then_some(NodeDependency::ViewHost)
 }
 
 /// 判定过程中的状态：会话插件的名字、已出现的 id。
@@ -255,7 +263,12 @@ impl Admission<'_> {
             return reject(SkipReason::DuplicateName);
         }
         let tables = self.reader.mcp_tables(dir, &manifest).await;
-        if let Some(dependency) = node_dependency(&name, &candidate.marketplace, &tables) {
+        if let Some(dependency) = node_dependency(
+            &name,
+            &candidate.marketplace,
+            &tables,
+            self.sources.view_host,
+        ) {
             return reject(SkipReason::NodeRuntime(dependency));
         }
         Ok(self.reader.components(dir, name, manifest, &tables).await)
