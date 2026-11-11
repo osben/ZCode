@@ -290,6 +290,29 @@ impl Server {
 
     async fn close_session(&self, params: &Value) -> Value {
         let session = SessionId::new(params["sessionId"].as_str().unwrap_or_default());
+        // Fork: Node `shouldCloseSessionForExpectedPersistence`. The store owns draft-ness, so a
+        // deferred close drops the draft in one locked step before anything closes; a first
+        // send that materialized it first wins and the close answers `false`.
+        let queries = self.kernel.queries();
+        match params["expectedPersistence"].as_str() {
+            Some("deferred") => {
+                if !queries.discard_draft(&session).await.unwrap_or(false) {
+                    return json!({"closed": false});
+                }
+                let live = self.bridge.get(&session);
+                self.bridge.close(&session);
+                if let Some(live) = live {
+                    // Node disposes the draft's runtime; the actor's late commits find no draft.
+                    live.handle.close(EndReason::Other).await;
+                    self.announce_lifecycle(&session, "unloaded").await;
+                }
+                return json!({"closed": true});
+            }
+            Some("immediate") if queries.is_draft(&session).await.unwrap_or(false) => {
+                return json!({"closed": false});
+            }
+            _ => {}
+        }
         let open = self.bridge.get(&session).is_some();
         self.bridge.close(&session);
         if open {
@@ -400,3 +423,7 @@ impl Service for Handler {
         self.0.dispatch(method, params).await
     }
 }
+
+#[cfg(test)]
+#[path = "server_close_tests.rs"]
+mod close_tests;
