@@ -10,6 +10,7 @@ import {
   createZCodeProcessResourceSampler,
   type ZCodeProcessResourceSampler,
 } from "../process-resource-sampler.js";
+import { startCliMemoryDiagnostics } from "../memory-diagnostics/start.js";
 import type { ZCodeProtocolAgentServer } from "./server.js";
 
 export function startProtocolResourceSampler(
@@ -61,7 +62,22 @@ export function startProtocolResourceSampler(
       },
     });
     sampler.start();
-    return sampler;
+    // The profile recorder is a local diagnostic: start failures leave the resource sampler unaffected.
+    let cliMemoryDiagnostics: { stop(): void } | undefined;
+    try {
+      cliMemoryDiagnostics = startCliMemoryDiagnostics(() =>
+        server.collectMemoryDiagnostics({ includeEventStats: false }),
+      );
+    } catch {
+      cliMemoryDiagnostics = undefined;
+    }
+    return {
+      start: () => sampler.start(),
+      stop: () => {
+        cliMemoryDiagnostics?.stop();
+        sampler.stop();
+      },
+    };
   } catch {
     // Resource telemetry is best effort; initialization failure must not change the Agent startup result.
     return undefined;
