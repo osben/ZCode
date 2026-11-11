@@ -100,6 +100,26 @@ fn allowed(kind: &str) -> Vec<&'static str> {
     fields
 }
 
+/// Every fact has only the schema's fields, no empty string field (`min(1)`), and a unique event ID.
+pub(crate) fn assert_schema(facts: &[Value]) {
+    let mut ids = std::collections::HashSet::new();
+    for fact in facts {
+        let kind = fact["kind"].as_str().expect("kind");
+        let allowed = allowed(kind);
+        for (key, value) in fact.as_object().expect("object") {
+            assert!(allowed.contains(&key.as_str()), "{kind} has {key}: {fact}");
+            assert!(
+                value.as_str() != Some(""),
+                "{kind} has an empty {key}: {fact}"
+            );
+        }
+        assert!(
+            ids.insert(fact["eventId"].as_str().expect("eventId").to_owned()),
+            "duplicate event id: {fact}"
+        );
+    }
+}
+
 fn provider() -> Provider {
     Provider {
         provider: "e2e-upstream".into(),
@@ -167,18 +187,7 @@ impl Run {
     }
 
     fn assert_schema(&self) {
-        let mut ids = std::collections::HashSet::new();
-        for fact in &self.facts {
-            let kind = fact["kind"].as_str().expect("kind");
-            let allowed = allowed(kind);
-            for key in fact.as_object().expect("object").keys() {
-                assert!(allowed.contains(&key.as_str()), "{kind} has {key}: {fact}");
-            }
-            assert!(
-                ids.insert(fact["eventId"].as_str().expect("eventId").to_owned()),
-                "duplicate event id: {fact}"
-            );
-        }
+        assert_schema(&self.facts);
     }
 }
 
@@ -491,4 +500,64 @@ fn a_subagent_notification_merged_at_a_tool_boundary_marks_the_turn_consumed() {
     run.assert_schema();
     let terminal = run.facts.last().expect("terminal");
     assert_eq!(terminal["backgroundSubagentResultConsumed"], true);
+}
+
+#[test]
+fn a_resumed_subagent_reports_a_second_lifecycle_pair() {
+    let mut run = Run::new("sess_main", Role::Main);
+    let link = |status: &str| SubagentLink {
+        agent: "agent_1".into(),
+        agent_type: Some("general-purpose".into()),
+        child: "sess_subagent_agent_1".into(),
+        parent_tool: "toolu_agent".into(),
+        background: true,
+        status: status.into(),
+        turn: Some("turn_1".into()),
+    };
+    run.event(turn_started("turn_1", Some("cmd-1")));
+    assert_eq!(run.links(&[link("running")]), ["sess_subagent_agent_1"]);
+    run.event(finished("turn_1"));
+    run.links(&[link("success")]);
+    // `SendMessage` in a later turn resumes the settled agent: its row runs again and the run is read again.
+    run.event(turn_started("turn_2", Some("cmd-2")));
+    assert_eq!(run.links(&[link("running")]), ["sess_subagent_agent_1"]);
+    run.event(finished("turn_2"));
+    run.links(&[link("success")]);
+
+    assert_eq!(
+        run.kinds(),
+        [
+            "turn.started",
+            "subagent.lifecycle:running",
+            "turn.terminal:success",
+            "subagent.lifecycle:completed",
+            "turn.started",
+            "subagent.lifecycle:running",
+            "turn.terminal:success",
+            "subagent.lifecycle:completed",
+        ]
+    );
+    run.assert_schema();
+    let respawned = &run.facts[5];
+    assert_eq!(respawned["phase"], "spawned");
+    assert_eq!(respawned["turnId"], "turn_2");
+    assert_eq!(respawned["sourceCommandId"], "cmd-2");
+    // Node reports the stop under the turn of its spawn (the resuming turn), not the row's launch turn.
+    assert_eq!(run.facts[7]["turnId"], "turn_2");
+}
+
+#[test]
+fn a_subagent_without_its_call_id_omits_the_parent_tool_call() {
+    let mut run = Run::new("sess_main", Role::Main);
+    run.links(&[SubagentLink {
+        agent: "agent_1".into(),
+        agent_type: None,
+        child: "sess_subagent_agent_1".into(),
+        parent_tool: String::new(),
+        background: false,
+        status: "running".into(),
+        turn: None,
+    }]);
+    run.assert_schema();
+    assert!(run.facts[0].get("parentToolCallId").is_none());
 }

@@ -16,6 +16,18 @@ use tokio::sync::mpsc;
 
 use crate::test_support::{Setup, envelope};
 
+fn started() -> ChildLive {
+    ChildLive::Started {
+        run: 1,
+        selection: rust_cli_kernel_api::model::ModelSelection {
+            provider: "p".to_owned(),
+            model: "m".to_owned(),
+            reasoning: None,
+            connection: None,
+        },
+    }
+}
+
 fn delta(text: &str) -> ChildLive {
     ChildLive::Event(QueryEvent::Delta {
         message: 0,
@@ -56,7 +68,7 @@ async fn a_late_view_streams_the_child_run_so_far_and_then_live() {
     let (live, receiver) = mpsc::unbounded_channel();
     let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
     setup.child_live = Some(ChildLiveFeed {
-        replay: vec![ChildLive::Started, delta("E2E_SIDE_TAB_CHILD_1_")],
+        replay: vec![started(), delta("E2E_SIDE_TAB_CHILD_1_")],
         live: tokio_stream_from(receiver),
     });
     let built = setup.build().await;
@@ -137,7 +149,7 @@ async fn a_cold_load_during_the_child_run_adds_no_resume_sentinel() {
         origin: rust_cli_kernel_api::message::UserOrigin::Human,
     })];
     setup.child_live = Some(ChildLiveFeed {
-        replay: vec![ChildLive::Started, delta("E2E_SIDE_TAB_CHILD_1_")],
+        replay: vec![started(), delta("E2E_SIDE_TAB_CHILD_1_")],
         live: tokio_stream_from(receiver),
     });
     let built = setup.build().await;

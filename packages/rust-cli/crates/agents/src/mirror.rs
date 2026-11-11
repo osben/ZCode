@@ -1,8 +1,10 @@
 //! Fork (node_desktop): the live runs of subagents, per child session, for the child session's actor (a side tab on
 //! a running subagent streams its run; specs/fork-rust-agent-parity.md). The run itself writes the child session; this
-//! only relays what it did, with a replay of the current run for a late subscriber.
+//! only relays what it did, with a replay of the current run for a late subscriber. The App's telemetry reads runs
+//! through [`Mirrors::run_feed`], which also replays a finished run that nobody read live (specs/fork-rust-agent-parity.md,
+//! "Child runs").
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 use futures_util::StreamExt;
@@ -10,7 +12,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::agents::{ChildLive, ChildLiveFeed};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::Message;
-use rust_cli_kernel_api::model::BlockDelta;
+use rust_cli_kernel_api::model::{BlockDelta, ModelSelection};
 use rust_cli_kernel_api::orchestration::{QueryError, QueryEvent, QueryStop};
 use rust_cli_kernel_api::session_api::TurnOutcome;
 use tokio::sync::broadcast;
@@ -18,8 +20,14 @@ use tokio::sync::broadcast;
 /// The live buffer of one subscriber; one that falls further behind gets a new feed.
 const CAPACITY: usize = 4096;
 
+/// The finished runs kept for a late [`Mirrors::run_feed`]. A run is kept only when it finished with no subscriber,
+/// which happens when the parent's watch has not subscribed yet; the parent subscribes within its next table read, so
+/// a few runs are enough.
+const KEPT_FINISHED: usize = 16;
+
 struct Mirror {
-    running: bool,
+    /// The current run's `Started` (run number and model); None between runs.
+    started: Option<(u64, ModelSelection)>,
     /// Messages stored during the current run.
     committed: Vec<Message>,
     /// Events since the last stored message (deltas merged, the latest progress per tool).
@@ -30,7 +38,7 @@ struct Mirror {
 impl Mirror {
     fn new() -> Self {
         Self {
-            running: false,
+            started: None,
             committed: Vec::new(),
             events: Vec::new(),
             sender: broadcast::channel(CAPACITY).0,
@@ -42,23 +50,35 @@ impl Mirror {
         self.events.clear();
     }
 
-    fn record(&mut self, event: &ChildLive) {
+    fn running(&self) -> bool {
+        self.started.is_some()
+    }
+
+    /// Records `event`; for a `Finished` that no subscriber receives, returns the whole run to keep.
+    fn record(&mut self, event: &ChildLive) -> Option<Vec<ChildLive>> {
         match event {
-            ChildLive::Started => {
-                self.running = true;
+            ChildLive::Started { run, selection } => {
+                self.started = Some((*run, selection.clone()));
                 self.clear();
             }
-            ChildLive::Event(event) if self.running => self.push(event),
-            ChildLive::Committed(message) if self.running => {
+            ChildLive::Event(event) if self.running() => self.push(event),
+            ChildLive::Committed(message) if self.running() => {
                 self.committed.push(message.clone());
                 self.events.clear();
             }
             ChildLive::Finished(_) => {
-                self.running = false;
+                let unread = (self.running() && self.sender.receiver_count() == 0).then(|| {
+                    let mut run = self.replay();
+                    run.push(event.clone());
+                    run
+                });
+                self.started = None;
                 self.clear();
+                return unread;
             }
             ChildLive::Event(_) | ChildLive::Committed(_) => {}
         }
+        None
     }
 
     fn push(&mut self, event: &QueryEvent) {
@@ -87,13 +107,16 @@ impl Mirror {
     }
 
     fn replay(&self) -> Vec<ChildLive> {
-        if !self.running {
+        let Some((run, selection)) = &self.started else {
             return Vec::new();
-        }
-        std::iter::once(ChildLive::Started)
-            .chain(self.committed.iter().cloned().map(ChildLive::Committed))
-            .chain(self.events.iter().cloned().map(ChildLive::Event))
-            .collect()
+        };
+        std::iter::once(ChildLive::Started {
+            run: *run,
+            selection: selection.clone(),
+        })
+        .chain(self.committed.iter().cloned().map(ChildLive::Committed))
+        .chain(self.events.iter().cloned().map(ChildLive::Event))
+        .collect()
     }
 }
 
@@ -112,26 +135,79 @@ fn merge(delta: &mut BlockDelta, next: &BlockDelta) -> bool {
 }
 
 #[derive(Default)]
-pub(crate) struct Mirrors(Mutex<HashMap<SessionId, Mirror>>);
+struct Inner {
+    mirrors: HashMap<SessionId, Mirror>,
+    /// Finished runs no subscriber read live, oldest first (see [`KEPT_FINISHED`]).
+    finished: VecDeque<(SessionId, Vec<ChildLive>)>,
+    /// The last run number handed out.
+    runs: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct Mirrors(Mutex<Inner>);
 
 impl Mirrors {
+    /// The number of a run about to start (unique within the process, increasing).
+    pub(crate) fn next_run(&self) -> u64 {
+        let mut inner = self.0.lock_unpoisoned();
+        inner.runs += 1;
+        inner.runs
+    }
+
     pub(crate) fn publish(&self, session: &SessionId, event: ChildLive) {
-        let mut mirrors = self.0.lock_unpoisoned();
-        let mirror = mirrors.entry(session.clone()).or_insert_with(Mirror::new);
-        mirror.record(&event);
+        let mut inner = self.0.lock_unpoisoned();
+        let inner = &mut *inner;
+        if matches!(event, ChildLive::Started { .. }) {
+            inner.finished.retain(|(kept, _)| kept != session);
+        }
+        let mirror = inner
+            .mirrors
+            .entry(session.clone())
+            .or_insert_with(Mirror::new);
+        if let Some(run) = mirror.record(&event) {
+            if inner.finished.len() == KEPT_FINISHED {
+                inner.finished.pop_front();
+            }
+            inner.finished.push_back((session.clone(), run));
+        }
         let _ = mirror.sender.send(event);
-        if !mirror.running && mirror.sender.receiver_count() == 0 {
-            mirrors.remove(session);
+        if !mirror.running() && mirror.sender.receiver_count() == 0 {
+            inner.mirrors.remove(session);
         }
     }
 
+    /// The side tab's feed: the current run so far and the later events.
     pub(crate) fn feed(&self, session: &SessionId) -> ChildLiveFeed {
-        let mut mirrors = self.0.lock_unpoisoned();
-        mirrors.retain(|_, mirror| mirror.running || mirror.sender.receiver_count() > 0);
-        let mirror = mirrors.entry(session.clone()).or_insert_with(Mirror::new);
+        self.subscribe(session, false)
+    }
+
+    /// The telemetry's feed: like [`Self::feed`], but a child that is not running replays its last finished run that
+    /// no subscriber read live, once.
+    pub(crate) fn run_feed(&self, session: &SessionId) -> ChildLiveFeed {
+        self.subscribe(session, true)
+    }
+
+    fn subscribe(&self, session: &SessionId, finished: bool) -> ChildLiveFeed {
+        let mut inner = self.0.lock_unpoisoned();
+        let inner = &mut *inner;
+        inner
+            .mirrors
+            .retain(|_, mirror| mirror.running() || mirror.sender.receiver_count() > 0);
+        let mirror = inner
+            .mirrors
+            .entry(session.clone())
+            .or_insert_with(Mirror::new);
         let receiver = mirror.sender.subscribe();
+        let mut replay = mirror.replay();
+        if finished
+            && replay.is_empty()
+            && let Some(at) = inner.finished.iter().position(|(kept, _)| kept == session)
+            && let Some((_, run)) = inner.finished.remove(at)
+        {
+            replay = run;
+        }
         ChildLiveFeed {
-            replay: mirror.replay(),
+            replay,
             live: futures_util::stream::unfold(receiver, |mut receiver| async move {
                 // A lagged or closed receiver ends the stream; the subscriber takes a new feed.
                 receiver.recv().await.ok().map(|event| (event, receiver))
@@ -150,10 +226,21 @@ pub(crate) struct MirrorRun {
 }
 
 impl MirrorRun {
-    pub(crate) fn start(core: &std::sync::Arc<crate::Core>, session: &SessionId) -> Self {
+    pub(crate) fn start(
+        core: &std::sync::Arc<crate::Core>,
+        session: &SessionId,
+        selection: &ModelSelection,
+    ) -> Self {
         let core = core.node_desktop.then(|| core.clone());
         if let Some(core) = &core {
-            core.mirrors.publish(session, ChildLive::Started);
+            let run = core.mirrors.next_run();
+            core.mirrors.publish(
+                session,
+                ChildLive::Started {
+                    run,
+                    selection: selection.clone(),
+                },
+            );
         }
         Self {
             core,

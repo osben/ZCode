@@ -6,6 +6,7 @@
 //! [`Startup::ready`] 或 [`Startup::failed`]；最后 [`serve`] 读到 Host 关掉输入。
 
 mod attachments;
+mod child_runs;
 mod commands;
 pub mod context;
 mod fork;

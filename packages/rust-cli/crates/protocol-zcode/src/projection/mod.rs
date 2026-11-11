@@ -427,11 +427,14 @@ impl Projection {
         self
     }
 
-    /// Fork: the selected model's directory entry, when the directory lists it.
-    pub(crate) fn catalog_entry(&self) -> Option<&rust_cli_kernel_api::provider::CatalogModel> {
+    /// Fork: the directory entry of `selection` (a subagent run's own model, crate::telemetry).
+    pub(crate) fn catalog_entry_for(
+        &self,
+        selection: &ModelSelection,
+    ) -> Option<&rust_cli_kernel_api::provider::CatalogModel> {
         self.catalog
             .iter()
-            .find(|entry| rust_cli_kernel_api::model_name::is_entry(&self.selection, entry))
+            .find(|entry| rust_cli_kernel_api::model_name::is_entry(selection, entry))
     }
 
     /// Fork: the selected model's levels in the directory, like Node `listThoughtLevels`; a model the directory does
