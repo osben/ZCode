@@ -27,6 +27,7 @@ impl ModelDirectory for Directory {
                 context_window: 200_000,
                 max_output_tokens: self.0,
                 connection: None,
+                host: None,
             }],
             default: None,
         }

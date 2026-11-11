@@ -378,9 +378,54 @@ Acceptance:
 - Unit: only an explicit `startNow` preempts (`commands_tests.rs`); a reserved foreground keeps a waiting notice behind the promoted input (`lane_tests.rs`).
 - E2E: `conversation-session-modified-submit-delivery` M06k, MCS and non-MCS.
 
+## Conversation telemetry facts (Node `conversation-telemetry-facts.ts`)
+
+Node sends one `v4/telemetry/event` notification per runtime fact (`ConversationTelemetryFactNormalizer`, `v4-gateway.ts` `emitLiveTelemetryFact`). The Host validates each one with the strict `conversationTelemetryFactSchema` and the renderer engine (`conversationTelemetryEngine.ts`) turns them into the `/event/report` events `agent_step` and `message_completion`. A fact with an unknown field is dropped by the Host, so the Rust facts carry exactly the schema's fields.
+
+- Owner: `protocol-zcode` `telemetry.rs` (`Telemetry`), one per open session `Live`, fed by the same `SessionSink::event` calls as the projection, after the `skip_through` check. A rebuild (`HistoryRewritten`) and a resubscribe replay emit nothing: facts are live only, like Node's.
+- Notification params are the bare fact. Facts are written in `flush`, after the frames of the same batch.
+- Identity:
+  - `eventId` is `"{sessionId}:{scope}{seq}:{n}"` (kernel event seq, fact index within that event; `scope` is empty for kernel-event facts and `table-` for the subagent-table facts emitted when the row table changes), `eventSeq` is the kernel seq.
+  - `sourceCommandId` is the turn's command (`TurnStarted.command`). A turn the kernel opened without a command (a background notification wake) gets a fresh UUID v7, Node's synthetic input ID.
+  - `memoryEnabled` is omitted (the Rust agent has no memory feature); `turnId` is the kernel turn ID.
+- Kinds:
+
+| Kind                   | Rust source                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turn.started`         | `TurnStarted`. A wake turn is held until its first notification message (`MessageDone`, user `Meta`), which gives `inputSource: "background_task"` and `backgroundSource` (`bash`, `subagent`; `background_origin::origin_meta`). Control-only turns (`TurnControlOnly`) carry `executionKind: "controlOnly"`.                                                             |
+| `model.request.status` | Synthesized (no kernel request event): `model_request_started` on the first `StreamDelta`/`ToolInputStarted` of a `(turn, response)`, `model_request_completed` on that response's assistant `MessageDone`. One UUID v7 `requestId` per response; `attempt` 1, `maxAttempts` 1, `transport` `"sse"`, `querySource` `main_turn` (`subagent` in a child).                    |
+| `usage.delta`          | The assistant `MessageDone` `usage`, with the same `requestId`.                                                                                                                                                                                                                                                                                                            |
+| `stream.chunk`         | Every text and thought delta, `firstChunk` true for the first of each channel in a response.                                                                                                                                                                                                                                                                               |
+| `tool.lifecycle`       | `ToolInputStarted` → `scheduled` (or `ToolStarted` when no input streamed), `ToolStarted` → `started`, `ToolDone` → `completed` / `failed` (error output), with `durationMs`.                                                                                                                                                                                              |
+| `subagent.lifecycle`   | The projection's subagent rows: `spawned` when a row appears, `stopped` when it settles; `background`, `agentId`, `agentType`, `childSessionId`, `parentToolCallId`.                                                                                                                                                                                                       |
+| `turn.terminal`        | `TurnFinished`: `success` / `interrupted` / `failed`, `resultType`, `durationMs`, `tokenCount` (turn usage), `toolCallCount`, `backgroundSubagentResultConsumed` (the turn consumed a subagent notification: in the meta user message that opened it, merged into a user turn, or merged at a tool boundary as a `queued_command` attachment in `task-notification` mode). |
+
+- Child sessions: while a subagent runs, the parent `Live` reads its run through the agents crate's live feed (`ChildLive`, the same feed a side tab mirrors) and emits the child's facts under `childSessionId` (`turn.started` with `inputSource: "subagent"`, requests, usage, tools, `turn.terminal`). A `Live` opened on a child session itself (a side tab) emits no telemetry: the parent reports the child, so a fact is never counted twice.
+- Provider identity: `providerId` and `modelId` from the turn's selection, `providerKind` from the catalog protocol, `providerHostname` from the catalog entry's base URL host only (never the URL, path or credentials).
+
+```
+kernel SessionEvent ─▶ Live::event ─┬─▶ Projection ─▶ frames
+                                    └─▶ Telemetry ─▶ pending facts
+child run (ChildLive) ─▶ child task ─▶ Telemetry(child) ─▶ pending facts
+Live::flush ─▶ frames ─▶ v4/telemetry/event × n ─▶ Host (strict schema) ─▶ renderer engine ─▶ /event/report
+```
+
+Known differences: no `model_request_failed` / `model_retry_scheduled` / `model_stream_stalled` (the kernel has no per-attempt events), no `permission.lifecycle`, `workflow.lifecycle` or `compaction.terminal` yet, and no tool `performance` block.
+
+Open gaps in the child-run facts (review of #395; a follow-up closes them):
+
+- A resumed run is not read again: when `SendMessage` resumes a settled subagent or a parked one wakes, the row goes back to `running`, but only unseen agents start a child watch, so the resumed run's requests, usage and lifecycle pair are missing.
+- Child facts carry the parent's current selection (`provider_of(projection)`). Node takes `providerId`/`modelId` from each request, so a subagent definition with its own model reports that model there.
+- A subagent launched by a subagent is not watched: the child feed only feeds `Telemetry::observe`, and the root projection has no row for the grandchild.
+- The watch starts when the parent's table watcher sees the row. A child run that finishes before that is not replayed (`Mirror::record` clears the replay on `Finished`), so its facts are lost. The fixture runs in the E2E gate do not hit this (727/727 facts in the background spec).
+
+Acceptance:
+
+- Unit: `telemetry_tests.rs` (a plain turn, a tool turn, a wake turn, a background subagent with its child facts); every fact passes the schema field lists.
+- E2E: `conversation-session-background` telemetry cases on Rust (BG13, BG18 and the two background control cases).
+
 ## Known differences kept on purpose
 
-- **Conversation telemetry facts.** The Rust agent emits no v4 conversation telemetry facts (`agent_step`, `message_completion`; Node `conversation-telemetry-facts.ts`). Fork builds ship no warehouse report endpoint, so users see no difference; the E2E cases that count `/event/report` deltas (`conversation-session-background`, four cases) fail on Rust only. Porting the facts is a separate change.
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.
 
 - **A guide's model inside the running turn.** Node switches the loop's model to a drained guide's selection (unless the turn's model is fixed) and rebuilds the context prefix. The Rust run keeps one model selection per run; the guide's mode and Plan switch apply, and the next input carries its own selection. Porting it needs a per-request selection in the query loop.
@@ -389,6 +434,7 @@ Acceptance:
 
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.
 - **Plan-mode specs outside the gate.** `plan-approval-feedback-user-message`, `plan-session-switch-restore` and `plan-file-compact-continuity` pass on Rust (E2E 2026-11-10). `plan-mode-mcp-permission` fails on Node too ("v4 权限弹窗没有出现"), so it does not cover "MCP tools in plan mode" yet; that section is backed by unit tests only.
+- **Subagent child sessions in the task list.** In `conversation-session-subagent-side-tabs` the Rust sidebar lists the subagent children (titled by the Agent `description`, "Side tab N", "Background side tab") as tasks of the project; Node lists only the parent. Seen on `origin/fork` and with the telemetry change alike (container screenshots, 2026-11-11), so it predates #395. Which writer admits the child rows (a sessions-index upsert from a child `Live`, or the Host) is not identified yet.
 - **Guides in a running turn (`running-guide-steer`).** One case ("guide 模式下 running 中发送引导消息…") fails on Node too; the Rust-only cases are covered by "Guides after a reply without tool calls, and guides in system turns" above.
 
 ## Order of work

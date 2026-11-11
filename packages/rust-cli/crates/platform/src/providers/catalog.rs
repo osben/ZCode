@@ -114,6 +114,7 @@ impl Template {
             max_output_tokens: self.max_output_tokens,
             capabilities: self.capabilities,
             connection: self.connection.clone(),
+            host: rust_cli_kernel_api::provider::url_host(&self.base_url),
         }
     }
 }

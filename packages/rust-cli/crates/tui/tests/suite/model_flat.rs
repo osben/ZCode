@@ -48,6 +48,7 @@ impl ModelDirectory for Plans {
                 vendor: "BigModel".into(),
                 name: team.into(),
             }),
+            host: None,
         };
         ModelCatalog {
             revision: 1,
