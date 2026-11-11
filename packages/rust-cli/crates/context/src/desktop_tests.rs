@@ -85,6 +85,20 @@ fn the_directory_is_nodes_hash_of_the_workspace_and_session() {
 }
 
 #[test]
+fn the_root_is_resolved_like_node() {
+    // Node: `join(resolve("/home/u/./.zcode//x/../visualizations/"), hash)`.
+    let desktop = DesktopContext {
+        gen_ui_root: Some("/home/u/./.zcode//x/../visualizations/".to_owned()),
+    };
+    assert_eq!(
+        directory(&desktop, "/workspace/project", "ses_0123").as_deref(),
+        Some(
+            "/home/u/.zcode/visualizations/126b6d78e2d83c7afcbabd1ad675bb9ee4d4b30f20fac3d7f86c9241cae89a3b"
+        )
+    );
+}
+
+#[test]
 fn no_root_or_a_relative_root_gives_no_directory() {
     assert_eq!(directory(&DesktopContext::default(), "/w", "s"), None);
     let relative = DesktopContext {

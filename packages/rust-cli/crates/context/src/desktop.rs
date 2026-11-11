@@ -2,7 +2,7 @@
 //! (specs/fork-rust-agent-parity.md, "ZCode Desktop Context").
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use rust_cli_base::sync::LockUnpoisoned;
@@ -50,7 +50,23 @@ pub(crate) fn directory(
     let key = serde_json::to_string(&[workspace, session]).ok()?;
     let digest = Sha256::digest(key.as_bytes());
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    Some(root.join(hex).to_string_lossy().into_owned())
+    Some(resolve(root).join(hex).to_string_lossy().into_owned())
+}
+
+/// Node's `path.resolve` for an absolute path: drops `.`, repeated and trailing separators, and applies `..`
+/// lexically (no symlinks are followed).
+fn resolve(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The Gen UI output directories this process has created (the single owner of "created" for the section).
