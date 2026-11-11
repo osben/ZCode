@@ -97,13 +97,21 @@ impl ToolCatalog {
     }
 
     /// 这些名字里延迟的工具名，按 UTF-16 码元序（`deferred_tools_delta` 的清单顺序）。
-    fn deferred_names(&self, names: &[String]) -> Result<Vec<String>, String> {
+    ///
+    /// Fork: each name is resolved by `session`'s own lookup (`find_for`). The global `find` can answer a server an
+    /// incognito profile hides that shares the tool's name, and that namesake's `alwaysLoad` would drop the session's
+    /// deferred tool from the listing (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    fn deferred_names(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+        names: &[String],
+    ) -> Result<Vec<String>, String> {
         let registry = self.registry()?;
         let mut deferred: Vec<String> = names
             .iter()
             .filter(|name| {
                 registry
-                    .find(name)
+                    .find_for(session, name)
                     .is_some_and(|tool| tool.is_enabled() && is_deferred(tool.as_ref()))
             })
             .cloned()
@@ -126,7 +134,7 @@ impl ListingSource for ToolCatalog {
             return Ok(Listings::default());
         }
         let deferred_tools = self
-            .deferred_names(&request.tool_names)
+            .deferred_names(&request.session, &request.tool_names)
             .map_err(|message| OrchestrationError::Failed { message })?
             .into_iter()
             .map(|name| ListingEntry {

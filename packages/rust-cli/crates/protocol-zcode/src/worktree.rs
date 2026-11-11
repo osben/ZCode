@@ -106,11 +106,6 @@ pub struct Marker {
     pub base_branch: Option<String>,
     pub status: PrepStatus,
     pub failure_message: Option<String>,
-    /// Fork: the incognito choice the first activation froze (Node's `prepared.incognito` stamp): `None` not chosen
-    /// yet, `Some(None)` a normal session, `Some(Some(profile))` an incognito one. Stored as the marker's `incognito`
-    /// key (absent, `null`, the profile); Node's parser ignores the key and the row's `fork_incognito` stays the
-    /// durable fact Node reads.
-    pub incognito: Option<Option<IncognitoProfile>>,
 }
 
 impl Marker {
@@ -122,7 +117,6 @@ impl Marker {
             base_branch: request.base_branch.clone(),
             status: PrepStatus::Preparing,
             failure_message: None,
-            incognito: None,
         }
     }
 
@@ -150,7 +144,9 @@ impl Marker {
         next
     }
 
-    /// Node's `worktreePreparationStateSchema` fields: the renderer's shape.
+    /// Node's `worktreePreparationStateSchema` fields: the renderer's shape and the stored record's data, both as Node
+    /// `persistPreparedWorktreeStatus` writes them. The incognito choice an activation froze is never stored here
+    /// (`Server::prepared_incognito`).
     fn wire(&self) -> Value {
         let mut data = json!({
             "branchName": self.branch_name,
@@ -169,20 +165,11 @@ impl Marker {
         data
     }
 
-    /// The stored record: the wire shape plus the fork's incognito stamp, which never reaches the renderer.
-    fn data(&self) -> Value {
-        let mut data = self.wire();
-        if let Some(choice) = &self.incognito {
-            data["incognito"] = json!(choice);
-        }
-        data
-    }
-
     pub fn record(&self, session: &str) -> FrontendRecord {
         FrontendRecord {
             kind: KIND.to_owned(),
             key: format!("{KIND}:{session}"),
-            data: self.data(),
+            data: self.wire(),
         }
     }
 
@@ -197,12 +184,6 @@ impl Marker {
             base_branch: text("baseBranch"),
             status: PrepStatus::parse(data["status"].as_str()?)?,
             failure_message: text("failureMessage"),
-            // A stamp this build cannot parse reads as lockdown, like the row (fail closed).
-            incognito: data.get("incognito").map(|choice| {
-                (!choice.is_null()).then(|| {
-                    IncognitoProfile::from_wire(choice).unwrap_or(IncognitoProfile::LOCKDOWN)
-                })
-            }),
         })
     }
 
@@ -650,13 +631,12 @@ async fn enter(
         .map_err(|error| error.to_string())
 }
 
-/// Fork: the incognito choice of an activation. A choice the row (Node writes it at the first send) or the marker's
-/// stamp already holds wins, and a request that differs from it is refused with Node's text; otherwise the request is
-/// the choice.
+/// Fork: the incognito choice of an activation. A choice the row (set once at the first activation, Node at the first
+/// send) or the prepared entry's in-memory freeze (`Server::prepared_incognito`, Node `prepared.incognito`) already
+/// holds wins, and a request that differs from it is refused with Node's text; otherwise the request is the choice.
 async fn frozen_incognito(
     server: &Server,
     id: &SessionId,
-    current: Option<&Marker>,
     requested: Option<IncognitoProfile>,
 ) -> Result<Option<IncognitoProfile>, &'static str> {
     // A read-only view: it never opens the held session.
@@ -668,7 +648,7 @@ async fn frozen_incognito(
         .and_then(|view| view.meta.incognito);
     let frozen = stored
         .map(Some)
-        .or_else(|| current.and_then(|marker| marker.incognito));
+        .or_else(|| server.prepared_incognito.lock_unpoisoned().get(id).copied());
     match frozen {
         Some(choice) if choice != requested => Err(INCOGNITO_MISMATCH),
         Some(choice) => Ok(choice),
@@ -676,30 +656,24 @@ async fn frozen_incognito(
     }
 }
 
-/// Fork: freezes the activation's incognito choice before anything of the session runs: the marker's stamp (a normal
-/// session too), then for a profile the row and the kernel's in-memory profile (`Kernel::freeze_incognito`), the
-/// actor's meta (`Command::SetIncognito`) and the projection's flag. Every step is idempotent, so a retry repeats them.
-/// Returns the stamped marker, which the active marker keeps.
+/// Fork: freezes the activation's incognito choice before anything of the session runs: the prepared entry's
+/// in-memory choice (a normal session too; never the stored marker, which stays Node's shape), then for a profile the
+/// row's set-once `fork_incognito` and the kernel's in-memory profile (`Kernel::freeze_incognito`), the actor's meta
+/// (`Command::SetIncognito`) and the projection's flag. Every step is idempotent, so a retry repeats them.
 async fn freeze_incognito(
     server: &Server,
     live: &Bridged<Live>,
     envelope: &Envelope,
     id: &SessionId,
-    current: Marker,
     choice: Option<IncognitoProfile>,
-) -> Result<Marker, String> {
-    let current = if current.incognito.is_none() {
-        let stamped = Marker {
-            incognito: Some(choice),
-            ..current
-        };
-        save(server, id, &stamped).await.map_err(str::to_owned)?;
-        stamped
-    } else {
-        current
-    };
+) -> Result<(), String> {
+    server
+        .prepared_incognito
+        .lock_unpoisoned()
+        .entry(id.clone())
+        .or_insert(choice);
     let Some(profile) = choice else {
-        return Ok(current);
+        return Ok(());
     };
     server
         .kernel
@@ -716,7 +690,7 @@ async fn freeze_incognito(
         return Err(reason);
     }
     live.sink.freeze_incognito(profile);
-    Ok(current)
+    Ok(())
 }
 
 /// Typed input reached the session: a committed or queued input that a client sent. SessionStart's own messages and
@@ -821,9 +795,9 @@ pub async fn activate(
         Err(reason) => return failed(envelope, reason, 0),
     };
     // Fork (Node `createSessionRecord`): the first activation freezes the incognito choice; the row's profile, else
-    // the marker's stamp, is that choice, and only an exact match may reuse the prepared session (absent is not equal
-    // to present), an active one included.
-    let incognito = match frozen_incognito(server, &id, current.as_ref(), incognito).await {
+    // the prepared entry's in-memory choice, is that choice, and only an exact match may reuse the prepared session
+    // (absent is not equal to present), an active one included.
+    let incognito = match frozen_incognito(server, &id, incognito).await {
         Ok(choice) => choice,
         Err(reason) => return failed(envelope, reason, 0),
     };
@@ -865,10 +839,9 @@ pub async fn activate(
     // Fork: the profile is frozen before the config, the move (which releases SessionStart) and the first input, so
     // no hook and no request of the session runs without it. A failure leaves the session held and the preparation
     // retryable, like a refused config.
-    let current = match freeze_incognito(server, &live, envelope, &id, current, incognito).await {
-        Ok(current) => current,
-        Err(message) => return failed(envelope, &message, 0),
-    };
+    if let Err(message) = freeze_incognito(server, &live, envelope, &id, incognito).await {
+        return failed(envelope, &message, 0);
+    }
     if !admitted && let Err(message) = configure(&live).await {
         return failed(envelope, &message, 0);
     }

@@ -233,3 +233,66 @@ async fn an_unbound_catalog_fails_instead_of_finding_nothing() {
         Err(rust_cli_kernel_api::tool::ToolError::Failed { .. })
     ));
 }
+
+/// A registry whose global lookup answers a hidden namesake (an incognito session's removed plugin server, `alwaysLoad`)
+/// while the session's own lookup answers the deferred tool the session is allowed.
+struct SessionNamesake {
+    hidden: Arc<dyn Tool>,
+    visible: Arc<dyn Tool>,
+    session: SessionId,
+    search: Arc<dyn Tool>,
+}
+
+impl rust_cli_kernel_api::testing::RegistryOverride for SessionNamesake {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        vec![self.search.clone(), self.hidden.clone()]
+    }
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        [self.search.clone(), self.hidden.clone()]
+            .into_iter()
+            .find(|tool| tool.name() == name)
+    }
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        if *session != self.session {
+            return ToolRegistry::find(self, name);
+        }
+        [self.search.clone(), self.visible.clone()]
+            .into_iter()
+            .find(|tool| tool.name() == name)
+    }
+}
+
+/// Fork (incognito): the deferred listing judges each name by the session's own lookup. A hidden `alwaysLoad`
+/// namesake that the global lookup answers must not drop the session's deferred tool from `deferred_tools_delta`.
+#[tokio::test]
+async fn the_deferred_listing_judges_names_by_the_sessions_lookup() {
+    const NAME: &str = "mcp__plugin_demo_api__lookup";
+    let named = |server: &str, always_load: bool| -> Arc<dyn Tool> {
+        Arc::new(Named {
+            name: NAME,
+            mcp: Some(McpToolInfo {
+                server: server.to_owned(),
+                tool: "lookup".to_owned(),
+                always_load,
+            }),
+        })
+    };
+    let catalog = Arc::new(ToolCatalog::default());
+    let registry: Arc<dyn ToolRegistry> = Arc::new(SessionNamesake {
+        hidden: named("plugin:demo:api", true),
+        visible: named("plugin_demo_api", false),
+        session: SessionId::new("sess_1"),
+        search: Arc::new(ToolSearchTool::new(catalog.clone())),
+    });
+    catalog.bind(&registry);
+    let listings = catalog
+        .listings(&request(GLM_5_3, &["ToolSearch", NAME]))
+        .await
+        .unwrap();
+    let deferred: Vec<&str> = listings
+        .deferred_tools
+        .iter()
+        .map(|entry| entry.line.as_str())
+        .collect();
+    assert_eq!(deferred, [NAME]);
+}

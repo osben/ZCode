@@ -43,26 +43,22 @@ fn update(status: PrepStatus, expected: Option<&str>, replacing: Option<Request>
     }
 }
 
-/// Fork (round 4): the incognito stamp is stored in the marker record only. `worktreePreparation` keeps Node's
-/// `worktreePreparationStateSchema` shape, so a failed activation's stamp never reaches the renderer.
+/// Fork: the stored record and `worktreePreparation` are both Node's shape (`persistPreparedWorktreeStatus`,
+/// `worktreePreparationStateSchema`), so a failed activation leaks nothing to the renderer. A key Node does not write,
+/// such as the `incognito` stamp an earlier build of this branch stored, is dropped on read like Node's parser does.
 #[test]
-fn the_incognito_stamp_stays_out_of_the_wire_shape() {
-    let mut marker =
+fn the_marker_record_and_the_wire_shape_are_nodes() {
+    let marker =
         Marker::preparing(&request(Some("a1"))).with_status(PrepStatus::Failed, Some("boom"), None);
     let wire = json!({"attemptId": "a1", "branchName": "feat/a", "targetPath": "/w/.worktrees/a",
                       "baseBranch": "main", "status": "failed", "failureMessage": "boom"});
-    for stamp in [
-        Some(Some(
-            rust_cli_kernel_api::incognito::IncognitoProfile::LOCKDOWN,
-        )),
-        Some(None),
-    ] {
-        marker.incognito = stamp;
-        assert_eq!(marker.exposed(), Some(wire.clone()));
-        let record = marker.record("s1");
-        assert!(record.data.get("incognito").is_some(), "{}", record.data);
-        assert_eq!(Marker::latest(&[record]), Some(marker.clone()));
-    }
+    assert_eq!(marker.exposed(), Some(wire.clone()));
+    let mut record = marker.record("s1");
+    assert_eq!(record.data, wire);
+    record.data["incognito"] = json!(null);
+    let read = Marker::latest(&[record]).unwrap();
+    assert_eq!(read, marker);
+    assert_eq!(read.record("s1").data, wire);
 }
 
 #[test]
@@ -1586,8 +1582,8 @@ async fn a_materialized_session_whose_receipt_failed_still_takes_commands() {
     let id = SessionId::new(&session);
     let activation = json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
         "executionWorktree": {"path": path}});
-    // Fork: a first attempt (its move refused) freezes the incognito choice in the marker, so the failure below hits
-    // the active marker, not that stamp.
+    // Fork: a first attempt (its move refused) freezes the incognito choice in memory, so the failure below hits the
+    // active marker, not that freeze.
     kernel
         .refuse_moves
         .store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1665,7 +1661,7 @@ fn activation(session: &str, workspace: &str, path: &str, incognito: Option<Valu
 }
 
 /// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"; Node `createSessionRecord`): the activation's profile
-/// is frozen (marker stamp, row, kernel profile, actor meta) before the move releases SessionStart and before the
+/// is frozen (prepared entry in memory, row, kernel profile, actor meta) before the move releases SessionStart and before the
 /// first input; the sessions-index row carries the flag. Only the same profile may repeat the activation.
 #[tokio::test]
 async fn an_incognito_activation_freezes_the_profile_before_the_session_runs() {
@@ -1703,7 +1699,6 @@ async fn an_incognito_activation_freezes_the_profile_before_the_session_runs() {
     );
     let marker = load(&server, &id).await.unwrap().unwrap();
     assert_eq!(marker.status, PrepStatus::Active);
-    assert_eq!(marker.incognito, Some(Some(IncognitoProfile::LOCKDOWN)));
     let live = server.bridge.get(&id).unwrap();
     assert_eq!(live.sink.summary()["incognito"], json!(true));
 
@@ -1730,7 +1725,8 @@ async fn an_incognito_activation_freezes_the_profile_before_the_session_runs() {
     }
 }
 
-/// Fork: an attempt that fails after the freeze (a refused move) leaves the choice frozen in the marker: a retry with
+/// Fork: an attempt that fails after the freeze (a refused move) leaves the choice frozen in memory (Node's
+/// `prepared.incognito`; the stored marker never holds it): a retry with
 /// another profile is refused, the same one completes. A normal activation freezes a normal session the same way.
 #[tokio::test]
 async fn a_retry_must_repeat_the_frozen_incognito_choice() {
@@ -1755,7 +1751,10 @@ async fn a_retry_must_repeat_the_frozen_incognito_choice() {
         mcp: true,
         ..IncognitoProfile::LOCKDOWN
     };
-    assert_eq!(marker.incognito, Some(Some(mcp_only)));
+    assert_eq!(
+        server.prepared_incognito.lock_unpoisoned().get(&id),
+        Some(&Some(mcp_only))
+    );
     let other = create(
         &server,
         "c2",
@@ -1780,12 +1779,13 @@ async fn a_retry_must_repeat_the_frozen_incognito_choice() {
         .store(1, std::sync::atomic::Ordering::SeqCst);
     let first = create(&server, "c4", activation(&normal, &workspace, &path, None)).await;
     assert_eq!(first.status, Status::Failed, "{first:?}");
-    let marker = load(&server, &SessionId::new(&normal))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(marker.incognito, Some(None));
-    assert_eq!(marker.record(&normal).data["incognito"], Value::Null);
+    assert_eq!(
+        server
+            .prepared_incognito
+            .lock_unpoisoned()
+            .get(&SessionId::new(&normal)),
+        Some(&None)
+    );
     let late = create(
         &server,
         "c5",
@@ -1793,6 +1793,50 @@ async fn a_retry_must_repeat_the_frozen_incognito_choice() {
     )
     .await;
     assert_eq!(late.message.as_deref(), Some(INCOGNITO_MISMATCH));
+}
+
+/// Fork (round 5; Node `persistPreparedWorktreeStatus`): the stored marker never carries the incognito choice. Node
+/// keeps it on the in-memory prepared entry (`prepared.incognito`) and its parser drops unknown keys, so the record is
+/// Node's shape after a failed attempt and after the activation, for an incognito and for a normal session alike.
+#[tokio::test]
+async fn the_stored_marker_has_no_incognito_key() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let stored = |id: &SessionId| {
+        let store = kernel.store.clone();
+        let id = id.clone();
+        async move { store.records(&id, KIND).await.unwrap() }
+    };
+    for (index, choice) in [Some(profile(false)), None].into_iter().enumerate() {
+        let (session, workspace, path) = prepared(&server, parent.path()).await;
+        let id = SessionId::new(&session);
+        kernel
+            .refuse_moves
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let failed = create(
+            &server,
+            &format!("f{index}"),
+            activation(&session, &workspace, &path, choice.clone()),
+        )
+        .await;
+        assert_eq!(failed.status, Status::Failed, "{failed:?}");
+        for record in stored(&id).await {
+            assert!(record.data.get("incognito").is_none(), "{}", record.data);
+        }
+        let done = create(
+            &server,
+            &format!("a{index}"),
+            activation(&session, &workspace, &path, choice),
+        )
+        .await;
+        assert_eq!(done.status, Status::Accepted, "{done:?}");
+        let records = stored(&id).await;
+        let last = records.last().unwrap();
+        assert_eq!(last.data["status"], "active");
+        for record in &records {
+            assert!(record.data.get("incognito").is_none(), "{}", record.data);
+        }
+    }
 }
 
 /// Fork: a profile the store cannot freeze fails the activation before anything runs (no move, so SessionStart stays
