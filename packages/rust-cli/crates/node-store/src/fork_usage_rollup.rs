@@ -29,8 +29,6 @@ const REPLACE_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const ROLLUP_RETENTION_MS: i64 = 2 * 365 * 24 * 60 * 60 * 1000;
 /// The recompute watermark row in `fork_usage_meta`.
 const WATERMARK_KEY: &str = "watermark_ms";
-/// Node `WRITE_DEBOUNCE_MS`: a usage write recomputes only when the last recompute is older.
-const WRITE_DEBOUNCE_MS: i64 = 5 * 60 * 1000;
 
 /// Node `FORK_USAGE_ROLLUP_SCHEMA`, byte-identical (the ledger checksum is `sha256(trim(sql))`).
 const FORK_USAGE_ROLLUP_SCHEMA: &str = "
@@ -283,21 +281,25 @@ pub(crate) fn refresh_for_read(conn: &Connection, now_ms: u64) -> Option<String>
     recompute(conn, now_ms).err().map(store_error_message)
 }
 
-/// Node `scheduleForkUsageRollup` for a usage batch, run in the batch's own transaction right
-/// before the 30-day raw prune (specs/fork-agent-runtime-selection.md "Usage rollup in Rust
-/// mode"). Node defers the recompute to a later transaction; here it precedes the prune so no raw
-/// row is deleted before a recompute covered it. Skipped while the shared watermark is younger
-/// than Node's write debounce: such a watermark was written after every row the prune can reach.
-/// An error must stop the prune (the caller rolls the savepoint back).
-pub(crate) fn recompute_before_raw_prune(conn: &Connection, now_ms: u64) -> Result<(), StoreError> {
-    let now = i64::try_from(now_ms).unwrap_or(i64::MAX);
-    if let Some(watermark) = read_watermark_if_present(conn)?
-        && now >= watermark
-        && now - watermark < WRITE_DEBOUNCE_MS
-    {
-        return Ok(());
-    }
-    recompute_in_transaction(conn, now_ms)
+/// Fork: the bound and the reconcile of the 30-day raw prune (specs/fork-agent-runtime-selection.md
+/// "Usage rollup in Rust mode"). Returns the `started_at` cutoff below which every raw row is
+/// covered by the last recompute (`align_down(watermark - 7 days)`, capped by `retention_cutoff`),
+/// or `None` when no recompute ran yet and nothing may be pruned. The usage write path never
+/// recomputes: that would move the watermark in the middle of a turn. The protected reconcile
+/// always runs first: it needs a raw row to apply a change another process made since the last
+/// reconcile. An error must stop the prune (the caller rolls the savepoint back).
+pub(crate) fn raw_prune_cutoff(
+    conn: &Connection,
+    retention_cutoff: i64,
+    now_ms: u64,
+) -> Result<Option<i64>, StoreError> {
+    let Some(watermark) = read_watermark_if_present(conn)? else {
+        return Ok(None);
+    };
+    ensure_detached_schema(conn, now_ms)?;
+    sync_protected_raw_rows(conn)?;
+    let covered = align_down_to_bucket(watermark.saturating_sub(REPLACE_WINDOW_MS));
+    Ok(Some(retention_cutoff.min(covered)))
 }
 
 /// The watermark when the rollup schema exists; a database no build has rolled up yet has no
