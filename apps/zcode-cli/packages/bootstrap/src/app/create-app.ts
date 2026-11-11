@@ -134,7 +134,6 @@ import {
   resolveStartupPlugins,
   startAppStartup,
 } from "./startup-marks.js";
-import { statPromptAttachmentDataUrl } from "./fork-prompt-attachment-stat.js";
 
 function decodePromptAttachmentDataUrl(
   content: string,
@@ -1362,15 +1361,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             uri: artifactUri,
             trace: traceContext,
           });
-          // Fork: report the attachment the read serves, not its stored data URL.
-          const artifact = await artifactStore.readToolResultArtifact({
-            uri: artifactUri,
-            trace: traceContext,
-          });
-          const decoded = statPromptAttachmentDataUrl(artifact.content, mediaType);
           return {
-            totalBytes: decoded?.totalBytes ?? result.bytes,
-            mediaType: decoded?.mediaType ?? mediaType,
+            totalBytes: result.bytes,
+            mediaType: result.contentType || mediaType,
             ...(result.mtimeMs === undefined ? {} : { mtimeMs: result.mtimeMs }),
           };
         }

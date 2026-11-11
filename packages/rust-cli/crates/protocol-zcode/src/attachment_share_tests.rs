@@ -64,7 +64,7 @@ fn malformed_or_oversized_artifacts_are_refused() {
     );
 }
 
-/// Fork fix (Node too): a stat reports what the read serves, not the stored data URL.
+/// A stat reports what the read serves, the decoded size this runtime's chips carry, not the stored data URL.
 #[test]
 fn a_stat_reports_the_decoded_attachment() {
     for length in [0usize, 1, 2, 3, 4, 1000] {
