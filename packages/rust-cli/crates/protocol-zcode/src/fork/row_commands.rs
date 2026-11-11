@@ -296,7 +296,9 @@ async fn edited_content(
     let (kept, new): (Vec<_>, Vec<_>) = refs
         .into_iter()
         .partition(|attachment| kept_ref(attachment.reference()).is_some());
-    let mut content = crate::attachments::content(server, session, text, new).await;
+    let mut content = crate::attachments::content(server, session, text, new)
+        .await
+        .map_err(|error| error.message)?;
     let files = kept
         .iter()
         .filter_map(|attachment| kept_ref(attachment.reference()).cloned());

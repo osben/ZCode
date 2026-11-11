@@ -20,19 +20,25 @@ testing = []
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 rusqlite.workspace = true
 rust-cli-base.workspace = true
 rust-cli-fs.workspace = true
+# Fork: a stored image over the model budget is prepared again on a cold load (attached_images.rs).
+rust-cli-image.workspace = true
 rust-cli-kernel-api.workspace = true
 # Node 记录格式的纯函数（F128，审查 X5）：仓储与事务在这里，记录的形状与读回在 node-records。
 rust-cli-node-records.workspace = true
 rust-cli-paths.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# Fork: encodes the oversized image of the cold-load preparation test.
+image.workspace = true
 # 共用的测试时钟（kernel-api 的 testing，F126）。
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 # Fork: the notification preamble the read-back of a Node notification carries.

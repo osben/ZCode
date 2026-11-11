@@ -104,6 +104,19 @@ impl Projection {
                     .collect();
                 if !chips.is_empty() {
                     row.insert("attachments".into(), Value::Array(chips));
+                    let sources = user
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::File { file } => Some(super::AttachmentSource {
+                                mime: rust_cli_kernel_api::prompt_attachment::part_mime(file),
+                                source: rust_cli_kernel_api::prompt_attachment::part_source(file),
+                            }),
+                            _ => None,
+                        })
+                        .collect();
+                    self.attachment_sources
+                        .insert(user.id.as_str().to_owned(), sources);
                 }
                 row.insert("origin".into(), json!("realUser"));
                 if let Some(command) = &turn.command {
@@ -200,6 +213,7 @@ impl Projection {
                         }
                         // 不投成行的块（P1）。
                         ContentBlock::Image { .. }
+                        | ContentBlock::Video { .. }
                         | ContentBlock::RedactedThinking { .. }
                         | ContentBlock::ToolResult { .. }
                         | ContentBlock::ServerToolUse { .. }

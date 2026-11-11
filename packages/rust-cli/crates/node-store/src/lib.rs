@@ -299,7 +299,7 @@ impl SessionStore for NodeStore {
         fork_execution_worktree::run_in_worktree(self, session, &mut loaded).await?;
         loaded.checkpoints = node_checkpoints::resolve(self.paths.artifacts(), checkpoints).await;
         // Fork: artifact-backed App images (file IO, so not on the database thread).
-        attached_images::resolve(self, session, &mut loaded.messages).await;
+        attached_images::resolve(self, &mut loaded.messages).await;
         Ok(loaded)
     }
 
@@ -766,6 +766,14 @@ impl ArtifactStore for NodeStore {
         id: &ArtifactId,
     ) -> Result<Option<ArtifactRef>, StoreError> {
         artifacts::find(self.paths.artifacts(), session, id).await
+    }
+
+    fn local_path(&self, artifact: &ArtifactRef) -> Option<PathBuf> {
+        Some(
+            artifacts::path(self.paths.artifacts(), artifact)
+                .as_path()
+                .to_path_buf(),
+        )
     }
 }
 

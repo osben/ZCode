@@ -202,6 +202,16 @@ pub enum QueryError {
     Unsupported { what: String },
 }
 
+impl QueryError {
+    /// Fork: see [`ModelError::code`].
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::Model(error) => error.code(),
+            _ => None,
+        }
+    }
+}
+
 /// 主循环的输出端，由会话 actor 实现（子代理、压缩各有自己的实现）。
 ///
 /// 提交屏障：`commit_message` 与 `commit_intent` 在存储事务成功后才返回，主循环拿到 `Ok` 才继续

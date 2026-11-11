@@ -103,3 +103,14 @@ fn documents_are_file_parts_with_the_ai_sdk_name() {
         "{body}"
     );
 }
+
+/// Node's OpenAI-compatible Chat adapter sends an attached video as a `video_url` data URL.
+#[test]
+fn videos_are_video_url_data_urls() {
+    let request = request(crate::openai::lower::tests::video_turn());
+    let body = body("m", request, &[]).unwrap();
+    assert!(
+        body.contains(r#"{"type":"video_url","video_url":{"url":"data:video/mp4;base64,AAAA"}}"#),
+        "{body}"
+    );
+}

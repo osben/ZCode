@@ -353,6 +353,7 @@ impl Actor {
         let outcome = match (running.failure, result) {
             (Some(error), _) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: None,
             },
             (None, Ok(Ok(QueryStop::Completed))) => TurnOutcome::Success,
             (None, Ok(Ok(QueryStop::Aborted))) => TurnOutcome::Interrupted,
@@ -360,15 +361,21 @@ impl Actor {
             (None, Ok(Ok(QueryStop::StopHookPrevented))) => TurnOutcome::StopHookPrevented,
             (None, Ok(Ok(QueryStop::MaxTurns))) => TurnOutcome::Failed {
                 message: "reached the maximum number of turns".to_owned(),
+                code: None,
             },
             (None, Ok(Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message }))) => {
-                TurnOutcome::Failed { message }
+                TurnOutcome::Failed {
+                    message,
+                    code: None,
+                }
             }
             (None, Ok(Err(error))) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: error.code().map(str::to_owned),
             },
             (None, Err(error)) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: None,
             },
         };
         // Node `turn_usage`（usage.md §2.4）：只在这次运行的输入已经落库时写；压缩运行没有输入。用量行是观测，

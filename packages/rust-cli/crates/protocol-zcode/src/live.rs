@@ -411,8 +411,42 @@ impl Live {
     }
 
     /// Fork: see [`Projection::attachment_mime`].
-    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+    pub fn attachment_mime(&self, reference: &str) -> Option<(String, bool)> {
         self.state().projection.attachment_mime(reference)
+    }
+
+    /// Fork: see [`crate::projection::Projection::attachment_source`].
+    pub fn attachment_source(
+        &self,
+        reference: &str,
+    ) -> Option<crate::projection::AttachmentSource> {
+        self.state().projection.attachment_source(reference)
+    }
+
+    /// Fork: see [`crate::projection::Projection::row_attachment`].
+    pub fn row_attachment(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<crate::projection::AttachmentSource> {
+        self.state()
+            .projection
+            .row_attachment(row_id, entity, index, reference)
+    }
+
+    /// Fork: see [`crate::projection::Projection::row_chip_mime`].
+    pub fn row_chip_mime(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<(String, bool)> {
+        self.state()
+            .projection
+            .row_chip_mime(row_id, entity, index, reference)
     }
 
     /// 用户拒绝了这个工具调用：之后它的结果投成 cancelled（与 Node 相同）。

@@ -5,6 +5,8 @@
 //! [`Context::new`]；马上 [`Startup::checking`]（Host 要求 30 s 内有首帧）；用 [`HostHeaders`] 组装平台层与内核；
 //! [`Startup::ready`] 或 [`Startup::failed`]；最后 [`serve`] 读到 Host 关掉输入。
 
+mod attachment_share;
+mod attachment_text;
 mod attachments;
 mod child_runs;
 mod commands;

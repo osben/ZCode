@@ -4,6 +4,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
 use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
+use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::permission::ExecutionState;
@@ -411,6 +412,12 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
                 );
             }
         };
+        // Resolved before the session moves: text material that cannot be written refuses the command first.
+        let content =
+            match first_content(server, envelope, &SessionId::new(prepared), first, refs).await {
+                Ok(content) => content,
+                Err(ack) => return *ack,
+            };
         // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
         // input follows the move into the worktree.
         let request = crate::worktree::ActivationRequest {
@@ -427,17 +434,10 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             async |live| apply_draft_config(server, live, envelope, config, first).await,
             async |live| {
                 // The reservation persisted the prepared session, so its admission has no draft to persist.
-                submit_first(
-                    server,
-                    live,
-                    envelope,
-                    &SessionId::new(prepared),
-                    first,
-                    refs,
-                )
-                .await
-                .ok()
-                .flatten()
+                submit_first(server, live, envelope, first, content)
+                    .await
+                    .ok()
+                    .flatten()
             },
         )
         .await;
@@ -479,6 +479,12 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         .session_id
         .as_deref()
         .map_or_else(inbox::new_session_id, SessionId::new);
+    // The first input's attachments are resolved before the session exists: text material that cannot be written
+    // refuses the command and leaves no session behind.
+    let content = match first_content(server, envelope, &id, &first, refs).await {
+        Ok(content) => content,
+        Err(ack) => return *ack,
+    };
     // Fork: the existence check and the create run under the reservation gate, so a concurrent reservation or create
     // of the same id cannot slip between them.
     let gate = match server.reservations.acquire().await {
@@ -603,7 +609,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
     };
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
-    match submit_first(server, &live, envelope, &id, &first, refs).await {
+    match submit_first(server, &live, envelope, &first, content).await {
         Ok(Some(input)) => result["input"] = input,
         Ok(None) => {}
         Err(ack) => return *ack,
@@ -611,16 +617,42 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
     Ack::accepted(&envelope.command_id, 0, Some(result))
 }
 
-/// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
-/// createSession command id. The `input` field of the result; `None` without text or when the session refused it;
-/// `Err` when the draft could not be persisted for it ([`admit_input`]).
-async fn submit_first(
+/// The content of a first input with attachments, resolved before any side effect of the command (the session's
+/// creation or activation): text material that cannot be written refuses the command. `None` without text or refs.
+async fn first_content(
     server: &Server,
-    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
     id: &SessionId,
     first: &Input,
     refs: Vec<crate::attachments::AttachmentRef>,
+) -> Result<Option<Vec<ContentBlock>>, Box<Ack>> {
+    match first.text.as_deref() {
+        Some(text) if !refs.is_empty() => crate::attachments::content(server, id, text, refs)
+            .await
+            .map(Some)
+            .map_err(|error| {
+                Box::new(Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    0,
+                ))
+            }),
+        _ => Ok(None),
+    }
+}
+
+/// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
+/// createSession command id, with its attachments already resolved ([`first_content`]). The `input` field of the
+/// result; `None` without text or when the session refused it; `Err` when the draft could not be persisted for it
+/// ([`admit_input`]).
+async fn submit_first(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    first: &Input,
+    content: Option<Vec<ContentBlock>>,
 ) -> Result<Option<Value>, Box<Ack>> {
     let Some(text) = first.text.clone() else {
         return Ok(None);
@@ -634,11 +666,7 @@ async fn submit_first(
     // as for `sendText`; missing parts are the session's current state.
     let view = live.handle.view().await.ok();
     let execution = input_execution(first, view.as_ref());
-    let content = if refs.is_empty() {
-        Vec::new()
-    } else {
-        crate::attachments::content(server, id, &text, refs).await
-    };
+    let content = content.unwrap_or_default();
     let submit = Command::SubmitWith {
         kind: QueuedKind::Text,
         text,
@@ -1387,6 +1415,25 @@ async fn send_text(
             );
         }
     };
+    // Resolved before any side effect (held queue, remembered input): text material that cannot be written refuses the
+    // input and changes nothing.
+    let content = if refs.is_empty() {
+        Vec::new()
+    } else {
+        let text = input.text.as_deref().unwrap_or_default();
+        match crate::attachments::content(server, handle.id(), text, refs).await {
+            Ok(content) => content,
+            Err(error) => {
+                return Ack::refused(
+                    command,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    revision,
+                );
+            }
+        }
+    };
     let view = handle.view().await.ok();
     // Fork: checked before the model or mode change, like Node's admission.
     if let Err(ack) = held_queue_choice(
@@ -1415,7 +1462,7 @@ async fn send_text(
         live.followup(),
         admission_phase,
         view.as_ref().is_none_or(|view| view.running),
-        !refs.is_empty(),
+        !content.is_empty(),
     );
     let text = input.text.clone().unwrap_or_default();
     if let Err(ack) = admit_input(server, handle, &text, command, revision).await {
@@ -1423,11 +1470,6 @@ async fn send_text(
     }
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
-    let content = if !refs.is_empty() {
-        crate::attachments::content(server, handle.id(), &text, refs).await
-    } else {
-        Vec::new()
-    };
     // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
     let text = if kind == QueuedKind::Goal {
         format!("/goal {}", text.trim())

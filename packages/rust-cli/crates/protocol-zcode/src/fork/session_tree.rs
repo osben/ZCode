@@ -29,7 +29,7 @@ const PER_SESSION_DIRECTORIES: [&str; 5] = [
 /// Node `SAFE_SEGMENT` (`/^[A-Za-z0-9._-]{1,120}$/u` plus the `.`/`..` refusal): matches what the
 /// artifact store's path sanitizer leaves unchanged, so the segment equals the id. The charset
 /// is ASCII-only, so bytes equal code points here.
-fn is_plain_segment(session_id: &str) -> bool {
+pub(crate) fn is_plain_segment(session_id: &str) -> bool {
     (1..=120).contains(&session_id.len())
         && session_id
             .bytes()

@@ -102,6 +102,12 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
             key(out, "source", false);
             image_source(out, source)?;
         }
+        // Fork: Node's patched `@ai-sdk/anthropic` writes a video file part as an image-shaped `video` block.
+        ContentBlock::Video { source, .. } => {
+            kind(out, "video");
+            key(out, "source", false);
+            image_source(out, source)?;
+        }
         ContentBlock::Thinking {
             thinking,
             signature,

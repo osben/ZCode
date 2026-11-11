@@ -6,6 +6,7 @@ members = [
   "crates/base",
   "crates/paths",
   "crates/fs",
+  "crates/image",
   "crates/proc",
   "crates/net",
   "crates/kernel-api",
@@ -117,6 +118,11 @@ unicode-width = "0.2"
 # kernel-api `env_path::nfc`：工具路径参数的 NFC（docs/specs/rust-cli/tools-files.md §3.2）。
 # Cargo.lock 里本来就有（url → idna → idna_adapter），只打开内置数据，不引入新包。
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
+# Fork: protocol-zcode reads desktop text attachments like Node (GBK / GB18030 detection). Cargo.lock already has it
+# (grep-searcher), so it adds no package.
+encoding_rs = "0.8"
+# Fork: rust-cli-image decodes, resizes and encodes attached images (Node uses Jimp). Only the formats Node prepares.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
 # 内容搜索：ripgrep 自己的搜索库（env-local 的 Grep，docs/specs/rust-cli/tools-files.md §3）。
 grep-matcher = "0.1"
 grep-regex = "0.1"
@@ -185,6 +191,7 @@ rust-cli-base = { path = "crates/base" }
 rust-cli-paths = { path = "crates/paths" }
 rust-cli-net = { path = "crates/net" }
 rust-cli-fs = { path = "crates/fs" }
+rust-cli-image = { path = "crates/image" }
 rust-cli-platform = { path = "crates/platform" }
 rust-cli-proc = { path = "crates/proc" }
 rust-cli-prompts = { path = "crates/prompts" }

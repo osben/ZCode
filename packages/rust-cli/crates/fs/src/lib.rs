@@ -404,6 +404,34 @@ pub async fn is_file(path: &Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file())
 }
 
+/// What [`stat`] found at a path (following symlinks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stat {
+    /// A regular file (not a directory, FIFO, device or socket).
+    pub is_file: bool,
+    pub len: u64,
+    /// Milliseconds since the Unix epoch, when the platform reports it.
+    pub modified_ms: Option<u64>,
+}
+
+/// The path's metadata, following symlinks; `None` when it does not exist (Fork: a shared attachment's size probe,
+/// specs/fork-agent-runtime-selection.md "Attachments in Rust mode").
+pub async fn stat(path: &Path) -> io::Result<Option<Stat>> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => Ok(Some(Stat {
+            is_file: metadata.is_file(),
+            len: metadata.len(),
+            modified_ms: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok()),
+        })),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// 文件的修改时间；不存在时为 `None`（模型轨迹按修改时间从旧到新淘汰文件，docs/specs/rust-cli/model-io.md §3.3）。
 pub async fn file_modified(path: &Path) -> io::Result<Option<SystemTime>> {
     match tokio::fs::metadata(path).await {

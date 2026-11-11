@@ -53,7 +53,7 @@ async fn a_blocking_prompt_hook_keeps_the_input_out() {
     let seen = until(&mut events, finished).await;
     assert!(matches!(
         seen.last(),
-        Some(KernelEvent::TurnFinished { outcome: TurnOutcome::Failed { message }, .. })
+        Some(KernelEvent::TurnFinished { outcome: TurnOutcome::Failed { message, .. }, .. })
             if message.starts_with("UserPromptSubmit operation blocked by hook:")
     ));
     assert!(built.session.view().await.unwrap().messages.is_empty());

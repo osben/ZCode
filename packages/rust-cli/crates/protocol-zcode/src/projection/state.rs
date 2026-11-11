@@ -47,6 +47,8 @@ pub struct ActiveWork {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LastError {
     pub message: String,
+    /// Fork: the failure's Node error code (`TurnOutcome::Failed`), else `fault.turn.failed`.
+    pub code: Option<String>,
     pub at: u64,
 }
 
@@ -91,7 +93,7 @@ pub fn control(
         "stopTargetKind": target,
         "activeWorks": works,
         "lastError": error.map(|error| json!({
-            "code": "fault.turn.failed",
+            "code": error.code.as_deref().unwrap_or("fault.turn.failed"),
             "message": error.message,
             "recoverable": true,
             "at": error.at,

@@ -27,6 +27,10 @@ pub enum TurnOutcome {
     StopHookPrevented,
     Failed {
         message: String,
+        /// Fork: Node's error code for the failure ([`crate::model::ModelError::code`]), which the App localizes
+        /// (`lastError.code`); `None` is the generic turn fault.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
 }
 

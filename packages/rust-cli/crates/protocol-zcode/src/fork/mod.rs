@@ -11,7 +11,7 @@ pub(crate) use queue::settle_running_turn;
 mod row_commands;
 mod session_config;
 mod session_delete;
-mod session_tree;
+pub(crate) mod session_tree;
 mod skills;
 mod subagents;
 mod usage;

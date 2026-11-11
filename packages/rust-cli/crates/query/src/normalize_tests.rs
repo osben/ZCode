@@ -394,6 +394,10 @@ fn attachments_with_blocks_stay_in_user_messages() {
             &prompt
         ]
     );
+    // A mention's blocks are marked as attachment content, so the media budget never protects them as input.
+    let meta: Vec<bool> = api[1].content.iter().map(|item| item.meta).collect();
+    assert_eq!(meta, [true, true, true, true, false, false]);
+    assert!(api[0].content.iter().all(|item| item.meta));
     assert_eq!(api[2].role, ApiRole::System);
     assert!(texts(&api[2])[0].starts_with("call doc"));
     // 不支持对话中间 system 消息：只有文字的 attachment 留在 user 消息里，带内容块的位置不变。
@@ -691,6 +695,9 @@ fn attached_files_expand_into_reminders_and_images() {
             reference: None,
             preview_reference: None,
             stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
             body,
         },
     };
@@ -705,7 +712,10 @@ fn attached_files_expand_into_reminders_and_images() {
             file(
                 "a.txt",
                 "text/plain",
-                AttachedBody::Text { text: "abc".into() },
+                AttachedBody::Text {
+                    text: "abc".into(),
+                    read: None,
+                },
             ),
             file(
                 "p.png",
@@ -740,6 +750,140 @@ fn attached_files_expand_into_reminders_and_images() {
             )),
         ]
     );
+}
+
+/// Fork: an input of only attached text has an empty real user message in Node, which the wire pads with
+/// `(no content)` (`toAiSdkUserContent`); a typed text or another attachment keeps it unpadded.
+#[test]
+fn an_input_of_only_attached_text_is_padded_like_node() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |body| ContentBlock::File {
+        file: AttachedFile {
+            name: "a.txt".into(),
+            mime: "text/plain".into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
+            body,
+        },
+    };
+    let inline = || {
+        file(AttachedBody::Text {
+            text: "abc".into(),
+            read: None,
+        })
+    };
+    let user = |content: Vec<ContentBlock>| {
+        let message = Message::User(UserMessage {
+            id: MessageId::new("u1"),
+            content,
+            origin: UserOrigin::Human,
+        });
+        normalize([&message], &ON)
+            .into_iter()
+            .find(|message| message.role == ApiRole::User)
+            .unwrap()
+            .content
+            .into_iter()
+            .map(|item| item.block)
+            .collect::<Vec<_>>()
+    };
+    let reminder = text(&prompt_attachment::text_file("a.txt", "abc").join("\n"));
+    assert_eq!(
+        user(vec![text(""), inline(), file(AttachedBody::ReadFailed)]),
+        [text("(no content)"), reminder.clone()]
+    );
+    assert_eq!(
+        user(vec![text("hi"), inline()]),
+        [text("hi"), reminder.clone()]
+    );
+    assert_eq!(
+        user(vec![inline(), file(AttachedBody::Omitted)]),
+        [
+            reminder,
+            text(&prompt_attachment::metadata_only("a.txt", "text/plain", 3))
+        ]
+    );
+}
+
+/// Fork: with separate user messages (OpenAI-compatible), an attached text's reminders are their own user message after
+/// the real one, as Node's `buildUserMessageEntries` entries; an empty real message is padded with `(no content)`.
+#[test]
+fn separate_user_messages_send_attached_text_apart_like_node() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |name: &str, body| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: "text/plain".into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
+            body,
+        },
+    };
+    let inline = |name: &str| {
+        file(
+            name,
+            AttachedBody::Text {
+                text: "abc".into(),
+                read: None,
+            },
+        )
+    };
+    let send = |content: Vec<ContentBlock>| {
+        let message = Message::User(UserMessage {
+            id: MessageId::new("u1"),
+            content,
+            origin: UserOrigin::Human,
+        });
+        normalize([&message], &SEPARATE)
+    };
+    let reminder = |name: &str| prompt_attachment::text_file(name, "abc").join("\n");
+
+    let api = send(vec![
+        text(""),
+        inline("a.txt"),
+        file("b.txt", AttachedBody::ReadFailed),
+    ]);
+    let texts: Vec<&str> = api.iter().map(one_text).collect();
+    assert_eq!(texts, ["(no content)", reminder("a.txt").as_str()]);
+    assert!(!api[0].content[0].meta && api[1].content[0].meta);
+
+    let api = send(vec![text("hi"), inline("a.txt"), inline("b.txt")]);
+    let texts: Vec<&str> = api.iter().map(one_text).collect();
+    assert_eq!(
+        texts,
+        ["hi", reminder("a.txt").as_str(), reminder("b.txt").as_str()]
+    );
+
+    // Other attachments stay in the real message.
+    let api = send(vec![
+        text("hi"),
+        inline("a.txt"),
+        file("d.txt", AttachedBody::Omitted),
+    ]);
+    assert_eq!(api.len(), 2);
+    let real: Vec<&ContentBlock> = api[0].content.iter().map(|item| &item.block).collect();
+    assert_eq!(
+        real,
+        [
+            &text("hi"),
+            &text(&prompt_attachment::metadata_only("d.txt", "text/plain", 3))
+        ]
+    );
+    assert_eq!(one_text(&api[1]), reminder("a.txt"));
 }
 
 const SEPARATE: NormalizeOptions = NormalizeOptions {
@@ -893,4 +1037,38 @@ fn separate_user_messages_keep_parallel_tool_results_together() {
         one_text(&api[3]),
         "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
     );
+}
+
+/// Fork: two inputs with media before any reply (the first one interrupted) merge into one user message here, where
+/// Node keeps two user messages and its media budget protects only the newest (`findLatestRealUserMessageIndex`).
+/// The earlier input's media are marked as not the current input, so the budget treats them as history.
+#[test]
+fn an_earlier_input_merged_into_the_next_is_not_the_current_input() {
+    let input = |id: &str, value: &str| {
+        Message::User(UserMessage {
+            id: MessageId::new(id),
+            content: vec![text(value), image()],
+            origin: UserOrigin::Human,
+        })
+    };
+    let api = normalize(&[input("u1", "first"), input("u2", "second")], &ON);
+    assert_eq!(api.len(), 1);
+    let meta: Vec<(bool, bool)> = api[0]
+        .content
+        .iter()
+        .map(|item| (matches!(item.block, ContentBlock::Image { .. }), item.meta))
+        .collect();
+    assert_eq!(
+        meta,
+        [(false, false), (true, true), (false, false), (true, false)]
+    );
+    // A reminder or a tool result joining the input is not a new input: the input's media stay current.
+    let api = normalize(
+        &[
+            input("u1", "first"),
+            human("u2", "<system-reminder>\nnote\n</system-reminder>"),
+        ],
+        &ON,
+    );
+    assert!(api[0].content.iter().all(|item| !item.meta));
 }
