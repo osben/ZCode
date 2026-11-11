@@ -10,6 +10,7 @@ fn file(body: AttachedBody) -> AttachedFile {
         stored: None,
         material: None,
         image: None,
+        unnamed: false,
         body,
     }
 }
@@ -561,4 +562,139 @@ fn the_history_names_an_unnamed_attachment_by_its_place() {
         user.content[1],
         rust_cli_kernel_api::message::ContentBlock::Image { .. }
     ));
+}
+
+/// Node `attachmentMetasOfMessage` for one stored part: `{fileName, mime, bytes, ref?}`.
+fn nodes_chip(part: &Value, index: usize) -> Value {
+    let url = part["url"].as_str().unwrap_or_default();
+    let stable = !url.is_empty() && !url.starts_with("data:");
+    let basename = if stable {
+        url.rsplit(['/', '\\']).next().unwrap_or_default()
+    } else {
+        ""
+    };
+    let name = match part["filename"].as_str() {
+        Some(name) => name.to_owned(),
+        None if basename.is_empty() => format!("attachment-{}", index + 1),
+        None => basename.to_owned(),
+    };
+    let mut chip = json!({"fileName": name, "mime": part["mime"],
+        "bytes": part["metadata"]["sizeBytes"].as_u64().unwrap_or(0)});
+    if stable {
+        chip["ref"] = json!(url);
+    }
+    chip
+}
+
+/// Node's web-remote image that failed preparation (`resolveInlineMediaAttachment` → `resolvedPlaceholderAttachment`
+/// without options) is stored with no `filename` and no `sizeBytes` (exact parts below: a local path, and an inline data
+/// URL whose `originalUrl` is `inline:data-url`). An input holding only such an image keeps it after a reopen: Node's
+/// chip, and Node's live placeholder for the model.
+#[test]
+fn nodes_failed_web_remote_image_stays_an_attachment() {
+    let path = json!({"id": "prt_1", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "image/*",
+        "url": "/w/broken.png", "metadata": {"errorCode": "attachment_image_invalid", "originalUrl": "/w/broken.png",
+            "recoverability": "metadata_only", "storageKind": "local_ref"}});
+    let inline = json!({"id": "prt_2", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "image/*",
+        "url": "data:image/png;base64,AAAA", "metadata": {"errorCode": "attachment_image_resize_failed",
+            "originalUrl": "inline:data-url", "recoverability": "metadata_only", "storageKind": "metadata_only"}});
+    let model_text = |file: &AttachedFile| {
+        let blocks = rust_cli_kernel_api::prompt_attachment::blocks(file);
+        match blocks.as_slice() {
+            [rust_cli_kernel_api::message::ContentBlock::Text { text }] => text.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    for (index, (part, text)) in [
+        (&path, "[Attached image/*: /w/broken.png]"),
+        (&inline, "[Attached image/*: attachment-2]"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let file = from_part(part, index).unwrap();
+        assert!(matches!(file.body, AttachedBody::ImageFailed { .. }));
+        assert_eq!(
+            rust_cli_kernel_api::prompt_attachment::chip(&file),
+            nodes_chip(part, index)
+        );
+        assert_eq!(model_text(&file), text);
+        // Written back, Node reads the same chip.
+        let stored = part_of(&file);
+        assert_eq!(stored.get("filename"), None);
+        assert_eq!(nodes_chip(&stored, index), nodes_chip(part, index));
+        assert_eq!(model_text(&from_part(&stored, index).unwrap()), text);
+    }
+
+    let record = crate::row::WithParts {
+        info: json!({"id": "msg_1", "role": "user"}),
+        parts: vec![json!({"type": "text", "text": ""}), inline],
+    };
+    let messages = crate::hydrate::hydrate(&[std::borrow::Cow::Owned(record)]);
+    let [rust_cli_kernel_api::message::Message::User(user)] = messages.as_slice() else {
+        panic!("one user message: {messages:?}");
+    };
+    assert!(user.content.iter().any(|block| matches!(block,
+        rust_cli_kernel_api::message::ContentBlock::File { file } if file.name == "attachment-1")));
+}
+
+fn part_of(file: &AttachedFile) -> Value {
+    part("prt_9".into(), ("s1", "msg_1"), file)
+}
+
+/// The chip name of a part without `filename` is not a name the model sees: Node's cold media block takes
+/// `placeholder: source.text.value ?? filename`, so a non-vision endpoint or the media budget writes `[Attached
+/// video/mp4]` (`modelMessageContentBlockToText`), not the chip's `vid`. Written back, the part still has no
+/// `filename`.
+#[test]
+fn an_unnamed_attachment_gives_the_model_no_name() {
+    use rust_cli_kernel_api::message::ContentBlock;
+    let inline = json!({"id": "prt_1", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "video/mp4",
+        "url": "data:video/mp4;base64,AAAA", "metadata": {"recoverability": "provider_ready", "sizeBytes": 3,
+            "storageKind": "inline"}});
+    let file = from_part(&inline, 0).unwrap();
+    assert_eq!(file.name, "attachment-1");
+    assert!(matches!(
+        rust_cli_kernel_api::prompt_attachment::blocks(&file).as_slice(),
+        [ContentBlock::Video { name: None, .. }]
+    ));
+    assert_eq!(part_of(&file).get("filename"), None);
+
+    // An artifact video whose artifact is gone: Node's cold text is `[Attached <mime>: <filename ?? url>]`.
+    let video = json!({"id": "prt_2", "sessionID": "s1", "messageID": "msg_1", "type": "file", "mime": "video/mp4",
+        "url": "zcode-artifact://s1/vid", "metadata": {"recoverability": "provider_ready", "sizeBytes": 29,
+            "storageKind": "artifact", "artifactUri": "zcode-artifact://s1/vid"}});
+    let file = from_part(&video, 0).unwrap();
+    assert_eq!(file.name, "vid");
+    let blocks = rust_cli_kernel_api::prompt_attachment::blocks(&file);
+    let [ContentBlock::Text { text }] = blocks.as_slice() else {
+        panic!("{blocks:?}")
+    };
+    assert!(
+        text.contains("Attached file: zcode-artifact://s1/vid (video/mp4, 29 bytes"),
+        "{text}"
+    );
+
+    // A named attachment keeps its name for the model.
+    let named = AttachedFile {
+        mime: "video/mp4".into(),
+        body: AttachedBody::Video {
+            source: ImageSource::Base64 {
+                media_type: "video/mp4".into(),
+                data: "AAAA".into(),
+            },
+        },
+        ..file_named("clip.mp4")
+    };
+    assert!(matches!(
+        rust_cli_kernel_api::prompt_attachment::blocks(&named).as_slice(),
+        [ContentBlock::Video { name: Some(name), .. }] if name == "clip.mp4"
+    ));
+}
+
+fn file_named(name: &str) -> AttachedFile {
+    AttachedFile {
+        name: name.into(),
+        ..file(AttachedBody::Omitted)
+    }
 }

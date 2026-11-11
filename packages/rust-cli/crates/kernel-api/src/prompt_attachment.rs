@@ -307,18 +307,30 @@ pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
         }
         AttachedBody::Image { source } => vec![ContentBlock::Image {
             source: source.clone(),
-            name: Some(file.name.clone()),
+            name: model_name(file).map(str::to_owned),
         }],
         AttachedBody::Video { source } => vec![ContentBlock::Video {
             source: source.clone(),
-            name: Some(file.name.clone()),
+            name: model_name(file).map(str::to_owned),
         }],
+        // Node's cold label of an unnamed part is its `url` (`filePartToContentBlock`: `filename ?? url`).
         AttachedBody::Omitted => vec![ContentBlock::Text {
-            text: metadata_only(&file.name, &file.mime, file.bytes),
+            text: metadata_only(
+                model_name(file)
+                    .or(file.reference.as_deref())
+                    .unwrap_or(&file.name),
+                &file.mime,
+                file.bytes,
+            ),
         }],
         // Node `filePartToContentBlock`: the note goes back as sent, the file is not read again.
         AttachedBody::PathReference { text } => vec![ContentBlock::Text { text: text.clone() }],
     }
+}
+
+/// The name the model sees: the stored `filename`, none for an unnamed part (whose `name` is only the chip's).
+fn model_name(file: &AttachedFile) -> Option<&str> {
+    (!file.unnamed).then_some(file.name.as_str())
 }
 
 /// Node `buildUserMessageEntries`: an input with no typed text whose attachments all go as text reminders (inline text,
@@ -387,7 +399,7 @@ pub fn part_mime(file: &AttachedFile) -> String {
 /// holding its bytes when there is one (immutable, so a later change of the local file does not change the preview),
 /// else the App's ref when it is not a data URL. `None` leaves the caller's authorised ref.
 pub fn part_source(file: &AttachedFile) -> Option<String> {
-    file.stored.clone().or_else(|| {
+    file.stored.as_deref().map(str::to_owned).or_else(|| {
         file.reference
             .clone()
             .filter(|reference| !reference.starts_with("data:"))
