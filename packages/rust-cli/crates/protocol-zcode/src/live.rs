@@ -340,6 +340,14 @@ impl Live {
         self.state().projection.attachment_mime(reference)
     }
 
+    /// Fork: see [`crate::projection::Projection::attachment_source`].
+    pub fn attachment_source(
+        &self,
+        reference: &str,
+    ) -> Option<crate::projection::AttachmentSource> {
+        self.state().projection.attachment_source(reference)
+    }
+
     /// Fork: see [`crate::projection::Projection::row_attachment`].
     pub fn row_attachment(
         &self,

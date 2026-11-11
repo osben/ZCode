@@ -520,3 +520,73 @@ async fn an_image_that_cannot_be_prepared_is_nodes_placeholder() {
         )
     );
 }
+
+/// Node `derivedMediaAttachmentPath`: the playback copy of a video artifact is keyed by the URI's hash under the
+/// session's `video-cache` directory; a MIME Node cannot name or an unsafe session id has none.
+#[test]
+fn a_video_artifacts_playback_copy_is_named_like_node() {
+    let root = Path::new("/data");
+    let uri = "zcode-artifact://s1/a1";
+    let digest = rust_cli_base::hash::sha256_hex(uri.as_bytes());
+    assert_eq!(
+        video_cache_path(
+            root,
+            &SessionId::new("s1"),
+            uri,
+            "video/QuickTime; codecs=x"
+        ),
+        Some(PathBuf::from(format!(
+            "/data/cli/video-cache/s1/video-{}.mov",
+            &digest[..32]
+        )))
+    );
+    assert_eq!(
+        video_cache_path(root, &SessionId::new("s1"), uri, "video/ogg"),
+        None
+    );
+    assert_eq!(
+        video_cache_path(root, &SessionId::new("../x"), uri, "video/mp4"),
+        None
+    );
+}
+
+/// Node `ensureMediaAttachmentPath`: the decoded video is written once and then reused; content that is not a video
+/// data URL leaves no file.
+#[test]
+fn a_video_artifact_is_written_once_as_its_playback_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cli/video-cache/s1/video-x.mp4");
+    let data_url = format!(
+        "data:video/mp4;base64,{}",
+        base64().encode(b"\0\0\0\x18ftyp")
+    );
+    let written = block_on(derived_video(
+        &path,
+        async || Some(data_url.clone().into_bytes()),
+        "video/mp4",
+    ));
+    assert_eq!(written.as_deref(), path.to_str());
+    assert_eq!(
+        block_on(rust_cli_fs::read_optional(&path))
+            .unwrap()
+            .unwrap(),
+        b"\0\0\0\x18ftyp"
+    );
+    // An existing copy is reused without reading the artifact again.
+    let reused = block_on(derived_video(&path, async || None, "video/mp4"));
+    assert_eq!(reused.as_deref(), path.to_str());
+
+    let other = dir.path().join("cli/video-cache/s1/video-y.mp4");
+    let image = format!("data:image/png;base64,{}", base64().encode(b"\x89PNG"));
+    for content in [image.into_bytes(), b"not a data url".to_vec()] {
+        assert_eq!(
+            block_on(derived_video(
+                &other,
+                async || Some(content.clone()),
+                "video/mp4"
+            )),
+            None
+        );
+    }
+    assert!(!block_on(rust_cli_fs::is_file(&other)));
+}

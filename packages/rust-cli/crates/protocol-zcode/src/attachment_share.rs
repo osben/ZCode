@@ -30,9 +30,9 @@ const STAT_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RowTarget {
-    row_id: u64,
-    entity_id: String,
+pub(crate) struct RowTarget {
+    pub(crate) row_id: u64,
+    pub(crate) entity_id: String,
 }
 
 #[derive(Debug, Deserialize)]

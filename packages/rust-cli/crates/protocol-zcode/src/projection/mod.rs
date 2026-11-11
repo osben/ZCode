@@ -378,6 +378,25 @@ impl Projection {
         })
     }
 
+    /// Fork: the first attachment of a `userInput` row whose `ref` or `previewRef` is `reference` (Node
+    /// `resolveReadableMediaAttachment` without a row target): its chip MIME and its stored source.
+    pub fn attachment_source(&self, reference: &str) -> Option<AttachmentSource> {
+        self.rows.iter().find_map(|row| {
+            if RowKind::of(row) != Some(RowKind::UserInput) {
+                return None;
+            }
+            let index = row
+                .get("attachments")?
+                .as_array()?
+                .iter()
+                .position(|chip| chip["ref"] == reference || chip["previewRef"] == reference)?;
+            self.attachment_sources
+                .get(row["entityId"].as_str()?)?
+                .get(index)
+                .cloned()
+        })
+    }
+
     /// Fork: the attachment at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its
     /// `ref` or `previewRef` (Node `conversationAttachmentRead` / `conversationAttachmentStat` authorisation): its chip
     /// MIME and its stored source.

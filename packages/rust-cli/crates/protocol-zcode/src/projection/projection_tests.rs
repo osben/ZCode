@@ -713,6 +713,14 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
         projection.row_attachment(row_id + 1, "msg_u1", 0, "/tmp/p.png"),
         None
     );
+    // Without a row target the ref alone finds its chip (Node's previewSource).
+    assert_eq!(
+        projection
+            .attachment_source("/tmp/n.md")
+            .and_then(|source| source.source),
+        Some("/tmp/n.md".into())
+    );
+    assert_eq!(projection.attachment_source("/tmp/other.png"), None);
 }
 
 /// Fork: one finished turn `n` (typed input `msg_u<n>`, reply `msg_a<n>`).

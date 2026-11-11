@@ -19,7 +19,7 @@ use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::server::Server;
@@ -812,9 +812,149 @@ pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcErr
     })))
 }
 
-/// `v4/attachment/previewSource`: the fork serves every preview in chunks.
-pub async fn preview_source(_server: &Server, _params: &Value) -> Result<Reply, RpcError> {
-    Ok(Reply::new(json!({"kind": "chunked"})))
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum ClientMode {
+    DesktopContinuous,
+    WebRemoteReplayable,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PreviewSourceParams {
+    session_id: String,
+    #[serde(rename = "ref")]
+    reference: String,
+    target: Option<crate::attachment_share::RowTarget>,
+    attachment_index: Option<usize>,
+    client_mode: ClientMode,
+}
+
+/// Node `extensionForDerivedMediaContentType` (its video rows): the derived copy's extension.
+fn video_extension(mime: &str) -> Option<&'static str> {
+    Some(match essence(mime).as_str() {
+        "video/mp4" => ".mp4",
+        "video/quicktime" => ".mov",
+        "video/webm" => ".webm",
+        "video/x-matroska" => ".mkv",
+        "video/x-m4v" => ".m4v",
+        "video/x-msvideo" => ".avi",
+        _ => return None,
+    })
+}
+
+/// Node `derivedMediaAttachmentPath` for a video: `<storageRoot>/cli/video-cache/<session>/video-<hash><ext>`, the hash
+/// being the first 32 hex digits of the artifact URI's SHA-256. `None` for a MIME without an extension or a session id
+/// that is not a plain path segment.
+fn video_cache_path(root: &Path, session: &SessionId, uri: &str, mime: &str) -> Option<PathBuf> {
+    let extension = video_extension(mime)?;
+    if !crate::fork::session_tree::is_plain_segment(session.as_str()) {
+        return None;
+    }
+    let digest = rust_cli_base::hash::sha256_hex(uri.as_bytes());
+    Some(
+        root.join("cli")
+            .join("video-cache")
+            .join(session.as_str())
+            .join(format!("video-{}{extension}", &digest[..32])),
+    )
+}
+
+/// Node `writeDerivedMediaAttachment`: the derived copy is reused when it is a file, else the artifact's video data URL
+/// is decoded and written atomically. `None` when the content is not a video data URL or the write fails.
+async fn derived_video(
+    path: &Path,
+    content: impl AsyncFnOnce() -> Option<Vec<u8>>,
+    mime: &str,
+) -> Option<String> {
+    const WRITE: rust_cli_fs::WriteOptions = rust_cli_fs::WriteOptions {
+        mode: rust_cli_fs::FileMode::Default,
+        temp_name: rust_cli_fs::TempName::Visible,
+        parent: rust_cli_fs::ParentDir::Create,
+        rename_retry: &[],
+    };
+    let path_text = path.to_str()?.to_owned();
+    if rust_cli_fs::is_file(path).await {
+        return Some(path_text);
+    }
+    let content = content().await?;
+    let (bytes, media_type) =
+        crate::attachment_share::decode_data_url(&content, mime, VIDEO_INPUT_MAX_BYTES).ok()?;
+    if !media_type.starts_with("video/") {
+        return None;
+    }
+    if rust_cli_fs::atomic_write(path, &bytes, WRITE)
+        .await
+        .is_err()
+    {
+        // No error text: a storage error names the storage path.
+        tracing::warn!(
+            event = "attachment.video_cache_failed",
+            "writing a video's playback copy failed"
+        );
+        return None;
+    }
+    Some(path_text)
+}
+
+/// `v4/attachment/previewSource` (Node `attachmentPreviewSource` and `resolvePromptAttachmentPreviewSource`): a desktop
+/// video plays from a local file, its artifact's derived copy or, without an artifact, its absolute path; everything
+/// else is read in chunks. An artifact-backed part never falls back to its mutable original path.
+pub async fn preview_source(server: &Server, params: &Value) -> Result<Reply, RpcError> {
+    let params: PreviewSourceParams = parse(params)?;
+    if params.target.is_some() != params.attachment_index.is_some() {
+        return Err(RpcError::invalid_params(
+            "target and attachmentIndex must be provided together",
+        ));
+    }
+    let session = SessionId::new(&params.session_id);
+    let live = server
+        .live(&session)
+        .await
+        .map_err(|error| crate::server::kernel_error(&error))?;
+    let attachment = match (&params.target, params.attachment_index) {
+        (Some(target), Some(index)) => {
+            live.sink
+                .row_attachment(target.row_id, &target.entity_id, index, &params.reference)
+        }
+        _ => live.sink.attachment_source(&params.reference),
+    }
+    .ok_or_else(|| fault("previewRefNotAuthorized"))?;
+    let chunked = || Ok(Reply::new(json!({"kind": "chunked"})));
+    let media_type = essence(&attachment.mime);
+    if params.client_mode != ClientMode::DesktopContinuous || !media_type.starts_with("video/") {
+        return chunked();
+    }
+    let Some(source) = attachment.source else {
+        return chunked();
+    };
+    let path = if source.starts_with(ARTIFACT_SCHEME) {
+        match server
+            .context
+            .storage_root()
+            .and_then(|root| video_cache_path(root, &session, &source, &media_type))
+        {
+            Some(path) => {
+                let content = async || {
+                    artifact_content(server, &session, &source, VIDEO_INPUT_MAX_BYTES)
+                        .await
+                        .ok()
+                };
+                derived_video(&path, content, &media_type).await
+            }
+            None => None,
+        }
+    } else if Path::new(&source).is_absolute() {
+        Some(source)
+    } else {
+        None
+    };
+    match path {
+        Some(path) => Ok(Reply::new(
+            json!({"kind": "local_path", "path": path, "mediaType": media_type}),
+        )),
+        None => chunked(),
+    }
 }
 
 #[cfg(test)]
