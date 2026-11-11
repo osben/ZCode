@@ -338,6 +338,25 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
         .session_id
         .as_deref()
         .map_or_else(inbox::new_session_id, SessionId::new);
+    // The first input's attachments are resolved before the session exists: text material that cannot be written
+    // refuses the command and leaves no session behind.
+    let content = match first.text.as_deref() {
+        Some(text) if !refs.is_empty() => {
+            match crate::attachments::content(server, &id, text, refs).await {
+                Ok(content) => Some(content),
+                Err(error) => {
+                    return Ack::refused(
+                        &envelope.command_id,
+                        Status::Failed,
+                        &error.message,
+                        error.message.clone(),
+                        0,
+                    );
+                }
+            }
+        }
+        _ => None,
+    };
     if let Some(followup) = config.followup_mode {
         server
             .followups
@@ -379,29 +398,16 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             &envelope.command_id,
             input_meta(envelope, &first, "startNow", "startNow"),
         );
-        let submit = if refs.is_empty() {
-            Command::Submit {
+        let submit = match content {
+            None => Command::Submit {
                 text,
                 attachments: Vec::new(),
                 delivery: Delivery::Queue,
-            }
-        } else {
-            match crate::attachments::content(server, &id, &text, refs).await {
-                Ok(content) => Command::SubmitContent {
-                    content,
-                    delivery: Delivery::Queue,
-                },
-                // The session exists; only its first input is refused (Node fails the first turn).
-                Err(error) => {
-                    return Ack::refused(
-                        &envelope.command_id,
-                        Status::Failed,
-                        &error.message,
-                        error.message.clone(),
-                        0,
-                    );
-                }
-            }
+            },
+            Some(content) => Command::SubmitContent {
+                content,
+                delivery: Delivery::Queue,
+            },
         };
         if let KernelAck::Accepted { .. } =
             send(live.handle.as_ref(), &envelope.command_id, submit).await
@@ -914,6 +920,25 @@ async fn send_text(
             );
         }
     };
+    // Resolved before any side effect (held queue, remembered input): text material that cannot be written refuses the
+    // input and changes nothing.
+    let content = if refs.is_empty() {
+        Vec::new()
+    } else {
+        let text = input.text.as_deref().unwrap_or_default();
+        match crate::attachments::content(server, handle.id(), text, refs).await {
+            Ok(content) => content,
+            Err(error) => {
+                return Ack::refused(
+                    command,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    revision,
+                );
+            }
+        }
+    };
     let view = handle.view().await.ok();
     // Fork: checked before the model or mode change, like Node's admission.
     if let Err(ack) = held_queue_choice(
@@ -942,27 +967,11 @@ async fn send_text(
         live.followup(),
         admission_phase,
         view.as_ref().is_none_or(|view| view.running),
-        !refs.is_empty(),
+        !content.is_empty(),
     );
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();
-    let content = if refs.is_empty() {
-        Vec::new()
-    } else {
-        match crate::attachments::content(server, handle.id(), &text, refs).await {
-            Ok(content) => content,
-            Err(error) => {
-                return Ack::refused(
-                    command,
-                    Status::Failed,
-                    &error.message,
-                    error.message.clone(),
-                    revision,
-                );
-            }
-        }
-    };
     // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
     let text = if kind == QueuedKind::Goal {
         format!("/goal {}", text.trim())
