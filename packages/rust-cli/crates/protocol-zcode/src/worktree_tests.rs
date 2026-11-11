@@ -1709,3 +1709,69 @@ async fn a_submission_activation_in_another_workspace_is_refused() {
     assert_eq!(ack["status"], "accepted", "{ack}");
     assert_eq!(ack["result"]["sessionId"], session.as_str());
 }
+
+/// Node lists a prepared session under `workspaceID ?? directory` and compares that key with `workspaceId`. A row a
+/// Node agent wrote with a workspace identity besides its directory is activated with the identity, not the path.
+#[tokio::test]
+async fn activations_compare_the_listed_workspace_key_not_the_directory() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let identity = format!("remote:ssh:box:{workspace}");
+
+    // Submission activation.
+    let ack = run(
+        &server,
+        json!({"commandId": "r1", "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "submissionPreparation": {"submissionId": "sub"}}}),
+    )
+    .await;
+    let submission = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    kernel
+        .store
+        .set_workspace_key(&SessionId::new(&submission), &identity);
+    let activate = |id: &str, workspace: &str| {
+        json!({"commandId": id, "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "preparedSessionId": submission,
+                "expectedSubmissionId": "sub"}})
+    };
+    let ack = run(&server, activate("a1", &workspace)).await;
+    assert_eq!(
+        ack["status"], "rejected",
+        "the directory is not the key: {ack}"
+    );
+    let ack = run(&server, activate("a2", &identity)).await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+
+    // Worktree activation.
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let path = worktree.to_str().unwrap().to_owned();
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "worktreePreparation": {
+            "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}),
+    )
+    .await;
+    let prepared = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    kernel
+        .store
+        .set_workspace_key(&SessionId::new(&prepared), &identity);
+    let activate = |id: &str, workspace: &str| {
+        json!({"commandId": id, "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "preparedSessionId": prepared,
+                "expectedAttemptId": "a1",
+                "executionWorktree": {"path": path, "branchName": "feat/a"}}})
+    };
+    let ack = run(&server, activate("w1", &workspace)).await;
+    assert_ne!(
+        ack["status"], "accepted",
+        "the directory is not the key: {ack}"
+    );
+    let ack = run(&server, activate("w2", &identity)).await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+}

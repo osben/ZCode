@@ -675,10 +675,8 @@ async fn activate_submission(
     }
     let id = SessionId::new(prepared);
     // Node compares the reservation's workspace with `workspaceId`: an activation from another workspace is refused.
-    let listed = crate::worktree::listed_directory(server, &id).await;
-    let workspace_matches = payload.workspace_id.as_deref().is_some_and(|workspace| {
-        listed.as_deref() == Some(server.workspace(workspace).root.as_str())
-    });
+    let listed = crate::worktree::listed_key(server, &id).await;
+    let workspace_matches = payload.workspace_id.is_some() && payload.workspace_id == listed;
     if !workspace_matches {
         return Ack::refused(
             &envelope.command_id,

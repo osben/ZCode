@@ -72,15 +72,25 @@ async fn a_cold_open_runs_in_the_worktree_and_lists_under_the_parent() {
     let row = crate::reconcile_row::row(&conn, "sess_1").unwrap().unwrap();
     assert_eq!(row["directory"], "/w");
     // The listed workspace is the row's directory, never the worktree it runs in.
-    let directory = rust_cli_kernel_api::store::StoreQueries::session_directory(&t.store, &id)
+    let key = rust_cli_kernel_api::store::StoreQueries::session_workspace_key(&t.store, &id)
         .await
         .unwrap();
-    assert_eq!(directory.unwrap().as_str(), "/w");
+    assert_eq!(key.as_deref(), Some("/w"));
     let unknown = SessionId::new("sess_none");
-    let none = rust_cli_kernel_api::store::StoreQueries::session_directory(&t.store, &unknown)
+    let none = rust_cli_kernel_api::store::StoreQueries::session_workspace_key(&t.store, &unknown)
         .await
         .unwrap();
     assert_eq!(none, None);
+    // A Node row with a workspace identity is listed under the identity (Node `workspaceID ?? directory`).
+    conn.execute(
+        "update session set workspace_id = 'remote:ssh:box:/repo' where id = 'sess_1'",
+        [],
+    )
+    .unwrap();
+    let key = rust_cli_kernel_api::store::StoreQueries::session_workspace_key(&t.store, &id)
+        .await
+        .unwrap();
+    assert_eq!(key.as_deref(), Some("remote:ssh:box:/repo"));
 }
 
 #[tokio::test]

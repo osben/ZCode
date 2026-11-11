@@ -491,13 +491,13 @@ impl StoreQueries for NodeStore {
             .await
     }
 
-    /// Fork: the row's `directory`, the workspace the session is listed under.
-    async fn session_directory(
+    /// Fork: the workspace key the row is listed under (Node `workspaceID ?? directory`).
+    async fn session_workspace_key(
         &self,
         session: &SessionId,
-    ) -> Result<Option<rust_cli_kernel_api::env::EnvPath>, StoreError> {
+    ) -> Result<Option<String>, StoreError> {
         let session = session.as_str().to_owned();
-        self.with_db(move |conn, _| fork_execution_worktree::directory(conn, &session))
+        self.with_db(move |conn, _| fork_execution_worktree::workspace_key(conn, &session))
             .await
     }
 
