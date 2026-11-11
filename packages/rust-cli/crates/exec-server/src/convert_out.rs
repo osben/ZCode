@@ -302,6 +302,8 @@ pub(crate) fn background_info(info: BackgroundInfo) -> ws::BackgroundInfo {
         status,
         kind,
         description,
+        // Fork: the wire format carries no output path (local machines only).
+        output: _,
     } = info;
     ws::BackgroundInfo {
         command,

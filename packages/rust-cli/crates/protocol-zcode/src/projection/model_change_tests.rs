@@ -154,3 +154,53 @@ fn a_cold_projection_draws_stored_switches() {
     assert_eq!(found[0]["marker"]["fromModel"], "pro");
     assert_eq!(found[0]["marker"]["toModel"], "scripted");
 }
+
+/// A subagent child's first turn starts with the source-less "Using <model>" marker (Node's
+/// `previousModelSelection: null` at the spawn), live and cold; later turns draw only real switches.
+#[test]
+fn a_subagent_child_starts_with_a_source_less_model_marker() {
+    let mut child = view(Vec::new());
+    child.meta.kind = rust_cli_kernel_api::store::SessionKind::Subagent;
+    let mut feed = Feed::new();
+    feed.projection = Projection::from_view(&child, Followup::Queue, Vec::new());
+    let started = turn(&mut feed, "turn_1");
+    let found = markers(&started);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0]["entityId"],
+        "model-initial:turn_1:fixture/scripted"
+    );
+    assert_eq!(found[0]["lane"], "lightBoundary");
+    assert_eq!(
+        found[0]["marker"],
+        json!({"type": "modelChange", "toProvider": "fixture", "toModel": "scripted", "toThought": ""})
+    );
+    assert!(markers(&turn(&mut feed, "turn_2")).is_empty());
+
+    let mut cold = view(vec![
+        user("msg_u1", "one"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "a".into() }]),
+        user("msg_u2", "two"),
+        assistant("msg_a2", vec![ContentBlock::Text { text: "b".into() }]),
+    ]);
+    cold.meta.kind = rust_cli_kernel_api::store::SessionKind::Subagent;
+    cold.message_models = [
+        (MessageId::new("msg_a1"), stored("upstream", "flash")),
+        (MessageId::new("msg_a2"), stored("upstream", "flash")),
+    ]
+    .into_iter()
+    .collect();
+    let projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    let drawn: Vec<_> = projection
+        .rows
+        .iter()
+        .filter(|row| row["kind"] == "timelineMarker" && row["marker"]["type"] == "modelChange")
+        .collect();
+    assert_eq!(drawn.len(), 1);
+    assert!(drawn[0]["marker"].get("fromModel").is_none());
+    assert_eq!(drawn[0]["marker"]["toModel"], "flash");
+
+    // A regular session's first turn stays silent.
+    let mut feed = Feed::new();
+    assert!(markers(&turn(&mut feed, "turn_1")).is_empty());
+}

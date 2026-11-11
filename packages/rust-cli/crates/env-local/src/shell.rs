@@ -207,6 +207,10 @@ pub(crate) struct SessionShell {
     pub background: BTreeMap<ShellTaskId, OperationId>,
     /// TaskStop 停掉、进程还没收尾的命令：收尾时不记通知（docs/specs/rust-cli/shell-permissions.md §2.6）。
     pub stopped: BTreeSet<ShellTaskId>,
+    /// Fork: TaskStop stopped these and their process has not exited yet. The ledger reports them `killed`
+    /// meanwhile, like Node's `killTask`: they left `background` at the stop and their notice (if any) is recorded at
+    /// the exit, which removes them from here under the same lock.
+    pub stopping: BTreeMap<ShellTaskId, OperationId>,
     pub next_seq: u64,
     pub acked: u64,
 }

@@ -19,10 +19,14 @@ use super::*;
 mod background_result;
 #[path = "background_shells_tests.rs"]
 mod background_shells;
+#[path = "fork_notice_tests.rs"]
+mod fork_notice;
 #[path = "goal_verify_tests.rs"]
 mod goal_verify;
 #[path = "guided_steer_tests.rs"]
 mod guided_steer;
+#[path = "interrupted_reply_tests.rs"]
+mod interrupted_reply;
 #[path = "model_change_tests.rs"]
 mod model_change;
 #[path = "rebuild_running_tests.rs"]

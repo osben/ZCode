@@ -1,7 +1,8 @@
 //! Fork: the model switch divider, like Node's `onTurnStarted` `lastTurnModel` (bootstrap
 //! `zcode-protocol-v4/product-projection.ts`; specs/fork-rust-agent-parity.md, Model switch timeline markers). A turn
 //! that starts on another provider or model than the previous turn gets a `modelChange` marker before its header.
-//! Choosing a model draws nothing: draft sessions that switch before the first message stay clean.
+//! Choosing a model draws nothing: draft sessions that switch before the first message stay clean. The first turn of a
+//! subagent child session gets a source-less marker instead (Node's `previousModelSelection: null` at the spawn).
 
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::ModelSelection;
@@ -14,7 +15,7 @@ impl Projection {
     /// Called by `start_turn` before the turn header with the model the turn runs on: the session's selection on a
     /// live turn; on a cold one the stored model of its first assistant message, `None` when unknown (nothing drawn,
     /// the previous model kept, like Node's cold resume without a stored selection). The first turn only records its
-    /// model; a reasoning change alone is not a switch.
+    /// model, except in a subagent child, where it draws "Using <model>"; a reasoning change alone is not a switch.
     pub(super) fn model_change(
         &mut self,
         turn: &str,
@@ -38,6 +39,22 @@ impl Projection {
         let previous = self
             .last_turn_model
             .replace((provider.clone(), model.clone()));
+        if std::mem::take(&mut self.initial_model_marker) {
+            let key = format!("model-initial:{turn}:{provider}/{model}");
+            let mut row = self.base(turn, &key, RowKind::TimelineMarker, now, seq);
+            row.insert("lane".into(), json!("lightBoundary"));
+            row.insert(
+                "marker".into(),
+                json!({
+                    "type": "modelChange",
+                    "toProvider": provider,
+                    "toModel": model,
+                    "toThought": reasoning.unwrap_or_default(),
+                }),
+            );
+            self.append(key, row, out);
+            return;
+        }
         let Some((from_provider, from_model)) = previous else {
             return;
         };

@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Projection, ToolStatus, tool_key, turn_key};
 
 pub(super) use rust_cli_kernel_api::background_origin::{
-    batch_meta, notified_statuses, notified_tools, origin_meta,
+    batch_meta, notified_outputs, notified_statuses, notified_tools, origin_meta,
 };
 
 impl Projection {

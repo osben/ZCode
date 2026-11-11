@@ -72,6 +72,11 @@ async fn a_finished_background_command_is_found_until_its_notice_is_acked() {
         ),
         "{found:?}"
     );
+    // Fork: the ended command still names the file it wrote.
+    assert_eq!(
+        found.and_then(|info| info.output),
+        Some(notice.output.clone())
+    );
     assert!(matches!(
         fixture.shells.stop(&key),
         BackgroundStop::NotRunning {
@@ -125,5 +130,68 @@ async fn a_stop_that_notifies_records_a_killed_notice() {
     assert_eq!(
         BackgroundStatus::ended(&notice.outcome, notice.exit_code),
         BackgroundStatus::Killed
+    );
+}
+
+/// Fork (node_desktop): between TaskStop and the process exit the command has left `background` and recorded no notice
+/// yet; the ledger reads it `killed` meanwhile (Node's `killTask` marks it killed at once), not unknown. The detail pane
+/// polls this and otherwise stops on "not found" with the status stuck on running. After the exit it is gone (the stop
+/// did not ask for a notice). The output path is the file the command writes, like Node's.
+#[tokio::test]
+async fn a_stopped_command_reads_killed_until_it_exits() {
+    let fixture = fixture(Vec::new());
+    let mut start = request("sleep 30", &fixture.root, CwdScope::Pinned);
+    start.kind = CommandKind::Background {
+        background: BackgroundCommand {
+            description: "Sleep".to_owned(),
+            tool_use: None,
+            kind: Default::default(),
+        },
+    };
+    let key = BackgroundTask {
+        session: SessionId::new("s1"),
+        task: start.task.clone(),
+        notify_stop: false,
+    };
+    let events = fixture
+        .shells
+        .start(context("op_bg_stopping"), start)
+        .await
+        .unwrap();
+    let running = fixture.shells.background_command(&key).unwrap();
+    assert_eq!(running.status, BackgroundStatus::Running);
+    let output = running
+        .output
+        .clone()
+        .expect("a local command reports its output file");
+    let written = fixture
+        .shells
+        .shared
+        .state()
+        .commands
+        .values()
+        .map(|running| running.output.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(written, [output.as_str()]);
+    assert!(matches!(
+        fixture.shells.stop(&key),
+        BackgroundStop::Stopped { .. }
+    ));
+    // The current-thread runtime cannot run the exit supervision between these calls.
+    let stopping = fixture.shells.background_command(&key).unwrap();
+    assert_eq!(stopping.status, BackgroundStatus::Killed);
+    assert_eq!(stopping.output, Some(output));
+    assert!(matches!(
+        fixture.shells.stop(&key),
+        BackgroundStop::NotRunning {
+            status: BackgroundStatus::Killed
+        }
+    ));
+    collect(events).await;
+    assert!(fixture.shells.background_command(&key).is_none());
+    assert!(
+        fixture.shells.shared.state().sessions[&key.session]
+            .stopping
+            .is_empty()
     );
 }

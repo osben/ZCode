@@ -644,3 +644,20 @@ async fn node_desktop_titles_skip_the_deferred_request_after_a_rename() {
     assert!(title_model.requests().is_empty());
     assert_eq!(built.session.view().await.unwrap().meta.title, "Mine");
 }
+
+/// Fork: an input without text keeps the `New session` placeholder in memory too, and the first real input replaces it
+/// (Node `persistSession`, specs/fork-rust-agent-parity.md, Blank first input title).
+#[tokio::test]
+async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["One."]),
+        text_response(&["Two."]),
+    ]));
+    let built = Setup::new(main).build().await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", " ")).await;
+    until(&mut events, |event| titled(event, "New session")).await;
+    until(&mut events, finished).await;
+    built.session.send(submit("c2", "real question")).await;
+    until(&mut events, |event| titled(event, "real question")).await;
+}

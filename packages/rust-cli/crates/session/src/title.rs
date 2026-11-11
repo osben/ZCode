@@ -153,9 +153,17 @@ impl Actor {
         let Some(text) = human_text(message) else {
             return;
         };
-        if self.meta.title.is_empty() {
-            // node-store 在同一事务里写了 first_input（Node `titleFromInput`），这里用同一个函数。
-            let title = rust_cli_kernel_api::title::from_input(&text);
+        // node-store 在同一事务里写了 first_input（Node `titleFromInput`），这里用同一个函数。
+        // Fork: an input without text keeps the placeholder, which the first real input replaces (Node
+        // `persistSession`, `applyFirstInputTitleForPersistedSession`).
+        let placeholder = rust_cli_kernel_api::title::PLACEHOLDER;
+        let blank = text.trim().is_empty();
+        if self.meta.title.is_empty() || (self.meta.title == placeholder && !blank) {
+            let title = if blank {
+                placeholder.to_owned()
+            } else {
+                rust_cli_kernel_api::title::from_input(&text)
+            };
             self.meta.title.clone_from(&title);
             self.log.append(KernelEvent::TitleChanged { title });
         }

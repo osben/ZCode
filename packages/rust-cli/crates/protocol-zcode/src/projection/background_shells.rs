@@ -26,6 +26,9 @@ pub(super) struct Shells {
     /// Fork: the terminal status each background command's notification reported (`completed`, `failed`,
     /// `killed`): the detail pane still reads its output after the ledger forgets it.
     ended: HashMap<String, String>,
+    /// Fork: the `<output-file>` each background command's notification named: the detail pane's output path after
+    /// the ledger forgets the command.
+    outputs: HashMap<String, String>,
 }
 
 impl Projection {
@@ -59,16 +62,35 @@ impl Projection {
         }
     }
 
-    /// Fork: remember the terminal statuses a notification message reports.
+    /// Fork: remember the terminal statuses and output files a notification message reports.
     pub(super) fn remember_notified(&mut self, text: &str) {
         self.shells
             .ended
             .extend(super::background_result::notified_statuses(text));
+        self.shells
+            .outputs
+            .extend(super::background_result::notified_outputs(text));
+    }
+
+    /// Fork: a background work's notice reached the session (`KernelEvent::BackgroundWork`). The status is known
+    /// here, before the notification message is committed and the ledger acks it, so the detail pane never reads the
+    /// gap between the two as an unknown command.
+    pub(super) fn remember_ended(&mut self, work: &str, status: BackgroundStatus) {
+        if status != BackgroundStatus::Running {
+            self.shells
+                .ended
+                .insert(work.to_owned(), status.as_str().to_owned());
+        }
     }
 
     /// Fork: the terminal status the notification of background command `task` reported.
     pub fn notified_status(&self, task: &str) -> Option<&str> {
         self.shells.ended.get(task).map(String::as_str)
+    }
+
+    /// Fork: the output file the notification of background command `task` named.
+    pub fn notified_output(&self, task: &str) -> Option<&str> {
+        self.shells.outputs.get(task).map(String::as_str)
     }
 
     /// The snapshot `backgroundWorks`: shell commands, then background subagents.
