@@ -834,6 +834,27 @@ impl StoreQueries for MemoryStore {
             .or_insert_with(|| (path.clone(), branch.map(str::to_owned)));
         Ok(())
     }
+
+    /// Fork: the reserved row's profile, set once (the meta's `incognito` while it is `None`).
+    async fn set_incognito(
+        &self,
+        session: &SessionId,
+        profile: &crate::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        let mut sessions = self.sessions.lock_unpoisoned();
+        let Some((meta, _)) = sessions.get_mut(session) else {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        };
+        if *meta.incognito.get_or_insert(*profile) == *profile {
+            Ok(())
+        } else {
+            Err(StoreError::Storage {
+                message: "the session already has another incognito profile".to_owned(),
+            })
+        }
+    }
 }
 
 #[async_trait]

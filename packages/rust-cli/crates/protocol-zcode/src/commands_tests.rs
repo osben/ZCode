@@ -108,7 +108,9 @@ fn an_incognito_profile_is_parsed_strictly() {
         invalid
     );
     assert_eq!(
-        parse(json!({"workspaceId": "/w", "incognito": profile, "worktreePreparation": {}})),
+        parse(
+            json!({"workspaceId": "/w", "incognito": profile, "worktreePreparation": {"branchName": "b", "targetPath": "/t"}})
+        ),
         invalid
     );
     // Node's `.optional()` refuses an explicit null; it must not create a normal session.

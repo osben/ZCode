@@ -309,6 +309,10 @@ impl HandleOverride for TestHandle {
                 self.view.lock().unwrap().plan = *enabled;
                 "SetPlan".to_owned()
             }
+            Command::SetIncognito { profile } => {
+                self.view.lock().unwrap().meta.incognito = Some(*profile);
+                "SetIncognito".to_owned()
+            }
             other => format!("{other:?}"),
         };
         self.sent
@@ -343,6 +347,8 @@ struct WorktreeKernel {
     reopened_held: StdMutex<Vec<String>>,
     /// The mode and plan each session was created with (its view starts there, as the actor's does).
     created: StdMutex<HashMap<SessionId, (PermissionMode, bool)>>,
+    /// Fork: how many `freeze_incognito` calls to fail (a store without the column).
+    refuse_freezes: std::sync::atomic::AtomicUsize,
 }
 
 impl WorktreeKernel {
@@ -467,6 +473,33 @@ impl rust_cli_kernel_api::session_api::Kernel for WorktreeKernel {
         HandleOverride::view(self.handle(session)?.as_ref()).await
     }
 
+    /// The row once (MemoryStore), recorded in `sent` so the order against the actor's commands shows.
+    async fn freeze_incognito(
+        &self,
+        session: &SessionId,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        let refuse = self
+            .refuse_freezes
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok();
+        if refuse {
+            return Err(KernelError::Unsupported {
+                what: "the fork_incognito column".to_owned(),
+            });
+        }
+        self.store.set_incognito(session, &profile).await?;
+        self.sent
+            .lock()
+            .unwrap()
+            .push(("kernel".to_owned(), "FreezeIncognito".to_owned()));
+        Ok(())
+    }
+
     async fn delete_session(&self, session: &SessionId) -> Result<(), KernelError> {
         self.deleted
             .lock()
@@ -491,6 +524,7 @@ fn server() -> (TaskScope, Arc<Server>, Arc<WorktreeKernel>) {
         prepared: StdMutex::new(Vec::new()),
         reopened_held: StdMutex::new(Vec::new()),
         created: StdMutex::new(HashMap::new()),
+        refuse_freezes: std::sync::atomic::AtomicUsize::new(0),
     });
     let server = Arc::new(Server::new(
         context,
@@ -1528,6 +1562,17 @@ async fn a_materialized_session_whose_receipt_failed_still_takes_commands() {
         .unwrap()
         .to_owned();
     let id = SessionId::new(&session);
+    let activation = json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+        "executionWorktree": {"path": path}});
+    // Fork: a first attempt (its move refused) freezes the incognito choice in the marker, so the failure below hits
+    // the active marker, not that stamp.
+    kernel
+        .refuse_moves
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        create(&server, "c1b", activation).await.status,
+        Status::Failed
+    );
 
     kernel.store.fail_next_put_record(KIND);
     let ack = create(
@@ -1554,4 +1599,208 @@ async fn a_materialized_session_whose_receipt_failed_still_takes_commands() {
         load(&server, &id).await.unwrap().unwrap().status,
         PrepStatus::Active
     );
+}
+
+/// Node's `JSON.stringify` order; `mcp` picks the second profile the retries use.
+fn profile(mcp: bool) -> Value {
+    json!({
+        "projectInstructions": false, "skills": false, "hooks": false, "plugins": false, "mcp": mcp,
+        "customAgents": false, "memory": false, "outputStyle": false, "systemPromptOverrides": false,
+        "identity": false, "harness": false, "environment": false, "automationTools": false,
+    })
+}
+
+/// Prepares a worktree session under a temporary parent; its id, the parent and the worktree path.
+async fn prepared(server: &Server, parent: &std::path::Path) -> (String, String, String) {
+    let worktree = parent.join("wt-i");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let ack = create(
+        server,
+        "prep",
+        json!({"workspaceId": workspace, "worktreePreparation": {"branchName": "feat/i", "targetPath": path}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let session = ack.result.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (session, workspace, path)
+}
+
+fn activation(session: &str, workspace: &str, path: &str, incognito: Option<Value>) -> Value {
+    let mut payload = json!({"workspaceId": workspace, "preparedSessionId": session,
+        "executionWorktree": {"path": path, "branchName": "feat/i"},
+        "firstInput": {"text": "first"}});
+    if let Some(profile) = incognito {
+        payload["incognito"] = profile;
+    }
+    payload
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"; Node `createSessionRecord`): the activation's profile
+/// is frozen (marker stamp, row, kernel profile, actor meta) before the move releases SessionStart and before the
+/// first input; the sessions-index row carries the flag. Only the same profile may repeat the activation.
+#[tokio::test]
+async fn an_incognito_activation_freezes_the_profile_before_the_session_runs() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let (session, workspace, path) = prepared(&server, parent.path()).await;
+    let id = SessionId::new(&session);
+    // Before the activation the reserved row has no profile and the session has run nothing.
+    assert_eq!(kernel.store.meta(&id).unwrap().incognito, None);
+    assert!(kernel.sent.lock().unwrap().is_empty());
+
+    let ack = create(
+        &server,
+        "c1",
+        activation(&session, &workspace, &path, Some(profile(false))),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(ack.result.unwrap()["preparedActivation"], "materialized");
+    let names: Vec<String> = kernel
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect();
+    let at = |prefix: &str| names.iter().position(|name| name.starts_with(prefix));
+    assert!(at("FreezeIncognito") < at("SetIncognito"), "{names:?}");
+    assert!(at("SetIncognito") < at("SetExecutionRoot"), "{names:?}");
+    assert!(at("SetExecutionRoot") < at("Submit first"), "{names:?}");
+    assert_eq!(
+        kernel.store.meta(&id).unwrap().incognito,
+        Some(IncognitoProfile::LOCKDOWN)
+    );
+    let marker = load(&server, &id).await.unwrap().unwrap();
+    assert_eq!(marker.status, PrepStatus::Active);
+    assert_eq!(marker.incognito, Some(Some(IncognitoProfile::LOCKDOWN)));
+    let live = server.bridge.get(&id).unwrap();
+    assert_eq!(live.sink.summary()["incognito"], json!(true));
+
+    // The same profile is answered from the receipt; another one, or none, is refused with Node's text.
+    let again = create(
+        &server,
+        "c2",
+        activation(&session, &workspace, &path, Some(profile(false))),
+    )
+    .await;
+    assert_eq!(
+        again.result.unwrap()["preparedActivation"],
+        "already-active"
+    );
+    for (command, other) in [("c3", Some(profile(true))), ("c4", None)] {
+        let refused = create(
+            &server,
+            command,
+            activation(&session, &workspace, &path, other),
+        )
+        .await;
+        assert_eq!(refused.status, Status::Failed, "{refused:?}");
+        assert_eq!(refused.message.as_deref(), Some(INCOGNITO_MISMATCH));
+    }
+}
+
+/// Fork: an attempt that fails after the freeze (a refused move) leaves the choice frozen in the marker: a retry with
+/// another profile is refused, the same one completes. A normal activation freezes a normal session the same way.
+#[tokio::test]
+async fn a_retry_must_repeat_the_frozen_incognito_choice() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let (session, workspace, path) = prepared(&server, parent.path()).await;
+    let id = SessionId::new(&session);
+    kernel
+        .refuse_moves
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let first = create(
+        &server,
+        "c1",
+        activation(&session, &workspace, &path, Some(profile(true))),
+    )
+    .await;
+    assert_eq!(first.status, Status::Failed, "{first:?}");
+    let marker = load(&server, &id).await.unwrap().unwrap();
+    assert_eq!(marker.status, PrepStatus::Preparing);
+    let mcp_only = IncognitoProfile {
+        mcp: true,
+        ..IncognitoProfile::LOCKDOWN
+    };
+    assert_eq!(marker.incognito, Some(Some(mcp_only)));
+    let other = create(
+        &server,
+        "c2",
+        activation(&session, &workspace, &path, Some(profile(false))),
+    )
+    .await;
+    assert_eq!(other.message.as_deref(), Some(INCOGNITO_MISMATCH));
+    let same = create(
+        &server,
+        "c3",
+        activation(&session, &workspace, &path, Some(profile(true))),
+    )
+    .await;
+    assert_eq!(same.status, Status::Accepted, "{same:?}");
+    assert_eq!(same.result.unwrap()["preparedActivation"], "materialized");
+    assert_eq!(kernel.store.meta(&id).unwrap().incognito, Some(mcp_only));
+
+    // A normal activation freezes a normal session (`null`): a later incognito request is refused.
+    let (normal, workspace, path) = prepared(&server, parent.path()).await;
+    kernel
+        .refuse_moves
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let first = create(&server, "c4", activation(&normal, &workspace, &path, None)).await;
+    assert_eq!(first.status, Status::Failed, "{first:?}");
+    let marker = load(&server, &SessionId::new(&normal))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.incognito, Some(None));
+    assert_eq!(marker.record(&normal).data["incognito"], Value::Null);
+    let late = create(
+        &server,
+        "c5",
+        activation(&normal, &workspace, &path, Some(profile(false))),
+    )
+    .await;
+    assert_eq!(late.message.as_deref(), Some(INCOGNITO_MISMATCH));
+}
+
+/// Fork: a profile the store cannot freeze fails the activation before anything runs (no move, so SessionStart stays
+/// held; no input), like a refused config; the preparation stays retryable.
+#[tokio::test]
+async fn a_failed_freeze_fails_the_activation_before_the_move() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let (session, workspace, path) = prepared(&server, parent.path()).await;
+    kernel
+        .refuse_freezes
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let ack = create(
+        &server,
+        "c1",
+        activation(&session, &workspace, &path, Some(profile(false))),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert!(kernel.sent.lock().unwrap().is_empty(), "{:?}", kernel.sent);
+    let marker = load(&server, &SessionId::new(&session))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.status, PrepStatus::Preparing);
+    let retried = create(
+        &server,
+        "c2",
+        activation(&session, &workspace, &path, Some(profile(false))),
+    )
+    .await;
+    assert_eq!(retried.status, Status::Accepted, "{retried:?}");
 }

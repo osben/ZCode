@@ -418,6 +418,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             expected_attempt: payload.expected_attempt_id.as_deref(),
             workspace: payload.workspace_id.as_deref(),
             requested: payload.execution_worktree.as_ref(),
+            incognito,
         };
         return crate::worktree::activate(
             server,

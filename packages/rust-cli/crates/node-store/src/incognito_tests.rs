@@ -202,3 +202,40 @@ async fn a_soft_deleted_row_is_reported_by_the_reconcile_read() {
 fn stored_title(t: &TestStore, id: &str) -> serde_json::Value {
     t.rows(&format!("select title from session where id = '{id}'"))[0][0].clone()
 }
+
+/// Fork: a prepared worktree's reserved row has no profile; the activation freezes it once, in Node's shape. The same
+/// profile again is a no-op; another one, an unknown row or a database without the column is refused.
+#[tokio::test]
+async fn the_activation_freezes_the_profile_of_a_reserved_row_once() {
+    use rust_cli_kernel_api::store::{StoreError, StoreQueries};
+    let t = TestStore::new();
+    with_column(&t).await;
+    let id = SessionId::new("sess_0");
+    t.store.set_incognito(&id, &mcp_only()).await.unwrap();
+    assert_eq!(stored(&t, "sess_0"), json!(NODE_MCP_ONLY));
+    t.store.set_incognito(&id, &mcp_only()).await.unwrap();
+    assert!(
+        t.store
+            .set_incognito(&id, &IncognitoProfile::LOCKDOWN)
+            .await
+            .is_err()
+    );
+    assert_eq!(stored(&t, "sess_0"), json!(NODE_MCP_ONLY));
+    assert_eq!(
+        t.store.load(&id).await.unwrap().meta.incognito,
+        Some(mcp_only())
+    );
+    assert!(matches!(
+        t.store
+            .set_incognito(&SessionId::new("sess_9"), &mcp_only())
+            .await,
+        Err(StoreError::NotFound { .. })
+    ));
+
+    let bare = TestStore::new();
+    bare.store.create(meta("sess_0", "/w", "")).await.unwrap();
+    assert!(matches!(
+        bare.store.set_incognito(&id, &mcp_only()).await,
+        Err(StoreError::Unsupported { .. })
+    ));
+}

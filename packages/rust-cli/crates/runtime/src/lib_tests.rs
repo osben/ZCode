@@ -208,3 +208,125 @@ async fn sessions_wait_for_the_default_model_to_settle() {
     creating.await.unwrap().unwrap();
     opening.await.unwrap().unwrap();
 }
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): a prepared execution worktree runs nothing before its
+/// activation (no model request, no message, no title), and the profile its activation freezes gates the first
+/// request exactly like a session created incognito: no environment and no identity reach the model.
+#[tokio::test]
+async fn a_prepared_session_frozen_incognito_at_activation_sends_the_incognito_request() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    async fn first_turn(
+        kernel: &LocalKernel,
+        id: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Arc<dyn rust_cli_kernel_api::session_api::SessionHandle> {
+        let session = kernel.open_session(id).await.unwrap();
+        let mut events = session.subscribe(Some(0));
+        session
+            .send(CommandEnvelope {
+                id: CommandId::new("c-first"),
+                command: Command::Submit {
+                    text: "hello".to_owned(),
+                    attachments: Vec::new(),
+                    delivery: Delivery::Queue,
+                },
+            })
+            .await;
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(5), events.next())
+                .await
+                .unwrap()
+                .unwrap();
+            if let KernelEvent::TurnFinished { outcome, .. } = event.event {
+                assert_eq!(outcome, TurnOutcome::Success);
+                return session;
+            }
+        }
+    }
+    let request = |incognito| CreateSession {
+        id: None,
+        workspace: workspace(),
+        selection: selection(),
+        mode: PermissionMode::Default,
+        plan: false,
+        incognito,
+    };
+
+    // The reference: a session created with the lockdown profile.
+    let direct_model = Arc::new(ScriptedModel::new(vec![text_response(&["hi"])]));
+    let direct = kernel(Arc::new(MemoryStore::default()), direct_model.clone());
+    let id = direct
+        .create_session(request(Some(IncognitoProfile::LOCKDOWN)))
+        .await
+        .unwrap();
+    first_turn(&direct, &id).await;
+    let expected = direct_model.requests().remove(0);
+
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["hi"])]));
+    let store = Arc::new(MemoryStore::default());
+    let prepared = kernel(store.clone(), model.clone());
+    let id = prepared
+        .create_prepared_session(request(None))
+        .await
+        .unwrap();
+    let session = prepared.open_session(&id).await.unwrap();
+    // Before the activation: nothing reached the model, the conversation or the title, and no turn started (every
+    // conversation telemetry fact and the memory extraction come from a turn).
+    let mut early = session.subscribe(Some(0));
+    while let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(50), early.next()).await
+    {
+        assert!(
+            !matches!(
+                event.event,
+                KernelEvent::TurnStarted { .. } | KernelEvent::TurnFinished { .. }
+            ),
+            "{:?}",
+            event.event
+        );
+    }
+    assert!(model.requests().is_empty());
+    let view = session.view().await.unwrap();
+    assert!(view.messages.is_empty(), "{:?}", view.messages);
+    assert!(view.meta.title.is_empty());
+    assert_eq!(view.meta.incognito, None);
+
+    // The activation's order: freeze (row, kernel profile), the actor's meta, then the move releases SessionStart.
+    prepared
+        .freeze_incognito(&id, IncognitoProfile::LOCKDOWN)
+        .await
+        .unwrap();
+    let send = |command| CommandEnvelope {
+        id: CommandId::new("c-activate"),
+        command,
+    };
+    session
+        .send(send(Command::SetIncognito {
+            profile: IncognitoProfile::LOCKDOWN,
+        }))
+        .await;
+    session
+        .send(send(Command::SetExecutionRoot {
+            root: workspace().root,
+        }))
+        .await;
+    first_turn(&prepared, &id).await;
+    let sent = model.requests().remove(0);
+    assert_eq!(sent.system, expected.system);
+    assert_eq!(sent.messages, expected.messages);
+    assert_eq!(
+        session.view().await.unwrap().meta.incognito,
+        Some(IncognitoProfile::LOCKDOWN)
+    );
+    assert_eq!(
+        store.meta(&id).unwrap().incognito,
+        Some(IncognitoProfile::LOCKDOWN)
+    );
+
+    // A normal session's first request differs (environment and identity), so the comparison above is not vacuous.
+    let normal_model = Arc::new(ScriptedModel::new(vec![text_response(&["hi"])]));
+    let normal = kernel(Arc::new(MemoryStore::default()), normal_model.clone());
+    let id = normal.create_session(request(None)).await.unwrap();
+    first_turn(&normal, &id).await;
+    let plain = normal_model.requests().remove(0);
+    assert_ne!(plain.system, expected.system);
+    assert_ne!(plain.messages, expected.messages);
+}

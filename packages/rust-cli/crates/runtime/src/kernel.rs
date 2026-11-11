@@ -72,6 +72,17 @@ impl Kernel for LocalKernel {
         self.open_in(session, start, false).await
     }
 
+    async fn freeze_incognito(
+        &self,
+        session: &SessionId,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        // The row first: a session whose profile could not be stored never runs gated in memory only.
+        self.ports.store.set_incognito(session, &profile).await?;
+        self.incognito.record(session, Some(profile));
+        Ok(())
+    }
+
     async fn open_prepared_session(
         &self,
         session: &SessionId,

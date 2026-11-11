@@ -128,6 +128,22 @@ pub fn incognito(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>
         .map(Option::flatten)
 }
 
+/// Fork: write `profile` (Node's JSON) into `fork_incognito` while it is NULL; the stored text afterwards (the
+/// written one, or the one an earlier write left). `None` when the row does not exist.
+pub fn freeze_incognito(
+    conn: &Connection,
+    id: &str,
+    profile: &str,
+) -> rusqlite::Result<Option<Option<String>>> {
+    conn.prepare_cached(
+        "update session set fork_incognito = ?2 where id = ?1 and fork_incognito is null",
+    )?
+    .execute([id, profile])?;
+    conn.prepare_cached("select fork_incognito from session where id = ?")?
+        .query_row([id], |row| row.get_ref(0).map(stored_incognito))
+        .optional()
+}
+
 /// Fork: `fork_incognito` as text. A value that is not text (a BLOB, a number) is still present, so it reads as an
 /// unparseable profile, i.e. lockdown (Node `parseStoredIncognitoProfile`), instead of failing the whole row.
 fn stored_incognito(value: rusqlite::types::ValueRef<'_>) -> Option<String> {

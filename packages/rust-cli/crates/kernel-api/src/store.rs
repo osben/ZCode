@@ -34,7 +34,8 @@ pub struct SessionMeta {
     pub title: String,
     pub trace: TraceId,
     pub created_at_ms: u64,
-    /// Fork: the incognito profile frozen at creation (`session.fork_incognito`); None for a normal session.
+    /// Fork: the incognito profile frozen at creation or at a prepared worktree's activation (`session.fork_incognito`);
+    /// None for a normal session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
@@ -910,6 +911,21 @@ pub trait StoreQueries: Send + Sync {
     ) -> Result<(), StoreError> {
         Err(StoreError::Unsupported {
             what: "execution worktree".to_owned(),
+        })
+    }
+
+    /// Fork: freeze the incognito profile of an existing row that has none yet (a prepared execution worktree, whose
+    /// reserved row has no profile; Node `createSessionRecord` freezes it at the activation). Set once like the create
+    /// (`fork_incognito` is written only while NULL); a row that already holds this profile is `Ok`, one that holds
+    /// another is an error. `NotFound` without the row, `Unsupported` without the column, so the caller never runs a
+    /// session it could not freeze.
+    async fn set_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: &crate::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "incognito profile".to_owned(),
         })
     }
 }

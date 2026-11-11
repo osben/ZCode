@@ -527,6 +527,37 @@ impl StoreQueries for NodeStore {
         })
         .await
     }
+
+    /// Fork: freezes the incognito profile of a reserved row once (`fork_incognito` while NULL).
+    async fn set_incognito(
+        &self,
+        session: &SessionId,
+        profile: &rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        let (id, profile) = (session.clone(), *profile);
+        self.with_db(move |conn, _| {
+            if !repo::sessions::has_incognito_column(conn).map_err(storage)? {
+                return Err(StoreError::Unsupported {
+                    what: "the fork_incognito column".to_owned(),
+                });
+            }
+            let stored = repo::sessions::freeze_incognito(conn, id.as_str(), &profile.to_stored())
+                .map_err(storage)?
+                .ok_or_else(|| StoreError::NotFound {
+                    session: id.clone(),
+                })?;
+            let stored = stored
+                .map(|text| rust_cli_kernel_api::incognito::IncognitoProfile::from_stored(&text));
+            if stored == Some(profile) {
+                Ok(())
+            } else {
+                Err(StoreError::Storage {
+                    message: "the session already has another incognito profile".to_owned(),
+                })
+            }
+        })
+        .await
+    }
 }
 
 #[async_trait]

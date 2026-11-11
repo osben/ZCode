@@ -132,6 +132,19 @@ impl Actor {
         }
     }
 
+    /// Fork: `Command::SetIncognito` (a prepared worktree's activation): the meta takes the frozen profile once, so a
+    /// fork of the session keeps it (the gates read the kernel's `IncognitoProfiles`, recorded before this command).
+    pub(crate) fn set_incognito(
+        &mut self,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Ack {
+        if *self.meta.incognito.get_or_insert(profile) == profile {
+            accepted()
+        } else {
+            rejected("the session already has another incognito profile".to_owned())
+        }
+    }
+
     /// 给模型的说明（来源 `rust-cli/cd` 的 meta 用户消息），先提交再进历史、发事件；`record` 的消息排在它前面、同一批。
     async fn commit_note(
         &mut self,

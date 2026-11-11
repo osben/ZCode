@@ -1,7 +1,8 @@
 //! Fork (desktop App): incognito sessions (specs/fork-rust-agent-parity.md, "Incognito sessions"; the product
 //! rules are Node's specs/incognito-session.md).
 //!
-//! An incognito session has a profile of 13 capabilities frozen at creation and stored in the session row's
+//! An incognito session has a profile of 13 capabilities frozen at creation (a prepared execution worktree: at its
+//! activation, before the session runs) and stored in the session row's
 //! `fork_incognito` column. `true` keeps a capability, `false` removes it from the session. A normal session has
 //! no profile. [`IncognitoProfiles`] is the one in-memory owner the gates read by session id.
 
@@ -114,8 +115,9 @@ pub fn excludes(profile: Option<&IncognitoProfile>, key: IncognitoKey) -> bool {
 }
 
 /// Process-wide map from session to profile: the one in-memory owner every gate reads. Filled from
-/// `SessionMeta::incognito` where a session's meta is materialized (kernel create and open, subagent spawn). A
-/// session's profile is frozen at creation, so an entry never changes and is never removed.
+/// `SessionMeta::incognito` where a session's meta is materialized (kernel create and open, subagent spawn), and by a
+/// prepared execution worktree's activation, which freezes the profile of a row that had none before the session runs
+/// (`Kernel::freeze_incognito`). A profile, once set, never changes, so an entry is never replaced or removed.
 #[derive(Debug, Clone, Default)]
 pub struct IncognitoProfiles(Arc<RwLock<HashMap<SessionId, IncognitoProfile>>>);
 
