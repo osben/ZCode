@@ -165,9 +165,10 @@ pub(crate) fn has_conversation(view: &rust_cli_kernel_api::session_api::SessionV
 }
 
 /// Fork: whether a plain createSession may repeat an id that already exists. Node refuses every existing id
-/// ("sessionId already exists") because it keeps a prewarm deferred; zcode-rs may hold a prewarm as a session, so only
-/// an untouched prewarm in the same workspace under the same profile (absent differs from present) is repeated. Any
-/// other session is refused: a repeat would reset its runtime state and run it with a profile its row does not hold.
+/// ("sessionId already exists") because it keeps a prewarm deferred. In zcode-rs a prewarm can still be visible here
+/// (an open draft, or a row persisted before draft deferral), so only an untouched prewarm in the same workspace under
+/// the same profile (absent differs from present) is repeated. Any other session is refused: a repeat would reset its
+/// runtime state and run it with a profile its row does not hold. The store never refuses; this is the one rule.
 pub(crate) fn recreate_existing(
     marker: Option<&Marker>,
     workspace_matches: bool,
