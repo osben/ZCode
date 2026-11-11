@@ -139,3 +139,28 @@ export function startCliMemoryDiagnostics(
     },
   };
 }
+
+/**
+ * Starts the profile recorder alongside an already started resource sampler and returns a sampler whose stop also
+ * stops the recorder. 3.18.1 starts the recorder inside the resource sampler start; it only runs when the sampler did.
+ * A recorder start failure leaves the resource sampler unaffected.
+ */
+export function attachCliMemoryDiagnostics<TSampler extends { start(): void; stop(): void }>(
+  sampler: TSampler | undefined,
+  readCounters: () => Record<string, number>,
+): { start(): void; stop(): void } | undefined {
+  if (!sampler) return undefined;
+  let recorder: { stop(): void } | undefined;
+  try {
+    recorder = startCliMemoryDiagnostics(readCounters);
+  } catch {
+    recorder = undefined;
+  }
+  return {
+    start: () => sampler.start(),
+    stop: () => {
+      recorder?.stop();
+      sampler.stop();
+    },
+  };
+}

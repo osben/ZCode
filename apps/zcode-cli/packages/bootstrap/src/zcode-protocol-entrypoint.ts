@@ -67,6 +67,7 @@ import { ZCodeProtocolAgentServer } from "./zcode-protocol/server.js";
 import { ZCodeProtocolNdjsonConnection } from "./zcode-protocol/transport.js";
 import { cleanupProtocolRuntime } from "./zcode-protocol/runtime-cleanup.js";
 import { startProtocolResourceSampler } from "./zcode-protocol/resource-sampler.js";
+import { attachCliMemoryDiagnostics } from "./memory-diagnostics/contract.js";
 import { acquireProtocolStartupResource } from "./zcode-protocol/startup-resource.js";
 import { prepareZCodeTelemetryEnv, shutdownZCodeTelemetry } from "./telemetry-bootstrap.js";
 import type { ZCodeProcessResourceSampler } from "./process-resource-sampler.js";
@@ -482,10 +483,9 @@ export async function runZCodeProtocolAgent(
     };
     connection.start();
     mcpTelemetryTracker?.start();
-    processResourceSampler = startProtocolResourceSampler(
-      server,
-      (message) => connection.send(message),
-      logger,
+    processResourceSampler = attachCliMemoryDiagnostics(
+      startProtocolResourceSampler(server, (message) => connection.send(message), logger),
+      () => server.collectMemoryDiagnostics({ includeEventStats: false }),
     );
     startupTimer.complete("ZCode Protocol agent startup completed", {
       event: "zcode_protocol.startup.completed",

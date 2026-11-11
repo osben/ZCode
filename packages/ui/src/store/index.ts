@@ -18,16 +18,14 @@ import {
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { readSafeLocalStorage, writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 import {
+  applyFontSmoothingEnabled,
   applyUiFontSizePx,
+  FONT_SMOOTHING_STORAGE_KEY,
+  loadFontSmoothingEnabled,
   loadUiFontSizePx,
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
 } from "@/lib/uiFontSize.js";
-import {
-  applyFontSmoothingEnabled,
-  FONT_SMOOTHING_STORAGE_KEY,
-  loadFontSmoothingEnabled,
-} from "@/lib/fontSmoothing.js";
 import { createFontPreferencesSlice, type FontPreferencesState } from "@/store/fontPreferences.js";
 import { wireStateBroadcast } from "@/store/stateBroadcast.js";
 import {

@@ -2032,6 +2032,34 @@ modules:
     layers:
       ui: .
     owner: conversation
+  # cli-memory-diagnostics: Node CLI memory profile recorder (3.18.1 backport, specs/upstream-backport-3.18.1.md)
+  - id: cli-memory-diagnostics
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/memory-diagnostics
+    managed: true
+    requires:
+      - shared
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/memory-diagnostics/contract.ts
+    layers:
+      adapters: .
+    owner: runtime
+  # services-feedback: diagnostic log archive builders only (3.18.1 backport adds the cli-memory source)
+  - id: services-feedback
+    roots:
+      - packages/services/src/feedback/log-archive-module
+      - packages/services/src/feedback/feedbackLogArchive.ts
+      - packages/services/src/feedback/compactLogArchive.ts
+    managed: true
+    requires:
+      - rpc
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/feedback/log-archive-module/contract.ts
+    layers:
+      adapters: .
+    owner: runtime
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

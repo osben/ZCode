@@ -10,7 +10,7 @@ import {
   applyPersistedFontPreferences,
 } from "@/store/fontPreferences.js";
 import { applyUiFontSizePx } from "@/lib/uiFontSize.js";
-import { applyFontSmoothingEnabled } from "@/lib/fontSmoothing.js";
+import { applyFontSmoothingEnabled } from "@/lib/uiFontSize.js";
 import type { Theme } from "../useTheme.js";
 import { applyTheme, isThemePalette, migrateThemeSelection } from "../useTheme.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
