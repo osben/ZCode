@@ -77,9 +77,12 @@ pub fn part(id: String, (session, message): (&str, &str), file: &AttachedFile) -
             metadata["storageKind"] = json!("inline");
         }
         // Node `resolvedPathReferenceAttachment`: the note is the part's `pathReferenceText`.
+        // Text material written by this runtime names the stored file, which Node also keeps as `originalUrl`.
         AttachedBody::PathReference { text } => {
-            let path = reference.unwrap_or(&file.name);
-            out["mime"] = json!(rust_cli_kernel_api::prompt_attachment::mime_of_path(path));
+            use rust_cli_kernel_api::prompt_attachment::{mime_of_path, path_reference_mime};
+            let path = file.stored.as_deref().or(reference).unwrap_or(&file.name);
+            metadata["originalUrl"] = json!(path);
+            out["mime"] = json!(path_reference_mime(text).unwrap_or_else(|| mime_of_path(path)));
             out["filename"] = json!(file.name);
             out["url"] = json!(path);
             out["source"] = json!({"type": "file", "path": path,
@@ -161,6 +164,7 @@ pub fn from_part(part: &Value) -> Option<AttachedFile> {
         reference,
         preview_reference: metadata["previewRef"].as_str().map(str::to_owned),
         stored,
+        material: None,
         body,
     })
 }

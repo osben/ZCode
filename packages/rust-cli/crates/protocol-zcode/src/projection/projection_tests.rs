@@ -581,6 +581,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
                     reference: Some("zcode-artifact://session_1/a".into()),
                     preview_reference: Some("zcode-artifact://session_1/b".into()),
                     stored: None,
+                    material: None,
                     body: AttachedBody::Omitted,
                 },
             },
@@ -611,7 +612,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     );
     assert_eq!(
         projection.attachment_mime("zcode-artifact://session_1/b"),
-        Some("image/png".into())
+        Some(("image/png".into(), false))
     );
     assert_eq!(
         projection.attachment_mime("zcode-artifact://session_1/c"),
@@ -634,6 +635,7 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
                 reference: Some(reference.into()),
                 preview_reference: None,
                 stored: stored.map(str::to_owned),
+                material: None,
                 body,
             },
         }

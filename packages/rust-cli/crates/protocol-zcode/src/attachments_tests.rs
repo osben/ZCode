@@ -159,3 +159,199 @@ async fn a_binary_desktop_file_goes_by_path_like_node() {
         None
     );
 }
+
+#[test]
+fn text_material_refs_are_parsed_like_node_attachment_ref_schema() {
+    let material = json!({"ref": "zcode-artifact://s/a", "fileName": "History.txt", "mime": "text/plain",
+        "bytes": 3, "sourceKind": "topic-history", "messageCount": 4});
+    let parsed = parse_refs(&[material]).unwrap();
+    assert_eq!(
+        parsed[0].material().map(|material| *material),
+        Some(Material {
+            kind: MaterialKind::TopicHistory,
+            message_count: Some(4)
+        })
+    );
+    // Node's enum and `int().nonnegative()` refuse the whole command.
+    for bad in [
+        json!({"ref": "/a.txt", "fileName": "a", "mime": "text/plain", "bytes": 1, "sourceKind": "note"}),
+        json!({"ref": "/a.txt", "fileName": "a", "mime": "text/plain", "bytes": 1,
+            "sourceKind": "clipboard-text", "messageCount": -1}),
+    ] {
+        assert!(parse_refs(&[bad]).is_err());
+    }
+    // A count without a kind is not material (Node `displayMetaOf`).
+    let count_only = json!({"ref": "/a.txt", "fileName": "a", "mime": "text/plain", "bytes": 1,
+        "messageCount": 2});
+    assert!(parse_refs(&[count_only]).unwrap()[0].material().is_none());
+}
+
+#[test]
+fn uri_refs_follow_node_is_uri_attachment_ref() {
+    assert!(is_uri_ref("zcode-artifact://s/a"));
+    assert!(is_uri_ref("x+y.z-1://a"));
+    assert!(!is_uri_ref("/Users/me/a.txt"));
+    assert!(!is_uri_ref("C:\\Users\\a.txt"));
+    assert!(!is_uri_ref("1x://a"));
+    assert!(!is_uri_ref("://a"));
+}
+
+#[test]
+fn material_text_takes_only_node_s_text_data_url() {
+    let encoded = base64().encode("привет\n");
+    for header in [
+        "data:text/plain;base64,",
+        "data:text/plain;charset=utf-8;base64,",
+    ] {
+        assert_eq!(
+            material_text(format!("{header}{encoded}").as_bytes()).unwrap(),
+            "привет\n".as_bytes()
+        );
+    }
+    // Node's `Buffer.from` takes a payload without its padding.
+    assert_eq!(material_text(b"data:text/plain;base64,aGk").unwrap(), b"hi");
+    for refused in [
+        "data:text/markdown;base64,aGk=",
+        "data:text/plain;charset=latin1;base64,aGk=",
+        "data:TEXT/PLAIN;base64,aGk=",
+        "data:text/plain,hi",
+        "data:text/plain;base64,aG k=",
+        "data:text/plain;base64,aGk===",
+        "hi",
+    ] {
+        assert_eq!(material_text(refused.as_bytes()), None, "{refused}");
+    }
+}
+
+/// An artifact store keeping objects as files in a directory, like the node store.
+struct Files(std::path::PathBuf, bool);
+
+#[async_trait::async_trait]
+impl ArtifactStore for Files {
+    async fn put(
+        &self,
+        session: &SessionId,
+        purpose: ArtifactPurpose,
+        media_type: String,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, rust_cli_kernel_api::store::StoreError> {
+        let artifact = ArtifactRef {
+            session: session.clone(),
+            id: rust_cli_kernel_api::ids::ArtifactId::new("tool-result-1"),
+            purpose,
+            media_type,
+            size: bytes.len() as u64,
+        };
+        rust_cli_fs::append(&self.0.join("attachment-tool-result-1.txt"), &bytes)
+            .await
+            .unwrap();
+        Ok(artifact)
+    }
+
+    async fn get(
+        &self,
+        _artifact: &ArtifactRef,
+    ) -> Result<Vec<u8>, rust_cli_kernel_api::store::StoreError> {
+        unreachable!()
+    }
+
+    fn local_path(&self, _artifact: &ArtifactRef) -> Option<std::path::PathBuf> {
+        self.1.then(|| self.0.join("attachment-tool-result-1.txt"))
+    }
+}
+
+#[tokio::test]
+async fn web_remote_text_material_is_written_and_referenced_by_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Files(dir.path().to_path_buf(), true);
+    let session = SessionId::new("s");
+    let content = format!(
+        "data:text/plain;base64,{}",
+        base64().encode("line 1\nline 2")
+    );
+    let (body, path) = write_material(
+        &store,
+        &session,
+        MaterialKind::ClipboardText,
+        content.as_bytes(),
+    )
+    .await
+    .unwrap();
+    // The model reads the raw text from the file the note names, as Node's Read tool would.
+    assert_eq!(
+        rust_cli_fs::read_optional(Path::new(&path))
+            .await
+            .unwrap()
+            .unwrap(),
+        b"line 1\nline 2"
+    );
+    let AttachedBody::PathReference { text } = body else {
+        panic!("path reference");
+    };
+    assert_eq!(
+        text,
+        format!(
+            "Attached text/plain: {path}\nThe file was sent by local path because it is a pasted-text temporary \
+             attachment that is deferred to keep the model context small.\nUse the available file reading tools if \
+             you need to inspect the file contents."
+        )
+    );
+    // Not Node's text data URL, or no local file to name: the input is refused (Node throws), never inlined.
+    let failed = |result: Result<(AttachedBody, String), RpcError>| result.unwrap_err().message;
+    assert_eq!(
+        failed(write_material(&store, &session, MaterialKind::TopicHistory, b"plain").await),
+        "fault.attachment.textMaterializationFailed"
+    );
+    let pathless = Files(dir.path().to_path_buf(), false);
+    assert_eq!(
+        failed(
+            write_material(
+                &pathless,
+                &session,
+                MaterialKind::TopicHistory,
+                content.as_bytes()
+            )
+            .await
+        ),
+        "fault.attachment.textMaterializationFailed"
+    );
+}
+
+#[tokio::test]
+async fn desktop_text_material_is_deferred_by_its_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let pasted = dir.path().join("pasted.txt");
+    rust_cli_fs::append(&pasted, b"long pasted text")
+        .await
+        .unwrap();
+    let mut reference = local_ref(&pasted, "text/plain", 16);
+    reference.source_kind = Some(MaterialKind::ClipboardText);
+    let Some(AttachedBody::PathReference { text }) = path_reference(&reference).await else {
+        panic!("path reference");
+    };
+    assert!(text.starts_with(&format!("Attached text/plain: {}\n", pasted.display())));
+    assert!(text.contains("because it is a pasted-text temporary attachment"));
+    reference.source_kind = Some(MaterialKind::TopicHistory);
+    let Some(AttachedBody::PathReference { text }) = path_reference(&reference).await else {
+        panic!("path reference");
+    };
+    assert!(text.contains("because topic history is provided for on-demand reading."));
+    // Node checks the extension first: a non-text file is still `binary_file`.
+    let blob = dir.path().join("pasted.bin");
+    rust_cli_fs::append(&blob, b"x").await.unwrap();
+    let mut reference = local_ref(&blob, "text/plain", 1);
+    reference.source_kind = Some(MaterialKind::ClipboardText);
+    let Some(AttachedBody::PathReference { text }) = path_reference(&reference).await else {
+        panic!("path reference");
+    };
+    assert!(text.contains("because the file is not a known text attachment."));
+}
+
+#[test]
+fn text_is_previewed_only_as_material() {
+    assert!(previewable("text/plain; charset=utf-8", true));
+    assert!(!previewable("text/plain", false));
+    assert!(previewable("image/png", false));
+    assert!(previewable("application/pdf", false));
+    assert!(!previewable("application/zip", true));
+}

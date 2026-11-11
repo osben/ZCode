@@ -336,7 +336,7 @@ impl Live {
     }
 
     /// Fork: see [`Projection::attachment_mime`].
-    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+    pub fn attachment_mime(&self, reference: &str) -> Option<(String, bool)> {
         self.state().projection.attachment_mime(reference)
     }
 

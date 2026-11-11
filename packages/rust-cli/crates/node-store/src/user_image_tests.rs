@@ -134,6 +134,7 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
             reference: Some(format!("/work/{name}")),
             preview_reference: None,
             stored: None,
+            material: None,
             body,
         },
     };
@@ -232,6 +233,7 @@ async fn stored_app_images_are_read_back_from_their_artifacts() {
             reference: Some(format!("/work/{name}")),
             preview_reference: None,
             stored: Some(stored),
+            material: None,
             body: AttachedBody::Image {
                 source: image.clone(),
             },

@@ -386,9 +386,21 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
                 delivery: Delivery::Queue,
             }
         } else {
-            Command::SubmitContent {
-                content: crate::attachments::content(server, &id, &text, refs).await,
-                delivery: Delivery::Queue,
+            match crate::attachments::content(server, &id, &text, refs).await {
+                Ok(content) => Command::SubmitContent {
+                    content,
+                    delivery: Delivery::Queue,
+                },
+                // The session exists; only its first input is refused (Node fails the first turn).
+                Err(error) => {
+                    return Ack::refused(
+                        &envelope.command_id,
+                        Status::Failed,
+                        &error.message,
+                        error.message.clone(),
+                        0,
+                    );
+                }
             }
         };
         if let KernelAck::Accepted { .. } =
@@ -935,10 +947,21 @@ async fn send_text(
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let text = input.text.unwrap_or_default();
-    let content = if !refs.is_empty() {
-        crate::attachments::content(server, handle.id(), &text, refs).await
-    } else {
+    let content = if refs.is_empty() {
         Vec::new()
+    } else {
+        match crate::attachments::content(server, handle.id(), &text, refs).await {
+            Ok(content) => content,
+            Err(error) => {
+                return Ack::refused(
+                    command,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    revision,
+                );
+            }
+        }
     };
     // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
     let text = if kind == QueuedKind::Goal {

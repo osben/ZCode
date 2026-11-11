@@ -531,6 +531,14 @@ impl ArtifactStore for NodeStore {
     ) -> Result<Option<ArtifactRef>, StoreError> {
         artifacts::find(self.paths.artifacts(), session, id).await
     }
+
+    fn local_path(&self, artifact: &ArtifactRef) -> Option<PathBuf> {
+        Some(
+            artifacts::path(self.paths.artifacts(), artifact)
+                .as_path()
+                .to_path_buf(),
+        )
+    }
 }
 
 #[cfg(test)]

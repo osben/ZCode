@@ -357,15 +357,22 @@ impl Projection {
         self.denied.insert(tool_use.to_owned());
     }
 
-    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these).
-    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these),
+    /// and whether that chip marks text material (a `sourceKind`, which only a live row carries).
+    pub fn attachment_mime(&self, reference: &str) -> Option<(String, bool)> {
         self.rows.iter().find_map(|row| {
             row.get("attachments")?
                 .as_array()?
                 .iter()
                 .find_map(|attachment| {
-                    (attachment["ref"] == reference || attachment["previewRef"] == reference)
-                        .then(|| attachment["mime"].as_str().unwrap_or_default().to_owned())
+                    (attachment["ref"] == reference || attachment["previewRef"] == reference).then(
+                        || {
+                            (
+                                attachment["mime"].as_str().unwrap_or_default().to_owned(),
+                                attachment.get("sourceKind").is_some(),
+                            )
+                        },
+                    )
                 })
         })
     }

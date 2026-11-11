@@ -912,6 +912,12 @@ pub trait ArtifactStore: Send + Sync {
             what: "artifact lookup by id".to_owned(),
         })
     }
+
+    /// Fork: the local file holding an artifact, for content the model is told to read by path (Node names the file of
+    /// written text material, `writeToolResultBinaryArtifact`). `None` when the store keeps no local files.
+    fn local_path(&self, _artifact: &ArtifactRef) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// `Fact::Entry` 的种类（不带 `rust-cli/` 前缀；node-store 写成 `type = rust-cli/<种类>`、键 `<会话>:rust-cli/<种类>:<id>`）。

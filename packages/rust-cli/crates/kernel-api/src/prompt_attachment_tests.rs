@@ -85,6 +85,7 @@ fn a_binary_local_file_goes_by_path_with_nodes_three_line_note() {
         reference: Some("/a/bundle.zip".into()),
         preview_reference: None,
         stored: None,
+        material: None,
         body: AttachedBody::PathReference { text: note.clone() },
     };
     assert_eq!(blocks(&file), vec![ContentBlock::Text { text: note }]);
@@ -99,6 +100,7 @@ fn an_attached_image_block_carries_the_file_name() {
         reference: None,
         preview_reference: None,
         stored: None,
+        material: None,
         body: AttachedBody::Image {
             source: ImageSource::Base64 {
                 media_type: "image/png".into(),
@@ -111,4 +113,68 @@ fn an_attached_image_block_carries_the_file_name() {
         panic!("one image block");
     };
     assert_eq!(name.as_deref(), Some("shot.png"));
+}
+
+#[test]
+fn deferred_text_material_reasons_match_node() {
+    assert_eq!(
+        path_reference(
+            "text/plain",
+            "/t/h.txt",
+            PathReason::deferred(MaterialKind::TopicHistory)
+        )
+        .split('\n')
+        .nth(1),
+        Some(
+            "The file was sent by local path because topic history is provided for on-demand reading."
+        )
+    );
+    let pasted = path_reference(
+        "text/plain",
+        "/t/p.txt",
+        PathReason::deferred(MaterialKind::ClipboardText),
+    );
+    assert_eq!(
+        pasted.split('\n').nth(1),
+        Some(
+            "The file was sent by local path because it is a pasted-text temporary attachment that is deferred to \
+             keep the model context small."
+        )
+    );
+    assert_eq!(path_reference_mime(&pasted), Some("text/plain"));
+    assert_eq!(path_reference_mime("Attached file: a (x)"), None);
+    assert_eq!(path_reference_mime("plain"), None);
+}
+
+#[test]
+fn a_live_material_chip_carries_its_marks() {
+    let file = AttachedFile {
+        name: "History.txt".into(),
+        mime: "text/plain".into(),
+        bytes: 9,
+        reference: Some("zcode-artifact://s/a".into()),
+        preview_reference: None,
+        stored: Some("/data/s/attachment-tool-result-1.txt".into()),
+        material: Some(Box::new(crate::message::Material {
+            kind: MaterialKind::TopicHistory,
+            message_count: Some(5),
+        })),
+        body: AttachedBody::PathReference {
+            text: path_reference(
+                "text/plain",
+                "/data/s/attachment-tool-result-1.txt",
+                PathReason::DeferredTopicHistory,
+            ),
+        },
+    };
+    assert_eq!(
+        chip(&file),
+        serde_json::json!({"fileName": "History.txt", "mime": "text/plain", "bytes": 9,
+            "ref": "zcode-artifact://s/a", "sourceKind": "topic-history", "messageCount": 5})
+    );
+    assert_eq!(part_mime(&file), "text/plain");
+    assert_eq!(
+        part_source(&file).as_deref(),
+        Some("/data/s/attachment-tool-result-1.txt")
+    );
 }

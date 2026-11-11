@@ -691,6 +691,7 @@ fn attached_files_expand_into_reminders_and_images() {
             reference: None,
             preview_reference: None,
             stored: None,
+            material: None,
             body,
         },
     };

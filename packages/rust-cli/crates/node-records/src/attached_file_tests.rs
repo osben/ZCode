@@ -8,6 +8,7 @@ fn file(body: AttachedBody) -> AttachedFile {
         reference: Some("zcode-artifact://sess/attachment-1".into()),
         preview_reference: None,
         stored: None,
+        material: None,
         body,
     }
 }
@@ -105,6 +106,7 @@ fn a_stored_image_has_nodes_artifact_shape() {
         mime: "image/png".into(),
         reference: Some("/w/p.png".into()),
         stored: Some("zcode-artifact://sess/tool-result-1".into()),
+        material: None,
         ..file(AttachedBody::Image {
             source: ImageSource::Base64 {
                 media_type: "image/png".into(),
@@ -151,4 +153,50 @@ fn a_path_reference_keeps_its_note_like_node() {
     let back = from_part(&stored).unwrap();
     assert_eq!(back.body, original.body);
     assert_eq!(back.reference, original.reference);
+}
+
+#[test]
+fn text_material_names_its_stored_file_like_node() {
+    // Node `resolveTurnAttachment`: the part's url, originalUrl and note name the written artifact file, mime text/plain.
+    let note = "Attached text/plain: /data/s/attachment-tool-result-1.txt\nThe file was sent by local path because \
+                topic history is provided for on-demand reading.\nUse tools.";
+    let mut original = file(AttachedBody::PathReference { text: note.into() });
+    original.name = "History.txt".into();
+    original.reference = Some("zcode-artifact://sess/attachment-1".into());
+    original.stored = Some("/data/s/attachment-tool-result-1.txt".into());
+    original.material = Some(Box::new(rust_cli_kernel_api::message::Material {
+        kind: rust_cli_kernel_api::message::MaterialKind::TopicHistory,
+        message_count: Some(3),
+    }));
+    let stored = part("prt_1".into(), ("sess", "msg"), &original);
+    assert_eq!(stored["mime"], "text/plain");
+    assert_eq!(stored["url"], "/data/s/attachment-tool-result-1.txt");
+    assert_eq!(
+        stored["metadata"]["originalUrl"],
+        "/data/s/attachment-tool-result-1.txt"
+    );
+    assert_eq!(stored["metadata"]["pathReferenceText"], note);
+    // The marks are the live row's only; Node's cold chip has neither.
+    assert!(!stored.to_string().contains("topic-history"));
+    let back = from_part(&stored).unwrap();
+    assert_eq!(back.body, original.body);
+    assert_eq!(
+        back.reference.as_deref(),
+        Some("/data/s/attachment-tool-result-1.txt")
+    );
+    assert_eq!(back.material, None);
+}
+
+#[test]
+fn an_oversized_image_path_reference_keeps_its_image_mime() {
+    let mut original = file(AttachedBody::PathReference {
+        text:
+            "Attached image/png: /p/big.png\nThe file was sent by local path because x.\nUse tools."
+                .into(),
+    });
+    original.reference = Some("/p/big.png".into());
+    assert_eq!(
+        part("prt_1".into(), ("sess", "msg"), &original)["mime"],
+        "image/png"
+    );
 }

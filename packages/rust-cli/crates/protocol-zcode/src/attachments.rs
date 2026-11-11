@@ -9,7 +9,9 @@ use base64::Engine;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_fs::BoundedRead;
 use rust_cli_kernel_api::ids::SessionId;
-use rust_cli_kernel_api::message::{AttachedBody, AttachedFile, ContentBlock, ImageSource};
+use rust_cli_kernel_api::message::{
+    AttachedBody, AttachedFile, ContentBlock, ImageSource, Material, MaterialKind,
+};
 use rust_cli_kernel_api::persisted_output::ARTIFACT_SCHEME;
 use rust_cli_kernel_api::prompt_attachment::INLINE_IMAGE_MAX_BYTES;
 use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactRef, ArtifactStore};
@@ -105,6 +107,22 @@ async fn read(
     if !reference.starts_with(ARTIFACT_SCHEME) {
         return read_local(Path::new(reference), mime, limit).await;
     }
+    let content = artifact_content(server, session, reference, limit).await?;
+    let (bytes, media_type) = from_data_url(content, mime);
+    if bytes.len() as u64 > limit {
+        return Err(fault("tooLarge"));
+    }
+    Ok((bytes, media_type))
+}
+
+/// The stored content of a session artifact ref (a data URL for an attachment), refused when it cannot hold at most
+/// `limit` decoded bytes.
+async fn artifact_content(
+    server: &Server,
+    session: &SessionId,
+    reference: &str,
+    limit: u64,
+) -> Result<Vec<u8>, RpcError> {
     let (owner, id) = rust_cli_kernel_api::prompt_attachment::parse_artifact_uri(reference)
         .ok_or_else(|| fault("refInvalid"))?;
     if &owner != session {
@@ -120,15 +138,7 @@ async fn read(
     if artifact.size > encoded_cap(limit) {
         return Err(fault("tooLarge"));
     }
-    let content = store
-        .get(&artifact)
-        .await
-        .map_err(|_| fault("storeFailed"))?;
-    let (bytes, media_type) = from_data_url(content, mime);
-    if bytes.len() as u64 > limit {
-        return Err(fault("tooLarge"));
-    }
-    Ok((bytes, media_type))
+    store.get(&artifact).await.map_err(|_| fault("storeFailed"))
 }
 
 /// A local ref: a regular file of at most `limit` bytes. A directory, FIFO or device is refused, since reading one can
@@ -160,10 +170,6 @@ fn essence(mime: &str) -> String {
 /// is accepted and nothing else is.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[expect(
-    dead_code,
-    reason = "source_kind and message_count are read only to accept the schema; the mapping does not use them"
-)]
 pub(crate) struct AttachmentRef {
     #[serde(rename = "ref")]
     reference: String,
@@ -171,9 +177,9 @@ pub(crate) struct AttachmentRef {
     mime: String,
     bytes: u64,
     #[serde(default)]
-    source_kind: Option<Value>,
+    source_kind: Option<MaterialKind>,
     #[serde(default)]
-    message_count: Option<Value>,
+    message_count: Option<u64>,
     #[serde(default)]
     preview_ref: Option<String>,
 }
@@ -182,6 +188,16 @@ impl AttachmentRef {
     /// Fork: the App's ref (a stored attachment keeps it as [`rust_cli_kernel_api::message::AttachedFile::reference`]).
     pub(crate) fn reference(&self) -> &str {
         &self.reference
+    }
+
+    /// Node `displayMetaOf`: `messageCount` counts only with a `sourceKind`.
+    fn material(&self) -> Option<Box<Material>> {
+        self.source_kind.map(|kind| {
+            Box::new(Material {
+                kind,
+                message_count: self.message_count,
+            })
+        })
     }
 }
 
@@ -200,13 +216,14 @@ pub(crate) fn parse_refs(refs: &[Value]) -> Result<Vec<AttachmentRef>, RpcError>
 
 /// The content of an input with attachments (Node `mapAttachmentRef` → `resolveAttachment`): the user's text, then one
 /// [`ContentBlock::File`] per attachment, read now (inline text or a base64 image). A ref that cannot be read still
-/// reaches the model as a metadata-only reminder, never silently dropped.
+/// reaches the model as a metadata-only reminder, never silently dropped. Text material that cannot be written refuses
+/// the input (Node throws and fails the turn), so its text never reaches the model another way.
 pub(crate) async fn content(
     server: &Server,
     session: &SessionId,
     text: &str,
     refs: Vec<AttachmentRef>,
-) -> Vec<ContentBlock> {
+) -> Result<Vec<ContentBlock>, RpcError> {
     let mut out = Vec::new();
     if !text.is_empty() {
         out.push(ContentBlock::Text {
@@ -214,13 +231,26 @@ pub(crate) async fn content(
         });
     }
     for attachment in refs {
-        let body = body(server, session, &attachment).await;
-        let stored = match &body {
-            AttachedBody::Image { source } => {
-                stored_image(server, session, &attachment, source).await
-            }
-            _ => None,
+        let (body, stored) = if let Some(kind) = attachment.source_kind
+            && is_uri_ref(&attachment.reference)
+        {
+            let store = artifacts(server).map_err(|_| material_failed())?;
+            let content = artifact_content(server, session, &attachment.reference, MAX_BYTES)
+                .await
+                .map_err(|_| material_failed())?;
+            let (body, path) = write_material(store.as_ref(), session, kind, &content).await?;
+            (body, Some(path))
+        } else {
+            let body = body(server, session, &attachment).await;
+            let stored = match &body {
+                AttachedBody::Image { source } => {
+                    stored_image(server, session, &attachment, source).await
+                }
+                _ => None,
+            };
+            (body, stored)
         };
+        let material = attachment.material();
         out.push(ContentBlock::File {
             file: AttachedFile {
                 name: attachment.file_name,
@@ -229,11 +259,79 @@ pub(crate) async fn content(
                 reference: Some(attachment.reference).filter(|reference| !reference.is_empty()),
                 preview_reference: attachment.preview_ref,
                 stored,
+                material,
                 body,
             },
         });
     }
-    out
+    Ok(out)
+}
+
+/// Node `isUriAttachmentRef`: `<scheme>://…` (a web-remote upload), not a local path.
+fn is_uri_ref(reference: &str) -> bool {
+    reference.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    })
+}
+
+fn material_failed() -> RpcError {
+    fault("textMaterializationFailed")
+}
+
+/// The text of uploaded material: exactly `data:text/plain[;charset=utf-8];base64,<payload>` (Node's pattern), the
+/// payload decoded as Node's `Buffer.from(…, "base64")` does.
+fn material_text(content: &[u8]) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(content).ok()?;
+    let payload = text
+        .strip_prefix("data:text/plain;charset=utf-8;base64,")
+        .or_else(|| text.strip_prefix("data:text/plain;base64,"))?;
+    let body = payload.trim_end_matches('=');
+    if payload.len() - body.len() > 2
+        || !body
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/')
+    {
+        return None;
+    }
+    let lenient = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::new()
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent)
+            .with_decode_allow_trailing_bits(true),
+    );
+    lenient.decode(body).ok()
+}
+
+/// Node's web-remote text material: the decoded text is written as a new session artifact (raw text, `.txt`) and the
+/// model gets the deferred path reference naming that file. Returns the body and the file's path.
+async fn write_material(
+    store: &dyn ArtifactStore,
+    session: &SessionId,
+    kind: MaterialKind,
+    content: &[u8],
+) -> Result<(AttachedBody, String), RpcError> {
+    use rust_cli_kernel_api::prompt_attachment::{PathReason, path_reference};
+    let text = material_text(content).ok_or_else(material_failed)?;
+    let artifact = store
+        .put(
+            session,
+            ArtifactPurpose::Attachment,
+            "text/plain".to_owned(),
+            text,
+        )
+        .await
+        .map_err(|_| material_failed())?;
+    let path = store
+        .local_path(&artifact)
+        .and_then(|path| path.to_str().map(str::to_owned))
+        .ok_or_else(material_failed)?;
+    let body = AttachedBody::PathReference {
+        text: path_reference("text/plain", &path, PathReason::deferred(kind)),
+    };
+    Ok((body, path))
 }
 
 /// The session artifact holding an inline image's data URL (Node `persistAttachmentDataUrl`): a web-remote ref already
@@ -339,10 +437,15 @@ async fn path_reference(attachment: &AttachmentRef) -> Option<AttachedBody> {
             return None;
         }
         (kind, PathReason::ImageTooLarge)
-    } else if kind.starts_with("video/") || kind == "application/pdf" || is_text_like_path(path) {
+    } else if kind.starts_with("video/") || kind == "application/pdf" {
         return None;
-    } else {
+    } else if !is_text_like_path(path) {
         (mime_of_path(path).to_owned(), PathReason::BinaryFile)
+    } else if let Some(material) = attachment.source_kind {
+        // Node: pasted text and topic history are already a local file; reading it would put the body back in.
+        ("text/plain".to_owned(), PathReason::deferred(material))
+    } else {
+        return None;
     };
     if !rust_cli_fs::is_file(Path::new(path)).await {
         return None;
@@ -501,12 +604,13 @@ struct ReadParams {
     limit: usize,
 }
 
-fn previewable(mime: &str) -> bool {
+/// Node `isPreviewable`: media, and text only when the chip marks it as text material.
+fn previewable(mime: &str, material: bool) -> bool {
     let kind = essence(mime);
     kind.starts_with("image/")
         || kind.starts_with("video/")
         || kind == "application/pdf"
-        || kind == "text/plain"
+        || (kind == "text/plain" && material)
 }
 
 /// `v4/attachment/read`: a ref is served only when a `userInput` row of the session carries it (never a raw path).
@@ -520,12 +624,12 @@ pub async fn read_chunk(server: &Server, params: &Value) -> Result<Reply, RpcErr
         .live(&session)
         .await
         .map_err(|error| crate::server::kernel_error(&error))?;
-    let mime = live
+    let (mime, material) = live
         .sink
         .attachment_mime(&params.reference)
         .ok_or_else(|| fault("previewRefNotAuthorized"))?;
     let (bytes, media_type) = read(server, &session, &params.reference, &mime, MAX_BYTES).await?;
-    if !previewable(&media_type) {
+    if !previewable(&media_type, material) {
         return Err(fault("previewUnsupported"));
     }
     if params.offset > bytes.len() {

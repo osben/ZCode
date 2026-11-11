@@ -79,9 +79,34 @@ pub struct AttachedFile {
     pub preview_reference: Option<String>,
     /// The session artifact (`zcode-artifact://`) holding an image's `data:` URL, Node's `metadata.artifactUri`: the
     /// stored part points at it instead of inlining the bytes, and a cold load reads the image back from it.
+    ///
+    /// For text material it is the local file holding the text (Node writes the decoded web-remote text as a session
+    /// artifact and names its path), so the chip keeps the App's ref.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stored: Option<String>,
+    /// The App's `sourceKind` / `messageCount` of text material. Only the live row shows it: the stored part does not
+    /// hold it (Node puts the input refs on the live row and builds a cold chip from the part).
+    /// Boxed: rare, and every message block pays for the field's size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<Box<Material>>,
     pub body: AttachedBody,
+}
+
+/// Fork: Node `attachmentSourceKindSchema`, the text material the App sends by reference only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MaterialKind {
+    TopicHistory,
+    ClipboardText,
+}
+
+/// Fork: the App's marks of a text material attachment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Material {
+    pub kind: MaterialKind,
+    /// The number of messages a topic history holds (the chip's label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<u64>,
 }
 
 /// What of an [`AttachedFile`] reaches the model.

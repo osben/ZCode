@@ -4,7 +4,7 @@
 //! typed. Also the artifact URI and `data:` URL helpers both runtimes' image parts use.
 
 use crate::ids::{ArtifactId, SessionId};
-use crate::message::{AttachedBody, AttachedFile, ContentBlock, ImageSource};
+use crate::message::{AttachedBody, AttachedFile, ContentBlock, ImageSource, MaterialKind};
 use crate::persisted_output::ARTIFACT_SCHEME;
 
 /// The largest image read inline, also when an image is read back from its artifact (the Anthropic API refuses larger
@@ -155,6 +155,18 @@ pub fn mime_of_path(path: &str) -> &'static str {
 pub enum PathReason {
     BinaryFile,
     ImageTooLarge,
+    DeferredTopicHistory,
+    DeferredClipboardText,
+}
+
+impl PathReason {
+    /// The deferred reason of text material.
+    pub fn deferred(kind: MaterialKind) -> Self {
+        match kind {
+            MaterialKind::TopicHistory => PathReason::DeferredTopicHistory,
+            MaterialKind::ClipboardText => PathReason::DeferredClipboardText,
+        }
+    }
 }
 
 /// Node `resolvedPathReferenceAttachment`: the three-line note naming the local path.
@@ -162,6 +174,10 @@ pub fn path_reference(mime: &str, path: &str, reason: PathReason) -> String {
     let because = match reason {
         PathReason::BinaryFile => "the file is not a known text attachment",
         PathReason::ImageTooLarge => "the image is larger than the inline media budget",
+        PathReason::DeferredTopicHistory => "topic history is provided for on-demand reading",
+        PathReason::DeferredClipboardText => {
+            "it is a pasted-text temporary attachment that is deferred to keep the model context small"
+        }
     };
     [
         format!("Attached {mime}: {path}"),
@@ -169,6 +185,13 @@ pub fn path_reference(mime: &str, path: &str, reason: PathReason) -> String {
         "Use the available file reading tools if you need to inspect the file contents.".to_owned(),
     ]
     .join("\n")
+}
+
+/// The MIME a path reference note names (`Attached <mime>: <path>`, its first line): the stored part's `mime`.
+pub fn path_reference_mime(text: &str) -> Option<&str> {
+    let first = text.lines().next()?.strip_prefix("Attached ")?;
+    let (mime, _) = first.split_once(": ")?;
+    (mime.contains('/') && !mime.contains(char::is_whitespace)).then_some(mime)
 }
 
 /// The model's view of an attached file: the Read-style reminder pair for inline text, the image block for an image,
@@ -191,7 +214,7 @@ pub fn blocks(file: &AttachedFile) -> Vec<ContentBlock> {
 }
 
 /// The App's chip of an attached file (Node `attachmentMetasOfMessage`: `{fileName, mime, bytes, ref?}`, plus the
-/// App's `previewRef`).
+/// App's `previewRef`, and on a live row the text material's `sourceKind` / `messageCount`).
 pub fn chip(file: &AttachedFile) -> serde_json::Value {
     let mut out =
         serde_json::json!({"fileName": file.name, "mime": file.mime, "bytes": file.bytes});
@@ -200,6 +223,12 @@ pub fn chip(file: &AttachedFile) -> serde_json::Value {
     }
     if let Some(preview) = &file.preview_reference {
         out["previewRef"] = preview.as_str().into();
+    }
+    if let Some(material) = &file.material {
+        out["sourceKind"] = serde_json::to_value(material.kind).unwrap_or_default();
+        if let Some(count) = material.message_count {
+            out["messageCount"] = count.into();
+        }
     }
     out
 }
@@ -213,9 +242,9 @@ pub fn part_mime(file: &AttachedFile) -> String {
             source:
                 ImageSource::Base64 { media_type, .. } | ImageSource::Artifact { media_type, .. },
         } => media_type.clone(),
-        AttachedBody::PathReference { .. } => {
-            mime_of_path(file.reference.as_deref().unwrap_or(&file.name)).to_owned()
-        }
+        AttachedBody::PathReference { text } => path_reference_mime(text)
+            .unwrap_or_else(|| mime_of_path(file.reference.as_deref().unwrap_or(&file.name)))
+            .to_owned(),
         AttachedBody::Omitted => file.mime.clone(),
     }
 }
