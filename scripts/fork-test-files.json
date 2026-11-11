@@ -1,7 +1,7 @@
 [
   "apps/zcode-cli/packages/adapters/tests/runner-debug-stream-timing.test.ts",
   "apps/zcode-cli/packages/adapters/tests/upstream-migration-checksum-pin.test.ts",
-  "apps/zcode-cli/packages/bootstrap/tests/fork-rust-agent-plugin-seed.test.ts",
+  "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/official-plugin-seed.test.ts",
   "packages/acp-agent-runtime/test/config-options.test.ts",
   "packages/acp-agent-runtime/test/frames.test.ts",
   "packages/acp-agent-runtime/test/fs.test.ts",

@@ -6,13 +6,13 @@ import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Logger } from "@zcode/contracts";
-import { seedOfficialPluginsForForkRustAgent } from "../src/app/fork-rust-agent-plugin-seed.js";
-import { prepareProtocolStartupStorage } from "../src/zcode-protocol/storage-startup.js";
+import { seedOfficialPluginsForForkRustAgent } from "../../src/fork-agent-runtime/contract.js";
+import { prepareProtocolStartupStorage } from "../../src/zcode-protocol/storage-startup.js";
 
 const faults = vi.hoisted(() => ({ seedThrows: false }));
 
-vi.mock("../src/app/bundled-plugins.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/app/bundled-plugins.js")>();
+vi.mock("../../src/app/bundled-plugins.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/app/bundled-plugins.js")>();
   return {
     ...actual,
     resolveOfficialPluginRoots(input: Parameters<typeof actual.resolveOfficialPluginRoots>[0]) {

@@ -2,8 +2,8 @@ import { isAbsolute, resolve } from "node:path";
 import { createConfig, resolvePath } from "@zcode/adapters/config";
 import type { Logger } from "@zcode/contracts";
 import { FORK_AGENT_RUNTIME_ENV } from "@zcode/shared";
-import { resolveOfficialPluginRoots } from "./bundled-plugins.js";
-import { getCliStorageRoot, getPluginStorageRoot } from "./paths.js";
+import { resolveOfficialPluginRoots } from "../app/bundled-plugins.js";
+import { getCliStorageRoot, getPluginStorageRoot } from "../app/paths.js";
 
 /**
  * Fork (specs/fork-agent-runtime-selection.md, rule 3): the Rust agent `zcode-rs` only reads the

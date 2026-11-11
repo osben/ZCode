@@ -34,7 +34,7 @@ import {
   prepareProtocolStartupStorage,
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
-import { seedOfficialPluginsForForkRustAgent } from "./app/fork-rust-agent-plugin-seed.js";
+import { seedOfficialPluginsForForkRustAgent } from "./fork-agent-runtime/contract.js";
 import { resolveMcpNodeFallbackProvider } from "./app/mcp-node-fallback.js";
 import { getCliStorageRoot, getProjectMemoryRoot } from "./app/paths.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
