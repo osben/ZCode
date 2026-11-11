@@ -7,7 +7,7 @@ use rust_cli_kernel_api::testing::{MemoryEnvironment, SequentialIds};
 use serde_json::json;
 
 use super::*;
-use crate::skills::runner;
+use crate::skills::{PluginSkillRoot, runner};
 use crate::test_support::{AllowedGate, CWD, EchoBash, facts, tool_context};
 
 const GREET: &str = "---\ndescription: Greet someone by name\nwhen_to_use: When the user asks for a greeting\nargument-hint: <name>\narguments: [who]\nallowed-tools: Bash(echo:*)\n---\nSay hello to $ARGUMENTS ($who, first: $0).\nSkill dir: ${CLAUDE_SKILL_DIR}\nInline: !`echo inline-ok`\n";
@@ -186,5 +186,37 @@ fn the_permission_subject_is_the_requested_skill() {
         Some(rust_cli_kernel_api::permission::PermissionSubject::Skill {
             name: "/greet".to_owned()
         })
+    );
+}
+
+/// Fork: the bundled `visualize` plugin skill (loaded on the desktop surface) goes through the Skill tool like any
+/// plugin skill: the frontmatter of `apps/zcode-cli/packages/visualize-plugin/skills/visualize/SKILL.md`, the
+/// `plugin:skill` name, and the base directory its relative `scripts/render.py` needs.
+#[tokio::test]
+async fn the_visualize_plugin_skill_loads_with_its_base_directory() {
+    let dir = "/plugins/visualize/0.1.1/skills/visualize";
+    let env = Arc::new(MemoryEnvironment::new(facts()).with_file(
+        &format!("{dir}/SKILL.md"),
+        "---\nname: visualize\ndescription: \"Create visualizations and interactive tools directly in conversation.\"\n---\n\n# Visualize\n\nRun `python3 scripts/render.py`.\n",
+    ));
+    let catalog = Arc::new(SkillCatalog::new(env.clone(), env.clone()));
+    catalog.set_plugin_roots(vec![PluginSkillRoot {
+        plugin: "visualize".to_owned(),
+        dir: "/plugins/visualize/0.1.1/skills".to_owned(),
+    }]);
+    let ids: Arc<dyn Ids> = Arc::new(SequentialIds::default());
+    let tool = SkillTool::new(catalog, ids, None);
+    let context = tool_context(env, PermissionMode::DontAsk);
+    let (progress, _ignored) = mpsc::channel(4);
+    let call = tool
+        .call_with_messages(json!({"skill": "visualize:visualize"}), context, progress)
+        .await
+        .unwrap();
+    assert_eq!(text(&call.output), "Launching skill: visualize:visualize");
+    assert_eq!(
+        body(&call),
+        format!(
+            "Base directory for this skill: {dir}\n\n\n# Visualize\n\nRun `python3 scripts/render.py`.\n"
+        )
     );
 }
