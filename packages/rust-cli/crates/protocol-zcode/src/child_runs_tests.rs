@@ -398,6 +398,60 @@ fn a_watch_that_fell_behind_reads_the_messages_it_lost_from_the_replay() {
 }
 
 #[test]
+fn a_watch_that_fell_behind_reads_the_end_of_a_run_that_finished_meanwhile() {
+    let mut parent = Parent::new();
+    let first = parent.runs.open(CHILD).expect("watch");
+    assert!(parent.feed(
+        CHILD,
+        first,
+        vec![],
+        vec![Some(started(3)), Some(assistant("m1")), None],
+    ));
+    // The run ended before the new watch subscribed: the feed replays it whole, `Finished` included.
+    let second = parent.runs.open(CHILD).expect("watch");
+    parent.feed(
+        CHILD,
+        second,
+        vec![started(3), assistant("m1"), assistant("m2"), finished()],
+        vec![],
+    );
+
+    let kinds = parent.kinds();
+    assert_eq!(
+        kinds.last().map(String::as_str),
+        Some("turn.terminal:success")
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| kind.as_str() == "usage.delta")
+            .count(),
+        2
+    );
+    assert!(!parent.runs.watching(CHILD));
+    assert_schema(&parent.facts);
+}
+
+#[test]
+fn nested_lifecycle_facts_of_a_reopened_parent_keep_unique_ids() {
+    let read = |now: u64| {
+        let mut parent = Parent::new();
+        parent.now = now;
+        parent.table(&[
+            entry("agent_1", SubagentStatus::Running, None),
+            entry("agent_2", SubagentStatus::Running, Some("agent_1")),
+        ]);
+        parent.facts
+    };
+    let (before, after) = (read(1_000), read(2_000));
+    let mut facts = before;
+    facts.extend(after);
+    assert_eq!(facts.len(), 2);
+    assert_ne!(facts[0]["eventId"], facts[1]["eventId"]);
+    assert_schema(&facts);
+}
+
+#[test]
 fn nested_lifecycle_facts_of_two_reads_at_one_parent_sequence_keep_unique_ids() {
     let mut parent = Parent::new();
     let owner = entry("agent_1", SubagentStatus::Running, None);

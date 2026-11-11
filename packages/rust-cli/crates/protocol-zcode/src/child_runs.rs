@@ -80,6 +80,9 @@ pub(crate) struct ChildRuns {
     /// The table reads with nested lifecycle facts: their event sequence, so two reads at the same parent log
     /// sequence never repeat an event ID.
     nested_reads: u64,
+    /// The event ID scope of the nested lifecycle facts, fresh per record (`"table-{uuid}-"`), so a reopened parent
+    /// restarting `nested_reads` never repeats an event ID either.
+    nested_scope: Option<String>,
 }
 
 /// What one feed item did.
@@ -194,13 +197,18 @@ impl ChildRuns {
                 if replayed && reading.skip_replay {
                     // A watch that fell behind: the items it lost are gone from the stream, but the replay still
                     // lists the run's committed messages; the ones past those already read are new. The in-progress
-                    // events of the replay (merged deltas, tools) cannot be told apart from the ones read: skipped.
-                    if !matches!(item, ChildLive::Committed(_)) {
-                        return read;
-                    }
-                    reading.replayed += 1;
-                    if reading.replayed <= reading.committed {
-                        return read;
+                    // events of the replay (merged deltas, tools) cannot be told apart from the ones read: skipped. A
+                    // replayed `Finished` (the run ended before the new watch subscribed) is never one already read:
+                    // after a run's `Finished` the same run is skipped whole.
+                    match item {
+                        ChildLive::Committed(_) => {
+                            reading.replayed += 1;
+                            if reading.replayed <= reading.committed {
+                                return read;
+                            }
+                        }
+                        ChildLive::Finished(_) => {}
+                        ChildLive::Event(_) | ChildLive::Started { .. } => return read,
                     }
                 }
                 if matches!(item, ChildLive::Committed(_)) {
@@ -314,6 +322,10 @@ impl ChildRuns {
                 self.nested_reads += 1;
                 nested_seq = Some(self.nested_reads);
             }
+            let scope = self
+                .nested_scope
+                .get_or_insert_with(|| format!("table-{}-", uuid_v7(at.now)))
+                .clone();
             let owner = self
                 .children
                 .entry((*owner).to_owned())
@@ -321,7 +333,7 @@ impl ChildRuns {
             // The owner child's facts: the parent log sequence names no event of the child's session, and two table
             // reads can share it, so the nested facts take this record's own sequence.
             let at = Observed {
-                scope: at.scope,
+                scope: &scope,
                 seq: nested_seq.unwrap_or_default(),
                 now: at.now,
                 provider: at.provider,
