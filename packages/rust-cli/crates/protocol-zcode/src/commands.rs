@@ -256,6 +256,9 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             0,
         );
     };
+    if let Some(ack) = crate::worktree::refuse_before_activation(server, envelope, session).await {
+        return ack;
+    }
     let live = match server.live(&SessionId::new(session)).await {
         Ok(live) => live,
         Err(error) => {

@@ -571,6 +571,8 @@ A cold open reads the marker, the execution facts and a preparing submission bef
 
 A prepared session reopened cold before its activation (an agent restart) keeps SessionStart held: while the marker is not `active` (`preparing`, `failed` or `cancelled`, the statuses in which the live actor still holds it), `Server::live` opens the session through `Kernel::open_prepared_session` before the bridge's own open finds it open. The hook never runs in the parent checkout and no turn starts there; it runs when the activation moves the session, with source `resume`. A session that is already open keeps its state.
 
+Before its activation a prepared session fails closed like Node, where it has no runtime record yet: while the marker is not `active`, every command whose Node handler starts with `requireRecord` (`record-access.ts`: `sendText`, `stop`, the queue, model and goal commands, and the rest) is refused with Node's ack (`failed`, `fault.command.executionFailed`, `v4 command session not found: <id>`), so no turn runs in the parent checkout. `deleteSession`, `updateWorktreePreparation`, reads and subscriptions pass (`worktree::refuse_before_activation`; test `input_before_the_activation_is_refused_like_node`).
+
 **`updateWorktreePreparation`:** ports `assertWorktreePreparationMutation`:
 
 - stale when the marker is `active`, or carries an attempt other than `expectedAttemptId`;

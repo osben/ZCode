@@ -1092,3 +1092,71 @@ async fn a_failed_column_write_after_the_move_keeps_the_parent_identity() {
     assert_eq!(stored.path.as_str(), path);
     assert_eq!(stored.directory.as_str(), workspace);
 }
+
+/// Fail closed like Node before the activation: a prepared session has no Node runtime record, so `sendText` is
+/// refused with Node's ack (`failed`, `fault.command.executionFailed`, `v4 command session not found: <id>`) and no
+/// turn runs at the parent. After the activation the same text is accepted. `deleteSession` passes before the
+/// activation, as Node lets a prepared session through `hasPreparedSession`.
+#[tokio::test]
+async fn input_before_the_activation_is_refused_like_node() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let prepare = |id: &str| {
+        json!({"commandId": id, "clientId": "k", "sessionId": null, "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "worktreePreparation": {
+                "branchName": "feat/a", "targetPath": path, "attemptId": "a1"}}})
+    };
+    let ack = run(&server, prepare("p1")).await;
+    let session = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    let send = |id: &str| {
+        json!({"commandId": id, "clientId": "k", "sessionId": session, "type": "sendText",
+            "issuedAt": 1, "payload": {"text": "hello"}})
+    };
+
+    let ack = run(&server, send("s1")).await;
+    assert_eq!(ack["status"], "failed", "{ack}");
+    assert_eq!(ack["reasonCode"], "fault.command.executionFailed", "{ack}");
+    assert_eq!(
+        ack["message"],
+        format!("v4 command session not found: {session}")
+    );
+    assert!(
+        !kernel
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, name)| name.starts_with("Submit")),
+        "{:?}",
+        kernel.sent.lock().unwrap()
+    );
+
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": workspace, "preparedSessionId": session, "expectedAttemptId": "a1",
+            "executionWorktree": {"path": path}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let ack = run(&server, send("s2")).await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+
+    // deleteSession passes before the activation.
+    let ack = run(&server, prepare("p2")).await;
+    let other = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    let ack = run(
+        &server,
+        json!({"commandId": "d1", "clientId": "k", "sessionId": other, "type": "deleteSession",
+            "issuedAt": 1, "payload": {}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(*kernel.deleted.lock().unwrap(), [other]);
+}

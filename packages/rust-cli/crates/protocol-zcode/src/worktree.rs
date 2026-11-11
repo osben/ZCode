@@ -392,6 +392,79 @@ fn failed(envelope: &Envelope, message: &str, revision: u64) -> Ack {
     )
 }
 
+/// The command kinds whose Node handler starts with `requireRecord` (`zcode-protocol-v4/commands/record-access.ts`):
+/// a prepared session has no runtime record before its activation, so Node refuses them with
+/// `V4SessionNotFoundError`. `deleteSession` (Node lets a prepared session through `hasPreparedSession`),
+/// `updateWorktreePreparation`, `createSession`, `resolveInteraction`, `snoozeInteractionAutoResolution`,
+/// `discardSharedContext`, reads and subscriptions pass.
+const REQUIRES_RECORD: &[&str] = &[
+    // session-flow.ts
+    "sendText",
+    "stop",
+    // queue.ts
+    "deleteQueueItem",
+    "editQueueItem",
+    "reorderQueueItem",
+    "setAutoDrain",
+    "setFollowupMode",
+    "sendQueuedNow",
+    // session-mgmt.ts
+    "renameSession",
+    // selection-side-session.ts
+    "createSelectionSideSession",
+    // goal-compact.ts
+    "compact",
+    "pauseGoal",
+    "resumeGoal",
+    "sendGoalCommand",
+    // model-config.ts
+    "switchModelConfig",
+    "switchCollaborationMode",
+    // interaction-background.ts
+    "respondWorkspaceHookReview",
+    "toggleWorkspaceHookReviewItem",
+    "revokeWorkspaceHookTrust",
+    "requestWorkspaceHookReview",
+    "cancelBackgroundWork",
+    "resumeWorkflowRun",
+    "startSavedWorkflow",
+    "amendWorkflowRunSettings",
+    // fork-edit-retry.ts
+    "forkAssistant",
+    "editUserQuery",
+    "retryTurn",
+    // file-rewind.ts, assistant-feedback.ts, row-pin.ts, highspeed-metrics.ts, external-agent-config.ts
+    "applyFileRewind",
+    "setAssistantFeedback",
+    "setRowPinned",
+    "setHighspeedMetrics",
+    "setExternalAgentConfigOption",
+];
+
+/// Fork: fail closed like Node before a prepared worktree's activation. While its marker is not `active` the actor
+/// waits at the parent checkout with SessionStart held, so a command that needs Node's runtime record (input, a
+/// turn, a setting) is refused with Node's ack (`failed`, `fault.command.executionFailed`,
+/// `v4 command session not found: <id>`) instead of running a turn in the parent. The durable marker is read, not
+/// the projection, which an activation updates asynchronously.
+pub async fn refuse_before_activation(
+    server: &Server,
+    envelope: &Envelope,
+    session: &str,
+) -> Option<Ack> {
+    if !REQUIRES_RECORD.contains(&envelope.kind.as_str()) {
+        return None;
+    }
+    match load(server, &SessionId::new(session)).await {
+        Ok(Some(marker)) if marker.status != PrepStatus::Active => Some(failed(
+            envelope,
+            &format!("v4 command session not found: {session}"),
+            0,
+        )),
+        Ok(_) => None,
+        Err(reason) => Some(failed(envelope, reason, 0)),
+    }
+}
+
 /// Fork: `createSession` with `worktreePreparation` (Node `prepareWorktreeSession`): a new session listed under
 /// the parent workspace, its marker preparing; no runtime settings and no input.
 pub async fn prepare(
