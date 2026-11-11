@@ -163,6 +163,18 @@ pub struct Projection {
     /// Fork: the tool call each streaming `tool_use` block opened (turn, response, block index), so its `InputJson`
     /// deltas append to that row's `inputText` (Node `tool_input_delta`, projection/rows.rs).
     streaming_tools: HashMap<(String, u32, usize), rows::StreamingTool>,
+    /// Fork: per user message id, what each of its attachments reads from (the stored `file` parts), for
+    /// `v4/conversation/attachmentRead` / `attachmentStat` (attachments.rs).
+    attachment_sources: HashMap<String, Vec<AttachmentSource>>,
+}
+
+/// Fork: one attachment of a `userInput` row as its stored `file` part has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentSource {
+    /// The part's MIME ([`rust_cli_kernel_api::prompt_attachment::part_mime`]).
+    pub mime: String,
+    /// The artifact or path a read opens ([`rust_cli_kernel_api::prompt_attachment::part_source`]).
+    pub source: Option<String>,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -300,6 +312,7 @@ impl Projection {
             turn_file_changes: HashMap::new(),
             subagents: subagent_rows::Subagents::default(),
             shells: background_shells::Shells::default(),
+            attachment_sources: HashMap::new(),
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -355,6 +368,33 @@ impl Projection {
                         .then(|| attachment["mime"].as_str().unwrap_or_default().to_owned())
                 })
         })
+    }
+
+    /// Fork: the attachment at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its
+    /// `ref` or `previewRef` (Node `conversationAttachmentRead` / `conversationAttachmentStat` authorisation): its chip
+    /// MIME and its stored source.
+    pub fn row_attachment(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<AttachmentSource> {
+        let row = self
+            .rows
+            .iter()
+            .find(|row| row["rowId"].as_u64() == Some(row_id) && row["entityId"] == entity)?;
+        if RowKind::of(row) != Some(RowKind::UserInput) {
+            return None;
+        }
+        let chip = row.get("attachments")?.as_array()?.get(index)?;
+        if chip["ref"] != reference && chip["previewRef"] != reference {
+            return None;
+        }
+        self.attachment_sources
+            .get(entity)
+            .and_then(|sources| sources.get(index))
+            .cloned()
     }
 
     /// 记下 sendText 的事实（行与队列项要用）。

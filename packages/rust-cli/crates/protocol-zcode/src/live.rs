@@ -340,6 +340,19 @@ impl Live {
         self.state().projection.attachment_mime(reference)
     }
 
+    /// Fork: see [`crate::projection::Projection::row_attachment`].
+    pub fn row_attachment(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<crate::projection::AttachmentSource> {
+        self.state()
+            .projection
+            .row_attachment(row_id, entity, index, reference)
+    }
+
     /// 用户拒绝了这个工具调用：之后它的结果投成 cancelled（与 Node 相同）。
     pub fn deny(&self, tool_use: &rust_cli_kernel_api::ids::ToolUseId) {
         self.state().projection.deny(tool_use.as_str());

@@ -204,6 +204,33 @@ pub fn chip(file: &AttachedFile) -> serde_json::Value {
     out
 }
 
+/// The MIME of the stored `file` part of an attached file (node-records writes it; Node's preview and Share reads
+/// take the part's `mime`, not the App's).
+pub fn part_mime(file: &AttachedFile) -> String {
+    match &file.body {
+        AttachedBody::Text { .. } => "text/plain".to_owned(),
+        AttachedBody::Image {
+            source:
+                ImageSource::Base64 { media_type, .. } | ImageSource::Artifact { media_type, .. },
+        } => media_type.clone(),
+        AttachedBody::PathReference { .. } => {
+            mime_of_path(file.reference.as_deref().unwrap_or(&file.name)).to_owned()
+        }
+        AttachedBody::Omitted => file.mime.clone(),
+    }
+}
+
+/// What a read of an attached file opens (Node `resolvePromptAttachment` for one message part): the session artifact
+/// holding its bytes when there is one (immutable, so a later change of the local file does not change the preview),
+/// else the App's ref when it is not a data URL. `None` leaves the caller's authorised ref.
+pub fn part_source(file: &AttachedFile) -> Option<String> {
+    file.stored.clone().or_else(|| {
+        file.reference
+            .clone()
+            .filter(|reference| !reference.starts_with("data:"))
+    })
+}
+
 /// The model input of a message with attachment reminders.
 pub fn model_input(text: &str, reminders: &[String]) -> String {
     if reminders.is_empty() {

@@ -371,6 +371,8 @@ impl Server {
             "v4/attachment/commit" => crate::attachments::commit(self, &params).await,
             "v4/attachment/abort" => crate::attachments::abort(self, &params).await,
             "v4/attachment/read" => crate::attachments::read_chunk(self, &params).await,
+            "v4/conversation/attachmentRead" => crate::attachment_share::read(self, &params).await,
+            "v4/conversation/attachmentStat" => crate::attachment_share::stat(self, &params).await,
             "v4/attachment/previewSource" => {
                 crate::attachments::preview_source(self, &params).await
             }

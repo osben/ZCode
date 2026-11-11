@@ -26,22 +26,25 @@ use crate::uploads::{Began, Begin, CHUNK_MAX_BYTES, Commit, MAX_BYTES, Target};
 /// Node `INLINE_TEXT_ATTACHMENT_MAX_BYTES`: larger text files are sent as a metadata-only reminder.
 const INLINE_TEXT_MAX_BYTES: u64 = 64 * 1024;
 
-fn fault(code: &str) -> RpcError {
-    RpcError::internal(format!("fault.attachment.{code}"))
+/// A `fault.attachment.*` error: the code is the message and `data.code`, like Node's `ZCodeAttachmentFaultError`
+/// through `toProtocolError` (the Host reads either).
+pub(crate) fn fault(code: &str) -> RpcError {
+    let code = format!("fault.attachment.{code}");
+    RpcError::internal(code.clone()).with_data(json!({ "code": code }))
 }
 
-fn base64() -> &'static base64::engine::GeneralPurpose {
+pub(crate) fn base64() -> &'static base64::engine::GeneralPurpose {
     &base64::engine::general_purpose::STANDARD
 }
 
-fn artifacts(server: &Server) -> Result<Arc<dyn ArtifactStore>, RpcError> {
+pub(crate) fn artifacts(server: &Server) -> Result<Arc<dyn ArtifactStore>, RpcError> {
     server
         .kernel
         .artifacts()
         .ok_or_else(|| fault("putUnsupported"))
 }
 
-fn parse<T: for<'de> Deserialize<'de>>(params: &Value) -> Result<T, RpcError> {
+pub(crate) fn parse<T: for<'de> Deserialize<'de>>(params: &Value) -> Result<T, RpcError> {
     serde_json::from_value(params.clone())
         .map_err(|error| RpcError::invalid_params(error.to_string()))
 }
@@ -85,7 +88,7 @@ const DATA_URL_HEADER_ALLOWANCE: u64 = 1024;
 
 /// The largest stored data URL that can hold `decoded` bytes. The artifact's ref size is checked against it before
 /// `get` loads the content; the decoded size is checked again after decoding.
-fn encoded_cap(decoded: u64) -> u64 {
+pub(crate) fn encoded_cap(decoded: u64) -> u64 {
     decoded.div_ceil(3) * 4 + DATA_URL_HEADER_ALLOWANCE
 }
 
