@@ -224,6 +224,23 @@ pub(crate) struct SessionShell {
 pub(crate) const ENDED_KEPT: usize = 64;
 
 impl SessionShell {
+    /// Fork: a TaskStop the ledger accepted before the exit is finalized wins over how the process ended, like Node's
+    /// `killTask`, which marks the task killed at once and for good. The supervisor may already have seen the
+    /// process exit (code 0) and be cleaning up when `stop` is accepted: the ledger then reported `killed`, and the
+    /// terminal record, the notice (for a stop that notifies) and the receipt must not turn it back into `completed`.
+    /// Called under the lock that finalizes the exit, before `stopping`/`stopped` are cleared.
+    pub(crate) fn settle_stop(
+        &self,
+        task: &ShellTaskId,
+        finish: &mut Finish,
+        killed_exit: Option<i32>,
+    ) {
+        if self.stopping.contains_key(task) || self.stopped.contains(task) {
+            finish.outcome = Outcome::Cancelled;
+            finish.exit_code = killed_exit;
+        }
+    }
+
     /// Fork: a background command ended (both exit sites, under the lock that takes it off `background`): keep its
     /// terminal record, newest last, at most [`ENDED_KEPT`].
     pub(crate) fn record_ended(

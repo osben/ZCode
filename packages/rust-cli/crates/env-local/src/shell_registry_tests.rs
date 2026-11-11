@@ -336,3 +336,67 @@ fn ended_records_are_bounded_per_session() {
     assert_eq!(task, &ShellTaskId::new("t1"));
     assert_eq!(info.status, BackgroundStatus::Failed);
 }
+
+/// Fork: a TaskStop accepted after the supervisor saw the process exit with code 0, but before it finalized the exit,
+/// wins (Node's `killTask` marks the task killed at once and for good). The ledger reported `killed` from the stop on;
+/// the finalized outcome must not turn the terminal record, the notice or the receipt back into `completed`. The
+/// interleaving is decided under the ledger lock, so it is reproduced here on the session's ledger directly.
+#[test]
+fn a_stop_accepted_before_the_exit_is_finalized_wins() {
+    use rust_cli_kernel_api::env::Outcome;
+    use rust_cli_kernel_api::ids::ShellTaskId;
+
+    use crate::shell::{Finish, SessionShell};
+
+    let exited = || Finish {
+        outcome: Outcome::Completed,
+        exit_code: Some(0),
+        timed_out: false,
+        cwd_reset: None,
+        output_bytes: 3,
+        output_limit: None,
+        output_unreadable: None,
+        discard: Vec::new(),
+    };
+    let task = ShellTaskId::new("b1");
+    let killed_exit = Some(137);
+
+    // No stop: the process's own outcome stands.
+    let shell = SessionShell::default();
+    let mut finish = exited();
+    shell.settle_stop(&task, &mut finish, killed_exit);
+    assert_eq!(finish, exited());
+    assert_eq!(
+        BackgroundStatus::ended(&finish.outcome, finish.exit_code),
+        BackgroundStatus::Completed
+    );
+
+    // A stop that notifies: `stop` moved the task from `background` to `stopping` after the exit was seen.
+    let mut shell = SessionShell::default();
+    shell
+        .stopping
+        .insert(task.clone(), OperationId::new("op_b1"));
+    let mut finish = exited();
+    shell.settle_stop(&task, &mut finish, killed_exit);
+    assert_eq!(finish.outcome, Outcome::Cancelled);
+    assert_eq!(finish.exit_code, killed_exit);
+    assert_eq!(finish.output_bytes, 3);
+    assert_eq!(
+        BackgroundStatus::ended(&finish.outcome, finish.exit_code),
+        BackgroundStatus::Killed
+    );
+
+    // A silent stop (`stopped` as well): killed too; its notice is suppressed by the caller.
+    shell.stopped.insert(task.clone());
+    let mut finish = exited();
+    shell.settle_stop(&task, &mut finish, None);
+    assert_eq!(
+        (finish.outcome, finish.exit_code),
+        (Outcome::Cancelled, None)
+    );
+
+    // Another task of the session is not affected.
+    let mut finish = exited();
+    shell.settle_stop(&ShellTaskId::new("b2"), &mut finish, killed_exit);
+    assert_eq!(finish, exited());
+}

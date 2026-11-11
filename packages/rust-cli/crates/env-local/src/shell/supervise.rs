@@ -738,7 +738,7 @@ async fn supervise(
     } else {
         record_cwd(&shared, job, cwd)
     };
-    let finish = Finish {
+    let mut finish = Finish {
         outcome,
         exit_code: exit,
         timed_out,
@@ -756,6 +756,8 @@ async fn supervise(
     state.commands.remove(&job.operation);
     if let Some(background) = background {
         let shell = state.sessions.entry(job.session.clone()).or_default();
+        // Fork: an accepted TaskStop wins over an exit the supervisor saw before it (Node's `killTask`).
+        shell.settle_stop(&job.request.task, &mut finish, Some(CANCEL_EXIT));
         shell.background.remove(&job.request.task);
         shell.stopping.remove(&job.request.task);
         // Fork: the terminal record outlives the notice's ack (also for a stop that records no notice).
