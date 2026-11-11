@@ -239,6 +239,27 @@ impl ToolRegistry for ExtRegistry {
         self.base.find(name).or_else(|| self.mcp.find(name))
     }
 
+    /// Fork: an incognito session looks MCP tools up among the servers its profile keeps, the same servers as its
+    /// snapshot (`snapshot_where`), so a hidden plugin server whose tool name collides never answers.
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        let Some(profile) = self.incognito.profile(session) else {
+            return self.find(name);
+        };
+        if name == self.skill.name() {
+            return Some(self.skill.clone());
+        }
+        if name == WAIT_FOR_MCP_SERVERS && self.mcp.has_servers() {
+            return Some(self.wait.clone());
+        }
+        self.base.find_for(session, name).or_else(|| {
+            self.mcp
+                .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
+                .0
+                .into_iter()
+                .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
+        })
+    }
+
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.base.withheld(name)
     }

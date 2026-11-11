@@ -219,6 +219,18 @@ impl ToolRegistry for AgentRegistry {
         }
     }
 
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        match self
+            .own
+            .iter()
+            .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
+        {
+            Some(tool) if self.base.hides(tool.name()) || !tool.is_enabled() => None,
+            Some(tool) => Some(tool.clone()),
+            None => self.base.find_for(session, name),
+        }
+    }
+
     fn hides(&self, name: &str) -> bool {
         self.base.hides(name)
     }

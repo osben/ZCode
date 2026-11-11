@@ -43,6 +43,28 @@ fn update(status: PrepStatus, expected: Option<&str>, replacing: Option<Request>
     }
 }
 
+/// Fork (round 4): the incognito stamp is stored in the marker record only. `worktreePreparation` keeps Node's
+/// `worktreePreparationStateSchema` shape, so a failed activation's stamp never reaches the renderer.
+#[test]
+fn the_incognito_stamp_stays_out_of_the_wire_shape() {
+    let mut marker =
+        Marker::preparing(&request(Some("a1"))).with_status(PrepStatus::Failed, Some("boom"), None);
+    let wire = json!({"attemptId": "a1", "branchName": "feat/a", "targetPath": "/w/.worktrees/a",
+                      "baseBranch": "main", "status": "failed", "failureMessage": "boom"});
+    for stamp in [
+        Some(Some(
+            rust_cli_kernel_api::incognito::IncognitoProfile::LOCKDOWN,
+        )),
+        Some(None),
+    ] {
+        marker.incognito = stamp;
+        assert_eq!(marker.exposed(), Some(wire.clone()));
+        let record = marker.record("s1");
+        assert!(record.data.get("incognito").is_some(), "{}", record.data);
+        assert_eq!(Marker::latest(&[record]), Some(marker.clone()));
+    }
+}
+
 #[test]
 fn the_marker_is_nodes_record_without_times() {
     let marker = Marker::preparing(&request(Some("a1")));

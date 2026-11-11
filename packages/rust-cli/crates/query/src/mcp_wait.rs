@@ -64,7 +64,7 @@ pub(crate) async fn wait_for_tool(
     let full = mcp.tool_wait_ms();
     let budget = full.saturating_sub(waited.load(Ordering::SeqCst));
     if budget == 0 {
-        return registry.find(name);
+        return registry.find_for(&scope.session, name);
     }
     let started = scope.parts.clock.now_ms();
     // Fork: the connection signals every change, but only the servers in the session's snapshot are judged, so a
@@ -90,7 +90,7 @@ pub(crate) async fn wait_for_tool(
     };
     let elapsed = scope.parts.clock.now_ms().saturating_sub(started);
     waited.fetch_add(elapsed, Ordering::SeqCst);
-    let found = registry.find(name);
+    let found = registry.find_for(&scope.session, name);
     // 一次给了整份预算、等满了仍没有：这些服务器本次运行不再等（只在一次给了整份预算时记）。
     if found.is_none() && budget == full && elapsed >= full {
         scope.exhausted.add(waiting(&view, name, &scope.exhausted));

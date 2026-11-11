@@ -174,3 +174,80 @@ async fn a_hidden_server_with_the_same_normalized_name_does_not_prolong_the_wait
     assert_eq!(results(&sink.messages()), ["value for alpha"]);
     assert_eq!(clock.now_ms() - start, 500);
 }
+
+/// Fork (round 4): with `mcp` kept and `plugins` off, the user's server `plugin_demo_api` and the hidden plugin server
+/// `plugin:demo:api` both name their tool `mcp__plugin_demo_api__lookup`. The call resolves to the tool in the
+/// session's snapshot, never the hidden server's (the global lookup found the hidden one first, which the pipeline
+/// then refused), both when the tool is there and after a wait for its connecting server.
+#[tokio::test(start_paused = true)]
+async fn a_call_resolves_to_the_sessions_tool_not_a_hidden_namesake() {
+    const NAME: &str = "mcp__plugin_demo_api__lookup";
+    let hidden: Arc<dyn rust_cli_kernel_api::tool::Tool> =
+        Arc::new(FakeTool::new(NAME, true, "hidden plugin value"));
+    let visible: Arc<dyn rust_cli_kernel_api::tool::Tool> =
+        Arc::new(FakeTool::new(NAME, true, "visible user value"));
+    let call = |registry: Arc<McpRegistry>| async move {
+        let model = Arc::new(ScriptedModel::new(vec![
+            tool_use_response("toolu_0", NAME, &json!({})),
+            text_response(&["done"]),
+        ]));
+        let clock = Arc::new(TokioClock::new(0));
+        let mut parts = parts(model, Vec::new());
+        parts.tools = registry.clone();
+        parts.clock = clock.clone();
+        let request = request("go");
+        let (scope, sink) = scope(parts, &request, Abort::new());
+        let start = clock.now_ms();
+        crate::run::run(scope, request).await.unwrap();
+        (results(&sink.messages()), clock.now_ms() - start)
+    };
+
+    // Both servers connected.
+    let registry = McpRegistry::new(
+        vec![visible.clone()],
+        FakeConnections::new(
+            vec![
+                server("plugin_demo_api", McpServerState::Connected),
+                server("plugin:demo:api", McpServerState::Connected),
+            ],
+            3_000,
+        ),
+    );
+    registry
+        .hidden
+        .lock()
+        .unwrap()
+        .push("plugin:demo:api".to_owned());
+    registry.hidden_tools.lock().unwrap().push(hidden.clone());
+    assert_eq!(
+        call(registry).await,
+        (vec!["visible user value".to_owned()], 0)
+    );
+
+    // The user's server still connecting, the hidden one already has its tool: the call waits for the session's tool.
+    let registry = McpRegistry::new(
+        Vec::new(),
+        FakeConnections::new(
+            vec![
+                server("plugin_demo_api", McpServerState::Pending),
+                server("plugin:demo:api", McpServerState::Connected),
+            ],
+            3_000,
+        ),
+    );
+    registry
+        .hidden
+        .lock()
+        .unwrap()
+        .push("plugin:demo:api".to_owned());
+    registry.hidden_tools.lock().unwrap().push(hidden);
+    let connecting = registry.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        connecting.connect("plugin_demo_api", vec![visible]);
+    });
+    assert_eq!(
+        call(registry).await,
+        (vec!["visible user value".to_owned()], 500)
+    );
+}

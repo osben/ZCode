@@ -74,7 +74,7 @@ impl Actor {
             if let Some(rules) = self
                 .deps
                 .directory_rules
-                .directory_rules(&moved, &self.messages)
+                .directory_rules(&self.meta.id, &moved, &self.messages)
                 .await
             {
                 note.push_str("\n\n");

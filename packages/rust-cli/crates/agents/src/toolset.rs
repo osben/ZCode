@@ -196,6 +196,20 @@ impl ToolRegistry for FilteredTools {
         self.tools().into_iter().find(|tool| tool.name() == name)
     }
 
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self
+            .inner
+            .find_for(session, name)
+            .filter(|tool| self.rule.allows(tool.name()))
+        {
+            return Some(tool);
+        }
+        if !SEARCH_TOOLS.contains(&name) {
+            return None;
+        }
+        self.tools().into_iter().find(|tool| tool.name() == name)
+    }
+
     fn keeps_order(&self) -> bool {
         self.rule.allow.is_some()
     }

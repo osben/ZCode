@@ -150,7 +150,8 @@ impl Marker {
         next
     }
 
-    fn data(&self) -> Value {
+    /// Node's `worktreePreparationStateSchema` fields: the renderer's shape.
+    fn wire(&self) -> Value {
         let mut data = json!({
             "branchName": self.branch_name,
             "targetPath": self.target_path,
@@ -165,6 +166,12 @@ impl Marker {
         if let Some(failure) = &self.failure_message {
             data["failureMessage"] = json!(failure);
         }
+        data
+    }
+
+    /// The stored record: the wire shape plus the fork's incognito stamp, which never reaches the renderer.
+    fn data(&self) -> Value {
+        let mut data = self.wire();
         if let Some(choice) = &self.incognito {
             data["incognito"] = json!(choice);
         }
@@ -201,7 +208,7 @@ impl Marker {
 
     /// `worktreePreparation` (`worktreePreparationStateSchema`): only while not active.
     pub fn exposed(&self) -> Option<Value> {
-        (self.status != PrepStatus::Active).then(|| self.data())
+        (self.status != PrepStatus::Active).then(|| self.wire())
     }
 }
 

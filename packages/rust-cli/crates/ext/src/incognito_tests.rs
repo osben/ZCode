@@ -39,11 +39,27 @@ fn config(name: &str, scope: McpScope) -> McpServer {
 }
 
 async fn started(profiles: &IncognitoProfiles, scope: &TaskScope) -> Ext {
-    let fake = Arc::new(
-        FakeMcp::default()
-            .with("files", listed("read", "Read files."))
-            .with("kit", listed("build", "Build things.")),
-    );
+    started_with(
+        profiles,
+        scope,
+        vec![
+            ("files", McpScope::Project, listed("read", "Read files.")),
+            ("kit", McpScope::Plugin, listed("build", "Build things.")),
+        ],
+    )
+    .await
+}
+
+async fn started_with(
+    profiles: &IncognitoProfiles,
+    scope: &TaskScope,
+    servers: Vec<(&str, McpScope, Arc<crate::test_support::Handler>)>,
+) -> Ext {
+    let mut fake = FakeMcp::default();
+    for (name, _, handler) in &servers {
+        fake = fake.with(name, handler.clone());
+    }
+    let fake = Arc::new(fake);
     let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(EchoBash::default())]));
     let env = Arc::new(MemoryEnvironment::new(facts()).with_file(
         &format!("{CWD}/.zcode/skills/greet/SKILL.md"),
@@ -64,10 +80,10 @@ async fn started(profiles: &IncognitoProfiles, scope: &TaskScope) -> Ext {
         base,
         ExtConfig {
             mcp: McpSettings {
-                servers: vec![
-                    config("files", McpScope::Project),
-                    config("kit", McpScope::Plugin),
-                ],
+                servers: servers
+                    .iter()
+                    .map(|(name, scope, _)| config(name, *scope))
+                    .collect(),
                 ..McpSettings::default()
             },
             workspace: Some(workspace()),
@@ -164,4 +180,73 @@ async fn a_profile_keeps_only_the_servers_and_listings_it_allows() {
     };
     assert!(skills("locked").await.is_empty());
     assert!(!skills("plugins").await.is_empty());
+}
+
+/// Fork (round 4): with `mcp` kept and `plugins` off, the user's server `plugin_demo_api` and the plugin server
+/// `plugin:demo:api` both expose `mcp__plugin_demo_api__lookup`. The global lookup answers with the plugin server's
+/// tool; the session's lookup answers with the tool its snapshot lists, so the advertised tool stays callable.
+#[tokio::test]
+async fn a_session_lookup_skips_a_hidden_server_with_the_same_tool_name() {
+    let profiles = IncognitoProfiles::default();
+    let session = SessionId::new("mcp-only");
+    profiles.record(
+        &session,
+        Some(IncognitoProfile {
+            mcp: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    let scope = TaskScope::root("test", |_| {});
+    let ext = started_with(
+        &profiles,
+        &scope,
+        vec![
+            (
+                "plugin_demo_api",
+                McpScope::Project,
+                listed("lookup", "User."),
+            ),
+            (
+                "plugin:demo:api",
+                McpScope::Plugin,
+                listed("lookup", "Plugin."),
+            ),
+        ],
+    )
+    .await;
+    let registry = ext.registry();
+    const NAME: &str = "mcp__plugin_demo_api__lookup";
+    let server = |tool: Arc<dyn rust_cli_kernel_api::tool::Tool>| {
+        tool.mcp_info().map(|info| info.server.clone())
+    };
+    let listed: Vec<_> = registry
+        .snapshot(&session)
+        .tools
+        .into_iter()
+        .filter(|tool| tool.name() == NAME)
+        .filter_map(server)
+        .collect();
+    assert_eq!(listed, ["plugin_demo_api"]);
+    assert_eq!(
+        registry.find(NAME).and_then(server).as_deref(),
+        Some("plugin:demo:api")
+    );
+    assert_eq!(
+        registry
+            .find_for(&session, NAME)
+            .and_then(server)
+            .as_deref(),
+        Some("plugin_demo_api")
+    );
+    assert!(!ext.incognito_tools().hides(
+        &session,
+        registry.find_for(&session, NAME).unwrap().as_ref()
+    ));
+    // A normal session keeps the global answer.
+    assert_eq!(
+        registry
+            .find_for(&SessionId::new("normal"), NAME)
+            .and_then(server),
+        registry.find(NAME).and_then(server)
+    );
 }
