@@ -375,6 +375,7 @@ impl SessionStore for MemoryStore {
                 created_at_ms: meta.created_at_ms,
                 last_outcome: None,
                 parent: meta.parent.clone(),
+                incognito: meta.incognito.is_some(),
             })
             .collect())
     }
@@ -437,6 +438,7 @@ impl SessionStore for MemoryStore {
             title: format!("Fork of {title}"),
             trace: parent.trace.clone(),
             created_at_ms: fork.created_at_ms,
+            incognito: parent.incognito,
         };
         let notice = Message::Attachment(AttachmentMessage {
             id: MessageId::new(format!("msg_fork_notice_{}", fork.child)),
@@ -879,6 +881,27 @@ impl StoreQueries for MemoryStore {
             .entry(session.clone())
             .or_insert_with(|| (path.clone(), branch.map(str::to_owned)));
         Ok(())
+    }
+
+    /// Fork: the reserved row's profile, set once (the meta's `incognito` while it is `None`).
+    async fn set_incognito(
+        &self,
+        session: &SessionId,
+        profile: &crate::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        let mut sessions = self.sessions.lock_unpoisoned();
+        let Some((meta, _)) = sessions.get_mut(session) else {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        };
+        if *meta.incognito.get_or_insert(*profile) == *profile {
+            Ok(())
+        } else {
+            Err(StoreError::Storage {
+                message: "the session already has another incognito profile".to_owned(),
+            })
+        }
     }
 }
 

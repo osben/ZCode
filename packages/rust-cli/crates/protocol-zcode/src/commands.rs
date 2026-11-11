@@ -2,6 +2,7 @@
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
@@ -135,10 +136,49 @@ struct CreateSessionPayload {
     expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
-    /// Fork: execution worktree (crate::worktree).
+    /// Fork: the incognito profile (strict; parsed by [`incognito_of`]). An explicit `null` is kept as present, so it
+    /// is refused like Node's `incognitoProfileSchema.optional()` instead of creating a normal session.
+    #[serde(default, deserialize_with = "present")]
+    incognito: Option<Value>,
+    /// Fork: execution worktree (crate::worktree). An incognito profile cannot ride on its preparation.
     worktree_preparation: Option<crate::worktree::Request>,
     expected_attempt_id: Option<String>,
     execution_worktree: Option<crate::worktree::Requested>,
+}
+
+/// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
+/// Fork: the requested incognito profile. An invalid profile refuses the command before any row exists, so it never
+/// runs as a normal session (specs/fork-rust-agent-parity.md, "Incognito sessions").
+fn incognito_of(
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+) -> Result<Option<IncognitoProfile>, Box<Ack>> {
+    let invalid = |message: String| {
+        Box::new(Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            message,
+            0,
+        ))
+    };
+    let Some(value) = &payload.incognito else {
+        return Ok(None);
+    };
+    // Node: the reserved worktree row has no profile, so the profile must ride on the activation instead.
+    if payload.worktree_preparation.is_some() {
+        return Err(invalid(
+            "worktree preparation cannot include an incognito profile; send it on the activation createSession"
+                .to_owned(),
+        ));
+    }
+    IncognitoProfile::from_wire(value)
+        .map(Some)
+        .map_err(invalid)
 }
 
 #[derive(Deserialize)]
@@ -331,8 +371,18 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    let incognito = match incognito_of(envelope, &payload) {
+        Ok(incognito) => incognito,
+        Err(ack) => return *ack,
+    };
     if let Some(preparation) = &payload.submission_preparation {
-        return reserve_submission(server, envelope, &payload, &preparation.submission_id).await;
+        return reserve_submission(
+            server,
+            envelope,
+            (&payload, incognito),
+            &preparation.submission_id,
+        )
+        .await;
     }
     if let Some(request) = &payload.worktree_preparation {
         return prepare_worktree(server, envelope, &payload, request).await;
@@ -341,7 +391,8 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
     ) {
-        return activate_submission(server, envelope, &payload, prepared, expected).await;
+        return activate_submission(server, envelope, (&payload, incognito), prepared, expected)
+            .await;
     }
     if let Some(prepared) = payload.prepared_session_id.as_deref() {
         let config = &payload.config;
@@ -367,6 +418,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             expected_attempt: payload.expected_attempt_id.as_deref(),
             workspace: payload.workspace_id.as_deref(),
             requested: payload.execution_worktree.as_ref(),
+            incognito,
         };
         return crate::worktree::activate(
             server,
@@ -424,6 +476,80 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         .session_id
         .as_deref()
         .map_or_else(inbox::new_session_id, SessionId::new);
+    // Fork: the existence check and the create run under the reservation gate, so a concurrent reservation or create
+    // of the same id cannot slip between them.
+    let gate = match server.reservations.acquire().await {
+        Ok(permit) => permit,
+        Err(reason) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.createSessionFailed",
+                reason.to_owned(),
+                0,
+            );
+        }
+    };
+    let failed = |reason: &str| {
+        Ack::refused(
+            &envelope.command_id,
+            Status::Failed,
+            "fault.command.createSessionFailed",
+            reason.to_owned(),
+            0,
+        )
+    };
+    let existing =
+        match crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await) {
+            Ok(view) => view,
+            // No error text: a storage error can name the storage path.
+            Err(_) => return failed("reading the session failed"),
+        };
+    // Fork: a soft-deleted id is not free (Node refuses it before any write).
+    if existing.is_none() {
+        match crate::preparation::deleted(server, &id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    "sessionId already exists".to_owned(),
+                    0,
+                );
+            }
+            Err(reason) => return failed(reason),
+        }
+    }
+    if let Some(view) = &existing {
+        let marker = match crate::preparation::load(server, &id).await {
+            Ok(marker) => marker,
+            Err(reason) => return failed(reason),
+        };
+        let workspace_matches = payload
+            .workspace_id
+            .as_deref()
+            .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
+        if crate::preparation::recreate_existing(
+            marker.as_ref(),
+            workspace_matches,
+            crate::preparation::has_conversation(view),
+            crate::preparation::ReserveIncognito {
+                stored: view.meta.incognito,
+                requested: incognito,
+            },
+        )
+        .is_err()
+        {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                "sessionId already exists".to_owned(),
+                0,
+            );
+        }
+    }
     if let Some(followup) = config.followup_mode {
         server
             .followups
@@ -437,6 +563,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         selection: chosen,
         mode: permission,
         plan,
+        incognito,
     };
     // Fork: the direct route starts the session in its worktree (SessionStart included); the row keeps the
     // parent workspace, and opening it below picks up the stored worktree facts.
@@ -453,6 +580,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
         }
         None => server.kernel.create_session(request).await,
     };
+    drop(gate);
     let refused = |message: String| {
         Ack::refused(
             &envelope.command_id,
@@ -523,7 +651,7 @@ async fn submit_first(
 async fn reserve_submission(
     server: &Server,
     envelope: &Envelope,
-    payload: &CreateSessionPayload,
+    (payload, incognito): (&CreateSessionPayload, Option<IncognitoProfile>),
     submission: &str,
 ) -> Ack {
     let refused = |code: &str, message: String| {
@@ -565,6 +693,27 @@ async fn reserve_submission(
                 );
             }
         };
+    // Fork: a soft-deleted id is not free (Node refuses it before any write).
+    if existing.is_none() {
+        match crate::preparation::deleted(server, &id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return refused(
+                    "proto.invalidPayload",
+                    format!("session {} cannot be reserved: it was deleted", id.as_str()),
+                );
+            }
+            Err(reason) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.createSessionFailed",
+                    reason.to_owned(),
+                    0,
+                );
+            }
+        }
+    }
     if let Some(view) = &existing {
         let marker = match crate::preparation::load(server, &id).await {
             Ok(marker) => marker,
@@ -582,12 +731,15 @@ async fn reserve_submission(
             .workspace_id
             .as_deref()
             .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
-        let conversation = !view.messages.is_empty() || !view.queue.is_empty() || view.running;
         match crate::preparation::reserve_existing(
             marker.as_ref(),
             submission,
             workspace_matches,
-            conversation,
+            crate::preparation::has_conversation(view),
+            crate::preparation::ReserveIncognito {
+                stored: view.meta.incognito,
+                requested: incognito,
+            },
         ) {
             crate::preparation::Reserve::Repeat => return accepted(&id),
             crate::preparation::Reserve::Adopt => {}
@@ -612,6 +764,7 @@ async fn reserve_submission(
                     .unwrap_or_else(|| server.defaults.selection.clone()),
                 mode: server.defaults.mode,
                 plan: false,
+                incognito,
             })
             .await
     };
@@ -659,7 +812,7 @@ async fn reserve_submission(
 async fn activate_submission(
     server: &Server,
     envelope: &Envelope,
-    payload: &CreateSessionPayload,
+    (payload, incognito): (&CreateSessionPayload, Option<IncognitoProfile>),
     prepared: &str,
     expected: &str,
 ) -> Ack {
@@ -710,6 +863,17 @@ async fn activate_submission(
             );
         }
     };
+    // Fork: the reservation froze the profile on the row; the activation must ask for the same one (absent is not
+    // equal to present), as Node's bridge checks `incognitoProfilesEqual`.
+    if live.sink.incognito() != incognito {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the frozen incognito profile".to_owned(),
+            0,
+        );
+    }
     let admitted = match payload.expected_first_input_command_id.as_deref() {
         Some(first) => server
             .kernel

@@ -16,6 +16,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 
 use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command};
 use rust_cli_kernel_api::store::{ExecutionWorktree, FrontendRecord};
 use rust_cli_protocol_core::sessions::Bridged;
@@ -31,6 +32,9 @@ pub const KIND: &str = "v4/worktree_preparation";
 /// Node's text for a prepared session that cannot be activated or updated.
 pub const UNAVAILABLE: &str = "Prepared worktree session is unavailable";
 pub const MISMATCH: &str = "Prepared worktree session does not match the requested workspace";
+/// Node's text for an activation whose incognito profile differs from the one the first activation froze.
+pub const INCOGNITO_MISMATCH: &str =
+    "Prepared worktree session does not match the requested incognito profile";
 const STALE: &str = "guard.worktreePreparationStale";
 const CANCELLED: &str = "guard.worktreePreparationCancelled";
 /// Node answers a failed handler `failed` with this reason and the error text as the message.
@@ -140,7 +144,10 @@ impl Marker {
         next
     }
 
-    fn data(&self) -> Value {
+    /// Node's `worktreePreparationStateSchema` fields: the renderer's shape and the stored record's data, both as Node
+    /// `persistPreparedWorktreeStatus` writes them. The incognito choice an activation froze is never stored here
+    /// (`Server::prepared_incognito`).
+    fn wire(&self) -> Value {
         let mut data = json!({
             "branchName": self.branch_name,
             "targetPath": self.target_path,
@@ -162,7 +169,7 @@ impl Marker {
         FrontendRecord {
             kind: KIND.to_owned(),
             key: format!("{KIND}:{session}"),
-            data: self.data(),
+            data: self.wire(),
         }
     }
 
@@ -182,7 +189,7 @@ impl Marker {
 
     /// `worktreePreparation` (`worktreePreparationStateSchema`): only while not active.
     pub fn exposed(&self) -> Option<Value> {
-        (self.status != PrepStatus::Active).then(|| self.data())
+        (self.status != PrepStatus::Active).then(|| self.wire())
     }
 }
 
@@ -513,6 +520,8 @@ pub async fn prepare(
             selection,
             mode: server.defaults.mode,
             plan: false,
+            // Fork: the reserved row has no profile, like Node; the profile rides on the activation.
+            incognito: None,
         })
         .await;
     let id = match created {
@@ -622,6 +631,68 @@ async fn enter(
         .map_err(|error| error.to_string())
 }
 
+/// Fork: the incognito choice of an activation. A choice the row (set once at the first activation, Node at the first
+/// send) or the prepared entry's in-memory freeze (`Server::prepared_incognito`, Node `prepared.incognito`) already
+/// holds wins, and a request that differs from it is refused with Node's text; otherwise the request is the choice.
+async fn frozen_incognito(
+    server: &Server,
+    id: &SessionId,
+    requested: Option<IncognitoProfile>,
+) -> Result<Option<IncognitoProfile>, &'static str> {
+    // A read-only view: it never opens the held session.
+    let stored = server
+        .kernel
+        .session_snapshot(id)
+        .await
+        .ok()
+        .and_then(|view| view.meta.incognito);
+    let frozen = stored
+        .map(Some)
+        .or_else(|| server.prepared_incognito.lock_unpoisoned().get(id).copied());
+    match frozen {
+        Some(choice) if choice != requested => Err(INCOGNITO_MISMATCH),
+        Some(choice) => Ok(choice),
+        None => Ok(requested),
+    }
+}
+
+/// Fork: freezes the activation's incognito choice before anything of the session runs: the prepared entry's
+/// in-memory choice (a normal session too; never the stored marker, which stays Node's shape), then for a profile the
+/// row's set-once `fork_incognito` and the kernel's in-memory profile (`Kernel::freeze_incognito`), the actor's meta
+/// (`Command::SetIncognito`) and the projection's flag. Every step is idempotent, so a retry repeats them.
+async fn freeze_incognito(
+    server: &Server,
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    id: &SessionId,
+    choice: Option<IncognitoProfile>,
+) -> Result<(), String> {
+    server
+        .prepared_incognito
+        .lock_unpoisoned()
+        .entry(id.clone())
+        .or_insert(choice);
+    let Some(profile) = choice else {
+        return Ok(());
+    };
+    server
+        .kernel
+        .freeze_incognito(id, profile)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let KernelAck::Rejected { reason } = crate::commands::send(
+        live.handle.as_ref(),
+        &format!("{}:incognito", envelope.command_id),
+        Command::SetIncognito { profile },
+    )
+    .await
+    {
+        return Err(reason);
+    }
+    live.sink.freeze_incognito(profile);
+    Ok(())
+}
+
 /// Typed input reached the session: a committed or queued input that a client sent. SessionStart's own messages and
 /// its `initial_user_message` are no evidence (Node checks the durable admission of the client's input).
 fn input_admitted(view: &rust_cli_kernel_api::session_api::SessionView) -> bool {
@@ -674,6 +745,9 @@ pub struct ActivationRequest<'a> {
     pub expected_attempt: Option<&'a str>,
     pub workspace: Option<&'a str>,
     pub requested: Option<&'a Requested>,
+    /// Fork: the activation's incognito profile (`createSession.incognito`; Node sends it here, never on the
+    /// preparation).
+    pub incognito: Option<IncognitoProfile>,
 }
 
 /// Fork: activation of a prepared worktree (`createSession` with `preparedSessionId`, no `expectedSubmissionId`;
@@ -694,6 +768,7 @@ pub async fn activate(
         expected_attempt,
         workspace,
         requested,
+        incognito,
     } = request;
     let id = SessionId::new(prepared);
     let Ok(_gate) = server.reservations.acquire().await else {
@@ -717,6 +792,13 @@ pub async fn activate(
         requested,
     ) {
         Ok(activation) => activation,
+        Err(reason) => return failed(envelope, reason, 0),
+    };
+    // Fork (Node `createSessionRecord`): the first activation freezes the incognito choice; the row's profile, else
+    // the prepared entry's in-memory choice, is that choice, and only an exact match may reuse the prepared session
+    // (absent is not equal to present), an active one included.
+    let incognito = match frozen_incognito(server, &id, incognito).await {
+        Ok(choice) => choice,
         Err(reason) => return failed(envelope, reason, 0),
     };
     let accepted = |outcome: &str, input: Option<Value>| {
@@ -754,6 +836,12 @@ pub async fn activate(
         .view()
         .await
         .is_ok_and(|view| input_admitted(&view));
+    // Fork: the profile is frozen before the config, the move (which releases SessionStart) and the first input, so
+    // no hook and no request of the session runs without it. A failure leaves the session held and the preparation
+    // retryable, like a refused config.
+    if let Err(message) = freeze_incognito(server, &live, envelope, &id, incognito).await {
+        return failed(envelope, &message, 0);
+    }
     if !admitted && let Err(message) = configure(&live).await {
         return failed(envelope, &message, 0);
     }

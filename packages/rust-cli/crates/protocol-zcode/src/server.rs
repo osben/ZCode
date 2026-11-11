@@ -65,6 +65,12 @@ pub struct Server {
     /// (`worktree::activate`). Process-local like Node's runtime record: the gate lets their commands through and
     /// heals the marker; after a restart the durable marker decides again.
     pub(crate) unreceipted: Mutex<std::collections::HashSet<SessionId>>,
+    /// Fork: the incognito choice a prepared worktree session's first activation froze in this process (Node's
+    /// in-memory `prepared.incognito`): `None` a normal session, `Some(profile)` an incognito one. It covers a warm
+    /// retry of a failed activation; the row's set-once `fork_incognito` is the durable fact, and the stored marker
+    /// never carries the choice (Node `persistPreparedWorktreeStatus`).
+    pub(crate) prepared_incognito:
+        Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
 }
@@ -132,6 +138,7 @@ impl Server {
             uploads: Mutex::new(crate::uploads::Registry::default()),
             reservations: crate::preparation::ReservationGate::default(),
             unreceipted: Mutex::new(std::collections::HashSet::new()),
+            prepared_incognito: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
         }
     }
@@ -353,6 +360,10 @@ impl Server {
                 "genUiContext": false,
                 "sessionWorkspaceRouting": true,
                 "residentRowsRange": true,
+                // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,
+                // specs/fork-rust-agent-parity.md "Incognito sessions").
+                "incognitoSession": true,
+                "incognitoPromptToggles": true,
             })),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({

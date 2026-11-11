@@ -80,6 +80,7 @@ fn a_cold_view_rebuilds_rows_with_tool_results() {
                 title: "Old chat".into(),
                 trace: TraceId::new("s1"),
                 created_at_ms: 0,
+                incognito: None,
             },
             vec![
                 user("u1", "list files"),

@@ -104,7 +104,7 @@ async fn the_builtin_comes_after_file_skills() {
     let env = Arc::new(env);
     let catalog = SkillCatalog::new(env.clone(), env);
     let lines: Vec<String> = catalog
-        .listing(&workspace(), &[], "")
+        .listing(&workspace(), None, &[], "")
         .await
         .into_iter()
         .map(|entry| entry.line)

@@ -14,11 +14,8 @@ describe("forkAgentRuntimeHelloOverrides", () => {
     expect(forkAgentRuntimeHelloOverrides({})).toEqual({});
   });
 
-  it("stops claiming capabilities zcode-rs lacks", () => {
-    expect(forkAgentRuntimeHelloOverrides(rust)).toEqual({
-      incognitoSession: false,
-      incognitoPromptToggles: false,
-    });
+  it("keeps the incognito capabilities now that zcode-rs implements them", () => {
+    expect(forkAgentRuntimeHelloOverrides(rust)).toEqual({});
   });
 });
 

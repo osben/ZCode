@@ -12,7 +12,7 @@ use rust_cli_kernel_api::model::QuerySource;
 use rust_cli_kernel_api::orchestration::{
     ContextRequest, HookEvent, HookEventName, HookOutcome, HookRunner, OrchestrationError,
 };
-use rust_cli_kernel_api::testing::{FakeTool, ListTools};
+use rust_cli_kernel_api::testing::{FakeTool, ListTools, RegistryOverride};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -125,4 +125,58 @@ async fn subagent_compaction_attaches_no_listings() {
     let (sources, listings) = compact(Some(AgentId::new("agent_1"))).await;
     assert_eq!(sources, ["file", "hook_additional_context"]);
     assert!(listings.0.lock().unwrap().is_empty());
+}
+
+/// Fork: the session's tool snapshot (an incognito session's) hides a tool the global list still has.
+struct SnapshotHides(Arc<FakeTool>, Arc<FakeTool>);
+
+impl RegistryOverride for SnapshotHides {
+    fn tools(&self) -> Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> {
+        vec![self.0.clone(), self.1.clone()]
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn rust_cli_kernel_api::tool::Tool>> {
+        self.tools().into_iter().find(|tool| tool.name() == name)
+    }
+
+    fn snapshot(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> rust_cli_kernel_api::orchestration::ToolSnapshot {
+        assert_eq!(session.as_str(), "s");
+        rust_cli_kernel_api::orchestration::ToolSnapshot {
+            tools: vec![self.0.clone()],
+            mcp: None,
+        }
+    }
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): the post-compact listings are built from the
+/// session's snapshot, so a tool its incognito profile removes is not listed again after a compaction.
+#[tokio::test]
+async fn the_post_compact_listings_use_the_sessions_tool_snapshot() {
+    let runner = ScriptedRunner::new(vec![Reply::Text("<summary>S</summary>".to_owned())]);
+    let read = Arc::new(FakeTool::new("Read", true, "1\talpha"));
+    let hidden = Arc::new(FakeTool::new("mcp__private__lookup", true, "x"));
+    let mut ports = ports_with_files(
+        runner,
+        Arc::new(SnapshotHides(read, hidden)),
+        FakeFileStates::with(&["/Users/dev/project/a.txt"]),
+    );
+    let listings = Arc::new(Listings::default());
+    ports.context = listings.clone();
+    let mut history = vec![human("u1", "go")];
+    history.extend(tool_round(1, "Read", "/Users/dev/project/a.txt"));
+    history.push(human("u2", "next"));
+    Engine { ports: &ports }
+        .run(
+            &request(history, CompactTrigger::Reactive),
+            true,
+            &CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let calls = listings.0.lock().unwrap();
+    assert_eq!(calls[0].0.tool_names, ["Read"]);
 }

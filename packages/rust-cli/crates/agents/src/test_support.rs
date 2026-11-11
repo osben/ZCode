@@ -681,6 +681,7 @@ fn built_full(
             rust_cli_kernel_api::ids::Generation::new(GENERATION),
             ids,
         ),
+        incognito: Default::default(),
     };
     let agents = Agents::new(
         ports,
@@ -766,6 +767,7 @@ impl Harness {
             title: String::new(),
             trace: rust_cli_kernel_api::ids::TraceId::new(session.as_str()),
             created_at_ms: 0,
+            incognito: None,
         };
         self.store.create(meta.clone()).await.unwrap();
         // Fork: a top-level session the kernel runs a turn in was opened or created first (its open hook).

@@ -80,6 +80,10 @@ fn cold_row(workspace: &str, session: &WorkspaceSession) -> Value {
         if let Some(parent) = &summary.parent {
             fields.insert("parentSessionId".to_owned(), json!(parent.as_str()));
         }
+        // Fork: Node's stored summary marks an incognito session (`incognito: true`), never the profile.
+        if summary.incognito {
+            fields.insert("incognito".to_owned(), json!(true));
+        }
     }
     row
 }

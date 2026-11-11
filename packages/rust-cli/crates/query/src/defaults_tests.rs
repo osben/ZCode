@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rust_cli_kernel_api::ids::ToolUseId;
+use rust_cli_kernel_api::ids::{SessionId, ToolUseId};
 use rust_cli_kernel_api::testing::ListTools;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext,
@@ -69,11 +69,11 @@ fn only_tools_that_rewrite_change_the_input() {
         }),
     ]);
     let mut rewritten = block("Rewrites");
-    apply(&tools, &mut rewritten);
+    apply(&tools, &SessionId::new("s"), &mut rewritten);
     assert_eq!(input(&rewritten), &json!({"rewritten": true}));
     for name in ["Keeps", "Missing"] {
         let mut kept = block(name);
-        apply(&tools, &mut kept);
+        apply(&tools, &SessionId::new("s"), &mut kept);
         assert_eq!(input(&kept), &json!({"n": 1}), "{name}");
     }
 }
