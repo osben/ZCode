@@ -169,6 +169,8 @@ Fork unit tests go in `scripts/fork-test-files.json`:
 - the Host resolver returning Rust with the Node storage entry, and the Node command unchanged by default;
 - the schema default;
 - the hello overrides (empty for Node) and the command gate (worktree and ACP refused in Rust mode only).
-- prepare-storage seeding the official plugins in Rust mode only, without failing preparation when the seed throws (`apps/zcode-cli/packages/bootstrap/tests/fork-rust-agent-plugin-seed.test.ts`).
+- prepare-storage seeding the official plugins in Rust mode only, without failing preparation when the seed throws (`apps/zcode-cli/packages/bootstrap/tests/fork-rust-agent-plugin-seed.test.ts`, which drives the database step and the seed directly because the entrypoint's module graph needs every CLI package built).
+
+Acceptance scenario 12 is the desktop E2E case `conversation-session-fork-official-plugins-fresh-home`, run on both runtimes. It checks the plugin store and the first request's skill listing (`visualize:visualize`, `skill-creator:skill-creator`), and it covers the call in the entrypoint.
 
 Desktop E2E stays on Node. `wdio.conf.ts` already removes `ZCODE_AGENT_SERVER_COMMAND`, and it should also remove `ZCODE_FORK_AGENT_RUNTIME` unless an explicit opt-in is set.

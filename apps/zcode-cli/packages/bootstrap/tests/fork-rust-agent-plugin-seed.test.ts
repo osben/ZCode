@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runZCodeProtocolAgent } from "../src/zcode-protocol-entrypoint.js";
+import type { Logger } from "@zcode/contracts";
+import { seedOfficialPluginsForForkRustAgent } from "../src/app/fork-rust-agent-plugin-seed.js";
+import { prepareProtocolStartupStorage } from "../src/zcode-protocol/storage-startup.js";
 
 const faults = vi.hoisted(() => ({ seedThrows: false }));
 
@@ -26,7 +28,12 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-/** Runs the storage-preparation branch the way the Host Worker drives it, and returns its stdout frames. */
+/**
+ * Runs the `prepareStorageOnly` branch of `runZCodeProtocolAgent` (database, then the fork seed)
+ * the way the Host Worker drives it, and returns its stdout frames. The entrypoint itself is not
+ * imported: its module graph needs every CLI package built, which the unit-test CI job does not do;
+ * the desktop E2E case `conversation-session-fork-official-plugins-fresh-home` covers the wiring.
+ */
 async function prepareStorage(runtime: string) {
   const dir = await mkdtemp(join(tmpdir(), "zcode-fork-plugin-seed-"));
   dirs.push(dir);
@@ -42,20 +49,17 @@ async function prepareStorage(runtime: string) {
       input.write(`${JSON.stringify({ method: "startup/storagePathReady", reuse: false })}\n`);
     if (frame.method === "startup/storagePrepared") input.end();
   });
-  await runZCodeProtocolAgent({
-    prepareStorageOnly: true,
-    cwd: dir,
-    env: {
-      ...process.env,
-      ZCODE_FORK_AGENT_RUNTIME: runtime,
-      ZCODE_SESSION_DB_PATH: join(storageDir, "cli", "db", "db.sqlite"),
-      ZCODE_STORAGE_DIR: storageDir,
-    },
+  const env = { ...process.env, ZCODE_FORK_AGENT_RUNTIME: runtime, ZCODE_STORAGE_DIR: storageDir };
+  const warnings: string[] = [];
+  const logger = { warn: (message: string) => warnings.push(message) } as unknown as Logger;
+  await prepareProtocolStartupStorage({
+    dbPath: join(storageDir, "cli", "db", "db.sqlite"),
     input,
     output,
   });
+  seedOfficialPluginsForForkRustAgent({ cwd: dir, env, logger });
   output.end();
-  return { frames, pluginRoot: join(storageDir, "cli", "plugins") };
+  return { frames, pluginRoot: join(storageDir, "cli", "plugins"), warnings };
 }
 
 describe("fork: prepare-storage seeds the official plugins for the Rust agent", () => {
@@ -84,10 +88,11 @@ describe("fork: prepare-storage seeds the official plugins for the Rust agent", 
     expect(existsSync(pluginRoot)).toBe(false);
   }, 60_000);
 
-  it("still prepares the storage when seeding throws", async () => {
+  it("logs a seed failure instead of failing storage preparation", async () => {
     faults.seedThrows = true;
-    const { frames, pluginRoot } = await prepareStorage("rust");
+    const { frames, pluginRoot, warnings } = await prepareStorage("rust");
     expect(frames.at(-1)?.method).toBe("startup/storagePrepared");
     expect(existsSync(join(pluginRoot, "cache"))).toBe(false);
+    expect(warnings).toEqual(["Official plugin seed for the Rust agent failed"]);
   }, 60_000);
 });
