@@ -569,6 +569,7 @@ fn titled(app: &mut App) {
             revision: 0,
             event: KernelEvent::TitleChanged {
                 title: "Fix lint".into(),
+                source: Default::default(),
             },
         },
         T0,

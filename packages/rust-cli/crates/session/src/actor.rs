@@ -183,6 +183,8 @@ pub(crate) struct Actor {
     pub(crate) deps: SessionDeps,
     pub(crate) log: Arc<EventLog>,
     pub(crate) meta: SessionMeta,
+    /// Fork: where `meta.title` came from; changed only with it ([`Actor::set_title`]).
+    pub(crate) title_source: rust_cli_kernel_api::title::Source,
     pub(crate) messages: Vec<Message>,
     /// 冷读取时只供显示的、最后一个压缩点之前的消息（工作线 F102，compact.md §5.1）：打开后不变，只进 `view()`。
     /// 模型侧的一切（主循环、压缩、token、标题、rewind、fork、goal 与任务的恢复）只看 `messages`。另一个只读的读者：
@@ -322,6 +324,9 @@ impl Actor {
         let mut actor = Self {
             deps,
             log,
+            title_source: state
+                .title_source
+                .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&state.meta.title)),
             meta: state.meta,
             messages: state.messages,
             earlier: state.earlier,
@@ -701,6 +706,10 @@ impl Actor {
             Command::Fork { at } => self.fork(id, at).await,
             Command::ForkFromInput { input } => self.fork_from_input(input).await,
             Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
+            Command::AdoptTitle { title } => {
+                self.adopt_title(title);
+                accepted()
+            }
             Command::Rename { title } => self.rename(id, title, None).await,
             Command::RenameRecorded { title, record } => self.rename(id, title, Some(record)).await,
             Command::StopTask { task } => self.stop_task(task).await,
@@ -712,6 +721,7 @@ impl Actor {
             }
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
             Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
+            Command::SetIncognito { profile } => self.set_incognito(profile),
             Command::ChangeDirectoryRecorded { root, record } => {
                 self.change_directory(id, root, Some(record)).await
             }
@@ -806,6 +816,7 @@ impl Actor {
                 .map(|(prompt, summary)| (prompt.clone(), summary.facts()))
                 .collect(),
             goal: self.goal_state(),
+            title_source: Some(self.title_source),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

@@ -127,6 +127,8 @@ pub struct SkillCatalog {
     cache: Mutex<Cache>,
     /// 单次的 `-p`（`singleShotPrintSession`）：内置 `/loop` 的 Monitor 超时随它（tools-more.md §17.1）。
     print: AtomicBool,
+    /// Fork: the sessions' incognito profiles; a session without plugins discovers no plugin skills.
+    incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
 }
 
 impl SkillCatalog {
@@ -137,7 +139,29 @@ impl SkillCatalog {
             plugins: Mutex::default(),
             cache: Mutex::default(),
             print: AtomicBool::new(false),
+            incognito: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Fork: set once by [`crate::Ext::new`].
+    pub(crate) fn set_incognito(
+        &self,
+        profiles: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    ) {
+        let _ = self.incognito.set(profiles);
+    }
+
+    /// Fork: whether `session` keeps the plugin skills (no session: every skill).
+    fn keeps_plugins(&self, session: Option<&rust_cli_kernel_api::ids::SessionId>) -> bool {
+        let excluded = session
+            .zip(self.incognito.get())
+            .is_some_and(|(session, profiles)| {
+                profiles.excludes(
+                    session,
+                    rust_cli_kernel_api::incognito::IncognitoKey::Plugins,
+                )
+            });
+        !excluded
     }
 
     /// 内核按形态设置：`-p` 是单次的打印会话。
@@ -174,6 +198,15 @@ impl SkillCatalog {
 
     /// 这一步发现的全部 skill，按优先级排好、同名只留第一个（ext.md §2.1）。
     pub async fn skills(&self, workspace: &WorkspaceRef) -> Vec<Arc<Skill>> {
+        self.skills_in(workspace, None).await
+    }
+
+    /// Fork: [`Self::skills`] as `session` sees them (incognito without plugins: no plugin skills).
+    pub async fn skills_in(
+        &self,
+        workspace: &WorkspaceRef,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+    ) -> Vec<Arc<Skill>> {
         let facts = match self.info.facts(workspace).await {
             Ok(facts) => facts,
             Err(error) => {
@@ -181,11 +214,22 @@ impl SkillCatalog {
                 return Vec::new();
             }
         };
-        self.skills_with(workspace, &facts).await
+        self.skills_with(workspace, &facts, self.keeps_plugins(session))
+            .await
     }
 
-    async fn skills_with(&self, workspace: &WorkspaceRef, facts: &EnvFacts) -> Vec<Arc<Skill>> {
-        let mut found = load::discover(self, workspace, facts, &self.plugin_roots()).await;
+    async fn skills_with(
+        &self,
+        workspace: &WorkspaceRef,
+        facts: &EnvFacts,
+        plugins: bool,
+    ) -> Vec<Arc<Skill>> {
+        let roots = if plugins {
+            self.plugin_roots()
+        } else {
+            Vec::new()
+        };
+        let mut found = load::discover(self, workspace, facts, &roots).await;
         // 内置 skill 排在文件与插件 skill 之后，同名时前面的生效。
         found.extend(builtin::skills());
         let mut seen = HashSet::new();
@@ -219,7 +263,17 @@ impl SkillCatalog {
 
     /// 按名字找（Skill 工具用）。
     pub async fn find(&self, workspace: &WorkspaceRef, name: &str) -> Option<Arc<Skill>> {
-        self.skills(workspace)
+        self.find_in(workspace, None, name).await
+    }
+
+    /// Fork: [`Self::find`] as `session` sees the skills.
+    pub async fn find_in(
+        &self,
+        workspace: &WorkspaceRef,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+        name: &str,
+    ) -> Option<Arc<Skill>> {
+        self.skills_in(workspace, session)
             .await
             .into_iter()
             .find(|skill| skill.name == name)
@@ -230,13 +284,16 @@ impl SkillCatalog {
     pub async fn listing(
         &self,
         workspace: &WorkspaceRef,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
         history: &[Message],
         model: &str,
     ) -> Vec<ListingEntry> {
         let Ok(facts) = self.info.facts(workspace).await else {
             return Vec::new();
         };
-        let skills = self.skills_with(workspace, &facts).await;
+        let skills = self
+            .skills_with(workspace, &facts, self.keeps_plugins(session))
+            .await;
         let touched = paths::touched(history, facts.cwd.as_str());
         let visible: Vec<Arc<Skill>> = skills
             .iter()

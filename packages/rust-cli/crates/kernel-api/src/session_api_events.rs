@@ -118,6 +118,10 @@ pub enum KernelEvent {
     },
     TitleChanged {
         title: String,
+        /// Fork: where the title came from (Node `SessionTitleUpdated.source`); an event without it reads as
+        /// `generated`.
+        #[serde(default)]
+        source: crate::title::Source,
     },
     ModelChanged {
         selection: ModelSelection,

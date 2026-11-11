@@ -291,6 +291,11 @@ pub trait RegistryOverride: Send + Sync {
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>>;
 
+    /// Fork: a double without per-session tools answers like `find`.
+    fn find_for(&self, _session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.find(name)
+    }
+
     fn withheld(&self, _name: &str) -> Option<Arc<dyn Tool>> {
         None
     }
@@ -322,6 +327,10 @@ impl<T: RegistryOverride> ToolRegistry for T {
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
         RegistryOverride::find(self, name)
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        RegistryOverride::find_for(self, session, name)
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {

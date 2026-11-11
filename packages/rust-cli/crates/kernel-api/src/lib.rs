@@ -50,6 +50,7 @@
 //! | [`context_usage`] | 上下文用量（`/context`）的查询、结果与数字写法 |
 //! | [`history`] | 活动历史（最近一次压缩边界之后，含保留段） |
 //! | [`hooks`] | hook 事件、合并结果与 http hook 的出口端口 |
+//! | [`incognito`] | Fork: incognito session profiles and their per-session owner |
 //! | [`session_api`] | 前端使用的会话 API 与内核事件 |
 //! | [`session_follow`] | 跟着一个会话的事件走：订阅流落后结束时按最后的 seq 重新订阅（三个前端共用） |
 //! | [`clock`] | 时间与 ID 的注入端口 |
@@ -84,6 +85,7 @@ pub mod history;
 pub mod hooks;
 pub mod ids;
 pub mod image;
+pub mod incognito;
 pub mod interaction;
 pub mod listing;
 pub mod machine;

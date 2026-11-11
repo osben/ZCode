@@ -1618,6 +1618,7 @@ dependencies = [
  "libc",
  "mimalloc",
  "rcgen",
+ "rusqlite",
  "rust-cli-base",
  "rust-cli-context",
  "rust-cli-env-local",

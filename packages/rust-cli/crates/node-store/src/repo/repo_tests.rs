@@ -32,6 +32,7 @@ fn create(input: &Value) -> sessions::Create {
         version: text(&input["version"]).unwrap(),
         permission: Some(input["permission"].clone()).filter(|p| !p.is_null()),
         time_created: None,
+        incognito: None,
     }
 }
 

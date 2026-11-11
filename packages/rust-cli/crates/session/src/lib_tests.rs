@@ -33,6 +33,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -293,6 +294,7 @@ async fn asking_session_with(
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            title_source: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),

@@ -214,6 +214,9 @@ pub struct SessionState {
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
     /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
     pub title_pending: bool,
+    /// Fork: where the title came from (cold load: `LoadedSession.title_source`; a new session: `None`, derived from
+    /// the title).
+    pub title_source: Option<rust_cli_kernel_api::title::Source>,
     /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
@@ -246,6 +249,7 @@ impl SessionState {
             commands: Default::default(),
             child_live: None,
             title_pending: true,
+            title_source: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -281,6 +285,7 @@ impl SessionState {
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
             title_pending: loaded.title_pending,
+            title_source: loaded.title_source,
             goal_target: loaded.goal_target,
             goal_verifications: loaded.goal_verifications,
             message_models: loaded.message_models,

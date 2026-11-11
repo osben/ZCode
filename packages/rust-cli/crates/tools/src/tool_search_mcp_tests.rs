@@ -92,16 +92,13 @@ impl McpConnections for Connections {
 
 #[test]
 fn the_note_lists_pending_servers_and_caps_at_thirty() {
-    let none = Connections(watch::channel(view(&[("a", McpServerState::Connected)])).0);
+    let none = view(&[("a", McpServerState::Connected)]);
     assert_eq!(pending_note(Some(&none)), "");
     assert_eq!(pending_note(None), "");
-    let two = Connections(
-        watch::channel(view(&[
-            ("b", McpServerState::Pending),
-            ("a", McpServerState::Pending),
-        ]))
-        .0,
-    );
+    let two = view(&[
+        ("b", McpServerState::Pending),
+        ("a", McpServerState::Pending),
+    ]);
     assert_eq!(
         pending_note(Some(&two)),
         ". Some MCP servers are still connecting: a, b. Their tools will become available shortly \u{2014} try searching again. If you're looking for a capability rather than a specific tool name, try keywords that might match the server's purpose (e.g., 'slack message', 'calendar event'). Once you find a matching tool, call it directly \u{2014} do not stop after searching."
@@ -111,7 +108,7 @@ fn the_note_lists_pending_servers_and_caps_at_thirty() {
         .iter()
         .map(|name| (name.as_str(), McpServerState::Pending))
         .collect();
-    let many = Connections(watch::channel(view(&many)).0);
+    let many = view(&many);
     assert!(
         pending_note(Some(&many))
             .contains("s28, s29, \u{2026}and 2 more. Their tools will become available shortly")
@@ -154,6 +151,14 @@ struct Registry {
     search: Arc<dyn Tool>,
     late: Mutex<Vec<Arc<dyn Tool>>>,
     mcp: Arc<Connections>,
+    /// Fork: servers the session's snapshot leaves out (an incognito profile), with their tools.
+    hidden: Vec<&'static str>,
+}
+
+impl Registry {
+    fn shown(&self, server: &str) -> bool {
+        !self.hidden.contains(&server)
+    }
 }
 
 impl rust_cli_kernel_api::testing::RegistryOverride for Registry {
@@ -169,6 +174,17 @@ impl rust_cli_kernel_api::testing::RegistryOverride for Registry {
             .find(|tool| tool.name() == name)
     }
 
+    fn snapshot(&self, _session: &SessionId) -> rust_cli_kernel_api::orchestration::ToolSnapshot {
+        let mut view = self.mcp.view();
+        view.servers.retain(|server| self.shown(&server.name));
+        let mut tools = ToolRegistry::tools(self);
+        tools.retain(|tool| tool.mcp_info().is_none_or(|info| self.shown(&info.server)));
+        rust_cli_kernel_api::orchestration::ToolSnapshot {
+            tools,
+            mcp: Some(view),
+        }
+    }
+
     fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
         Some(self.mcp.clone())
     }
@@ -180,6 +196,10 @@ struct Rig {
 }
 
 fn rig(pending: &[&str]) -> Rig {
+    rig_hiding(pending, Vec::new())
+}
+
+fn rig_hiding(pending: &[&str], hidden: Vec<&'static str>) -> Rig {
     let catalog = Arc::new(ToolCatalog::default());
     let states: Vec<(&str, McpServerState)> = pending
         .iter()
@@ -189,6 +209,7 @@ fn rig(pending: &[&str]) -> Rig {
         search: Arc::new(ToolSearchTool::new(catalog.clone())),
         late: Mutex::default(),
         mcp: Arc::new(Connections(watch::channel(view(&states)).0)),
+        hidden,
     });
     let shared: Arc<dyn ToolRegistry> = registry.clone();
     catalog.bind(&shared);
@@ -277,4 +298,24 @@ async fn a_query_naming_a_server_that_is_not_connecting_does_not_wait() {
 
 fn rig2() -> Rig {
     rig(&["fast", "slow"])
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): a server the session's snapshot leaves out is never
+/// named in the note, never waited for, and its tools are not found once it connects.
+#[tokio::test(start_paused = true)]
+async fn servers_outside_the_sessions_snapshot_are_neither_named_nor_awaited() {
+    let rig = rig_hiding(&["slow", "secret"], vec!["secret"]);
+    connect_after(&rig, "secret", 100);
+    let (text, waited) = search(&rig, "lookup").await;
+    assert_eq!(waited, 5_000);
+    assert!(
+        text.contains("Some MCP servers are still connecting: slow."),
+        "{text}"
+    );
+    assert!(!text.contains("secret"), "{text}");
+    // Only a hidden server is connecting: nothing to wait for, nothing to name.
+    let rig = rig_hiding(&["secret"], vec!["secret"]);
+    let (text, waited) = search(&rig, "mcp__secret__lookup").await;
+    assert_eq!(waited, 0);
+    assert_eq!(text, "No matching deferred tools found");
 }

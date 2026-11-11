@@ -28,6 +28,8 @@ pub struct Summary<'a> {
     pub session: &'a str,
     pub workspace: &'a str,
     pub title: &'a str,
+    /// Fork: where the title came from (stored, or the live projection's); shown as Node normalizes it.
+    pub title_source: rust_cli_kernel_api::title::Source,
     pub phase: Phase,
     pub created_at: u64,
     pub activity_at: u64,
@@ -41,7 +43,7 @@ impl Summary<'_> {
             "sessionId": self.session,
             "workspaceId": self.workspace,
             "title": self.title,
-            "titleSource": if self.title.is_empty() { "default" } else { "generated" },
+            "titleSource": self.title_source.shown(),
             "phase": self.phase.name(),
             "sessionEnded": self.phase.ended(),
             "hasBackgroundWork": false,
@@ -272,6 +274,15 @@ impl Topics {
             let outgoing = topics.dropped(&topic, &session);
             Self::write(&topics.context, outgoing).await;
         }));
+    }
+
+    /// The live rows of a workspace's sessions index (tests only).
+    #[cfg(test)]
+    pub(crate) fn live_rows(&self, workspace: &str) -> Vec<String> {
+        self.table()
+            .get(&format!("{INDEX_PREFIX}{workspace}"))
+            .map(|entry| entry.rows.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// The lock-held half of [`Topics::remove`]: drop the row, then record the removal delta.

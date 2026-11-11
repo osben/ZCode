@@ -163,7 +163,13 @@ impl UsageAnalyzer {
         // 与主循环同一个能力来源（model.md §11，修复线 F23）：WebSearch 的去留、对话中间的 system。工具的取舍是主循环的
         // 同一个函数（kernel-api `tool_search::visible_tools`，工作线 F131）。
         let capabilities = self.model.capabilities(&query.selection).await;
-        let tools = visible_tools(self.tools.tools(), capabilities.as_ref());
+        // Fork: a session's tools are its snapshot (the main loop's list), so an incognito session does not count the
+        // tools its profile removes. Without a session there is no profile.
+        let registered = match &query.session {
+            Some(session) => self.tools.snapshot(session).tools,
+            None => self.tools.tools(),
+        };
+        let tools = visible_tools(registered, capabilities.as_ref());
         let model = query.selection.model.clone();
         let tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_owned()).collect();
         // 这一步的 ToolSearch 形式：与主循环同一个判定（工作线 F89：`ENABLE_TOOL_SEARCH` 与自动的门槛，不看模型；F84 时
@@ -202,7 +208,7 @@ impl UsageAnalyzer {
         let counter = Counter { per_token };
         let custom: Vec<_> = self
             .agents
-            .definitions(&query.workspace)
+            .definitions_in(&query.workspace, query.session.as_ref())
             .await
             .into_iter()
             .filter(|agent| agent.source != AgentSource::BuiltIn)

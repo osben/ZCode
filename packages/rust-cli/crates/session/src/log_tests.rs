@@ -6,6 +6,7 @@ use super::*;
 fn title(value: &str) -> KernelEvent {
     KernelEvent::TitleChanged {
         title: value.to_owned(),
+        source: Default::default(),
     }
 }
 

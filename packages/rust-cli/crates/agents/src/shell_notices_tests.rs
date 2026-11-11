@@ -294,6 +294,7 @@ fn meta(
         title: String::new(),
         trace: rust_cli_kernel_api::ids::TraceId::new(id),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 

@@ -11,6 +11,7 @@ mod append;
 mod artifacts;
 mod attached_images;
 mod compaction;
+mod drafts;
 mod facts;
 mod fork;
 mod fork_clone;
@@ -45,6 +46,7 @@ mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_node_records::{branch, hydrate, keys, mode, records, tool_content};
 
 use std::fmt::Display;
@@ -86,6 +88,8 @@ pub struct NodeStore {
     /// 会话行的 `version`（Node 写 CLI 版本）：入口给的本工程版本（docs/specs/rust-cli/version.md §4），
     /// node-store 不读自己的包版本。没设时为空串（测试与工具）。
     version: String,
+    /// Fork: deferred drafts ([`drafts`]); `None` writes every session at create.
+    drafts: Option<Arc<Mutex<drafts::Drafts>>>,
 }
 
 impl NodeStore {
@@ -96,7 +100,33 @@ impl NodeStore {
             connection: Arc::new(Mutex::new(None)),
             database_dir: AtomicBool::new(false),
             version: String::new(),
+            drafts: None,
         }
+    }
+
+    /// Fork: keep a new top-level interactive session in memory until its first real write, like
+    /// the Node agent's deferred prewarm (specs/fork-agent-runtime-selection.md "Draft prewarm in
+    /// Rust mode"). Only the app-server turns it on.
+    pub fn with_deferred_drafts(mut self) -> Self {
+        self.drafts = Some(Arc::default());
+        self
+    }
+
+    /// [`Self::with_db`] with the drafts locked inside the connection lock; `None` without
+    /// deferral.
+    async fn with_drafts<T, F>(&self, work: F) -> Result<T, StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Connection, &NodeIds, Option<&mut drafts::Drafts>) -> Result<T, StoreError>
+            + Send
+            + 'static,
+    {
+        let drafts = self.drafts.clone();
+        self.with_db(move |conn, ids| match &drafts {
+            Some(drafts) => work(conn, ids, Some(&mut drafts.lock_unpoisoned())),
+            None => work(conn, ids, None),
+        })
+        .await
     }
 
     /// 新建会话行写入的版本（入口 crate 的 `VERSION`）。
@@ -221,6 +251,7 @@ fn create_input(meta: &SessionMeta, version: &str) -> Result<repo::sessions::Cre
         // Node 写 `config.mode ?? "build"`；内核随后提交的 ModeChanged 会更新它。
         permission: Some(json!({"mode": "build"})),
         time_created: Some(i64::try_from(meta.created_at_ms).unwrap_or(i64::MAX)),
+        incognito: meta.incognito.as_ref().map(IncognitoProfile::to_stored),
     })
 }
 
@@ -228,7 +259,17 @@ fn create_input(meta: &SessionMeta, version: &str) -> Result<repo::sessions::Cre
 impl SessionStore for NodeStore {
     async fn create(&self, meta: SessionMeta) -> Result<(), StoreError> {
         let input = create_input(&meta, &self.version)?;
-        self.with_db(move |conn, ids| {
+        let deferred = meta.kind == SessionKind::Interactive && meta.parent.is_none();
+        self.with_drafts(move |conn, ids, drafts| {
+            // Under the drafts lock, a draft never shadows a stored row: a create of a stored id
+            // upserts as before, and whether a repeated create is refused is the protocol's rule.
+            if let Some(drafts) = drafts
+                && deferred
+                && repo::sessions::get(conn, &input.id).storage()?.is_none()
+            {
+                drafts.hold(input);
+                return Ok(());
+            }
             let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
             repo::sessions::create(conn, &input, now).storage()
         })
@@ -241,8 +282,15 @@ impl SessionStore for NodeStore {
         batch: FactBatch,
     ) -> Result<CommitReceipt, StoreError> {
         let session = session.clone();
-        self.with_db(move |conn, ids| facts::commit(conn, &session, &batch, ids))
-            .await
+        self.with_drafts(move |conn, ids, drafts| {
+            if let Some(drafts) = drafts
+                && let Some(receipt) = drafts::commit(conn, drafts, &session, &batch, ids)?
+            {
+                return Ok(receipt);
+            }
+            facts::commit(conn, &session, &batch, ids)
+        })
+        .await
     }
 
     async fn load(&self, session: &SessionId) -> Result<LoadedSession, StoreError> {
@@ -279,15 +327,28 @@ impl SessionStore for NodeStore {
     /// Node `setCustomSessionTitle`（node-store.md §5.1）。
     async fn rename(&self, session: &SessionId, title: &str) -> Result<(), StoreError> {
         let (session, title) = (session.clone(), title.to_owned());
-        self.with_db(move |conn, ids| query::rename(conn, &session, &title, ids.now_ms()))
-            .await
+        self.with_drafts(move |conn, ids, drafts| {
+            if let Some(drafts) = drafts {
+                drafts::persist(conn, drafts, &session, ids)?;
+            }
+            query::rename(conn, &session, &title, ids.now_ms())
+        })
+        .await
     }
 
-    /// Node `softDeleteSession`（node-store.md §5.1）。
+    /// Node `softDeleteSession`（node-store.md §5.1）。Fork: a draft is dropped, like Node's
+    /// disposal of a deferred runtime (no row is written).
     async fn delete(&self, session: &SessionId) -> Result<(), StoreError> {
         let session = session.clone();
-        self.with_db(move |conn, ids| query::delete(conn, &session, ids.now_ms()))
-            .await
+        self.with_drafts(move |conn, ids, drafts| {
+            if let Some(drafts) = drafts
+                && (drafts.discard(session.as_str()) || drafts.was_dropped(session.as_str()))
+            {
+                return Ok(());
+            }
+            query::delete(conn, &session, ids.now_ms())
+        })
+        .await
     }
 
     /// Node `/fork` 的新会话，一个事务写完（docs/specs/rust-cli/node-store.md §4.8）。
@@ -395,9 +456,16 @@ impl StoreQueries for NodeStore {
         session: &SessionId,
         record: &rust_cli_kernel_api::store::FrontendRecord,
     ) -> Result<(), StoreError> {
-        let (session, record) = (session.as_str().to_owned(), record.clone());
-        self.with_db(move |conn, ids| frontend_records::put(conn, &session, &record, ids.now_ms()))
-            .await
+        let (session, record) = (session.clone(), record.clone());
+        self.with_drafts(move |conn, ids, drafts| {
+            if let Some(drafts) = drafts
+                && drafts::put_record(conn, drafts, &session, &record, ids)?
+            {
+                return Ok(());
+            }
+            frontend_records::put(conn, session.as_str(), &record, ids.now_ms())
+        })
+        .await
     }
 
     async fn records(
@@ -406,8 +474,13 @@ impl StoreQueries for NodeStore {
         kind: &str,
     ) -> Result<Vec<rust_cli_kernel_api::store::FrontendRecord>, StoreError> {
         let (session, kind) = (session.as_str().to_owned(), kind.to_owned());
-        self.with_db(move |conn, _| frontend_records::list(conn, &session, &kind))
-            .await
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(held) = drafts.and_then(|drafts| drafts.records(&session, &kind)) {
+                return Ok(held);
+            }
+            frontend_records::list(conn, &session, &kind)
+        })
+        .await
     }
 
     async fn settled_input(
@@ -456,8 +529,15 @@ impl StoreQueries for NodeStore {
         &self,
         root_ids: Vec<String>,
     ) -> Result<ErasedSessionTree, StoreError> {
-        self.with_db(move |conn, ids| session_tree::delete_tree(conn, &root_ids, ids))
-            .await
+        self.with_drafts(move |conn, ids, drafts| {
+            if let Some(drafts) = drafts {
+                for id in &root_ids {
+                    drafts.discard(id);
+                }
+            }
+            session_tree::delete_tree(conn, &root_ids, ids)
+        })
+        .await
     }
 
     /// Fork: the App Usage read path behind `v4/usage/stats` — rollup first, raw tables as the
@@ -500,14 +580,55 @@ impl StoreQueries for NodeStore {
             .await
     }
 
+    async fn is_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        Ok(self
+            .drafts
+            .as_ref()
+            .is_some_and(|drafts| drafts.lock_unpoisoned().is_draft(session.as_str())))
+    }
+
+    async fn discard_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        Ok(self
+            .drafts
+            .as_ref()
+            .is_some_and(|drafts| drafts.lock_unpoisoned().discard(session.as_str())))
+    }
+
+    async fn is_rowless_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        Ok(self.drafts.as_ref().is_some_and(|drafts| {
+            let drafts = drafts.lock_unpoisoned();
+            drafts.is_draft(session.as_str()) || drafts.was_dropped(session.as_str())
+        }))
+    }
+
+    async fn persist_for_input(
+        &self,
+        session: &SessionId,
+        input: &str,
+    ) -> Result<rust_cli_kernel_api::store::Admission, StoreError> {
+        let session = session.clone();
+        let input = input.to_owned();
+        self.with_drafts(move |conn, ids, drafts| match drafts {
+            Some(drafts) => drafts::persist_for_input(conn, drafts, &session, ids, &input),
+            None => Ok(Default::default()),
+        })
+        .await
+    }
+
     /// Fork: the workspace key the row is listed under (Node `workspaceID ?? directory`).
     async fn session_workspace_key(
         &self,
         session: &SessionId,
     ) -> Result<Option<String>, StoreError> {
         let session = session.as_str().to_owned();
-        self.with_db(move |conn, _| fork_execution_worktree::workspace_key(conn, &session))
-            .await
+        // Fork: a draft answers what its row will hold, so the projection opened before the row lists it rightly.
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(key) = drafts.and_then(|drafts| drafts.workspace_key(&session)) {
+                return Ok(Some(key));
+            }
+            fork_execution_worktree::workspace_key(conn, &session)
+        })
+        .await
     }
 
     /// Fork: the session's execution worktree (`execution_directory`, `execution_branch`).
@@ -516,8 +637,13 @@ impl StoreQueries for NodeStore {
         session: &SessionId,
     ) -> Result<Option<rust_cli_kernel_api::store::ExecutionWorktree>, StoreError> {
         let session = session.as_str().to_owned();
-        self.with_db(move |conn, _| fork_execution_worktree::read(conn, &session))
-            .await
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(held) = drafts.and_then(|drafts| drafts.execution(&session)) {
+                return Ok(held);
+            }
+            fork_execution_worktree::read(conn, &session)
+        })
+        .await
     }
 
     /// Fork: stores the execution worktree once (Node `coalesce`).
@@ -529,8 +655,52 @@ impl StoreQueries for NodeStore {
     ) -> Result<(), StoreError> {
         let (session, path) = (session.as_str().to_owned(), path.as_str().to_owned());
         let branch = branch.map(str::to_owned);
-        self.with_db(move |conn, _| {
+        // Fork: a draft has no row yet; it keeps the worktree and writes it with the row (Node holds
+        // `executionWorktree` in the runtime config until `persistSession`).
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(drafts) = drafts
+                && drafts::set_execution(
+                    conn,
+                    drafts,
+                    &SessionId::new(&session),
+                    &path,
+                    branch.as_deref(),
+                )?
+            {
+                return Ok(());
+            }
             fork_execution_worktree::write(conn, &session, &path, branch.as_deref())
+        })
+        .await
+    }
+
+    /// Fork: freezes the incognito profile of a reserved row once (`fork_incognito` while NULL).
+    async fn set_incognito(
+        &self,
+        session: &SessionId,
+        profile: &rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        let (id, profile) = (session.clone(), *profile);
+        self.with_db(move |conn, _| {
+            if !repo::sessions::has_incognito_column(conn).map_err(storage)? {
+                return Err(StoreError::Unsupported {
+                    what: "the fork_incognito column".to_owned(),
+                });
+            }
+            let stored = repo::sessions::freeze_incognito(conn, id.as_str(), &profile.to_stored())
+                .map_err(storage)?
+                .ok_or_else(|| StoreError::NotFound {
+                    session: id.clone(),
+                })?;
+            let stored = stored
+                .map(|text| rust_cli_kernel_api::incognito::IncognitoProfile::from_stored(&text));
+            if stored == Some(profile) {
+                Ok(())
+            } else {
+                Err(StoreError::Storage {
+                    message: "the session already has another incognito profile".to_owned(),
+                })
+            }
         })
         .await
     }
@@ -662,3 +832,7 @@ mod resume_sentinel_tests;
 #[cfg(test)]
 #[path = "frontend_records_tests.rs"]
 mod frontend_records_tests;
+
+#[cfg(test)]
+#[path = "incognito_tests.rs"]
+mod incognito_tests;

@@ -35,6 +35,7 @@ fn titled(app: &mut App) {
             seq: 1,
             event: KernelEvent::TitleChanged {
                 title: "Fix the footer spacing".into(),
+                source: Default::default(),
             },
             revision: 0,
         },
