@@ -7,6 +7,7 @@ use super::*;
 
 fn human(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -29,6 +30,7 @@ fn assistant(id: &str) -> Message {
 
 fn result(id: &str, assistant: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t"),

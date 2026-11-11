@@ -131,6 +131,7 @@ async fn a_tool_usage_row_that_cannot_be_written_keeps_the_result() {
     // 表不在：用量行与批末的保留期删除都写不进去。
     break_schema(&t, "drop table tool_usage");
     let result = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("toolu_1"),

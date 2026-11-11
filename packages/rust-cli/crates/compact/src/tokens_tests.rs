@@ -5,6 +5,7 @@ use super::*;
 
 fn user(text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),

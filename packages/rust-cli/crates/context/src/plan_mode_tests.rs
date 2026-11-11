@@ -21,6 +21,7 @@ const PLAN: &str = "/Users/dev/w/.zcode/plans/plan-sess_1.md";
 
 pub(super) fn human() -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
             text: "go".to_owned(),

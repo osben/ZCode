@@ -531,6 +531,7 @@ async fn submit_first(
     let execution = input_execution(first, view.as_ref());
     let content = content.unwrap_or_default();
     let submit = Command::SubmitWith {
+        intent: None,
         kind: QueuedKind::Text,
         text,
         content,
@@ -1259,6 +1260,7 @@ async fn send_text(
         typed
     };
     let submit = Command::SubmitWith {
+        intent: None,
         kind,
         text,
         content,

@@ -12,6 +12,7 @@ use super::{Feed, Followup, Projection, assistant, row_of, user, view};
 
 fn notification(id: &str, task: &str, summary: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: format!(
@@ -232,6 +233,7 @@ fn one_notification_message_with_two_blocks_is_one_batch_header() {
         ),
     };
     let batch = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_n"),
         content: vec![block("b1", "First"), block("b2", "Second")],
         origin: UserOrigin::Meta {
@@ -289,6 +291,7 @@ fn agent_block(task: &str, call: &str, status: &str, summary: &str) -> ContentBl
 
 fn notifications(id: &str, blocks: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: blocks,
         origin: UserOrigin::Meta {
@@ -396,6 +399,7 @@ fn a_single_failed_notification_settles_its_card_live_and_cold() {
             user("msg_u1", "start it"),
             agent_calls(&["call_1"]),
             Message::User(UserMessage {
+                intent: None,
                 id: MessageId::new("msg_r1"),
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: ToolUseId::new("call_1"),

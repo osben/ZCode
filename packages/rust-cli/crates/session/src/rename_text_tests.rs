@@ -18,6 +18,7 @@ fn text(value: &str) -> ContentBlock {
 
 fn user(id: &str, origin: UserOrigin, blocks: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: blocks,
         origin,

@@ -60,6 +60,7 @@ impl Actor {
 
 fn user(id: rust_cli_kernel_api::ids::MessageId, text: String, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id,
         content: vec![ContentBlock::Text { text }],
         origin,

@@ -441,6 +441,7 @@ impl Actor {
             };
             self.inbox.push_input(
                 QueuedInput {
+                    intent: None,
                     command: id,
                     text,
                     delivery,
@@ -631,6 +632,7 @@ impl Actor {
                     // 插话（Steer）进 next 通道，由主循环在下一个工具边界领取（steering.rs），其余等回合结束。
                     self.inbox.push_input(
                         QueuedInput {
+                            intent: None,
                             command: id,
                             text,
                             delivery,
@@ -667,6 +669,7 @@ impl Actor {
                 Err(reason) => rejected(reason),
             },
             Command::SubmitWith {
+                intent: _,
                 kind,
                 text,
                 content,

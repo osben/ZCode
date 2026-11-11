@@ -364,6 +364,7 @@ pub(super) async fn send_queued_now(
         handle,
         &part("send"),
         Command::SubmitWith {
+            intent: None,
             kind: item.kind,
             text: item.text,
             content: Vec::new(),

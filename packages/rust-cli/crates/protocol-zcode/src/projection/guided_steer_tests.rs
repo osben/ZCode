@@ -22,6 +22,7 @@ fn history(steer: AttachmentMessage) -> Vec<Message> {
             }],
         ),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("toolu_exit"),

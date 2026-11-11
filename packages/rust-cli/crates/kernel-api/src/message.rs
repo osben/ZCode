@@ -269,6 +269,10 @@ pub struct UserMessage {
     pub id: MessageId,
     pub content: Vec<ContentBlock>,
     pub origin: UserOrigin,
+    /// Fork: the App input this message was admitted as (Node's input intent, [`crate::input_intent`]); `None` for
+    /// TUI and CLI inputs and every message that is not a typed input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
 }
 
 /// 模型停止的原因（Anthropic `stop_reason`）。

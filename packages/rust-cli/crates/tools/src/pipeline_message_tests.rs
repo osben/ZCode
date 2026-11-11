@@ -24,6 +24,7 @@ struct Loader;
 
 fn loaded() -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_body"),
         content: vec![ContentBlock::Text {
             text: "skill body".to_owned(),

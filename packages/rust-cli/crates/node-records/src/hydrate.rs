@@ -127,6 +127,7 @@ fn user(record: &WithParts) -> Option<Message> {
         return None;
     }
     Some(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(record.id()),
         content,
         origin: if summary {

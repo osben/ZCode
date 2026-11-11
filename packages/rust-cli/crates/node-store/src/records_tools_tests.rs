@@ -85,6 +85,7 @@ fn result(
         })
         .sum();
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(call),

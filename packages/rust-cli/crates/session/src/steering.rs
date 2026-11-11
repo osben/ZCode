@@ -275,6 +275,7 @@ impl ActorSink {
                         self.title(title).await;
                     }
                     absorbed.push(Absorbed::Prompt(Steered {
+                        intent: None,
                         text,
                         after: outcome.messages,
                         from: rust_cli_kernel_api::hooks::SteerSender::User,

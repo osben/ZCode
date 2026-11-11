@@ -58,6 +58,9 @@ pub struct QueuedInput {
     /// `None` keeps the session's state (TUI inputs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<InputExecution>,
+    /// Fork: the App input's intent ([`crate::input_intent`]); `text` stays the typed text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
 }
 
 impl QueuedInput {
@@ -69,6 +72,7 @@ impl QueuedInput {
             delivery,
             kind: QueuedKind::Text,
             execution: None,
+            intent: None,
         }
     }
 }

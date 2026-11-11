@@ -291,6 +291,8 @@ pub struct Steered {
     /// Fork: the absorbed queued command, stored on its `queued_command` attachment so the projection shows the steer
     /// as a guided user row with that command (Node's drained guide row). None for a coordinator steer.
     pub command: Option<String>,
+    /// Fork: the steered App input's intent; `text` is the typed text.
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
 }
 
 /// The sender of a mid-turn steer.
@@ -306,6 +308,7 @@ pub enum SteerSender {
 impl Steered {
     pub fn plain(text: String) -> Self {
         Self {
+            intent: None,
             text,
             after: Vec::new(),
             from: SteerSender::User,
@@ -316,6 +319,7 @@ impl Steered {
     /// A SendMessage from the parent agent, absorbed by the running subagent.
     pub fn coordinator(text: String) -> Self {
         Self {
+            intent: None,
             text,
             after: Vec::new(),
             from: SteerSender::Coordinator,

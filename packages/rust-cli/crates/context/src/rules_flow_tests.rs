@@ -76,6 +76,7 @@ fn request() -> ContextRequest {
 
 fn human() -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("prompt"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -215,6 +216,7 @@ async fn reading_a_file_in_a_subdirectory_brings_its_rules_once() {
         usage: None,
     }));
     history.push(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t1"),
@@ -263,6 +265,7 @@ async fn a_shell_cd_announces_the_new_working_directory() {
         },
     ));
     history.push(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: rust_cli_kernel_api::ids::ToolUseId::new("t1"),

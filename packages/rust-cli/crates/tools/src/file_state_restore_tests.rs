@@ -22,6 +22,7 @@ fn written(path: &str) -> Vec<Message> {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),
@@ -89,6 +90,7 @@ async fn restored_keys_follow_the_tool_path_rule() {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),
@@ -131,6 +133,7 @@ async fn a_restored_read_is_not_checked_for_changes_on_disk() {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),

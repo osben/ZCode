@@ -160,6 +160,7 @@ async fn short_inputs_and_later_turns_do_not_generate() {
     let mut setup = Setup::new(main);
     setup.titles = titles(title_model.clone());
     setup.messages = vec![Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_old"),
         content: vec![ContentBlock::Text {
             text: "earlier".to_owned(),
@@ -581,6 +582,7 @@ async fn node_desktop_titles_retry_a_reopened_session_only_with_an_automatic_tit
         setup.titles = node_titles(title_model.clone());
         setup.title_pending = pending;
         setup.messages = vec![Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_old"),
             content: vec![ContentBlock::Text {
                 text: "earlier".to_owned(),

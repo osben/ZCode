@@ -102,6 +102,7 @@ mod send_now {
     fn queued() -> KernelEvent {
         KernelEvent::QueueChanged {
             items: vec![QueuedInput {
+                intent: None,
                 command: CommandId::new("c2"),
                 text: "also check the date".into(),
                 delivery: Delivery::Steer,

@@ -56,6 +56,7 @@ async fn instructions(env: MemoryEnvironment) -> Option<String> {
         ),
     );
     let history = [Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),

@@ -27,6 +27,7 @@ fn attachment(id: &str, source: &str, body: &str, data: Value) -> Fact {
 fn user_with(id: &str, content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            intent: None,
             id: MessageId::new(id),
             content,
             origin,

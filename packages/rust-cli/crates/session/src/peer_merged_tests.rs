@@ -154,6 +154,7 @@ fn appended(message: Message) -> Fact {
 
 fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin,

@@ -174,6 +174,9 @@ pub enum Command {
         execution: Option<InputExecution>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         behind_held: bool,
+        /// Fork: the App input's intent; `text` is the typed text and the quotes join it after slash expansion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent: Option<Box<crate::input_intent::InputIntent>>,
     },
     /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
     /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are

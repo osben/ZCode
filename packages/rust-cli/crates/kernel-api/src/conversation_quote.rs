@@ -16,7 +16,7 @@ pub const MAX_TOTAL_UTF16: usize = 16_000;
 
 const OPEN: &str = "<conversation_quote>\n";
 const CLOSE: &str = "\n</conversation_quote>";
-const SEPARATOR: &str = "\n\n";
+pub const SEPARATOR: &str = "\n\n";
 
 /// One `conversationQuoteSchema` item. The field order is the schema's, so the serialized array equals Node's
 /// `JSON.stringify` of the parsed quotes (absent keys left out, unknown keys stripped as zod does).

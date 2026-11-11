@@ -37,6 +37,7 @@ impl Actor {
             .collect::<Vec<_>>()
             .join("\n");
         let user = Message::User(UserMessage {
+            intent: None,
             id: prompt.clone(),
             content,
             origin: UserOrigin::Human,
@@ -117,6 +118,7 @@ impl Actor {
             let mut hook_messages = outcome.messages.clone();
             for extra in more {
                 let message = Message::User(UserMessage {
+                    intent: None,
                     id: ids.message(),
                     content: vec![ContentBlock::Text { text: extra.text }],
                     origin: UserOrigin::Human,

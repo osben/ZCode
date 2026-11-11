@@ -16,6 +16,7 @@ use crate::test_support::{CWD, facts, workspace};
 
 fn user(text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -35,6 +36,7 @@ fn body(text: &str) -> Message {
 
 fn launched(name: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("r"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t"),

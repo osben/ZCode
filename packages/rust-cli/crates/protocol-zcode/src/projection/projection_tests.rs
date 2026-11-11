@@ -58,6 +58,7 @@ fn view(messages: Vec<Message>) -> SessionView {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -524,6 +525,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c1"),
             text: "hi".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -570,6 +572,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
 
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
             ContentBlock::Text { text: "see".into() },
@@ -643,6 +646,7 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
         }
     };
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
             ContentBlock::Text { text: "see".into() },
@@ -1092,6 +1096,7 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -1180,6 +1185,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
     use rust_cli_kernel_api::message::CompactTrigger;
     let queued = || KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -1247,6 +1253,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
     use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
     let mut feed = Feed::new();
     let item = |id: &str, text: &str, kind, execution| QueuedInput {
+        intent: None,
         command: CommandId::new(id),
         text: text.into(),
         delivery: Delivery::Queue,
@@ -1539,6 +1546,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
     assert!(row.get("output").is_none(), "{row}");
 
     let result = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: tool,
@@ -1570,6 +1578,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
 /// A background task notification: a meta user message, no typed input (Node `task-notification` origin).
 fn notification(id: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: "<task-notification>done</task-notification>".into(),
@@ -1735,6 +1744,7 @@ fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
     let mut feed = Feed::new();
     let deltas = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c1"),
             text: quoted,
             delivery: Delivery::Queue,

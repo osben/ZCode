@@ -59,6 +59,7 @@ fn usage(n: usize) -> Option<Usage> {
 
 fn user(n: usize) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: id("u", n),
         content: vec![ContentBlock::Text {
             text: format!("question {n}"),
@@ -88,6 +89,7 @@ fn call(n: usize) -> Message {
 
 fn result(n: usize) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: id("r", n),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(format!("toolu_{n:05}")),
@@ -143,6 +145,7 @@ fn compaction(k: usize, preserved: Option<(MessageId, MessageId)>) -> Vec<Messag
             discovered_tools: Vec::new(),
         })),
         Message::User(UserMessage {
+            intent: None,
             id: summary,
             content: vec![ContentBlock::Text {
                 text: format!(

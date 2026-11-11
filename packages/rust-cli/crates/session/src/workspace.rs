@@ -143,6 +143,7 @@ impl Actor {
             .map(|record| crate::local_record::record_messages(self.deps.ids.as_ref(), &record))
             .unwrap_or_default();
         messages.push(Message::User(UserMessage {
+            intent: None,
             id: self.deps.ids.message(),
             content: vec![ContentBlock::Text { text: note }],
             origin: UserOrigin::Meta {

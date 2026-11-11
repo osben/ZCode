@@ -370,6 +370,7 @@ impl ToolBatch {
 
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
         Message::User(UserMessage {
+            intent: None,
             id: self.scope.parts.ids.message(),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: id.clone(),

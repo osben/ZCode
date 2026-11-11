@@ -85,6 +85,7 @@ pub mod history;
 pub mod hooks;
 pub mod ids;
 pub mod image;
+pub mod input_intent;
 pub mod interaction;
 pub mod listing;
 pub mod machine;

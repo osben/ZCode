@@ -33,6 +33,7 @@ pub(crate) fn record_messages(ids: &dyn Ids, record: &LocalCommandRecord) -> Vec
         .into_iter()
         .map(|(source, text)| {
             Message::User(UserMessage {
+                intent: None,
                 id: ids.message(),
                 content: vec![ContentBlock::Text { text }],
                 origin: UserOrigin::Meta {

@@ -114,6 +114,7 @@ pub(crate) fn settle(
         let message = id();
         added.push(message.clone());
         out.push(Message::User(UserMessage {
+            intent: None,
             id: message,
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: call,

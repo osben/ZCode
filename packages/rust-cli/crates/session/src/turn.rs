@@ -152,6 +152,7 @@ impl Actor {
             .into_iter()
             .chain(blocks.into_iter().map(|(content, origin)| {
                 Message::User(UserMessage {
+                    intent: None,
                     id: self.deps.ids.message(),
                     content,
                     origin,
