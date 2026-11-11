@@ -1,10 +1,10 @@
 //! Fork: incognito sessions in the shared row (specs/fork-rust-agent-parity.md, "Incognito sessions"):
 //! `fork_incognito` is written once in Node's JSON shape, read back with Node's fail-closed rule, copied by a fork,
 //! and an incognito create on a database without the column fails instead of writing a normal row.
+use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::{EnvironmentId, MessageId, SessionId};
 use rust_cli_kernel_api::incognito::IncognitoProfile;
-use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::store::{SessionFilter, SessionFork, SessionStore};
 use serde_json::json;
@@ -31,7 +31,10 @@ async fn with_column(t: &TestStore) {
 }
 
 fn stored(t: &TestStore, id: &str) -> serde_json::Value {
-    t.rows(&format!("select fork_incognito from session where id = '{id}'"))[0][0].clone()
+    t.rows(&format!(
+        "select fork_incognito from session where id = '{id}'"
+    ))[0][0]
+        .clone()
 }
 
 fn filter() -> SessionFilter {
@@ -66,7 +69,13 @@ async fn an_incognito_create_writes_nodes_shape_once_and_reads_back() {
     let normal = t.store.load(&SessionId::new("sess_0")).await.unwrap();
     assert_eq!(normal.meta.incognito, None);
     let listed = t.store.list(filter()).await.unwrap();
-    let flag = |id: &str| listed.iter().find(|row| row.id.as_str() == id).unwrap().incognito;
+    let flag = |id: &str| {
+        listed
+            .iter()
+            .find(|row| row.id.as_str() == id)
+            .unwrap()
+            .incognito
+    };
     assert!(flag("sess_1"));
     assert!(!flag("sess_0"));
 }
@@ -130,5 +139,8 @@ async fn without_the_column_normal_sessions_work_and_an_incognito_create_fails()
     let mut incognito = meta("sess_1", "/w", "");
     incognito.incognito = Some(mcp_only());
     assert!(t.store.create(incognito).await.is_err());
-    assert!(t.rows("select id from session where id = 'sess_1'").is_empty());
+    assert!(
+        t.rows("select id from session where id = 'sess_1'")
+            .is_empty()
+    );
 }

@@ -43,8 +43,8 @@ mod usage_v4;
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。
-use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_node_records::{branch, hydrate, keys, mode, records, tool_content};
 
 use std::fmt::Display;

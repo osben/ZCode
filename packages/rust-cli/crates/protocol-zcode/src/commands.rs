@@ -2,6 +2,7 @@
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
@@ -116,6 +117,40 @@ struct CreateSessionPayload {
     expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
+    /// Fork: the incognito profile (strict; parsed by [`incognito_of`]).
+    incognito: Option<Value>,
+    /// Fork: only its presence matters here (an incognito profile cannot ride on it).
+    worktree_preparation: Option<Value>,
+}
+
+/// Fork: the requested incognito profile. An invalid profile refuses the command before any row exists, so it never
+/// runs as a normal session (specs/fork-rust-agent-parity.md, "Incognito sessions").
+fn incognito_of(
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+) -> Result<Option<IncognitoProfile>, Box<Ack>> {
+    let invalid = |message: String| {
+        Box::new(Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            message,
+            0,
+        ))
+    };
+    let Some(value) = &payload.incognito else {
+        return Ok(None);
+    };
+    // Node: the reserved worktree row has no profile, so the profile must ride on the activation instead.
+    if payload.worktree_preparation.is_some() {
+        return Err(invalid(
+            "worktree preparation cannot include an incognito profile; send it on the activation createSession"
+                .to_owned(),
+        ));
+    }
+    IncognitoProfile::from_wire(value)
+        .map(Some)
+        .map_err(invalid)
 }
 
 #[derive(Deserialize)]
@@ -305,14 +340,25 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    let incognito = match incognito_of(envelope, &payload) {
+        Ok(incognito) => incognito,
+        Err(ack) => return *ack,
+    };
     if let Some(preparation) = &payload.submission_preparation {
-        return reserve_submission(server, envelope, &payload, &preparation.submission_id).await;
+        return reserve_submission(
+            server,
+            envelope,
+            (&payload, incognito),
+            &preparation.submission_id,
+        )
+        .await;
     }
     if let (Some(prepared), Some(expected)) = (
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
     ) {
-        return activate_submission(server, envelope, &payload, prepared, expected).await;
+        return activate_submission(server, envelope, (&payload, incognito), prepared, expected)
+            .await;
     }
     let config = &payload.config;
     let first = payload.first_input.unwrap_or_default();
@@ -353,7 +399,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             selection: chosen,
             mode: permission,
             plan,
-            incognito: None,
+            incognito,
         })
         .await;
     let refused = |message: String| {
@@ -406,7 +452,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
 async fn reserve_submission(
     server: &Server,
     envelope: &Envelope,
-    payload: &CreateSessionPayload,
+    (payload, incognito): (&CreateSessionPayload, Option<IncognitoProfile>),
     submission: &str,
 ) -> Ack {
     let refused = |code: &str, message: String| {
@@ -471,6 +517,10 @@ async fn reserve_submission(
             submission,
             workspace_matches,
             conversation,
+            crate::preparation::ReserveIncognito {
+                stored: view.meta.incognito,
+                requested: incognito,
+            },
         ) {
             crate::preparation::Reserve::Repeat => return accepted(&id),
             crate::preparation::Reserve::Adopt => {}
@@ -495,7 +545,7 @@ async fn reserve_submission(
                     .unwrap_or_else(|| server.defaults.selection.clone()),
                 mode: server.defaults.mode,
                 plan: false,
-                incognito: None,
+                incognito,
             })
             .await
     };
@@ -543,7 +593,7 @@ async fn reserve_submission(
 async fn activate_submission(
     server: &Server,
     envelope: &Envelope,
-    payload: &CreateSessionPayload,
+    (payload, incognito): (&CreateSessionPayload, Option<IncognitoProfile>),
     prepared: &str,
     expected: &str,
 ) -> Ack {
@@ -572,6 +622,17 @@ async fn activate_submission(
             );
         }
     };
+    // Fork: the reservation froze the profile on the row; the activation must ask for the same one (absent is not
+    // equal to present), as Node's bridge checks `incognitoProfilesEqual`.
+    if live.sink.incognito() != incognito {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the frozen incognito profile".to_owned(),
+            0,
+        );
+    }
     let admitted = match payload.expected_first_input_command_id.as_deref() {
         Some(first) => server
             .kernel

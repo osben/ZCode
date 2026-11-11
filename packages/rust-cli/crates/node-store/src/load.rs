@@ -1,9 +1,9 @@
 //! 冷读取：会话行、活动分支上的消息、模型选择与模式；会话列表
 //! （docs/specs/rust-cli/node-store.md §5，docs/specs/rust-m11-node-storage.md §6）。
-use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rusqlite::Connection;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, MessageId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::model::{ModelConnection, ModelSelection};
 use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::store::{

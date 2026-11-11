@@ -9,6 +9,7 @@
 //! preparing, the conversation snapshot and the sessions-index row carry `submissionPreparation`.
 
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::store::FrontendRecord;
 use serde_json::{Value, json};
 
@@ -149,19 +150,39 @@ pub(crate) enum Reserve {
     Refuse(&'static str),
 }
 
+/// The incognito profiles of a reservation: the one stored on the existing row and the requested one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ReserveIncognito {
+    pub(crate) stored: Option<IncognitoProfile>,
+    pub(crate) requested: Option<IncognitoProfile>,
+}
+
 pub(crate) fn reserve_existing(
     marker: Option<&Marker>,
     submission: &str,
     workspace_matches: bool,
     conversation: bool,
+    incognito: ReserveIncognito,
 ) -> Reserve {
     if !workspace_matches {
         return Reserve::Refuse("it belongs to another workspace");
     }
     match marker {
-        Some(marker) if marker.submission_id == submission => Reserve::Repeat,
+        // Fork: a repeat must carry the profile the row was reserved with (Node `incognitoProfilesEqual`).
+        Some(marker) if marker.submission_id == submission => {
+            if incognito.stored == incognito.requested {
+                Reserve::Repeat
+            } else {
+                Reserve::Refuse("another incognito profile reserved it")
+            }
+        }
         Some(_) => Reserve::Refuse("another submission reserved it"),
         None if conversation => Reserve::Refuse("it already has a conversation"),
+        // Fork: a prewarm is a normal session; it is never adopted for, or as, an incognito one (Node refuses
+        // "an incompatible prewarm").
+        None if incognito.stored.is_some() || incognito.requested.is_some() => {
+            Reserve::Refuse("an incognito reservation cannot reuse a prewarm")
+        }
         None => Reserve::Adopt,
     }
 }
@@ -241,26 +262,62 @@ mod tests {
     #[test]
     fn adopts_only_an_untouched_prewarm_in_the_same_workspace() {
         let marker = Marker::preparing("sub-1", 1);
-        assert_eq!(reserve_existing(None, "sub-1", true, false), Reserve::Adopt);
         assert_eq!(
-            reserve_existing(Some(&marker), "sub-1", true, false),
+            reserve_existing(None, "sub-1", true, false, normal()),
+            Reserve::Adopt
+        );
+        assert_eq!(
+            reserve_existing(Some(&marker), "sub-1", true, false, normal()),
             Reserve::Repeat
         );
         assert!(matches!(
-            reserve_existing(Some(&marker), "sub-2", true, false),
+            reserve_existing(Some(&marker), "sub-2", true, false, normal()),
             Reserve::Refuse(_)
         ));
         assert!(matches!(
-            reserve_existing(None, "sub-1", true, true),
+            reserve_existing(None, "sub-1", true, true, normal()),
             Reserve::Refuse(_)
         ));
         assert!(matches!(
-            reserve_existing(None, "sub-1", false, false),
+            reserve_existing(None, "sub-1", false, false, normal()),
             Reserve::Refuse(_)
         ));
         assert!(matches!(
-            reserve_existing(Some(&marker), "sub-1", false, false),
+            reserve_existing(Some(&marker), "sub-1", false, false, normal()),
             Reserve::Refuse(_)
         ));
+    }
+
+    fn normal() -> ReserveIncognito {
+        ReserveIncognito::default()
+    }
+
+    #[test]
+    fn an_incognito_reservation_repeats_only_with_the_same_profile_and_never_adopts() {
+        let marker = Marker::preparing("sub-1", 1);
+        let lockdown = Some(IncognitoProfile::LOCKDOWN);
+        let other = Some(IncognitoProfile {
+            mcp: true,
+            ..IncognitoProfile::LOCKDOWN
+        });
+        let same = ReserveIncognito {
+            stored: lockdown,
+            requested: lockdown,
+        };
+        assert_eq!(
+            reserve_existing(Some(&marker), "sub-1", true, false, same),
+            Reserve::Repeat
+        );
+        for (stored, requested) in [(lockdown, other), (lockdown, None), (None, lockdown)] {
+            let incognito = ReserveIncognito { stored, requested };
+            assert!(matches!(
+                reserve_existing(Some(&marker), "sub-1", true, false, incognito),
+                Reserve::Refuse(_)
+            ));
+            assert!(matches!(
+                reserve_existing(None, "sub-1", true, false, incognito),
+                Reserve::Refuse(_)
+            ));
+        }
     }
 }

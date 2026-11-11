@@ -25,8 +25,19 @@ fn a_stored_value_this_build_cannot_parse_reads_as_lockdown() {
     let missing = NODE_STORED.replace(r#","automationTools":false"#, "");
     let unknown = NODE_STORED.replace('}', r#","extra":true}"#);
     let versioned = NODE_STORED.replace('}', r#","version":1}"#);
-    for text in ["{", "null", "[]", missing.as_str(), unknown.as_str(), versioned.as_str()] {
-        assert_eq!(IncognitoProfile::from_stored(text), IncognitoProfile::LOCKDOWN, "{text}");
+    for text in [
+        "{",
+        "null",
+        "[]",
+        missing.as_str(),
+        unknown.as_str(),
+        versioned.as_str(),
+    ] {
+        assert_eq!(
+            IncognitoProfile::from_stored(text),
+            IncognitoProfile::LOCKDOWN,
+            "{text}"
+        );
     }
 }
 

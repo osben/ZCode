@@ -113,6 +113,8 @@ pub struct Live {
     child_watch: std::sync::OnceLock<Box<ChildWatch>>,
     /// Fork: the summary goes to the sessions index ([`listed_in_sessions_index`]).
     indexed: bool,
+    /// Fork: the session's incognito profile, frozen at creation (the row's `fork_incognito`).
+    incognito: Option<rust_cli_kernel_api::incognito::IncognitoProfile>,
 }
 
 impl Live {
@@ -154,7 +156,13 @@ impl Live {
             promotions: crate::reservations::Reservations::default(),
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
+            incognito: view.meta.incognito,
         }
+    }
+
+    /// Fork: the session's incognito profile (None for a normal session).
+    pub(crate) fn incognito(&self) -> Option<rust_cli_kernel_api::incognito::IncognitoProfile> {
+        self.incognito
     }
 
     /// Fork: see [`ChildWatch`]; set once when the server opens the session.
@@ -583,6 +591,10 @@ impl Live {
             permissions: state.projection.pending_permissions(),
         }
         .to_value();
+        // Fork: the sidebar marks an incognito session; only the flag is projected (Node `incognito: true`).
+        if self.incognito.is_some() {
+            row["incognito"] = json!(true);
+        }
         if let Some(preparation) = &state.preparation {
             row["submissionPreparation"] = preparation.clone();
             row["phase"] = json!("draft");

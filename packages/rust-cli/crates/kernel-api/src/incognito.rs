@@ -125,12 +125,18 @@ impl IncognitoProfiles {
         let Some(profile) = profile else {
             return;
         };
-        let mut map = self.0.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut map = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         map.insert(session.clone(), profile);
     }
 
     pub fn get(&self, session: &SessionId) -> Option<IncognitoProfile> {
-        let map = self.0.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let map = self
+            .0
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         map.get(session).copied()
     }
 

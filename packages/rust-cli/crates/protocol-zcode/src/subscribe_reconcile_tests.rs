@@ -149,4 +149,12 @@ fn a_cold_fork_row_carries_its_parent() {
     assert_eq!(fork["parentSessionId"], json!("sess_1"));
     let root = super::cold_row("/work/a", &session(None));
     assert!(root.get("parentSessionId").is_none());
+    // Fork: an incognito session's cold row carries the flag only (specs/fork-rust-agent-parity.md).
+    assert!(root.get("incognito").is_none());
+    let mut incognito = session(None);
+    incognito.summary.incognito = true;
+    assert_eq!(
+        super::cold_row("/work/a", &incognito)["incognito"],
+        json!(true)
+    );
 }
