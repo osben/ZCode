@@ -15,6 +15,11 @@ The desktop Host always runs the Node agent (`zcode.cjs app-server --stdio`), wh
    3. The fork setting `agentRuntime`.
    4. The default, `node`.
 3. **Storage preparation always stays on Node.** The Rust agent is spawned only as the conversation process. Database preparation and migrations, including fork `9001_fork_*`, keep running in the Host Worker from the bundled `zcode.cjs` (`storagePreparationEntry`). If no Node bundle is available, Rust is not selectable, because a Rust agent without prepared storage would open an unmigrated database.
+   - **The same step seeds the official plugins in Rust mode.** `zcode-rs` only reads the official plugin store (`platform/src/local/plugin_inventory.rs`: `cache/zcode-plugins-official/<name>/<version>` and `marketplaces/zcode-plugins-official/bundled-marketplace.json`) and has no copy of the plugin sources. Node's agent seeds that store itself on its first plugin resolution (`bundled-plugins.ts` `resolveOfficialPluginRoots`). With Rust effective no Node agent runs, so on a fresh home Rust would list no official plugin skill. The storage Worker already ships the plugin sources, so when its env has `ZCODE_FORK_AGENT_RUNTIME=rust` it runs the same `resolveOfficialPluginRoots` once the database is prepared (`fork-rust-agent-plugin-seed.ts`, called from the `prepareStorageOnly` branch of `runZCodeProtocolAgent`).
+     - **Rust only.** With Node effective it does nothing, and the Node agent stays the only seeder. Measured on the dev bundle (Apple M-series, 17 plugins, 66 MB): a cold seed adds ~230 ms to the Worker, a warm one ~70 ms, because each Worker re-hashes every bundled plugin file (the hash memo is per process). Doing it in Node mode would add the warm cost to every default start for nothing.
+     - **Store root.** The one the Rust agent reads (`StoragePaths::plugin_storage`): the merged `storage.dir` with `~/` expanded, a relative path resolved against the workspace, then `<cli storage root>/plugins`.
+     - **Never fails preparation.** A seed error is logged at `warn` and the Worker still exits `0`; the Rust agent then sees whatever usable cache already exists. The seed writes nothing to stdout, the Host's control channel.
+     - **Same content as Node.** Seeding writes every bundled plugin, including `computer-use`; `suppressedBuiltins`, default enablement and the Node-only plugins are filtered when `zcode-rs` discovers plugins (`ext/src/plugins/select.rs`), as Node filters at discovery.
 4. **No silent lie about the runtime.**
    - Main resolves which runtime is in effect. If `rust` is selected but no `zcode-rs` binary is found, Main runs Node and logs at `warn`: `selected=rust effective=node reason=binary_missing`.
    - Main writes only the effective runtime into the Host env.
@@ -111,6 +116,7 @@ Host (utility process)
     prepareHostStorage (tasks-index)                       Node Worker
     prepareSessionStorage → resolveDefaultZCodeAgentCommand
                              → storagePreparationEntry = bundled zcode.cjs   Node Worker, migrations
+                               → effective=rust: seed official plugins        same Worker, after storagePrepared, before exit
   getClient → resolveDefaultZCodeAgentCommand
                → effective=rust ? zcode-rs app-server --stdio : zcode.cjs   conversation process
 ```
@@ -152,6 +158,7 @@ The Rust agent lives in this repository at `packages/rust-cli`, the same path it
 10. Rust effective, web-remote and desktop, in a fresh session: attaching a text file with a secret word on a line the model has not echoed, and asking for it, gives the word in the reply. The chip shows the file name, and the bubble shows only the typed text. After an agent restart the chip is still there and an attached image still previews. Reopening the task under `ZCODE_FORK_AGENT_RUNTIME=node` shows the same bubble and chips, and a follow-up question quoting the unechoed line exactly is answered from history.
 
 11. Rust effective: after a full agent restart, subscribing to a task (`v4/conversation/subscribe` with `topic: conversation/<session>`, `connectionId`, `clientMode`) gives `userInput` rows and turn headers whose `sourceCommandId` equals the stored `anchor.sourceCommandId` of that input. An image attached under Rust shows a chip with a ref when the task is reopened under Node, and an image attached under Node reaches the Rust model as an image.
+12. Rust effective on a fresh home (no `~/.zcode/cli/plugins`): after the first start the plugin store has `bundled-marketplace.json` and the `visualize` cache, and the first model request of a new task lists the `visualize` skill. With Node effective the storage Worker leaves the plugin store untouched.
 
 ## Tests
 
@@ -162,5 +169,6 @@ Fork unit tests go in `scripts/fork-test-files.json`:
 - the Host resolver returning Rust with the Node storage entry, and the Node command unchanged by default;
 - the schema default;
 - the hello overrides (empty for Node) and the command gate (worktree and ACP refused in Rust mode only).
+- prepare-storage seeding the official plugins in Rust mode only, without failing preparation when the seed throws (`apps/zcode-cli/packages/bootstrap/tests/fork-rust-agent-plugin-seed.test.ts`).
 
 Desktop E2E stays on Node. `wdio.conf.ts` already removes `ZCODE_AGENT_SERVER_COMMAND`, and it should also remove `ZCODE_FORK_AGENT_RUNTIME` unless an explicit opt-in is set.
