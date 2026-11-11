@@ -473,6 +473,8 @@ export function SettingsPage({
   const setCodePreviewSettings = useZCodeStore((state) => state.setCodePreviewSettings);
   const uiFontSizePx = useZCodeStore((state) => state.uiFontSizePx);
   const setUiFontSizePx = useZCodeStore((state) => state.setUiFontSizePx);
+  const fontSmoothingEnabled = useZCodeStore((state) => state.fontSmoothingEnabled);
+  const setFontSmoothingEnabled = useZCodeStore((state) => state.setFontSmoothingEnabled);
   const uiFontFamily = useZCodeStore((state) => state.uiFontFamily);
   const setUiFontFamily = useZCodeStore((state) => state.setUiFontFamily);
   const monoFontFamily = useZCodeStore((state) => state.monoFontFamily);
@@ -1733,6 +1735,7 @@ export function SettingsPage({
                     windowsHost: hostPlatform === "win32",
                     tray: Boolean(isWindowsDesktop || isLinuxDesktop),
                     notWindows: !isWindowsDesktop,
+                    macDesktop: Boolean(isDesktop && isMacDesktop),
                     computerUse: resolveComputerUseAvailability({
                       isDesktop: Boolean(isDesktop),
                       isMacDesktop: Boolean(isMacDesktop),
@@ -2252,6 +2255,9 @@ export function SettingsPage({
                               setUiFontFamily={setUiFontFamily}
                               monoFontFamily={monoFontFamily}
                               setMonoFontFamily={setMonoFontFamily}
+                              isMacDesktop={Boolean(isDesktop && isMacDesktop)}
+                              fontSmoothingEnabled={fontSmoothingEnabled}
+                              setFontSmoothingEnabled={setFontSmoothingEnabled}
                               setUiFontSizePx={(fontSizePx) =>
                                 runUserAction({
                                   input: {

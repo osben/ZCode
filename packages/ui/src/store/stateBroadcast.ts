@@ -10,6 +10,7 @@ import {
   applyPersistedFontPreferences,
 } from "@/store/fontPreferences.js";
 import { applyUiFontSizePx } from "@/lib/uiFontSize.js";
+import { applyFontSmoothingEnabled } from "@/lib/fontSmoothing.js";
 import type { Theme } from "../useTheme.js";
 import { applyTheme, isThemePalette, migrateThemeSelection } from "../useTheme.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
@@ -23,6 +24,7 @@ const BROADCAST_FIELDS = new Set<string>([
   "palette",
   "locale",
   "uiFontSizePx",
+  "fontSmoothingEnabled",
   "interfaceMode",
   "uiFontFamily",
   "monoFontFamily",
@@ -35,6 +37,7 @@ type BroadcastField =
   | "palette"
   | "locale"
   | "uiFontSizePx"
+  | "fontSmoothingEnabled"
   | "interfaceMode"
   | "uiFontFamily"
   | "monoFontFamily"
@@ -100,6 +103,8 @@ export function wireStateBroadcast(
         state.setInterfaceMode(normalizeInterfaceMode(msg.payload));
       } else if (field === "uiFontSizePx" && typeof msg.payload === "number") {
         state.setUiFontSizePx(msg.payload);
+      } else if (field === "fontSmoothingEnabled" && typeof msg.payload === "boolean") {
+        state.setFontSmoothingEnabled(msg.payload);
       } else if (field === "notificationEnabled" && typeof msg.payload === "boolean") {
         state.setNotificationEnabled(msg.payload);
       } else if (field === "hideProjectDeviceNames" && typeof msg.payload === "boolean") {
@@ -115,5 +120,6 @@ export function wireStateBroadcast(
   syncSystemThemeListener(useStore.getState().theme);
   applyTheme(useStore.getState().theme, useStore.getState().palette);
   applyUiFontSizePx(useStore.getState().uiFontSizePx);
+  applyFontSmoothingEnabled(useStore.getState().fontSmoothingEnabled);
   applyPersistedFontPreferences(useStore.getState());
 }

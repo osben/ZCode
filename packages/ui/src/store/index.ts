@@ -23,6 +23,11 @@ import {
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
 } from "@/lib/uiFontSize.js";
+import {
+  applyFontSmoothingEnabled,
+  FONT_SMOOTHING_STORAGE_KEY,
+  loadFontSmoothingEnabled,
+} from "@/lib/fontSmoothing.js";
 import { createFontPreferencesSlice, type FontPreferencesState } from "@/store/fontPreferences.js";
 import { wireStateBroadcast } from "@/store/stateBroadcast.js";
 import {
@@ -155,6 +160,10 @@ export interface ZCodeState extends FontPreferencesState {
   /** Root UI font size in rem (px). */
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
+
+  /** macOS desktop only: antialiased font rendering. Broadcast-synced like theme and locale. */
+  fontSmoothingEnabled: boolean;
+  setFontSmoothingEnabled: (enabled: boolean) => void;
 
   /** Whether performance mode is enabled. */
   performanceMode: boolean;
@@ -342,6 +351,13 @@ export function createZCodeStore(
       writeSafeLocalStorage(UI_FONT_SIZE_STORAGE_KEY, String(normalizedFontSizePx));
       applyUiFontSizePx(normalizedFontSizePx);
       set({ uiFontSizePx: normalizedFontSizePx });
+    },
+
+    fontSmoothingEnabled: loadFontSmoothingEnabled(),
+    setFontSmoothingEnabled: (enabled: boolean) => {
+      writeSafeLocalStorage(FONT_SMOOTHING_STORAGE_KEY, String(enabled));
+      applyFontSmoothingEnabled(enabled);
+      set({ fontSmoothingEnabled: enabled });
     },
 
     ...createFontPreferencesSlice((partial) => set(partial)),
