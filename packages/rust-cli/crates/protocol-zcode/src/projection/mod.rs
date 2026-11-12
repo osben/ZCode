@@ -478,17 +478,18 @@ impl Projection {
         }})
     }
 
-    /// Fork: the kernel queued an input remembered as `startNow` (its `SubmitWith` answered `Queued`, e.g. while
-    /// another promotion owns the foreground): it is a queue item after all, admitted `queue` (Node answers from Core's
-    /// admission). Returns the `state.updated` for the queue when the item was already in the kernel's queue and so
-    /// hidden; `None` when nothing shown changes (the coming `QueueChanged` then shows it).
-    pub fn admitted_to_queue(&mut self, command: &str) -> Option<Value> {
-        if self.inputs.get(command)?.admitted != "startNow" {
+    /// Fork: the kernel's real admission of a remembered input (its `SubmitWith` answered `Queued` or started it), which
+    /// the protocol predicted otherwise: the remembered admission follows the kernel (Node answers from Core's
+    /// admission). An input remembered as `startNow` that the kernel queued is a queue item after all (inputs admitted
+    /// `startNow` are not shown as queue items). Returns the `state.updated` for the queue when what it shows changed
+    /// (the kernel's `QueueChanged` came first); `None` otherwise (a coming `QueueChanged` shows the corrected item).
+    pub fn readmit(&mut self, command: &str, admitted: &'static str) -> Option<Value> {
+        if self.inputs.get(command)?.admitted == admitted {
             return None;
         }
         let before = self.queue_state();
         if let Some(meta) = self.inputs.get_mut(command) {
-            meta.admitted = "queue";
+            meta.admitted = admitted;
         }
         let after = self.queue_state();
         (after != before).then(|| {

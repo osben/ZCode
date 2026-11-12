@@ -466,3 +466,24 @@ fn an_app_input_is_admitted_with_nodes_intent() {
     let plain: Input = serde_json::from_value(json!({"text": "hi"})).unwrap();
     assert_eq!(plain.conversation_quotes, None);
 }
+
+/// Node `session-flow.ts` answers a `sendText` from Core's admission in both directions: a started input is
+/// `startNow`, a queued one `queue`. The projection's prediction loses in both races: a turn that ended between the
+/// snapshot and the submit (predicted `queue` or `guide`, the kernel started it) and a lease or turn that appeared
+/// (predicted `startNow`, the kernel queued it). A queued guide stays `guide` (it steers into the running turn).
+#[test]
+fn the_ack_follows_the_kernels_admission_both_ways() {
+    use rust_cli_kernel_api::session_api::{Ack as KernelAck, CommandResult};
+    let started = KernelAck::Accepted {
+        result: CommandResult::Done,
+    };
+    let queued = KernelAck::Accepted {
+        result: CommandResult::Queued,
+    };
+    assert_eq!(acked_delivery("queue", &started), "startNow");
+    assert_eq!(acked_delivery("guide", &started), "startNow");
+    assert_eq!(acked_delivery("startNow", &started), "startNow");
+    assert_eq!(acked_delivery("startNow", &queued), "queue");
+    assert_eq!(acked_delivery("queue", &queued), "queue");
+    assert_eq!(acked_delivery("guide", &queued), "guide");
+}

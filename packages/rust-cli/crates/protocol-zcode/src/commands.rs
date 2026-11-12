@@ -321,10 +321,7 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             let ack = if kind == QueuedKind::Text && requests_start_now(envelope) {
                 send_text_now(server, &live, envelope, phase, revision).await
             } else {
-                send_text(
-                    server, handle, &live.sink, envelope, kind, phase, revision, None,
-                )
-                .await
+                send_text(server, &live, envelope, kind, phase, revision, None).await
             };
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
@@ -1358,6 +1355,27 @@ fn admission(
     }
 }
 
+/// Fork: the `sendText` ACK's `delivery` from the kernel's real admission (Node `session-flow.ts` answers from
+/// `started.admission.kind`): a started input is `startNow`, a queued one `queue`, a queued guide stays `guide` (it
+/// steers into the running turn). The projection's prediction loses in both races (a turn that ended before the
+/// submit, a turn or lease that appeared). A refusal or duplicate keeps the prediction.
+fn acked_delivery(
+    predicted: &'static str,
+    kernel: &rust_cli_kernel_api::session_api::Ack,
+) -> &'static str {
+    use rust_cli_kernel_api::session_api::{Ack as KernelAck, CommandResult};
+    match kernel {
+        KernelAck::Accepted {
+            result: CommandResult::Queued,
+        } if predicted == "startNow" => "queue",
+        KernelAck::Accepted {
+            result: CommandResult::Queued,
+        } => predicted,
+        KernelAck::Accepted { .. } => "startNow",
+        KernelAck::Rejected { .. } | KernelAck::Duplicate => predicted,
+    }
+}
+
 /// Fork: `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode).
 fn requests_start_now(envelope: &Envelope) -> bool {
     envelope
@@ -1406,8 +1424,7 @@ async fn send_text_now(
         Ok(()) => {
             send_text(
                 server,
-                handle,
-                &live.sink,
+                live,
                 envelope,
                 QueuedKind::Text,
                 phase,
@@ -1446,14 +1463,15 @@ async fn send_text_now(
 )]
 async fn send_text(
     server: &Server,
-    handle: &dyn SessionHandle,
-    live: &crate::live::Live,
+    bridged: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
     kind: QueuedKind,
     phase: Phase,
     revision: u64,
     promotion: Option<&str>,
 ) -> Ack {
+    let handle = bridged.handle.as_ref();
+    let live = bridged.sink.as_ref();
     let input: Input = match payload(envelope) {
         Ok(input) => input,
         Err(ack) => return *ack,
@@ -1576,17 +1594,17 @@ async fn send_text(
         lease: promotion.map(str::to_owned),
     };
     let kernel = send(handle, command, submit).await;
-    // Node answers from Core's real admission (`started.admission.kind === "queued"` → `queue`): the kernel queues an
-    // input the projection saw as idle when it is busy after all or another promotion owns the foreground.
-    let admitted = match &kernel {
-        rust_cli_kernel_api::session_api::Ack::Accepted {
-            result: rust_cli_kernel_api::session_api::CommandResult::Queued,
-        } if admitted == "startNow" => {
-            live.admitted_to_queue(command).await;
-            "queue"
-        }
-        _ => admitted,
-    };
+    let predicted = admitted;
+    let admitted = acked_delivery(predicted, &kernel);
+    if admitted != predicted {
+        // The remembered admission follows the kernel's. Corrected and published in the session's pump, after the
+        // events already received, so its frame cannot overtake or be overtaken by the pump's frames.
+        let sink = bridged.sink.clone();
+        let command = command.to_owned();
+        bridged.run(Box::pin(
+            async move { sink.readmit(&command, admitted).await },
+        ));
+    }
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(
         kernel,

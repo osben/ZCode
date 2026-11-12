@@ -574,18 +574,19 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
     assert!(marker.iter().all(|delta| delta.get("row").is_none()));
 }
 
-/// Fork: an input remembered as `startNow` that the kernel queued (its `SubmitWith` answered `Queued`, e.g. while
-/// another promotion owns the foreground) is a queue item after all: it is shown, with `admitted: "queue"`, whether
-/// the kernel's `QueueChanged` arrived before the correction or after it.
+/// Fork: the remembered admission follows the kernel's (`Projection::readmit`): an input remembered as `startNow` that
+/// the kernel queued (its `SubmitWith` answered `Queued`) is a queue item after all, shown with `admitted: "queue"`,
+/// whether the kernel's `QueueChanged` arrived before the correction or after it; an input remembered as `queue` that
+/// the kernel started is never a queue item.
 #[test]
-fn an_input_the_kernel_queued_after_a_start_now_admission_is_shown_as_queued() {
-    let meta = || InputMeta {
+fn the_remembered_admission_follows_the_kernel() {
+    let meta = |admitted: &'static str| InputMeta {
         client: "k".into(),
         origin: None,
         text: "hi".into(),
         admitted_at: 0,
         requested: "startNow",
-        admitted: "startNow",
+        admitted,
         attachments: Vec::new(),
     };
     let queued = || KernelEvent::QueueChanged {
@@ -601,11 +602,11 @@ fn an_input_the_kernel_queued_after_a_start_now_admission_is_shown_as_queued() {
     };
     // The event first: the item is hidden, and the correction publishes it.
     let mut feed = Feed::new();
-    feed.projection.remember_input("c1", meta());
+    feed.projection.remember_input("c1", meta("startNow"));
     feed.apply(queued());
     let delta = feed
         .projection
-        .admitted_to_queue("c1")
+        .readmit("c1", "queue")
         .expect("the correction publishes the queue");
     assert_eq!(
         delta["patch"]["queue"]["items"][0]["delivery"]["admitted"],
@@ -613,13 +614,23 @@ fn an_input_the_kernel_queued_after_a_start_now_admission_is_shown_as_queued() {
     );
     // The correction first: the event shows the item.
     let mut feed = Feed::new();
-    feed.projection.remember_input("c1", meta());
-    assert!(feed.projection.admitted_to_queue("c1").is_none());
+    feed.projection.remember_input("c1", meta("startNow"));
+    assert!(feed.projection.readmit("c1", "queue").is_none());
     let deltas = feed.apply(queued());
     assert!(
         deltas
             .iter()
             .any(|delta| delta["patch"]["queue"]["items"][0]["delivery"]["admitted"] == "queue")
+    );
+    // Predicted `queue`, started by the kernel: no queue item appears, and the empty queue is not republished.
+    let mut feed = Feed::new();
+    feed.projection.remember_input("c1", meta("queue"));
+    assert!(feed.projection.readmit("c1", "startNow").is_none());
+    let deltas = feed.apply(KernelEvent::QueueChanged { items: Vec::new() });
+    assert!(
+        deltas
+            .iter()
+            .all(|delta| delta["patch"].get("queue").is_none())
     );
 }
 

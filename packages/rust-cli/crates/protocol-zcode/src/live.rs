@@ -553,11 +553,12 @@ impl Live {
         self.write(outgoing).await;
     }
 
-    /// Fork: see [`crate::projection::Projection::admitted_to_queue`]; publishes the queue when it changed.
-    pub async fn admitted_to_queue(&self, command: &str) {
+    /// Fork: see [`crate::projection::Projection::readmit`]; publishes the queue when it changed. In the session's pump
+    /// task ([`rust_cli_protocol_core::sessions::Bridged::run`]), like every other frame of the session.
+    pub async fn readmit(&self, command: &str, admitted: &'static str) {
         let outgoing = {
             let mut state = self.state();
-            let Some(delta) = state.projection.admitted_to_queue(command) else {
+            let Some(delta) = state.projection.readmit(command, admitted) else {
                 return;
             };
             state.log.record(vec![delta]);
