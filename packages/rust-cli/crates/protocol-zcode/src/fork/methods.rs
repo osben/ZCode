@@ -32,6 +32,10 @@ pub(crate) async fn dispatch(
         // Fork: the App's usage surfaces.
         "v4/usage/stats" => super::usage::usage_stats(server, &params).await,
         "v4/conversation/usage" => super::usage::conversation_usage(server, &params).await,
+        // Fork: the Host unloads a removed managed worktree's sessions (Node `releaseSessionsUnderDirectory`).
+        "session/releaseUnderDirectory" => {
+            super::release_under_directory::release(server, &params).await
+        }
         // Fork: the background Bash detail pane (Node `readBackgroundBashOutput`).
         "v4/conversation/backgroundBashOutput" => {
             super::background_work::bash_output(server, &params).await

@@ -26,6 +26,7 @@ impl App {
         self.view
             .in_flight_mut()
             .send(rust_cli_kernel_api::session_api::QueuedInput {
+                edit_lock: None,
                 intent: None,
                 command,
                 text,

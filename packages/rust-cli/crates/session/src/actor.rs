@@ -446,6 +446,7 @@ impl Actor {
             };
             self.inbox.push_input(
                 QueuedInput {
+                    edit_lock: None,
                     intent,
                     command: id,
                     text,
@@ -639,6 +640,7 @@ impl Actor {
                     // 插话（Steer）进 next 通道，由主循环在下一个工具边界领取（steering.rs），其余等回合结束。
                     self.inbox.push_input(
                         QueuedInput {
+                            edit_lock: None,
                             intent: None,
                             command: id,
                             text,
@@ -743,8 +745,14 @@ impl Actor {
             Command::BackgroundForeground { reason } => self.background_foreground(reason).await,
             Command::StoreResumeSentinel => self.store_resume_sentinel(id).await,
             Command::Dequeue { command } => self.dequeue(&command),
+            Command::ClearQueued { command } => self.clear_queued(&command),
             // Fork: in-place queue editing (Node queue.ts handlers, specs/fork-rust-agent-parity.md).
-            Command::EditQueued { command, text } => self.edit_queued(&command, text),
+            Command::EditQueued { command, edit } => self.edit_queued(&command, edit).await,
+            Command::LockQueuedEdit { command, lock } => self.lock_queued_edit(&command, lock),
+            Command::ReleaseQueuedEdit { command } => self.release_queued_edit(&command).await,
+            Command::ApplyQueuedConfig { commands, edit } => {
+                self.apply_queued_config(&commands, &edit)
+            }
             Command::ReorderQueued { command, before } => {
                 self.reorder_queued(&command, before.as_ref())
             }

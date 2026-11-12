@@ -832,7 +832,7 @@ The `worktreePreparation` override replaces branch, path, base and attempt. Node
 
 ## Upstream 3.18 native worktree: divergence
 
-Upstream 3.18.0 (`docs/git/worktree.md`, capability `worktreeCwd`) ships its own worktree sessions with a different shape. The fork is on 3.17.2; this section records what the 3.18 sync has to reconcile.
+Upstream 3.18.0 (`docs/git/worktree.md`, capability `worktreeCwd`) ships its own worktree sessions with a different shape. The fork merged 3.18.0 on 2026-11-12 (#402); Rust still reports `worktreeCwd: false`, so the Host hides managed worktrees for Rust workspaces. This section records what reconciling the two shapes involves (gap B1 below).
 
 | Aspect                    | Fork execution worktree (this section, Node and Rust)                                                          | Upstream 3.18 managed worktree                                                                                                              |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -854,6 +854,109 @@ Upstream 3.18.0 (`docs/git/worktree.md`, capability `worktreeCwd`) ships its own
 - the `executionWorktreeMissing` stat and the fail-closed root with the `Write` guard.
 
 The marker, the prepare / update / activate compare-and-set and the execution-column read and write are fork-shape only. Rust keeps reading them for as long as fork-shape sessions exist in the database.
+
+## Upstream 3.18.0 gaps (wave 2)
+
+Gap map from 2026-11-12, upstream `a9fe401e` (3.17.2) to `b95ebaffe` (3.18.0). Rust's `inbound.json` is generated from the 3.18.0 zod schemas, so new command shapes pass validation. They then reach `commands.rs` `unsupported()` (`proto.unsupportedCommand`). Unknown `v4/*` methods answer `-32601`. Node's capability list (`zcode-protocol/server.ts` `runtime/capabilities`) adds `highspeedCardOwner`, `providerRegistryRefresh`, `pluginDiscoveryUi`, `worktreeCwd`, `extensionInputSource`, `conversationQuoteComment` and `pluginExtensionSummary`; Rust reports none of them.
+
+### (a) Broken in Rust today, no Host gate
+
+| Id  | Item                                                                                                                        | Node 3.18                                                                              | Rust today                                                                                                                                                             | Rule after the port                                                                                                           |
+| --- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Queued-item edit lock: `lockQueueItemEdit`, `releaseQueueItemEdit`, `editQueueItem.editorId`, snapshot `queueItem.editLock` | core `steering.ts` (`editLockVerdict`); UI `composer-edit-mode/useComposerEditMode.ts` | unsupported, so the UI shows `chat.composerEdit.lockFailed.generic` and never enters edit mode. `fork/queue.rs` `EditPayload` carries only `queueItemId` and `newText` | The lock and its verdicts follow Node. `editQueueItem` keeps the full Node payload (attachments, model selection, mode, plan) |
+| A2  | `applyQueueItemsConfig`                                                                                                     | `command.ts`; UI `composer-edit-mode/queueConfigApply.ts`                              | unsupported                                                                                                                                                            | Applies model and mode to queued items like Node. Depends on A1                                                               |
+| A3  | `session/releaseUnderDirectory`                                                                                             | Host `zcodeAgentService.ts`, `managed-worktree-tasks/removal.ts`                       | `-32601`, so removing a managed worktree fails with `session-close-failed` and the worktree stays                                                                      | Releases the Rust sessions whose cwd is under the directory, then answers like Node                                           |
+
+### A1 and A2: product rules and acceptance cases
+
+Scope: the Rust kernel's queue (`session/src/inbox.rs`, `lane.rs`, `actor.rs`) owns the lock and the edits; `protocol-zcode/src/fork/queue.rs` maps the App commands to kernel commands. Node reference: `bootstrap/.../handlers/queue.ts` and `core/.../methods/steering.ts` (`editLockVerdict`, `lockPendingInputEdit`, `releasePendingInputEdit`, `editPendingInputById`, `clearAllPendingInputs`). The shared schema says the lock is "not persisted; discarded when the CLI process exits", so this agent keeps it in memory with no timeout and writes no session event for it (decision: nothing replays it; a restarted agent has no locks, and the App sees only the snapshot of the running process).
+
+**Owner.** The lock is a field of the queued item in the session actor's inbox. It is projected through `QueueChanged` (`QueuedInput.edit_lock`) and nowhere else. The protocol keeps only the reservation (`Live::reserve_promotion`) that already serializes `sendQueuedNow`; lock and promotion take that same reservation guard for the one command that needs mutual exclusion, so a lock and a promotion of one item never overlap.
+
+**Rules: lock (`lockQueueItemEdit {queueItemId, editorId}`).**
+
+1. A compact item is refused (`guard.queueItemNotEditable`).
+2. The item is reserved or promoting (protocol reservation held): `guard.queueItemReserved`.
+3. No such queued item: noop `queue.itemMissing`.
+4. Locked by another editor: `guard.queueItemEditLocked`.
+5. Locked by the same editor: accepted, no change (idempotent). The original lock keeps its `clientId` and `inputOrigin`.
+6. Otherwise the item gets `editLock {editorId, clientId, inputOrigin?}` where `clientId` is the envelope's and `inputOrigin` the trusted envelope field. One `QueueChanged`.
+
+**Rules: while locked.**
+
+7. Auto-drain stops at the item: when the next thing to start is a locked queued input, no turn starts and the queue is not paused or failed. The notices in front of it still run.
+8. Batching stops before a locked input (the same stop as 7).
+9. `deleteQueueItem` (Dequeue), `reorderQueueItem` (of the locked item) and `sendQueuedNow` are refused with `guard.queueItemEditLocked`. (`sendQueuedNow` reads the lock from the queue view before reserving, and the actor's Dequeue refuses it if a lock raced in.)
+10. Clear-all (`clearQueueAndSend`) removes locked items with their lock (`ClearQueued`, not guarded).
+11. Running-turn guides (lane inputs absorbed at a tool boundary) are not held by the lock. Node does the same (`drainPendingInputUnlocked` checks reservations only). Recorded as a parity point, not a bug.
+
+**Rules: edit (`editQueueItem`).**
+
+12. Compact: `guard.queueItemNotEditable`. Checked before the lock, as in Node.
+13. Lock verdict: with `editorId`, the lock must be held by that editor, else `guard.queueEditLockLost` (also when the item is gone). Without `editorId`, a locked item is refused with `guard.queueItemEditLocked`.
+14. No such queued item (and no editorId): noop `queue.itemMissing`.
+15. The edit keeps the input's place, delivery, and screening. `newText` replaces the text (and the intent text). Omitted fields keep the original value. `conversationQuotes` replaces the quotes (the intent keeps its other fields). `attachments` is set to the given refs; `[]` clears them. `modelSelection`, `mode` and `planEnabled` resolve against the item's own execution state (or the session's state when the item had none), as the send path does (`resolve_execution`). A model change different from the item's previous selection removes the `highspeed` key from the intent (Node `dropHighspeed`).
+16. With `editorId`, a successful edit releases the lock. Then, if the agent is idle, the drain is re-evaluated (rule 19).
+
+**Rules: release (`releaseQueueItemEdit {queueItemId}`).**
+
+17. No lock on the item: noop `queue.editLockMissing`.
+18. Otherwise the lock is removed, one `QueueChanged`.
+19. After a release, when the agent is idle, the drain is re-evaluated: an idle session whose head is the released item starts it. A busy session only clears the lock; the turn end drains.
+
+**Rules: applyQueueItemsConfig (A2).**
+
+20. For each id: skip if missing, compact, not queued (reserved or promoting) or locked. Otherwise apply `modelSelection` and/or `mode` in place, keeping text, quotes, attachments and plan, under rule 15's resolution and highspeed drop.
+21. None applied: noop `queue.itemMissing`. At least one applied: accepted, one `QueueChanged`.
+
+**Projection.** The queue item snapshot carries `editLock` while locked (strict shape). Attachments of a queued input are held by the protocol's input metadata (`InputMeta.attachments`), as before; an `editQueueItem` with `attachments` updates that after the kernel accepted the edit.
+
+**Known deviations from Node (kept on purpose).**
+
+- Attachments: queued refs are not resolved into turn attachments, because the Rust queue never carried them into a turn (`sendQueuedNow` already restarts a promoted item without attachments). The App's chips follow the edit; the model does not get them.
+- Highspeed credentials: Node stages them in memory and drops them on edit. Rust has no staged credentials, so only the `highspeed` intent key is removed.
+- Editing a missing item now answers noop `queue.itemMissing` (Node 3.18 `editQueueItem` throws the noop). The earlier Rust answer was accepted.
+
+**Acceptance cases (Rust tests).**
+
+- Kernel, `session/src/queue_edit_tests.rs`: lock accepted, idempotent for the same editor, refused for another editor, missing item is noop; the lock appears in the queue view with editor, client and origin; a locked head stops the drain after a turn end and a release starts it; delete and reorder refused while locked; clear-all removes a locked item; edit without the lock refused, with the wrong editor `lockLost`, with the holder releases the lock; release without a lock is `queue.editLockMissing`.
+- Kernel, `session/src/inbox_tests.rs`: compact refused for lock and edit; batching stops before a locked input; a full payload edit (quotes, model, mode, plan) resolves against the item's state; a model change removes `highspeed`; apply skips locked, compact and missing items and reports none applied.
+- Protocol, `projection/projection_tests.rs`: `editLock` is projected while locked and gone after release; an attachment update changes the item's chips only.
+
+### A3: product rules and acceptance cases
+
+**A3 rules (`session/releaseUnderDirectory`).** Node: `releaseSessionsUnderDirectory` (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts`, `releaseSessionsUnderDirectory`), params `zcodeSessionReleaseUnderDirectoryParamsSchema` (`packages/shared/src/zcode-protocol/index.ts`, strict `{directory}`), result `{released, busy}`. The Host calls it on every agent of the workspace before a managed worktree is removed (`packages/services/src/managed-worktree-tasks/removal.ts` `releaseCliSessionsUnder`, `packages/services/src/zcode-agent/zcodeAgentService.ts` `releaseSessionsUnderDirectory`), with no `worktreeCwd` capability gate, so the method must answer on Rust while `worktreeCwd` stays `false` (B1). A `-32601` makes the Host fail with `session-close-failed` and keep the worktree.
+
+- Params: `directory` is a non-empty string and the only field. A missing or empty `directory`, or any other field, is invalid params.
+- Candidates: the open sessions only (Node's resident map). A stored session that is not open is not touched.
+- Under the directory: the session's cwd is inside it (`Live::cwd`, Node `record.workspace.workspacePath`). The cwd is the execution worktree path when the session runs in one, else the root it was opened on. The listed key is not the cwd: a worktree session is listed under its project. The test is component-wise (`PathStyle::is_within`, the shared `env_path` helper): equal paths match, `/a/b` does not match `/a/bc`, and separators and Windows case follow the path style.
+- Busy (Node `readSessionBusyState`): a turn or compaction is running, queued input waits, an interaction is pending, a background command or subagent still runs (Node's `hasResidencyBlockingWork` includes registry background tasks), or a first submission is still preparing (Node's lifecycle not ready). Background work reads the projection's `backgroundWorks`. A preparing submission is accepted input that has not started, so it counts as busy; this is a choice Node does not state directly.
+- Any busy candidate: nothing is closed, and the answer is `{released: [], busy: [busy ids]}`. The busy check and the first close have no await between them.
+- Otherwise each candidate is deactivated the way `session/lifecycle/stop` unloads it: bridge entry closed, kernel actor ended with `EndReason::Other`, `unloaded` announced. Nothing else changes: no store writes, no draft drop, no soft delete, no `session.removed`, no sessions-index row removal, no follow-up preference change. The session opens again later.
+- Answer `{released: [ids], busy: []}`. Both lists are sorted by session id. Node uses Map order; the Host reads membership and length only (deviation).
+- No match, or no open session: `{released: [], busy: []}`, a success, never an error.
+
+Acceptance cases (`fork/release_under_directory_tests.rs`): (1) an idle session under the directory is released and a session outside it is not; (2) a worktree session listed under the project is released by the worktree directory and not by the project directory; (3) a sibling prefix (`/x/repo2` for `/x/repo`) and a directory whose child is named differently are not matched, and a Windows directory matches a cwd written with the other separator and case (`C:\Repo\wt` and `c:/repo/WT`) but not `C:\Repo\wt2`; (4) one busy session makes the whole answer busy and closes nothing; (5) each busy fact on its own (a running turn, a pending interaction, a running background work, a preparing submission) is busy; (6) no match answers empty success; (7) invalid params are refused, including an extra field; (8) the method is routed to the handler (not `-32601`).
+
+### Shared database check (before any purge work)
+
+Upstream adds session-store migration `0025_session_permanent_deletion` (`session_purge`, `session_runtime_presence`, and triggers that abort writes while a purge is pending) and tasks-index migration `0007_task_permanent_deletion` (`task_purge`). Rust references none of these tables. It is not yet confirmed whether a purge sees a Rust-run session as live, or how Rust handles the `session-data.deleting` abort. Upstream migration definitions stay untouched; fork additions use `9001_fork_*`.
+
+### (b) Hidden because Rust reports the capability false
+
+- **B1 `worktreeCwd`**: `createSession.cwd` and `worktreeCreation`, `forkAssistant.targetCwd`, `workspace` on cold-restore entries, and `subscribe.worktreeSessionIds`. L, and it needs a design first. Until then Rust rejects a received `cwd` or `targetCwd` explicitly instead of creating the session in the workspace directory.
+- **B2 `stopSubagent` and `runningSubagentSummary.stopControl`**: the status-panel Stop button for running subagents is hidden on Rust.
+- **B3 Permission `modeSwitch` (`choose` / `fullAccessOnly`) and the `allowAndSwitchGuarded` grant**: Rust once-asks offer no full-access switch.
+- **B4 `extensionInputSource`**: the Host refuses extension-originated input for Rust.
+- **B5 `conversationQuoteComment`**: the selection-comment entry is hidden. It is cheap if Rust's `conversation_quote` already keeps `comment` and `agent`.
+- `pluginDiscoveryUi` stays out of scope (plugins). `highspeedCardOwner`, `providerRegistryRefresh` and `pluginExtensionSummary` are cosmetic.
+
+### (c) Model-facing, telemetry and skew-safe
+
+- Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): absent in Rust and model-facing.
+- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported.
+
+Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4, then the stall reminder. B1 waits for a design agreed with the user.
 
 ## Known differences kept on purpose
 

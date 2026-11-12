@@ -7,6 +7,7 @@ pub(crate) mod commands;
 mod file_summary;
 pub(crate) mod methods;
 mod queue;
+mod release_under_directory;
 pub(crate) use queue::settle_running_turn;
 mod row_commands;
 mod session_config;

@@ -12,7 +12,10 @@ use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::machine_notices::MachineNotice;
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
-use rust_cli_kernel_api::session_api::InputExecution;
+use rust_cli_kernel_api::session_api::{
+    InputExecution, QUEUE_EDIT_LOCK_MISSING, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING,
+    QueueEditLock, QueuedEdit,
+};
 use rust_cli_kernel_api::store::Fact;
 
 use crate::actor::Actor;
@@ -199,7 +202,20 @@ impl Actor {
     /// `Command::Dequeue`（query.md §4.4）：还在队列里的输入取回——从队列与通道去掉（输入的种类与并入点筛查的结果
     /// 跟着条目一起去掉）。判断与出队在 actor 的一次处理里：开回合、成批与工具边界的结局（`settle_steering`）也都在
     /// actor 里出队，所以一条输入要么取回、要么发出，不会两样都有。
+    /// Fork: a composer edit lock refuses the removal (Node `removePendingInputById`); [`Self::clear_queued`] ignores it.
     pub(crate) fn dequeue(&mut self, command: &CommandId) -> rust_cli_kernel_api::session_api::Ack {
+        if self.inbox.edit_lock_of(command).is_some() {
+            return crate::actor::rejected(QUEUE_ITEM_EDIT_LOCKED);
+        }
+        self.clear_queued(command)
+    }
+
+    /// Fork: `Command::ClearQueued` (Node `clearAllPendingInputs`): remove the input whatever its lock; the lock goes
+    /// with it. Otherwise as [`Self::dequeue`].
+    pub(crate) fn clear_queued(
+        &mut self,
+        command: &CommandId,
+    ) -> rust_cli_kernel_api::session_api::Ack {
         if self
             .inbox
             .remove_input(command, crate::inbox::Left::Cancelled("user_removed"))
@@ -211,19 +227,86 @@ impl Actor {
         crate::actor::accepted()
     }
 
-    /// Fork: `Command::EditQueued` (Node `editQueueItem`): replace the text of a still-queued input in
-    /// place — position, delivery and screening are kept. The same miss and rejection as
-    /// [`Self::dequeue`] when the input already went out.
-    pub(crate) fn edit_queued(
+    /// Fork: `Command::EditQueued` (Node `editQueueItem`): edit a still-queued input in place. The verdicts are the
+    /// inbox's ([`crate::inbox::Inbox::edit`]). An edit with an editor releases its lock; the drain is then
+    /// re-evaluated when the session is idle, so a released head starts (Node `afterLegacyStateMutation`).
+    pub(crate) async fn edit_queued(
         &mut self,
         command: &CommandId,
-        text: String,
+        edit: QueuedEdit,
     ) -> rust_cli_kernel_api::session_api::Ack {
-        if !self.inbox.edit_input(command, text) {
-            return crate::actor::rejected(ALREADY_SENT);
+        let current = self.execution;
+        match self
+            .inbox
+            .edit(command, edit.editor_id.as_deref(), &edit, current)
+        {
+            Ok(released) => {
+                self.emit_queue();
+                if released {
+                    self.resume_drain_if_idle().await;
+                }
+                crate::actor::accepted()
+            }
+            Err(reason) => crate::actor::rejected(reason),
+        }
+    }
+
+    /// Fork: `Command::LockQueuedEdit` (Node `lockPendingInputEdit`). A lock is in memory only, with no timeout.
+    pub(crate) fn lock_queued_edit(
+        &mut self,
+        command: &CommandId,
+        lock: QueueEditLock,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        match self.inbox.lock(command, lock) {
+            Ok(changed) => {
+                if changed {
+                    self.emit_queue();
+                }
+                crate::actor::accepted()
+            }
+            Err(reason) => crate::actor::rejected(reason),
+        }
+    }
+
+    /// Fork: `Command::ReleaseQueuedEdit` (Node `releasePendingInputEdit`): an idle session re-evaluates the drain,
+    /// so a released head starts.
+    pub(crate) async fn release_queued_edit(
+        &mut self,
+        command: &CommandId,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        if !self.inbox.release(command) {
+            return crate::actor::rejected(QUEUE_EDIT_LOCK_MISSING);
+        }
+        self.emit_queue();
+        self.resume_drain_if_idle().await;
+        crate::actor::accepted()
+    }
+
+    /// Fork: `Command::ApplyQueuedConfig` (Node `applyQueueItemsConfig`): the same edit on each input in turn. The
+    /// inbox skips the missing, compact and locked ones; none applied is rejected with [`QUEUE_ITEM_MISSING`].
+    pub(crate) fn apply_queued_config(
+        &mut self,
+        commands: &[CommandId],
+        edit: &QueuedEdit,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        let current = self.execution;
+        let applied = commands
+            .iter()
+            .filter(|command| self.inbox.edit(command, None, edit, current).is_ok())
+            .count();
+        if applied == 0 {
+            return crate::actor::rejected(QUEUE_ITEM_MISSING);
         }
         self.emit_queue();
         crate::actor::accepted()
+    }
+
+    /// Fork: an idle session starts the head of the queue as a turn end would (a released lock, a released hold).
+    /// While busy it does nothing: the running turn's end drains.
+    async fn resume_drain_if_idle(&mut self) {
+        if !self.busy() {
+            self.start_next().await;
+        }
     }
 
     /// Fork: `Command::ReorderQueued` (Node `reorderQueueItem`): move a queued input before another
@@ -234,6 +317,10 @@ impl Actor {
         command: &CommandId,
         before: Option<&CommandId>,
     ) -> rust_cli_kernel_api::session_api::Ack {
+        // Fork: a composer edit lock refuses the move of the locked input (Node `reorderPendingInput`).
+        if self.inbox.edit_lock_of(command).is_some() {
+            return crate::actor::rejected(QUEUE_ITEM_EDIT_LOCKED);
+        }
         if !self.inbox.reorder_input(command, before) {
             return crate::actor::rejected(ALREADY_SENT);
         }
@@ -285,6 +372,10 @@ impl Actor {
 
     /// 通道头不是只在工具边界并入的项时的下一项。
     fn next_active_input(&mut self) -> Option<(TurnInput, Option<InputExecution>)> {
+        // Fork: a queued input locked for editing stops the drain before it (no turn, no pause, no failure).
+        if self.inbox.head_locked() {
+            return None;
+        }
         match self.inbox.lane_front() {
             // Fork: the queue is held (`Command::HoldQueue`): queued inputs wait. A notice behind a held
             // input waits too — the lane is the arrival order and the drain may not skip ahead of it.

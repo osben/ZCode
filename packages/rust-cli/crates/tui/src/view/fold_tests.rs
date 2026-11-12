@@ -367,6 +367,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
 fn steered_input_leaves_the_queue_and_shows_as_a_user_row() {
     let mut feed = Feed::new();
     let queued = QueuedInput {
+        edit_lock: None,
         intent: None,
         command: CommandId::new("c2"),
         text: "also this".into(),

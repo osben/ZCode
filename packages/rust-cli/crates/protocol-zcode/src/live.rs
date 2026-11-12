@@ -558,6 +558,23 @@ impl Live {
         self.state().projection.auto_drain()
     }
 
+    /// Fork: the session's cwd (Node `record.workspace.workspacePath`): the execution worktree it runs in, else the
+    /// root it was opened on. `workspace` is the listed key, which a worktree session shares with its project, so it
+    /// is not the cwd.
+    pub fn cwd(&self) -> String {
+        self.state().worktree.execution.as_ref().map_or_else(
+            || self.workspace.clone(),
+            |execution| execution.path.clone(),
+        )
+    }
+
+    /// Fork: whether the session is busy for a release (Node `readSessionBusyState`): the projection's busy facts, or a
+    /// first submission still preparing (accepted input that has not started).
+    pub fn residency_blocking(&self) -> bool {
+        let state = self.state();
+        state.preparation.is_some() || state.projection.residency_blocking()
+    }
+
     /// Fork: see [`crate::projection::Projection::has_queue`].
     pub fn has_queue(&self) -> bool {
         self.state().projection.has_queue()
@@ -580,6 +597,22 @@ impl Live {
             let mut state = self.state();
             let delta = state.projection.set_auto_drain(auto_drain);
             state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: a queued input's attachment refs changed; publishes the queue (see
+    /// [`crate::projection::Projection::set_queued_attachments`]).
+    pub async fn set_queued_attachments(&self, command: &str, attachments: Vec<serde_json::Value>) {
+        let outgoing = {
+            let mut state = self.state();
+            if let Some(delta) = state
+                .projection
+                .set_queued_attachments(command, attachments)
+            {
+                state.log.record(vec![delta]);
+            }
             self.collect(&mut state)
         };
         self.write(outgoing).await;

@@ -61,6 +61,10 @@ pub struct QueuedInput {
     /// Fork: the App input's intent ([`crate::input_intent`]); `text` stays the typed text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<Box<crate::input_intent::InputIntent>>,
+    /// Fork: the composer edit lock on this item (Node `pendingInputEditLocks`, `editLock` in the App's queue item).
+    /// Held in the session actor's memory only; it is not replayed after the agent process exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_lock: Option<QueueEditLock>,
 }
 
 impl QueuedInput {
@@ -73,8 +77,20 @@ impl QueuedInput {
             kind: QueuedKind::Text,
             execution: None,
             intent: None,
+            edit_lock: None,
         }
     }
+}
+
+/// Fork: who holds the composer edit lock of a queued input (Node `PendingInputEditLock`). `client_id` is the
+/// envelope's client, `input_origin` the trusted Host field (`desktop` or `mobile`), shown to the other clients.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueEditLock {
+    pub editor_id: String,
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_origin: Option<String>,
 }
 
 /// Fork: the kind of a queued input (Node's queue item `kind`: `sendText`, `sendGoalCommand`, `compact`).

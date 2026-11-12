@@ -103,7 +103,10 @@ async fn a_queue_edit_keeps_the_quotes() {
             id: CommandId::new("c3"),
             command: Command::EditQueued {
                 command: CommandId::new("c2"),
-                text: "CHANGED".to_owned(),
+                edit: rust_cli_kernel_api::session_api::QueuedEdit {
+                    text: Some("CHANGED".to_owned()),
+                    ..Default::default()
+                },
             },
         })
         .await;

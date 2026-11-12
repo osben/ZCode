@@ -7,7 +7,11 @@
 use futures_util::StreamExt;
 use rust_cli_kernel_api::goal::{GoalPhase, VerificationStatus};
 use rust_cli_kernel_api::ids::CommandId;
-use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, Delivery, KernelEvent};
+use rust_cli_kernel_api::session_api::{
+    Ack as KernelAck, Command, Delivery, KernelEvent, QUEUE_EDIT_LOCK_LOST,
+    QUEUE_EDIT_LOCK_MISSING, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING, QUEUE_ITEM_NOT_EDITABLE,
+    QueueEditLock, QueuedEdit,
+};
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
 use serde_json::Value;
@@ -17,9 +21,6 @@ use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::projection::InputMeta;
 
-/// Node `deleteQueueItem` throws `V4CommandNoopError("queue.itemMissing")` when the item already
-/// drained or was deleted, so the client does not restore a consumed item into the composer.
-const ITEM_MISSING: &str = "queue.itemMissing";
 /// Node `V4QueueItemTextUnavailableError` carries no domain reason code, so the gateway settles it as
 /// the generic execution failure.
 const ITEM_UNAVAILABLE: &str = "fault.command.executionFailed";
@@ -40,7 +41,38 @@ struct ItemPayload {
 #[serde(rename_all = "camelCase")]
 struct EditPayload {
     queue_item_id: String,
-    new_text: String,
+    /// Required by the schema for `editQueueItem`; absent for the config-only edits of `applyQueueItemsConfig`.
+    #[serde(default)]
+    new_text: Option<String>,
+    #[serde(default)]
+    editor_id: Option<String>,
+    #[serde(default)]
+    attachments: Option<Vec<Value>>,
+    #[serde(default)]
+    conversation_quotes: Option<Value>,
+    #[serde(default)]
+    model_selection: Option<Value>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    plan_enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LockPayload {
+    queue_item_id: String,
+    editor_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyConfigPayload {
+    queue_item_ids: Vec<String>,
+    #[serde(default)]
+    model_selection: Option<Value>,
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -82,7 +114,21 @@ fn accepted_despite_miss(envelope: &Envelope, revision: u64, reason: &str) -> Ac
     Ack::accepted(&envelope.command_id, revision, None)
 }
 
-/// `deleteQueueItem` → kernel `Dequeue`. A miss is Node's `queue.itemMissing` noop, not a failure.
+/// A kernel refusal of a queue command, as the App's code: the lock and compaction guards are rejections, a
+/// missing item (or a stale release) is a noop (Node `V4CommandNoopError`). Other reasons are misses too.
+fn queue_refusal(envelope: &Envelope, revision: u64, reason: &str) -> Ack {
+    let (status, code) = match reason {
+        QUEUE_ITEM_EDIT_LOCKED | QUEUE_EDIT_LOCK_LOST | QUEUE_ITEM_NOT_EDITABLE => {
+            (Status::Rejected, reason)
+        }
+        QUEUE_EDIT_LOCK_MISSING => (Status::Noop, QUEUE_EDIT_LOCK_MISSING),
+        _ => (Status::Noop, QUEUE_ITEM_MISSING),
+    };
+    Ack::refused(&envelope.command_id, status, code, reason, revision)
+}
+
+/// `deleteQueueItem` → kernel `Dequeue`. A miss is Node's `queue.itemMissing` noop, not a failure; a composer
+/// edit lock refuses the removal (`guard.queueItemEditLocked`).
 pub(super) async fn delete_queue_item(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -99,21 +145,14 @@ pub(super) async fn delete_queue_item(
     ack_of(
         kernel,
         Ack::accepted(&envelope.command_id, revision, None),
-        |reason| {
-            Ack::refused(
-                &envelope.command_id,
-                Status::Noop,
-                ITEM_MISSING,
-                reason,
-                revision,
-            )
-        },
+        |reason| queue_refusal(envelope, revision, &reason),
     )
 }
 
-/// `editQueueItem` → kernel `EditQueued`: the text is replaced in place, the position kept. Node's
-/// `guard.queueItemNotEditable` (compact entries) has no counterpart: this agent's queue only holds
-/// typed inputs.
+/// `editQueueItem` → kernel `EditQueued`: the item is edited in place, its position kept. The body's fields the App
+/// did not send keep their values (Node: `newText` is the text; `attachments` is the chips, `[]` clears them and
+/// is applied here, the protocol's input metadata). Node's `guard.queueItemNotEditable` is the kernel's refusal of a
+/// compaction.
 pub(super) async fn edit_queue_item(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -123,9 +162,62 @@ pub(super) async fn edit_queue_item(
         Ok(body) => body,
         Err(ack) => return *ack,
     };
+    let source = source_of(&body.queue_item_id);
     let command = Command::EditQueued {
-        command: CommandId::new(source_of(&body.queue_item_id)),
-        text: body.new_text,
+        command: CommandId::new(source),
+        edit: QueuedEdit {
+            editor_id: body.editor_id.clone(),
+            text: body.new_text.clone(),
+            conversation_quotes: body.conversation_quotes.clone(),
+            model_selection: crate::commands::selection(body.model_selection.as_ref()),
+            mode: body.mode.clone(),
+            plan_enabled: body.plan_enabled,
+        },
+    };
+    let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
+    match kernel {
+        KernelAck::Accepted { .. } => {
+            if let Some(attachments) = body.attachments {
+                live.sink.set_queued_attachments(source, attachments).await;
+            }
+            Ack::accepted(&envelope.command_id, revision, None)
+        }
+        KernelAck::Duplicate => {
+            crate::inbox::duplicate(&Ack::accepted(&envelope.command_id, revision, None))
+        }
+        KernelAck::Rejected { reason } => queue_refusal(envelope, revision, &reason),
+    }
+}
+
+/// `lockQueueItemEdit` → kernel `LockQueuedEdit` (Node `lockQueueItemEdit`). The protocol holds the item's promotion
+/// reservation for the command, so a lock and a `sendQueuedNow` of one item never overlap (Node
+/// `pendingInputReservations` vs `pendingInputEditLocks`); the lock itself is the inbox's.
+pub(super) async fn lock_queue_item_edit(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    revision: u64,
+) -> Ack {
+    let body: LockPayload = match payload(envelope) {
+        Ok(body) => body,
+        Err(ack) => return *ack,
+    };
+    let source = source_of(&body.queue_item_id);
+    let Some(_reservation) = live.sink.reserve_promotion(source) else {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            ITEM_RESERVED,
+            ITEM_RESERVED,
+            revision,
+        );
+    };
+    let command = Command::LockQueuedEdit {
+        command: CommandId::new(source),
+        lock: QueueEditLock {
+            editor_id: body.editor_id,
+            client_id: envelope.client_id.clone(),
+            input_origin: envelope.input_origin.clone(),
+        },
     };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
     match kernel {
@@ -133,12 +225,76 @@ pub(super) async fn edit_queue_item(
         KernelAck::Duplicate => {
             crate::inbox::duplicate(&Ack::accepted(&envelope.command_id, revision, None))
         }
-        KernelAck::Rejected { reason } => accepted_despite_miss(envelope, revision, &reason),
+        KernelAck::Rejected { reason } => queue_refusal(envelope, revision, &reason),
+    }
+}
+
+/// `releaseQueueItemEdit` → kernel `ReleaseQueuedEdit`: no lock is the noop `queue.editLockMissing`.
+pub(super) async fn release_queue_item_edit(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    revision: u64,
+) -> Ack {
+    let body: ItemPayload = match payload(envelope) {
+        Ok(body) => body,
+        Err(ack) => return *ack,
+    };
+    let command = Command::ReleaseQueuedEdit {
+        command: CommandId::new(source_of(&body.queue_item_id)),
+    };
+    let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
+    ack_of(
+        kernel,
+        Ack::accepted(&envelope.command_id, revision, None),
+        |reason| queue_refusal(envelope, revision, &reason),
+    )
+}
+
+/// `applyQueueItemsConfig` → kernel `ApplyQueuedConfig` (Node `applyQueueItemsConfig`). Items that a promotion
+/// holds (Node: not `queued`) are skipped here through their reservation; the kernel skips the missing, compact and
+/// locked ones. Nothing applied is the noop `queue.itemMissing`.
+pub(super) async fn apply_queue_items_config(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    revision: u64,
+) -> Ack {
+    let body: ApplyConfigPayload = match payload(envelope) {
+        Ok(body) => body,
+        Err(ack) => return *ack,
+    };
+    let mut commands = Vec::new();
+    let mut held = Vec::new();
+    for id in &body.queue_item_ids {
+        let source = source_of(id);
+        if let Some(reservation) = live.sink.reserve_promotion(source) {
+            held.push(reservation);
+            commands.push(CommandId::new(source));
+        }
+    }
+    if commands.is_empty() {
+        return queue_refusal(envelope, revision, QUEUE_ITEM_MISSING);
+    }
+    let command = Command::ApplyQueuedConfig {
+        commands,
+        edit: QueuedEdit {
+            model_selection: crate::commands::selection(body.model_selection.as_ref()),
+            mode: body.mode,
+            ..QueuedEdit::default()
+        },
+    };
+    let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
+    drop(held);
+    match kernel {
+        KernelAck::Accepted { .. } => Ack::accepted(&envelope.command_id, revision, None),
+        KernelAck::Duplicate => {
+            crate::inbox::duplicate(&Ack::accepted(&envelope.command_id, revision, None))
+        }
+        KernelAck::Rejected { reason } => queue_refusal(envelope, revision, &reason),
     }
 }
 
 /// `reorderQueueItem` → kernel `ReorderQueued`: before another queued item, or to the end when the
-/// anchor is null. A miss is accepted with a warn, exactly like Node.
+/// anchor is null. A miss is accepted with a warn, exactly like Node; a locked item is refused.
 pub(super) async fn reorder_queue_item(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -161,6 +317,9 @@ pub(super) async fn reorder_queue_item(
         KernelAck::Accepted { .. } => Ack::accepted(&envelope.command_id, revision, None),
         KernelAck::Duplicate => {
             crate::inbox::duplicate(&Ack::accepted(&envelope.command_id, revision, None))
+        }
+        KernelAck::Rejected { reason } if reason == QUEUE_ITEM_EDIT_LOCKED => {
+            queue_refusal(envelope, revision, &reason)
         }
         KernelAck::Rejected { reason } => accepted_despite_miss(envelope, revision, &reason),
     }
@@ -305,6 +464,17 @@ pub(super) async fn send_queued_now(
             ),
         );
     };
+    // Node `sendQueuedNow` refuses a locked item (`guard.queueItemEditLocked`); the lock is read from the same view
+    // as the item, and the reservation above keeps a lock from being taken while the promotion runs.
+    if item.edit_lock.is_some() {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            QUEUE_ITEM_EDIT_LOCKED,
+            QUEUE_ITEM_EDIT_LOCKED,
+            revision,
+        );
+    }
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
     let release = || Command::ReserveForeground { reserved: false };
     // The promotion lease: while the window is open neither another queued item nor a background notice can start
