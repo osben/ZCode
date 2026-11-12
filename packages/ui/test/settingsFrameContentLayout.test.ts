@@ -11,6 +11,7 @@ const automationsSectionSource = readSource("../src/settings/AutomationsSection.
 const automationEditViewSource = readSource("../src/settings/AutomationEditView.tsx");
 const offPeakEditViewSource = readSource("../src/settings/OffPeakEditView.tsx");
 const workspaceShellSource = readSource("../src/app-shell/WorkspaceShellLayout.tsx");
+const memorySettingsSectionSource = readSource("../src/settings/MemorySettingsSection.tsx");
 const automationsBreadcrumbFrameSource = readSource(
   "../src/settings/AutomationsMainBreadcrumbFrame.tsx",
 );
@@ -100,13 +101,27 @@ describe("settings frame content layout", () => {
   });
 
   it("only exposes the Project Memory viewer from the desktop host", () => {
-    expect(settingsPageSource).toContain("projectMemoryViewerAvailable={Boolean(isDesktop)}");
+    // The device-scoped Memory page (upstream) receives the desktop flag; the viewer is
+    // available only on the desktop AND for the local device, never for remote devices.
+    expect(settingsPageSource).toContain("isDesktop={Boolean(isDesktop)}");
     expect(settingsPageSource).not.toContain("projectMemoryViewerAvailable={!isWebRemoteControl}");
+    expect(memorySettingsSectionSource).toContain(
+      "projectMemoryViewerAvailable={isDesktop && isLocal}",
+    );
   });
 
   it("pins the Project Memory viewer subtree to the local base host", () => {
-    expect(settingsPageSource).toMatch(
-      /<ServiceProvider services=\{localHostServices\}>[\s\S]*?<MemorySettingsSection[\s\S]*?<\/ServiceProvider>/,
+    // The local device's scope services are the base workspace services; the remote device
+    // gets its own Source services. The page itself never inherits a remote workspace provider.
+    expect(settingsPageSource).toContain(
+      "<MemorySettingsPage\n                              workspacePath={activeWorkspacePath}",
+    );
+    expect(memorySettingsSectionSource).toContain("const services = useBaseWorkspaceServices();");
+    expect(memorySettingsSectionSource).toMatch(
+      /<ServiceProvider services=\{services\}>[\s\S]*?<MemoryDeviceSettings/,
+    );
+    expect(memorySettingsSectionSource).toMatch(
+      /<ServiceProvider services=\{user\.unscopedServices\} key=\{scope\.selectedScopeKey\}>/,
     );
   });
 

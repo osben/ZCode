@@ -75,7 +75,11 @@ impl AgentTool {
         if self.core.fork && wanted == crate::fork::FORK {
             return Ok(crate::fork::definition());
         }
-        let definitions = self.core.catalog.definitions(&context.workspace).await;
+        let definitions = self
+            .core
+            .catalog
+            .definitions_in(&context.workspace, Some(&context.session))
+            .await;
         if let Some(found) = definitions.iter().find(|agent| agent.agent_type == wanted) {
             return Ok(found.clone());
         }
@@ -108,7 +112,11 @@ impl Tool for AgentTool {
         {
             return fork.input_schema.clone();
         }
-        rust_cli_prompts::definition(NAME).schema.clone()
+        let schema = &rust_cli_prompts::definition(NAME).schema;
+        if self.core.node_desktop {
+            return crate::desktop_prompt::input_schema(schema);
+        }
+        schema.clone()
     }
 
     /// Agent 的 schema 是宽松对象（agents.md §2，修复线 F51）：schema 外的键（例如删掉的 `model`，F51b 删掉的
@@ -123,7 +131,11 @@ impl Tool for AgentTool {
         {
             return fork.description.clone();
         }
-        rust_cli_prompts::definition(NAME).description.clone()
+        let description = &rust_cli_prompts::definition(NAME).description;
+        if self.core.node_desktop {
+            return crate::desktop_prompt::description(description);
+        }
+        description.clone()
     }
 
     /// 权限交给子代理自己的工具，Agent 本身算只读。
@@ -182,8 +194,11 @@ impl Tool for AgentTool {
         // 子代理里派生时同样按参数（以前总在前台：子会话没有 actor 接收通知）。嵌套的后台子代理的
         // 通知送给派生它的子代理（owner），由 `routing` 投递（agents.md §5.1）。fork 打开时一律在后台（对照实现
         // 同样，修复线 L-A）。
-        let background =
-            self.core.fork || input.run_in_background.unwrap_or(true) || definition.background;
+        // Fork (node_desktop): Node runs an Agent call in the background only on
+        // `run_in_background: true`; zcode-rs defaults to the background.
+        let background = self.core.fork
+            || input.run_in_background.unwrap_or(!self.core.node_desktop)
+            || definition.background;
         let fork = definition.agent_type == crate::fork::FORK && self.core.fork;
         // fork 继承父会话已提交的对话（agents.md §8.1.2）；会话 actor 是它的 owner。
         let inherited = if fork {
@@ -210,6 +225,12 @@ impl Tool for AgentTool {
             .and_then(|owner| core.live.get(owner))
             .map_or(1, |owner| owner.depth + 1);
         let (agent, child) = spawn::ids(core);
+        // Fork: the child runs in the same workspace, so a deleted execution worktree refuses its tools too.
+        let execution_worktree = context
+            .session_ops
+            .view()
+            .await
+            .is_some_and(|view| view.execution_worktree);
         let entry = LiveAgent {
             agent,
             child,
@@ -218,6 +239,9 @@ impl Tool for AgentTool {
             owner,
             depth,
             tool_use: Some(context.tool_use.clone()),
+            stopped_by_user: false,
+            erased: false,
+            late_messages: Vec::new(),
             description: input.description.clone(),
             // fork 总用父运行的模型与档位（`effort` 参数忽略）。
             selection: if fork {
@@ -232,6 +256,7 @@ impl Tool for AgentTool {
             mode: spawn::mode(parent.mode, definition.permission_mode),
             definition: Arc::new(definition),
             workspace: context.workspace.clone(),
+            execution_worktree,
             // 执行管线已按 Agent 的 `machine` 换好了机器（R3）：远端时记下它，子代理的工具缺省在那里跑。
             machine: context.machine.name().clone(),
             background,
@@ -242,7 +267,10 @@ impl Tool for AgentTool {
                 .flatten()
                 .map(crate::child::Asks),
             state: AgentState::Finished(Ending::Completed),
-            shown: crate::live::Shown::default(),
+            shown: crate::live::Shown {
+                execution_id: self.core.ports.ids.execution(),
+                ..Default::default()
+            },
             delivered: Vec::new(),
             fork_prefix: inherited.map(Arc::new),
         };
@@ -258,12 +286,17 @@ impl Tool for AgentTool {
                     message: error.to_string(),
                 })?;
         // 子会话里后台命令的通知送给这个子代理（agents.md §5.2）。
-        crate::shell_notices::watch(core, &entry);
+        crate::shell_notices::watch(core, &entry.child, &entry.root);
         if background {
             let output = launched_output(&entry);
             spawn::background(core, entry, opening);
             return Ok(output);
         }
+        // Fork: the foreground child is announced before its first model response, so the
+        // desktop shows it while it waits (the child's own progress starts with that response).
+        let _ = progress.try_send(ToolProgress {
+            data: serde_json::json!({ "agentId": entry.agent }),
+        });
         let parent = Parent {
             session: context.session.clone(),
             asks: context.interactions.clone(),
@@ -284,8 +317,22 @@ impl Tool for AgentTool {
             // 还有在跑的后台子代理（交互模式）：转成后台、停放，父调用回“已启动”（`async_launched`）。
             return Ok(launched_output(&entry));
         }
-        match (finished.ending, finished.error) {
-            (Ending::Killed, _) => Err(ToolError::Cancelled),
+        // Fork: `settled.ending`, not the query's: a stop accepted before the run settled ends it as stopped.
+        match (settled.ending, finished.error) {
+            // The parent turn was interrupted: the call is cancelled with it.
+            (Ending::Killed, _) if context.cancel.is_cancelled() => Err(ToolError::Cancelled),
+            // Fork: the child alone was stopped (desktop `stopSubagent`, TaskStop). Node ends only this Agent call with
+            // `ToolCancelled` and keeps its child link, so the stop keeps `display.agent` (the `SubagentLinked` fact that
+            // cold subagent queries read), with `status: "killed"`, which the projection reads as cancelled.
+            (Ending::Killed, _) => Err(ToolError::Stopped {
+                message: rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER.to_owned(),
+                display: with_display(
+                    rust_cli_kernel_api::tool::text(String::new()),
+                    &entry,
+                    serde_json::json!({ "status": "killed" }),
+                )
+                .display,
+            }),
             (_, Some(error)) => Err(ToolError::Failed {
                 message: error.to_string(),
             }),

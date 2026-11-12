@@ -23,6 +23,8 @@ fn recorded(source: &str, (text, data): (String, Value)) -> Message {
 
 fn human() -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -133,6 +135,8 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
     };
     let user = |origin: UserOrigin| {
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("u"),
             content: vec![ContentBlock::Text {
                 text: "x".to_owned(),
@@ -147,6 +151,8 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
         data: serde_json::Value::Null,
     });
     let result = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("r"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t"),
@@ -168,6 +174,8 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
     assert!(tokens_due(&[result.clone(), skill.clone()]));
     // 用户调用 skill（命令标签 + 正文）不是普通的用户输入：不宣布（ext.md §2.7）。
     let command = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("c"),
         content: vec![ContentBlock::Text {
             text: rust_cli_kernel_api::user_command::command_tags("greet", "Ada"),
@@ -192,6 +200,8 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
 fn inputs_are_not_announced_after_the_goal_prompt_or_stop_feedback() {
     let meta = |source: &str| {
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("m"),
             content: vec![ContentBlock::Text {
                 text: "x".to_owned(),
@@ -216,6 +226,8 @@ fn inputs_are_not_announced_after_the_goal_prompt_or_stop_feedback() {
 fn inputs_are_not_announced_after_a_bash_mode_command() {
     let said = |text: &str| {
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("b"),
             content: vec![ContentBlock::Text {
                 text: text.to_owned(),

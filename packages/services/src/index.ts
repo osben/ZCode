@@ -206,6 +206,7 @@ export type {
   WindowHostControllerTaskListItem,
   WindowHostControllerTaskListResult,
   WindowHostTaskUnreadSignal,
+  WindowHostTasksRemovedSignal,
 } from "./window-controller/windowController.js";
 
 // ZCode agent service — IZCodeAgentService is both a type (interface) and value (descriptor)
@@ -215,6 +216,8 @@ export {
   ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE,
 } from "./zcode-agent/zcodeAgent.js";
 export {
+  isZCodeAgentModelSelectionBasisUnsupportedError,
+  ZCodeAgentModelSelectionBasisUnsupportedError,
   isZCodeAgentMcpStatusModeUnsupportedError,
   ZCODE_AGENT_MCP_STATUS_MODE_UNSUPPORTED_ERROR_CODE,
   ZCodeAgentMcpStatusModeUnsupportedError,
@@ -236,6 +239,7 @@ export type {
   ZCodeAgentCuaPermissionObservation,
   ZCodeAgentInitializeResult,
   ZCodeAgentStorageStartupSnapshot,
+  ZCodeAgentRuntimeExitedEvent,
   ZCodeAgentRuntimeLifecycleEvent,
   ZCodeAgentRuntimePolicy,
   ZCodeAgentReadSessionParams,
@@ -359,6 +363,14 @@ export { ISkillSyncService } from "./skill-sync/skillSync.js";
 export { IDeviceSyncStateService, IUserConfigSyncService } from "./data-sync/index.js";
 export type { IDataSyncCategoryService } from "./data-sync/index.js";
 export { IProviderProvisioningStatusService } from "./provider-provisioning-status/index.js";
+export {
+  IExtensionGrantsService,
+  IExtensionsService,
+  IExtensionViewsService,
+  type ExtensionsContributionsMessage,
+} from "./extensions/index.js";
+export { IVoiceInputService } from "./voice-input/index.js";
+export type { VoiceInputErrorCode, VoiceInputEvent } from "./voice-input/index.js";
 export { IMcpSyncService } from "./mcp-sync/mcpSync.js";
 export { IPluginSyncService } from "./plugin-sync/pluginSync.js";
 export {
@@ -386,17 +398,6 @@ export {
   ISourceServerManagementService,
   type UpdateConnectionProfileInput,
 } from "./source-server-management/sourceServerManagement.js";
-
-export { IProjectService, LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "#src/project/contract.js";
-export type {
-  ProjectDirectories,
-  ProjectRoot,
-  ProjectTask,
-  ProjectTaskRef,
-  ProjectTree,
-  SaveProjectInput,
-  VirtualProject,
-} from "#src/project/contract.js";
 
 export { ITaskGroupService } from "#src/task-groups/contract.js";
 export type {
@@ -444,17 +445,6 @@ export type {
   ExternalSessionsListResult,
 } from "#src/external-sessions/contract.js";
 
-export { readProjectCatalog, projectSelectionId } from "#src/project-catalog/index.js";
-export type { ProjectCatalogPort, ProjectCatalogSnapshot } from "#src/project-catalog/contract.js";
-
-export { IRemoteProjectService } from "#src/remote-projects/contract.js";
-export type {
-  RemoteProjectCache,
-  RemoteProjectDirectory,
-  RemoteProjectEntry,
-  RemoteProjectHost,
-} from "#src/remote-projects/contract.js";
-
 // Subagents service — ISubagentsService is both a type (interface) and value (descriptor)
 export { ISubagentsService } from "./subagents/subagents.js";
 
@@ -489,6 +479,34 @@ export type {
   FeedbackTicketSummary,
   FeedbackTicketType,
 } from "@zcode/shared";
+
+export { IProjectService, LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "#src/project/contract.js";
+export {
+  IManagedWorktreeService,
+  type ManagedWorktreeGroup,
+  type ManagedWorktreeWorkspace,
+  type StartManagedWorktreeCreationResult,
+} from "#src/managed-worktree-tasks/contract.js";
+export type {
+  ProjectTree,
+  ProjectTask,
+  ProjectTaskRef,
+  VirtualProject,
+  ProjectRoot,
+  SaveProjectInput,
+  ProjectDirectories,
+} from "#src/project/contract.js";
+
+export { IRemoteProjectService } from "#src/remote-projects/contract.js";
+export type {
+  RemoteProjectHost,
+  RemoteProjectEntry,
+  RemoteProjectCache,
+  RemoteProjectDirectory,
+} from "#src/remote-projects/contract.js";
+
+export { readProjectCatalog, projectSelectionId } from "#src/project-catalog/index.js";
+export type { ProjectCatalogPort, ProjectCatalogSnapshot } from "#src/project-catalog/contract.js";
 
 // Plugin UI bridge: descriptors, parameter types, and factories; App-Provided Tools has a separate descriptor.
 export {

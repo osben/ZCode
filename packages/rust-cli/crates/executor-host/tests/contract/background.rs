@@ -24,6 +24,7 @@ fn key(session: &str, task: &ShellTaskId) -> BackgroundTask {
     BackgroundTask {
         session: SessionId::new(session),
         task: task.clone(),
+        notify_stop: false,
     }
 }
 
@@ -54,6 +55,8 @@ async fn next_notice(shell: &Shell) -> ShellNotice {
         .unwrap()
 }
 
+/// The output path is local-only (the wire does not carry it; env-local tests check it), so the contract compares the
+/// rest.
 async fn info(shell: &Shell, session: &str, task: &ShellTaskId) -> Option<BackgroundInfo> {
     shell
         .machine
@@ -61,6 +64,10 @@ async fn info(shell: &Shell, session: &str, task: &ShellTaskId) -> Option<Backgr
         .background_command(key(session, task))
         .await
         .unwrap()
+        .map(|info| BackgroundInfo {
+            output: None,
+            ..info
+        })
 }
 
 async fn stop(
@@ -110,6 +117,50 @@ async fn background_commands_report_until_acked(kind: Kind) {
     assert!(pending.is_err(), "acked notices are not delivered again");
 }
 
+/// Fork: an acknowledged command keeps its terminal record, and a remote executor answers it over the wire
+/// (`background.ended_background_command`), while `background_command` forgets it at the ack.
+async fn an_acked_command_answers_its_ended_record(kind: Kind) {
+    let shell = shell(kind, Vec::new()).await;
+    let task = background(&shell, "op1", "echo bg").await;
+    let notice = next_notice(&shell).await;
+    let session = SessionId::new("s1");
+    shell
+        .machine
+        .shell()
+        .ack_shell_notice(&session, notice.seq)
+        .await
+        .unwrap();
+    assert_eq!(info(&shell, "s1", &task).await, None);
+    let ended = shell
+        .machine
+        .background()
+        .ended_background_command(key("s1", &task))
+        .await
+        .unwrap()
+        .map(|info| BackgroundInfo {
+            output: None,
+            ..info
+        });
+    assert_eq!(
+        ended,
+        Some(BackgroundInfo {
+            command: "echo bg".to_owned(),
+            status: BackgroundStatus::Completed,
+            kind: BackgroundKind::Bash,
+            description: "Wait a while".to_owned(),
+            output: None,
+        })
+    );
+    // Only the session that ran it.
+    let other = shell
+        .machine
+        .background()
+        .ended_background_command(key("s2", &task))
+        .await
+        .unwrap();
+    assert_eq!(other, None);
+}
+
 async fn a_stopped_command_leaves_the_background_without_a_notice(kind: Kind) {
     let shell = shell(kind, Vec::new()).await;
     let task = background(&shell, "op1", "sleep 30").await;
@@ -118,6 +169,7 @@ async fn a_stopped_command_leaves_the_background_without_a_notice(kind: Kind) {
         status: BackgroundStatus::Running,
         kind: BackgroundKind::Bash,
         description: "Wait a while".to_owned(),
+        output: None,
     };
     assert_eq!(info(&shell, "s1", &task).await, Some(running));
     // 只找本会话的命令。
@@ -129,10 +181,11 @@ async fn a_stopped_command_leaves_the_background_without_a_notice(kind: Kind) {
         })
     );
     assert!(shell.background().await.is_empty());
-    assert_eq!(info(&shell, "s1", &task).await, None);
-    assert_eq!(
-        stop(&shell, "stop2", &task).await,
-        Ok(BackgroundStop::NotFound)
+    // Fork: stopped but not exited yet reads killed (Node's killTask); which one is seen depends on the exit timing.
+    let stopping = info(&shell, "s1", &task).await.map(|info| info.status);
+    assert!(
+        matches!(stopping, None | Some(BackgroundStatus::Killed)),
+        "{stopping:?}"
     );
     let ran = shell.collect("op1").await;
     assert_eq!(
@@ -140,6 +193,11 @@ async fn a_stopped_command_leaves_the_background_without_a_notice(kind: Kind) {
         (Outcome::Cancelled, Some(137), false)
     );
     assert!(ran.output.ends_with("\n[killed]\n"), "{:?}", ran.output);
+    assert_eq!(info(&shell, "s1", &task).await, None);
+    assert_eq!(
+        stop(&shell, "stop2", &task).await,
+        Ok(BackgroundStop::NotFound)
+    );
     // 没有通知：下一条后台命令的通知是 seq 1。
     let next = background(&shell, "op2", "true").await;
     let notice = next_notice(&shell).await;
@@ -155,6 +213,7 @@ async fn an_ended_command_is_not_running_until_its_notice_is_acked(kind: Kind) {
         status: BackgroundStatus::Failed,
         kind: BackgroundKind::Bash,
         description: "Wait a while".to_owned(),
+        output: None,
     });
     assert_eq!(info(&shell, "s1", &task).await, failed);
     assert_eq!(
@@ -389,6 +448,7 @@ async fn background_commands_report_their_kind_and_description(kind: Kind) {
             status: BackgroundStatus::Running,
             kind,
             description: description.to_owned(),
+            output: None,
         })
     };
     assert_eq!(
@@ -433,6 +493,7 @@ async fn background_commands_report_their_kind_and_description(kind: Kind) {
 
 contract!(
     background_commands_report_until_acked,
+    an_acked_command_answers_its_ended_record,
     background_commands_report_their_kind_and_description,
     a_stopped_command_leaves_the_background_without_a_notice,
     an_ended_command_is_not_running_until_its_notice_is_acked,

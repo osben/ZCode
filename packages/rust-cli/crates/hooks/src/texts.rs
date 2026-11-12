@@ -12,14 +12,12 @@ use crate::result::Blocking;
 
 /// PreToolUse 的 `continue: false`。
 pub(crate) const STOPPED_BY_HOOK: &str = "Execution stopped by hook";
-/// PostToolUse 的 `continue: false`（`ooe`）。
-pub(crate) const STOPPED_BY_POST_TOOL_USE: &str = "Execution stopped by PostToolUse hook";
 /// Stop 的 `continue: false`。
 pub(crate) const STOP_PREVENTED: &str = "Stop hook prevented continuation";
 /// UserPromptSubmit 的 `continue: false`。
 pub(crate) const OPERATION_STOPPED: &str = "Operation stopped by hook";
-/// PermissionRequest 拒绝时没有 message。
-pub(crate) const PERMISSION_DENIED_BY_HOOK: &str = "Permission denied by hook";
+/// Node `hook-flow.ts`: a PermissionRequest hook that stops (`continue: false`) without a `stopReason`.
+pub(crate) const DENIED_BY_PERMISSION_REQUEST_HOOK: &str = "Denied by PermissionRequest hook";
 
 /// 转义：`<system-reminder` 与 `</system-reminder` 前的 `<`、结尾单独的 `<` 转成 `&lt;`。
 pub(crate) fn escape(text: &str) -> String {
@@ -142,6 +140,8 @@ pub(crate) fn success(ids: &dyn Ids, hook_name: &str, event: &str, content: &str
 /// meta user 消息（`createUserMessage({isMeta: true})`），文本原样。
 pub(crate) fn meta(ids: &dyn Ids, source: &str, text: String) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: ids.message(),
         content: vec![ContentBlock::Text { text }],
         origin: UserOrigin::Meta {

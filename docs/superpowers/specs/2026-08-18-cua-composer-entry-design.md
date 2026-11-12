@@ -2,8 +2,7 @@
 
 - Date: 2026-08-18
 - Status: design confirmed, pending implementation
-- Upstream PRD: "ZCode CUA Composer Persistent Button & Free Trial PRD v0.2" (Feishu wiki
-  EEE7wZ06Ti7Gx5kGWU8cthX9nOg)
+- Upstream PRD: "ZCode CUA Composer Persistent Button & Free Trial PRD v0.2" (internal product doc)
 - Branch: `feat/cua-composer-entry`
 - Later change: see "2026-09-11 change: Computer Use off by default" at the end. It removed the "not enabled"
   (`plugin-disabled`) UI state described in several places below; read the state tables and ASCII diagrams

@@ -192,6 +192,7 @@ impl Loop<'_> {
             selection: self.app.view.selection().clone(),
             mode: self.app.view.mode(),
             plan: self.app.view.plan(),
+            incognito: None,
         };
         self.pending.push(
             async move {

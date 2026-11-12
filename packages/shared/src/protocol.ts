@@ -74,8 +74,14 @@ export interface SystemInfo {
   platform: string;
 }
 
+/**
+ * Supported UI languages (BCP-47). The order is the display order in the Settings language dropdown.
+ * Steps for adding a language are in docs/i18n/ui-locales.md.
+ */
+export const SUPPORTED_LOCALES = ["zh-CN", "en-US", "ja-JP", "ru-RU", "ko-KR", "uk-UA"] as const;
+
 /** Supported languages. */
-export type Locale = "zh-CN" | "en-US" | "uk-UA";
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 /** UI language preference; system follows the current runtime's system language. */
 export type LocalePreference = "system" | Locale;
@@ -216,8 +222,8 @@ export type PersistedWorkspaceSessionEntry =
 
 // ── Process Monitor ──
 
-/** Resource-manager category: core service / built-in plugin / community plugin. */
-export type ResourceUsageCategory = "base" | "builtin-plugin" | "community-plugin";
+/** Resource-manager category: core service / task process / built-in plugin / community plugin. */
+export type ResourceUsageCategory = "base" | "task" | "builtin-plugin" | "community-plugin";
 
 /** Group key for core services; plugin group key is the plugin name or MCP server name. */
 export type ResourceUsageBaseGroupKey = "main" | "gpu" | "renderer" | "host" | "cli" | "utility";
@@ -323,6 +329,8 @@ export interface AppSettings {
    * Affects only built-in browser traffic, not ZCode's own backend or model API requests. Disabled by default; applies after restart.
    */
   embeddedBrowserAllowInsecureCertificates?: boolean;
+  /** Whether clicking a local .html file in the file tree opens it in the built-in browser (default false: keeps source preview). Right-click "Open" always previews the source. */
+  fileTreeHtmlClickOpensBrowser?: boolean;
   /** One-time display preference when a human user opens a Browser tab; Agent Browser Use does not read or write it. */
   embeddedBrowserViewportPreference?: EmbeddedBrowserViewportPreference;
   /**
@@ -341,6 +349,8 @@ export interface AppSettings {
   closeToTrayOnWindows?: boolean;
   /** Prevent system idle sleep while an off-peak task is running (manual toggle; does not prevent sleep when the lid is closed). */
   keepAwakeWhileRunning?: boolean;
+  /** Local offline push reporting switch; treated as enabled when unset (spec: docs/web-remote-control/mobile-event-push.md 6.4). */
+  mobilePushEnabled?: boolean;
   /** Whether the one-time migration for the Windows close-to-tray default has run; used only for Settings migration, not business logic. */
   closeToTrayOnWindowsMigrationInitialized?: boolean;
   /**
@@ -379,6 +389,8 @@ export interface AppSettings {
   askUserQuestionAutoResolutionEnabled?: boolean;
   /** Initial checkbox state for continuing a Coding Plan task after its five-hour usage reset. */
   codingPlanLimitAutoContinueDefaultEnabled?: boolean;
+  /** Off by default; controls plugin discovery and recommendations in conversation. Manual install in Settings stays available. */
+  pluginAutoRecommendationEnabled?: boolean;
   /** Whether to preserve Model I/O in full; when enabled, do not rotate, reset limits, compress, or truncate, while still redacting authentication data. */
   modelIoFullRetentionEnabled?: boolean;
   /**

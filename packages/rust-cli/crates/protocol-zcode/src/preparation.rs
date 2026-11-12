@@ -9,6 +9,7 @@
 //! preparing, the conversation snapshot and the sessions-index row carry `submissionPreparation`.
 
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::store::FrontendRecord;
 use serde_json::{Value, json};
 
@@ -129,6 +130,25 @@ pub(crate) fn absent_if_not_found<T>(
     }
 }
 
+/// Fork: whether `session` has a soft-deleted row. A deleted session reads as "no such session", but its row still
+/// exists: Node's createSession reads `getSession` (deleted rows included) and refuses before any write, while a
+/// create here would upsert over the row (title, directory, and possibly the incognito profile) before failing. A
+/// store without the row read cannot hold one.
+pub(crate) async fn deleted(server: &Server, session: &SessionId) -> Result<bool, &'static str> {
+    match server.kernel.queries().reconcile_row(session).await {
+        Ok(row) => Ok(row_deleted(row.as_ref())),
+        Err(rust_cli_kernel_api::store::StoreError::Unsupported { .. }) => Ok(false),
+        // No error text: a storage error can name the storage path.
+        Err(_) => Err("reading the session failed"),
+    }
+}
+
+/// Fork: a reconcile row (`StoreQueries::reconcile_row`) with a deletion time.
+pub(crate) fn row_deleted(row: Option<&Value>) -> bool {
+    row.and_then(|row| row.get("timeDeleted"))
+        .is_some_and(|time| !time.is_null())
+}
+
 pub async fn save(server: &Server, session: &SessionId, marker: &Marker) -> Result<(), String> {
     server
         .kernel
@@ -143,10 +163,51 @@ pub async fn save(server: &Server, session: &SessionId, marker: &Marker) -> Resu
 pub(crate) enum Reserve {
     /// The same submission reserved it before (a retried reservation): answer with the same session.
     Repeat,
-    /// An untouched prewarm. The UI prewarms the draft with a plain createSession before the first send and
-    /// zcode-rs persists it at once, so it is adopted the way the Node agent adopts its deferred prewarm.
+    /// An untouched prewarm. The UI prewarms the draft with a plain createSession before the first send; the
+    /// app-server store holds it as a draft until the reservation's marker persists it, so it is adopted the way
+    /// the Node agent adopts its deferred prewarm (fork-agent-runtime-selection.md "Draft prewarm in Rust mode").
     Adopt,
     Refuse(&'static str),
+}
+
+/// The incognito profiles of a reservation: the one stored on the existing row and the requested one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ReserveIncognito {
+    pub(crate) stored: Option<IncognitoProfile>,
+    pub(crate) requested: Option<IncognitoProfile>,
+}
+
+/// Fork: whether an existing session has a conversation (messages, queued input or a running turn). With no
+/// submission marker and the same workspace, a session without one is an untouched prewarm: the one rule for a
+/// reservation's adoption ([`reserve_existing`]) and a plain createSession's repeat ([`recreate_existing`]).
+pub(crate) fn has_conversation(view: &rust_cli_kernel_api::session_api::SessionView) -> bool {
+    !view.messages.is_empty() || !view.queue.is_empty() || view.running
+}
+
+/// Fork: whether a plain createSession may repeat an id that already exists. Node refuses every existing id
+/// ("sessionId already exists") because it keeps a prewarm deferred. In zcode-rs a prewarm can still be visible here
+/// (an open draft, or a row persisted before draft deferral), so only an untouched prewarm in the same workspace under
+/// the same profile (absent differs from present) is repeated. Any other session is refused: a repeat would reset its
+/// runtime state and run it with a profile its row does not hold. The store never refuses; this is the one rule.
+pub(crate) fn recreate_existing(
+    marker: Option<&Marker>,
+    workspace_matches: bool,
+    conversation: bool,
+    incognito: ReserveIncognito,
+) -> Result<(), &'static str> {
+    if !workspace_matches {
+        return Err("it belongs to another workspace");
+    }
+    if marker.is_some() {
+        return Err("a submission reserved it");
+    }
+    if conversation {
+        return Err("it already has a conversation");
+    }
+    if incognito.stored != incognito.requested {
+        return Err("it has another incognito profile");
+    }
+    Ok(())
 }
 
 pub(crate) fn reserve_existing(
@@ -154,14 +215,27 @@ pub(crate) fn reserve_existing(
     submission: &str,
     workspace_matches: bool,
     conversation: bool,
+    incognito: ReserveIncognito,
 ) -> Reserve {
     if !workspace_matches {
         return Reserve::Refuse("it belongs to another workspace");
     }
     match marker {
-        Some(marker) if marker.submission_id == submission => Reserve::Repeat,
+        // Fork: a repeat must carry the profile the row was reserved with (Node `incognitoProfilesEqual`).
+        Some(marker) if marker.submission_id == submission => {
+            if incognito.stored == incognito.requested {
+                Reserve::Repeat
+            } else {
+                Reserve::Refuse("another incognito profile reserved it")
+            }
+        }
         Some(_) => Reserve::Refuse("another submission reserved it"),
         None if conversation => Reserve::Refuse("it already has a conversation"),
+        // Fork: a prewarm is a normal session; it is never adopted for, or as, an incognito one (Node refuses
+        // "an incompatible prewarm").
+        None if incognito.stored.is_some() || incognito.requested.is_some() => {
+            Reserve::Refuse("an incognito reservation cannot reuse a prewarm")
+        }
         None => Reserve::Adopt,
     }
 }
@@ -241,26 +315,97 @@ mod tests {
     #[test]
     fn adopts_only_an_untouched_prewarm_in_the_same_workspace() {
         let marker = Marker::preparing("sub-1", 1);
-        assert_eq!(reserve_existing(None, "sub-1", true, false), Reserve::Adopt);
         assert_eq!(
-            reserve_existing(Some(&marker), "sub-1", true, false),
+            reserve_existing(None, "sub-1", true, false, normal()),
+            Reserve::Adopt
+        );
+        assert_eq!(
+            reserve_existing(Some(&marker), "sub-1", true, false, normal()),
             Reserve::Repeat
         );
         assert!(matches!(
-            reserve_existing(Some(&marker), "sub-2", true, false),
+            reserve_existing(Some(&marker), "sub-2", true, false, normal()),
             Reserve::Refuse(_)
         ));
         assert!(matches!(
-            reserve_existing(None, "sub-1", true, true),
+            reserve_existing(None, "sub-1", true, true, normal()),
             Reserve::Refuse(_)
         ));
         assert!(matches!(
-            reserve_existing(None, "sub-1", false, false),
+            reserve_existing(None, "sub-1", false, false, normal()),
             Reserve::Refuse(_)
         ));
         assert!(matches!(
-            reserve_existing(Some(&marker), "sub-1", false, false),
+            reserve_existing(Some(&marker), "sub-1", false, false, normal()),
             Reserve::Refuse(_)
         ));
+    }
+
+    #[test]
+    fn a_plain_create_repeats_only_an_untouched_prewarm_under_the_same_profile() {
+        let marker = Marker::preparing("sub-1", 1);
+        let lockdown = Some(IncognitoProfile::LOCKDOWN);
+        let softer = Some(IncognitoProfile {
+            mcp: true,
+            ..IncognitoProfile::LOCKDOWN
+        });
+        let same = |profile| ReserveIncognito {
+            stored: profile,
+            requested: profile,
+        };
+        assert_eq!(recreate_existing(None, true, false, normal()), Ok(()));
+        assert_eq!(recreate_existing(None, true, false, same(lockdown)), Ok(()));
+        // A session with history, queued input or a running turn is never re-created (Node "sessionId already exists").
+        assert!(recreate_existing(None, true, true, normal()).is_err());
+        assert!(recreate_existing(None, true, true, same(lockdown)).is_err());
+        assert!(recreate_existing(Some(&marker), true, false, normal()).is_err());
+        assert!(recreate_existing(None, false, false, normal()).is_err());
+        for (stored, requested) in [(lockdown, softer), (lockdown, None), (None, lockdown)] {
+            let incognito = ReserveIncognito { stored, requested };
+            assert!(recreate_existing(None, true, false, incognito).is_err());
+        }
+    }
+
+    #[test]
+    fn only_a_row_with_a_deletion_time_is_deleted() {
+        assert!(!row_deleted(None));
+        assert!(!row_deleted(Some(
+            &json!({"timeDeleted": null, "title": "t"})
+        )));
+        assert!(!row_deleted(Some(&json!({"title": "t"}))));
+        assert!(row_deleted(Some(&json!({"timeDeleted": 4_000}))));
+    }
+
+    fn normal() -> ReserveIncognito {
+        ReserveIncognito::default()
+    }
+
+    #[test]
+    fn an_incognito_reservation_repeats_only_with_the_same_profile_and_never_adopts() {
+        let marker = Marker::preparing("sub-1", 1);
+        let lockdown = Some(IncognitoProfile::LOCKDOWN);
+        let other = Some(IncognitoProfile {
+            mcp: true,
+            ..IncognitoProfile::LOCKDOWN
+        });
+        let same = ReserveIncognito {
+            stored: lockdown,
+            requested: lockdown,
+        };
+        assert_eq!(
+            reserve_existing(Some(&marker), "sub-1", true, false, same),
+            Reserve::Repeat
+        );
+        for (stored, requested) in [(lockdown, other), (lockdown, None), (None, lockdown)] {
+            let incognito = ReserveIncognito { stored, requested };
+            assert!(matches!(
+                reserve_existing(Some(&marker), "sub-1", true, false, incognito),
+                Reserve::Refuse(_)
+            ));
+            assert!(matches!(
+                reserve_existing(None, "sub-1", true, false, incognito),
+                Reserve::Refuse(_)
+            ));
+        }
     }
 }

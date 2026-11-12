@@ -62,6 +62,8 @@ export function createE2EStartupCredentialSeed(
       // The Rewards suite goes through the local control plane and must verify both OAuth and JWT injection.
       fileName === "marketing-touch-rewards.test.ts" ||
       fileName === "jwt-401-auto-logout.test.ts" ||
+      // 语音输入只对已登录用户显示，ticket 请求带 zcodejwttoken。
+      fileName === "composer-voice-input.test.ts" ||
       isRequestSecuritySpec(fileName) ||
       fileName === "coding-plan-upgrade-webview-refresh-provider.test.ts" ||
       fileName === "start-plan-manual-claim-experience.test.ts" ||

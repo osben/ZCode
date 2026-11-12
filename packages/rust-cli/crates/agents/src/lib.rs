@@ -14,20 +14,28 @@ mod child;
 mod context;
 mod custom;
 mod definitions;
+mod desktop_prompt;
 mod doing;
 mod fork;
 mod frontmatter;
 mod live;
 mod messaging;
+mod mirror;
 mod monitors;
 mod peer_send;
 mod plugin;
 mod report;
+mod routes;
 mod routing;
 mod runs;
 mod shell_notices;
 mod signals;
 mod spawn;
+mod stall;
+#[cfg(test)]
+#[path = "stop_subagent_tests.rs"]
+mod stop_subagent_tests;
+mod task_output;
 mod task_stop;
 mod tasks;
 mod toolset;
@@ -51,6 +59,7 @@ pub use agent_tool::AgentTool;
 pub use context::AgentCatalog;
 pub use definitions::{AgentDefinition, AgentSource, builtins};
 pub use plugin::PluginAgentFile;
+pub use stall::StallConfig;
 pub use tasks::{MemoryTaskLists, task_tools_enabled};
 
 use crate::live::Live;
@@ -69,6 +78,9 @@ pub struct AgentsPorts {
     /// 以前另存一份主 env，与注册表给的是同一份。
     pub machines: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
     pub tasks: Arc<dyn TaskListStore>,
+    /// Fork: the store's read queries; a reopened top-level session's persisted subagent children come from it
+    /// (`StoreQueries::subagent_child_ids`, shell_notices.rs).
+    pub store_queries: Arc<dyn rust_cli_kernel_api::store::StoreQueries>,
     pub queries: Arc<dyn SubagentQueries>,
     /// 主线程的上下文组装；子代理的 attachment 也由它按 `QuerySource::Subagent` 产生。
     pub context: Arc<dyn ContextBuilder>,
@@ -82,6 +94,8 @@ pub struct AgentsPorts {
     pub peers: Arc<dyn rust_cli_kernel_api::peers::PeerMessaging>,
     /// 操作上下文的工厂（同会话 actor 的 `SessionDeps::operations`）：子代理里停掉 monitor 的操作上下文。
     pub operations: rust_cli_kernel_api::env::Operations,
+    /// Fork: incognito profiles by session; a child session inherits its parent's.
+    pub incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
 }
 
 /// Task v2 四个工具开不开（[`task_tools_enabled`]）。
@@ -117,6 +131,11 @@ pub struct AgentsConfig {
     pub background_prompts: bool,
     /// fork 子代理（修复线 L-A，agents.md §8.1）：交互会话打开，`-p` 关。打开时 Agent 用 fork 写法、全部在后台。
     pub fork: bool,
+    /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
+    /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
+    pub node_desktop: bool,
+    /// 后台子代理的无进展提醒（Node `subagents.backgroundStallNotifyMs` 与 `backgroundStallMaxIntervalMs`）。
+    pub stall: StallConfig,
 }
 
 impl AgentsPorts {
@@ -137,9 +156,14 @@ pub(crate) struct Core {
     pub(crate) board: TaskBoard,
     /// 子代理里的 Monitor（agents.md §5.3，工作线 F83）。
     pub(crate) monitors: monitors::MonitorBoard,
+    /// Fork (node_desktop): the live child runs for the child sessions' actors (side tabs).
+    pub(crate) mirrors: mirror::Mirrors,
     pub(crate) keep_alive: bool,
     pub(crate) background_prompts: bool,
     pub(crate) fork: bool,
+    /// Fork (node_desktop): an Agent call runs in the foreground unless it asks for the background
+    /// (Node `agent.ts`: `runInBackground: run_in_background === true`).
+    pub(crate) node_desktop: bool,
     /// 主线程的完整注册表（基础工具 + 本 crate 的工具）；子代理从它过滤。弱引用：注册表里的工具持有 Core，
     /// 两者在 [`Agents::new`] 里用 `Arc::new_cyclic` 一次建好，没有“先建后接”的空档。
     registry: Weak<AgentRegistry>,
@@ -206,6 +230,18 @@ impl ToolRegistry for AgentRegistry {
         }
     }
 
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        match self
+            .own
+            .iter()
+            .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
+        {
+            Some(tool) if self.base.hides(tool.name()) || !tool.is_enabled() => None,
+            Some(tool) => Some(tool.clone()),
+            None => self.base.find_for(session, name),
+        }
+    }
+
     fn hides(&self, name: &str) -> bool {
         self.base.hides(name)
     }
@@ -237,9 +273,11 @@ impl Agents {
                 live,
                 hub: Hub::default(),
                 monitors: monitors::MonitorBoard::default(),
+                mirrors: mirror::Mirrors::default(),
                 keep_alive: config.keep_alive,
                 background_prompts: config.background_prompts,
                 fork: config.fork,
+                node_desktop: config.node_desktop,
                 registry: registry.clone(),
             });
             let mut own: Vec<Arc<dyn Tool>> = vec![Arc::new(AgentTool { core: core.clone() })];
@@ -247,8 +285,18 @@ impl Agents {
             if !matches!(config.task_tools, TaskTools::Off) {
                 own.extend(tasks::tools(&core, &config.task_tools));
             }
+            // Fork (node_desktop): only the app-server's agent exposes Node's TaskOutput.
+            if config.node_desktop {
+                own.push(Arc::new(task_output::TaskOutputTool { core: core.clone() }));
+            }
             AgentRegistry { base, own, core }
         });
+        // 无进展提醒的钟：弱引用，注册表释放后驱动结束（stall.rs）。
+        stall::spawn(
+            Arc::downgrade(&registry.core),
+            config.stall,
+            &registry.core.ports.spawner,
+        );
         Self {
             core: registry.core.clone(),
             registry,
@@ -304,6 +352,43 @@ struct Signals(Arc<Core>);
 impl AgentSignals for Signals {
     fn signals(&self, session: &SessionId) -> BoxStream<'static, AgentSignal> {
         self.0.hub.subscribe(session)
+    }
+
+    fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {
+        shell_notices::adopt(&self.0, meta);
+    }
+
+    async fn stall_current(
+        &self,
+        _session: &SessionId,
+        stall: &rust_cli_kernel_api::agents::AgentStall,
+    ) -> bool {
+        self.0.live.stall_current(stall)
+    }
+
+    fn session_closing(&self, session: &SessionId) {
+        shell_notices::closing(&self.0, session);
+    }
+
+    fn sessions_erased(&self, sessions: &[SessionId]) {
+        shell_notices::erased(&self.0, sessions);
+    }
+
+    fn running_agent_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.0.live.running_in(sessions)
+    }
+
+    fn child_live(
+        &self,
+        session: &SessionId,
+    ) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.0.node_desktop.then(|| self.0.mirrors.feed(session))
+    }
+
+    fn child_run(&self, session: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.0
+            .node_desktop
+            .then(|| self.0.mirrors.run_feed(session))
     }
 
     async fn ack(&self, session: &SessionId, seq: u64) {
@@ -371,11 +456,46 @@ impl AgentSignals for Signals {
             agent: None,
             machine: &machine,
             operation: &operation,
+            by_user: self.0.node_desktop,
         };
         tool.stop(task, &caller)
             .await
             .map(|stopped| stopped.message())
             .map_err(|error| error.to_string())
+    }
+
+    /// Fork (desktop `stopSubagent`, specs/fork-rust-agent-parity.md B2): the guarded user stop of one run. A parked
+    /// agent ends as a `/tasks` stop of it does (`KilledByUser` on the desktop, its child's background commands stopped).
+    async fn stop_subagent(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+        operation: rust_cli_kernel_api::env::OperationContext,
+    ) -> Result<(), rust_cli_kernel_api::agents::SubagentStopRefusal> {
+        use rust_cli_kernel_api::agents::SubagentStopRefusal;
+        match self.0.live.stop_execution(session, agent, execution) {
+            live::GuardedStop::Aborted => Ok(()),
+            live::GuardedStop::NotFound => Err(SubagentStopRefusal::NotFound),
+            live::GuardedStop::NotRunning => Err(SubagentStopRefusal::NotRunning),
+            live::GuardedStop::Parked(execution) => {
+                let tool = task_stop::TaskStopTool {
+                    core: self.0.clone(),
+                };
+                let machine = self.0.ports.machines.primary_machine();
+                let caller = task_stop::Caller {
+                    session,
+                    agent: None,
+                    machine: &machine,
+                    operation: &operation,
+                    by_user: true,
+                };
+                tool.stop_parked(agent, execution, &caller)
+                    .await
+                    .then_some(())
+                    .ok_or(SubagentStopRefusal::NotRunning)
+            }
+        }
     }
 
     /// 输入框下面的子代理列表（tui-panels.md §1.1）。

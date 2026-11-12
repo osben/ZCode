@@ -11,8 +11,8 @@
 
 ## 2. Execution semantics
 
-- **Persistent context**: `node:vm` `vm.createContext(sandbox)`. The sandbox object is the `globalThis` the model sees and lives for the session.
-- **Cross-call state**: properties set via `globalThis.x = ...` or on the `sandbox` persist across `run()` calls; top-level `let/const/function` do **not** (each `runInContext` is a separate script scope), so the model must attach persistent values to globalThis.
+- **Persistent context**: `node:vm` `vm.createContext(replGlobals)`. The replGlobals object is the `globalThis` the model sees and lives for the session.
+- **Cross-call state**: properties set via `globalThis.x = ...` or on `replGlobals` persist across `run()` calls; top-level `let/const/function` do **not** (each `runInContext` is a separate script scope), so the model must attach persistent values to globalThis.
 - **Top-level await**: user code is wrapped as `(async () => { <code> })()`; `vm.runInContext` returns that promise and it is awaited.
 - **Dynamic module loading**: an injected `importModule(specifier)` still passes through to the host `import()`. Since 2026-07-13 the executor rewrites standard `await import(...)` in user code to this loader by AST, so skills and the model contract use standard `await import(...)` and no private helper is exposed.
 - **Module dirs**: `addModuleDir(dir)` accumulates; relative specifiers resolve against registered dirs.
@@ -34,7 +34,7 @@ export interface NodeReplRunResult {
 }
 
 export interface NodeReplSessionOptions {
-  /** Extra globals injected into the sandbox (browser execute bridge, agent object, ...). */
+  /** Extra globals injected into the REPL globals (browser execute bridge, agent object, ...). */
   injectedGlobals?: Record<string, unknown>;
   /** Module resolution base dirs (accumulated by js_add_node_module_dir). */
   moduleDirs?: string[];
@@ -51,9 +51,11 @@ export class NodeReplSession {
 }
 ```
 
-## 4. Built-in sandbox globals
+## 4. Built-in REPL globals
 
-`console` (tee to the sink), `process`, `Buffer`, `URL`, `URLSearchParams`, `TextEncoder`/`TextDecoder`, `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval`/`queueMicrotask`, `structuredClone`, `require` (host createRequire), `nodeRepl: { write }`, plus `injectedGlobals` (browser `execute`, `agent` skeleton). `globalThis` references the sandbox.
+The vm context only isolates global state per call; it is not a security sandbox: a cell has the same privileges as the agent and can load any Node module.
+
+Globals injected into the vm context: `console` (tee to the sink), `process`, `Buffer`, `URL`, `URLSearchParams`, `TextEncoder`/`TextDecoder`, `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval`/`queueMicrotask`, `structuredClone`, `require` (host createRequire), `nodeRepl: { write }`, plus `injectedGlobals` (browser `execute`, `agent` skeleton). `globalThis` references this REPL globals object.
 
 ## 5. Output and errors
 

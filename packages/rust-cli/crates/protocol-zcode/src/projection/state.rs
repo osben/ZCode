@@ -47,12 +47,20 @@ pub struct ActiveWork {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LastError {
     pub message: String,
+    /// Fork: the failure's Node error code (`TurnOutcome::Failed`), else `fault.turn.failed`.
+    pub code: Option<String>,
     pub at: u64,
 }
 
-pub fn control(phase: Phase, active: Option<&ActiveWork>, error: Option<&LastError>) -> Value {
+/// `verifier`: the start time of a running goal completion verification (Node `activeWorks` kind `goalVerifier`).
+pub fn control(
+    phase: Phase,
+    active: Option<&ActiveWork>,
+    error: Option<&LastError>,
+    verifier: Option<u64>,
+) -> Value {
     let running = phase == Phase::Running;
-    let works: Vec<Value> = active
+    let mut works: Vec<Value> = active
         .filter(|_| running)
         .map(|work| {
             let mut value = json!({
@@ -67,15 +75,25 @@ pub fn control(phase: Phase, active: Option<&ActiveWork>, error: Option<&LastErr
         })
         .into_iter()
         .collect();
+    let primary = !works.is_empty();
+    if let Some(started_at) = verifier.filter(|_| running) {
+        works.push(json!({"kind": "goalVerifier", "startedAt": started_at}));
+    }
+    let target = match (running, primary, verifier.is_some()) {
+        (false, _, _) => "unknown",
+        (true, true, true) => "mixed",
+        (true, false, true) => "goalVerifier",
+        (true, _, false) => "assistant",
+    };
     json!({
         "phase": phase.name(),
         "sessionEnded": phase.ended(),
         "canStop": running,
         "stopState": if running { "stoppable" } else { "idle" },
-        "stopTargetKind": if running { "assistant" } else { "unknown" },
+        "stopTargetKind": target,
         "activeWorks": works,
         "lastError": error.map(|error| json!({
-            "code": "fault.turn.failed",
+            "code": error.code.as_deref().unwrap_or("fault.turn.failed"),
             "message": error.message,
             "recoverable": true,
             "at": error.at,
@@ -93,18 +111,52 @@ fn denied(reason: &str) -> Value {
     json!({"allowed": false, "reasonCode": reason})
 }
 
-/// 操作是否可用。P1 不支持的命令（fork、compact、立即发送排队项）标成不可用，原因是 `proto.unsupportedCommand`。
-pub fn availability() -> Value {
-    let unsupported = "proto.unsupportedCommand";
+/// Fork: the session actions (Node `computeAvailability`, projection-state.ts): `goal` is the goal
+/// status name (snapshot `goal.status`), None without a goal.
+pub fn availability(phase: Phase, compacting: bool, goal: Option<&str>) -> Value {
+    let running = phase == Phase::Running;
+    let draft = phase == Phase::Draft;
+    let lock = || denied("compactOperationLock");
+    let fork = if compacting {
+        lock()
+    } else if draft {
+        denied("forkTargetNotStable")
+    } else {
+        allowed()
+    };
+    let compact = if compacting {
+        lock()
+    } else if draft {
+        denied("idleCannotCompact")
+    } else {
+        allowed()
+    };
+    let send_queued_now = if compacting {
+        lock()
+    } else if running {
+        allowed()
+    } else {
+        denied("sendQueuedNowRequiresRunning")
+    };
+    let pause = match goal {
+        Some("active" | "verifying" | "notSatisfied") => allowed(),
+        Some(_) => denied("goalNotActive"),
+        None => denied("noGoalToPause"),
+    };
+    let resume = match goal {
+        Some("paused") => allowed(),
+        Some(_) => denied("goalNotPaused"),
+        None => denied("noGoalToResume"),
+    };
     json!({
-        "fork": denied(unsupported),
-        "compact": denied(unsupported),
+        "fork": fork,
+        "compact": compact,
         "switchModelConfig": allowed(),
         "setFollowupMode": allowed(),
         "queueEdit": allowed(),
-        "sendQueuedNow": denied(unsupported),
-        "pauseGoal": denied("noGoalToPause"),
-        "resumeGoal": denied("noGoalToResume"),
+        "sendQueuedNow": send_queued_now,
+        "pauseGoal": pause,
+        "resumeGoal": resume,
     })
 }
 
@@ -125,7 +177,17 @@ impl Followup {
     }
 }
 
-pub fn input_routing(phase: Phase, followup: Followup) -> Value {
+/// `held`: a paused queue still holds items (Node's `computeInputRouting`: after a finished turn new input needs the
+/// client's clear/keep choice, `heldQueueInputRequiresChoice`).
+/// `verifying`: a goal completion verification runs (Node `goalVerifierAcceptsFutureInput`: it is not a steerable
+/// turn, so input queues in guide mode too).
+pub fn input_routing(phase: Phase, followup: Followup, held: bool, verifying: bool) -> Value {
+    if verifying {
+        return json!({"mode": "enqueue", "reasonCode": "goalVerifierAcceptsFutureInput"});
+    }
+    if held && matches!(phase, Phase::CompletedSuccess | Phase::CompletedInterrupted) {
+        return json!({"mode": "choice", "reasonCode": "heldQueueInputRequiresChoice"});
+    }
     match (phase, followup) {
         (Phase::Running, Followup::Queue) => json!({"mode": "enqueue"}),
         (Phase::Running, Followup::Guide) => json!({"mode": "guide"}),
@@ -136,10 +198,10 @@ pub fn input_routing(phase: Phase, followup: Followup) -> Value {
     }
 }
 
-pub fn meta(title: &str, generated: bool) -> Value {
+pub fn meta(title: &str, source: rust_cli_kernel_api::title::Source) -> Value {
     json!({
         "title": title,
-        "titleSource": if title.is_empty() { "default" } else if generated { "generated" } else { "custom" },
+        "titleSource": source.shown(),
     })
 }
 
@@ -183,11 +245,13 @@ pub fn usage(
     total: &Usage,
 ) -> Value {
     json!({
-        "contextWindow": context.map(|context| json!({
+        // Fork: Node publishes the model window (not the window minus the summary reserve) and no
+        // context window at all for an unknown model.
+        "contextWindow": context.and_then(|context| context.window_tokens.map(|window| json!({
             "usedTokens": context.used_tokens,
-            "maxTokens": context.max_tokens,
+            "maxTokens": window,
             "autoCompactThresholdTokens": context.compact_at,
-        })),
+        }))),
         "cumulative": {
             "inputTokens": total.input_tokens,
             "outputTokens": total.output_tokens,
@@ -207,6 +271,20 @@ pub fn permission_options() -> Value {
         {"optionId": "deny", "label": "Deny", "kind": "deny",
             "response": {"decision": "deny", "reason": "The user doesn't want to proceed with this tool use."}},
     ])
+}
+
+/// Fork: the single-use ask (Node `approvalMode: "user-once"` keeps only allow once and deny).
+pub fn single_use_permission_options() -> Value {
+    let options = permission_options();
+    Value::Array(
+        options
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|option| option["kind"] != "allowAlways")
+            .cloned()
+            .collect(),
+    )
 }
 
 /// “完全访问”选项（与 Node 的 V4 投影相同）：选它时会话切到 yolo（bypassPermissions）并放行这一次。

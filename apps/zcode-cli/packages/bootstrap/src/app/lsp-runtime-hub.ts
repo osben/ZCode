@@ -31,8 +31,11 @@ export interface CreateLspRuntimeHubOptions {
   port: LanguageServerPort;
   documents: LspDocumentSync;
   preferences: LspPreferencesStore;
-  /** Servers declared by enabled plugins for a workspace; must not start anything. */
-  resolveServers(workspacePath: string): ResolvedLspServer[];
+  /**
+   * Servers declared by enabled plugins for a workspace; must not start anything. Async because
+   * plugin resolution is async since upstream 3.18.0.
+   */
+  resolveServers(workspacePath: string): ResolvedLspServer[] | Promise<ResolvedLspServer[]>;
   logger?: Logger;
 }
 
@@ -44,7 +47,7 @@ export function createLspRuntimeHub(options: CreateLspRuntimeHubOptions): LspRun
     preferences,
     async getStatus(workspace) {
       const prefs = await preferences.load();
-      const servers = options.resolveServers(workspace.workspacePath);
+      const servers = await options.resolveServers(workspace.workspacePath);
       // Match the pool key (identity and root), never the path alone (AGENTS.md workspace identity).
       const identityKey = workspace.workspaceIdentity?.trim() || workspace.workspacePath;
       const live = port

@@ -76,6 +76,7 @@ fn request() -> CreateSession {
         selection: selection(),
         mode: PermissionMode::Default,
         plan: false,
+        incognito: None,
     }
 }
 

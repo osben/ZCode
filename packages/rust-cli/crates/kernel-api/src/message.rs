@@ -19,6 +19,18 @@ pub enum ContentBlock {
     },
     Image {
         source: ImageSource,
+        /// Fork: the attached file's name (Node `source.placeholder`). The model never sees it, except as
+        /// `[Attached <mime>: <name>]` when the endpoint takes no images; it is not stored.
+        #[serde(skip)]
+        name: Option<String>,
+    },
+    /// Fork: an attached video (Node's `video` model block). Only the model request carries it: `query::normalize`
+    /// expands an attached video into it, and the stored message keeps the `file` part.
+    Video {
+        source: ImageSource,
+        /// The attached file's name, as for [`ContentBlock::Image`].
+        #[serde(skip)]
+        name: Option<String>,
     },
     Thinking {
         thinking: String,
@@ -72,24 +84,125 @@ pub struct AttachedFile {
     pub reference: Option<String>,
     /// The App's `previewRef` (a smaller rendition the App previews instead), when it sent one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preview_reference: Option<String>,
+    /// `Box<str>`: keeps the block within the size of a model stream event (clippy `large_enum_variant`).
+    pub preview_reference: Option<Box<str>>,
     /// The session artifact (`zcode-artifact://`) holding an image's `data:` URL, Node's `metadata.artifactUri`: the
     /// stored part points at it instead of inlining the bytes, and a cold load reads the image back from it.
+    ///
+    /// For text material it is the local file holding the text (Node writes the decoded web-remote text as a session
+    /// artifact and names its path), so the chip keeps the App's ref.
+    ///
+    /// `Box<str>`, like `preview_reference`: keeps the block within the size of a model stream event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stored: Option<String>,
+    pub stored: Option<Box<str>>,
+    /// The App's `sourceKind` / `messageCount` of text material. Only the live row shows it: the stored part does not
+    /// hold it (Node puts the input refs on the live row and builds a cold chip from the part).
+    /// Boxed: rare, and every message block pays for the field's size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<Box<Material>>,
+    /// Node's `metadata.image` of an image prepared for the model (specs/fork-agent-runtime-selection.md "Image
+    /// preparation"). Boxed: only images have it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<Box<ImageInfo>>,
+    /// The stored part has no `filename` (Node's web-remote image and video resolvers write none): `name` is then only
+    /// the chip's (Node `attachmentMetasOfMessage`), and the model gets no name (Node's cold media block takes
+    /// `placeholder: source.text.value ?? filename`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unnamed: bool,
     pub body: AttachedBody,
+}
+
+/// Fork: Node `PreparedImageData.metadata`, how an attached image was prepared for the model. The pixel sizes are
+/// unknown for a WebP image, which is sent as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_height: Option<u32>,
+    pub max_dimension: u32,
+    pub resized: bool,
+    /// The size of the bytes sent.
+    pub transformed_size_bytes: u64,
+}
+
+/// Fork: Node `attachmentSourceKindSchema`, the text material the App sends by reference only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MaterialKind {
+    TopicHistory,
+    ClipboardText,
+}
+
+/// Fork: the App's marks of a text material attachment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Material {
+    pub kind: MaterialKind,
+    /// The number of messages a topic history holds (the chip's label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<u64>,
 }
 
 /// What of an [`AttachedFile`] reaches the model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachedBody {
-    /// A UTF-8 text file read inline (Node's Read-style reminder pair).
-    Text { text: String },
+    /// A text file read inline (Node's Read-style reminder pair). `read` is set for a desktop file the agent read
+    /// (Node `resolveLocalFileAttachment`): the submitted path and the view of the file that was sent.
+    Text {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read: Option<Box<TextRead>>,
+    },
     /// An image sent as an image block.
     Image { source: ImageSource },
-    /// Only the metadata reminder (too large, binary, unsupported or unreadable).
+    /// A video sent as a video block (Node `resolveInlineMediaAttachment` / `resolveLocalVideoAttachment`); `source`
+    /// holds the video's media type.
+    Video { source: ImageSource },
+    /// Only the metadata reminder (too large, unsupported or unreadable).
     Omitted,
+    /// Node's path reference (`resolvedPathReferenceAttachment`): a local file the model is told to read with its
+    /// tools, e.g. a binary file. `text` is the note as sent, kept so a cold load replays it unchanged.
+    PathReference { text: String },
+    /// Node's `attachment_read_failed` placeholder of a desktop text file that could not be read: nothing of it reaches
+    /// the model (Node `isFailedTextAttachmentPlaceholder`).
+    ReadFailed,
+    /// Node's placeholder of a file that could not be read or prepared for the model (`resolvedPlaceholderAttachment`,
+    /// `code` its `errorCode`, e.g. `attachment_image_resize_failed`): the model reads `[Attached <mime>: <label>]`.
+    /// `label` is Node's (`path ?? attachment-<n>`) for a part Node wrote without a name; `None` labels it by the
+    /// submitted path, else the file name. `url` is the part's `url` when no ref holds it (Node keeps an inline data URL
+    /// there), so the part is written back as Node stored it.
+    #[serde(alias = "image_failed")]
+    Placeholder {
+        code: Box<str>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<Box<str>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<Box<str>>,
+    },
+}
+
+/// Fork: the view of a desktop text file that was sent (Node's `metadata.preview` of `resolveLocalFileAttachment`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextRead {
+    /// The path the App submitted (Node `source.text.value`): the Read reminder names it.
+    pub path: String,
+    /// The first line sent, 1-based.
+    pub start_line: u64,
+    /// The lines of the whole file.
+    pub total_lines: u64,
+    /// The file's size on disk.
+    pub original_bytes: u64,
+    /// Node `truncated`: set only by the token cap's partial view (a plain 2000-line cut is not marked).
+    pub truncated: bool,
+    pub truncated_by_token_cap: bool,
+    /// Node `partialViewNotice`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// 图片来源。大图不内联在消息里，用 Artifact 引用，在发给模型的一侧物化（§6 规则 10）。
@@ -173,6 +286,14 @@ pub struct UserMessage {
     pub id: MessageId,
     pub content: Vec<ContentBlock>,
     pub origin: UserOrigin,
+    /// Fork: the App input this message was admitted as (Node's input intent, [`crate::input_intent`]); `None` for
+    /// TUI and CLI inputs and every message that is not a typed input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
+    /// The run (`executionId`) a no-progress reminder was built for: only on a message that is exactly one such reminder
+    /// (Node's `subagentStall.executionId`, written by the store and the projection). `None` for every other message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall_execution: Option<String>,
 }
 
 /// 模型停止的原因（Anthropic `stop_reason`）。

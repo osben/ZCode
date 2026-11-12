@@ -60,6 +60,7 @@ fn sequences_match_each_channel() {
 
 fn permission() -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("toolu_1"),
         tool: "Bash".to_owned(),
@@ -68,6 +69,8 @@ fn permission() -> InteractionRequest {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: None,
+        once: false,
+        independent: false,
     }
 }
 
@@ -217,6 +220,7 @@ fn what_rings() {
             iterations: None,
             duration_ms: None,
             tokens: None,
+            paused: None,
         }))
     };
     assert!(rings(&goal(true, false)));

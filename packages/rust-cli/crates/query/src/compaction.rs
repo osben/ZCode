@@ -26,6 +26,10 @@ impl CompactProgress for Progress<'_> {
     async fn failed(&self, trigger: CompactTrigger, message: String) {
         self.0.sink.compact_failed(trigger, message).await;
     }
+
+    async fn skipped(&self, trigger: CompactTrigger) {
+        self.0.sink.compact_skipped(trigger).await;
+    }
 }
 
 /// 一次运行内的压缩状态（自动压缩的跟踪与是否试过反应式压缩）。

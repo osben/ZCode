@@ -16,6 +16,7 @@ mod base64;
 mod bash;
 mod bash_mode;
 pub mod bash_output;
+mod bash_preview;
 mod bash_reads;
 mod bash_settings;
 mod bash_sleep;
@@ -133,11 +134,16 @@ pub fn file_tools(files: &FileTools) -> Vec<Arc<dyn Tool>> {
 /// 交互、计划模式与 ToolSearch（docs/specs/rust-cli/tools-more.md）。`interactive` 为假（`-p`）时
 /// AskUserQuestion 与计划模式的两个工具不可用（非交互会话里不提供它们）；`catalog` 由 runtime
 /// 在主线程注册表建好后绑定，同时作为 `deferred_tools_delta` 的清单来源。
-pub fn interaction_tools(catalog: &Arc<ToolCatalog>, interactive: bool) -> Vec<Arc<dyn Tool>> {
+/// `ids` names the message ExitPlanMode adds for plan feedback.
+pub fn interaction_tools(
+    catalog: &Arc<ToolCatalog>,
+    interactive: bool,
+    ids: Arc<dyn rust_cli_kernel_api::clock::Ids>,
+) -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(AskUserQuestionTool::new(interactive)),
         Arc::new(EnterPlanModeTool::new(interactive)),
-        Arc::new(ExitPlanModeTool::new(interactive)),
+        Arc::new(ExitPlanModeTool::new(interactive, ids)),
         Arc::new(ToolSearchTool::new(catalog.clone())),
     ]
 }

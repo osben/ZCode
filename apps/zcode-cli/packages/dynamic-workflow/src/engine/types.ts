@@ -81,7 +81,23 @@ export interface PersonaSpec {
   system?: string;
   /** Model name written literally in the script (`ModelRef` is lowered to its name); absent means use the run's subagent model. */
   model?: string;
+  /**
+   * 每个 ask 的工具预算（docs/dynamic-workflow/authoring.md「A subagent's search budget」）。
+   * 引擎只记录、不解读；driver 据此给 WebSearch 设上限。与 `model` 一样不进缓存身份。
+   */
+  budget?: PersonaBudget;
 }
+
+/** persona 的工具预算。`webSearch`：每个 ask 的 WebSearch 次数，0–{@link MAX_WEB_SEARCH_BUDGET_PER_ASK} 的整数。 */
+export interface PersonaBudget {
+  webSearch?: number;
+}
+
+/** 每个 ask 的 WebSearch 默认上限：persona 没写 `budget.webSearch` 时生效。 */
+export const DEFAULT_WEB_SEARCH_BUDGET_PER_ASK = 128;
+
+/** persona 可写的 WebSearch 上限的最大值（编译期 9013 与引擎规范化共用）。没有「不限」：退化的模型会一直搜下去。 */
+export const MAX_WEB_SEARCH_BUDGET_PER_ASK = 1024;
 
 /**
  * Message dispatched for one ask: instruction text + whether it is typed + its schema when typed

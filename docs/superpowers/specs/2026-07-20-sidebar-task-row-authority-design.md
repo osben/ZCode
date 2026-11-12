@@ -158,7 +158,7 @@ first send: draft(no row) -> optimistic row -> tasks-index commit -> task_create
 
 ## TSL19/TSL20 restart regression handoff (2026-07-22)
 
-Two P0 bugfix cases tied to cold-start membership, local `desktop-continuous` UI entries only; remote/mobile reuse the same task-type/tombstone invariants.
+Two P0 bugfix cases tied to cold-start membership, local `desktop-continuous` UI entries only; remote/mobile reuse the same task-type/membership invariants. The TSL20 permanent-delete assertion was updated per the 2026-11-04 archive-management decision; the older replay records below are historical evidence only.
 
 ```text
 fork: parent completed -> Fork -> child(task_type=fork,parent_id=parent)
@@ -166,13 +166,13 @@ fork: parent completed -> Fork -> child(task_type=fork,parent_id=parent)
                                   -> cold sessions-index -> Project child row -> click/hydrate
 
 delete: task -> archive(confirm) -> Archived -> delete(confirm)
-                 -> tasks-index deleted=1 ----┐
-                 -> CLI session retained -----+-> App restart -> sessions-index has summary
-                                              └-> Project/Archived both hide task
+                 -> Host row + CLI session/message/part removed
+                 -> App restart -> Project/Archived/mention all omit deleted task
+                                -> ordinary control task remains visible
 ```
 
 - **TSL19** — create a parent, fork from a completed assistant (CLI row `task_type=fork`, `parent_id=parent`); switch to an unsent draft, restart the app, open the `#` session directory before resuming the child. Assert exact `session:<childId>` is visible, proving cold sessions-index restored the child. (The Project row is now owned by tasks-index; a fork not landing a task row is a separate gap — workflow/auxiliary children are covered by focused tests.)
-- **TSL20** — archive a normal task from Project, permanently delete it from Archived; assert tombstone and CLI session, restart, and wait until the raw sessions mention directory shows the session. Project and Archived never resurrect; tasks-index `deleted=1`; the CLI session is retained.
+- **TSL20** — archive a normal task from Project, permanently delete it from Archived; per the archive-management 2026-11-04 decision, check the persisted data, restart, and keep an ordinary task as a loaded-list control. The Host index and CLI session/message/part are all removed; Project, Archived and mention never resurrect the task. Fork/attachment-reference cleanup boundaries are covered by the APD series.
 
 Both passed fixture check and 1/1 strict replay (`desktop-e2e-20260722-141321-231` and `-141719-802/summary.md`).
 

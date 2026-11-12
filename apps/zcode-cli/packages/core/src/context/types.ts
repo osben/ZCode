@@ -49,6 +49,7 @@ export type ContextSource =
   | "dynamic_behavior" // Dynamic behavior boundaries
   | "session_guidance" // Guidance for currently available built-in capabilities
   | "context_management" // Long-context management guidance
+  | "total_tokens" // Fixed token budget line
   | "desktop_context"; // ZCode Desktop rendering and interaction protocol
 
 export type ContextInjectionTarget = "system" | "meta_user";
@@ -70,6 +71,29 @@ export interface ContextSection {
   tokens: number; // Estimated token count
   content: string; // Full content
   preview: string; // Preview of the first 100 characters
+  /** Per-file blocks of request_user_context; the instruction-change announcement compares by them. */
+  instructionFiles?: InstructionFile[];
+}
+
+/** One file block of an instruction announcement: `Contents of <path> (<type>):`, a blank line, then the body (trimmed). */
+export interface InstructionFile {
+  path: string;
+  type: string;
+  body: string;
+  /** sha256 of the body, computed once when the file is built (createInstructionFile); comparisons before a request use it directly. */
+  hash: string;
+}
+
+export type InstructionRefreshReason = "session_start" | "compaction";
+
+/**
+ * Files already announced, recorded in runtime metadata (never sent to the provider).
+ * No reason means a full announcement; with a reason it is a delta, and files holds only changed or added files.
+ */
+export interface InstructionAnnouncement {
+  files: { path: string; type: string; hash: string }[];
+  removed?: string[];
+  reason?: InstructionRefreshReason;
 }
 
 export type ContextMetaUserAttachmentSource =
@@ -80,6 +104,8 @@ export type ContextMetaUserAttachmentSource =
 export interface ContextMetaUserAttachment {
   source: ContextMetaUserAttachmentSource;
   content: string;
+  /** 只有 context_prefix 有：组成 content 的指令文件。 */
+  files?: InstructionFile[];
 }
 
 // -----------------------------------------------

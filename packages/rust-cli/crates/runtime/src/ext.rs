@@ -27,6 +27,9 @@ pub struct Extensions {
     /// Monitor 开着（工作线 F83，tools-more.md §19.1）：注册 Monitor，Bash 与 CronCreate 的描述随之变，Bash 拦前台的
     /// 长 `sleep`。产品缺省开，由入口给（只给测试用的变量关掉，Windows 上要有 Git Bash）；这里缺省关（测试与嵌入）。
     pub monitor: bool,
+    /// Fork: the Node desktop agent's semantics (plan mode boundary `PolicyGate::with_node_plan_mode`, one queued input per
+    /// turn); the app-server turns it on.
+    pub node_desktop: bool,
 }
 
 impl Extensions {
@@ -38,6 +41,7 @@ impl Extensions {
             peers: rust_cli_session::PeerDeps::off(),
             streaming_input: false,
             monitor: false,
+            node_desktop: false,
         }
     }
 }

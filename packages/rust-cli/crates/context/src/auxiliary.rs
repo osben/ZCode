@@ -4,6 +4,7 @@
 //! 也跑：规则文件、会话上下文、日期只在这次请求的消息里还没有时宣布。压缩裁掉开头时它们随第一组被裁掉，
 //! 摘要请求就重新带上它们（例如 `Today's date is …`）。
 
+use rust_cli_kernel_api::incognito::IncognitoKey;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::ContextRequest;
 
@@ -31,7 +32,9 @@ impl PromptAssembler {
                         .map(|found| self.attachment(instructions::SOURCE, found)),
                 );
             }
-            if missing(session_context::SOURCE) {
+            if missing(session_context::SOURCE)
+                && !self.excludes(request, IncognitoKey::Environment)
+            {
                 let git = self.ports.git.as_ref();
                 out.extend(
                     session_context::announce(git, &request.workspace, &facts, window)

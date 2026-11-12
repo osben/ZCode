@@ -56,6 +56,7 @@ export const TaskList = memo(function TaskList({
   organizationActions,
   onDeleteTask,
   onSelectChildSession,
+  renameOnDoubleClick = true,
 }: {
   organizationActions?: React.ReactNode;
   workspacePath: string;
@@ -87,6 +88,7 @@ export const TaskList = memo(function TaskList({
   onDeleteTask?: (taskId: string) => void;
   /** Child-session navigation; rows render the child marker/list only when provided. */
   onSelectChildSession?: ChildSessionSelectHandler;
+  renameOnDoubleClick?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const pinnedTaskIdSet = useMemo(
@@ -403,6 +405,7 @@ export const TaskList = memo(function TaskList({
         onSelectChildSession={onSelectChildSession}
         actionsDisabled={Boolean(readOnlyReason)}
         actionsDisabledReason={readOnlyReason}
+        renameOnDoubleClick={renameOnDoubleClick}
         intl={intl}
       />
     );

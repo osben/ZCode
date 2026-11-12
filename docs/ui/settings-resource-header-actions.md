@@ -23,6 +23,7 @@ the same actions:
    implementation only passes the callback to the shared button group.
 8. Large guide buttons in empty states are out of scope and follow resource semantics.
 9. Desktop, Web and mobile widths use the same button order; the container may wrap.
+10. Read-only refreshes of the Subagents list (manual Refresh, list-projection refresh after save, background refresh after plugin resources finish initializing) only put the Refresh button in the refreshing state and do not disable row controls. Row controls are disabled only while that row's own save, enable/disable or delete is in progress, so a background refresh does not close a model or tier menu the user has open.
 
 ## Current Capability Matrix
 

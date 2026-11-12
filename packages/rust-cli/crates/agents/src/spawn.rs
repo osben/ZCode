@@ -58,6 +58,8 @@ pub(crate) fn mode(parent: PermissionMode, declared: Option<PermissionMode>) -> 
 
 fn user(core: &Core, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: core.ports.ids.message(),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -94,6 +96,8 @@ pub(crate) async fn create(
     parent: &RunInfo,
     prompt: &str,
 ) -> Result<(LiveAgent, Opening), StoreError> {
+    // Fork: the child inherits its parent's incognito profile; its row stores it, like Node's child rows.
+    let incognito = core.ports.incognito.get(&parent.session);
     let meta = SessionMeta {
         id: agent.child.clone(),
         kind: SessionKind::Subagent,
@@ -102,8 +106,10 @@ pub(crate) async fn create(
         title: agent.description.clone(),
         trace: TraceId::new(agent.root.as_str()),
         created_at_ms: core.ports.clock.now_ms(),
+        incognito,
     };
     core.ports.store.create(meta).await?;
+    core.ports.incognito.record(&agent.child, incognito);
     inherit_directory(core, &agent).await;
     let first = user(core, prompt, UserOrigin::Human);
     let mut facts = vec![
@@ -195,6 +201,23 @@ pub(crate) struct Finished {
     pub(crate) error: Option<QueryError>,
 }
 
+impl Finished {
+    /// The failure reason after `failed: ` in a background agent's notification. Fork (node_desktop): Node's
+    /// background runner passes the provider's own message for a rate limit or an overload, without Rust's
+    /// `rate limited: ` / `model overloaded: ` prefix (`runner.ts` `selectExecutionErrorMessage`,
+    /// `completion-notification.ts` `failureReason`; specs/fork-rust-agent-parity.md). A foreground Agent call
+    /// keeps the formatted error.
+    pub(crate) fn failure(&self, node_desktop: bool) -> Option<String> {
+        use rust_cli_kernel_api::model::ModelError;
+        self.error.as_ref().map(|error| match error {
+            QueryError::Model(
+                ModelError::RateLimited { message, .. } | ModelError::Overloaded { message },
+            ) if node_desktop => message.clone(),
+            error => error.to_string(),
+        })
+    }
+}
+
 fn abort_of(agent: &LiveAgent) -> Abort {
     match &agent.state {
         AgentState::Running { abort, .. } => abort.clone(),
@@ -251,8 +274,12 @@ pub(crate) async fn drive(
         )
         .with_ledger(ledger)
         .asking(&agent.definition.agent_type, agent.asks.clone())
-        .with_core(core.clone()),
+        .with_origin(agent)
+        .with_core(core.clone())
+        .with_execution(agent.shown.execution),
     );
+    // Fork (node_desktop): an open side tab on the child session streams this run; the guard ends it on every exit.
+    let mut mirrored = crate::mirror::MirrorRun::start(core, &agent.child, &agent.selection);
     let result = match core.registry() {
         Some(registry) => {
             run_loop(core, agent, registry, messages, sink.clone(), abort, cancel).await
@@ -277,6 +304,7 @@ pub(crate) async fn drive(
     if let Err(error) = sink.commit(vec![Fact::TurnEnded { status }]).await {
         tracing::warn!(%error, "the subagent turn usage could not be stored");
     }
+    mirrored.finish(crate::mirror::outcome(&result));
     let (last, run_tool_uses) = sink.outcome();
     let tool_uses = earlier + run_tool_uses;
     let mut text = report::final_text(last.as_ref());
@@ -351,11 +379,15 @@ async fn run_loop(
         (
             Arc::new(FilteredTools {
                 inner: registry,
-                rule: ToolRule::new(&agent.definition, agent.background, agent.depth),
+                rule: ToolRule::new(&agent.definition, agent.background, agent.depth)
+                    .with_questions(core.node_desktop),
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),
-                system: report::system(&agent.definition.prompt),
+                system: report::system(
+                    &agent.definition.prompt,
+                    core.ports.incognito.get(&agent.child).as_ref(),
+                ),
             }),
         )
     };

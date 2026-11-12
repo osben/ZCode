@@ -325,6 +325,7 @@ fn finished_ends_and_stderr_of_a_command_is_ignored() {
     });
     assert_eq!(watch.on_event(stderr, start), Next::Step(Step::default()));
     let finished = Ok(CommandEvent::Finished {
+        output_unreadable: None,
         outcome: crate::env::Outcome::Completed,
         exit_code: Some(0),
         timed_out: false,

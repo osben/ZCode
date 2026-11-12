@@ -211,3 +211,109 @@ async fn recently_touched_files_are_reread_with_the_read_tool() {
         "<system-reminder>\nCalled the Read tool with the following input: {\"file_path\":\"/Users/dev/project/b.rs\"}\nResult of calling the Read tool:\n     1\tfn main() {}\n</system-reminder>"
     );
 }
+
+#[tokio::test]
+async fn manual_compact_summarizes_every_round_without_a_tail() {
+    let runner = ScriptedRunner::new(vec![summary("S")]);
+    let ports = ports(runner.clone(), no_tools());
+    let history = vec![
+        human("u1", "first"),
+        reply("a1", "one", None),
+        human("u2", "second"),
+        reply("a2", "two", None),
+    ];
+    let result = Engine { ports: &ports }
+        .run(
+            &request(history, CompactTrigger::Manual),
+            true,
+            &CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    // Node `selectCompactEntries` keeps no recent round for a manual compact.
+    assert_eq!(result.boundary.preserved, None);
+    let sent = runner.requests();
+    let ids: Vec<&str> = sent[0].messages.iter().map(|m| m.id().as_str()).collect();
+    assert_eq!(&ids[..4], ["u1", "a1", "u2", "a2"]);
+}
+
+/// Fork: the initial token gap seeds extra kept rounds for automatic compaction only; a manual
+/// `/compact` with a gap still summarizes every round.
+#[tokio::test]
+async fn manual_compact_with_an_initial_gap_keeps_no_tail() {
+    let runner = ScriptedRunner::new(vec![summary("S")]);
+    let ports = ports(runner.clone(), no_tools());
+    let history = vec![
+        human("u1", "first"),
+        reply("a1", "one", None),
+        human("u2", "second"),
+        reply("a2", "two", None),
+        human("u3", "third"),
+        reply("a3", "three", None),
+        human("u4", "fourth"),
+        reply("a4", "four", None),
+    ];
+    let mut compact = request(history, CompactTrigger::Manual);
+    compact.initial_token_gap = Some(1_000_000);
+    let result = Engine { ports: &ports }
+        .run(&compact, true, &CancellationToken::new(), None)
+        .await
+        .unwrap();
+    assert_eq!(result.boundary.preserved, None);
+    let sent = runner.requests();
+    let ids: Vec<&str> = sent[0].messages.iter().map(|m| m.id().as_str()).collect();
+    assert_eq!(&ids[..8], ["u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4"]);
+}
+
+/// Context that excludes one file from the restore (Node `excludedPaths`).
+struct Excluding(&'static str);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::compaction::PostCompactContext for Excluding {
+    async fn post_compact(
+        &self,
+        _request: rust_cli_kernel_api::orchestration::ContextRequest,
+        _kept: &[Message],
+    ) -> Result<
+        Vec<rust_cli_kernel_api::message::AttachmentMessage>,
+        rust_cli_kernel_api::orchestration::OrchestrationError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn restore_exclusions(
+        &self,
+        _request: &rust_cli_kernel_api::orchestration::ContextRequest,
+    ) -> Vec<String> {
+        vec![self.0.to_owned()]
+    }
+}
+
+#[tokio::test]
+async fn files_the_context_excludes_are_not_reread() {
+    let runner = ScriptedRunner::new(vec![summary("S")]);
+    let read = Arc::new(FakeTool::new("Read", true, "     1\tfn main() {}"));
+    let files = FakeFileStates::with(&["/Users/dev/project/b.rs", "/Users/dev/project/a.rs"]);
+    let mut ports = ports_with_files(runner, Arc::new(ListTools(vec![read])), files);
+    ports.context = Arc::new(Excluding("/Users/dev/project/b.rs"));
+    let history = vec![human("u1", "edit things"), reply("a_end", "done", None)];
+    let result = Engine { ports: &ports }
+        .run(
+            &request(history, CompactTrigger::Manual),
+            true,
+            &CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let restored: Vec<&str> = result
+        .restored
+        .iter()
+        .filter_map(|m| match m {
+            Message::Attachment(attachment) => attachment.data["filename"].as_str(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(restored, ["/Users/dev/project/a.rs"]);
+}

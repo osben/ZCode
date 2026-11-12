@@ -33,6 +33,9 @@ pub(crate) fn app(lang: Lang) -> App {
 
 pub(crate) fn entry(id: &str, background: bool, status: SubagentStatus) -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
+        execution: 0,
+        previous: None,
         agent: AgentId::new(id),
         child: SessionId::new(format!("sess_subagent_{id}")),
         agent_type: "Explore".into(),
@@ -102,6 +105,8 @@ fn report(app: &mut App, agent: &str) {
             revision: 0,
             event: KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
+                    stall_execution: None,
+                    intent: None,
                     id: MessageId::new("m1"),
                     content: vec![ContentBlock::Text { text }],
                     origin: UserOrigin::Meta {
@@ -550,6 +555,8 @@ fn with_body(app: &mut App) {
             revision: 0,
             event: KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
+                    stall_execution: None,
+                    intent: None,
                     id: MessageId::new("m1"),
                     content: vec![ContentBlock::Text {
                         text: "fix it".into(),
@@ -569,6 +576,7 @@ fn titled(app: &mut App) {
             revision: 0,
             event: KernelEvent::TitleChanged {
                 title: "Fix lint".into(),
+                source: Default::default(),
             },
         },
         T0,

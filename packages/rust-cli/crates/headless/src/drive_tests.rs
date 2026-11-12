@@ -124,6 +124,7 @@ async fn a_slow_reader_resubscribes_and_writes_the_whole_turn() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

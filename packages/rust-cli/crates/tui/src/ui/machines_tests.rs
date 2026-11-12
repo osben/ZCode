@@ -178,6 +178,7 @@ fn ask(tool: &str, input: serde_json::Value, machine: Option<&str>) -> DetachedE
             session: SessionId::new("sess_old"),
             title: String::new(),
             request: InteractionRequest::Permission {
+                origin: None,
                 tool_use: ToolUseId::new("tu1"),
                 tool: tool.into(),
                 input,
@@ -196,6 +197,8 @@ fn ask(tool: &str, input: serde_json::Value, machine: Option<&str>) -> DetachedE
                 rule_seed: None,
                 asked_by: None,
                 machine: rust_cli_kernel_api::ids::MachineName::new(machine.unwrap_or_default()),
+                once: false,
+                independent: false,
             },
         }),
     }

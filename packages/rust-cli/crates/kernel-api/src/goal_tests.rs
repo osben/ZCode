@@ -32,6 +32,7 @@ fn goal_status_uses_the_fixed_keys() {
         iterations: None,
         duration_ms: None,
         tokens: None,
+        paused: None,
     };
     assert_eq!(
         round_trip(&set),
@@ -46,6 +47,7 @@ fn goal_status_uses_the_fixed_keys() {
         iterations: Some(2),
         duration_ms: Some(1500),
         tokens: Some(40),
+        paused: None,
     };
     assert_eq!(
         round_trip(&met),
@@ -88,6 +90,8 @@ fn stop_conditions_and_verdicts_round_trip() {
         transcript: Vec::new(),
     });
     let feedback = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_2"),
         content: vec![ContentBlock::Text {
             text: "Stop hook feedback:\n[done]: no".to_owned(),

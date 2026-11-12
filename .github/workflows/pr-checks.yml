@@ -20,6 +20,36 @@ env:
   NODE_COMPILE_CACHE: ${{ github.workspace }}/.v8-cache
 
 jobs:
+  # Path gate for the Rust job. A workflow-level `paths` filter would skip the TS jobs too, and a
+  # job skipped by `if` still satisfies a required check, so the gate lives at job level.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      rust-cli: ${{ steps.diff.outputs.rust-cli }}
+    steps:
+      # Same merge-base as the unit-tests job; trees only, no blobs.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Diff against the merge-base
+        id: diff
+        run: |
+          set -euo pipefail
+          base="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          # Captured, not piped into `grep -q`: grep exits on the first match, git diff then dies
+          # of SIGPIPE on a large diff, and pipefail turns a real change into "false".
+          changed="$(git diff --name-only "$base" HEAD -- packages/rust-cli)"
+          echo "packages/rust-cli files changed since $base: $(grep -c . <<<"$changed" || true)"
+          if [ -n "$changed" ]; then
+            echo "rust-cli=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rust-cli=false" >> "$GITHUB_OUTPUT"
+          fi
+
   checks:
     # Name kept identical to the pre-split job so existing branch-protection required
     # checks keep matching; add the new "Unit tests" job to protection as well.
@@ -77,6 +107,11 @@ jobs:
 
       - name: Frozen upstream migrations
         run: pnpm db:migrations:check
+
+      # The zcode-rs inbound schema is generated from the App's zod schemas; a zod change alone makes it stale,
+      # so this runs here rather than in the path-gated Rust job.
+      - name: zcode-rs inbound schema
+        run: pnpm rust-agent:inbound-schema:check
 
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
@@ -196,3 +231,87 @@ jobs:
           pnpm test:node
           # Relay suites sit outside both manifests and the affected selection; run them on every PR.
           pnpm test:relay
+
+  # Vendored upstream Rust agent (specs/fork-agent-runtime-selection.md, "Source"). It has no
+  # package.json, so the pnpm jobs above do not see it. Debug profile only: a release build bumps
+  # the tracked packages/rust-cli/build-number, which must never be committed.
+  rust-cli:
+    name: Rust CLI (fmt, clippy, tests)
+    needs: changes
+    if: needs.changes.outputs.rust-cli == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        # rustup reads rust-toolchain.toml from the cwd upward, not from --manifest-path.
+        working-directory: packages/rust-cli
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      # Keeps the cached target directory small while panics still show file:line.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v5
+
+      # Installs the channel and components pinned in packages/rust-cli/rust-toolchain.toml.
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
+
+      # vendor/ugrep is C++ and links libstdc++ statically on linux-gnu (vendor/ugrep/build.rs).
+      # env-local's shell tests run commands under /bin/zsh as well as /bin/bash.
+      - name: Install g++, the static libstdc++ and zsh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends g++ zsh
+
+      - name: Restore cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            packages/rust-cli/target
+          # Per-commit key keeps every run saveable (an existing key is immutable); restore-keys
+          # fall back to the newest entry for the same toolchain and lockfile, then toolchain only.
+          key: rust-cli-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml') }}-${{ hashFiles('packages/rust-cli/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-cli-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml') }}-${{ hashFiles('packages/rust-cli/Cargo.lock') }}-
+            rust-cli-v1-${{ runner.os }}-${{ hashFiles('packages/rust-cli/rust-toolchain.toml') }}-
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Same runner as upstream's `pnpm test:rust-cli`. Pinned prebuilt release binary instead of a
+      # multi-minute `cargo install`.
+      - name: Install cargo-nextest
+        env:
+          NEXTEST_VERSION: 0.9.151
+        run: |
+          curl -LsSf "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          cargo nextest --version
+
+      # nextest runs every test in its own process; packages/rust-cli/.config/nextest.toml sets
+      # fail-fast = false and the slow-test timeouts. Process isolation matters on Linux: many tests
+      # write a fake executable and exec it, and under `cargo test` a sibling thread's fork() can
+      # still hold the write fd (ETXTBSY, "Text file busy"; seen in ssh-connect provision_latest_tests).
+      # --retries 2 (config default is 1) covers the known upstream flakes, which nextest then
+      # reports as FLAKY instead of failing the job:
+      # - rust-cli-fs exclusive::tests::only_one_holder_at_a_time fails about 1 run in 3;
+      # - rust-cli-platform team::platform_tests::an_account_change_during_the_query_discards_the_round
+      #   fails under full parallel load.
+      # A test that fails all three attempts still fails the job.
+      - name: cargo nextest
+        run: cargo nextest run --workspace --locked --retries 2
+
+      # nextest does not run doctests.
+      - name: cargo test (doctests)
+        run: cargo test --workspace --locked --doc
+
+      - name: build-number untouched
+        run: git diff --exit-code -- build-number

@@ -15,8 +15,7 @@ layer's `settingService` directly.
 - The settings page general group shows the same switch.
 - When the setting is on and an available update is detected, the main process automatically calls the current
   download flow.
-- While downloading, the main update entry shows only progress/loading and cannot be clicked to open the update
-  dialog.
+- While downloading, the main update entry shows progress/loading and can still be clicked to reopen the same update window. Closing the small window only ends the display and does not cancel the background download; window rules are in [server manifest auto-update](auto-update-service-manifest.md).
 - After download completes the user clicks `重启以更新` (restart to update):
   - with no running Agent session, run the existing `quitAndInstallUpdate()` directly;
   - with running tasks, first warn that the app will quit and restart and in-progress tasks will be
@@ -36,6 +35,6 @@ layer's `settingService` directly.
 
 - Unit tests cover: settings schema default and patch; auto-download starts when an update is detected with the
   preference on; the dialog checkbox writes the setting and triggers download for the currently available
-  update; the main update entry is disabled while downloading; the restart button asks for confirmation when
+  update; the main update entry can reopen the current progress while downloading; the restart button asks for confirmation when
   tasks are running.
 - `pnpm typecheck` and `pnpm lint` still run.

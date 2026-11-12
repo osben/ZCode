@@ -95,6 +95,15 @@ pub enum QueryEvent {
         index: usize,
         delta: BlockDelta,
     },
+    /// Fork: the model stream started a `tool_use` block (Node `tool_input_start`); its input follows as
+    /// [`QueryEvent::Delta`] with `BlockDelta::InputJson` (specs/fork-rust-agent-parity.md, "Tool rows while the tool
+    /// input streams").
+    ToolInputStarted {
+        message: usize,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,
@@ -110,6 +119,53 @@ pub enum QueryEvent {
     },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
+}
+
+impl QueryEvent {
+    /// The session event of a query event in `turn` (the session actor's log, and the App's telemetry of a
+    /// subagent's live run).
+    pub fn into_kernel_event(self, turn: crate::ids::TurnId) -> crate::session_api::KernelEvent {
+        use crate::session_api::KernelEvent;
+        match self {
+            Self::Delta {
+                message,
+                index,
+                delta,
+            } => KernelEvent::StreamDelta {
+                turn,
+                response: u32::try_from(message).unwrap_or(u32::MAX),
+                index,
+                delta,
+            },
+            Self::ToolInputStarted {
+                message,
+                index,
+                tool_use,
+                name,
+            } => KernelEvent::ToolInputStarted {
+                turn,
+                response: u32::try_from(message).unwrap_or(u32::MAX),
+                index,
+                tool_use,
+                name,
+            },
+            Self::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => KernelEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            },
+            Self::ToolProgress { tool_use, progress } => {
+                KernelEvent::ToolProgress { tool_use, progress }
+            }
+            Self::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
+            // 模型通知只供显示，不落库（stall-visibility.md §1）。
+            Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,6 +200,16 @@ pub enum QueryError {
     Store(#[from] StoreError),
     #[error("not implemented: {what}")]
     Unsupported { what: String },
+}
+
+impl QueryError {
+    /// Fork: see [`ModelError::code`].
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::Model(error) => error.code(),
+            _ => None,
+        }
+    }
 }
 
 /// 主循环的输出端，由会话 actor 实现（子代理、压缩各有自己的实现）。
@@ -183,11 +249,31 @@ pub trait RunSink: Interactions + SessionOps {
     /// 输出端什么都不做。
     async fn compact_failed(&self, trigger: CompactTrigger, message: String);
 
+    /// Fork (desktop): the compaction had nothing to summarize ([`crate::compaction::CompactProgress::skipped`]).
+    /// Default: nothing.
+    async fn compact_skipped(&self, _trigger: CompactTrigger) {}
+
+    /// A tool call joined the response's batch (Node `ToolCallScheduled`), before it starts, possibly behind a running
+    /// call. Only the subagent's no-progress reminder reads it; it is not logged. Default: nothing.
+    async fn tool_scheduled(&self, _tool_use: &ToolUseId, _name: &str, _input: &Value) {}
+
+    /// A model request is about to be sent (Node `ModelRequest`, which also sets the subagent's last progress). Called
+    /// once per model step, each time the run sends a request to the model. Retries inside the provider adapter are
+    /// not counted, as in Node. Default: nothing.
+    async fn request_started(&self) {}
+
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序
     /// （L18，docs/specs/rust-cli/query.md §4、§5）。取走即属于当前回合；本回合已中止时插话不取，继续排队。顶层会话的
     /// 通知由会话 actor 在回合结束后开新回合；子代理收到它派生的后台子代理的通知（agents.md §5.1）。工作线 F134 以前
     /// 另有 `take_steering`、`take_steered`、`take_notices` 三个缺省方法拼出它，主循环只调这一个。
     async fn take_absorbed(&self) -> Vec<Absorbed>;
+
+    /// Fork: the steers a reply without tool calls takes into the same turn (Node `drainInlineGuideForNextRequest`:
+    /// a text-only reply is a continuation boundary for a pending guide). Only prompts, never notices (a notice
+    /// still opens its own turn after this one). Default: none (subagents and the compaction sink).
+    async fn take_steered_prompts(&self) -> Vec<Absorbed> {
+        Vec::new()
+    }
 
     /// 报告一次目标评估（goal.md §3）：actor 按判定提交反馈与 `goal_status`、改目标，返回已提交的
     /// 消息（主循环并入自己的历史）。`condition` 不是当前目标时什么都不做；没有目标的输出端（子代理）不提交。
@@ -207,6 +293,16 @@ pub trait QueryRunner: Send + Sync {
         sink: Arc<dyn RunSink>,
         abort: Abort,
     ) -> Result<QueryStop, QueryError>;
+
+    /// The active history as the main loop sends it to `selection` (normalized, mid-conversation system turns per
+    /// the model's capability `mid_system`), for side requests that send the conversation outside a run (the desktop
+    /// goal verifier, specs/fork-rust-goal-verifier.md).
+    fn transcript(
+        &self,
+        history: &[Message],
+        selection: &ModelSelection,
+        mid_system: Option<bool>,
+    ) -> Vec<crate::model::ApiMessage>;
 }
 
 /// 组装一次模型请求的上下文所需的输入。
@@ -287,6 +383,10 @@ pub enum OrchestrationError {
     /// 会话已经关闭（会话 actor 收不下请求了；工作线 F130，以前各处写 `Failed { "the session is closed" }`）。
     #[error("the session is closed")]
     Closed,
+    /// Fork: the request had nothing to do and is not a failure: a desktop compaction with too little history, Node's
+    /// `skipped` compaction (specs/fork-rust-agent-parity.md, Compact timeline markers). `message` is Node's text.
+    #[error("{message}")]
+    Skipped { message: String },
 }
 
 #[async_trait]
@@ -327,9 +427,11 @@ pub trait ContextBuilder: Send + Sync {
 /// context 实现；会话 actor 判定可以移动后用自己的活动历史调用（不复制历史）。
 #[async_trait]
 pub trait DirectoryRules: Send + Sync {
-    /// `workspace.root` 的规则文件文字（`instructions` 的格式）；没有新文件时为 None。
+    /// `workspace.root` 的规则文件文字（`instructions` 的格式）；没有新文件时为 None。Fork: `session` is the moving
+    /// session, so an incognito profile without `projectInstructions` loads none (specs/fork-rust-agent-parity.md).
     async fn directory_rules(
         &self,
+        session: &SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String>;
@@ -342,6 +444,7 @@ pub struct NoDirectoryRules;
 impl DirectoryRules for NoDirectoryRules {
     async fn directory_rules(
         &self,
+        _session: &SessionId,
         _workspace: &WorkspaceRef,
         _history: &[Message],
     ) -> Option<String> {
@@ -357,6 +460,11 @@ impl DirectoryRules for NoDirectoryRules {
 pub trait ToolRegistry: Send + Sync {
     fn tools(&self) -> Vec<Arc<dyn Tool>>;
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>>;
+
+    /// Fork: [`Self::find`] for one session: a name two servers share resolves to the tool of the server the session's
+    /// snapshot keeps (an incognito profile hides the other), never the hidden one. Every call of a tool by its name in
+    /// a run looks it up here (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>>;
 
     /// 注册了、但按暴露规则不出现在 [`Self::tools`] 里的工具（有 Bash 时的 Glob / Grep，内嵌搜索，
     /// docs/specs/rust-cli/tools-files.md §1.1）。子代理的工具清单点名它们、又没有 Bash 时补回（
@@ -500,15 +608,52 @@ pub enum InteractionRequest {
         /// 调用在哪台机器上执行（R3，remote-exec.md §20.8）；主 env 不写出。界面的标记在 R4。
         #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
         machine: crate::ids::MachineName,
+        /// Fork: approves this one execution only (guarded dangerous command, Node
+        /// `approvalMode: "user-once"`): the App offers no "always allow" option for it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        once: bool,
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy: "no-always-allow"`): the App offers allow
+        /// once and deny only and no permission mode switch, and a grant answering it is refused
+        /// (specs/fork-rust-agent-parity.md B3). Unlike `once`, PermissionRequest hooks still run for it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        independent: bool,
+        /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
+        /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
     },
     Question {
         tool_use: ToolUseId,
         questions: Value,
+        /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
+        /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
     },
     PlanApproval {
         tool_use: ToolUseId,
         plan: String,
+        /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
+        /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
     },
+}
+
+/// Fork: the subagent an ask came from (Node `zcodeInteractionRequestOriginSchema`, `kind: "subagent"`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskOrigin {
+    pub agent: AgentId,
+    /// The agent type (definition name).
+    pub agent_type: String,
+    pub child_session: SessionId,
+    pub parent_session: SessionId,
+    /// The Agent call's description.
+    #[serde(default)]
+    pub description: String,
+    /// The parent's Agent call that started the subagent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_tool_use: Option<ToolUseId>,
 }
 
 impl InteractionRequest {
@@ -519,6 +664,27 @@ impl InteractionRequest {
             | Self::Question { tool_use, .. }
             | Self::PlanApproval { tool_use, .. } => tool_use,
         }
+    }
+
+    /// Fork: the subagent that asked ([`AskOrigin`]).
+    pub fn origin(&self) -> Option<&AskOrigin> {
+        match self {
+            Self::Permission { origin, .. }
+            | Self::Question { origin, .. }
+            | Self::PlanApproval { origin, .. } => origin.as_deref(),
+        }
+    }
+
+    /// Fork: records the subagent that asked unless an inner subagent already did.
+    #[must_use]
+    pub fn asked_from(mut self, from: AskOrigin) -> Self {
+        let (Self::Permission { origin, .. }
+        | Self::Question { origin, .. }
+        | Self::PlanApproval { origin, .. }) = &mut self;
+        if origin.is_none() {
+            *origin = Some(Box::new(from));
+        }
+        self
     }
 }
 

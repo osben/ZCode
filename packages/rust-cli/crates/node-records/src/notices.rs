@@ -25,6 +25,13 @@ pub const BASH_OUTPUT_SOURCE: &str = "bash_output";
 /// 冷读取去掉前缀。修复线 F2：Node 把同名的当成自己的提醒（`plan_mode_exit` 在 Node 是只在运行时的提醒）。
 pub const RENAMED_SOURCES: [&str; 1] = [rust_cli_kernel_api::plan::EXIT_SOURCE];
 
+/// Fork: Node's source of a background task notification message
+/// (`persistBackgroundTaskNotificationBatch`). The kernel's notice origin
+/// (`queued_command::TASK_NOTIFICATION`) is stored under it, so Node's cold read sees a background
+/// result turn; the cold read here maps it back. Rows written before used the kernel name and read
+/// as before.
+pub const BACKGROUND_TASK_SOURCE: &str = "background_task";
+
 pub const ATTACHMENT: &str = "attachment";
 pub const META: &str = "meta";
 pub const INTERRUPT: &str = "interrupt";
@@ -55,12 +62,44 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
     let id = MessageId::new(record.id());
     // Node 的分叉提示（本工程写的形状相同，没有 `rustCli`）：Node 把它当对话中间的 system 提醒
     // （`rewind_notice`）发给模型，这里还原成同来源的 attachment（session-lifecycle.md §6.5.2）。
+    // Fork: the notice's `forkContext` rides along as data, so the projection can draw the fork divider.
     if marker.is_null() && source == FORK_NOTICE_SOURCE && first["synthetic"] == true {
         return Some(Message::Attachment(AttachmentMessage {
             id,
             source,
             text: rust_cli_base::reminder::wrap(&text(first)),
-            data: Value::Null,
+            data: first["metadata"]["forkContext"].clone(),
+        }));
+    }
+    // Fork: Node's background notification (`persistBackgroundTaskNotificationBatch`) has no
+    // `rustCli` marker and stores the bare `<task-notification>` envelopes; the model saw each one
+    // behind the notification preamble, so it is read back as the kernel's notification message.
+    // Both presentations (`task_notification`, mid-turn `task_notification_steer`) are read the
+    // same way, like Node's own cold read (`getConversationModelOnlyTurnTriggerSource` keys on the
+    // `background_task` source); the projection places a mid-turn one in its turn.
+    if marker.is_null() && record.info["source"] == BACKGROUND_TASK_SOURCE {
+        let content = parts
+            .iter()
+            .map(|part| {
+                let body = text(part);
+                ContentBlock::Text {
+                    text: if body.contains("<system-reminder>") {
+                        body
+                    } else {
+                        // Node's stored envelope ends with a newline the wire text does not have.
+                        rust_cli_prompts::agents::notification_wrap(body.trim_end())
+                    },
+                }
+            })
+            .collect();
+        return Some(Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id,
+            content,
+            origin: UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned(),
+            },
         }));
     }
     let message = match marker["message"].as_str()? {
@@ -74,11 +113,21 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             ),
         }),
         META => Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id,
             content: content(),
-            origin: UserOrigin::Meta { source },
+            origin: UserOrigin::Meta {
+                source: if source == BACKGROUND_TASK_SOURCE {
+                    rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned()
+                } else {
+                    source
+                },
+            },
         }),
         INTERRUPT | BASH_OUTPUT => Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id,
             content: content(),
             origin: UserOrigin::Human,
@@ -104,7 +153,7 @@ fn attachment_blocks(record: &WithParts) -> Vec<ContentBlock> {
                 };
             }
             match crate::tool_content::from_file_part(part) {
-                ToolResultContent::Image { source } => ContentBlock::Image { source },
+                ToolResultContent::Image { source } => ContentBlock::Image { source, name: None },
                 ToolResultContent::Text { text } => ContentBlock::Text { text },
                 // attachment 不带 document（提及不附 PDF 内容，tui-input.md §1.3）；万一有，读成 Node 的占位。
                 ToolResultContent::Document { source } => ContentBlock::Text {
@@ -130,3 +179,7 @@ fn with_blocks(mut data: Value, blocks: Vec<ContentBlock>) -> Value {
     }
     data
 }
+
+#[cfg(test)]
+#[path = "notices_tests.rs"]
+mod tests;

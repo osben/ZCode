@@ -128,6 +128,10 @@ pub struct ModelCapabilities {
     pub supports_native_web_search: bool,
     /// `supportsMidConversationSystem`：对话中间的 `role: system` 消息。
     pub supports_mid_conversation_system: bool,
+    /// Fork: every user message and reminder is its own request message (no adjacent-user merge, no reminder fold into
+    /// tool results). Node sets `requestCapabilities.foldRemindersIntoToolResults` only for Anthropic Messages, so this
+    /// is true on the OpenAI-compatible protocols.
+    pub separate_user_messages: bool,
     /// `supportsJsonSchemaOutput`。
     pub supports_json_schema_output: bool,
     /// `requiresMfjsToolSchema`。
@@ -158,6 +162,7 @@ impl Default for ModelCapabilities {
             supports_tool_call: true,
             supports_native_web_search: false,
             supports_mid_conversation_system: false,
+            separate_user_messages: false,
             supports_json_schema_output: false,
             requires_mfjs_tool_schema: false,
             supports_image: false,
@@ -187,6 +192,26 @@ pub struct CatalogModel {
     /// 这一项的账号连接（Team Plan 的团队项目，工作线 F49）；没有时为 None。选中时 `connection.id` 进选择。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<CatalogConnection>,
+    /// Fork: the host of the provider's base URL, without scheme, port, path or credentials (the
+    /// `providerHostname` of the App's telemetry facts); None when the URL has no host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
+/// Fork: the host of a base URL (`https://user@api.example.com:8443/v1` → `api.example.com`, an IPv6
+/// literal keeps its brackets); None without one.
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if authority.starts_with('[') {
+        authority.split_inclusive(']').next().unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or_default()
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// 目录项的账号连接（docs/specs/rust-cli/platform.md §9.3）：连接本身与显示用的两个名字，前端按界面语言拼说明。

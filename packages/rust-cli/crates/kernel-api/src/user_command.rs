@@ -99,6 +99,30 @@ pub fn dim(text: &str) -> String {
     format!("\u{1b}[2m{text}\u{1b}[22m")
 }
 
+/// Fork (desktop App): where a skill of the Composer reference catalog comes from (Node
+/// `zcodeSkillReferenceCatalogEntrySchema.scope`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillScope {
+    Workspace,
+    User,
+    Plugin,
+}
+
+/// Fork (desktop App): one skill of the Composer reference catalog (Node
+/// `skill-reference-catalog.ts`). Bundled skills are not listed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillReference {
+    /// The frontmatter `name` (Node `SkillMetadata.name`).
+    pub name: String,
+    pub description: String,
+    /// The `SKILL.md` path in the execution environment.
+    pub path: String,
+    pub scope: SkillScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+}
+
 /// 用户可调用的命令（TUI 的斜杠补全）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserCommand {

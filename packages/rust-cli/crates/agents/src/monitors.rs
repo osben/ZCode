@@ -27,10 +27,13 @@ use crate::Core;
 use crate::live::{LiveAgent, Notice};
 use crate::routing;
 
+/// A terminal notice handed to a monitor's task, and how the task tells the forwarder that it acknowledged it.
+type Handoff = (ShellNotice, oneshot::Sender<()>);
+
 /// 在跑的 monitor：属于哪个子代理，终态通知交给谁。
 struct Slot {
     agent: AgentId,
-    notice: Option<oneshot::Sender<ShellNotice>>,
+    notice: Option<oneshot::Sender<Handoff>>,
 }
 
 /// 子代理的全部 monitor（只放登记与交接，状态在各自的任务里）。
@@ -55,16 +58,18 @@ impl MonitorBoard {
         self.slots().keys().any(|watched| watched.as_str() == task)
     }
 
-    /// 子会话的终态通知属于在看的 monitor 时交给它的任务（它送出之后自己 ack），返回 true。
-    pub(crate) fn take(&self, notice: &ShellNotice) -> bool {
+    /// 子会话的终态通知属于在看的 monitor 时交给它的任务（它送出之后自己 ack）。Fork: returns what resolves once the
+    /// task acknowledged it; the forwarder waits for that before its next safe point, so its entry covers the delegated
+    /// ack (a reopen in between starts no second subscriber that would replay the notice). An error means the task did
+    /// not take it (it had already decided the command was gone): the forwarder delivers it itself.
+    pub(crate) fn take(&self, notice: &ShellNotice) -> Option<oneshot::Receiver<()>> {
         let sender = self
             .slots()
             .get_mut(&notice.task)
-            .and_then(|slot| slot.notice.take());
-        match sender {
-            Some(sender) => sender.send(notice.clone()).is_ok(),
-            None => false,
-        }
+            .and_then(|slot| slot.notice.take())?;
+        let (done, acked) = oneshot::channel();
+        sender.send((notice.clone(), done)).ok()?;
+        Some(acked)
     }
 }
 
@@ -143,9 +148,16 @@ async fn deliver(
         status,
         envelope,
     };
-    let wake = core
-        .live
-        .with(|agents| routing::deliver(agents, &core.hub, Some(&live.agent), &live.root, notice));
+    let wake = core.live.with(|agents| {
+        routing::deliver(
+            agents,
+            &core.hub,
+            core.ports.ids.as_ref(),
+            Some(&live.agent),
+            &live.root,
+            notice,
+        )
+    });
     routing::wake(core, wake.into_iter().collect()).await;
 }
 
@@ -178,6 +190,7 @@ async fn stop(core: &Core, live: &LiveAgent, armed: &MonitorArmed) {
     let request = BackgroundTask {
         session: live.child.clone(),
         task: armed.task.clone(),
+        notify_stop: false,
     };
     if let Err(error) = core
         .ports
@@ -202,7 +215,7 @@ async fn run(
     live: LiveAgent,
     armed: MonitorArmed,
     mut events: CommandEvents,
-    notice: oneshot::Receiver<ShellNotice>,
+    notice: oneshot::Receiver<Handoff>,
 ) {
     let mut watch = Watch::new(armed.clone(), core.ports.clock.now_ms());
     // monitor 所在的机器（R3）：查询、停止、ack 与流出错后的续读都发给它。输出读 Monitor 工具交来的那条流（F119）。
@@ -237,13 +250,14 @@ async fn run(
     let key = BackgroundTask {
         session: live.child.clone(),
         task: armed.task.clone(),
+        notify_stop: false,
     };
     let pending = matches!(
         machine.background().background_command(key).await,
         Ok(Some(_))
     );
     let now = core.ports.clock.now_ms();
-    if pending && let Ok(notice) = notice.await {
+    if pending && let Ok((notice, done)) = notice.await {
         // 命令自己结束：合成终态通知（剩下的行拿得到令牌就放进正文）；ws 来源只 ack（关闭说明已经送过）。
         if !socket {
             let mut step = Step::default();
@@ -263,6 +277,8 @@ async fn run(
         {
             tracing::warn!(%error, "a subagent monitor notice was not acknowledged");
         }
+        // Fork: the forwarder that handed it over may reach its next safe point only now.
+        let _ = done.send(());
     } else {
         let step = watch.after_stop(rest, socket, now);
         send(core, &live, &armed, &step).await;

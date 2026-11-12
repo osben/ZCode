@@ -7,7 +7,7 @@ import type {
 import type { WebRemoteControlRelayV2Device } from "@zcode/shared/web-remote-relay";
 import { parseWebRemoteControlExternalQrParams, type WebRemoteControlFailure } from "@zcode/shared";
 import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-relay";
-import type { WebOAuthProviderId } from "#src/auth/browserOAuthCredentialRepo.js";
+import type { WebOAuthProviderId } from "#src/auth/contract.js";
 import { groupWebRemoteControlDevices } from "#src/web-remote-control/domain/webRemoteControlDeviceGroups.js";
 import { resolveWebRemoteControlRepairNotice } from "#src/web-remote-control/domain/webRemoteControlRepairNotice.js";
 import {
@@ -67,6 +67,7 @@ export class WebRemoteControlEntry {
         lastSid: string | null;
         lastMid: string | null;
         acceptedJwt?: string;
+        acceptedRevision?: string | null;
       }
     | undefined;
 
@@ -81,6 +82,18 @@ export class WebRemoteControlEntry {
   private reset(): void {
     this.dispose();
     this.scope = new AbortController();
+    const jwt = this.options.auth.getZCodeJwtToken();
+    const revision = this.options.auth.getSessionRevision();
+    const unsubscribe = this.options.auth.subscribeSessionChange(() => {
+      if (!this.matchesSession(jwt, revision)) void this.start();
+    });
+    this.scope.signal.addEventListener("abort", unsubscribe, { once: true });
+  }
+
+  private matchesSession(jwt: string | null, revision: string | null): boolean {
+    // Compare against bearer(), not the login JWT alone: a device-key pairing JWT is the bearer without a login, and
+    // comparing only getZCodeJwtToken() would never match it and restart the entry in a loop.
+    return this.bearer() === jwt && this.options.auth.getSessionRevision() === revision;
   }
 
   async start(): Promise<void> {
@@ -176,8 +189,10 @@ export class WebRemoteControlEntry {
     if (!list) return;
     if (list.request) return list.request;
     const jwt = this.bearer();
+    const revision = this.options.auth.getSessionRevision();
     if (!jwt) return this.switchAccount();
-    if (list.acceptedJwt && list.acceptedJwt !== jwt) return this.start();
+    if (list.acceptedJwt && !this.matchesSession(list.acceptedJwt, list.acceptedRevision ?? null))
+      return this.start();
     const { signal } = this.scope;
     list.view = { ...list.view, loading: true, error: false };
     this.options.onView(list.view);
@@ -186,8 +201,9 @@ export class WebRemoteControlEntry {
         const devices = await this.options.devices(jwt, signal);
         if (signal.aborted) return;
         // Responses received after an account change must not provide device or auto-connect basis for the new account.
-        if (this.bearer() !== jwt) return this.start();
+        if (!this.matchesSession(jwt, revision)) return this.start();
         list.acceptedJwt = jwt;
+        list.acceptedRevision = revision;
         // First read the cache to fill in names/platforms for offline records, then write back this online record; they are display preferences only and do not enter admission.
         const knownDevices = readKnownDevices(this.options.storage);
         const groups = groupWebRemoteControlDevices(devices, this.options.locale, knownDevices);
@@ -201,7 +217,7 @@ export class WebRemoteControlEntry {
         else this.options.onView(list.view);
       } catch (error) {
         if (signal.aborted) return;
-        if (this.bearer() !== jwt) return this.start();
+        if (!this.matchesSession(jwt, revision)) return this.start();
         if (
           error instanceof WebRemoteControlV2ConnectionError &&
           error.reason === "auth-required"
@@ -220,7 +236,7 @@ export class WebRemoteControlEntry {
 
   selectDevice(sid: string): void {
     if (!this.list || this.list.view.loading || this.list.view.error) return;
-    if (this.list.acceptedJwt !== this.bearer()) {
+    if (!this.matchesSession(this.list.acceptedJwt ?? null, this.list.acceptedRevision ?? null)) {
       void this.start();
       return;
     }
@@ -263,12 +279,13 @@ export class WebRemoteControlEntry {
     this.reset();
     const { signal } = this.scope;
     const jwt = this.options.auth.getZCodeJwtToken();
+    const revision = this.options.auth.getSessionRevision();
     if (!jwt) return this.switchAccount();
     try {
       const devices = await this.options.devices(jwt, signal);
       if (signal.aborted) return;
       // Consistent with the list: a response from before an account change must not be used as the basis for resuming.
-      if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+      if (!this.matchesSession(jwt, revision)) return this.start();
       const groups = groupWebRemoteControlDevices(
         devices,
         this.options.locale,
@@ -289,7 +306,7 @@ export class WebRemoteControlEntry {
       if (device) return this.admit(device, false);
     } catch (error) {
       if (signal.aborted) return;
-      if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+      if (!this.matchesSession(jwt, revision)) return this.start();
       if (error instanceof WebRemoteControlV2ConnectionError && error.reason === "auth-required")
         return this.switchAccount();
     }
@@ -326,9 +343,14 @@ export class WebRemoteControlEntry {
       signal,
       getToken: async (tokenSignal) => {
         const jwt = this.bearer();
+        const revision = this.options.auth.getSessionRevision();
         if (!jwt) throw new WebRemoteControlV2ConnectionError("auth-required");
         try {
-          return await this.options.token(jwt, tokenSignal);
+          const token = await this.options.token(jwt, tokenSignal);
+          // 同JWT的新revision也必须丢弃旧请求结果，不能让旧会话继续配对。
+          if (!this.matchesSession(jwt, revision))
+            throw new DOMException("Session changed", "AbortError");
+          return token;
         } catch (error) {
           // A 401 only rejects the JWT used by this request. If another tab wrote a new JWT while the request was in
           // flight, logging out would also clear the new login and return to the login page; mark it retryable instead, so
@@ -338,7 +360,7 @@ export class WebRemoteControlEntry {
             error instanceof WebRemoteControlV2ConnectionError &&
             error.reason === "auth-required" &&
             current &&
-            current !== jwt
+            !this.matchesSession(jwt, revision)
           )
             throw new WebRemoteControlV2ConnectionError("relay-unavailable", true);
           throw error;
@@ -367,11 +389,12 @@ export class WebRemoteControlEntry {
     });
   }
 
-  startLogin(provider?: WebOAuthProviderId): void {
-    this.options.auth.startLogin({
+  startLogin(provider?: WebOAuthProviderId, signal?: AbortSignal): Promise<void> {
+    return this.options.auth.startLogin({
       ...this.options.loginOptions,
       ...(provider ? { provider } : {}),
       appReturnTo: this.options.getHref(),
+      signal,
     });
   }
 

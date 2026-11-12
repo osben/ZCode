@@ -1,7 +1,7 @@
 //! 工作区文件：元数据、目录、读取与条件写（docs/specs/rust-cli/tools-files.md §3）。
 //!
-//! 都是阻塞调用，由调用方放进 `rust_cli_base::blocking`。写入是原地写：保留 inode、权限、硬链接，
-//! 写穿符号链接；写完 fsync 并核对大小。
+//! 都是阻塞调用，由调用方放进 `rust_cli_base::blocking`。写入是原地写：保留 inode、权限、硬链接；
+//! 写完 fsync 并核对大小。目标本身是符号链接时拒写（Node `atomicWrite` 的 lstat 与 O_NOFOLLOW）。
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -123,12 +123,37 @@ fn admits(current: Option<&fs::Metadata>, precondition: &WritePrecondition) -> b
     }
 }
 
+/// Node's refusal text (`SymlinkWriteRefusedError` in the fs adapter).
+fn symlink_refused(path: &Path) -> EnvError {
+    EnvError::Io {
+        message: format!(
+            "Refusing to write through symlink: {}. Resolve the symlink and pass the real target path explicitly.",
+            display(path)
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn is_symlink_loop(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ELOOP)
+}
+
+#[cfg(not(unix))]
+fn is_symlink_loop(_error: &io::Error) -> bool {
+    false
+}
+
 /// 条件写：检查前置条件与写入在同一个执行侧操作里完成。
 #[expect(
     clippy::disallowed_methods,
     reason = "env-local 是工作区文件 IO 的入口（docs/specs/rust-cli/README.md §4）"
 )]
 pub(crate) fn put_file(path: &Path, request: &PutFile) -> Result<FileWritten, EnvError> {
+    // Node refuses to write through a symlink (lstat, then O_NOFOLLOW on open): a link planted at the target
+    // would otherwise redirect the write to a file the caller never named.
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(symlink_refused(path));
+    }
     let current = metadata(path)?;
     if !admits(current.as_ref(), &request.precondition) {
         return Err(EnvError::PreconditionFailed {
@@ -149,12 +174,21 @@ pub(crate) fn put_file(path: &Path, request: &PutFile) -> Result<FileWritten, En
     {
         fs::create_dir_all(parent).map_err(|error| io_error(parent, &error))?;
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|error| io_error(path, &error))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Closes the race between the lstat above and the open: a link swapped in meanwhile fails with ELOOP.
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).map_err(|error| {
+        if is_symlink_loop(&error) {
+            symlink_refused(path)
+        } else {
+            io_error(path, &error)
+        }
+    })?;
     file.write_all(&request.bytes)
         .and_then(|()| file.sync_all())
         .map_err(|error| io_error(path, &error))?;

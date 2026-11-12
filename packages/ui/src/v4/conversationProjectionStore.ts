@@ -43,6 +43,15 @@ export function requiresAcceptedInputProjection(type: string): boolean {
 /** lastError shown to the user when backoff is exhausted (for replacement paths with no underlying error object to reference). */
 const RUNTIME_RECYCLED_ERROR = "ZCode agent runtime 已被回收，重连未成功";
 
+/** recovery flight 的起因。只由调用点显式给出，不从状态反推，否则日志会把两种原因混成一个。 */
+type RecoveryReason =
+  | "staleAuthority"
+  | "deltasWithoutBase"
+  | "applyGap"
+  | "contentFault"
+  | "assemblyFault"
+  | "acceptedInputSilent";
+
 function monotonicNow(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
@@ -117,7 +126,14 @@ export interface ConversationStoreState {
   /** Renderer first-frame timing; notify it with the snapshot to prevent the UI from reading a partially updated diagnostic state. */
   rendererTiming?: SessionOpenRendererTiming;
   optimisticCommands: readonly OptimisticCommand[];
-  /** In-flight loadOlder flag (prevents reentry during automatic prefetch). */
+  /** 编辑重发期间仅供显示的旧 rows；不参与权威 snapshot、命令或恢复裁决。 */
+  editPresentation: {
+    commandId: string;
+    logEpoch: string;
+    rows: ConversationSnapshot["rows"];
+    errorAt: number | null;
+  } | null;
+  /** loadOlder 在途标记（自动预取防重入）。 */
   loadingOlder: boolean;
   /** Terminal plan directory returned by the CLI's complete, valid projection. */
   sessionPlans: readonly ToolCallRow[];
@@ -142,6 +158,7 @@ const INITIAL_STATE: ConversationStoreState = {
   lastError: null,
   rendererTiming: undefined,
   optimisticCommands: [],
+  editPresentation: null,
   loadingOlder: false,
   sessionPlans: [],
   planDirectoryRevision: 0,
@@ -510,7 +527,24 @@ export class ConversationProjectionStore {
   }
 
   private setState(patch: Partial<ConversationStoreState>): void {
-    this.state = { ...this.state, ...patch };
+    const next = { ...this.state, ...patch };
+    const edit = next.editPresentation;
+    if (
+      edit &&
+      (next.status === "error" ||
+        next.status === "closed" ||
+        next.snapshot?.logEpoch !== edit.logEpoch ||
+        !next.optimisticCommands.some((command) => command.commandId === edit.commandId) ||
+        hasAcceptedInputProjection(next.snapshot, edit.commandId) ||
+        (next.snapshot.control.lastError !== null &&
+          next.snapshot.control.lastError.at !== edit.errorAt))
+    ) {
+      // Bug 根因：branch cut 和 replacement 分帧到达时，立即显示截断会先缩再撑。
+      // 权威 snapshot 仍即时推进；只在同 commandId 输入或明确失败/换代时交接显示，
+      // 并在同一次通知中释放旧 rows，不能靠 ACK 或定时器猜测 replacement 已到达。
+      next.editPresentation = null;
+    }
+    this.state = next;
     for (const listener of this.listeners) listener();
   }
 
@@ -531,6 +565,7 @@ export class ConversationProjectionStore {
       this.subscriptionHasAppliedBase = false;
       this.setState({
         subscriptionId: null,
+        editPresentation: null,
         projectionReady: false,
         status: snapshot.state === "faulted" ? "error" : "connecting",
         lastError: snapshot.lastError?.message ?? null,
@@ -771,6 +806,7 @@ export class ConversationProjectionStore {
     this.setState({
       status: "connecting",
       subscriptionId: null,
+      editPresentation: null,
       lifecycle: undefined,
       projectionReady: false,
     });
@@ -810,7 +846,7 @@ export class ConversationProjectionStore {
 
   /** Epoch/entity authority for a row command/query became invalid; recover through same-sub recovery. */
   recoverFromStaleAuthority(): void {
-    this.requestRecovery();
+    this.requestRecovery(false, { reason: "staleAuthority" });
   }
 
   /** Frame-routing entry point for SessionDataLayer. */
@@ -847,9 +883,9 @@ export class ConversationProjectionStore {
       return;
     }
     if (frame.payload.kind === "deltas" && !this.subscriptionHasAppliedBase) {
-      // ACK(snapshot) does not establish an applied base. If initial was lost, matching fromSeq with the old projection by chance
-      // still does not allow deltas from a new epoch to be applied to old state.
-      this.requestRecovery(deliveryKind === "recovery");
+      // ACK(snapshot) 不构成 applied base；initial 丢失后即便数值 fromSeq 恰好
+      // 对上旧 projection，也不能把新 epoch delta 拼到旧状态。
+      this.requestRecovery(deliveryKind === "recovery", { reason: "deltasWithoutBase" });
       return;
     }
     this.applyFrame(frame, {
@@ -927,7 +963,7 @@ export class ConversationProjectionStore {
         // Gaps on an active subscription's online/recovery frames remain same-sub.
         void this.connect({ forceSnapshot: true });
       } else {
-        this.requestRecovery(context.recovery);
+        this.requestRecovery(context.recovery, { reason: "applyGap" });
       }
       return;
     }
@@ -1062,7 +1098,7 @@ export class ConversationProjectionStore {
     // A forced snapshot is the only way to get different bytes, so jump directly to it and stop if it too is rejected for content,
     // rather than wasting the subscription on retries that must fail.
     if (isDeterministicContentFault(reasonCode)) {
-      this.requestRecovery(true, { contentFault: true });
+      this.requestRecovery(true, { contentFault: true, reason: "contentFault" });
       return;
     }
     // A missing/fabricated deliveryKind arrives as an undefined typed fault. If recovery is already in flight,
@@ -1073,10 +1109,13 @@ export class ConversationProjectionStore {
       this.recovery.postRecoveryGapPending ||= this.recovery.validFrameSeen;
       return;
     }
-    this.requestRecovery(recoveryFault);
+    this.requestRecovery(recoveryFault, { reason: "assemblyFault" });
   }
 
-  private requestRecovery(recoveryEvent = false, options: { contentFault?: boolean } = {}): void {
+  private requestRecovery(
+    recoveryEvent = false,
+    options: { contentFault?: boolean; reason?: RecoveryReason } = {},
+  ): void {
     if (this.closed) return;
     const subscriptionId = this.state.subscriptionId;
     if (!subscriptionId) {
@@ -1116,7 +1155,19 @@ export class ConversationProjectionStore {
       contentFault,
     };
     this.recovery = recovery;
-    // Content failures skip the resume step and force a snapshot; transient failures still try resume first using the original ladder.
+    // 每次 recovery flight 的起因都要可归因。此前六个入口都不记录，排查时只能看到一次
+    // resync，分不清是内容拒收、authority 失效还是 apply 断档——2026-11-03 查
+    // contentRejected 时正是卡在这一步。reason 来自调用点，不从状态反推。
+    logger.lifecycle.warn("v4 conversation store recovery started", {
+      contentFault,
+      event: "v4.conversation.store.recovery.started",
+      generation: this.generation,
+      module: "ui.v4.conversation_projection_store",
+      reason: options.reason ?? "unspecified",
+      status: "recovering",
+      topic: this.topic,
+    });
+    // 内容失败跳过 resume 档直接强制 snapshot；瞬态失败仍按原阶梯先试 resume。
     this.issueRecovery(recovery, contentFault);
   }
 
@@ -1233,7 +1284,18 @@ export class ConversationProjectionStore {
     const contentFault = this.recovery.contentFault && options.contentEligible !== false;
     const code = contentFault ? SUBSCRIPTION_CONTENT_REJECTED : reasonCode;
     this.discardRecovery();
-    logger.warn(`[v4-store] ${this.topic} recovery fail-closed: ${code}`);
+    // 这条是订阅走到终态的唯一记录，用户此时看到的是整块错误面板而不是正文。原来用
+    // logger.warn，生产构建下是 no-op，因此打包版出事时日志里既没有拒收也没有终态。
+    // 走 lifecycle 通道保留它；字段与同文件其他 lifecycle 日志同构，便于按 event 聚合。
+    logger.lifecycle.warn("v4 conversation store recovery fail-closed", {
+      contentFault,
+      event: "v4.conversation.store.recovery.fail_closed",
+      generation: this.generation,
+      module: "ui.v4.conversation_projection_store",
+      reasonCode: code,
+      status: "error",
+      topic: this.topic,
+    });
     this.setState({ status: "error", lastError: code });
   }
 
@@ -1560,8 +1622,31 @@ export class ConversationProjectionStore {
   /** Register an overlay before sending a command (for pending/stopping display). */
   markCommandPending(command: OptimisticCommand): void {
     if (this.closed) return;
+    const snapshot = this.state.snapshot;
     this.setState({
       optimisticCommands: [...this.state.optimisticCommands, command],
+      ...(command.type === "editUserQuery" && snapshot
+        ? {
+            editPresentation: {
+              commandId: command.commandId,
+              logEpoch: snapshot.logEpoch,
+              rows: snapshot.rows,
+              errorAt: snapshot.control.lastError?.at ?? null,
+            },
+          }
+        : {}),
+    });
+  }
+
+  /** ACK 不结束行内提交态；由权威输入交接、失败或 store 关闭唤醒，无时间兜底。 */
+  waitForEditPresentation(commandId: string): Promise<void> {
+    if (this.state.editPresentation?.commandId !== commandId) return Promise.resolve();
+    return new Promise((resolve) => {
+      const unsubscribe = this.subscribe(() => {
+        if (this.state.editPresentation?.commandId === commandId) return;
+        unsubscribe();
+        resolve();
+      });
     });
   }
 
@@ -1592,11 +1677,14 @@ export class ConversationProjectionStore {
         this.settleCommand(commandId);
         return;
       }
-      logger.warn("[v4-store] accepted input projection silent, trigger same-sub recovery", {
+      // 同样原为生产构建下 no-op 的 logger.warn：这条是「已接纳的输入没投影出来」的唯一线索。
+      logger.lifecycle.warn("v4 conversation store accepted input projection silent", {
         commandId,
+        event: "v4.conversation.store.accepted_input.silent",
+        module: "ui.v4.conversation_projection_store",
         topic: this.topic,
       });
-      this.requestRecovery();
+      this.requestRecovery(false, { reason: "acceptedInputSilent" });
     }, ACCEPTED_INPUT_PROJECTION_GRACE_MS);
     this.acceptedInputProjectionTimers.set(commandId, timer);
   }
@@ -1657,8 +1745,8 @@ export class ConversationProjectionStore {
     return this.state.snapshot?.rows.window.length ?? 0;
   }
 
-  /** Unsubscribe and dispose this store (called only by SessionDataLayer). */
-  async close(): Promise<void> {
+  /** 退订并终结本 store（仅 SessionDataLayer 调用）。 */
+  async close(options?: { forget?: boolean }): Promise<void> {
     if (this.closed) return;
     liveProjectionStores.delete(this);
     const closeStartedAt = monotonicNow();
@@ -1684,7 +1772,11 @@ export class ConversationProjectionStore {
     this.subscriptionHasAppliedBase = false;
     this.generation++;
     const { subscriptionId } = this.state;
-    this.setState({ status: "closed", subscriptionId: null });
+    this.setState({
+      ...(options?.forget ? INITIAL_STATE : {}),
+      status: "closed",
+      subscriptionId: null,
+    });
     if (subscriptionId) {
       try {
         await this.transport.unsubscribe(subscriptionId);

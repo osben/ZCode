@@ -4,7 +4,7 @@ use rust_cli_kernel_api::ids::{MessageId, SessionId, ToolUseId};
 use rust_cli_kernel_api::message::{StopReason, Usage};
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall, ToolCall};
 use rust_cli_kernel_api::model::{ModelError, ModelSelection, QuerySource};
-use rust_cli_kernel_api::store::{Fact, SessionKind, SessionStore};
+use rust_cli_kernel_api::store::{Fact, SessionKind, SessionStore, StoreQueries};
 use serde_json::{Value, json};
 
 use crate::tests::{TestStore, assistant, batch, meta, started, text, user};
@@ -469,8 +469,10 @@ async fn a_failed_batch_rolls_back_its_usage_rows() {
     assert!(t.rows("select * from model_usage").is_empty());
 }
 
+/// Upstream 3.18.0 keeps usage facts forever: a usage write never deletes raw rows, even rows a
+/// recompute already rolled up and far older than the 30 days builds up to 3.17 kept.
 #[tokio::test]
-async fn usage_writes_prune_rows_older_than_thirty_days() {
+async fn usage_writes_keep_raw_rows_of_any_age() {
     let t = TestStore::new();
     started(&t, "sess_1").await;
     commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
@@ -483,12 +485,90 @@ async fn usage_writes_prune_rows_older_than_thirty_days() {
     )
     .await;
     let day = 86_400_000_u64;
-    t.source.at(2_000 + 30 * day + 1);
+    t.source.at(2_000 + 400 * day);
+    all_time(&t).await;
     let mut fresh = call("msg_a2", CallStatus::Completed);
-    fresh.started_at_ms = 30 * day;
+    fresh.started_at_ms = 400 * day;
     commit(&t, &sid(), vec![Fact::ModelCalled { call: fresh }]).await;
     assert_eq!(
-        t.rows("select logical_request_id from model_usage"),
-        vec![vec![json!("msg_a2")]]
+        t.rows("select logical_request_id from model_usage order by started_at"),
+        vec![vec![json!("msg_a1")], vec![json!("msg_a2")]]
     );
+}
+
+/// The whole history as App Usage answers it (a read recomputes the rollup first).
+async fn all_time(t: &TestStore) -> rust_cli_kernel_api::store::AppUsageRows {
+    let span = rust_cli_kernel_api::store::AppUsageSpan {
+        since_ms: 0,
+        until_ms: i64::MAX / 4,
+        tz_offset_ms: 0,
+        filters: rust_cli_kernel_api::store::AppUsageFilters::default(),
+        include_facets: false,
+        hourly: false,
+        top_sessions: false,
+    };
+    let rows = t.store.app_usage(span).await.unwrap();
+    assert_eq!(rows.rollup_fallback_reason, None);
+    rows
+}
+
+const DAY: u64 = 86_400_000;
+
+fn model_call_at(message: &str, at: u64) -> Fact {
+    let mut model = call(message, CallStatus::Completed);
+    model.started_at_ms = at;
+    model.first_token_at_ms = Some(at + 100);
+    model.completed_at_ms = at + 200;
+    Fact::ModelCalled { call: model }
+}
+
+/// Fork (specs/fork-agent-runtime-selection.md "Usage rollup in Rust mode"): a raw row written
+/// before any recompute, older than a month, is still counted by the first App Usage read.
+#[tokio::test]
+async fn a_row_app_usage_never_saw_is_counted_by_the_first_read() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
+    commit(&t, &sid(), vec![model_call_at("msg_a1", 2_000)]).await;
+    t.source.at(2_000 + 31 * DAY);
+    commit(
+        &t,
+        &sid(),
+        vec![model_call_at("msg_a2", 2_000 + 31 * DAY - 1_000)],
+    )
+    .await;
+    assert_eq!(
+        t.rows("select logical_request_id from model_usage order by started_at"),
+        vec![vec![json!("msg_a1")], vec![json!("msg_a2")]]
+    );
+    assert_eq!(all_time(&t).await.totals.total_tokens, 40);
+}
+
+/// A turn longer than the 7-day replace window: its `turn_usage` row arrives with the turn's old
+/// start after the last model call. The usage write path must not move the watermark in between,
+/// or the turn falls outside every later replace window.
+#[tokio::test]
+async fn a_turn_longer_than_the_replace_window_is_still_rolled_up() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let base = 40 * DAY;
+    t.source.at(base - 1);
+    all_time(&t).await;
+    t.source.at(base);
+    // The input's id carries its creation time (base36 ms): "1l5m2o0" is `base`.
+    commit(&t, &sid(), vec![user("msg_1l5m2o0_u1", "hi")]).await;
+    let end = base + 8 * DAY;
+    t.source.at(end);
+    commit(&t, &sid(), vec![model_call_at("msg_a1", end - 1_000)]).await;
+    t.source.at(end + 60_000);
+    commit(
+        &t,
+        &sid(),
+        vec![Fact::TurnEnded {
+            status: CallStatus::Completed,
+        }],
+    )
+    .await;
+    t.source.at(end + 120_000);
+    assert_eq!(all_time(&t).await.turn_totals.total_turns, 1);
 }

@@ -121,7 +121,11 @@ impl Sandbox {
             task_tools: None,
             limits: Default::default(),
         };
-        LocalKernel::new(ports, defaults).with_titles(TitleModel { model, directory })
+        LocalKernel::new(ports, defaults).with_titles(TitleModel {
+            model,
+            directory,
+            node_prompt: false,
+        })
     }
 
     /// 开一个交互会话、提交首条输入，等到生成的标题与回合结束（标题请求与主请求都已回复，夹具记下了它们；两者并发，
@@ -137,6 +141,7 @@ impl Sandbox {
                 selection,
                 mode: PermissionMode::BypassPermissions,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();
@@ -158,7 +163,7 @@ impl Sandbox {
             let (mut titled, mut finished) = (false, false);
             while let Some(event) = events.next().await {
                 match &event.event {
-                    KernelEvent::TitleChanged { title } if title == GENERATED => titled = true,
+                    KernelEvent::TitleChanged { title, .. } if title == GENERATED => titled = true,
                     KernelEvent::TurnFinished { .. } => finished = true,
                     _ => {}
                 }

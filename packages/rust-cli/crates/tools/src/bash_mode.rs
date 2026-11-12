@@ -26,6 +26,27 @@ pub(crate) async fn run(
             },
             stderr: String::new(),
         },
+        // Fork (node_desktop): a display-carrying result cannot occur in bash mode (the TUI keeps
+        // node_desktop off); fall back to its text block for completeness.
+        Ok(Ran::Shown(output)) => {
+            let text = output
+                .content
+                .iter()
+                .map(|block| match block {
+                    rust_cli_kernel_api::message::ToolResultContent::Text { text } => text.as_str(),
+                    _ => "",
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            BashRun::Completed {
+                stdout: if text.starts_with(PERSISTED) {
+                    text
+                } else {
+                    escape_xml(&text)
+                },
+                stderr: String::new(),
+            }
+        }
         // 退出码表示失败：合流的输出放进 stderr，不带 `Exit code N`。
         Ok(Ran::Failed { output, .. }) => BashRun::Completed {
             stdout: String::new(),

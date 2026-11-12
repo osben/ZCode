@@ -7,7 +7,7 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{StopReason, Usage, UserMessage};
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
 use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelPort, ModelRequest, QuerySource};
-use rust_cli_kernel_api::session_api::{Command, SessionHandle};
+use rust_cli_kernel_api::session_api::{Command, CommandEnvelope, Delivery, SessionHandle};
 use rust_cli_kernel_api::side_request::SideSource;
 use rust_cli_kernel_api::testing::{MemoryStore, ScriptedModel, text_response};
 use tokio::sync::Notify;
@@ -20,11 +20,12 @@ fn titles(model: Arc<dyn ModelPort>) -> Option<TitleModel> {
     Some(TitleModel {
         model,
         directory: None,
+        node_prompt: false,
     })
 }
 
 fn titled(event: &KernelEvent, expected: &str) -> bool {
-    matches!(event, KernelEvent::TitleChanged { title } if title == expected)
+    matches!(event, KernelEvent::TitleChanged { title, .. } if title == expected)
 }
 
 fn generated(facts: &[Fact]) -> Vec<Fact> {
@@ -159,6 +160,8 @@ async fn short_inputs_and_later_turns_do_not_generate() {
     let mut setup = Setup::new(main);
     setup.titles = titles(title_model.clone());
     setup.messages = vec![Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_old"),
         content: vec![ContentBlock::Text {
             text: "earlier".to_owned(),
@@ -347,4 +350,404 @@ async fn a_failed_title_request_still_writes_a_usage_row() {
     );
     let facts = built.store.facts(&SessionId::new("sess_1"));
     assert!(generated(&facts).is_empty());
+}
+
+fn node_titles(model: Arc<dyn ModelPort>) -> Option<TitleModel> {
+    Some(TitleModel {
+        model,
+        directory: None,
+        node_prompt: true,
+    })
+}
+
+/// Fork (Node desktop titles): the first-input title starts once its turn completed (core `turn.ts`
+/// `maybeStartDeferredSessionTitleGeneration`), not while the turn runs.
+#[tokio::test]
+async fn node_desktop_titles_wait_for_the_turn_to_complete() {
+    let gate = Arc::new(Notify::new());
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]).gated(gate.clone()));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, |event| {
+        titled(event, "Explain the hook trust digest")
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+    gate.notify_one();
+    let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert!(seen.iter().any(finished));
+    assert_eq!(title_model.requests().len(), 1);
+}
+
+/// Fork (Node desktop titles): a turn that does not complete starts no title.
+#[tokio::test]
+async fn node_desktop_titles_skip_a_failed_turn() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        vec![Err(ModelError::InvalidRequest {
+            message: "bad".to_owned(),
+        })],
+        text_response(&["Sure."]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+
+    // The next completed turn is still the first (Node counts completed turns only) and gets the title.
+    built
+        .session
+        .send(submit("c2", "Explain the hook trust digest again"))
+        .await;
+    until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert_eq!(title_model.requests().len(), 1);
+}
+
+/// Fork (specs/fork-agent-runtime-selection.md, Conversation quotes): a quoted input is titled, and seeds the title
+/// request, by its typed text only (Node `titleFromInput(displayInput)`).
+#[tokio::test]
+async fn a_quoted_input_is_titled_by_its_typed_text() {
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main.clone());
+    setup.titles = titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    let typed = "Explain the hook trust digest";
+    let intent: rust_cli_kernel_api::input_intent::InputIntent = serde_json::from_value(
+        serde_json::json!({"text": typed, "conversationQuotes": [{"text": "QUOTED_SELECTION"}]}),
+    )
+    .unwrap();
+    built
+        .session
+        .send(CommandEnvelope {
+            id: CommandId::new("c1"),
+            command: Command::SubmitWith {
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: typed.to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: false,
+                lease: None,
+                intent: Some(Box::new(intent)),
+            },
+        })
+        .await;
+    let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert!(
+        seen.iter()
+            .any(|event| titled(event, "Explain the hook trust digest"))
+    );
+    let requests = title_model.requests();
+    assert!(asked_with(&requests[0], "Explain the hook trust digest"));
+    assert!(!asked_with(&requests[0], "QUOTED_SELECTION"));
+    // The turn itself still reads the quotes.
+    assert!(format!("{:?}", main.requests()[0].messages).contains("QUOTED_SELECTION"));
+}
+
+fn asked_with(request: &ModelRequest, seed: &str) -> bool {
+    format!("{:?}", request.messages).contains(seed)
+}
+
+/// Fork (Node desktop titles, specs/session-title-polish.md §6.4 scenario 1): an attempt that gives no title is retried
+/// once by a later input, with the first input as the seed; a third input makes no request.
+#[tokio::test]
+async fn node_desktop_titles_retry_once_with_the_first_input_as_seed() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["a"]),
+        text_response(&["b"]),
+        text_response(&["c"]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![
+        text_response(&[""]),
+        text_response(&["{\"title\":\"Hook trust digest\"}"]),
+    ]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, finished).await;
+    until_title_call(&built.store).await;
+    assert_eq!(title_model.requests().len(), 1);
+    assert!(generated(&built.store.facts(&SessionId::new("sess_1"))).is_empty());
+
+    built
+        .session
+        .send(submit("c2", "and now the second part please"))
+        .await;
+    until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    let requests = title_model.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(asked_with(&requests[1], "Explain the hook trust digest"));
+
+    built
+        .session
+        .send(submit("c3", "a third message that is long enough"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(title_model.requests().len(), 2);
+}
+
+/// Fork (Node desktop titles): the retry's seed is stored seeded and normalized (Node `sessionTitleSeed.input =
+/// normalizeTitleInput(sanitizeTitleSeed(input))`), and the request seeds it again (`buildTitleMessages`), so a nested
+/// mention is reduced twice.
+#[tokio::test]
+async fn node_desktop_titles_retry_with_the_stored_seed_seeded_again() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["a"]),
+        text_response(&["b"]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![
+        text_response(&[""]),
+        text_response(&["{\"title\":\"Parser module\"}"]),
+    ]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit(
+            "c1",
+            "[[x](./a.ts)](./b.ts) explain the parser module",
+        ))
+        .await;
+    until(&mut events, finished).await;
+    until_title_call(&built.store).await;
+    built
+        .session
+        .send(submit("c2", "and now the second part please"))
+        .await;
+    until(&mut events, |event| titled(event, "Parser module")).await;
+    let requests = title_model.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].messages[0].content[0].block,
+        ContentBlock::Text {
+            text: "x explain the parser module".to_owned()
+        }
+    );
+}
+
+/// Fork (scenario 2): a short first input makes no request; the next long input is titled from itself.
+#[tokio::test]
+async fn node_desktop_titles_title_the_input_after_a_short_first_one() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["a"]),
+        text_response(&["b"]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Dark mode\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", "hi")).await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+    built
+        .session
+        .send(submit("c2", "please add dark mode"))
+        .await;
+    until(&mut events, |event| titled(event, "Dark mode")).await;
+    let requests = title_model.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(asked_with(&requests[0], "please add dark mode"));
+}
+
+/// Fork (scenario 3): a rename after a failed attempt stops the retries.
+#[tokio::test]
+async fn node_desktop_titles_do_not_retry_after_a_rename() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["a"]),
+        text_response(&["b"]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[""])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, finished).await;
+    until_title_call(&built.store).await;
+    built
+        .session
+        .send(envelope(
+            "c2",
+            Command::Rename {
+                title: "Mine".to_owned(),
+            },
+        ))
+        .await;
+    until(&mut events, |event| titled(event, "Mine")).await;
+    built
+        .session
+        .send(submit("c3", "and now the second part please"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(title_model.requests().len(), 1);
+    assert_eq!(built.session.view().await.unwrap().meta.title, "Mine");
+}
+
+/// Fork (scenario 4): a reopened session retries only while its stored title is still automatic.
+#[tokio::test]
+async fn node_desktop_titles_retry_a_reopened_session_only_with_an_automatic_title() {
+    for pending in [false, true] {
+        let main = Arc::new(ScriptedModel::new(vec![text_response(&["c"])]));
+        let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+            "{\"title\":\"Follow up\"}",
+        ])]));
+        let mut setup = Setup::new(main);
+        setup.titles = node_titles(title_model.clone());
+        setup.title_pending = pending;
+        setup.messages = vec![Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new("msg_old"),
+            content: vec![ContentBlock::Text {
+                text: "earlier".to_owned(),
+            }],
+            origin: UserOrigin::Human,
+        })];
+        let built = setup.build().await;
+        let mut events = built.session.subscribe(None);
+        built
+            .session
+            .send(submit("c1", "a long enough follow up message"))
+            .await;
+        if pending {
+            until(&mut events, |event| titled(event, "Follow up")).await;
+            let requests = title_model.requests();
+            assert_eq!(requests.len(), 1);
+            assert!(asked_with(&requests[0], "a long enough follow up message"));
+        } else {
+            until(&mut events, finished).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            assert!(title_model.requests().is_empty());
+        }
+    }
+}
+
+/// Fork (scenario 5): no retry while the first request is still running.
+#[tokio::test]
+async fn node_desktop_titles_do_not_retry_while_a_request_runs() {
+    let gate = Arc::new(Notify::new());
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["a"]),
+        text_response(&["b"]),
+    ]));
+    let title_model = Arc::new(
+        ScriptedModel::new(vec![text_response(&["{\"title\":\"Hook trust digest\"}"])])
+            .gated(gate.clone()),
+    );
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, finished).await;
+    built
+        .session
+        .send(submit("c2", "and now the second part please"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(title_model.requests().len(), 1);
+    gate.notify_one();
+    until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    assert_eq!(title_model.requests().len(), 1);
+}
+
+/// Fork: a rename while the first turn runs settles the deferred title without a request (Node re-checks the mode
+/// after the turn and finds the session settled).
+#[tokio::test]
+async fn node_desktop_titles_skip_the_deferred_request_after_a_rename() {
+    let gate = Arc::new(Notify::new());
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]).gated(gate.clone()));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, |event| {
+        titled(event, "Explain the hook trust digest")
+    })
+    .await;
+    let ack = built
+        .session
+        .send(envelope(
+            "c2",
+            Command::Rename {
+                title: "Mine".to_owned(),
+            },
+        ))
+        .await;
+    assert!(matches!(
+        ack,
+        rust_cli_kernel_api::session_api::Ack::Accepted { .. }
+    ));
+    gate.notify_one();
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+    assert_eq!(built.session.view().await.unwrap().meta.title, "Mine");
+}
+
+/// Fork: an input without text keeps the `New session` placeholder in memory too, and the first real input replaces it
+/// (Node `persistSession`, specs/fork-rust-agent-parity.md, Blank first input title).
+#[tokio::test]
+async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["One."]),
+        text_response(&["Two."]),
+    ]));
+    let built = Setup::new(main).build().await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", " ")).await;
+    until(&mut events, |event| titled(event, "New session")).await;
+    until(&mut events, finished).await;
+    built.session.send(submit("c2", "real question")).await;
+    until(&mut events, |event| titled(event, "real question")).await;
 }

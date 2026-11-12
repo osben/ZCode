@@ -4,9 +4,9 @@
 
 Confirmed through discussion on 2026-09-15: create a separate Alibaba Cloud CMS dashboard, primarily to answer questions about version regressions and resource health, while also supporting single-device investigation and telemetry verification. This phase does not create alerts, subscriptions, or sharing permissions.
 
-- Workspace: `arms-id-placeholder`.
-- Data source: Beijing `arms-project-placeholder` / `logstore-rum`.
-- App constraint: `service_id = arms-id-placeholder`.
+- Workspace: `<workspace-id>`, filled in with the real identifier at deployment.
+- Data source: Beijing `<sls-project>` / `logstore-rum`, filled in with the real project name at deployment.
+- App constraint: `service_id = '<service-id>'`, filled in with the real application identifier at deployment.
 - Consume only `perf_process_window`, `perf_system_window`, and `perf_tool_exec_resource`. The old dashboard remains separate; do not combine old resource events.
 - Default to `prod` and the most recent 24 hours. Provide environment, version, and operating-system filters; use hardware filters to control device differences in version comparisons.
 - Use two-column charts and seven collapsible sections; emphasize overview and version comparison on the home view.
@@ -42,7 +42,7 @@ The native [JSON](./process-resource-dashboard.json) and [SQL query list](./proc
 
 ### Delivered (2026-09-15)
 
-- [Live dashboard](https://cmsnext.console.aliyun.com/next/region/cn-beijing/workspace/arms-id-placeholder/app/dashboard/detail/dashboard-1789470797128-483124): `dashboard-1789470797128-483124`.
+- The live dashboard is deployed; its entry and resource identifiers are kept in internal operations config.
 - 32 data charts/cards, seven collapsible sections, and eight global filters; the query list contains 32 panel queries and one version-list query.
 - Fix the default time to the most recent 24 hours using `attribute.time`; use the single-select `env` variable with SQL defaulting to prod, preventing development and production data from being mixed. Keep the native multi-select filter for versions.
 - Use the native `classify` transformation for trends to split `time / series / value` into separate lines. Do not only `GROUP BY series` in SQL and rely on the default line chart, or different roles will be connected as one line.

@@ -73,7 +73,22 @@ export class ProjectAccessTokenError extends Error {
 export type ProjectAccessTokenRequestFailure =
   | { readonly kind: "network" }
   | { readonly kind: "timeout" }
-  | { readonly kind: "http"; readonly status: number };
+  | { readonly kind: "http"; readonly status: number; readonly retryAfterMs?: number };
+
+/** 只保留限流等待量，不把响应头原文带入错误或日志。 */
+export function projectAccessTokenRetryAfterMs(
+  value: string | null | undefined,
+  now = Date.now(),
+): number | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    const milliseconds = Number(text) * SECOND_MS;
+    return Number.isFinite(milliseconds) ? milliseconds : undefined;
+  }
+  const timestamp = Date.parse(text);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - now) : undefined;
+}
 
 /** Transient failure confirmed by the I/O adapter; carries no raw response, URL, token, or cause. */
 export class ProjectAccessTokenTransientError extends Error {
@@ -145,7 +160,7 @@ export class ProjectAccessTokenCache {
 
   async resolve(
     scope: ProjectAccessTokenScope,
-    issue: () => Promise<unknown>,
+    issue: (hasValidFallback: () => boolean) => Promise<unknown>,
     rejectedFingerprint?: string,
   ): Promise<ProjectAccessTokenResult> {
     const key = scopeKey(scope);
@@ -175,7 +190,13 @@ export class ProjectAccessTokenCache {
         if (this.#entries.get(key) !== current) {
           throw new ProjectAccessTokenError("project_token_scope_invalidated");
         }
-        return issue();
+        // 是否能降级始终由缓存 owner 按当前有效期判断，不能冻结为请求开始时的布尔值。
+        return issue(
+          () =>
+            this.#entries.get(key) === current &&
+            current.value !== undefined &&
+            this.#now() < current.value.expiresAt,
+        );
       })
       .then(async (raw) => {
         if (this.#entries.get(key) !== current) {

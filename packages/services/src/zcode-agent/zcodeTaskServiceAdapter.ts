@@ -1,4 +1,4 @@
-import { isAuxiliarySessionKind } from "@zcode/shared";
+import { formatBotInputClientId, isAuxiliarySessionKind } from "@zcode/shared";
 import { createBotTopicAdmission } from "#src/zcode-agent/botTopicAdmission.js";
 import {
   readBotGroupRuntimeSnapshot,
@@ -160,7 +160,11 @@ import type {
 } from "./zcodeTaskIndexSyncer.js";
 import { readModelTrajectory } from "./modelTrajectory.js";
 import { readModelTrajectoryV2, type ContextWindowPort } from "#src/model-trajectory-v2/index.js";
-import { errorAttributionSchema, type CommandPayloadMap } from "@zcode/shared/zcode-protocol-v4";
+import {
+  errorAttributionSchema,
+  type CommandAck,
+  type CommandPayloadMap,
+} from "@zcode/shared/zcode-protocol-v4";
 import {
   assertV4CommandAckOk,
   createHostCommandEnvelope,
@@ -442,9 +446,10 @@ export function createZCodeTaskServiceAdapter(
       clientMode?: ZCodeTaskClientMode;
       logReason?: string;
       modelSelection?: CommandPayloadMap["sendText"]["modelSelection"];
+      modelSelectionBasis?: CommandPayloadMap["sendText"]["modelSelectionBasis"];
       modelExecution?: CommandPayloadMap["sendText"]["modelExecution"];
     } & ZCodeBackgroundTurnAttribution,
-  ): Promise<void> {
+  ): Promise<CommandAck | undefined> {
     const startedAt = Date.now();
     notifySyncerSession(target);
     // The live tool projection is used only to close out the current run. Clear live-only subtools from
@@ -467,6 +472,8 @@ export function createZCodeTaskServiceAdapter(
     });
     try {
       const promptToolDenylist = resolvePromptToolDenylist(params);
+      // 附件旧路径没有 v4 ACK，保持 undefined。
+      let ack: CommandAck | undefined;
       if (params.attachments?.length) {
         // Legacy attachment command path: v4 sendText attachments use attachmentRef references, but
         // upload/registration commands are not modeled yet (same decision as CLI fork-edit-retry.ts:
@@ -488,6 +495,7 @@ export function createZCodeTaskServiceAdapter(
           // Attachment fallback changes only payload transport; do not lose this request's resolved model
           // or execution scope.
           modelSelection: params.modelSelection,
+          modelSelectionBasis: params.modelSelectionBasis,
           modelExecution: params.modelExecution,
           ...turnAttributionOf(params),
           toolDenylist: promptToolDenylist,
@@ -501,7 +509,7 @@ export function createZCodeTaskServiceAdapter(
         // heldQueueDisposition=keepQueueAndSend: old session/send had no held-choice gate, so the
         // replayable unattended-interaction path retains the old behavior of sending immediately without
         // changing the queue.
-        const ack = await options.zcodeAgentService.sendConversationCommandV4({
+        const sendAck = await options.zcodeAgentService.sendConversationCommandV4({
           workspacePath: target.workspacePath,
           workspaceIdentity: target.workspaceIdentity,
           ...(target.remoteSessionId ? { remoteSessionId: target.remoteSessionId } : {}),
@@ -512,6 +520,9 @@ export function createZCodeTaskServiceAdapter(
               text: params.content,
               heldQueueDisposition: "keepQueueAndSend",
               ...(params.modelSelection ? { modelSelection: params.modelSelection } : {}),
+              ...(params.modelSelectionBasis
+                ? { modelSelectionBasis: params.modelSelectionBasis }
+                : {}),
               ...(params.modelExecution ? { modelExecution: params.modelExecution } : {}),
               ...turnAttributionOf(params),
               ...(params.botDeliveryTarget ? { botDeliveryTarget: params.botDeliveryTarget } : {}),
@@ -522,9 +533,11 @@ export function createZCodeTaskServiceAdapter(
             clientId: params.clientId,
           }),
         });
-        assertV4CommandAckOk("sendText", ack, `session=${target.taskId}`);
+        // 调用方需要区分 accepted 与 duplicate：duplicate 不会开新一轮，也没有终态事件。
+        ack = assertV4CommandAckOk("sendText", sendAck, `session=${target.taskId}`);
       }
       logger.info(params.traceId, "ZCode task facade sendPrompt ACK", {
+        ackStatus: ack?.status ?? null,
         durationMs: Date.now() - startedAt,
         queryId: params.queryId ?? null,
         reason: params.logReason ?? "direct",
@@ -533,6 +546,7 @@ export function createZCodeTaskServiceAdapter(
         workspaceKey: resolveWorkspaceKey(target),
         workspacePath: target.workspacePath,
       });
+      return ack;
     } catch (error) {
       activePromptInputIds.delete(taskKey(target));
       logger.warn(params.traceId, "ZCode task facade sendPrompt 失败", {
@@ -2310,7 +2324,7 @@ export function createZCodeTaskServiceAdapter(
         type: "sendText",
         sessionId: target.taskId,
         commandId: params.commandId,
-        clientId: `bot:${params.source.botId}:${params.source.chatId}:${params.source.senderId}`,
+        clientId: formatBotInputClientId(params.source),
         payload: {
           text: params.content,
           attachments,
@@ -2350,13 +2364,13 @@ export function createZCodeTaskServiceAdapter(
       return params.source.threadId ? topicAdmission.run(admissionKey, version, send) : send();
     },
 
-    async sendPrompt(params): Promise<void> {
+    async sendPrompt(params): Promise<CommandAck | undefined> {
       const storedTarget = getTaskTarget(params.taskId);
       const target = {
         ...storedTarget,
         ...(params.remoteSessionId ? { remoteSessionId: params.remoteSessionId } : {}),
       };
-      await sendPromptToAgent(target, {
+      return sendPromptToAgent(target, {
         traceId: params.traceId,
         queryId: params.queryId,
         messageId: params.messageId,
@@ -2859,6 +2873,11 @@ export function createZCodeTaskServiceAdapter(
         .map((ref) => ref.taskId);
     },
 
+    async listPermanentlyDeletedTaskIds(params) {
+      return taskIndexRepo.listPermanentlyDeletedTaskIds(params);
+    },
+
+    // Keep global search and the Controller's explicit scopes query; the project sidebar no longer maintains the legacy remote list mirror.
     // listTaskList serves full-text search (searchable_text/snippets) and supplements
     // remoteTimelineTaskStore. The five sidebar views and remote-shard rows without search use the three
     // sections above. The client builds workspace rows from each endpoint's task rows and session details.
@@ -3405,6 +3424,44 @@ export function createZCodeTaskServiceAdapter(
 
     async restartWorkspaceProcess(params): Promise<void> {
       await options.zcodeAgentService.disposeWorkspace(normalizeWorkspaceParams(params));
+    },
+
+    async previewArchivedTaskDeletion(params) {
+      const preview = options.zcodeAgentService.previewSessionDeletion;
+      if (!preview) throw new Error("session-data.unavailable");
+      const archived = await taskIndexRepo.isTaskArchived(params);
+      const result = await preview({
+        sessionId: params.taskId,
+        workspace: normalizeWorkspaceParams(params),
+      });
+      if (!archived && !result.completed && !result.incomplete)
+        return { ...result, blockedReason: "not-archived" as const };
+      return result;
+    },
+
+    async permanentlyDeleteArchivedTask(params) {
+      const execute = options.zcodeAgentService.executeSessionDeletion;
+      if (!execute) throw new Error("session-data.unavailable");
+      if (!(await taskIndexRepo.reservePermanentDeletion(params)))
+        return {
+          sessionId: params.taskId,
+          status: "blocked" as const,
+          sessionIds: [],
+          retainedArtifacts: 0,
+          reason: "not-archived",
+        };
+      // 响应丢失时保留准入；重试向 CLI 查询同一身份的持久结果，不把未知结果当作可恢复会话。
+      const result = await execute({
+        sessionId: params.taskId,
+        workspace: normalizeWorkspaceParams(params),
+        revision: params.revision,
+        operationId: params.operationId,
+      });
+      if (result.status === "deleted") {
+        await taskIndexRepo.completePermanentDeletion(params, result.sessionIds);
+        emitWorkspaceTaskListChanged(params, undefined, "task_deleted");
+      } else if (result.status === "blocked") await taskIndexRepo.releasePermanentDeletion(params);
+      return result;
     },
 
     async deleteTask(params): Promise<void> {

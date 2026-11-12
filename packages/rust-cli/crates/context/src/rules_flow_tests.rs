@@ -76,6 +76,8 @@ fn request() -> ContextRequest {
 
 fn human() -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("prompt"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -215,6 +217,8 @@ async fn reading_a_file_in_a_subdirectory_brings_its_rules_once() {
         usage: None,
     }));
     history.push(Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t1"),
@@ -263,6 +267,8 @@ async fn a_shell_cd_announces_the_new_working_directory() {
         },
     ));
     history.push(Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: rust_cli_kernel_api::ids::ToolUseId::new("t1"),
@@ -283,4 +289,131 @@ async fn a_shell_cd_announces_the_new_working_directory() {
         "{}",
         next[0].text
     );
+}
+
+/// Node `restorePostCompactFiles` `excludedPaths`: the plan file, the instruction files in the context
+/// prefix and the auto-memory `MEMORY.md` are not restored after a compact.
+#[tokio::test]
+async fn the_restore_exclusions_list_the_files_already_in_the_context() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let env = Arc::new(environment());
+    let mut config = ContextConfig::new(Surface::Print);
+    config.memory_dir = Some("/Users/dev/.zcode/memory/".to_owned());
+    let context = PromptAssembler::new(
+        ContextPorts {
+            info: env.clone(),
+            files: env.clone(),
+            shell: env.clone(),
+            git: env,
+            clock: Arc::new(FixedClock(1_792_224_000_000)),
+            ids: Arc::new(SequentialIds::default()),
+            listings: Arc::new(NoListings),
+        },
+        config,
+    );
+    let mut history = vec![human()];
+    step(&context, &mut history).await;
+    assert_eq!(
+        context.restore_exclusions(&request()).await,
+        [
+            "/Users/dev/.zcode/AGENTS.md",
+            "/Users/dev/.zcode/memory/MEMORY.md",
+            "/Users/dev/w/.zcode/plans/plan-s.md",
+            "/Users/dev/w/AGENTS.md",
+            "/Users/dev/w/docs/style.md",
+        ]
+    );
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): an all-off profile drops the rule files, the
+/// environment and model announcements and the git context; each key brings back only its own sections.
+#[tokio::test]
+async fn an_incognito_profile_removes_only_the_sections_it_turns_off() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let run = |profile: IncognitoProfile| async move {
+        let profiles = IncognitoProfiles::default();
+        profiles.record(&SessionId::new("s"), Some(profile));
+        let context = assembler(Arc::new(environment())).with_incognito(profiles);
+        let mut history = vec![human()];
+        step(&context, &mut history)
+            .await
+            .iter()
+            .map(|item| item.source.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        run(IncognitoProfile::LOCKDOWN).await,
+        ["total_tokens_reminder", "date"]
+    );
+    assert_eq!(
+        run(IncognitoProfile {
+            project_instructions: true,
+            ..IncognitoProfile::LOCKDOWN
+        })
+        .await,
+        ["total_tokens_reminder", "instructions", "date"]
+    );
+    assert_eq!(
+        run(IncognitoProfile {
+            environment: true,
+            ..IncognitoProfile::LOCKDOWN
+        })
+        .await,
+        [
+            "environment",
+            "model",
+            "total_tokens_reminder",
+            "session_context",
+            "date"
+        ]
+    );
+}
+
+/// Fork: `/context` lists the same gated files as the prompt, so an incognito profile without `projectInstructions`
+/// and `memory` shows neither the rule files nor the auto-memory index.
+#[tokio::test]
+async fn context_usage_lists_only_the_files_an_incognito_profile_keeps() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    use rust_cli_memory::entrypoint::ENTRYPOINT;
+    let memory = format!("/Users/dev/mem/{ENTRYPOINT}");
+    let env = Arc::new(environment().with_file(&memory, "- remembered"));
+    let profiles = IncognitoProfiles::default();
+    profiles.record(&SessionId::new("locked"), Some(IncognitoProfile::LOCKDOWN));
+    let mut config = ContextConfig::new(Surface::Print);
+    config.memory_dir = Some("/Users/dev/mem".to_owned());
+    let context = PromptAssembler::new(
+        ContextPorts {
+            info: env.clone(),
+            files: env.clone(),
+            shell: env.clone(),
+            git: env,
+            clock: Arc::new(FixedClock(1_792_224_000_000)),
+            ids: Arc::new(SequentialIds::default()),
+            listings: Arc::new(NoListings),
+        },
+        config,
+    )
+    .with_incognito(profiles);
+    let paths = |request: ContextRequest| {
+        let context = &context;
+        async move {
+            context
+                .analysis(&request, &[])
+                .await
+                .unwrap()
+                .memory_files
+                .into_iter()
+                .map(|file| file.path)
+                .collect::<Vec<_>>()
+        }
+    };
+    let normal = paths(request()).await;
+    assert!(
+        normal.contains(&"/Users/dev/w/AGENTS.md".to_owned()),
+        "{normal:?}"
+    );
+    assert!(normal.contains(&memory), "{normal:?}");
+    let mut locked = request();
+    locked.session = SessionId::new("locked");
+    assert_eq!(paths(locked).await, Vec::<String>::new());
 }

@@ -192,8 +192,8 @@ export function extractLegacyForkSettings(rawValue: unknown): Partial<ForkAppSet
  * the fork sidecar as one of two override keys. settingService is the only caller.
  */
 
-/** Values the upstream app accepts for the shared `locale` key. */
-export type SharedLocale = "zh-CN" | "en-US";
+/** Values the upstream app accepts for the shared `locale` key: every UI locale except the fork-only uk-UA. */
+export type SharedLocale = Exclude<Locale, "uk-UA">;
 
 /** Values the upstream app accepts for the shared `localePreference` key. */
 export type SharedLocalePreference = "system" | SharedLocale;

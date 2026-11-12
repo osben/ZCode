@@ -48,6 +48,7 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
     match block {
         ContentBlock::Text { .. } => "text",
         ContentBlock::Image { .. } => "image",
+        ContentBlock::Video { .. } => "video",
         ContentBlock::Thinking { .. } => "thinking",
         ContentBlock::RedactedThinking { .. } => "redacted_thinking",
         ContentBlock::ToolUse { .. } => "tool_use",
@@ -76,6 +77,11 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     }
     let id = user.id.as_str();
     let created = created_at(id, ctx.now);
+    // Fork: an App input's quote block is its intent's (specs/fork-agent-runtime-selection.md, Conversation quotes in
+    // Rust mode): the typed text is the text before that block, never a block parsed out of the text.
+    let intent = user.intent.as_deref();
+    let typed =
+        |text: &str| -> String { intent.map_or(text, |intent| intent.typed(text)).to_owned() };
     // 批次的回合锚点指向这条输入时用锚点的轮次（会话 actor 生成，node-store.md §4，修复线 F6）。
     let turn = ctx
         .anchored_turn(id)
@@ -87,6 +93,13 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         selection: state::selection(ctx.conn, ctx.session).storage()?,
         turn: &turn,
         command: ctx.command,
+        metadata: intent.map(|intent| {
+            let shown = texts.first().map(|text| display_input(&typed(text)));
+            rust_cli_node_records::input_intent::message_metadata(
+                intent,
+                shown.as_deref().unwrap_or_default(),
+            )
+        }),
     });
     messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
     ctx.opened(id, &turn);
@@ -94,7 +107,14 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         // Node `persistUserPrompt(displayInput, …, {modelInput})`：text 是界面原文，模型文本在
         // `metadata.modelInput`（冷读取优先读它）。修复线 F2：bash 模式与 skill 命令以前把 `<bash-input>`、
         // `<command-message>` 标签当用户原文存，App 显示成带标签的用户气泡。
-        let shown = display_input(text);
+        // Fork: Node's part is `withConversationQuotes(displayInput)`: the display input, then the intent's block.
+        let typed_text = typed(text);
+        let shown = match intent {
+            Some(intent) if typed_text.len() != text.len() => {
+                intent.compose(&display_input(&typed_text))
+            }
+            _ => display_input(text),
+        };
         let model = (shown != *text).then_some(*text);
         let part = records::user_text_part(
             part_id(ctx.now, &(ctx.uuid)()),
@@ -112,23 +132,46 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
                 owner,
                 file,
             ),
-            ContentBlock::Image { source } => {
+            ContentBlock::Image { source, .. } => {
                 crate::tool_content::file_part(part_id(ctx.now, &(ctx.uuid)()), owner, source)
             }
             _ => continue,
         };
         messages::save_part(ctx.conn, &part, ctx.now as i64).storage()?;
     }
-    let title = sessions::Update {
-        id: ctx.session.to_owned(),
-        // 用户调用 skill 的输入是命令标签：临时标题按用户输入的样子（`/<名字> <参数>`，ext.md §2.7）。
-        title: Some(records::title_from_input(&display_input(&texts.join("\n")))),
+    // Fork: the title seed is the typed text without its quotes (Node titles the display input); the part keeps them,
+    // as Node's text part does, so either runtime sends them to the model.
+    let typed: Vec<String> = texts.iter().map(|text| typed(text)).collect();
+    first_input_title(ctx.conn, ctx.session, &typed.join("\n"), ctx.now as i64)?;
+    Ok(())
+}
+
+/// The first input's title over the `default` placeholder (kernel-api `title::first_input`, Node
+/// `titleFromInput(sanitizeTitleSeed(input))`); a later input, a generated or a custom title is kept. The user message
+/// commit and, fork, the admission of a session's input (Node `ensureSessionPersistedForExternalActivity`, before its
+/// `UserPromptSubmit` hooks) both write it here. The title it wrote, `None` when the row kept its title.
+pub(crate) fn first_input_title(
+    conn: &rusqlite::Connection,
+    session: &str,
+    text: &str,
+    now: i64,
+) -> Result<Option<String>, StoreError> {
+    // 用户调用 skill 的输入是命令标签：临时标题按用户输入的样子（`/<名字> <参数>`，ext.md §2.7）。
+    // Fork: an input without text keeps the `default` placeholder for a later real input (Node `persistSession`).
+    let (title, source) = rust_cli_kernel_api::title::first_input(text);
+    let source = match source {
+        rust_cli_kernel_api::title::Source::FirstInput => "first_input",
+        _ => "default",
+    };
+    let update = sessions::Update {
+        id: session.to_owned(),
+        title: Some(title.clone()),
         expected_title_sources: vec!["default".to_owned()],
-        title_source: Some("first_input".to_owned()),
+        title_source: Some(source.to_owned()),
         ..Default::default()
     };
-    sessions::update(ctx.conn, &title, ctx.now as i64).storage()?;
-    Ok(())
+    let written = sessions::update(conn, &update, now).storage()?;
+    Ok((written > 0).then_some(title))
 }
 
 /// Node 流式请求没有收到停止原因时的 `finishReason`。
@@ -298,11 +341,8 @@ fn append_assistant(ctx: &Commit<'_>, assistant: &AssistantMessage) -> Result<()
     Ok(())
 }
 
-/// 命令标签还原成用户输入（kernel-api `user_command::display`），其余原样。
+/// 命令标签还原成用户输入（kernel-api `user_command::display`），其余原样。Fork: attachment reminders stay in
+/// `metadata.modelInput`, not in the bubble.
 fn display_input(text: &str) -> String {
-    rust_cli_kernel_api::user_command::display(text)
-        .or_else(|| rust_cli_kernel_api::user_input::display(text))
-        // Fork: attachment reminders stay in `metadata.modelInput`, not in the bubble.
-        .or_else(|| rust_cli_kernel_api::prompt_attachment::display(text))
-        .unwrap_or_else(|| text.to_owned())
+    rust_cli_kernel_api::title::shown_input(text)
 }

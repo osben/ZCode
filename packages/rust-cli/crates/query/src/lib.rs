@@ -33,6 +33,7 @@ mod stop_hooks;
 mod texts;
 
 pub use deferred::step_tool_search;
+/// Fork (desktop App): the transcript the goal completion verifier reads (as the stop-time `/goal` evaluation).
 pub use limits::{RequestLimits, ThinkingTokens};
 
 /// `/context` 的消息估算（docs/specs/rust-cli/context-usage.md §3 i）：与主循环相同的规范化（对话中间的
@@ -50,6 +51,8 @@ pub fn api_messages<'a>(
         turn_effort: None,
         // 缓存断点与主循环相同（摘要请求才前移一条，compact.md）。
         skip_cache_write: false,
+        // Fork: the `/context` estimate keeps the merged layout (token counts barely differ).
+        separate_user_messages: false,
     };
     normalize::normalize(messages, &options)
 }
@@ -63,7 +66,8 @@ use rust_cli_kernel_api::env::Operations;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::ids::{AgentId, RunId, SessionId};
-use rust_cli_kernel_api::model::ModelPort;
+use rust_cli_kernel_api::message::Message;
+use rust_cli_kernel_api::model::{ApiMessage, ModelPort, ModelSelection};
 use rust_cli_kernel_api::orchestration::{
     Compactor, ContextBuilder, HookRunner, QueryError, QueryRequest, QueryRunner, QueryStop,
     RunSink, RunView, ToolExecutor, ToolRegistry,
@@ -141,6 +145,8 @@ impl RunScope {
         self.sink
             .view()
             .await
+            // Without session state there is no plan flag either: the request's mode is both the effective and the
+            // base mode (`RunView::new`).
             .unwrap_or_else(|| RunView::new(self.mode, self.workspace.clone()))
     }
 }
@@ -169,5 +175,14 @@ impl QueryRunner for QueryLoop {
     ) -> Result<QueryStop, QueryError> {
         let scope = Arc::new(RunScope::new(&request, sink, self.parts.clone(), abort));
         run::run(scope, request).await
+    }
+
+    fn transcript(
+        &self,
+        history: &[Message],
+        selection: &ModelSelection,
+        mid_system: Option<bool>,
+    ) -> Vec<ApiMessage> {
+        goal::transcript(history, selection, mid_system)
     }
 }

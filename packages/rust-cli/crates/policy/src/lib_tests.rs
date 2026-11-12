@@ -64,6 +64,7 @@ fn context(mode: PermissionMode) -> ToolUseContext {
             root: EnvPath::new("/w"),
         },
         mode,
+        base_mode: mode,
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),
         session_ops: Arc::new(rust_cli_kernel_api::testing::NoSession),
         operation: OperationContext::new(
@@ -246,6 +247,7 @@ async fn plan_mode_sends_questions_to_the_classifier() {
     );
     let classic = PolicyGate::default().with_options(PolicyOptions {
         auto_in_plan: false,
+        node_plan: false,
     });
     assert!(matches!(
         bash(&classic, PermissionMode::Plan, "touch plan.txt").await,
@@ -276,3 +278,6 @@ mod machine;
 
 #[path = "lib_tests_allowed.rs"]
 mod allowed;
+
+#[path = "lib_tests_plan_mcp.rs"]
+mod plan_mcp;

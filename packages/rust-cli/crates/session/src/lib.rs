@@ -12,6 +12,7 @@ mod agent_signals;
 mod append;
 mod bash;
 mod checkpoints;
+mod child_live;
 mod closing;
 mod commit;
 mod compact;
@@ -21,9 +22,13 @@ mod duration;
 mod fork;
 mod fork_input;
 mod goal;
+mod goal_desktop;
+mod goal_verify;
+mod goal_verify_text;
 mod hooks;
 mod inbox;
 mod input;
+mod input_ledger;
 #[cfg(test)]
 mod input_tests;
 mod lane;
@@ -58,6 +63,7 @@ mod title;
 mod title_model;
 mod title_parse;
 mod turn;
+mod turn_files;
 mod watched;
 mod workspace;
 
@@ -69,13 +75,13 @@ use rust_cli_base::{Spawner, Task};
 use rust_cli_kernel_api::agents::AgentSignals;
 use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::env::Operations;
-use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::{ModelPort, ModelSelection};
 use rust_cli_kernel_api::orchestration::{Compactor, HookRunner, QueryRunner};
 use rust_cli_kernel_api::session_api::{
-    Ack, CommandEnvelope, EndReason, KernelError, KernelEvent, RewindOption, SequencedEvent,
-    SessionHandle, SessionView, StartSource,
+    Ack, CommandEnvelope, EndReason, KernelError, KernelEvent, RewindOption, RewindPreview,
+    SequencedEvent, SessionHandle, SessionView, StartSource,
 };
 use rust_cli_kernel_api::store::{ArtifactStore, SessionMeta, SessionStore, WorkspaceCheckpoint};
 use tokio::sync::{mpsc, oneshot};
@@ -139,6 +145,21 @@ pub struct SessionDeps {
     pub peers: PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）；没有时那些询问按会话已关闭失败。
     pub detached: Option<Arc<DetachedAsks>>,
+    /// Fork: queued inputs are not merged into one turn; each runs as its own turn, like the Node desktop agent
+    /// (its queue drains one item per turn), and a batch of task notifications that opens a turn is one user
+    /// message with a text block per notification, as Node stores it. The app-server turns it on.
+    pub one_input_per_turn: bool,
+    /// Fork: goals run like the Node desktop agent: Node's continuation prompt, pause and resume,
+    /// and `KernelEvent::GoalChanged` for the App's goal panel. The app-server turns it on.
+    pub desktop_goals: bool,
+    /// Fork: `/fork` (`forkAssistant`) from a completed turn is accepted while a later turn runs, like the Node
+    /// desktop agent; the copy stops at that turn, so the running turn and the queue stay in the parent. The
+    /// app-server turns it on.
+    pub fork_while_running: bool,
+    /// Fork: a failed main-loop turn holds the queued inputs instead of starting the next one, like the Node
+    /// desktop agent (`queueAutoDrain = false` on a turn error; specs/fork-rust-agent-parity.md). The app-server
+    /// turns it on.
+    pub error_holds_queue: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。
@@ -171,6 +192,13 @@ pub struct SessionState {
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     /// SessionStart hook 的来源（session-lifecycle.md §3.2）。
     pub start: StartSource,
+    /// Fork: SessionStart waits for `Command::SetExecutionRoot` (a prepared execution worktree, created or reopened
+    /// before its activation), so the hook runs in the worktree, as Node starts the runtime there
+    /// (specs/fork-rust-agent-parity.md "Execution worktree").
+    pub start_held: bool,
+    /// Fork: the root is the session's execution worktree (created there, reopened there, or moved there by
+    /// `Command::SetExecutionRoot`): a root that is gone refuses the workspace tools ([`RunView::execution_worktree`]).
+    pub execution_worktree: bool,
     /// 当前轮（冷加载的 `LoadedSession.turn`；新建的会话没有）。
     pub turn: Option<rust_cli_kernel_api::store::TurnAnchor>,
     /// 当前轮以错误结束（冷加载的 `LoadedSession.last_turn_failed`）：续写时不补 assistant（session-lifecycle.md
@@ -181,6 +209,23 @@ pub struct SessionState {
         rust_cli_kernel_api::ids::MessageId,
         rust_cli_kernel_api::ids::CommandId,
     >,
+    /// Fork (node_desktop): the live run of the subagent this child session belongs to, taken before the cold load
+    /// (crate::child_live). None for every other session.
+    pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
+    /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
+    pub title_pending: bool,
+    /// Fork: where the title came from (cold load: `LoadedSession.title_source`; a new session: `None`, derived from
+    /// the title).
+    pub title_source: Option<rust_cli_kernel_api::title::Source>,
+    /// Fork (B3): the last permission mode grant (cold load: `LoadedSession.permission_grant`; a new session: none).
+    pub permission_grant: Option<String>,
+    /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
+    pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
+    pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
+    /// Fork: the model of each assistant message (cold load: `LoadedSession.message_models`).
+    pub message_models:
+        std::collections::BTreeMap<rust_cli_kernel_api::ids::MessageId, ModelSelection>,
 }
 
 impl SessionState {
@@ -199,9 +244,18 @@ impl SessionState {
             mode,
             checkpoints: Vec::new(),
             start,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             commands: Default::default(),
+            child_live: None,
+            title_pending: true,
+            title_source: None,
+            permission_grant: None,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
         }
     }
 
@@ -228,8 +282,17 @@ impl SessionState {
             ),
             checkpoints: loaded.checkpoints,
             start,
+            start_held: false,
+            execution_worktree: loaded.execution_worktree,
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
+            child_live: None,
+            title_pending: loaded.title_pending,
+            title_source: loaded.title_source,
+            permission_grant: loaded.permission_grant,
+            goal_target: loaded.goal_target,
+            goal_verifications: loaded.goal_verifications,
+            message_models: loaded.message_models,
         }
     }
 }
@@ -267,6 +330,9 @@ impl Session {
             // 中断后续跑：末尾没有结果的调用补中断结果、更早的去掉 tool_use 块（session-lifecycle.md §6.3，工作线
             // F81）；最后一条 user 消息没有回答时补一条 assistant（§6.3.1）。补的消息由 actor 随第一批带消息的提交
             // 落库（工作线 F77），会话里切过去时由 `Command::StoreResumeSentinel` 马上落库（F79）。
+            // Fork: a subagent's child session opened while its run is live (session crate `child_live`) ends on
+            // the run's own unanswered input; the run stores its reply, so nothing is repaired or added.
+            Opened::Loaded if child_live::running(state.child_live.as_ref()) => {}
             Opened::Loaded => {
                 let ids = deps.ids.clone();
                 let (messages, results) =
@@ -373,6 +439,58 @@ impl SessionHandle for Session {
         Ok(rewind::options(self.deps.artifacts.as_ref(), snapshot).await)
     }
 
+    /// Fork: what a code rewind to `target` would restore and which files conflicts block, computed
+    /// without changing anything (Node's file rewind preview): the actor picks the same machine
+    /// groups the rewind would run; artifact reads and the hash check run in the caller's task,
+    /// and every prepared token is released without applying.
+    async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError> {
+        let snapshot = self
+            .ask(|reply| Request::RewindPreview {
+                target: target.clone(),
+                reply,
+            })
+            .await?
+            .map_err(|reason| KernelError::Failed { message: reason })?;
+        rewind::preview(self.deps.artifacts.as_ref(), snapshot)
+            .await
+            .map_err(|reason| KernelError::Failed { message: reason })
+    }
+
+    /// Fork: the files the turn opened by `turn_input` changed (Node `v4/conversation/fileChanges`):
+    /// the actor picks the turn's unrestored checkpoints; the artifact reads and the per-path
+    /// summary run in the caller's task.
+    async fn turn_file_changes(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<rust_cli_kernel_api::session_api::TurnFileChanges, KernelError> {
+        let snapshot = self
+            .ask(|reply| Request::TurnFileChanges {
+                turn_input: turn_input.clone(),
+                reply,
+            })
+            .await?
+            .map_err(|reason| KernelError::Failed { message: reason })?;
+        Ok(turn_files::changes(self.deps.artifacts.as_ref(), snapshot).await)
+    }
+
+    /// Fork: what restoring only that turn's own checkpoints would do (Node
+    /// `v4/conversation/fileRewindPreview`), computed without changing anything.
+    async fn turn_rewind_preview(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError> {
+        let snapshot = self
+            .ask(|reply| Request::TurnRewindPreview {
+                turn_input: turn_input.clone(),
+                reply,
+            })
+            .await?
+            .map_err(|reason| KernelError::Failed { message: reason })?;
+        rewind::preview(self.deps.artifacts.as_ref(), snapshot)
+            .await
+            .map_err(|reason| KernelError::Failed { message: reason })
+    }
+
     async fn goal(&self) -> Result<rust_cli_kernel_api::goal::GoalView, KernelError> {
         self.ask(|reply| Request::Goal { reply }).await
     }
@@ -400,6 +518,10 @@ impl SessionHandle for Session {
         self.deps.agents.subagent_changes()
     }
 
+    fn child_run(&self, child: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.deps.agents.child_run(child)
+    }
+
     /// 子代理列表与后台任务的同一份快照（修复线 F34，tui-panels.md §0）：actor 只给出工作区，命令与子代理在调用方的
     /// 任务里取，一次回执。
     async fn tasks_snapshot(
@@ -423,6 +545,14 @@ impl SessionHandle for Session {
     ) -> Result<Option<rust_cli_kernel_api::panels::ShellDetail>, KernelError> {
         let meta = self.ask(|reply| Request::Meta { reply }).await?;
         Ok(tasks::shell_detail(&self.deps, &meta.workspace, &meta.id, task).await)
+    }
+
+    async fn background_bash_output(
+        &self,
+        task: &str,
+    ) -> Result<Option<rust_cli_kernel_api::panels::BashOutputRead>, KernelError> {
+        let meta = self.ask(|reply| Request::Meta { reply }).await?;
+        Ok(tasks::bash_output(&self.deps, &meta.workspace, &meta.id, task).await)
     }
 }
 

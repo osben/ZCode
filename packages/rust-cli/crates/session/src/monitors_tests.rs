@@ -281,6 +281,7 @@ fn output(data: &str, cursor: u64) -> Result<CommandEvent, EnvError> {
 
 fn finished(exit_code: i32) -> Result<CommandEvent, EnvError> {
     Ok(CommandEvent::Finished {
+        output_unreadable: None,
         outcome: Outcome::Completed,
         exit_code: Some(exit_code),
         timed_out: false,

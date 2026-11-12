@@ -4,7 +4,7 @@ Status: implementation contract
 
 Frozen baseline: `3ee0eadbe3dfda41a65bf2ac1a0d4ab761311060` (`origin/feat/cua-merge`)
 
-Upstream design: Feishu `O3s2dIIooo1uuExdipOcVJ9Vnvg`, revision 75 (V3).
+Upstream design: CUA design doc, revision 75 (V3).
 
 Producer implementation: workspace package `packages/zcode-cua` (import baseline
 `zcode-cua@4a3c507dd16f3ed840e87bc92e709ce339e6a4f3`; includes image-first, transport-internal frame binding and

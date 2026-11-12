@@ -19,6 +19,7 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_PACKAGE_NAMES = [
   "visualize-plugin",
   "typescript-lsp-plugin",
   "zcode-site-plugin",
+  "design-plugin",
 ] as const;
 
 export const REMOTE_AGENT_OFFICIAL_PLUGIN_INCLUDED_TOP_LEVEL_PATHS = [
@@ -101,6 +102,23 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   "presentations-plugin/skills/pptx/SKILL.md",
   "spreadsheets-plugin/agents/visual-judge.md",
   "spreadsheets-plugin/skills/xlsx/SKILL.md",
+  // Design's full local seed paths are required (bootstrap OFFICIAL_DESIGN_REQUIRED_SEED_PATHS, mechanically cross-checked by server/test).
+  // Unlike other plugins that list only sentinels: when the hook cannot find SKILL.md it exits silently, and the rule and script files are read or executed on demand, so a missing file only fails inside the session.
+  "design-plugin/skills/design/SKILL.md",
+  "design-plugin/skills/design/references/catalog.md",
+  "design-plugin/skills/design/references/check.md",
+  "design-plugin/skills/design/references/create.md",
+  "design-plugin/skills/design/references/design-system.md",
+  "design-plugin/skills/design/references/interact.md",
+  "design-plugin/skills/design/references/output.md",
+  "design-plugin/skills/design/references/redesign.md",
+  "design-plugin/skills/design/scripts/adapt-canvas.mjs",
+  "design-plugin/skills/design/scripts/design-lint.mjs",
+  "design-plugin/skills/design/scripts/design-tokens.mjs",
+  "design-plugin/skills/design/scripts/import-design-system.mjs",
+  "design-plugin/hooks/hooks.json",
+  "design-plugin/hooks/run-hook.cmd",
+  "design-plugin/hooks/design-rules",
   "zcode-cua-plugin/docs/computer-use.md",
   "zcode-cua-plugin/scripts/computer-use-client.mjs",
   "zcode-cua-plugin/skills/computer-use/SKILL.md",

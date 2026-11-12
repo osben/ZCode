@@ -33,6 +33,7 @@ fn text(text: &str, cache_control: Option<CacheControl>) -> ApiContent {
             text: text.to_owned(),
         },
         cache_control,
+        meta: false,
     }
 }
 
@@ -283,7 +284,7 @@ fn openai_chat() {
         ),
         main_request(models::GLM_5_1, false),
         "openai-chat",
-        &r##"{"model":"<model>","messages":[{"role":"system","content":"I\n\nS\n\nD"},{"role":"user","content":[{"type":"text","text":"hi"},{"type":"text","text":"<system-reminder>\n# Env\n</system-reminder>"}]}],"tools":[{"type":"function","function":{"name":"Read","description":"d","parameters":{"type":"object"}}},{"type":"function","function":{"name":"WebFetch","description":"d","parameters":{"type":"object"}}}],"tool_choice":"auto","stream":true,"stream_options":{"include_usage":true},"reasoning_effort":"high","max_completion_tokens":64000}"##.replace("<model>", models::GLM_5_1),
+        &r##"{"model":"<model>","messages":[{"role":"system","content":"I\n\nS\n\nD"},{"role":"user","content":"hi"},{"role":"user","content":"<system-reminder>\n# Env\n</system-reminder>"}],"tools":[{"type":"function","function":{"name":"Read","description":"d","parameters":{"type":"object"}}},{"type":"function","function":{"name":"WebFetch","description":"d","parameters":{"type":"object"}}}],"tool_choice":"auto","stream":true,"stream_options":{"include_usage":true},"reasoning_effort":"high","max_completion_tokens":64000}"##.replace("<model>", models::GLM_5_1),
         None,
     );
 }
@@ -303,7 +304,7 @@ fn openai_responses() {
         ),
         main_request(models::GPT_5, false),
         "openai-responses",
-        &r##"{"model":"<model>","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":64000,"input":[{"role":"developer","content":"I\n\nS\n\nD"},{"role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_text","text":"<system-reminder>\n# Env\n</system-reminder>"}]}],"tools":[{"type":"function","name":"Read","description":"d","parameters":{"type":"object"},"strict":false},{"type":"function","name":"WebFetch","description":"d","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","reasoning":{"effort":"high"}}"##.replace("<model>", models::GPT_5),
+        &r##"{"model":"<model>","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":64000,"input":[{"role":"developer","content":"I\n\nS\n\nD"},{"role":"user","content":[{"type":"input_text","text":"hi"}]},{"role":"user","content":[{"type":"input_text","text":"<system-reminder>\n# Env\n</system-reminder>"}]}],"tools":[{"type":"function","name":"Read","description":"d","parameters":{"type":"object"},"strict":false},{"type":"function","name":"WebFetch","description":"d","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","reasoning":{"effort":"high"}}"##.replace("<model>", models::GPT_5),
         None,
     );
 }
@@ -417,6 +418,7 @@ fn a_gateway_sends_the_betas_node_sends() {
                 is_error: false,
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: None,
     });

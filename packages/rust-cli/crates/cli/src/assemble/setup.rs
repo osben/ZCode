@@ -151,6 +151,7 @@ pub(crate) fn route_options(
     let var = |name: &str| env.get(name).map(str::to_owned);
     let headers = crate::assemble::request_headers::request_headers(&var, VERSION, ids);
     Ok(rust_cli_model::RouteOptions {
+        retry: options::model_retry(env),
         idle: options::stream_idle(env),
         sandbox: options::is_sandbox(env),
         max_output_tokens,

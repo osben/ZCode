@@ -44,6 +44,7 @@ fn entry(provider: &str, model: &str) -> CatalogModel {
         context_window: 1,
         max_output_tokens: 1,
         connection: None,
+        host: None,
     }
 }
 

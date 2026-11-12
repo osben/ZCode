@@ -64,9 +64,9 @@
 - With Coding Plan active, the detail page keeps URL, Models and other config; Models allow manual
   appends; the status-card upgrade entry only opens the purchase flow and never replaces or hides
   the config section below.
-- Not logged in, not connected, not subscribed, or entitlement fetch failed: the detail page shows
+- Not logged in, not connected, not subscribed, query in progress, or entitlement fetch failed: the detail page shows
   only the Coding Plan status card and a hint banner below — no API Key, URL or Models config — so
-  a managed plan entry is not mistaken for manual configuration.
+  a managed plan entry is not mistaken for manual configuration. A Start Plan that is pending (`pending`) also shows no Models: the plan card shows the effective schedule, and the Models area appears only once the entitlement is actually usable.
 - BigModel signed out: no trial-plan title or trial quota copy; below the status card, three
   full-width entry banners “Start Plan”“个人套餐”“团队套餐”. Start Plan uses the Start Plan quota
   banner's soft green emphasis; 个人套餐 and 团队套餐 use Pro blue and Max gold respectively, with

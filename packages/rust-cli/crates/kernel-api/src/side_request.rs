@@ -29,16 +29,22 @@ pub enum SideSource {
     WebFetch,
     /// WebSearch（tools-more.md §5）。
     WebSearch,
+    /// Fork (desktop App): the summary title of a goal set after the first input (Node `goal_summary_title`).
+    GoalSummaryTitle,
+    /// Fork (desktop App): the goal completion verifier (Node `target_completion_verification`).
+    GoalVerification,
 }
 
 impl SideSource {
     /// 全部来源（`from_wire` 按它查；测试核对它列全了）。
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::SessionTitle,
         Self::Rename,
         Self::HookPrompt,
         Self::WebFetch,
         Self::WebSearch,
+        Self::GoalSummaryTitle,
+        Self::GoalVerification,
     ];
 
     /// 本工程的来源名（`QuerySource` 序列化后的 `name`；用量表与请求头另经 [`Self::node_name`]）。
@@ -49,6 +55,8 @@ impl SideSource {
             Self::HookPrompt => "hook_prompt",
             Self::WebFetch => "web_fetch_apply",
             Self::WebSearch => "web_search_tool",
+            Self::GoalSummaryTitle => "goal_summary_title",
+            Self::GoalVerification => "target_completion_verification",
         }
     }
 
@@ -64,23 +72,31 @@ impl SideSource {
         match self {
             Self::SessionTitle => "session_title",
             Self::WebFetch => "web_fetch_processing",
-            Self::Rename | Self::HookPrompt | Self::WebSearch => self.as_wire(),
+            Self::Rename
+            | Self::HookPrompt
+            | Self::WebSearch
+            | Self::GoalSummaryTitle
+            | Self::GoalVerification => self.as_wire(),
         }
     }
 
     /// 用户在等结果：遇过载照主循环重试（model.md §5.2 第 1 条）；其余旁路请求过载时立即失败。
     pub const fn foreground(self) -> bool {
         match self {
-            Self::HookPrompt | Self::WebFetch | Self::WebSearch => true,
-            Self::SessionTitle | Self::Rename => false,
+            Self::HookPrompt | Self::WebFetch | Self::WebSearch | Self::GoalVerification => true,
+            Self::SessionTitle | Self::Rename | Self::GoalSummaryTitle => false,
         }
     }
 
     /// 安静的来源：跑主循环时不做 thinking-only 的提示，也不做自动与反应式压缩（query.md §3、compact.md §1）。
     pub const fn quiet(self) -> bool {
         match self {
-            Self::HookPrompt => true,
-            Self::SessionTitle | Self::Rename | Self::WebFetch | Self::WebSearch => false,
+            Self::HookPrompt | Self::GoalVerification => true,
+            Self::SessionTitle
+            | Self::Rename
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::GoalSummaryTitle => false,
         }
     }
 
@@ -91,7 +107,9 @@ impl SideSource {
             | Self::Rename
             | Self::HookPrompt
             | Self::WebFetch
-            | Self::WebSearch => false,
+            | Self::WebSearch
+            | Self::GoalSummaryTitle
+            | Self::GoalVerification => false,
         }
     }
 }
@@ -128,6 +146,7 @@ impl ApiMessage {
             content: vec![ApiContent {
                 block: ContentBlock::Text { text },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         }

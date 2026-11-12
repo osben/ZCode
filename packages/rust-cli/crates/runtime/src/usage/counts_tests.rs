@@ -33,6 +33,7 @@ fn text_tools_and_images_follow_the_local_estimate() {
             media_type: "image/png".to_owned(),
             data: "AAAA".to_owned(),
         },
+        name: None,
     };
     assert_eq!(counter.count(&image, &[]), rust_cli_compact::IMAGE_TOKENS);
 }

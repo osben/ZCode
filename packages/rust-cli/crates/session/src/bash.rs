@@ -22,6 +22,8 @@ const INTERRUPTED: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[0];
 
 fn user(id: rust_cli_kernel_api::ids::MessageId, text: String, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id,
         content: vec![ContentBlock::Text { text }],
         origin,
@@ -33,9 +35,13 @@ impl Actor {
     pub(crate) fn bash_command(&mut self, command: CommandId, line: String) {
         if self.busy() {
             let input = QueuedInput {
+                edit_lock: None,
+                intent: None,
                 command,
                 text: bash_input(&line),
                 delivery: Delivery::Queue,
+                kind: Default::default(),
+                execution: None,
             };
             self.inbox.push_input(input, InputKind::Bash(line));
             self.emit_queue();
@@ -60,16 +66,24 @@ impl Actor {
                 .collect::<Vec<_>>()
                 .join("\n");
             let input = QueuedInput {
+                edit_lock: None,
+                intent: None,
                 command,
                 text,
                 delivery: Delivery::Queue,
+                kind: Default::default(),
+                execution: None,
             };
             self.inbox.push_input(input, InputKind::Content(content));
             self.emit_queue();
             return Ok(());
         }
-        self.start_turn(crate::turn::TurnInput::Content { command, content })
-            .await
+        self.start_turn(crate::turn::TurnInput::Content {
+            command,
+            content,
+            intent: None,
+        })
+        .await
     }
 
     pub(crate) fn start_bash_turn(&mut self, command: CommandId, line: String) {

@@ -27,7 +27,8 @@ const SCOPE_CLOSE_GRACE: Duration = Duration::from_secs(2);
 /// 子命令的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
-    /// `--surface`（Host 给 `desktop`）。P1 不按它改提示词（app-protocol.md §13 第 4 项）。
+    /// `--surface`（Host 给 `desktop`）。Fork: `desktop` turns on Node's "ZCode Desktop Context" system section
+    /// (specs/fork-rust-agent-parity.md); the Host omits it when its rollout is off.
     pub(crate) surface: Option<String>,
 }
 /// `app-server` 子命令；不是它时为 None。只认 `--stdio` 与 `--surface`。
@@ -81,7 +82,8 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
     let (peer, writer) =
         connection::start(tokio::io::stdout(), &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, run.clock.clone()));
-    let result = serve(&run, context, scope.spawner()).await;
+    let desktop_context = parsed.surface.as_deref() == Some("desktop");
+    let result = serve(&run, context, scope.spawner(), desktop_context).await;
     // 写者写完队列里剩下的帧再退出。
     drop(writer);
     let _ = scope.close(SCOPE_CLOSE_GRACE).await;
@@ -92,6 +94,7 @@ async fn serve(
     run: &ControllerRun,
     context: Arc<Context>,
     spawner: rust_cli_base::Spawner,
+    desktop_context: bool,
 ) -> Result<()> {
     let ControllerRun {
         facts,
@@ -101,7 +104,7 @@ async fn serve(
         model_io,
         ..
     } = run;
-    let spec = Controller::app(Arc::new(HostHeaders::new(context.clone())));
+    let spec = Controller::app(Arc::new(HostHeaders::new(context.clone())), desktop_context);
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
@@ -124,6 +127,12 @@ async fn serve(
         state.failed("open_failed").await;
         anyhow::bail!("opening the session database failed: {error}");
     }
+    // Fork: the projection's reasoning levels come from the model directory (specs/fork-rust-agent-parity.md).
+    if let Some(directory) = opened.directory.clone() {
+        context.set_models(directory);
+    }
+    // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
+    context.set_storage_root(opened.paths.root().as_path().to_path_buf());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;

@@ -3,11 +3,37 @@
 
 use rust_cli_kernel_api::ids::{CommandId, MessageId, OwnerEpoch};
 use rust_cli_kernel_api::message::{Message, UserOrigin};
+use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::session_api::Ack;
 use rust_cli_kernel_api::store::{Fact, FactBatch, StoreError, TurnAnchor};
 use rust_cli_kernel_api::user_input;
 
 use crate::actor::{Actor, accepted, rejected};
+
+/// Fork: the model of each assistant message of a batch, like node-store's `providerId` / `modelId`: the selection of its
+/// model request (`ModelCalled`), else the session's current one.
+fn assistant_models(facts: &[Fact], current: &ModelSelection) -> Vec<(MessageId, ModelSelection)> {
+    facts
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::MessageAppended {
+                message: Message::Assistant(assistant),
+            } => {
+                let requested = facts.iter().find_map(|fact| match fact {
+                    Fact::ModelCalled { call } if call.message == assistant.id => {
+                        Some(call.selection.clone())
+                    }
+                    _ => None,
+                });
+                Some((
+                    assistant.id.clone(),
+                    requested.unwrap_or_else(|| current.clone()),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
 
 /// Fork: the typed user messages of a batch, filtered like node-store `append_user` (Human, not an interrupt, not bash
 /// output): the store anchors exactly these to the batch command.
@@ -44,12 +70,14 @@ impl Actor {
         let facts = pending.into_iter().chain(facts).collect();
         let batch = self.ledger.batch(command, facts, self.deps.ids.as_ref());
         let turn = batch.turn.clone();
+        let models = assistant_models(&batch.facts, &self.selection);
         let typed = batch
             .command
             .clone()
             .map(|command| (typed_inputs(&batch.facts), command));
         self.deps.store.commit(&self.meta.id, batch).await?;
         self.ledger.committed(turn);
+        self.message_models.extend(models);
         if let Some((ids, command)) = typed {
             for id in ids {
                 self.commands.insert(id, command.clone());
@@ -131,3 +159,7 @@ impl Actor {
         self.ledger.turn().cloned()
     }
 }
+
+#[cfg(test)]
+#[path = "commit_tests.rs"]
+mod tests;

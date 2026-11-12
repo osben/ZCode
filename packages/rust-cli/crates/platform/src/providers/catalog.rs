@@ -114,6 +114,7 @@ impl Template {
             max_output_tokens: self.max_output_tokens,
             capabilities: self.capabilities,
             connection: self.connection.clone(),
+            host: rust_cli_kernel_api::provider::url_host(&self.base_url),
         }
     }
 }
@@ -182,7 +183,13 @@ impl Snapshot {
 ///
 /// GLM 按 opus 的卡片形状发请求（工作线 F121，用户决定 2026-10-30，model.md §11.1）：对话中间的 system 是形状的一部分，
 /// 所以 GLM 的 `supports_mid_conversation_system` 总为真（内置配置给的是假，配置不改）；别的能力照配置。
-pub(crate) fn capabilities(model: &str, effective: &Value) -> ModelCapabilities {
+pub(crate) fn capabilities(
+    protocol: WireProtocol,
+    model: &str,
+    effective: &Value,
+) -> ModelCapabilities {
+    // Fork: the F121 GLM forcing and Node's reminder fold / user merge are Anthropic Messages shapes only.
+    let anthropic = protocol == WireProtocol::AnthropicMessages;
     let properties = &effective["properties"];
     let input = &properties["inputFormat"];
     ModelCapabilities {
@@ -190,7 +197,8 @@ pub(crate) fn capabilities(model: &str, effective: &Value) -> ModelCapabilities 
         supports_tool_call: properties["supportsToolCall"] == true,
         supports_native_web_search: properties["supportsNativeWebSearch"] == true,
         supports_mid_conversation_system: properties["supportsMidConversationSystem"] == true
-            || rust_cli_base::models::is_glm(model),
+            || (anthropic && rust_cli_base::models::is_glm(model)),
+        separate_user_messages: !anthropic,
         supports_json_schema_output: properties["supportsJsonSchemaOutput"] == true,
         requires_mfjs_tool_schema: properties["requiresMfjsToolSchema"] == true,
         supports_image: input["supportsImage"] == true,
@@ -232,8 +240,14 @@ pub(crate) fn snapshot(
                 provider: provider.provider_id.clone(),
                 model: model.model_id.clone(),
                 enabled: model.effective_config["enabled"] == true,
+                // The window does not depend on the protocol.
                 context_window: Some(
-                    capabilities(&model.model_id, &model.effective_config).context_window,
+                    capabilities(
+                        WireProtocol::AnthropicMessages,
+                        &model.model_id,
+                        &model.effective_config,
+                    )
+                    .context_window,
                 )
                 .filter(|w| *w > 0),
             })
@@ -281,7 +295,7 @@ pub(crate) fn snapshot(
                 reasoning_map: text(&specs["reasoningLevel"], "map").to_owned(),
                 max_map: text(&specs["maxOutputTokens"], "map").to_owned(),
                 max_output_tokens: specs["maxOutputTokens"]["max"].as_u64().unwrap_or(0),
-                capabilities: capabilities(&model.model_id, effective),
+                capabilities: capabilities(protocol, &model.model_id, effective),
                 hidden: provider.hidden,
                 provider_name: provider
                     .provider_name

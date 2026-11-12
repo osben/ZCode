@@ -183,7 +183,8 @@ async fn a_mentioned_image_reaches_the_model_as_an_image_block() {
             source: ImageSource::Base64 {
                 media_type: "image/png".to_owned(),
                 data: "cG5nIGJ5dGVz".to_owned(),
-            }
+            },
+            name: None,
         }
     );
     let last = messages[1].content.last().map(|item| &item.block);

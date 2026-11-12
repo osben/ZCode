@@ -14,34 +14,28 @@ the unified runtime contract.
 
 ## Core contract
 
-The runtime keeps a session-level `ExecutionShellSelection`, the Bash tool's effective shell snapshot. A new
-session starts uninitialized; the current candidate shell is initialized as the session-start snapshot only
-just before the first user prompt is truly accepted.
+The runtime keeps a runtime-level `ExecutionShellSelection` (`config.bashShellSelection`), the Bash tool's effective shell. The selection is not persisted: new sessions and cold resume both read the user's current shell setting, and like other environment fields a change is announced to the model through the environment notice.
 
 - Ordinary session creation and deferred-draft warm-up do not resolve the user-configured shell selection.
-- `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts` is the sole owner of the session shell environment, responsible for initialization, reading, EnvInfo patch, persistence and resume restoration.
-- Before the session first accepts input, the unified user-execution boundary reads the current shell candidate once from the owning Host through the `user-execution` scope of `session/requestRuntimePreferences`, and `initializeSessionShellEnvironmentIfNeeded()` then initializes. The request waits at most 15 seconds; on timeout the first user execution is blocked with a protocol error, with no retry and no silent fallback to another shell.
-- The `Shell` field of the initial `# Environment` shows only the `display.name` of this session-start snapshot.
-- The Bash tool executes with the same selection.
-- The Explore subtask's prompt environment and child runtime inherit the same selection.
-- If the user switches shell within a session, the current session is not hot-updated; the user must create a new session for it to take effect.
+- `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts` is the sole owner of the session shell environment, responsible for initialization, reading and the EnvInfo patch before the first send.
+- Before a new session first accepts input, the unified user-execution boundary reads the current shell candidate once from the owning Host through the `user-execution` scope of `session/requestRuntimePreferences`, and `initializeSessionShellEnvironmentIfNeeded()` then initializes. The request waits at most 15 seconds; on timeout the first user execution is blocked with a protocol error, with no retry and no silent fallback to another shell.
+- Cold resume works like a new session: the resume entry initializes the selection with the same read before restoring history, and does not use the shell of the session's creation.
+- Bash tool execution, the `Shell` field (`display.name`) of the `# Environment` notice, the Explore subtask's prompt environment and the child runtime all use the same selection.
+- No hot update while the runtime is alive: if the user switches the shell setting inside one runtime, the current session keeps the already initialized selection; new sessions use the new value at once, and existing sessions use it at their next cold resume.
 - A deferred draft session is only a hidden warm-up state of a new conversation, not a stable session the user has started. Warm-up creation does not read the user-configured shell selection.
-- legacy `session/send`, V4 `sendText`, create/resume/subscribe carry no shell candidate; the Host read happens only at the Agent's unified first-user-execution boundary, so desktop/mobile or individual command entries cannot each maintain a branch.
-- The app layer's ordinary prompt, goal external activity, expert workflow and script workflow share the same user-execution boundary. Any entry that creates the first user-visible fact, starts a model turn or a workflow child agent must call this boundary first to initialize the shell snapshot, before persisting the session or creating the child runtime.
+- legacy `session/send`, V4 `sendText`, create/resume/subscribe carry no shell candidate; the Host read happens only at the Agent's unified user-execution boundary and the resume entry, so desktop/mobile or individual command entries cannot each maintain a branch.
+- The app layer's ordinary prompt, goal external activity, expert workflow and script workflow share the same user-execution boundary. Any entry that starts a model turn or a workflow child agent must call this boundary first to initialize the shell, before starting the turn or creating the child runtime.
 - The Protocol's `session/create` / `session/resume` accept no shell candidate, so callers do not mistake them as a way to override the session shell at creation or resume.
-- When the session is first truly persisted, the runtime writes the creation-time shell selection into `session_entry`.
-- On cold resume the core runtime reads this persisted selection first to rebuild the runtime config instead of re-reading the latest settings.
-- Cold resume first checks whether the persisted selection is still usable: `legacy-shell` may have no path; the Windows `cmd.exe` fallback keeps being accepted under its original semantics; any other concrete shell path must still be an executable file. If invalid, the old path is not handed to the Bash executor, and it falls back to the current selection the resume entry has already resolved.
-- A legacy session with no persisted selection, or whose persisted selection is invalid, can only be restored best-effort by the current auto-resolution logic; when the historical `# Environment` Shell differs from the current execution shell, the model must be told through a `shell_environment_change` attachment. When a Windows legacy session is taken over by the current auto Git Bash, a one-time Git Bash shell reminder is inserted even if the historical `# Environment` has no reliable Shell field, so the model does not keep using old shell habits.
+- A `runtime/bash_shell_selection` session entry written by an older version is no longer read and is not migrated.
 
 ## Bash Runtime `.sh` snapshots
 
 The Bash tool runtime has three similarly named snapshots with different responsibilities:
 
-1. session shell selection snapshot
+1. session shell selection
    - Managed by `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts`.
-   - Decides the session's effective shell, the provider-visible `# Environment` Shell field and the shell display Explore inherits.
-   - Not hot-updated by settings switches after session creation.
+   - Decides the current runtime's effective shell, the provider-visible `# Environment` Shell field and the shell display Explore inherits.
+   - Not hot-updated by settings switches while the runtime is alive; it is not an `.sh` file and is not persisted.
 
 2. shell init snapshot
    - Managed by `apps/zcode-cli/packages/adapters/src/exec/shell-init-snapshot.ts`.
@@ -51,7 +45,7 @@ The Bash tool runtime has three similarly named snapshots with different respons
    - After successful creation, later Bash tool commands source this snapshot first and then run the real command with a non-login shell, i.e. the spawn args change from `-c -l <command>` to `-c <command>`.
    - On creation failure it degrades to the original behavior and keeps `-c -l <command>`.
    - Hot resume that still reuses the same adapter/manager can keep reusing the in-process ready snapshot.
-   - Cold resume does not restore the snapshot file path; after restoring the session shell selection, the first Bash toolcall recreates the shell init snapshot.
+   - Cold resume does not restore the snapshot file path; after the current shell selection is initialized, the first Bash toolcall recreates the shell init snapshot.
    - Cold resume or a new adapter does not scan/revive old snapshots and does not reuse same-named files by session/hash; a new process creates a new random snapshot file, and old leftovers are handled only by retention cleanup.
    - Before every real Bash command the cached snapshot file is re-checked for accessibility; if the file is lost, this run falls back to a login shell and does not skip `-l`.
    - If the user cancels the command or closes the adapter during snapshot creation, the real model command is not spawned.
@@ -64,7 +58,7 @@ The Bash tool runtime has three similarly named snapshots with different respons
    - This script is ZCode internal execution infrastructure, not provider-visible prompt content, and does not change the tool schema.
    - The `rg` fallback is always kept; whether `find` / `grep` map to `bfs` / `ugrep` is decided by the enhanced-search startup preference fixed when the root Session runtime materializes, enabled by default.
 
-Execution order: source the shell init snapshot first, then the ZCode startup script, and finally run the model command and the cwd capture trailer. The snapshot file path is not persisted as session state; after cold resume the adapter lazily creates a new random snapshot based on the restored shell selection. An old file cannot be restored directly as a ready snapshot.
+Execution order: source the shell init snapshot first, then the ZCode startup script, and finally run the model command and the cwd capture trailer. The snapshot file path is not persisted as session state; after cold resume the adapter lazily creates a new random snapshot based on the current shell selection. An old file cannot be restored directly as a ready snapshot.
 
 ## Selection structure
 
@@ -98,16 +92,12 @@ Windows:
 
 ## Prompt and cache
 
-`# Environment` is a session-start snapshot and is not rewritten when the user switches shell within the same
-session. This avoids breaking the prompt-cache through a whole-system-context mutation.
+The model learns the current shell only through the environment notice; there is no separate shell reminder. Notice rules are in `apps/zcode-cli/docs/design/v2/loop/meta-user-context.md`; the shell-related part:
 
-Switching shell does not append a `shell_environment_change` attachment to an existing session. Because Bash
-execution still uses the session-start selection, the initial `# Environment` the model sees stays consistent
-with the real Bash execution environment.
-
-The exception is a cold resume of a legacy/no-usable-snapshot session: such a session has no stable
-session-start shell selection to restore, so the runtime can only continue with the currently resolved
-selection. If on Windows auto Git Bash finally takes over, a short reminder is inserted through
-`shell_environment_change` telling the model that later Bash commands currently run with Git Bash. This is
-not an in-session shell hot update and does not read the user's latest settings to override an existing
-usable snapshot.
+- Every request compares the `display.name` of the current selection with the Shell of the latest environment notice in history.
+- The first notice is the full `# Environment`, with the current selection as Shell.
+- Afterwards, when the shell differs (usually a cold resume read a new setting), an ` - Shell: <new> (was <old>)` line is appended under `# Environment update`; when the latest notice's Shell is empty (an old Windows session) no `(was ...)` is written.
+- The notice is written to the store with the request and restored in place by hydration on cold resume, so it is compared only with the latest notice: with an unchanged setting nothing is appended again, and A -> B -> A announces every change. The history prefix already sent stays unchanged across cold resumes.
+- System and tool definitions carry no shell, so switching shell does not rewrite the prefix already sent.
+- The environment notice is an input attachment and obeys the same skip rule: if the first turn after a cold resume is a new-turn notice (`task_notification` / `subagent_reply`), the first request collects no input attachments, and a shell change is announced only in the next request after the tool result. In that one request the model may still write commands for the old shell while Bash already ran with the new one. The same holds for cwd and other environment fields, and shell gets no separate exception.
+- When an old Host returns `-32601`, or the Agent is not yet connected to a Host and gets `-32020`, the CLI keeps its automatic resolution; other protocol, resolver or transport errors fail as they are. Cold resume follows the same rule: in these two cases the shell the user chose (such as CMD) does not take effect and the automatic result is used, and the change is likewise announced to the model through the environment notice.

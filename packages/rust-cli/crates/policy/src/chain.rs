@@ -35,6 +35,8 @@ pub enum Inner {
         suggestions: Vec<PermissionRule>,
         /// 只批准这一次（guarded 的危险命令，shell-permissions.md §4.6.1）：成为 `PermissionDecision::Ask.once`。
         once: bool,
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy`): becomes `PermissionDecision::Ask.independent`.
+        independent: bool,
     },
 }
 
@@ -132,6 +134,7 @@ pub fn own(
             message,
             suggestions,
             once: _,
+            independent: _,
         } => (
             Check::Ask {
                 message,
@@ -166,6 +169,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             // 危险命令又命中整个工具的 ask 规则时，这一问同样只批准这一次（工作线 F137 以前 `ask_once` 只看命令，不看是
             // 哪一条询问；判决逐项不变）。
             once: inputs.dangerous,
+            independent: false,
         };
     }
     let (message, reason, kind, suggestions) = match check {
@@ -178,6 +182,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
                 kind: AskKind::Immune,
                 suggestions: Vec::new(),
                 once: true,
+                independent: false,
             };
         }
         Check::Allow => return Inner::Allow { updated_input },
@@ -193,6 +198,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
                 kind,
                 suggestions,
                 once: false,
+                independent: false,
             };
         }
         Check::Ask {
@@ -214,6 +220,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
         kind,
         suggestions,
         once: false,
+        independent: false,
     }
 }
 
@@ -226,6 +233,46 @@ fn bypass_category(mode: PermissionMode) -> bool {
     )
 }
 
+/// Fork: an MCP tool's annotations, read by Node's plan gate (`checkPlanMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanMcp {
+    /// `readOnlyHint: true`.
+    pub read_only: bool,
+    /// `destructiveHint: true`.
+    pub destructive: bool,
+}
+
+/// Fork: Node's plan gate for an MCP tool, after the inner chain (specs/fork-rust-agent-parity.md, "MCP tools in plan
+/// mode"). Deny rules, the tool's own denial and whole-tool ask rules come first, as in Node. Then a destructive tool is
+/// denied and a tool that is not read-only asks once, even with an allow rule (Node asks before allow rules, and a rule
+/// remembered in plan mode would not apply). A read-only tool keeps the inner result.
+/// With `base_bypass` (plan over a guarded or bypass base, `result` decided in that base mode) the gate passes any
+/// tool that is not destructive (Node `if (context.mode === "yolo" || context.mode === "guarded") return undefined`).
+pub fn plan_mcp(tool: &str, mcp: PlanMcp, base_bypass: bool, result: Inner) -> Inner {
+    match result {
+        Inner::Deny { .. }
+        | Inner::Ask {
+            kind: AskKind::Rule,
+            ..
+        } => result,
+        _ if mcp.destructive => Inner::Deny {
+            message: texts::PLAN_MODE_READ_ONLY.to_owned(),
+        },
+        _ if base_bypass => result,
+        _ if !mcp.read_only => Inner::Ask {
+            message: texts::request_message(tool, None),
+            kind: AskKind::Other,
+            suggestions: Vec::new(),
+            // Node sets no `approvalMode: "user-once"` here: PermissionRequest hooks still run for this ask.
+            once: false,
+            // Node `mode.plan.mcp`: `optionsPolicy: "no-always-allow"` (allow once and deny only), no permission mode
+            // switch.
+            independent: true,
+        },
+        _ => result,
+    }
+}
+
 /// 外层的选项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outer {
@@ -233,6 +280,11 @@ pub struct Outer {
     pub auto_in_plan: bool,
     /// 没有人能回答询问。
     pub avoid_prompts: bool,
+    /// Fork: plan mode denies anything that would ask, like the Node desktop agent (no classifier, no prompt).
+    pub node_plan: bool,
+    /// Fork: the call already went through Node's plan gate ([`plan_mcp`], or a base-mode decision over a guarded or
+    /// bypass base): under `node_plan` its ask goes to the user (no classifier).
+    pub plan_ask: bool,
 }
 
 /// 一次调用。
@@ -258,7 +310,7 @@ pub async fn outer(
         session,
         mode,
     } = *call;
-    let (message, kind, suggestions, once) = match result {
+    let (message, kind, suggestions, once, independent) = match result {
         Inner::Allow { updated_input } => return PermissionDecision::Allow { updated_input },
         Inner::Deny { message } => return PermissionDecision::Deny { message },
         Inner::Ask {
@@ -266,11 +318,28 @@ pub async fn outer(
             kind,
             suggestions,
             once,
-        } => (message, kind, suggestions, once),
+            independent,
+        } => (message, kind, suggestions, once, independent),
     };
     if mode == PermissionMode::DontAsk {
         return PermissionDecision::Deny {
             message: texts::dont_ask_rejected(tool),
+        };
+    }
+    if mode == PermissionMode::Plan && options.node_plan {
+        if !options.plan_ask {
+            return PermissionDecision::Deny {
+                message: texts::PLAN_MODE_READ_ONLY.to_owned(),
+            };
+        }
+        if options.avoid_prompts {
+            return PermissionDecision::Deny { message };
+        }
+        return PermissionDecision::Ask {
+            message,
+            suggestions,
+            once,
+            independent,
         };
     }
     let automatic =
@@ -305,6 +374,7 @@ pub async fn outer(
         message,
         suggestions,
         once,
+        independent,
     }
 }
 

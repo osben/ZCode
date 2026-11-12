@@ -101,3 +101,36 @@ export function ensureDurableFirstSubmissionSupport(client: CapabilityClient): P
     "proto.durableFirstSubmissionUnsupported",
   );
 }
+
+/** The CLI advertises plugin discovery UI support; a failed read answers false. */
+export async function supportsPluginDiscoveryUi(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).pluginDiscoveryUi === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * plugins/overview includeExtensionSummary: older CLIs use a strict parameter schema, so one extra
+ * key rejects the whole request. The field is sent only when the endpoint advertises it.
+ */
+export async function supportsPluginExtensionSummary(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).pluginExtensionSummary === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Older CLIs use a strict metadata schema that does not know ownerKey. Without support only the new
+ * field is dropped and the send continues.
+ */
+export async function supportsHighspeedCardOwner(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).highspeedCardOwner === true;
+  } catch {
+    return false;
+  }
+}

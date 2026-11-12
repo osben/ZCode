@@ -195,6 +195,7 @@ async fn a_stopped_socket_writes_no_lifecycle_and_no_notice() {
     let stop = fixture.shells.stop(&BackgroundTask {
         session: SessionId::new("s1"),
         task,
+        notify_stop: false,
     });
     assert!(matches!(
         stop,

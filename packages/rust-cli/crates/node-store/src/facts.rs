@@ -127,21 +127,36 @@ pub fn commit(
     batch: &FactBatch,
     ids: &NodeIds,
 ) -> Result<CommitReceipt, StoreError> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .storage()?;
+    let receipt = commit_in(&tx, session, batch, ids, ids.now_ms())?;
+    tx.commit().storage()?;
+    Ok(receipt)
+}
+
+/// [`commit`] inside a transaction the caller owns, at commit time `now`: a materializing draft
+/// replays its buffered batches with their own times before the batch that triggered it
+/// (`crate::drafts`).
+pub(crate) fn commit_in(
+    tx: &Connection,
+    session: &SessionId,
+    batch: &FactBatch,
+    ids: &NodeIds,
+    now: u64,
+) -> Result<CommitReceipt, StoreError> {
     // 本地只有一个 owner（OwnerEpoch::LOCAL）；其他值来自过期的租约。
     if batch.owner_epoch != OwnerEpoch::LOCAL {
         return Err(StoreError::StaleOwner {
             session: session.clone(),
         });
     }
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .storage()?;
-    live_session(&tx, session)?;
+    live_session(tx, session)?;
     let uuid = || ids.uuid();
     let ctx = Commit::new(
-        &tx,
+        tx,
         session.as_str(),
-        (ids.now_ms(), &uuid),
+        (now, &uuid),
         batch.command.as_ref().map(CommandId::as_str),
         &batch.facts,
         batch.turn.as_ref(),
@@ -149,12 +164,7 @@ pub fn commit(
     for fact in &batch.facts {
         apply(&ctx, fact)?;
     }
-    // 写过用量行：同一事务里按 Node 的保留期删旧行（usage.md §2.5）；删不掉只记日志（工作线 F77）。
-    if crate::usage::touches_usage(&batch.facts) {
-        crate::usage::observe(&ctx, "usage.prune.failed", || crate::usage::prune(&ctx))?;
-    }
     let sequence = next_sequence(&ctx)?;
-    tx.commit().storage()?;
     Ok(CommitReceipt { sequence })
 }
 
@@ -184,6 +194,12 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
         }
         Fact::ModeChanged { mode } => change_mode(ctx, *mode),
         Fact::ExecutionChanged { state } => write_execution(ctx, *state),
+        Fact::PermissionGranted {
+            interaction,
+            previous,
+            next,
+            queue_items,
+        } => write_grant(ctx, interaction, *previous, *next, queue_items),
         Fact::RevertSet { cursor } => {
             // Node `rewindConversationToMessage` → `setRevert`；游标按库里的行算（rewind.rs）。
             let update = sessions::Update {
@@ -231,6 +247,14 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
                 _ => Ok(()),
             }
         }
+        Fact::GoalTargetSaved { goal, seen_at_ms } => {
+            crate::goal_target::save(ctx, goal, *seen_at_ms)
+        }
+        Fact::GoalTargetCleared => sessions::clear_target(ctx.conn, ctx.session).storage(),
+        Fact::GoalVerificationRecorded {
+            verification,
+            at_ms,
+        } => crate::goal_verify::save(ctx, verification, *at_ms),
         Fact::PermissionRulesAdded { behavior, rules } => {
             crate::project_rules::add(ctx, *behavior, rules)
         }
@@ -250,6 +274,18 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
             crate::usage::observe(ctx, "usage.turn.write.failed", || {
                 crate::usage::turn_ended(ctx, *status)
             })
+        }
+        Fact::InputAdmitted { input } => {
+            crate::session_inputs::observe(ctx, || crate::session_inputs::admit(ctx, input))
+        }
+        Fact::InputPromoted { command } => {
+            crate::session_inputs::observe(ctx, || crate::session_inputs::promote(ctx, command))
+        }
+        Fact::InputCancelled { command, reason } => crate::session_inputs::observe(ctx, || {
+            crate::session_inputs::settle(ctx, command, "cancelled", reason)
+        }),
+        Fact::InputsResumed { transcript } => {
+            crate::session_inputs::observe(ctx, || crate::session_inputs::resumed(ctx, transcript))
         }
         Fact::SubagentLinked {
             tool_use,
@@ -284,6 +320,56 @@ fn change_mode(ctx: &Commit<'_>, mode: PermissionMode) -> Result<(), StoreError>
 }
 
 /// 执行状态（修复线 F20）：权限模式 × plan 开关整体写入。
+/// Fork (B3): Node `commitPermissionFullAccess`'s receipt, in the grant's transaction (the session actor commits it in
+/// one batch with the grant's `ExecutionChanged`). Its id is fixed per interaction; one already stored is kept (Node
+/// commits nothing when the receipt exists). The event's sequence number counts this session's receipts (Node uses
+/// its event store's sequence; only a non-negative integer is required to read the receipt back).
+fn write_grant(
+    ctx: &Commit<'_>,
+    interaction: &str,
+    previous: rust_cli_kernel_api::permission::ExecutionState,
+    next: rust_cli_kernel_api::permission::ExecutionState,
+    queue_items: &[String],
+) -> Result<(), StoreError> {
+    let stored = entries::list(
+        ctx.conn,
+        ctx.session,
+        Some(records::PERMISSION_FULL_ACCESS_ENTRY),
+    )
+    .storage()?;
+    let id = format!("{}:permission-full-access:{interaction}", ctx.session);
+    if stored.iter().any(|entry| entry.id == id) {
+        return Ok(());
+    }
+    let row = sessions::get(ctx.conn, ctx.session)
+        .storage()?
+        .ok_or_else(|| storage(format!("session {} disappeared", ctx.session)))?;
+    let trace = row
+        .trace_id
+        .unwrap_or_else(|| format!("trace_{}", ctx.session));
+    let (previous, next) = (mode::to_node(previous), mode::to_node(next));
+    let event = (ctx.uuid)();
+    let receipt = records::GrantReceipt {
+        interaction,
+        event: &event,
+        trace: &trace,
+        sequence: stored.len() as u64,
+        previous: records::GrantState {
+            mode: &previous.mode,
+            plan: previous.plan,
+        },
+        next: records::GrantState {
+            mode: &next.mode,
+            plan: next.plan,
+        },
+        queue_items,
+    };
+    save_entry(
+        ctx,
+        &records::permission_full_access_entry(ctx.session, ctx.now, &receipt),
+    )
+}
+
 fn write_execution(
     ctx: &Commit<'_>,
     state: rust_cli_kernel_api::permission::ExecutionState,

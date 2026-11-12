@@ -26,6 +26,8 @@ use crate::plan::PlanModeFlags;
 pub struct RunView {
     /// 判决用的权限模式（plan 开时是 plan）。
     pub mode: PermissionMode,
+    /// Fork: the permission mode under plan (`ExecutionState.mode`); equal to `mode` when plan is off.
+    pub base_mode: PermissionMode,
     /// 计划模式的会话标志（与 `mode` 同一个快照）。
     pub plan_flags: PlanModeFlags,
     pub workspace: WorkspaceRef,
@@ -34,6 +36,9 @@ pub struct RunView {
     pub selection: Option<ModelSelection>,
     /// 会话现在的目标条件（`/goal`，goal.md §4）；子代理没有。
     pub goal: Option<String>,
+    /// Fork: the workspace is the session's execution worktree (a subagent: its parent's), so a root that is gone
+    /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then).
+    pub execution_worktree: bool,
 }
 
 impl RunView {
@@ -42,10 +47,12 @@ impl RunView {
     pub fn new(mode: PermissionMode, workspace: WorkspaceRef) -> Self {
         Self {
             mode,
+            base_mode: mode,
             plan_flags: PlanModeFlags::default(),
             workspace,
             selection: None,
             goal: None,
+            execution_worktree: false,
         }
     }
 }
@@ -68,6 +75,17 @@ pub trait SessionOps: Send + Sync {
     /// 工具请求打开或关掉 plan 开关（EnterPlanMode、ExitPlanMode，修复线 F20），权限模式不变。owner 是会话 actor：
     /// 先提交事实再通知前端，返回后新状态已生效（tools-more.md §2.3）。不持有会话状态的输出端返回 `Unsupported`。
     async fn set_plan(&self, enabled: bool) -> Result<(), OrchestrationError>;
+
+    /// Fork: [`Self::set_plan`] from the plan tool call `tool_call`; the session actor also reports
+    /// the transition with the call id (`KernelEvent::PlanTransition`). Other sinks ignore the id.
+    async fn set_plan_from_tool(
+        &self,
+        enabled: bool,
+        tool_call: &str,
+    ) -> Result<(), OrchestrationError> {
+        let _ = tool_call;
+        self.set_plan(enabled).await
+    }
 
     /// 改会话的工作目录（EnterWorktree / ExitWorktree）；owner 是会话 actor，它同时设执行环境的 shell cwd
     /// （tools-more.md §11.4）。前台子代理改的是父会话的；不持有会话的返回 `Unsupported`。

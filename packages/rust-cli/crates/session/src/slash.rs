@@ -41,6 +41,7 @@ impl Actor {
             agent: None,
             workspace: self.meta.workspace.clone(),
             mode: self.mode(),
+            base_mode: self.execution.mode,
             cancel: abort.token().clone(),
             machine: self.deps.machines.primary_machine(),
             controller: self.deps.machines.controller(),
@@ -60,6 +61,8 @@ impl Actor {
 
 fn user(id: rust_cli_kernel_api::ids::MessageId, text: String, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id,
         content: vec![ContentBlock::Text { text }],
         origin,

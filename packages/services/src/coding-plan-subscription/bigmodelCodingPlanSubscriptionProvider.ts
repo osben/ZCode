@@ -1,5 +1,10 @@
 import {
+  isSameOAuthAccountMaterial,
+  type OAuthAccountMaterial,
+} from "#src/oauth/repo/oauthCredentialRepo.js";
+import {
   ApiError,
+  resolveOptionalZCodeAuthorization,
   readValidatedRequestVerificationConfig,
   requestVerificationClaimHeaders,
   isRequestVerificationMessage,
@@ -66,7 +71,6 @@ import type {
 import type { ModelSelectionView } from "@zcode/provider";
 import type { OffPeakClientConfig } from "./codingPlanSubscription.js";
 import {
-  BIGMODEL_PROVIDER_ID,
   BUILTIN_MODEL_PROVIDER_IDS,
   REQUEST_VERIFICATION_REQUIRED,
   CODING_PLAN_SYSTEM_BUSY,
@@ -184,6 +188,7 @@ interface ZCodeClientConfigEnvelope {
 
 interface BigModelCodingPlanSubscriptionProviderOptions {
   apiClient: ApiClient;
+  loadOAuthAccountMaterial: (family: "zai" | "bigmodel") => Promise<OAuthAccountMaterial | null>;
   credentialService: Pick<ICredentialService, "load">;
   resolveOffPeakModelSelectionView?: () => Promise<ModelSelectionView>;
 }
@@ -214,14 +219,17 @@ interface BigModelCustomerInfoResponse {
 
 export class BigModelCodingPlanSubscriptionProvider {
   protected readonly apiClient: ApiClient;
+  private readonly loadOAuthAccountMaterial: BigModelCodingPlanSubscriptionProviderOptions["loadOAuthAccountMaterial"];
   protected readonly credentialService: Pick<ICredentialService, "load">;
   private readonly resolveOffPeakModelSelectionView?: () => Promise<ModelSelectionView>;
+  private clientConfigKey = "";
   private clientConfigSnapshot: ZCodeClientConfigEnvelope | null = null;
   private clientConfigSnapshotExpiresAt = 0;
   private clientConfigRequest: Promise<ZCodeClientConfigEnvelope> | null = null;
 
   constructor(options: BigModelCodingPlanSubscriptionProviderOptions) {
     this.apiClient = options.apiClient;
+    this.loadOAuthAccountMaterial = options.loadOAuthAccountMaterial;
     this.credentialService = options.credentialService;
     this.resolveOffPeakModelSelectionView = options.resolveOffPeakModelSelectionView;
   }
@@ -240,11 +248,6 @@ export class BigModelCodingPlanSubscriptionProvider {
   /** Business API origin for the current family (BigModel domain / Z.ai domain). */
   protected resolveFamilyEnterpriseHost(): string {
     return resolveBigModelApiOrigin(process.env);
-  }
-
-  /** Business OAuth token for the current family. */
-  protected async loadFamilyEnterpriseToken(): Promise<string> {
-    return this.loadBigModelAccessToken();
   }
 
   /** Business authorization header for the current family. */
@@ -655,11 +658,40 @@ export class BigModelCodingPlanSubscriptionProvider {
       return unwrapEnvelope(payload, providerId);
     }
 
-    const response = await this.get<EnterpriseCodingPlanPricingResponse>(
-      providerId,
-      new URL(`${host}${BIGMODEL_CODING_PLAN_API_PREFIX}/subscription/enterprise/v2/pricing`),
+    const family = isZaiCodingPlanProviderId(providerId) ? "zai" : "bigmodel";
+    const account = await this.loadOAuthAccountMaterial(family);
+    if (
+      !account?.accessToken ||
+      (family === "bigmodel" && account.accessToken === account.zcodeJwtToken)
+    )
+      throw new Error(`${family}_oauth_required`);
+    const assertCurrent = async () => {
+      if (!isSameOAuthAccountMaterial(account, await this.loadOAuthAccountMaterial(family)))
+        throw new Error("oauth_account_changed");
+    };
+    // pricing、组织查询及 Key 创建必须使用同一会话，不能在中途拼入另一次登录。
+    const apiClient: ApiClient = {
+      request: async (input, init) => {
+        await assertCurrent();
+        const response = await this.apiClient.request(input, init);
+        await assertCurrent();
+        return response;
+      },
+    };
+    const payload = await readCodingPlanApiJson<
+      RemoteEnvelope<EnterpriseCodingPlanPricingResponse>
+    >(apiClient, `${host}${BIGMODEL_CODING_PLAN_API_PREFIX}/subscription/enterprise/v2/pricing`, {
+      method: "GET",
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      headers: this.createFamilyEnterpriseAuthHeaders(account.accessToken),
+    });
+    const result = await this.enrichEnterprisePricingTeamProjects(
+      unwrapEnvelope(payload, providerId),
+      account.accessToken,
+      apiClient,
     );
-    return this.enrichEnterprisePricingTeamProjects(response);
+    await assertCurrent();
+    return result;
   }
 
   async getEnterpriseBalance(): Promise<EnterpriseCodingPlanBalanceResponse> {
@@ -804,35 +836,46 @@ export class BigModelCodingPlanSubscriptionProvider {
   }
 
   private async getClientConfigs(): Promise<ZCodeClientConfigEnvelope> {
-    if (this.clientConfigSnapshot && this.clientConfigSnapshotExpiresAt > Date.now()) {
-      return this.clientConfigSnapshot;
-    }
-    if (this.clientConfigRequest) {
-      return await this.clientConfigRequest;
-    }
-
     // client/configs and other ZCode platform APIs must share the runtime endpoint;
     // E2E/test environments point ZCODE_BASE_URL at a local mock, so hard-coding the production domain would make plan state uncontrollable.
+    const authorization = await resolveOptionalZCodeAuthorization(() =>
+      this.credentialService.load(ZCODE_JWT_TOKEN_KEY),
+    );
     const url = resolveCodingPlanClientConfigUrl(process.env);
     url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
     url.searchParams.set("platform", resolveClientPlatformKey());
+    const key = JSON.stringify([url.toString(), authorization]);
+    // Login, account switching, logout, or endpoint changes must not reuse plan configuration from the previous context.
+    if (this.clientConfigKey !== key) {
+      this.clientConfigKey = key;
+      this.clientConfigSnapshot = null;
+      this.clientConfigSnapshotExpiresAt = 0;
+      this.clientConfigRequest = null;
+    }
+    if (this.clientConfigSnapshot && this.clientConfigSnapshotExpiresAt > Date.now()) {
+      return this.clientConfigSnapshot;
+    }
+    if (this.clientConfigRequest) return this.clientConfigRequest;
+
     // StartPlanCard and the plan list both come from the same client/configs response.
     // When preview/products are read on the same screen, combine the requests to avoid duplicate remote config reads on the signed-out settings page.
-    this.clientConfigRequest = readCodingPlanApiJson<ZCodeClientConfigEnvelope>(
-      this.apiClient,
-      url,
-      {
-        method: "GET",
-        timeoutMs: REQUEST_TIMEOUT_MS,
-      },
-    );
+    const request = readCodingPlanApiJson<ZCodeClientConfigEnvelope>(this.apiClient, url, {
+      method: "GET",
+      redirect: "error",
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      ...(authorization ? { headers: { Authorization: authorization } } : {}),
+    });
+    this.clientConfigRequest = request;
     try {
-      const payload = await this.clientConfigRequest;
-      this.clientConfigSnapshot = payload;
-      this.clientConfigSnapshotExpiresAt = Date.now() + CLIENT_CONFIG_CACHE_TTL_MS;
+      const payload = await request;
+      // 旧请求晚到时只完成原调用，不能覆盖新身份的缓存或解除其在飞状态。
+      if (this.clientConfigRequest === request) {
+        this.clientConfigSnapshot = payload;
+        this.clientConfigSnapshotExpiresAt = Date.now() + CLIENT_CONFIG_CACHE_TTL_MS;
+      }
       return payload;
     } finally {
-      this.clientConfigRequest = null;
+      if (this.clientConfigRequest === request) this.clientConfigRequest = null;
     }
   }
 
@@ -859,13 +902,12 @@ export class BigModelCodingPlanSubscriptionProvider {
   }
 
   private async loadBigModelAccessToken(): Promise<string> {
-    const token = (
-      await this.credentialService.load(`oauth:${BIGMODEL_PROVIDER_ID}:access_token`)
-    )?.trim();
+    const account = await this.loadOAuthAccountMaterial("bigmodel");
+    const token = account?.accessToken.trim();
     if (!token) {
       throw new Error("bigmodel_oauth_required");
     }
-    const zcodeJwtToken = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim();
+    const zcodeJwtToken = account?.zcodeJwtToken;
     if (zcodeJwtToken && token === zcodeJwtToken) {
       // An older BigModel OAuth callback also wrote the ZCode JWT to
       // oauth:bigmodel:access_token; paid-plan previews then sent it to bigmodel.cn and received an expired-token error.
@@ -878,6 +920,8 @@ export class BigModelCodingPlanSubscriptionProvider {
 
   protected async enrichEnterprisePricingTeamProjects(
     response: EnterpriseCodingPlanPricingResponse,
+    token: string,
+    apiClient: ApiClient,
   ): Promise<EnterpriseCodingPlanPricingResponse> {
     if (response.productList.length === 0) {
       return response;
@@ -893,15 +937,15 @@ export class BigModelCodingPlanSubscriptionProvider {
     if (hasSubscribedProduct && !hasSubscribedProductMissingProjectContext) {
       const apiKeyStatuses = await this.ensureSubscribedTeamPlanProjectApiKeys(
         response,
-        await this.loadFamilyEnterpriseToken(),
+        token,
+        apiClient,
       );
       return applyTeamPlanProjectApiKeyStatuses(response, apiKeyStatuses);
     }
 
-    const token = await this.loadFamilyEnterpriseToken();
     const host = this.resolveFamilyEnterpriseHost();
     const customerInfo = await readCodingPlanApiJson<RemoteEnvelope<BigModelCustomerInfoResponse>>(
-      this.apiClient,
+      apiClient,
       `${host}${BIGMODEL_CODING_PLAN_API_PREFIX}/customer/getCustomerInfo`,
       {
         method: "GET",
@@ -951,6 +995,7 @@ export class BigModelCodingPlanSubscriptionProvider {
     const apiKeyStatuses = await this.ensureSubscribedTeamPlanProjectApiKeys(
       enrichedResponse,
       token,
+      apiClient,
     );
     return applyTeamPlanProjectApiKeyStatuses(enrichedResponse, apiKeyStatuses);
   }
@@ -958,6 +1003,7 @@ export class BigModelCodingPlanSubscriptionProvider {
   protected async ensureSubscribedTeamPlanProjectApiKeys(
     response: EnterpriseCodingPlanPricingResponse,
     token: string,
+    apiClient: ApiClient,
   ): Promise<Map<string, TeamPlanProjectApiKeyPrewarmStatus>> {
     const teamContexts = collectSubscribedTeamPlanProjectContexts(response.productList);
     const statuses = new Map<string, TeamPlanProjectApiKeyPrewarmStatus>();
@@ -972,7 +1018,7 @@ export class BigModelCodingPlanSubscriptionProvider {
     for (const teamContext of teamContexts) {
       try {
         const result = await ensureBigModelTeamPlanProjectApiKeyWithStatus({
-          apiClient: this.apiClient,
+          apiClient,
           authorization: token,
           host,
           teamContext,
@@ -1009,9 +1055,7 @@ export class BigModelCodingPlanSubscriptionProvider {
   }
 
   protected async loadZaiAuthorization(): Promise<string> {
-    const token = (
-      await this.credentialService.load(`oauth:${ZAI_PROVIDER_ID}:access_token`)
-    )?.trim();
+    const token = (await this.loadOAuthAccountMaterial("zai"))?.accessToken.trim();
     if (!token) {
       throw new Error("zai_oauth_required");
     }

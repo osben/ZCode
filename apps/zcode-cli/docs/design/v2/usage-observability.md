@@ -2,7 +2,7 @@
 
 ## Goal
 
-Persist short-lived usage facts for `/usage` and local diagnostics. The data answers:
+Persist long-lived usage facts for `/usage` and local diagnostics. The data answers:
 
 - Daily token usage by provider and model.
 - Daily user turn count, similar to an activity heatmap.
@@ -10,11 +10,8 @@ Persist short-lived usage facts for `/usage` and local diagnostics. The data ans
 - Cache hit and cache creation token volume.
 - Error, retry, cancellation, and context-overflow rates.
 
-Usage observability is not a permanent billing ledger. Rows are retained for 30 days. Automatic
-pruning runs after usage writes at most once per hour per open database connection; the first write
-for a connection attempts pruning immediately. Expired rows can remain until a later write after
-that interval. A failed automatic prune does not advance the interval, so a later write retries it.
-An explicit `pruneUsage` call always prunes immediately.
+Usage observability is not a billing ledger. Model, turn, and tool usage facts are retained
+indefinitely, with no automatic age-based deletion on startup, writes, or queries.
 
 ## Source Of Truth
 
@@ -73,21 +70,28 @@ for activity-style turn counts and loop-level latency.
 One row per tool call. The row tracks tool name, side-effect metadata, approval status, latency,
 output byte counts, truncation, errors, and cancellation flags.
 
-Rollups are intentionally deferred. `/usage` can group over 30 days of facts directly; if the facts
-grow expensive later, daily rollups can be rebuilt from these tables.
+Rollups are intentionally deferred. `/usage` groups facts within the requested time range directly;
+if queries grow expensive later, daily rollups can be rebuilt from the retained facts.
 
 ## Retention
 
-The store prunes rows older than 30 days using:
+`model_usage`, `turn_usage`, and `tool_usage` have no retention cutoff. Writing a new fact or
+updating an existing fact must not delete older facts, including records older than 30 days or a year.
+Closing and reopening the database must preserve the same history.
 
-```sql
-delete from model_usage where started_at < ?;
-delete from turn_usage where started_at < ?;
-delete from tool_usage where started_at < ?;
+```text
+Runtime usage events → CLI-owned SQLite write/upsert → retained usage facts
+                                                    → requested-range aggregation
 ```
 
-The cutoff is `Date.now() - 30 days`. Pruning must never block the model/tool path if it fails; it is
-best-effort observability.
+The store exposes no time-based `pruneUsage` operation. Remove the former 30-day constants, automatic
+pruning calls, store method, and port capability together. Usage write capability detection must
+only require the existing write methods; it must not depend on a removed cleanup method.
+
+Query ranges remain filters, not retention policies: `since=0` includes all retained history, while
+7-day and 30-day queries include only their requested windows. No schema migration is needed.
+Previously pruned data cannot be restored by this change. Explicit session/data deletion keeps its
+existing behavior; indefinite retention means no automatic expiry, not protection from user deletion.
 
 ## Write Points
 
@@ -156,9 +160,10 @@ order by calls desc;
 
 ## Fork History Rollup
 
-The raw usage tables above stay the canonical write target and keep the 30-day retention, because the
-upstream build shares this database and runs its own `pruneUsage`. The fork adds a long-lived,
-read-only-derived rollup so App Usage can show history beyond 30 days. Spec of record for the whole
+The raw usage tables above stay the canonical write target. Since 3.18.0 neither build prunes them,
+but builds up to 3.17 (fork and upstream) pruned rows older than 30 days, so older history may only
+survive in the rollup. The fork keeps a long-lived, read-only-derived rollup so App Usage still shows
+history those builds pruned. Spec of record for the whole
 plan: `docs/specs/usage-stats-history-and-filters.md`.
 
 - Tables (fork-owned, `fork_` prefix, created idempotently by `ensureForkUsageRollupSchema`, tracked
@@ -229,7 +234,7 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   `total_tokens` was added after the first rollout;
   `ensureForkUsageRollupSchema` adds the missing column and resets the watermark so the next recompute
   backfills it for every bucket whose raw rows still exist (older buckets keep 0).
-- Known limitation: raw rows that live and are pruned entirely while no fork build runs are never
+- Known limitation: raw rows that a build up to 3.17 pruned while no fork build ran were never
   rolled up. History starts when the rollup is first created.
 
 ## Tests

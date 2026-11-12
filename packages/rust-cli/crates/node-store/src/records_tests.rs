@@ -128,6 +128,8 @@ async fn the_node_records_read_back_as_kernel_messages() {
     let loaded = t.store.load(&SessionId::new(SESSION)).await.unwrap();
     let user = |id: &str, text: &str| {
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],
             origin: UserOrigin::Human,

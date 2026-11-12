@@ -8,6 +8,19 @@ export const BROWSER_VIEWPORT_LIMITS = {
   maxHeight: 2160,
 } as const;
 
+/**
+ * Human-user presets for the free-size toolbar of the Browser tab (docs/browser-use/2026-10-16-browser-device-presets-and-export-spec.md).
+ * They are only shortcuts for width/height input, all within BROWSER_VIEWPORT_LIMITS; the Agent viewport does not use them.
+ */
+export const BROWSER_VIEWPORT_PRESETS = [
+  { id: "phone", width: 390, height: 844 },
+  { id: "tablet", width: 834, height: 1112 },
+  { id: "desktop", width: 1440, height: 900 },
+  { id: "slide", width: 1920, height: 1080 },
+] as const;
+
+export type BrowserViewportPresetId = (typeof BROWSER_VIEWPORT_PRESETS)[number]["id"];
+
 /** Fixed logical viewport for pages created or opened by the Agent; this is not a human browser display preference. */
 export const DEFAULT_AGENT_BROWSER_VIEWPORT = {
   width: 1280,

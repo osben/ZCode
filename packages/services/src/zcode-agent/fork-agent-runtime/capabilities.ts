@@ -13,22 +13,17 @@ export function isForkRustAgentRuntime(env: NodeJS.ProcessEnv = process.env): bo
   return env[FORK_AGENT_RUNTIME_ENV]?.trim() === "rust";
 }
 
-/** Spread after both Host hello capability literals so the renderer takes the older-agent routes. */
-export function forkAgentRuntimeHelloOverrides(env: NodeJS.ProcessEnv = process.env): {
-  incognitoSession?: false;
-  incognitoPromptToggles?: false;
-  independentPlanState?: false;
-} {
-  if (!isForkRustAgentRuntime(env)) return {};
-  return {
-    incognitoSession: false,
-    incognitoPromptToggles: false,
-    independentPlanState: false,
-  };
+/**
+ * Spread after both Host hello capability literals so the renderer takes the older-agent routes. Empty for
+ * both runtimes: zcode-rs reports every flag the Host claims (the incognito flags left this table when
+ * zcode-rs implemented incognito sessions).
+ */
+export function forkAgentRuntimeHelloOverrides(
+  _env: NodeJS.ProcessEnv = process.env,
+): Record<string, never> {
+  return {};
 }
 
-export const FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED =
-  "proto.forkRustAgent.executionWorktreeUnsupported";
 export const FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED =
   "proto.forkRustAgent.externalAgentUnsupported";
 
@@ -48,8 +43,8 @@ function isAcpSelection(value: unknown): boolean {
 
 /**
  * Fork features with no agent capability flag. The Node agent implements them; zcode-rs drops the
- * fields, which would run a worktree session in the main checkout or send an ACP prompt to an
- * unknown provider. Refuse them before the command reaches the Rust agent.
+ * fields, which would send an ACP prompt to an unknown provider. Refuse them before the command
+ * reaches the Rust agent.
  */
 export function forkAgentRuntimeCommandGateError(
   envelope: CommandEnvelopeLike,
@@ -57,20 +52,11 @@ export function forkAgentRuntimeCommandGateError(
 ): string | undefined {
   if (!isForkRustAgentRuntime(env)) return undefined;
   const payload = (envelope.payload ?? {}) as {
-    worktreePreparation?: unknown;
-    executionWorktree?: unknown;
     modelSelection?: unknown;
     provider?: unknown;
     config?: { modelSelection?: unknown; provider?: unknown };
     firstInput?: { modelSelection?: unknown };
   };
-  if (
-    envelope.type === "updateWorktreePreparation" ||
-    (envelope.type === "createSession" &&
-      (payload.worktreePreparation !== undefined || payload.executionWorktree !== undefined))
-  ) {
-    return FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED;
-  }
   if (
     envelope.type === "setExternalAgentConfigOption" ||
     isAcpSelection(payload.modelSelection) ||

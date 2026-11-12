@@ -71,11 +71,16 @@ use crate::rules::Rules;
 pub(crate) struct PolicyOptions {
     /// plan 模式按自动模式的语义走分类器（缺省开启）。
     pub(crate) auto_in_plan: bool,
+    /// Fork: Node's plan mode ([`chain::Outer::node_plan`]).
+    pub(crate) node_plan: bool,
 }
 
 impl Default for PolicyOptions {
     fn default() -> Self {
-        Self { auto_in_plan: true }
+        Self {
+            auto_in_plan: true,
+            node_plan: false,
+        }
     }
 }
 
@@ -125,6 +130,13 @@ impl PolicyGate {
     #[must_use]
     pub(crate) fn with_options(mut self, options: PolicyOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// Fork: plan mode denies what would ask, with Node's reason (the desktop app-server).
+    #[must_use]
+    pub fn with_node_plan_mode(mut self, enabled: bool) -> Self {
+        self.options.node_plan = enabled;
         self
     }
 
@@ -243,19 +255,55 @@ impl ScopedGate for PolicyGate {
         let subject = tool.permission_subject(input);
         let name = tool.name();
         let guarded = guarded_command(subject.as_ref());
-        let evaluate = |mode: PermissionMode| {
+        let evaluate_with = |mode: PermissionMode, full_access: bool| {
             let inputs = Inputs {
                 mode,
                 rules: &rules,
                 paths: &paths,
                 root,
                 dangerous: guarded::applies(mode, guarded, paths.style),
-                full_access: mode == PermissionMode::BypassPermissions,
+                full_access,
             };
             let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
             chain::inner(name, check, updated, &inputs)
         };
-        let result = evaluate(context.mode);
+        let evaluate =
+            |mode: PermissionMode| evaluate_with(mode, mode == PermissionMode::BypassPermissions);
+        let node_plan = context.mode == PermissionMode::Plan && self.options.node_plan;
+        let plan_mcp = (node_plan && tool.mcp_info().is_some()).then(|| chain::PlanMcp {
+            read_only: tool.is_read_only(input),
+            destructive: tool.is_destructive(input),
+        });
+        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and any
+        // read-only, non-destructive tool (WebFetch, WebSearch), and the base mode decides it. Plan skips Node's early
+        // yolo allow, so deny and ask rules still apply: the base mode runs without full access.
+        let passes_gate = plan_mcp.is_some()
+            || (node_plan && tool.is_read_only(input) && !tool.is_destructive(input));
+        let base_bypass = passes_gate
+            && matches!(
+                context.base_mode,
+                PermissionMode::BypassPermissions | PermissionMode::Guarded
+            );
+        let mut result = if base_bypass {
+            evaluate_with(context.base_mode, false)
+        } else {
+            evaluate(context.mode)
+        };
+        // Over any other base Node's gate passes a read-only, non-destructive built-in tool too, and `checkBuildMode`
+        // decides it in the base mode. Rust's plan chain already allows what needs no approval; a call it would ask
+        // about (and the plan gate would then deny) is decided in the base mode instead, and its ask goes to the user.
+        // A view without a separate base (a subagent, the fallback view) has `base_mode == Plan`: the gate still denies.
+        let base_decides = !base_bypass
+            && passes_gate
+            && context.base_mode != PermissionMode::Plan
+            && plan_mcp.is_none()
+            && matches!(result, chain::Inner::Ask { .. });
+        if base_decides {
+            result = evaluate(context.base_mode);
+        }
+        if let Some(mcp) = plan_mcp {
+            result = chain::plan_mcp(name, mcp, base_bypass, result);
+        }
         let call = Call {
             tool: name,
             input,
@@ -265,6 +313,8 @@ impl ScopedGate for PolicyGate {
         let options = Outer {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
+            node_plan: self.options.node_plan,
+            plan_ask: plan_mcp.is_some() || base_bypass || base_decides,
         };
         chain::outer(
             &call,
@@ -337,11 +387,13 @@ impl PermissionGate for PolicyGate {
                 message,
                 suggestions,
                 once,
+                independent,
                 kind: _,
             } => Some(PermissionDecision::Ask {
                 message,
                 suggestions,
                 once,
+                independent,
             }),
         }
     }

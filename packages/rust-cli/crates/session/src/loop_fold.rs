@@ -205,6 +205,8 @@ impl Actor {
         let before = fold
             .map(|fold| {
                 vec![Message::User(UserMessage {
+                    stall_execution: None,
+                    intent: None,
                     id: self.deps.ids.message(),
                     content: vec![ContentBlock::Text {
                         text: note(fold.streak),

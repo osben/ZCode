@@ -111,6 +111,7 @@ impl Bench {
                 root: EnvPath::new(self.root.to_string_lossy()),
             },
             mode: self.mode,
+            base_mode: self.mode,
             machine: machine(env.clone()),
             controller: controller_services(env),
             interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),

@@ -4,6 +4,8 @@
 > Existing workspace changes were preserved; the CLI lint / baseline test failures and the phone
 > end-to-end gap are in section 9.
 
+> Current product behavior: the approval row is extended to "Allow, and switch to...". The default is autonomous mode; choosing full access still needs a risk confirmation; each Plan is kept, and new sessions in the same project inherit the chosen permission. What follows is the original design record; the current contract is the [permission approval spec](../../../permission-project-approval.md).
+
 ## 1. Goal and latest decision
 
 Reduce repeated approvals during tool execution: the permission dialog offers "Full access", and one
@@ -24,13 +26,13 @@ semantics. Historical conflict: [C26](../design-v2/evidence-and-contradictions.m
 
 Ordinary command approval lists, default still the 1st item:
 
-| No. | Option                            | Meaning and effect                                                                                                |
-| --- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 1   | Allow                             | allow this once; existing allow_once semantics                                                                    |
-| 2   | Always allow this command         | project scope, same command not asked again; existing allow_project rule generation/matching kept                 |
-| 3   | Full access                       | grant the Agent full access with no more confirmation; performs this Todo's current-task, Composer and queue sync |
-| 4   | Deny                              | deny this operation; existing Deny behavior                                                                       |
-| 5   | Tell the model what to do next... | the separate input row for feedback with denial and its submit method kept                                        |
+| No. | Option                            | Meaning and effect                                                                                                                    |
+| --- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Allow                             | allow this once; existing allow_once semantics                                                                                        |
+| 2   | Always allow this command         | project scope, same command not asked again; existing allow_project rule generation/matching kept                                     |
+| 3   | Full access                       | the current session and this project's later new sessions use full access; performs this Todo's current-task, Composer and queue sync |
+| 4   | Deny                              | deny this operation; existing Deny behavior                                                                                           |
+| 5   | Tell the model what to do next... | the separate input row for feedback with denial and its submit method kept                                                            |
 
 - Number shortcuts, arrows, Tab, Enter, focus and the confirm button follow the actual option layout; `5` focuses feedback without submitting; IME behavior and phone input compat kept. The feedback row still requires the request to declare feedback support (no fake feedback response for entries lacking it).
 - Item 2 keeps showing the Agent's real prefix/exact scope (a title wording change must not change matching or widen authorization). File, network, MCP and official CUA approvals sharing the surface keep their tool-scope wording and trusted capability-group semantics (not renamed "command").
@@ -82,7 +84,7 @@ Approval, failure and cross-end:
 - One explicit approval action folds the permission switch, queue change and current answer together; the UI does not send two unrelated commands and assume atomic success. It reuses the existing Runtime state update, interaction broker and command idempotency; the Agent is the owner of queue and permission (no second accepted queue in Renderer, Host or Relay).
 - Interaction and task/session ownership are validated; a late action cannot expand permission after the request was denied, cancelled or handled by another end; a Hook racing a user answer still has a unique winner.
 - Any failure of state save, queue update or event commit gives a reconcilable result and an idempotent retry path (no approving the tool before discovering the queue did not finish); the commit point, failure recovery and fault-injection evidence are explicit (several `await`s are not a transaction).
-- The Composer is handled by the existing draft owner in a targeted way for this explicit result; same-task cross-end and reconnect avoid duplicate application; ordinary snapshots still never keep overwriting the draft; a late result never changes another scope. The action writes no Composer Recent; a later accepted real Submission follows the existing Recent rule.
+- The Composer is handled by the existing draft owner in a targeted way for this explicit result; same-task cross-end and reconnect avoid duplicate application; ordinary snapshots still never keep overwriting the draft; a late result never changes another scope. The client updates the current project's Composer Recent permission from the actual grant receipt; a later accepted real Submission still follows the existing Recent rule.
 - For sub-agent approvals taken over by the parent, origin, broker and the actual executing Runtime are checked; changing only the display Runtime does not claim the child takes effect; other tasks and independent children do not gain authorization from static call relations. Changing the inheritance contract needs a recorded impact first.
 
 ## 5. Slices and compatibility
@@ -98,20 +100,20 @@ Only approving the current request is in scope; other already-pending independen
 
 ## 6. Acceptance cases
 
-| Case     | Scenario                                                             | Must prove                                                                                                                                              |
-| -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PA158-01 | Ordinary command approval                                            | five rows in order, default allow-once, 1-4 and row-5 feedback navigation; no fake input when feedback is not declared                                  |
-| PA158-02 | Running build/edit task awaiting approval, pick full access          | no turn stop, no new message; Runtime becomes yolo, the current tool runs, later tools judged by the new permission                                     |
-| PA158-03 | Runtime, Composer and queue with different Plan                      | all targets become yolo, each keeping true/false; yolo+Plan still obeys planning constraints                                                            |
-| PA158-04 | Several ordinary queue items, held queue and unconsumed Guide        | all targets updated; config/attachments/order/pause state unchanged; auto-consume and "send now" never write back the old mode                          |
-| PA158-05 | Edit-back of an updated queue item                                   | Composer gets the item's updated permission and original Plan/model/body; other items unchanged                                                         |
-| PA158-06 | Batch update interleaved with new submissions, reserve/promote/drain | boundary decided by owner order; no missed target, no double execution, no override of a later-accepted independent user choice                         |
-| PA158-07 | Multi-end clicks, Hook answer, deny/cancel, lost ACK                 | a unique answer winner, expired action gives no privilege, retry reconciles without duplicate side effects                                              |
-| PA158-08 | Faults in save / queue update / event commit                         | no false full success and no early tool release; facts consistent after recovery or retry                                                               |
-| PA158-09 | Ordinary menu, allow once, project always-allow, deny/feedback       | original behavior; the ordinary menu does not batch-update the queue; project rule scope not widened                                                    |
-| PA158-10 | Desktop, phone reconnect and scope switch                            | continuous/replayable verified separately; same-task results consistent, drafts not overwritten by ordinary snapshots, no workspaceIdentity/session mix |
-| PA158-11 | Task/project preferences and shared callers                          | the action writes no project mode/ruleset or Recent and changes no other task; Bot/automation/CLI regress-free                                          |
-| PA158-12 | Sub-agent-origin approval and old-version combinations               | origin routing matches actual execution permission; unsupported full action neither wrongly grants nor extends to unrelated tasks                       |
+| Case     | Scenario                                                             | Must prove                                                                                                                                                        |
+| -------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PA158-01 | Ordinary command approval                                            | five rows in order, default allow-once, 1-4 and row-5 feedback navigation; no fake input when feedback is not declared                                            |
+| PA158-02 | Running build/edit task awaiting approval, pick full access          | no turn stop, no new message; Runtime becomes yolo, the current tool runs, later tools judged by the new permission                                               |
+| PA158-03 | Runtime, Composer and queue with different Plan                      | all targets become yolo, each keeping true/false; yolo+Plan still obeys planning constraints                                                                      |
+| PA158-04 | Several ordinary queue items, held queue and unconsumed Guide        | all targets updated; config/attachments/order/pause state unchanged; auto-consume and "send now" never write back the old mode                                    |
+| PA158-05 | Edit-back of an updated queue item                                   | Composer gets the item's updated permission and original Plan/model/body; other items unchanged                                                                   |
+| PA158-06 | Batch update interleaved with new submissions, reserve/promote/drain | boundary decided by owner order; no missed target, no double execution, no override of a later-accepted independent user choice                                   |
+| PA158-07 | Multi-end clicks, Hook answer, deny/cancel, lost ACK                 | a unique answer winner, expired action gives no privilege, retry reconciles without duplicate side effects                                                        |
+| PA158-08 | Faults in save / queue update / event commit                         | no false full success and no early tool release; facts consistent after recovery or retry                                                                         |
+| PA158-09 | Ordinary menu, allow once, project always-allow, deny/feedback       | original behavior; the ordinary menu does not batch-update the queue; project rule scope not widened                                                              |
+| PA158-10 | Desktop, phone reconnect and scope switch                            | continuous/replayable verified separately; same-task results consistent, drafts not overwritten by ordinary snapshots, no workspaceIdentity/session mix           |
+| PA158-11 | Task/project preferences and shared callers                          | the action only updates this client's project Recent permission, writes no Agent project mode/ruleset, and changes no other task; Bot/automation/CLI regress-free |
+| PA158-12 | Sub-agent-origin approval and old-version combinations               | origin routing matches actual execution permission; unsupported full action neither wrongly grants nor extends to unrelated tasks                                 |
 
 Required verification: root `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected
 tests; CLI per its child rules. UI covers desktop/phone, light/dark and zh/en; interaction needs matching

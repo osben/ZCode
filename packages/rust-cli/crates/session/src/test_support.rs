@@ -44,6 +44,7 @@ pub(crate) fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -129,6 +130,8 @@ pub(crate) struct Setup {
     pub earlier: Vec<Message>,
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     pub opened: Opened,
+    /// Fork: `SessionState::start_held` (a prepared execution worktree).
+    pub start_held: bool,
     pub start: StartSource,
     /// 为 false 时存储里没有这个会话，所有提交都失败。
     pub stored: bool,
@@ -155,6 +158,14 @@ pub(crate) struct Setup {
     pub peers: crate::PeerDeps,
     /// 父会话关闭之后的询问入口（detached_tests.rs）；缺省没有。
     pub detached: Option<Arc<crate::DetachedAsks>>,
+    /// Fork: `SessionDeps::one_input_per_turn`; off by default.
+    pub one_input_per_turn: bool,
+    /// Fork: `SessionDeps::desktop_goals`; off by default.
+    pub desktop_goals: bool,
+    /// Fork: `SessionDeps::fork_while_running`; off by default.
+    pub fork_while_running: bool,
+    /// Fork: `SessionDeps::error_holds_queue`; off by default.
+    pub error_holds_queue: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -165,6 +176,14 @@ pub(crate) struct Setup {
     pub root: &'static str,
     /// 会话 actor 的时钟（回合结束那一行的用时，duration_tests.rs 拨动它）；缺省固定在 1000。
     pub clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+    /// Fork: the mirrored child run (`SessionState::child_live`); none by default.
+    pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
+    /// Fork: the stored title is still automatic (`SessionState::title_pending`); true by default.
+    pub title_pending: bool,
+    /// Fork: the stored goal row (`SessionState::goal_target`); none by default.
+    pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
+    /// Fork: the stored goal verification steps; none by default.
+    pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
 }
 
 impl Setup {
@@ -181,6 +200,7 @@ impl Setup {
             earlier: Vec::new(),
             checkpoints: Vec::new(),
             opened: Opened::Created,
+            start_held: false,
             start: StartSource::Startup,
             stored: true,
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
@@ -195,11 +215,19 @@ impl Setup {
             last_turn_failed: false,
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
+            desktop_goals: false,
+            fork_while_running: false,
+            error_holds_queue: false,
             store: None,
             store_hooks: None,
             machines: None,
             root: "/work",
             clock: Arc::new(FixedClock(1_000)),
+            child_live: None,
+            title_pending: true,
+            goal_target: None,
+            goal_verifications: Vec::new(),
         }
     }
 
@@ -285,6 +313,10 @@ impl Setup {
                 directory_rules: self.directory_rules,
                 peers: self.peers,
                 detached: self.detached,
+                one_input_per_turn: self.one_input_per_turn,
+                desktop_goals: self.desktop_goals,
+                fork_while_running: self.fork_while_running,
+                error_holds_queue: self.error_holds_queue,
             },
             SessionState {
                 commands: Default::default(),
@@ -295,8 +327,17 @@ impl Setup {
                 mode: PermissionMode::Default.into(),
                 checkpoints: self.checkpoints,
                 start: self.start,
+                start_held: self.start_held,
+                execution_worktree: false,
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
+                child_live: self.child_live,
+                title_pending: self.title_pending,
+                title_source: None,
+                permission_grant: None,
+                goal_target: self.goal_target,
+                goal_verifications: self.goal_verifications,
+                message_models: Default::default(),
             },
             self.opened,
         );

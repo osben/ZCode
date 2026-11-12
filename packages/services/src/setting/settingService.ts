@@ -12,9 +12,13 @@ import {
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
   formatZodError,
+  hasLegacyIncompatiblePersistedLocale,
   planLegacyLocaleMigration,
   resolveEffectiveLocale,
   splitForkSettingsPatch,
+  toPersistedSettingsLocaleFields,
+  USER_INSTRUCTIONS_MAX_BYTES,
+  USER_INSTRUCTIONS_TOO_LARGE_ERROR_CODE,
 } from "@zcode/shared";
 import type { ForkAppSettings, LegacyLocaleMigrationPlan } from "@zcode/shared";
 import type { ISettingService, WorkspaceSettingsProjection } from "./setting.js";
@@ -91,6 +95,9 @@ function shouldPersistSettingsMigrations(rawValue: unknown): boolean {
   return (
     // In-memory migration would leave version 3 on disk for rollback clients; it must persist under the write lock.
     raw.remoteBoundaryOnboardingVersion === 3 ||
+    // Reason: during development of this feature, an internal build wrote ja-JP and similar values into the legacy locale/localePreference fields;
+    // an older build reading them resets the whole settings file, so on read they are immediately persisted in the new format (legacy fields downgraded + new uiLocale fields).
+    hasLegacyIncompatiblePersistedLocale(raw) ||
     (needsLegacyAccountConnectionMigration(rawValue) &&
       readIncompleteLegacyTeamConnections(rawValue).length === 0) ||
     raw.closeToTrayOnWindowsMigrationInitialized !== true ||
@@ -245,7 +252,13 @@ async function writeSettings(
   maybeThrowInjectedFsFault({ operation: "writeFile", path: settingsFile });
   const raw = await readLegacyAccountConnectionSettingsFile(settingsFile);
   const rollbackFields = retainLegacyAccountConnectionFields(raw);
-  const persisted = { ...rollbackFields, ...settings };
+  const persisted = {
+    ...rollbackFields,
+    ...settings,
+    ...toPersistedSettingsLocaleFields(settings),
+  };
+  // The interface language is persisted through toPersistedSettingsLocaleFields: the legacy locale/localePreference fields carry only zh/en,
+  // while the real choice is written to uiLocale/uiLocalePreference, so an older build reading ja-JP and similar values does not reset the whole settings file.
   // When a legacy Team is waiting for OAuth to supply organization details, the schema default {} is not a new user choice.
   // Ordinary preference saves must preserve the new field's absence; only a migration commit or explicit connection selection ends the legacy import.
   if (!commitAccountSelection && readIncompleteLegacyTeamConnections(raw).length > 0) {

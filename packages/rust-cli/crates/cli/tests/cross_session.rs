@@ -575,6 +575,8 @@ fn compact_latest(sandbox: &Sandbox) {
             discovered_tools: Vec::new(),
         })),
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: summary,
             content: vec![ContentBlock::Text {
                 text: "Summary:\nSUMMARY".to_owned(),

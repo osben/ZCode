@@ -41,6 +41,7 @@ fn ask(app: &mut App, id: &str, request: InteractionRequest, now: Instant) {
 
 fn bash(command: &str, suggestions: &[&str]) -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".into(),
@@ -55,6 +56,8 @@ fn bash(command: &str, suggestions: &[&str]) -> InteractionRequest {
             .collect(),
         rule_seed: None,
         asked_by: None,
+        once: false,
+        independent: false,
     }
 }
 
@@ -69,6 +72,7 @@ fn seeded(command: &str, suggestions: &[&str], seed: &str) -> InteractionRequest
 
 fn question() -> InteractionRequest {
     InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("tu2"),
         questions: json!([{
             "question": "Which database?", "header": "DB", "multiSelect": false,
@@ -79,6 +83,7 @@ fn question() -> InteractionRequest {
 
 fn plan() -> InteractionRequest {
     InteractionRequest::PlanApproval {
+        origin: None,
         tool_use: ToolUseId::new("tu3"),
         plan: "1. Add tests\n2. Fix it".into(),
     }

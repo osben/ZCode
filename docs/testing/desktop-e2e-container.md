@@ -10,11 +10,11 @@ pnpm run test:e2e:container
 
 By default it runs a lightweight container smoke set:
 
-- `packages/desktop/test/e2e/container-boot.test.ts`
-- `packages/desktop/test/e2e/smoke.test.ts`
-- `packages/desktop/test/e2e/e2ecase-regression.test.ts`
-- `packages/desktop/test/e2e/upstream-provider.test.ts`
-- `packages/desktop/test/e2e/task-list-archive-confirmation.test.ts`
+- `packages/desktop/test/e2e/infrastructure/smoke/container-boot.test.ts`
+- `packages/desktop/test/e2e/infrastructure/smoke/smoke.test.ts`
+- `packages/desktop/test/e2e/infrastructure/smoke/e2ecase-regression.test.ts`
+- `packages/desktop/test/e2e/infrastructure/smoke/upstream-provider.test.ts`
+- `packages/desktop/test/e2e/ui-shell/navigation/task-list-archive-confirmation.test.ts`
 
 The DeepSeek provider case uses fixture replay by default and never reaches the real upstream; a real key is required only with an explicit `E2E_PROVIDER_HTTP_MODE=capture`. The container path therefore covers the current core desktop e2e set, not just a boot demo.
 
@@ -47,7 +47,7 @@ Electron metrics are collected only after the WDIO Electron session is ready, so
 ## Override the spec
 
 ```bash
-E2E_SPEC=./test/e2e/smoke.test.ts pnpm run test:e2e:container
+E2E_SPEC=./test/e2e/infrastructure/smoke/smoke.test.ts pnpm run test:e2e:container
 ```
 
 ## Conversation session suite
@@ -112,7 +112,7 @@ pnpm run test:e2e:container
 The DeepSeek provider regression uses fixture replay by default and needs no real key:
 
 ```bash
-E2E_SPEC=./test/e2e/upstream-provider.test.ts \
+E2E_SPEC=./test/e2e/infrastructure/smoke/upstream-provider.test.ts \
 pnpm run test:e2e:container
 ```
 
@@ -122,7 +122,7 @@ To capture real GLM highspeed streaming data, switch explicitly to capture mode 
 E2E_PROVIDER_HTTP_MODE=capture \
 E2E_PROVIDER_PRESET=glmhighspeed \
 GLM_HIGHSPEED_E2E_API_KEY=... \
-E2E_SPEC=./test/e2e/upstream-provider.test.ts \
+E2E_SPEC=./test/e2e/infrastructure/smoke/upstream-provider.test.ts \
 pnpm run test:e2e:container
 ```
 

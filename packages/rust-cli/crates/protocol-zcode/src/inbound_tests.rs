@@ -95,6 +95,59 @@ fn commands_check_the_payload_and_the_cross_field_rules() {
     );
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): an extension source must carry a pluginId and nothing else. The shipped
+/// schema refuses the rest before the handler runs (the command is rejected with `proto.invalidPayload`).
+#[test]
+fn an_extension_source_is_checked_by_the_shipped_schema() {
+    let inbound = Inbound::get();
+    let envelope = |kind: &str, payload: Value| {
+        json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": kind,
+            "payload": payload, "issuedAt": 1})
+    };
+    let valid = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    assert!(
+        inbound
+            .command(&envelope(
+                "sendText",
+                json!({"text": "hi", "source": valid})
+            ))
+            .is_ok()
+    );
+    assert!(
+        inbound
+            .command(&envelope(
+                "createSession",
+                json!({"workspaceId": "/w", "firstInput": {"text": "hi", "source": valid}}),
+            ))
+            .is_ok()
+    );
+    let invalid = [
+        json!({"kind": "extension"}),
+        json!({"kind": "extension", "pluginId": ""}),
+        json!({"kind": "extension", "pluginId": "p", "toolCallId": "t"}),
+    ];
+    for source in invalid {
+        assert!(
+            inbound
+                .command(&envelope(
+                    "sendText",
+                    json!({"text": "hi", "source": source})
+                ))
+                .is_err(),
+            "sendText accepted {source}"
+        );
+        assert!(
+            inbound
+                .command(&envelope(
+                    "createSession",
+                    json!({"workspaceId": "/w", "firstInput": {"text": "hi", "source": source}}),
+                ))
+                .is_err(),
+            "createSession accepted {source}"
+        );
+    }
+}
+
 #[test]
 fn reverse_request_replies_follow_the_app_schema() {
     let inbound = Inbound::get();
@@ -120,4 +173,31 @@ fn reverse_request_replies_follow_the_app_schema() {
             )
             .is_ok()
     );
+}
+
+/// B2 (Node `command.ts` `stopSubagent`: zod `.strict()`, both ids `min(1)`): an empty id or an extra key is refused as
+/// `proto.invalidPayload` before the kernel, never answered as `not_found` / `not_running`.
+#[test]
+fn a_stop_subagent_payload_is_strict() {
+    let inbound = Inbound::get();
+    let envelope = |payload: Value| {
+        json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": "stopSubagent",
+            "payload": payload, "issuedAt": 1})
+    };
+    assert!(
+        inbound
+            .command(&envelope(json!({"taskId": "agent_1", "executionId": "0"})))
+            .is_ok()
+    );
+    for payload in [
+        json!({"taskId": "", "executionId": "0"}),
+        json!({"taskId": "agent_1", "executionId": ""}),
+        json!({"taskId": "agent_1"}),
+        json!({"taskId": "agent_1", "executionId": "0", "extra": true}),
+    ] {
+        assert!(
+            inbound.command(&envelope(payload.clone())).is_err(),
+            "{payload}"
+        );
+    }
 }

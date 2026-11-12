@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rust_cli_agents::{AgentCatalog, Agents, AgentsConfig, AgentsPorts, TaskTools};
+use rust_cli_agents::{AgentCatalog, Agents, AgentsConfig, AgentsPorts, StallConfig, TaskTools};
 use rust_cli_base::Spawner;
 use rust_cli_compact::{CompactConfig, CompactPorts, Compaction, DenyTools, Disabled};
 use rust_cli_context::{ContextConfig, ContextPorts, PromptAssembler};
@@ -51,25 +51,33 @@ impl SurfaceTraits {
 
 /// 会话侧 hooks 与回退事务的执行环境实例：hook 命令在主 env 上跑，与工具共用同一个实例（`operations` 的 generation）。配置快照由入口层
 /// 组装后经 `HookEngine::replace` 交进来（hooks.md §2.2）。
-pub(crate) fn hooks(ports: &Ports, operations: &Operations) -> Arc<HookEngine> {
+pub(crate) fn hooks(
+    ports: &Ports,
+    operations: &Operations,
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+) -> Arc<HookEngine> {
     let machine = ports.environments.primary_machine();
-    Arc::new(HookEngine::new(HookPorts {
-        commands: machine.commands().clone(),
-        shell: machine.shell().clone(),
-        ids: ports.ids.clone(),
-        model: Some(ports.model.clone()),
-        http: None,
-        operations: operations.clone(),
-        // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
-        artifacts: ports.artifacts.clone(),
-    }))
+    Arc::new(
+        HookEngine::new(HookPorts {
+            commands: machine.commands().clone(),
+            shell: machine.shell().clone(),
+            ids: ports.ids.clone(),
+            model: Some(ports.model.clone()),
+            http: None,
+            operations: operations.clone(),
+            // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
+            artifacts: ports.artifacts.clone(),
+        })
+        .with_incognito(incognito.clone()),
+    )
 }
 
 /// 一个判决链实例：工具注册（Edit / Write 的先读规则）与执行管线共用，会话内“总是允许”的规则因此对两边都生效。规则
 /// 快照由入口层接入配置后替换；“总是允许”落库后从会话存储读回 LocalSettings 层（shell-permissions.md §5）。
-pub(crate) fn gate(ports: &Ports) -> Arc<PolicyGate> {
+pub(crate) fn gate(ports: &Ports, node_desktop: bool) -> Arc<PolicyGate> {
     Arc::new(
         PolicyGate::default()
+            .with_node_plan_mode(node_desktop)
             .with_local_rules(Arc::new(permissions::StoredRules(ports.store.clone()))),
     )
 }
@@ -108,6 +116,8 @@ fn bash_settings(
         background_deadline: traits.non_interactive,
         bash_first_trimmed: ModeClass::of(defaults.mode) == ModeClass::Bypass,
         monitor: extensions.monitor,
+        // Fork (node_desktop): only the app-server runs like the Node desktop agent.
+        node_desktop: extensions.node_desktop,
     }
 }
 
@@ -147,6 +157,7 @@ pub(crate) fn base_tools(
             .with_tools(rust_cli_tools::interaction_tools(
                 &catalog,
                 traits.interactive,
+                ports.ids.clone(),
             ))
             .with_tools(rust_cli_tools::web_tools(side_model(), ports.clock.clone()))
             .with_tools(rust_cli_tools::cron_tools(&cron, extensions.monitor))
@@ -181,6 +192,7 @@ pub(crate) fn ext(
     (gate, spawner): (&Arc<PolicyGate>, Spawner),
     base: Arc<dyn ToolRegistry>,
     (config, traits): (rust_cli_ext::ExtConfig, SurfaceTraits),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Arc<Ext> {
     let machine = ports.environments.primary_machine();
     let ext = Arc::new(Ext::new(
@@ -193,6 +205,7 @@ pub(crate) fn ext(
             machines: Some(ports.environments.clone()),
             spawner,
             clock: ports.clock.clone(),
+            incognito: incognito.clone(),
         },
         base,
         config,
@@ -208,6 +221,7 @@ pub(crate) fn context(
     ports: &Ports,
     config: ContextConfig,
     (agent_catalog, tools, ext): (&Arc<AgentCatalog>, &BaseTools, &Ext),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Arc<PromptAssembler> {
     let machine = ports.environments.primary_machine();
     let assembler = PromptAssembler::new(
@@ -230,7 +244,8 @@ pub(crate) fn context(
         rust_cli_tools::FileChanges::new(tools.read_files.clone(), machine.files().clone())
             .with_machines(ports.environments.clone()),
     ))
-    .with_machines(ports.environments.clone());
+    .with_machines(ports.environments.clone())
+    .with_incognito(incognito.clone());
     Arc::new(assembler)
 }
 
@@ -257,7 +272,9 @@ pub(crate) fn query_parts(
         // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
         // （R3，remote-exec.md §20.6）。
         executor: Arc::new(
-            Pipeline::new(gate.clone(), hooks.clone()).with_machines(ports.environments.clone()),
+            Pipeline::new(gate.clone(), hooks.clone())
+                .with_machines(ports.environments.clone())
+                .with_incognito(ext.incognito_tools()),
         ),
         compactor: late.clone(),
         hooks: hooks.clone(),
@@ -277,7 +294,8 @@ pub(crate) fn agents(
     ports: &Ports,
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
-    (defaults, traits): (&Defaults, SurfaceTraits),
+    (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Agents {
     Agents::new(
         AgentsPorts {
@@ -286,6 +304,7 @@ pub(crate) fn agents(
             clock: ports.clock.clone(),
             machines: ports.environments.clone(),
             tasks,
+            store_queries: ports.store.clone(),
             queries: Arc::new(agents::LoopFactory {
                 parts: parts.clone(),
             }),
@@ -295,6 +314,7 @@ pub(crate) fn agents(
             spawner,
             peers: peers.port.clone(),
             operations: parts.operations.clone(),
+            incognito: incognito.clone(),
         },
         parts.tools.clone(),
         AgentsConfig {
@@ -307,7 +327,15 @@ pub(crate) fn agents(
             // 修复线 F67：交互界面里后台子代理也能询问（agents.md §4.1.1）。
             background_prompts: traits.interactive,
             // 修复线 L-A：交互会话缺省打开 fork 子代理，`-p` 关；环境变量可以改（agents.md §8.1.1）。
-            fork: defaults.limits.fork_subagent.unwrap_or(traits.interactive),
+            // Fork (node_desktop): the Node desktop agent has no fork subagent (an explicit setting still wins).
+            fork: defaults
+                .limits
+                .fork_subagent
+                .unwrap_or(traits.interactive && !node_desktop),
+            // Fork (node_desktop): Node's TaskOutput only on the app-server's agent.
+            node_desktop,
+            // 无进展提醒：`ZCODE_SUBAGENT_STALL_NOTIFY_MS`（入口已读）；没设时用 core 的缺省。
+            stall: StallConfig::new(defaults.limits.subagent_stall_notify_ms, None),
         },
     )
 }

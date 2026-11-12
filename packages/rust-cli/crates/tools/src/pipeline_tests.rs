@@ -140,11 +140,21 @@ async fn asking_the_user_follows_the_answer() {
     )
     .await;
     assert!(denied.is_error);
-    assert!(
-        text(&denied).ends_with("the user said:\nuse pnpm"),
-        "{}",
-        text(&denied)
+    // Fork: Node's `buildPermissionDeniedContent`: the full denial (STOP included), then the trimmed feedback.
+    assert_eq!(
+        text(&denied),
+        format!("{REJECT_MESSAGE} To tell you how to proceed, the user said:\nuse pnpm")
     );
+    let (blank, _) = run(
+        ask(),
+        PermissionAnswer::Deny {
+            feedback: Some("   ".to_owned()),
+        },
+        FakeTool::new("Bash", false, "out"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(text(&blank), REJECT_MESSAGE);
 }
 
 #[tokio::test]
@@ -538,4 +548,50 @@ async fn background_agents_without_prompts_get_the_denial_text() {
         events.contains(&HookEventName::PermissionRequest),
         "{events:?}"
     );
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): a tool the session's profile removes is answered like
+/// an unregistered one, before any hook or permission check; other tools run as before.
+#[tokio::test]
+async fn an_incognito_gate_refuses_a_removed_tool_before_any_hook() {
+    struct HidesCron;
+    impl rust_cli_kernel_api::incognito::IncognitoToolGate for HidesCron {
+        fn hides(&self, _session: &SessionId, tool: &dyn Tool) -> bool {
+            tool.name() == "CronCreate"
+        }
+    }
+    let hooks = Arc::new(RecordingHooks::default());
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        hooks.clone(),
+    )
+    .with_incognito(Arc::new(HidesCron));
+    let (progress, _updates) = mpsc::channel(4);
+    let output = pipeline
+        .execute(
+            Arc::new(FakeTool::new("CronCreate", false, "scheduled")),
+            json!({}),
+            context(allow()),
+            progress.clone(),
+        )
+        .await
+        .output;
+    assert!(output.is_error);
+    assert_eq!(
+        text(&output),
+        "<tool_use_error>Error: No such tool available: CronCreate</tool_use_error>"
+    );
+    assert!(hooks.0.lock().unwrap().is_empty());
+    let output = pipeline
+        .execute(
+            Arc::new(FakeTool::new("Read", true, "contents")),
+            json!({}),
+            context(allow()),
+            progress,
+        )
+        .await
+        .output;
+    assert_eq!(text(&output), "contents");
 }

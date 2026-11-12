@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, MessageId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::model::{ModelConnection, ModelSelection};
 use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::store::{
@@ -48,12 +49,25 @@ pub fn load(
         });
     let loaded = LoadedSession {
         commands: commands(&records),
+        message_models: message_models(&records),
         messages: crate::hydrate::hydrate(&active),
         earlier: crate::hydrate::hydrate(&earlier),
         model,
         mode: execution.map(|state| state.mode),
         plan: execution.is_some_and(|state| state.plan),
         meta: meta(&row),
+        // Fork: Node `isAutoTitlePending` (specs/fork-rust-agent-parity.md, first-input title timing).
+        goal_target: crate::goal_target::load(conn, session)?,
+        goal_verifications: crate::goal_verify::load(conn, session)?,
+        title_pending: matches!(
+            row.title_source.as_deref().unwrap_or("first_input"),
+            "default" | "first_input"
+        ),
+        title_source: row
+            .title_source
+            .as_deref()
+            .map(rust_cli_kernel_api::title::Source::stored),
+        permission_grant: permission_grant(conn, session)?,
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。
@@ -64,8 +78,33 @@ pub fn load(
             }
             None => false,
         },
+        // Fork: set by `fork_execution_worktree::run_in_worktree` after the load.
+        execution_worktree: false,
     };
     Ok((loaded, crate::rewind::active_checkpoints(conn, session)?))
+}
+
+/// Fork (B3): Node `restorePermissionGrantMarker`: the last stored grant receipt names the composer's adoption key; an
+/// invalid one or another session's is ignored (logged, the cold read goes on).
+fn permission_grant(conn: &Connection, session: &SessionId) -> Result<Option<String>, StoreError> {
+    let stored = crate::repo::entries::list(
+        conn,
+        session.as_str(),
+        Some(crate::records::PERMISSION_FULL_ACCESS_ENTRY),
+    )
+    .storage()?;
+    let Some(last) = stored.last() else {
+        return Ok(None);
+    };
+    let grant = crate::records::permission_grant_of(session.as_str(), &last.data);
+    if grant.is_none() {
+        tracing::warn!(
+            event = "session.resume.permission_grant_invalid",
+            session = %session,
+            "ignoring an invalid permission grant receipt"
+        );
+    }
+    Ok(grant)
 }
 
 /// Fork: the `anchor.sourceCommandId` of each user message (Node `buildProjectionAnchor` writes it for typed input), so
@@ -77,6 +116,41 @@ fn commands(records: &[messages::WithParts]) -> std::collections::BTreeMap<Messa
         .filter_map(|record| {
             let command = record.info["anchor"]["sourceCommandId"].as_str()?;
             (!command.is_empty()).then(|| (MessageId::new(record.id()), CommandId::new(command)))
+        })
+        .collect()
+}
+
+/// Fork: Node's highspeed card providers (`packages/shared/src/highspeed.ts`): a single turn's execution model, not the
+/// session's, so cold resume does not read it as a switch (Node `sessionModelSelectionOfHydratedMessage`).
+const HIGHSPEED_PROVIDERS: [&str; 2] = [
+    "account:zai-highspeed-card",
+    "account:bigmodel-highspeed-card",
+];
+
+/// Fork: the stored model of each assistant message, read like Node `assistantModelSelectionOf` (not a timeline event,
+/// both ids present, highspeed providers left out), for the cold model switch divider.
+fn message_models(
+    records: &[messages::WithParts],
+) -> std::collections::BTreeMap<MessageId, ModelSelection> {
+    records
+        .iter()
+        .filter(|record| record.info["role"] == "assistant")
+        .filter(|record| record.info["semantics"]["kind"] != "timeline_event")
+        .filter_map(|record| {
+            let provider = record.info["providerId"]
+                .as_str()
+                .filter(|id| !id.is_empty())?;
+            let model = record.info["modelId"]
+                .as_str()
+                .filter(|id| !id.is_empty())?;
+            if HIGHSPEED_PROVIDERS.contains(&provider) {
+                return None;
+            }
+            let selection = ModelSelection {
+                reasoning: record.info["reasoningLevel"].as_str().map(str::to_owned),
+                ..ModelSelection::new(provider.to_owned(), model.to_owned())
+            };
+            Some((MessageId::new(record.id()), selection))
         })
         .collect()
 }
@@ -94,6 +168,11 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
             id: SessionId::new(row.id),
             title: row.title,
             updated_at_ms: u64::try_from(row.time_updated).unwrap_or(0),
+            created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
+            last_outcome: row.last_outcome,
+            parent: row.parent_id.map(SessionId::new),
+            title_source: row.title_source,
+            incognito: row.incognito.is_some(),
         })
         .collect())
 }
@@ -119,6 +198,8 @@ fn meta(row: &SessionRow) -> SessionMeta {
         // Node 会话都写 traceID；缺失时（极旧的会话）链路 ID 取会话 ID。
         trace: TraceId::new(row.trace_id.as_deref().unwrap_or(&row.id)),
         created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
+        // Fork: a present column never reads as a normal session (unparseable values read as lockdown).
+        incognito: row.incognito.as_deref().map(IncognitoProfile::from_stored),
     }
 }
 

@@ -29,6 +29,10 @@ pub struct BashSettings {
     pub bash_first_trimmed: bool,
     /// Monitor 开着（工作线 F83，tools-more.md §19.9）：`run_in_background` 一行末尾多一句，前台的长 `sleep` 拦下。
     pub monitor: bool,
+    /// Fork (node_desktop): run like the Node desktop agent — output files under
+    /// `<tmp>/zcode-bash-<uid>/<session>/<toolCallId>-stdout.log`, Node's result texts,
+    /// throttled progress previews. Only the app-server turns it on.
+    pub node_desktop: bool,
 }
 
 impl Default for BashSettings {
@@ -39,6 +43,7 @@ impl Default for BashSettings {
             background_deadline: true,
             bash_first_trimmed: false,
             monitor: false,
+            node_desktop: false,
         }
     }
 }

@@ -52,6 +52,15 @@ impl ScriptedRunner {
 
 #[async_trait]
 impl QueryRunner for ScriptedRunner {
+    fn transcript(
+        &self,
+        _history: &[rust_cli_kernel_api::message::Message],
+        _selection: &rust_cli_kernel_api::model::ModelSelection,
+        _mid_system: Option<bool>,
+    ) -> Vec<rust_cli_kernel_api::model::ApiMessage> {
+        Vec::new()
+    }
+
     async fn run(
         &self,
         request: QueryRequest,
@@ -175,6 +184,8 @@ pub(crate) fn request(messages: Vec<Message>, trigger: CompactTrigger) -> Compac
 
 pub(crate) fn human(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -212,6 +223,8 @@ pub(crate) fn tool_round(index: usize, tool: &str, path: &str) -> [Message; 2] {
             usage: None,
         }),
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new(format!("r_tool_{index}")),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: id,

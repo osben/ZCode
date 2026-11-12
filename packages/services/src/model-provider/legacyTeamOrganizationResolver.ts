@@ -13,9 +13,13 @@ import type {
 /** Used only to import legacy connections: reads OAuth user information without depending on the current Provider or requesting a team key. Remove after the legacy version is retired. */
 export function createLegacyTeamOrganizationResolver(dependencies: {
   apiClient: ApiClient;
-  loadOAuthTokenSet: (
-    family: ProviderFamilyDomain,
-  ) => Promise<{ accessToken: string; zcodeJwtToken?: string | null } | null>;
+  loadOAuthTokenSet: (family: ProviderFamilyDomain) => Promise<{
+    accessToken: string;
+    zcodeJwtToken?: string | null;
+    sessionRevision?: string | null;
+    accountIdentity?: string;
+    zcodeUserId?: string;
+  } | null>;
 }): (connection: LegacyTeamConnection) => Promise<string | null> {
   return async ({ family, projectId }) => {
     const tokens = await dependencies.loadOAuthTokenSet(family);
@@ -38,7 +42,15 @@ export function createLegacyTeamOrganizationResolver(dependencies: {
     const payload = (await response.json()) as RemoteEnvelope<RemoteCustomerInfo>;
     if (payload.code !== undefined && payload.code !== 0 && payload.code !== 200) return null;
     // Switching accounts invalidates the old query; do not assign its organization to the new account even if the project IDs happen to match.
-    if ((await dependencies.loadOAuthTokenSet(family))?.accessToken.trim() !== token) return null;
+    const latest = await dependencies.loadOAuthTokenSet(family);
+    if (
+      latest?.accessToken.trim() !== token ||
+      latest?.zcodeJwtToken !== tokens?.zcodeJwtToken ||
+      latest?.sessionRevision !== tokens?.sessionRevision ||
+      latest?.accountIdentity !== tokens?.accountIdentity ||
+      latest?.zcodeUserId !== tokens?.zcodeUserId
+    )
+      return null;
     const organizations = new Set(
       (payload.data?.organizations ?? [])
         .filter((org) => org.projects?.some((project) => project.projectId?.trim() === projectId))

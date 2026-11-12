@@ -97,8 +97,14 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
             kind(out, "text");
             text_field(out, "text", text);
         }
-        ContentBlock::Image { source } => {
+        ContentBlock::Image { source, .. } => {
             kind(out, "image");
+            key(out, "source", false);
+            image_source(out, source)?;
+        }
+        // Fork: Node's patched `@ai-sdk/anthropic` writes a video file part as an image-shaped `video` block.
+        ContentBlock::Video { source, .. } => {
+            kind(out, "video");
             key(out, "source", false);
             image_source(out, source)?;
         }

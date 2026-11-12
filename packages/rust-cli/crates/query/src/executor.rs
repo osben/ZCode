@@ -123,7 +123,8 @@ impl ToolBatch {
     }
 
     pub(crate) fn add(&mut self, id: ToolUseId, name: String, input: Value, assistant: MessageId) {
-        let tool = self.scope.parts.tools.find(&name);
+        // Fork: the session's tool for this name (an incognito profile may hide a namesake).
+        let tool = self.scope.parts.tools.find_for(&self.scope.session, &name);
         // 找不到、它的服务器在首次连接时排成不可并发的调用，执行时再等。
         let waits_for_mcp = tool.is_none() && mcp_wait::connecting(&self.scope, &name);
         let (safe, status) = match &tool {
@@ -258,6 +259,19 @@ impl ToolBatch {
             .push(run.map(move |output| (index, output)).boxed());
     }
 
+    /// The call the last `add` put in the batch, when it will run (Node `ToolCallScheduled`). An unknown tool's
+    /// immediate result is not scheduled, so nothing waits for it to finish.
+    pub(crate) fn scheduled(&self) -> Option<(ToolUseId, String, Value)> {
+        let tracked = self.tools.last()?;
+        (!matches!(tracked.status, Status::Completed(_))).then(|| {
+            (
+                tracked.id.clone(),
+                tracked.name.clone(),
+                tracked.input.clone(),
+            )
+        })
+    }
+
     /// 这次响应里加入的调用数（日志用）。
     pub(crate) fn len(&self) -> usize {
         self.tools.len()
@@ -370,6 +384,8 @@ impl ToolBatch {
 
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: self.scope.parts.ids.message(),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: id.clone(),
@@ -466,6 +482,7 @@ async fn execute(
         agent: scope.agent.clone(),
         workspace: view.workspace,
         mode: view.mode,
+        base_mode: view.base_mode,
         cancel,
         // 缺省机器（R3，remote-exec.md §20.6）：主线程是本机，子代理是派生时给的机器；执行管线再按调用的 `machine` 换。
         machine: scope.default_machine_env(),

@@ -320,6 +320,8 @@ impl Start {
         let overload_retry = retries_overload(&request.source);
         // 模型不接受图片时换成占位文字（model.md §10.5），三种协议共用。
         crate::media::project(&mut request.messages, &endpoint);
+        // Fork: Node's 40 MiB request media budget, after the capability projection like Node.
+        crate::media::budget(&mut request.messages)?;
         let profile = route.profile(&endpoint);
         let vendor = route.vendor(&endpoint);
         tracing::debug!(

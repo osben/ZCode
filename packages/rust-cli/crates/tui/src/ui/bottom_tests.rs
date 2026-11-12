@@ -55,10 +55,14 @@ fn finished() -> KernelEvent {
 fn queued(text: &str) -> KernelEvent {
     KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            edit_lock: None,
+            intent: None,
             command: CommandId::new("c2"),
             text: text.to_owned(),
             // 等下一轮的（栈只放它们；插进这一回合的在 transcript 的尾巴里，tui-kit.md §4.0）。
             delivery: Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
         }],
     }
 }
@@ -147,9 +151,13 @@ fn the_queue_is_puffins_stack() {
     let mut app = app_in(Lang::En);
     let items = (1..=6)
         .map(|i| QueuedInput {
+            edit_lock: None,
+            intent: None,
             command: CommandId::new(format!("c{i}")),
             text: format!("message {i}\nline two"),
             delivery: Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
         })
         .collect();
     feed(&mut app, vec![KernelEvent::QueueChanged { items }]);

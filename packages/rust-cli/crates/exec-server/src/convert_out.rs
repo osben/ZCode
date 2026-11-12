@@ -302,6 +302,8 @@ pub(crate) fn background_info(info: BackgroundInfo) -> ws::BackgroundInfo {
         status,
         kind,
         description,
+        // Fork: the wire format carries no output path (local machines only).
+        output: _,
     } = info;
     ws::BackgroundInfo {
         command,
@@ -399,6 +401,7 @@ pub(crate) fn command_event(event: CommandEvent, body: &mut BodyBuilder) -> wc::
             wc::CommandEvent::Backgrounded
         }
         CommandEvent::Finished {
+            output_unreadable: _,
             outcome: ended,
             exit_code,
             timed_out,

@@ -162,8 +162,11 @@ mod reference {
             ContentBlock::Text { text: body } => {
                 object([("type", text("text")), ("text", Value::String(body))])
             }
-            ContentBlock::Image { source } => {
+            ContentBlock::Image { source, .. } => {
                 object([("type", text("image")), ("source", image_source(source)?)])
+            }
+            ContentBlock::Video { source, .. } => {
+                object([("type", text("video")), ("source", image_source(source)?)])
             }
             ContentBlock::Thinking {
                 thinking,
@@ -360,6 +363,7 @@ fn item(block: ContentBlock, cache_control: Option<CacheControl>) -> ApiContent 
     ApiContent {
         block,
         cache_control,
+        meta: false,
     }
 }
 
@@ -404,7 +408,13 @@ fn shapes() -> Vec<ApiMessage> {
                     },
                     None,
                 ),
-                item(ContentBlock::Image { source: image() }, cache(None, None)),
+                item(
+                    ContentBlock::Image {
+                        source: image(),
+                        name: None,
+                    },
+                    cache(None, None),
+                ),
             ],
             None,
         ),
@@ -575,7 +585,13 @@ fn unmaterialized_images_fail_the_same_way() {
     };
     let request = request(vec![message(
         ApiRole::User,
-        vec![item(ContentBlock::Image { source: artifact }, None)],
+        vec![item(
+            ContentBlock::Image {
+                source: artifact,
+                name: None,
+            },
+            None,
+        )],
         None,
     )]);
     let old = reference::body_value(request.clone(), false, &[]).unwrap_err();

@@ -27,6 +27,7 @@ impl ModelDirectory for LeveledDirectory {
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: None,
+            host: None,
         };
         ModelCatalog {
             revision: 1,

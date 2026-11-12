@@ -5,8 +5,11 @@
 // projection attributes, and the old ChatView DOM is no longer depended on.
 // The old helper's login/workspace/provider parts are still reused
 // (desktop-app.ts / upstream-provider.ts).
+import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
 import {
   TID_CHAT_ERROR_DETAILS_BUTTON,
+  TID_CHAT_ATTACHMENT_BUTTON,
+  TID_CHAT_ATTACHMENT_MENU_ITEM,
   TID_CHAT_MODE_SELECT_ITEM,
   TID_CHAT_MODE_SELECT_TRIGGER,
   TID_CHAT_SUMMARY_PANEL,
@@ -20,6 +23,7 @@ import {
   TID_LOGIN_API_KEY_CONTINUE_BUTTON,
   TID_LOGIN_API_KEY_INPUT,
   TID_LOGIN_USE_API_KEY_BUTTON,
+  TID_TASK_DELETE_CONFIRM,
   TID_TASK_ITEM,
   TID_TASK_NEW_BUTTON,
   TID_V4_AUTODRAIN_TOGGLE,
@@ -32,9 +36,7 @@ import {
   TID_V4_COMPOSER_KEEP_QUEUE_SEND,
   TID_V4_COMPOSER_SEND,
   TID_V4_EDIT,
-  TID_V4_EDIT_INPUT,
   TID_V4_EDIT_REWIND_WORKSPACE,
-  TID_V4_EDIT_SUBMIT,
   TID_V4_EDIT_WORKSPACE_CONFLICT_CONVERSATION_ONLY,
   TID_V4_EDIT_WORKSPACE_CONFLICT_DIALOG,
   TID_V4_FOLLOWUP_TOGGLE,
@@ -77,9 +79,43 @@ import { getTaskStoreSnapshot as readTaskStoreSnapshotForDiagnostics } from "./c
 import { consumeDraftRegenerationResend } from "#e2e/helpers/draft-regeneration-resend";
 import { sel } from "./selectors.js";
 import { skipOccupationOnboardingIfPresent } from "./occupation-onboarding.js";
+import { openLatestV4UserQueryEditInComposer } from "./v4-composer-edit.js";
 
 export const LOGIN_API_KEY = "e2e-login-api-key";
 export const E2E_REPLY_TOKEN = "upstream-e2e-ok";
+
+/** 经真实附件菜单打开文件 input，再让 WebDriver 注入有磁盘路径的 File。 */
+export async function pickV4ComposerFiles(paths: string[]) {
+  const inputSelector = `[data-testid="${TID_V4_COMPOSER}"] input[type="file"]`;
+  await browser.waitUntil(
+    () => browser.execute((selector) => Boolean(document.querySelector(selector)), inputSelector),
+    { timeout: 15_000, timeoutMsg: "v4 Composer 文件 input 没有出现" },
+  );
+  await browser.execute((selector) => {
+    const input = document.querySelector<HTMLInputElement>(selector);
+    if (!input) throw new Error("v4 Composer 文件 input 不存在");
+    // Bug 根因：native picker 不属于页面 DOM，E2E 无法用真实文件路径通过 WebDriver 选择。
+    // 临时显示 input 供 WebDriver 设置磁盘文件，仍让 Chromium 创建带本机路径的 File。
+    input.classList.remove("hidden");
+    input.style.position = "fixed";
+    input.style.left = "0";
+    input.style.top = "0";
+    input.style.width = "1px";
+    input.style.height = "1px";
+    input.style.opacity = "0";
+    input.addEventListener("click", (event) => event.preventDefault(), {
+      capture: true,
+      once: true,
+    });
+  }, inputSelector);
+  const trigger = await $(`[data-testid="${TID_CHAT_ATTACHMENT_BUTTON}"]`);
+  await trigger.waitForClickable({ timeout: 15_000 });
+  await trigger.click();
+  const menuItem = await $(`[data-testid="${TID_CHAT_ATTACHMENT_MENU_ITEM}"]`);
+  await menuItem.waitForClickable({ timeout: 10_000 });
+  await menuItem.click();
+  await $(inputSelector).setValue(paths.join("\n"));
+}
 
 interface PrepareV4ConversationE2EOptions {
   resetDraftBeforeProvider?: boolean;
@@ -153,6 +189,51 @@ export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2E
     await selectUpstreamModel();
     await selectUpstreamThoughtLevel();
   }
+  if (!options.skipShellReady) {
+    await waitForV4WorkspacePresentationReady();
+  }
+}
+
+/**
+ * 等待 workspace presentation（slash 目录）写入 renderer store。
+ *
+ * 修复原因：全新 HOME 下 agent 首次 readPresentation 会同步 seed 官方插件缓存（约 97MB），
+ * 阻塞 agent 事件循环 10-17s，期间首条 session/create 只能排队，首发 ACK 晚于 composer
+ * 清空断言的等待时间。presentation 是该次 seed 的唯一完成事实；准备阶段先等它，
+ * 让用例只验证自身语义。产品侧的冷启动耗时另见
+ * docs/issues/official-plugin-seed/01-sync-seed-blocks-cli-event-loop.md。
+ */
+export async function waitForV4WorkspacePresentationReady(
+  workspacePath: string = DEFAULT_WORKSPACE,
+  timeout = 60_000,
+) {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (targetPath, caseInsensitive) => {
+          const workspaces = (
+            window as Window & {
+              __zcodeSessionStoreE2E?: {
+                getState(): { workspaces: Record<string, { slashCommands?: unknown[] }> };
+              };
+            }
+          ).__zcodeSessionStoreE2E?.getState().workspaces;
+          // Windows 路径大小写不敏感，store key 可能与夹具路径的盘符/目录大小写不同。
+          const normalize = (path: string) => (caseInsensitive ? path.toLowerCase() : path);
+          return Object.entries(workspaces ?? {}).some(
+            ([key, workspace]) =>
+              normalize(key) === normalize(targetPath) &&
+              (workspace.slashCommands?.length ?? 0) > 0,
+          );
+        },
+        workspacePath,
+        process.platform === "win32",
+      ),
+    {
+      timeout,
+      timeoutMsg: `workspace presentation 没有就绪（slash 目录为空）: ${workspacePath}`,
+    },
+  );
 }
 
 async function ensureV4ShellReady() {
@@ -662,10 +743,44 @@ export async function setV4ComposerText(text: string) {
 }
 
 export async function waitForV4ComposerText(expected: string, timeoutMsg: string, timeout = 10000) {
-  await browser.waitUntil(async () => (await getV4ComposerText()) === expected, {
-    timeout,
-    timeoutMsg,
-  });
+  try {
+    await browser.waitUntil(async () => (await getV4ComposerText()) === expected, {
+      timeout,
+      timeoutMsg,
+    });
+  } catch (error) {
+    const actual = await getV4ComposerText().catch(() => "<unreadable>");
+    const state = await getV4ConversationState().catch((stateError) => ({
+      error: stateError instanceof Error ? stateError.message : String(stateError),
+    }));
+    const ui = await browser
+      .execute(() => {
+        const tabs = (window as any).__zcodeTabStoreE2E?.getState();
+        return {
+          tabs: JSON.stringify(tabs?.tabs ?? null).slice(0, 1500),
+          active: tabs?.activeTabId ?? null,
+          taskItems: Array.from(document.querySelectorAll('[data-testid^="task-item"]')).map((el) =>
+            (el.textContent ?? "").slice(0, 60),
+          ),
+          projects: Array.from(document.querySelectorAll("[data-project-name]")).map((el) =>
+            el.getAttribute("data-project-name"),
+          ),
+          onboarding: Boolean(document.querySelector('[data-testid="onboarding-page"]')),
+          projectSection: Boolean(document.querySelector('[data-testid="project-section"]')),
+          sidebarText: (document.querySelector("aside, nav")?.textContent ?? "").slice(0, 600),
+          panes: Array.from(document.querySelectorAll('[data-testid^="v4-session-pane-"]')).map(
+            (el) => el.getAttribute("data-testid"),
+          ),
+        };
+      })
+      .catch((e) => String(e));
+    throw new Error(
+      `${timeoutMsg}; composer=${JSON.stringify(actual)}; state=${JSON.stringify(state)}; ui=${JSON.stringify(ui)}`,
+      {
+        cause: error,
+      },
+    );
+  }
 }
 
 /** Clicks the v4 composer send button (input already written by the caller, e.g. a slash command). */
@@ -817,9 +932,16 @@ export async function clickV4Stop() {
   });
 }
 
+// Reason: when a worktree is available the fork button becomes a dropdown (ForkDestinationMenu) whose
+// items use testids v4-fork-here-* / v4-fork-to-worktree-*. They also match the legacy ^="v4-fork-" prefix,
+// and clicking only the trigger does not fork. The selector excludes the menu items; when the trigger is a
+// menu, pick "Fork here", which keeps the same direct-fork semantics as without a worktree.
+const V4_FORK_TRIGGER_SELECTOR =
+  '[data-testid^="v4-fork-"]:not([data-testid^="v4-fork-here-"]):not([data-testid^="v4-fork-to-worktree-"])';
+
 /** Clicks the first visible fork button (a completed assistant row); returns whether one was clicked. */
 export async function clickFirstV4Fork() {
-  const buttons = await browser.$$('[data-testid^="v4-fork-"]');
+  const buttons = await browser.$$(V4_FORK_TRIGGER_SELECTOR);
   for (const button of buttons) {
     await moveV4ForkRowIntoHoverState(button);
     if (!(await button.isDisplayed()) || !(await button.isEnabled())) {
@@ -831,6 +953,15 @@ export async function clickFirstV4Fork() {
     // Use a native WebDriver click — same button, same assertion semantics — to guarantee real
     // pointer/click events are fired.
     await button.click();
+    if ((await button.getAttribute("aria-haspopup")) === "menu") {
+      const rowId = (await button.getAttribute("data-testid"))!.slice("v4-fork-".length);
+      const forkHere = $(`[data-testid="v4-fork-here-${rowId}"]`);
+      await forkHere.waitForClickable({
+        timeout: 10000,
+        timeoutMsg: "fork 菜单没有出现「在此处 fork」",
+      });
+      await forkHere.click();
+    }
     return true;
   }
   return false;
@@ -839,7 +970,7 @@ export async function clickFirstV4Fork() {
 export async function waitForV4Fork(timeout = 60000) {
   await browser.waitUntil(
     async () => {
-      const buttons = await browser.$$('[data-testid^="v4-fork-"]');
+      const buttons = await browser.$$(V4_FORK_TRIGGER_SELECTOR);
       for (const button of buttons) {
         await moveV4ForkRowIntoHoverState(button);
         if ((await button.isDisplayed()) && (await button.isEnabled())) {
@@ -930,7 +1061,7 @@ export async function clickV4QueueItemDelete(queueItemId: string) {
   }, queueItemId);
 }
 
-/** Clicks a queue item's edit button (by queueItemId; pulls back into the composer). */
+/** Clicks a queue item's edit button (by queueItemId; freezes that item and enters composer edit mode). */
 export async function clickV4QueueItemEdit(queueItemId: string, clickCount = 1) {
   return browser.execute(
     (id, count) => {
@@ -1114,27 +1245,27 @@ export async function openV4ComposerRunningBackgroundWorks(timeout = 30000) {
   });
   await browser.waitUntil(
     async () =>
-      browser.execute(
-        (panelTestId, itemPrefix) => {
-          const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
-          const terminalCount = Number(panel?.dataset.runningTerminalCount ?? "0");
-          const agentCount = Number(panel?.dataset.runningAgentCount ?? "0");
-          const terminalTrigger = panel?.querySelector<HTMLElement>(
-            '[data-status-section-trigger="terminal"]',
-          );
-          const agentTrigger = panel?.querySelector<HTMLElement>(
-            '[data-status-section-trigger="agent"]',
-          );
-          return Boolean(
-            panel?.dataset.state === "expanded" &&
-            (terminalCount === 0 || terminalTrigger?.getAttribute("aria-expanded") === "true") &&
-            (agentCount === 0 || agentTrigger?.getAttribute("aria-expanded") === "true") &&
-            panel.querySelector(`[data-testid^="${itemPrefix}-"]`),
-          );
-        },
-        TID_CHAT_SUMMARY_PANEL,
-        TID_V4_BACKGROUND_WORK_ITEM,
-      ),
+      browser.execute((panelTestId) => {
+        const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
+        const terminalCount = Number(panel?.dataset.runningTerminalCount ?? "0");
+        const agentCount = Number(panel?.dataset.runningAgentCount ?? "0");
+        const terminalTrigger = panel?.querySelector<HTMLElement>(
+          '[data-status-section-trigger="terminal"]',
+        );
+        const agentTrigger = panel?.querySelector<HTMLElement>(
+          '[data-status-section-trigger="agent"]',
+        );
+        // Bug 原因：Agent 行改用 taskId/executionId 停止身份后，testid 固定为
+        // `v4-running-subagent-item`，不再是 `v4-background-work-item-<workId>`；
+        // 只有 Agent 在跑时旧判定永远找不到行而超时。三类行共有的结构属性是
+        // `data-background-task-kind`，按它判定“已有明细行”。
+        return Boolean(
+          panel?.dataset.state === "expanded" &&
+          (terminalCount === 0 || terminalTrigger?.getAttribute("aria-expanded") === "true") &&
+          (agentCount === 0 || agentTrigger?.getAttribute("aria-expanded") === "true") &&
+          panel.querySelector("[data-background-task-kind]"),
+        );
+      }, TID_CHAT_SUMMARY_PANEL),
     { timeout, timeoutMsg: "Composer 入口没有直达展开的终端/智能体明细" },
   );
 }
@@ -1143,43 +1274,40 @@ export async function openV4ComposerRunningBackgroundWorks(timeout = 30000) {
 export async function openV4RunningBackgroundWorks(timeout = 30000) {
   await browser.waitUntil(
     async () =>
-      browser.execute(
-        (panelTestId, itemPrefix) => {
-          const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
-          if (!panel || Number(panel.dataset.runningBackgroundCount ?? "0") < 1) {
-            return false;
+      browser.execute((panelTestId) => {
+        const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
+        if (!panel || Number(panel.dataset.runningBackgroundCount ?? "0") < 1) {
+          return false;
+        }
+        if (panel.dataset.state === "collapsed") {
+          panel.querySelector<HTMLButtonElement>("button")?.click();
+          return false;
+        }
+        const sections = [
+          {
+            count: Number(panel.dataset.runningTerminalCount ?? "0"),
+            name: "terminal",
+          },
+          {
+            count: Number(panel.dataset.runningAgentCount ?? "0"),
+            name: "agent",
+          },
+        ];
+        let allOpen = true;
+        for (const section of sections) {
+          if (section.count === 0) continue;
+          const trigger = panel.querySelector<HTMLButtonElement>(
+            `[data-status-section-trigger="${section.name}"]`,
+          );
+          if (!trigger) return false;
+          if (trigger.getAttribute("aria-expanded") !== "true") {
+            trigger.click();
+            allOpen = false;
           }
-          if (panel.dataset.state === "collapsed") {
-            panel.querySelector<HTMLButtonElement>("button")?.click();
-            return false;
-          }
-          const sections = [
-            {
-              count: Number(panel.dataset.runningTerminalCount ?? "0"),
-              name: "terminal",
-            },
-            {
-              count: Number(panel.dataset.runningAgentCount ?? "0"),
-              name: "agent",
-            },
-          ];
-          let allOpen = true;
-          for (const section of sections) {
-            if (section.count === 0) continue;
-            const trigger = panel.querySelector<HTMLButtonElement>(
-              `[data-status-section-trigger="${section.name}"]`,
-            );
-            if (!trigger) return false;
-            if (trigger.getAttribute("aria-expanded") !== "true") {
-              trigger.click();
-              allOpen = false;
-            }
-          }
-          return allOpen && Boolean(panel.querySelector(`[data-testid^="${itemPrefix}-"]`));
-        },
-        TID_CHAT_SUMMARY_PANEL,
-        TID_V4_BACKGROUND_WORK_ITEM,
-      ),
+        }
+        // 同上：Agent 行没有 `v4-background-work-item-*` testid，按共有结构属性判定。
+        return allOpen && Boolean(panel.querySelector("[data-background-task-kind]"));
+      }, TID_CHAT_SUMMARY_PANEL),
     { timeout, timeoutMsg: "status panel 没有展开终端/智能体 background work" },
   );
 }
@@ -1271,7 +1399,9 @@ export async function clickV4DeleteSession() {
   const deleteButton = archived.$('[data-testid="archive-delete"]');
   await deleteButton.waitForClickable({ timeout: 15000 });
   await deleteButton.click();
-  const confirm = $('[data-testid="confirm-dialog-confirm"]');
+  // Fork: archive delete is permanent and confirmed in the task delete dialog (useTaskDeleteDialog),
+  // not the generic confirm dialog.
+  const confirm = $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`);
   await confirm.waitForDisplayed({ timeout: 15000 });
   await confirm.click();
   await archived.waitForExist({ reverse: true, timeout: 15000 });
@@ -1390,8 +1520,11 @@ export async function switchV4Model(provider: string, model: string, thought: st
   await modelTrigger.waitForClickable({ timeout: 30000 });
   await modelTrigger.click();
   await browser.waitUntil(
-    async () =>
-      browser.execute(
+    async () => {
+      // 已有会话切 Provider 需等待配置 ACK；保持原面板，仅在已收起时重新打开。
+      await modelTrigger.waitForClickable({ timeout: 30000 });
+      if ((await modelTrigger.getAttribute("aria-expanded")) !== "true") await modelTrigger.click();
+      return browser.execute(
         (itemTestId, groupTestIds) => {
           const item = document.querySelector<HTMLElement>(`[data-testid="${itemTestId}"]`);
           if (item) {
@@ -1422,7 +1555,8 @@ export async function switchV4Model(provider: string, model: string, thought: st
         },
         modelItemTestId,
         providerGroupTestIds,
-      ),
+      );
+    },
     {
       timeout: 45000,
       timeoutMsg: `v4 模型选择器没有出现目标模型项: ${provider}/${model}`,
@@ -1437,6 +1571,13 @@ export async function switchV4Model(provider: string, model: string, thought: st
     timeoutMsg: `模型切换后 config.model 投影没有更新为 ${model}`,
   });
 
+  // The combined composer menu renders the thought slider inside the model menu, so the standalone
+  // thought trigger may not exist; use the combined path first.
+  if (thought && (await selectCombinedComposerThoughtLevel(thought))) return;
+  if (!thought && (await modelTrigger.getAttribute("data-composer-combined-model")) === "true") {
+    await browser.keys("Escape");
+    return;
+  }
   // Custom providers without reasoning metadata render no thought selector. Protocol-type E2Es
   // pass an empty value to mean "switch the model only"; a missing reasoning-depth control must
   // not be treated as a model-switch failure.
@@ -1530,87 +1671,24 @@ export function getV4GoalProjection(): Promise<{
   );
 }
 
-/** Opens the latest user query's inline edit and fills in new text, without submitting. */
+/**
+ * Opens the composer edit mode for the latest user query and writes the new text, without submitting.
+ * Editing reuses the bottom composer (docs/ui/composer-edit-mode.md); the original draft is held by the product and is not part of newText.
+ */
 export async function beginFirstV4UserQueryEdit(newText: string) {
-  let rowId: string | null = null;
-  let lastClickedRowId: string | null = null;
-  let lastClickedAt = 0;
-  await browser.waitUntil(
-    async () => {
-      const state = await browser.execute(
-        (editPrefix, editInputPrefix) => {
-          const actionPattern = new RegExp(`^${editPrefix}-(\\d+)$`);
-          const inputPattern = new RegExp(`^${editInputPrefix}-(\\d+)$`);
-          const testIds = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]"));
-          const input = testIds
-            .filter((candidate) => inputPattern.test(candidate.dataset.testid ?? ""))
-            .at(-1);
-          if (input) {
-            return {
-              inputRowId: inputPattern.exec(input.dataset.testid ?? "")?.[1] ?? null,
-              actionRowId: null,
-            };
-          }
-          const action = testIds
-            .filter((candidate) => actionPattern.test(candidate.dataset.testid ?? ""))
-            .at(-1);
-          return {
-            inputRowId: null,
-            actionRowId: actionPattern.exec(action?.dataset.testid ?? "")?.[1] ?? null,
-          };
-        },
-        TID_V4_EDIT,
-        TID_V4_EDIT_INPUT,
-      );
-      if (state.inputRowId) {
-        rowId = state.inputRowId;
-        return true;
-      }
-      if (!state.actionRowId) return false;
-
-      const now = Date.now();
-      if (lastClickedRowId !== state.actionRowId || now - lastClickedAt >= 500) {
-        lastClickedRowId = state.actionRowId;
-        lastClickedAt = now;
-        await clickTestIdByDom(testId(TID_V4_EDIT, state.actionRowId), {
-          timeout: 2000,
-          timeoutMsg: `v4 行内编辑按钮在 projection 收口时消失: rowId=${state.actionRowId}`,
-        }).catch(() => undefined);
-      }
-      return false;
-    },
-    {
-      timeout: 15000,
-      timeoutMsg: "v4 latest user edit action 出现后没有进入稳定行内编辑态",
-      interval: 100,
-    },
-  );
-  if (!rowId) {
-    throw new Error("v4 latest user edit action 没有出现");
-  }
-  // Bug root cause: compact success projects the success marker first and cleans up the active
-  // work afterwards; between those two frames the old edit action may be briefly visible before
-  // the canEdit gate pulls it. A single DOM click would close the just-opened local editing state
-  // together with the vanished onEdit. Wait for a stable input and retry once the action is
-  // back.
-  await setInputValueByTestIdDom(testId(TID_V4_EDIT_INPUT, rowId), newText, {
-    timeout: 15000,
-    timeoutMsg: `v4 行内编辑输入框没有出现: rowId=${rowId}`,
-  });
+  const rowId = await openLatestV4UserQueryEditInComposer();
+  await setV4ComposerText(newText);
   return rowId;
 }
 
-/** Submits the latest user query through the real inline-edit interaction; the main composer draft is not involved. */
+/** Submits the latest user query through the real composer edit mode: the send button in edit mode routes to editUserQuery. */
 export async function editFirstV4UserQuery(newText: string) {
   const rowId = await beginFirstV4UserQueryEdit(newText);
-  await clickTestIdByDom(testId(TID_V4_EDIT_SUBMIT, rowId), {
-    timeout: 15000,
-    timeoutMsg: `v4 行内编辑提交按钮没有出现: rowId=${rowId}`,
-  });
+  await clickV4Send();
   return rowId;
 }
 
-/** Submits the inline edit's "conversation + files reset" path. */
+/** Submits the "conversation + files reset" action in the edit-mode status bar. */
 export async function clickV4EditWorkspaceReset(rowId: string) {
   await clickTestIdByDom(testId(TID_V4_EDIT_REWIND_WORKSPACE, rowId), {
     timeout: 15000,
@@ -1705,6 +1783,32 @@ export async function renameV4Session(title: string) {
   await input.setValue(title);
   await input.addValue("\uE007");
   await input.waitForExist({ reverse: true, timeout: 15000 });
+}
+
+/** Double-clicking a task row opens the same rename dialog; `view` selects the by-project or by-group row component. */
+export async function renameV4SessionByDoubleClick(
+  title: string,
+  options: { view?: "projects" | "grouped" } = {},
+) {
+  const { sessionId } = await getV4PaneSnapshot();
+  if (!sessionId || sessionId === "draft") throw new Error("重命名要求已建立的会话");
+  const rowSelector = `[data-testid="${TID_TASK_ITEM}-${sessionId}"]`;
+  const row =
+    options.view === "grouped"
+      ? $(`[data-testid="task-grouped-view"] ${rowSelector}`)
+      : $(rowSelector);
+  await row.waitForDisplayed({ timeout: 15000 });
+  await row.doubleClick();
+  const dialog = $('[role="dialog"]');
+  await dialog.waitForDisplayed({ timeout: 15000 });
+  expect(await $$('[role="dialog"]').length).toBe(1);
+  const input = dialog.$("input");
+  await input.waitForDisplayed({ timeout: 15000 });
+  // The double-click entry must reuse the context-menu rename dialog and prefill the current title.
+  expect(await input.getValue()).not.toBe("");
+  await input.setValue(title);
+  await input.addValue("\uE007");
+  await dialog.waitForExist({ reverse: true, timeout: 15000 });
 }
 
 /** Reads the input control bar: autoDrain (data-auto-drain) and followupMode (data-followup-mode). */

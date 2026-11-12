@@ -264,12 +264,25 @@ pub(crate) fn process(
     if json.get("continue") == Some(&Value::Bool(false)) {
         result.prevent = true;
         result.stop_reason = string(json, "stopReason");
+        // Node `hooks/output.ts`: `stopReason ?? reason` for every event but Stop (where Node ignores
+        // `continue: false`; Rust keeps its own Stop handling).
+        if event != "Stop" && result.stop_reason.is_none() {
+            result.stop_reason.clone_from(&reason);
+        }
     }
     match json.get("decision").and_then(Value::as_str) {
         Some("approve") => result.behavior = Some(Behavior::Allow),
         Some("block") => {
             result.behavior = Some(Behavior::Deny);
             result.blocking = Some(block(reason.clone()));
+            result.block_requested = true;
+            // Node `hooks/output.ts`: `stopReason ?? reason ?? systemMessage`, replacing the `continue: false` one
+            // (Rust keeps its own Stop handling).
+            if event != "Stop" {
+                result.stop_reason = string(json, "stopReason")
+                    .or_else(|| reason.clone())
+                    .or_else(|| string(json, "systemMessage"));
+            }
         }
         _ => {}
     }

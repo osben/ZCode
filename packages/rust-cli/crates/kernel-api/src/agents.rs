@@ -59,11 +59,56 @@ pub struct AgentNotice {
     pub text: String,
 }
 
+/// Fork (node_desktop): one event of a subagent run in its own child session. The run writes the child session
+/// directly, not through that session's actor, so the actor mirrors these for an open side tab
+/// (specs/fork-rust-agent-parity.md, side-pane tab of a running subagent).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChildLive {
+    /// A run started. `run` is unique within the process (a later run of the same child has a higher number), and
+    /// `selection` is the model the run uses (a subagent definition can name its own).
+    Started {
+        run: u64,
+        selection: crate::model::ModelSelection,
+    },
+    /// A query event of the run: stream deltas, tool start, progress and finish, model notices.
+    Event(crate::orchestration::QueryEvent),
+    /// A message the run has already stored in the child session.
+    Committed(crate::message::Message),
+    Finished(crate::session_api::TurnOutcome),
+}
+
+/// Fork: the current child run so far (`Started`, the messages stored during it, the events since the last stored
+/// message) and the later events, taken under one lock so nothing falls between them. The live stream ends when the
+/// subscriber falls behind; the subscriber then takes a new feed.
+pub struct ChildLiveFeed {
+    pub replay: Vec<ChildLive>,
+    pub live: BoxStream<'static, ChildLive>,
+}
+
+/// 后台子代理的无进展提醒（Node `subagent-stall-reminder.ts`，specs/fork-rust-agent-parity.md「Background subagent
+/// stall reminder」）。不是终态通知：不 ack、不计入后台工作，只进对话的通知通道，全文不再包装。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentStall {
+    /// 长时间没有进展的后台子代理。
+    pub agent: AgentId,
+    /// 提醒全文（`[SYSTEM NOTIFICATION …]` 开头，Node 的 `formatBackgroundSubagentStallNotification` 原样）。
+    pub text: String,
+    /// 提醒所依据的运行的计数（#418 的 `execution`，只用来判断是不是同一次运行）。
+    pub execution: u64,
+    /// 提醒所依据的运行的 execution id（Node `executionId`，每次运行一个 UUID）：stopControl 用的是同一个值，写进
+    /// `subagentStall.executionId`。
+    pub execution_id: String,
+    /// 提醒所依据的最后一次进展（Node `lastProgressAt`）。出队时进展前进了，提醒就过时。
+    pub progress_ms: u64,
+}
+
 /// 发给某个会话的信号。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentSignal {
     Notice(AgentNotice),
+    /// 无进展提醒（不 ack，交出后即不再保留）。
+    Stall(AgentStall),
     /// 任务清单变了；`tasks` 是变化后的完整清单（[`TaskList::tasks`] 的 JSON）。
     TasksChanged {
         tasks: Value,
@@ -77,6 +122,12 @@ pub trait AgentSignals: Send + Sync {
 
     /// `seq` 这条通知已作为消息提交（幂等）。没有 ack 的通知在重新订阅时再次送达。
     async fn ack(&self, session: &SessionId, seq: u64);
+
+    /// 无进展提醒是否仍然成立（Node `isBackgroundSubagentStallReminderCurrent`）：子代理还在跑、没在等审批、仍是提醒
+    /// 依据的那次运行、进展没有前进。默认成立（没有子代理能力的实现没有提醒）。
+    async fn stall_current(&self, _session: &SessionId, _stall: &AgentStall) -> bool {
+        true
+    }
 
     /// 还在跑、或已结束但通知还没有 ack 的后台子代理（`-p` 等它们都处理完才收尾）。
     async fn background(&self, session: &SessionId) -> Vec<AgentId>;
@@ -106,6 +157,18 @@ pub trait AgentSignals: Send + Sync {
         Err("stopping background tasks is not supported".to_owned())
     }
 
+    /// Fork (desktop `stopSubagent`, Node `stopBackgroundTask` with `expectedExecutionId`): the user stops one run of
+    /// a subagent that `session` spawned itself. One `Live` lock section checks the agent and its run, then ends it.
+    async fn stop_subagent(
+        &self,
+        _session: &SessionId,
+        _agent: &AgentId,
+        _execution: &str,
+        _operation: crate::env::OperationContext,
+    ) -> Result<(), SubagentStopRefusal> {
+        Err(SubagentStopRefusal::NotFound)
+    }
+
     /// 顶层会话 `session` 里本进程启动过的子代理（含嵌套的），按启动顺序（tui-panels.md §1.1，L30）。
     async fn subagents(&self, _session: &SessionId) -> Vec<crate::panels::SubagentEntry> {
         Vec::new()
@@ -124,6 +187,40 @@ pub trait AgentSignals: Send + Sync {
             subagents: self.subagents(session).await,
             background: self.background_entries(session).await,
         }
+    }
+
+    /// Fork: the kernel opened `meta` (from the store, or created it). For a top-level session the agents start a notice forwarder
+    /// for each of its persisted subagent children that has none (specs/fork-rust-agent-parity.md, "After a restart,
+    /// and on a remote executor"). Returns at once; the work runs in the background.
+    fn session_opened(&self, _meta: &crate::store::SessionMeta) {}
+
+    /// Fork: the kernel started closing `session` (before its actor exits). When it is a top-level session, the
+    /// forwarders of its children that no running or parked agent owns stop; their later notices stay pending in the
+    /// executor until the session opens again.
+    fn session_closing(&self, _session: &SessionId) {}
+
+    /// Fork: these sessions were erased from the store (`session/eraseTree`). Their children's forwarders stop, even
+    /// one a live agent owns, and the agents drop what they still hold for them (Node `deleteSessionTree`).
+    fn sessions_erased(&self, _sessions: &[SessionId]) {}
+
+    /// Fork: the sessions among `sessions` that are the child session of a running agent (not a parked one).
+    /// `session/eraseTree` refuses to erase them, as Node's `findRunningSessionIds` refuses a running detached
+    /// subagent (`getDetachedChildSessionFacts().running`).
+    fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
+    }
+
+    /// Fork (node_desktop): the feed of the subagent run whose child session is `session`. None when the agents do
+    /// not mirror child runs (the TUI).
+    fn child_live(&self, _session: &SessionId) -> Option<ChildLiveFeed> {
+        None
+    }
+
+    /// Fork (node_desktop): like [`AgentSignals::child_live`], but when the child is not running the replay is its
+    /// last finished run that no subscriber read live (taken once), so a reader that subscribes late still sees it
+    /// (the App's telemetry facts; specs/fork-rust-agent-parity.md, "Child runs").
+    fn child_run(&self, _session: &SessionId) -> Option<ChildLiveFeed> {
+        None
     }
 
     /// 顶层会话 `session` 里一个子代理的只读快照（子会话的消息，tui-panels.md §1.4）。
@@ -224,3 +321,22 @@ pub trait TaskReader: Send + Sync {
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+/// Fork: why a guarded subagent stop was refused (Node `RuntimeBackgroundStopResult.reason` without its
+/// `background_task_` prefix, the suffix of `fault.command.subagentStopRejected.<reason>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentStopRefusal {
+    /// No such agent, or one that another session or a subagent spawned.
+    NotFound,
+    /// The agent ended, or the named run is not its current one.
+    NotRunning,
+}
+
+impl SubagentStopRefusal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::NotRunning => "not_running",
+        }
+    }
+}

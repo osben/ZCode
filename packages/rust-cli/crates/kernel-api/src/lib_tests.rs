@@ -100,6 +100,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         title: String::new(),
         trace: TraceId::new("sess_1"),
         created_at_ms: 1,
+        incognito: None,
     };
     let loaded = LoadedSession {
         commands: Default::default(),
@@ -112,11 +113,23 @@ fn loaded_sessions_round_trip_with_open_work() {
         turn: None,
         last_turn_failed: true,
         earlier: vec![assistant()],
+        title_pending: true,
+        title_source: None,
+        permission_grant: Some("int_1".to_owned()),
+        goal_target: None,
+        goal_verifications: Vec::new(),
+        message_models: Default::default(),
+        execution_worktree: false,
     };
     round_trip(&loaded);
     // 没有这些字段的旧结果也能读，读出来是空清单。
     let mut old = serde_json::to_value(&loaded).unwrap();
-    for key in ["checkpoints", "last_turn_failed", "earlier"] {
+    for key in [
+        "checkpoints",
+        "last_turn_failed",
+        "earlier",
+        "title_pending",
+    ] {
         old.as_object_mut().unwrap().remove(key);
     }
     // 工作线 F130 之前的结果带待回答的交互：多出的键忽略。
@@ -127,6 +140,7 @@ fn loaded_sessions_round_trip_with_open_work() {
     assert!(old.checkpoints.is_empty());
     assert!(!old.last_turn_failed);
     assert!(old.earlier.is_empty());
+    assert!(!old.title_pending);
 }
 
 #[test]
@@ -189,6 +203,7 @@ fn system_turns_carry_their_output_config() {
                 text: "# Environment".to_owned(),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: Some(TurnOutputConfig {
             effort: Some("medium".to_owned()),
@@ -223,6 +238,7 @@ fn attachment_blocks_live_in_data() {
             media_type: "image/png".to_owned(),
             data: "iVBORw0KGgo=".to_owned(),
         },
+        name: None,
     };
     let attachment = |data: serde_json::Value| AttachmentMessage {
         id: MessageId::new("m"),
@@ -336,6 +352,7 @@ fn provider_and_failover_types_round_trip() {
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: None,
+            host: None,
         }],
         default: Some(ModelSelection {
             reasoning: Some("high".to_owned()),
@@ -477,6 +494,7 @@ fn question_and_plan_answers_have_a_stable_shape() {
             session: SessionId::new("s1"),
             title: String::new(),
             request: InteractionRequest::Question {
+                origin: None,
                 tool_use: ToolUseId::new("tu1"),
                 questions: json!([]),
             },

@@ -54,6 +54,8 @@ impl Feed {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -80,6 +82,8 @@ fn tool_use(id: &str, name: &str) -> ContentBlock {
 
 fn tool_result(id: &str, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(format!("r_{id}")),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(id),
@@ -243,6 +247,7 @@ fn a_failed_turn_shows_its_reason() {
     let mut feed = Feed::new();
     feed.push(started()).push(finished(TurnOutcome::Failed {
         message: "busy".into(),
+        code: None,
     }));
     let bodies = bodies(&feed.view);
     assert_eq!(bodies[0], Body::Turn(TurnState::Failed));
@@ -254,6 +259,7 @@ fn a_failed_turn_shows_its_reason() {
     let mut feed = Feed::new();
     feed.push(started()).push(finished(TurnOutcome::Failed {
         message: "Prompt is too long".into(),
+        code: None,
     }));
     let Body::Failure(failure) = &bodies_of(&feed)[1] else {
         panic!("失败块");
@@ -306,6 +312,7 @@ fn a_compaction_is_one_row_with_its_token_arrow() {
             used_tokens: 7_900,
             max_tokens: 200_000,
             compact_at: Some(160_000),
+            window_tokens: None,
         });
     let running = bodies(&feed.view);
     assert_eq!(
@@ -322,6 +329,7 @@ fn a_compaction_is_one_row_with_its_token_arrow() {
 fn permission_asks_mark_the_tool_and_resolve() {
     let mut feed = Feed::new();
     let ask = InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("tu1"),
         tool: "Bash".into(),
@@ -330,6 +338,8 @@ fn permission_asks_mark_the_tool_and_resolve() {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: None,
+        once: false,
+        independent: false,
     };
     feed.push(started())
         .push(KernelEvent::ToolStarted {
@@ -360,9 +370,13 @@ fn permission_asks_mark_the_tool_and_resolve() {
 fn steered_input_leaves_the_queue_and_shows_as_a_user_row() {
     let mut feed = Feed::new();
     let queued = QueuedInput {
+        edit_lock: None,
+        intent: None,
         command: CommandId::new("c2"),
         text: "also this".into(),
         delivery: Delivery::Steer,
+        kind: Default::default(),
+        execution: None,
     };
     feed.push(started()).push(KernelEvent::QueueChanged {
         items: vec![queued.clone()],

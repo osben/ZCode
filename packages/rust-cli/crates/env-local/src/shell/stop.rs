@@ -7,7 +7,9 @@ use rust_cli_kernel_api::env_shell::{
     BackgroundInfo, BackgroundStatus, BackgroundStop, BackgroundTask,
 };
 
-use super::{Shells, State};
+use rust_cli_kernel_api::env::EnvPath;
+
+use super::{Running, Shells, State};
 
 /// 在跑的、已结束但通知还没 ack 的，或不认识（含已被停止、通知已 ack）。种类与说明是启动时的：在跑的取账本里的命令，
 /// 已结束的取通知（两处都是启动时记下的同一份，修复线 F117）；已结束的命令原文也跟通知一起记着（登记已删，F119）。
@@ -15,12 +17,14 @@ fn lookup(state: &State, request: &BackgroundTask) -> Option<BackgroundInfo> {
     let shell = state.sessions.get(&request.session)?;
     if let Some(operation) = shell.background.get(&request.task) {
         let running = state.commands.get(operation)?;
-        return Some(BackgroundInfo {
-            command: running.command.clone(),
-            status: BackgroundStatus::Running,
-            kind: running.kind,
-            description: running.description.clone(),
-        });
+        return Some(info(running, BackgroundStatus::Running));
+    }
+    if let Some(running) = shell
+        .stopping
+        .get(&request.task)
+        .and_then(|operation| state.commands.get(operation))
+    {
+        return Some(info(running, BackgroundStatus::Killed));
     }
     let pending = shell
         .notices
@@ -32,12 +36,36 @@ fn lookup(state: &State, request: &BackgroundTask) -> Option<BackgroundInfo> {
         status: BackgroundStatus::ended(&notice.outcome, notice.exit_code),
         kind: notice.kind,
         description: notice.description.clone(),
+        output: Some(notice.output.clone()),
     })
+}
+
+fn info(running: &Running, status: BackgroundStatus) -> BackgroundInfo {
+    BackgroundInfo {
+        command: running.command.clone(),
+        status,
+        kind: running.kind,
+        description: running.description.clone(),
+        output: Some(EnvPath::new(running.output.to_string_lossy())),
+    }
 }
 
 impl Shells {
     pub(crate) fn background_command(&self, request: &BackgroundTask) -> Option<BackgroundInfo> {
         lookup(&self.shared.state(), request)
+    }
+
+    /// Fork: the terminal record of a background command that ended in this session ([`super::SessionShell::ended`]).
+    pub(crate) fn ended_command(&self, request: &BackgroundTask) -> Option<BackgroundInfo> {
+        let state = self.shared.state();
+        state
+            .sessions
+            .get(&request.session)?
+            .ended
+            .iter()
+            .rev()
+            .find(|(task, _)| task == &request.task)
+            .map(|(_, info)| info.clone())
     }
 
     /// 还在跑的后台命令从开始到现在的毫秒数；已结束、已停止或不认识时为 None（tui-panels.md §3.3）。
@@ -64,7 +92,16 @@ impl Shells {
             }) => {
                 let shell = state.sessions.entry(request.session.clone()).or_default();
                 let operation = shell.background.remove(&request.task);
-                shell.stopped.insert(request.task.clone());
+                if let Some(operation) = &operation {
+                    shell
+                        .stopping
+                        .insert(request.task.clone(), operation.clone());
+                }
+                // Fork (node_desktop): the stopped command still records its killed notice so the parent wakes
+                // like Node's `<status>killed</status>` notification.
+                if !request.notify_stop {
+                    shell.stopped.insert(request.task.clone());
+                }
                 if let Some(running) = operation.and_then(|op| state.commands.get(&op)) {
                     running.cancel.cancel();
                 }

@@ -190,6 +190,7 @@ fn events() -> Vec<CommandEvent> {
             cwd_reset: Some(path("/srv/work")),
             output_bytes: 3,
             output_limit: Some("Command killed: output file exceeded 5GB".to_owned()),
+            output_unreadable: None,
         },
     ]
 }
@@ -332,6 +333,7 @@ impl Background for Echo {
             status: BackgroundStatus::Killed,
             kind: BackgroundKind::Monitor,
             description: "follow the log".to_owned(),
+            output: None,
         }))
     }
 
@@ -625,6 +627,7 @@ async fn writes_rewinds_and_background_survive_the_wire() {
     let task = BackgroundTask {
         session: SessionId::new("s1"),
         task: ShellTaskId::new("b1"),
+        notify_stop: false,
     };
     let stop = machine
         .background()

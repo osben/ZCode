@@ -113,12 +113,16 @@ struct Loaded {
     /// 插件的 hooks（与设置快照分开登记，hooks.md §2.2）。
     plugins: Vec<PluginHooks>,
     effective: Effective,
+    /// Fork: the settings hooks alone, for an incognito session without plugins.
+    without_plugins: Effective,
 }
 
 /// hook 引擎：持有当前快照，实现 [`HookRunner`]。
 pub struct HookEngine {
     ports: HookPorts,
     loaded: RwLock<Arc<Loaded>>,
+    /// Fork: the sessions' incognito profiles (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
 }
 
 impl HookEngine {
@@ -131,7 +135,19 @@ impl HookEngine {
         Self {
             ports,
             loaded: RwLock::new(Arc::new(load(config, Vec::new()))),
+            incognito: Default::default(),
         }
+    }
+
+    /// Fork: read the sessions' incognito profiles; without hooks a session runs none, without plugins it runs
+    /// only the settings hooks.
+    #[must_use]
+    pub fn with_incognito(
+        mut self,
+        profiles: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    ) -> Self {
+        self.incognito = profiles;
+        self
     }
 
     /// 换上新的快照；正在运行的事件用旧快照。插件 hooks
@@ -170,10 +186,12 @@ impl HookEngine {
 
 fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
     let effective = config.effective_with(&plugins);
+    let without_plugins = config.effective_with(&[]);
     Loaded {
         config,
         plugins,
         effective,
+        without_plugins,
     }
 }
 
@@ -184,7 +202,13 @@ impl HookRunner for HookEngine {
         if !loaded.config.trusted || cancel.is_cancelled() {
             return HookOutcome::default();
         }
-        let Some(matchers) = loaded.effective.matchers.get(&event.name) else {
+        let effective = match self.incognito.get(&event.session) {
+            None => &loaded.effective,
+            Some(profile) if !profile.hooks => return HookOutcome::default(),
+            Some(profile) if !profile.plugins => &loaded.without_plugins,
+            Some(_) => &loaded.effective,
+        };
+        let Some(matchers) = effective.matchers.get(&event.name) else {
             return HookOutcome::default();
         };
         let hooks = matcher::select(event.name, matchers, &event.payload);
@@ -202,8 +226,8 @@ impl HookRunner for HookEngine {
             input,
             default_timeout_ms: default_timeout_ms(event.name),
             http: HttpPolicy {
-                allowed_urls: loaded.effective.allowed_urls.as_deref(),
-                allowed_env_vars: loaded.effective.allowed_env_vars.as_deref(),
+                allowed_urls: effective.allowed_urls.as_deref(),
+                allowed_env_vars: effective.allowed_env_vars.as_deref(),
                 env: loaded.config.env.vars(),
             },
             prompt_model: loaded.config.prompt_model.as_ref(),
@@ -218,6 +242,11 @@ impl HookRunner for HookEngine {
                 .map(|(index, executed)| interpret::outside(executed, &hooks[index].display()))
                 .collect();
             return fold_session::outside(event.name, &summaries);
+        }
+        // Node runs PermissionRequest hooks one by one in config order and the last decision or stop wins
+        // (`mergeHookRunResult`); the concurrent run finishes in any order, so the fold reads config order.
+        if event.name == HookEventName::PermissionRequest {
+            done.sort_by_key(|(index, _)| *index);
         }
         let mut results: Vec<_> = done
             .into_iter()

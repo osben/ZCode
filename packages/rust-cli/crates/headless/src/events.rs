@@ -68,9 +68,12 @@ pub(crate) fn init(init: &Init<'_>, uuid: &str) -> Value {
         "cwd": init.cwd,
         "session_id": init.session_id,
         "tools": init.catalog.tools.iter().map(|name| tool_name(name)).collect::<Vec<_>>(),
+        // Fork (incognito, specs/fork-rust-agent-parity.md): only the servers in the session's tool snapshot, so a
+        // lockdown session does not leak the names and states of the servers its profile drops.
         "mcp_servers": init
             .mcp_servers
             .iter()
+            .filter(|server| init.catalog.mcp_servers.contains(&server.name))
             .map(|server| json!({"name": server.name, "status": mcp_status(server.state)}))
             .collect::<Vec<_>>(),
         "model": init.model,
@@ -124,7 +127,12 @@ fn result_content(item: &ToolResultContent) -> Value {
 pub(crate) fn block(block: &ContentBlock) -> Value {
     match block {
         ContentBlock::Text { text } => json!({"type": "text", "text": text}),
-        ContentBlock::Image { source } => json!({"type": "image", "source": image_source(source)}),
+        ContentBlock::Image { source, .. } => {
+            json!({"type": "image", "source": image_source(source)})
+        }
+        ContentBlock::Video { source, .. } => {
+            json!({"type": "video", "source": image_source(source)})
+        }
         ContentBlock::Thinking {
             thinking,
             signature,

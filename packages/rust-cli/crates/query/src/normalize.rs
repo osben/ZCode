@@ -21,11 +21,10 @@ use std::collections::HashMap;
 
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::ToolUseId;
-use rust_cli_kernel_api::message::{AttachmentMessage, AttachmentRole, ContentBlock, Message};
+use rust_cli_kernel_api::message::{AttachedBody, AttachmentRole, ContentBlock, Message};
 use rust_cli_kernel_api::model::{ApiContent, ApiMessage, ApiRole, CacheControl, TurnOutputConfig};
 use rust_cli_kernel_api::reminder_fold::{array_result, fold_into_tool_result};
 use rust_cli_prompts::reminder;
-use serde_json::Value;
 
 /// normalize 的选项（随模型变化）。
 #[derive(Debug, Clone, Default)]
@@ -36,6 +35,10 @@ pub(crate) struct NormalizeOptions {
     pub turn_effort: Option<String>,
     /// 摘要请求不写缓存：断点往前挪一条（[`skip_write_marker`]）。
     pub skip_cache_write: bool,
+    /// Fork: OpenAI-compatible protocols (`ModelCapabilities::separate_user_messages`). Every user message, reminder and
+    /// media attachment becomes its own message: no adjacent-user merge and no reminder fold into tool results, like
+    /// Node when `foldRemindersIntoToolResults` is off.
+    pub separate_user_messages: bool,
 }
 
 fn message(role: ApiRole, content: Vec<ApiContent>) -> ApiMessage {
@@ -57,26 +60,42 @@ fn plain(blocks: Vec<ContentBlock>) -> Vec<ApiContent> {
         .map(|block| ApiContent {
             block,
             cache_control: None,
+            meta: false,
         })
         .collect()
+}
+
+fn is_attached_text(block: &ContentBlock) -> bool {
+    matches!(block, ContentBlock::File { file } if matches!(file.body, AttachedBody::Text { .. }))
+}
+
+fn has_attached_text(content: &[ContentBlock]) -> bool {
+    content.iter().any(is_attached_text)
+}
+
+/// Node `buildUserMessageEntries`: the real user message's blocks (non-empty typed text and every attachment but
+/// attached text, a failed text read dropping out) and the reminders of each attached text, in order.
+fn split_attached_text(content: &[ContentBlock]) -> (Vec<ContentBlock>, Vec<ContentBlock>) {
+    let mut real = Vec::new();
+    let mut reminders = Vec::new();
+    for block in content {
+        match block {
+            ContentBlock::Text { text } if text.is_empty() => {}
+            ContentBlock::File { file } if is_attached_text(block) => {
+                reminders.extend(rust_cli_kernel_api::prompt_attachment::blocks(file));
+            }
+            block => real.push(block.clone()),
+        }
+    }
+    (real, reminders)
 }
 
 fn text(value: String) -> ApiContent {
     ApiContent {
         block: ContentBlock::Text { text: value },
         cache_control: None,
+        meta: false,
     }
-}
-
-/// 人类插话（记录里带 `humanTurn: true` 的 `queued_command`）：插话的 `commandMode` 是 `prompt`，
-/// 后台通知是 `task-notification`（query.md §4、§5）。
-fn is_human_prompt(attachment: &AttachmentMessage) -> bool {
-    attachment.source == queued_command::SOURCE
-        && attachment
-            .data
-            .get(queued_command::MODE_KEY)
-            .and_then(Value::as_str)
-            == Some(queued_command::PROMPT_MODE)
 }
 
 /// 停止上浮的位置：assistant，或以工具结果开头的 user 消息。
@@ -125,7 +144,33 @@ fn tool_results_first(content: &mut Vec<ApiContent>) {
     *content = results;
 }
 
+/// Fork: content made only of tool results.
+fn only_results(content: &[ApiContent]) -> bool {
+    !content.is_empty()
+        && content
+            .iter()
+            .all(|item| matches!(item.block, ContentBlock::ToolResult { .. }))
+}
+
+/// Fork: a meta notification message with more than one block.
+fn notification_batch(user: &rust_cli_kernel_api::message::UserMessage) -> bool {
+    user.content.len() > 1
+        && matches!(&user.origin, rust_cli_kernel_api::message::UserOrigin::Meta { source }
+            if source == rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION)
+}
+
 /// 相邻 user 消息合并：文本接文本时，前一段末尾补一个换行。
+/// A block of the user's own input (model `media::is_real_user`, Node `isMetaUserContextMessage`): not attachment
+/// content, and not `<system-reminder>` text or a tool result.
+fn own_input(content: &ApiContent) -> bool {
+    !content.meta
+        && match &content.block {
+            ContentBlock::Text { text } => !text.trim_start().starts_with("<system-reminder>"),
+            ContentBlock::Image { .. } | ContentBlock::Video { .. } => true,
+            _ => false,
+        }
+}
+
 fn merge_user(into: &mut Vec<ApiContent>, next: Vec<ApiContent>) {
     if let (Some(last), Some(first)) = (into.last_mut(), next.first())
         && let (ContentBlock::Text { text }, ContentBlock::Text { .. }) =
@@ -139,6 +184,8 @@ fn merge_user(into: &mut Vec<ApiContent>, next: Vec<ApiContent>) {
 
 struct Builder {
     out: Vec<ApiMessage>,
+    /// [`NormalizeOptions::separate_user_messages`].
+    separate: bool,
     folded: Vec<String>,
     /// 已发出的 tool_use 的工具名：提醒并进工具结果时按它推结果的形式（`array_result`）。
     tool_names: HashMap<ToolUseId, String>,
@@ -151,7 +198,31 @@ impl Builder {
 
     fn push_user(&mut self, content: Vec<ApiContent>) {
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => merge_user(&mut last.content, content),
+            Some(last) if last.role == ApiRole::User && !self.separate => {
+                // Node keeps each input its own user message and its media budget protects only the newest one; once
+                // a new input joins, the earlier input's media are history.
+                if content.iter().any(own_input) {
+                    for item in last.content.iter_mut().filter(|item| {
+                        matches!(
+                            item.block,
+                            ContentBlock::Image { .. } | ContentBlock::Video { .. }
+                        )
+                    }) {
+                        item.meta = true;
+                    }
+                }
+                merge_user(&mut last.content, content);
+            }
+            // The executor records each result of one reply as its own message, and pairing only reads the first user
+            // message after a reply. Separate mode therefore still keeps consecutive results together; split apart,
+            // the later results were replaced with missing-result errors and dropped as orphans.
+            Some(last)
+                if last.role == ApiRole::User
+                    && only_results(&last.content)
+                    && only_results(&content) =>
+            {
+                last.content.extend(content);
+            }
             _ => self.out.push(message(ApiRole::User, content)),
         }
     }
@@ -163,7 +234,7 @@ impl Builder {
     /// 应把它并进工具结果的字符串、缓存断点落在工具结果上，所以 GLM 等没有卡片的模型每个工具轮的请求形状都不对。
     fn push_reminder(&mut self, value: String) {
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => {
+            Some(last) if last.role == ApiRole::User && !self.separate => {
                 let names = &self.tool_names;
                 let array_form = |id: &ToolUseId, is_error: bool| {
                     names
@@ -183,15 +254,21 @@ impl Builder {
     /// 调用说明与内容块依次接在后面；否则调用说明单独一条 user 消息、内容块另起一条（这两条 meta
     /// 消息原样推入，之后的内容接在第二条后面）。
     fn push_media(&mut self, value: String, blocks: Vec<ContentBlock>) {
-        let blocks = plain(blocks);
+        // Fork: marked so the request media budget does not count these as the user's own input.
+        let meta = |mut content: ApiContent| {
+            content.meta = true;
+            content
+        };
+        let blocks: Vec<ApiContent> = plain(blocks).into_iter().map(meta).collect();
+        let value = meta(text(value));
         match self.out.last_mut() {
-            Some(last) if last.role == ApiRole::User => {
-                last.content.push(text(value));
+            Some(last) if last.role == ApiRole::User && !self.separate => {
+                last.content.push(value);
                 last.content.extend(blocks);
                 tool_results_first(&mut last.content);
             }
             _ => {
-                self.out.push(message(ApiRole::User, vec![text(value)]));
+                self.out.push(message(ApiRole::User, vec![value]));
                 self.out.push(message(ApiRole::User, blocks));
             }
         }
@@ -304,22 +381,65 @@ pub(crate) fn normalize<'a>(
 ) -> Vec<ApiMessage> {
     let mut builder = Builder {
         out: Vec::new(),
+        separate: options.separate_user_messages,
         folded: Vec::new(),
         tool_names: HashMap::new(),
     };
     for item in hoist(messages.into_iter().collect()) {
         match item {
+            // Fork: a notification batch (one message, a text block per notification) reaches the
+            // model like one user message per notification: every block but the last ends with a
+            // newline, as Node sends `persistBackgroundTaskNotificationBatch`'s parts.
+            Message::User(user) if notification_batch(user) => {
+                for block in &user.content {
+                    builder.push_user(plain(vec![block.clone()]));
+                }
+            }
+            // Fork: OpenAI-compatible protocols get Node's entries apart (`buildUserMessageEntries`): the real user
+            // message, `(no content)` when it is empty, then one user message per attached text's reminders.
+            Message::User(user) if builder.separate && has_attached_text(&user.content) => {
+                let (real, reminders) = split_attached_text(&user.content);
+                // Lowered first: a failed text read lowers to nothing.
+                let real = plain(real);
+                builder.push_user(if real.is_empty() {
+                    vec![text(crate::texts::NO_CONTENT.to_owned())]
+                } else {
+                    real
+                });
+                for reminder in reminders {
+                    // Attachment content, not the user's input (see `push_media`).
+                    let mut content = plain(vec![reminder]);
+                    content.iter_mut().for_each(|item| item.meta = true);
+                    builder.push_user(content);
+                }
+            }
+            // Fork: Node's empty real user message goes to the provider as `(no content)`, before the reminders.
+            Message::User(user)
+                if rust_cli_kernel_api::prompt_attachment::reminders_only(&user.content) =>
+            {
+                let mut content = vec![text(crate::texts::NO_CONTENT.to_owned())];
+                // The empty typed text is what the padding replaces (Node drops empty text blocks).
+                content.extend(plain(
+                    user.content
+                        .iter()
+                        .filter(|block| !matches!(block, ContentBlock::Text { text } if text.is_empty()))
+                        .cloned()
+                        .collect(),
+                ));
+                builder.push_user(content);
+            }
             Message::User(user) => builder.push_user(plain(user.content.clone())),
             // 只供显示的 attachment（如 `max_turns_reached`）文本为空，渲染为空。
             Message::Attachment(attachment) if attachment.text.is_empty() => {}
-            // 缺陷修复（修复线 F13）：人类插话原来按 system 角色折进末尾的 system 消息。应在
-            // 有 system turn 时把它当人类输入（缺省开）：去包装、接在工具结果所在的
-            // user 消息后面（先于 system 文字落地）。没有 system turn 时走下面的老路。
-            Message::Attachment(attachment)
-                if options.system_turns && is_human_prompt(attachment) =>
-            {
-                builder.push_user(vec![text(reminder::unwrap(&attachment.text).to_owned())]);
+            // Fork: a steer with a source (plan feedback) reaches the model as the plain user text, after the tool
+            // result, never folded into it (Node `steering.ts`: no guide presentation for a sourced input).
+            Message::Attachment(attachment) if queued_command::sourced(attachment).is_some() => {
+                let (_, prompt) = queued_command::sourced(attachment).unwrap_or_default();
+                builder.push_user(vec![text(prompt.to_owned())]);
             }
+            // Fork: a typed steer is a mid-turn input (Node 3.17 `inputPresentationRole` `mid_turn`): with system turns
+            // it folds into the run's system message like any system-role attachment, and without an anchor it falls
+            // back to one wrapped user reminder (`flush`). The Rust port used to send it as unwrapped user text (F13).
             Message::Attachment(attachment) => {
                 let blocks = attachment.blocks();
                 if !blocks.is_empty() {

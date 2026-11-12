@@ -12,11 +12,13 @@ const ON: NormalizeOptions = NormalizeOptions {
     system_turns: true,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 const OFF: NormalizeOptions = NormalizeOptions {
     system_turns: false,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 
 fn text(value: &str) -> ContentBlock {
@@ -27,6 +29,8 @@ fn text(value: &str) -> ContentBlock {
 
 fn human(id: &str, value: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![text(value)],
         origin: UserOrigin::Human,
@@ -137,6 +141,8 @@ fn attachments_stop_at_tool_results_and_assistants() {
             }],
         ),
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("u2"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: tool_use,
@@ -192,12 +198,29 @@ fn adjacent_user_messages_join_with_a_newline_and_keep_tool_results_first() {
     assert_eq!(texts(&api[0]), ["a\n", "b"]);
 }
 
+/// Fork: the blocks of one notification batch message are separated like adjacent messages.
+#[test]
+fn a_notification_batch_message_separates_its_blocks_with_a_newline() {
+    let batch = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
+        id: MessageId::new("n1"),
+        content: vec![text("a"), text("b")],
+        origin: UserOrigin::Meta {
+            source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned(),
+        },
+    });
+    let api = normalize(&[batch], &ON);
+    assert_eq!(texts(&api[0]), ["a\n", "b"]);
+}
+
 #[test]
 fn the_turn_effort_rides_on_the_system_turn_after_the_first_prompt() {
     let options = NormalizeOptions {
         system_turns: true,
         turn_effort: Some("medium".to_owned()),
         skip_cache_write: false,
+        separate_user_messages: false,
     };
     let messages = [
         human("u1", "a"),
@@ -256,6 +279,7 @@ fn marked(api: &[ApiMessage]) -> Vec<(usize, usize)> {
 fn a_summary_request_marks_the_message_before_the_last() {
     let options = NormalizeOptions {
         skip_cache_write: true,
+        separate_user_messages: false,
         ..ON
     };
     let call = ContentBlock::ToolUse {
@@ -264,6 +288,8 @@ fn a_summary_request_marks_the_message_before_the_last() {
         input: serde_json::json!({"file_path": "/a"}),
     };
     let result = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t1"),
@@ -324,6 +350,7 @@ fn image() -> ContentBlock {
             media_type: "image/png".to_owned(),
             data: "iVBORw0KGgo=".to_owned(),
         },
+        name: None,
     }
 }
 
@@ -375,6 +402,10 @@ fn attachments_with_blocks_stay_in_user_messages() {
             &prompt
         ]
     );
+    // A mention's blocks are marked as attachment content, so the media budget never protects them as input.
+    let meta: Vec<bool> = api[1].content.iter().map(|item| item.meta).collect();
+    assert_eq!(meta, [true, true, true, true, false, false]);
+    assert!(api[0].content.iter().all(|item| item.meta));
     assert_eq!(api[2].role, ApiRole::System);
     assert!(texts(&api[2])[0].starts_with("call doc"));
     // 不支持对话中间 system 消息：只有文字的 attachment 留在 user 消息里，带内容块的位置不变。
@@ -454,6 +485,8 @@ fn read_then(result: &str, tool: &str, after: Vec<Message>) -> Vec<Message> {
             }],
         ),
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("u2"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: tool_use,
@@ -553,11 +586,10 @@ fn steered(id: &str, prompt: &str) -> Message {
     })
 }
 
-/// 修复线 F13（context.md §3 第 10 条）：有 system turn 时人类插话按人类输入
-/// ——去掉包装、作为文本块接在工具结果所在的 user 消息后面，排在 system 文字之前；两条插话
-/// 之间补换行。修前它被折进末尾的 system 消息，与剩余 token 连在一起。
+/// Fork (Node 3.17 `mid_turn`): with system turns a typed steer folds into the run's system message like the other
+/// system-role attachments, unwrapped and separated by a blank line; the tool result stays alone in its user message.
 #[test]
-fn with_system_turns_a_steered_prompt_follows_the_tool_result_as_text() {
+fn with_system_turns_a_steered_prompt_folds_into_the_system_turn() {
     let messages = read_then(
         "ok",
         "Read",
@@ -574,19 +606,33 @@ fn with_system_turns_a_steered_prompt_follows_the_tool_result_as_text() {
     let api = normalize(&messages, &ON);
     assert_eq!(api.len(), 4);
     assert_eq!(api[2].role, ApiRole::User);
-    assert!(matches!(
-        api[2].content[0].block,
-        ContentBlock::ToolResult { .. }
-    ));
+    assert_eq!(api[2].content.len(), 1);
+    assert_eq!(api[3].role, ApiRole::System);
     assert_eq!(
-        texts(&api[2])[1..],
+        texts(&api[3]),
         [
-            "The user sent a new message while you were working:\nfirst\n",
-            "The user sent a new message while you were working:\nsecond"
+            "The user sent a new message while you were working:\nfirst\n\nThe user sent a new message while you were working:\nsecond\n\n<total_tokens>9</total_tokens>"
         ]
     );
-    assert_eq!(api[3].role, ApiRole::System);
-    assert_eq!(texts(&api[3]), ["<total_tokens>9</total_tokens>"]);
+}
+
+/// Fork: after a reply without tool calls there is no user message to follow, so with system turns the steer falls
+/// back to one wrapped user reminder (Node's MCS fallback).
+#[test]
+fn with_system_turns_a_steer_after_a_text_reply_is_a_wrapped_user_reminder() {
+    let messages = vec![
+        human("u1", "go"),
+        assistant("a1", vec![text("middle")]),
+        steered("q1", "second"),
+    ];
+    let api = normalize(&messages, &ON);
+    assert_eq!(api.last().unwrap().role, ApiRole::User);
+    assert_eq!(
+        texts(api.last().unwrap()),
+        [
+            "<system-reminder>\nThe user sent a new message while you were working:\nsecond\n</system-reminder>"
+        ]
+    );
 }
 
 /// 没有 system turn 的模型照旧（带包装、并进工具结果）；后台通知（`commandMode: task-notification`）仍是 system
@@ -615,6 +661,35 @@ fn notices_and_models_without_system_turns_keep_the_old_place_for_queued_command
     );
 }
 
+/// Fork: plan feedback (a steer with `steerSource`) reaches the model as the plain user text after the tool result,
+/// with or without system turns (Node `steering.ts`: a sourced input has no guide presentation).
+#[test]
+fn plan_feedback_follows_the_tool_result_as_plain_user_text() {
+    let feedback = Message::Attachment(AttachmentMessage {
+        id: MessageId::new("f1"),
+        source: "queued_command".to_owned(),
+        text: reminder::wrap("The user sent a new message while you were working:\nadd tests"),
+        data: serde_json::json!({"prompt": "add tests", "commandMode": "prompt",
+            "steerSource": "plan_approval_feedback"}),
+    });
+    for options in [&ON, &OFF] {
+        let api = normalize(
+            &read_then("denied", "Read", vec![feedback.clone()]),
+            options,
+        );
+        assert_eq!(api[2].role, ApiRole::User);
+        assert_eq!(result_texts(&api[2]), ["denied"]);
+        assert!(matches!(
+            api[2].content[0].block,
+            ContentBlock::ToolResult { .. }
+        ));
+        assert!(
+            matches!(&api[2].content[1].block, ContentBlock::Text { text } if text == "add tests")
+        );
+        assert_eq!(api[2].content.len(), 2);
+    }
+}
+
 /// Fork: an attached file reaches the model as Node's reminders (inline text), its image block, or the metadata
 /// reminder; the adapters never see a `File` block.
 #[test]
@@ -630,6 +705,9 @@ fn attached_files_expand_into_reminders_and_images() {
             reference: None,
             preview_reference: None,
             stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
             body,
         },
     };
@@ -638,13 +716,18 @@ fn attached_files_expand_into_reminders_and_images() {
         data: "iVBO".into(),
     };
     let message = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("u1"),
         content: vec![
             text("look"),
             file(
                 "a.txt",
                 "text/plain",
-                AttachedBody::Text { text: "abc".into() },
+                AttachedBody::Text {
+                    text: "abc".into(),
+                    read: None,
+                },
             ),
             file(
                 "p.png",
@@ -668,7 +751,10 @@ fn attached_files_expand_into_reminders_and_images() {
         [
             &text("look"),
             &text(&prompt_attachment::text_file("a.txt", "abc").join("\n")),
-            &ContentBlock::Image { source: image },
+            &ContentBlock::Image {
+                source: image,
+                name: Some("p.png".into())
+            },
             &text(&prompt_attachment::metadata_only(
                 "d.pdf",
                 "application/pdf",
@@ -676,4 +762,333 @@ fn attached_files_expand_into_reminders_and_images() {
             )),
         ]
     );
+}
+
+/// Fork: an input of only attached text has an empty real user message in Node, which the wire pads with
+/// `(no content)` (`toAiSdkUserContent`); a typed text or another attachment keeps it unpadded.
+#[test]
+fn an_input_of_only_attached_text_is_padded_like_node() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |body| ContentBlock::File {
+        file: AttachedFile {
+            name: "a.txt".into(),
+            mime: "text/plain".into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
+            body,
+        },
+    };
+    let inline = || {
+        file(AttachedBody::Text {
+            text: "abc".into(),
+            read: None,
+        })
+    };
+    let user = |content: Vec<ContentBlock>| {
+        let message = Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new("u1"),
+            content,
+            origin: UserOrigin::Human,
+        });
+        normalize([&message], &ON)
+            .into_iter()
+            .find(|message| message.role == ApiRole::User)
+            .unwrap()
+            .content
+            .into_iter()
+            .map(|item| item.block)
+            .collect::<Vec<_>>()
+    };
+    let reminder = text(&prompt_attachment::text_file("a.txt", "abc").join("\n"));
+    assert_eq!(
+        user(vec![text(""), inline(), file(AttachedBody::ReadFailed)]),
+        [text("(no content)"), reminder.clone()]
+    );
+    assert_eq!(
+        user(vec![text("hi"), inline()]),
+        [text("hi"), reminder.clone()]
+    );
+    assert_eq!(
+        user(vec![inline(), file(AttachedBody::Omitted)]),
+        [
+            reminder,
+            text(&prompt_attachment::metadata_only("a.txt", "text/plain", 3))
+        ]
+    );
+}
+
+/// Fork: with separate user messages (OpenAI-compatible), an attached text's reminders are their own user message after
+/// the real one, as Node's `buildUserMessageEntries` entries; an empty real message is padded with `(no content)`.
+#[test]
+fn separate_user_messages_send_attached_text_apart_like_node() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::prompt_attachment;
+
+    let file = |name: &str, body| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: "text/plain".into(),
+            bytes: 3,
+            reference: None,
+            preview_reference: None,
+            stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
+            body,
+        },
+    };
+    let inline = |name: &str| {
+        file(
+            name,
+            AttachedBody::Text {
+                text: "abc".into(),
+                read: None,
+            },
+        )
+    };
+    let send = |content: Vec<ContentBlock>| {
+        let message = Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new("u1"),
+            content,
+            origin: UserOrigin::Human,
+        });
+        normalize([&message], &SEPARATE)
+    };
+    let reminder = |name: &str| prompt_attachment::text_file(name, "abc").join("\n");
+
+    let api = send(vec![
+        text(""),
+        inline("a.txt"),
+        file("b.txt", AttachedBody::ReadFailed),
+    ]);
+    let texts: Vec<&str> = api.iter().map(one_text).collect();
+    assert_eq!(texts, ["(no content)", reminder("a.txt").as_str()]);
+    assert!(!api[0].content[0].meta && api[1].content[0].meta);
+
+    let api = send(vec![text("hi"), inline("a.txt"), inline("b.txt")]);
+    let texts: Vec<&str> = api.iter().map(one_text).collect();
+    assert_eq!(
+        texts,
+        ["hi", reminder("a.txt").as_str(), reminder("b.txt").as_str()]
+    );
+
+    // Other attachments stay in the real message.
+    let api = send(vec![
+        text("hi"),
+        inline("a.txt"),
+        file("d.txt", AttachedBody::Omitted),
+    ]);
+    assert_eq!(api.len(), 2);
+    let real: Vec<&ContentBlock> = api[0].content.iter().map(|item| &item.block).collect();
+    assert_eq!(
+        real,
+        [
+            &text("hi"),
+            &text(&prompt_attachment::metadata_only("d.txt", "text/plain", 3))
+        ]
+    );
+    assert_eq!(one_text(&api[1]), reminder("a.txt"));
+}
+
+const SEPARATE: NormalizeOptions = NormalizeOptions {
+    system_turns: false,
+    turn_effort: None,
+    skip_cache_write: false,
+    separate_user_messages: true,
+};
+
+fn one_text(message: &ApiMessage) -> &str {
+    assert_eq!(message.role, ApiRole::User);
+    assert_eq!(message.content.len(), 1, "{message:?}");
+    match &message.content[0].block {
+        ContentBlock::Text { text } => text,
+        other => panic!("not text: {other:?}"),
+    }
+}
+
+/// Fork: OpenAI-compatible protocols send every reminder and prompt as its own user message, reminders before the
+/// prompt they were hoisted over (Node without `foldRemindersIntoToolResults`). A fork notice therefore comes before
+/// the child prompt.
+#[test]
+fn separate_user_messages_keep_each_reminder_and_prompt_apart() {
+    let messages = [
+        human("u1", "parent"),
+        attachment("a1", "environment", "# Environment"),
+        attachment("a2", "date", "Today's date is 2026-10-17."),
+        assistant("m1", vec![text("reply")]),
+        human("u2", "child"),
+        attachment("a3", "fork_notice", "This session was forked."),
+    ];
+    let api = normalize(&messages, &SEPARATE);
+    let roles: Vec<_> = api.iter().map(|message| message.role).collect();
+    assert_eq!(
+        roles,
+        [
+            ApiRole::User,
+            ApiRole::User,
+            ApiRole::User,
+            ApiRole::Assistant,
+            ApiRole::User,
+            ApiRole::User
+        ]
+    );
+    assert_eq!(
+        one_text(&api[0]),
+        "<system-reminder>\n# Environment\n</system-reminder>"
+    );
+    assert_eq!(
+        one_text(&api[1]),
+        "<system-reminder>\nToday's date is 2026-10-17.\n</system-reminder>"
+    );
+    assert_eq!(one_text(&api[2]), "parent");
+    assert_eq!(
+        one_text(&api[4]),
+        "<system-reminder>\nThis session was forked.\n</system-reminder>"
+    );
+    assert_eq!(one_text(&api[5]), "child");
+}
+
+/// Fork: with separate user messages a reminder after a tool result is its own user message, not folded into the
+/// result string.
+#[test]
+fn separate_user_messages_leave_tool_results_unfolded() {
+    let messages = read_then(
+        "1\talpha",
+        "Read",
+        vec![attachment(
+            "a1",
+            "total_tokens_reminder",
+            "<total_tokens>9 tokens left</total_tokens>",
+        )],
+    );
+    let api = normalize(&messages, &SEPARATE);
+    assert_eq!(api.len(), 4);
+    assert_eq!(result_texts(&api[2]), ["1\talpha"]);
+    assert_eq!(
+        one_text(&api[3]),
+        "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
+    );
+}
+
+fn tool_result(id: &str, tool_use: &str, value: &str) -> Message {
+    Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
+        id: MessageId::new(id),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: ToolUseId::new(tool_use),
+            content: vec![ToolResultContent::Text {
+                text: value.to_owned(),
+            }],
+            is_error: false,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new("m1"),
+        },
+    })
+}
+
+/// Fork: the executor records each tool result as its own user message. With separate user messages the results of
+/// one reply still travel together, so pairing keeps every real result instead of replacing the later ones with
+/// missing-result errors.
+#[test]
+fn separate_user_messages_keep_parallel_tool_results_together() {
+    let call = |id: &str| ContentBlock::ToolUse {
+        id: ToolUseId::new(id),
+        name: "Read".to_owned(),
+        input: Value::Null,
+    };
+    let messages = [
+        human("u1", "go"),
+        assistant("m1", vec![call("toolu_1"), call("toolu_2")]),
+        tool_result("r1", "toolu_1", "one"),
+        tool_result("r2", "toolu_2", "two"),
+        attachment(
+            "a1",
+            "total_tokens_reminder",
+            "<total_tokens>9 tokens left</total_tokens>",
+        ),
+    ];
+    let api = normalize(&messages, &SEPARATE);
+    assert_eq!(api.len(), 4, "{api:#?}");
+    let results: Vec<(String, Vec<String>)> = api[2]
+        .content
+        .iter()
+        .map(|item| match &item.block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } => (
+                tool_use_id.as_str().to_owned(),
+                content
+                    .iter()
+                    .map(|part| match part {
+                        ToolResultContent::Text { text } => text.clone(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect(),
+            ),
+            other => panic!("not a tool result: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        results,
+        [
+            ("toolu_1".to_owned(), vec!["one".to_owned()]),
+            ("toolu_2".to_owned(), vec!["two".to_owned()]),
+        ]
+    );
+    assert_eq!(
+        one_text(&api[3]),
+        "<system-reminder>\n<total_tokens>9 tokens left</total_tokens>\n</system-reminder>"
+    );
+}
+
+/// Fork: two inputs with media before any reply (the first one interrupted) merge into one user message here, where
+/// Node keeps two user messages and its media budget protects only the newest (`findLatestRealUserMessageIndex`).
+/// The earlier input's media are marked as not the current input, so the budget treats them as history.
+#[test]
+fn an_earlier_input_merged_into_the_next_is_not_the_current_input() {
+    let input = |id: &str, value: &str| {
+        Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new(id),
+            content: vec![text(value), image()],
+            origin: UserOrigin::Human,
+        })
+    };
+    let api = normalize(&[input("u1", "first"), input("u2", "second")], &ON);
+    assert_eq!(api.len(), 1);
+    let meta: Vec<(bool, bool)> = api[0]
+        .content
+        .iter()
+        .map(|item| (matches!(item.block, ContentBlock::Image { .. }), item.meta))
+        .collect();
+    assert_eq!(
+        meta,
+        [(false, false), (true, true), (false, false), (true, false)]
+    );
+    // A reminder or a tool result joining the input is not a new input: the input's media stay current.
+    let api = normalize(
+        &[
+            input("u1", "first"),
+            human("u2", "<system-reminder>\nnote\n</system-reminder>"),
+        ],
+        &ON,
+    );
+    assert!(api[0].content.iter().all(|item| !item.meta));
 }

@@ -11,15 +11,19 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::test_more::{Ctx, TextEnv, output_text};
 
-const PLAN_PATH: &str = "/Users/dev/work/.zcode/plans/plan-sess_1.md";
+fn ids() -> Arc<dyn Ids> {
+    Arc::new(rust_cli_kernel_api::testing::SequentialIds::default())
+}
+
+const PLAN: &str = "# Plan\n1. do it";
 
 fn approve(mode: PermissionMode) -> rust_cli_kernel_api::orchestration::Answer {
     PlanApprovalAnswer::Approve { mode }.into()
 }
 
-fn plan_context(interactions: Arc<ScriptedInteractions>, files: &[(&str, &str)]) -> Ctx {
+fn plan_context(interactions: Arc<ScriptedInteractions>) -> Ctx {
     let mut context = Ctx::with_session(interactions);
-    context.set_text_env(Arc::new(TextEnv::new(files)));
+    context.set_text_env(Arc::new(TextEnv::new(&[])));
     context.mode = PermissionMode::Plan;
     context
 }
@@ -58,7 +62,7 @@ async fn entering_plan_mode_only_turns_the_plan_switch_on() {
 fn plan_tools_are_deferred_and_interactive_only() {
     for tool in [
         Arc::new(EnterPlanModeTool::new(false)) as Arc<dyn Tool>,
-        Arc::new(ExitPlanModeTool::new(false)),
+        Arc::new(ExitPlanModeTool::new(false, ids())),
     ] {
         assert!(tool.should_defer());
         assert!(!tool.is_enabled());
@@ -103,77 +107,179 @@ async fn approving_the_plan_only_turns_the_plan_switch_off() {
     let interactions = Arc::new(ScriptedInteractions::new([approve(
         PermissionMode::AcceptEdits,
     )]));
-    let tool = ExitPlanModeTool::new(true);
-    let context = plan_context(interactions.clone(), &[(PLAN_PATH, "# Plan\n1. do it")]).build();
+    let tool = ExitPlanModeTool::new(true, ids());
+    let context = plan_context(interactions.clone()).build();
     assert_eq!(
-        tool.validate_input(&json!({}), &context).await,
+        tool.validate_input(&json!({"plan": PLAN}), &context).await,
         Validation::Ok
     );
     let (progress, _) = mpsc::channel(1);
-    let output = tool.call(json!({}), context, progress).await.unwrap();
-    assert_eq!(
-        output_text(&output),
-        texts::plan_approved(PLAN_PATH, "# Plan\n1. do it")
-    );
+    let output = tool
+        .call(json!({"plan": PLAN}), context, progress)
+        .await
+        .unwrap();
+    assert_eq!(output_text(&output), texts::plan_approved(PLAN));
     // 修复线 F20：批准只关掉 plan，回答里的模式不用来改权限模式（退出后是进入前的模式，由会话 actor 保留）。
     assert_eq!(interactions.plans(), [false]);
     match &interactions.asked()[..] {
-        [InteractionRequest::PlanApproval { plan, .. }] => assert_eq!(plan, "# Plan\n1. do it"),
+        [InteractionRequest::PlanApproval { plan, .. }] => assert_eq!(plan, PLAN),
         other => panic!("unexpected {other:?}"),
     }
 }
 
+/// Node 3.17 `ExitPlanModeInputSchema`：`plan` 必填、去掉首尾空白后非空、最多 20000 个字符。
 #[tokio::test]
-async fn without_a_plan_file_the_exit_is_still_approved() {
+async fn the_plan_input_is_validated_like_node() {
+    let tool = ExitPlanModeTool::new(true, ids());
+    let context = plan_context(Arc::new(ScriptedInteractions::default())).build();
+    let invalid = |message: &str| Validation::Invalid {
+        message: message.to_owned(),
+        error_code: Some(1),
+    };
+    let blank = json!({"plan": " \n\t "});
+    assert_eq!(
+        tool.validate_input(&blank, &context).await,
+        invalid("String must contain at least 1 character(s)")
+    );
+    assert_eq!(
+        tool.validate_input(&json!({}), &context).await,
+        invalid("Invalid input: expected string, received undefined")
+    );
+    assert_eq!(
+        tool.validate_input(&json!({"plan": 3}), &context).await,
+        invalid("Invalid input: expected string, received undefined")
+    );
+    // 最长 20000 个 UTF-16 码元：BMP 字符一个码元，表情符号两个。
+    let max = "a".repeat(20_000);
+    assert_eq!(
+        tool.validate_input(&json!({"plan": max}), &context).await,
+        Validation::Ok
+    );
+    let too_long = "a".repeat(20_001);
+    assert_eq!(
+        tool.validate_input(&json!({"plan": too_long}), &context)
+            .await,
+        invalid("Too big: expected string to have <=20000 characters")
+    );
+    let emoji_max = "😀".repeat(10_000);
+    assert_eq!(
+        tool.validate_input(&json!({"plan": emoji_max}), &context)
+            .await,
+        Validation::Ok
+    );
+    let emoji_too_long = "😀".repeat(10_001);
+    assert_eq!(
+        tool.validate_input(&json!({"plan": emoji_too_long}), &context)
+            .await,
+        invalid("Too big: expected string to have <=20000 characters")
+    );
+    // 执行时同样拒绝：没有批准请求，也不退出 plan。
+    let interactions = Arc::new(ScriptedInteractions::default());
+    let (progress, _) = mpsc::channel(1);
+    let result = tool
+        .call_with_messages(blank, plan_context(interactions.clone()).build(), progress)
+        .await;
+    assert!(result.is_err());
+    assert!(interactions.asked().is_empty());
+    assert!(interactions.plans().is_empty());
+}
+
+/// 没有计划（或计划全是空白）不会走到这里：输入校验先拒绝，所以批准文本只有有计划的一种。
+#[tokio::test]
+async fn the_approved_text_carries_the_trimmed_plan() {
     let interactions = Arc::new(ScriptedInteractions::new([approve(
         PermissionMode::Default,
     )]));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let (progress, _) = mpsc::channel(1);
     let output = tool
         .call(
-            json!({}),
-            plan_context(interactions.clone(), &[]).build(),
+            json!({"plan": "\n# Plan\n1. do it\n"}),
+            plan_context(interactions.clone()).build(),
             progress,
         )
         .await
         .unwrap();
-    assert_eq!(output_text(&output), texts::PLAN_EXIT_APPROVED);
+    assert_eq!(output_text(&output), texts::plan_approved(PLAN));
     assert_eq!(interactions.plans(), [false]);
 }
 
+/// Node 3.17 `withPlanExitDeniedTurnStop`: the result is the denial text alone; the feedback follows the result as a
+/// guided steer (`plan_approval_feedback`) and the mode stays on.
 #[tokio::test]
-async fn keep_planning_rejects_with_the_feedback_and_keeps_the_mode() {
+async fn keep_planning_steers_the_feedback_after_the_denial() {
     let feedback = PlanApprovalAnswer::KeepPlanning {
-        feedback: Some("add tests".to_owned()),
+        feedback: Some("  add tests ".to_owned()),
     };
     let interactions = Arc::new(ScriptedInteractions::new([
         rust_cli_kernel_api::orchestration::Answer::from(feedback),
     ]));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let (progress, _) = mpsc::channel(1);
-    let output = tool
-        .call(
-            json!({}),
-            plan_context(interactions.clone(), &[]).build(),
+    let called = tool
+        .call_with_messages(
+            json!({"plan": PLAN}),
+            plan_context(interactions.clone()).build(),
             progress,
         )
         .await
         .unwrap();
-    assert!(output.is_error);
+    assert!(called.output.is_error);
+    assert_eq!(output_text(&called.output), EXIT_PLAN_DENIED);
+    assert!(!called.stop_turn);
+    let [Message::Attachment(steer)] = called.new_messages.as_slice() else {
+        panic!("one steer attachment: {:?}", called.new_messages);
+    };
+    assert_eq!(steer.source, queued_command::SOURCE);
+    assert_eq!(queued_command::guided(steer), Some(("add tests", None)));
     assert_eq!(
-        output_text(&output),
-        format!("{REJECT_WITH_REASON}add tests")
+        steer.data[queued_command::STEER_SOURCE_KEY],
+        queued_command::PLAN_APPROVAL_FEEDBACK
+    );
+    assert_eq!(
+        steer.text,
+        queued_command::steer_text("add tests", SteerSender::User)
     );
     assert!(interactions.plans().is_empty());
 }
 
+/// Node's `withPlanExitDeniedTurnStop`: a bare decline ends the turn, feedback does not.
+#[tokio::test]
+async fn a_decline_without_feedback_ends_the_turn() {
+    let cases = [
+        (PlanApprovalAnswer::KeepPlanning { feedback: None }, true),
+        (
+            PlanApprovalAnswer::KeepPlanning {
+                feedback: Some("add tests".to_owned()),
+            },
+            false,
+        ),
+    ];
+    for (answer, stops) in cases {
+        let interactions = Arc::new(ScriptedInteractions::new([
+            rust_cli_kernel_api::orchestration::Answer::from(answer),
+        ]));
+        let tool = ExitPlanModeTool::new(true, ids());
+        let (progress, _) = mpsc::channel(1);
+        let called = tool
+            .call_with_messages(
+                json!({"plan": PLAN}),
+                plan_context(interactions.clone()).build(),
+                progress,
+            )
+            .await
+            .unwrap();
+        assert!(called.output.is_error);
+        assert_eq!(called.stop_turn, stops);
+    }
+}
+
 #[tokio::test]
 async fn exit_outside_plan_mode_is_invalid() {
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let context = Ctx::new(Arc::new(ScriptedInteractions::default())).build();
     assert_eq!(
-        tool.validate_input(&json!({}), &context).await,
+        tool.validate_input(&json!({"plan": PLAN}), &context).await,
         Validation::Invalid {
             message: texts::NOT_IN_PLAN_MODE.to_owned(),
             error_code: Some(1),
@@ -186,12 +292,12 @@ async fn a_subagent_plan_is_approved_without_touching_the_session_mode() {
     let interactions = Arc::new(ScriptedInteractions::new([approve(
         PermissionMode::Default,
     )]));
-    let mut context = plan_context(interactions.clone(), &[]);
+    let mut context = plan_context(interactions.clone());
     context.agent = Some(AgentId::new("a1"));
-    let tool = ExitPlanModeTool::new(true);
+    let tool = ExitPlanModeTool::new(true, ids());
     let (progress, _) = mpsc::channel(1);
     let output = tool
-        .call(json!({}), context.build(), progress)
+        .call(json!({"plan": PLAN}), context.build(), progress)
         .await
         .unwrap();
     assert_eq!(output_text(&output), texts::AGENT_PLAN_APPROVED);

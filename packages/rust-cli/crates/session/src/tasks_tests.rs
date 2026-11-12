@@ -124,6 +124,18 @@ impl Files for Shells {
                 path: path.to_owned(),
             });
         }
+        // Fork: `e1` ended and its notice was acknowledged; only its terminal record is left.
+        if path == format!("{outputs}/e1.output") {
+            return Ok(TextRead::Text(TextSlice {
+                content: "ended output".to_owned(),
+                line_count: 1,
+                total_lines: 1,
+                total_bytes: 0,
+                read_bytes: 0,
+                mtime_ms: 0,
+                version: rust_cli_kernel_api::env::FileVersion::new("v1"),
+            }));
+        }
         assert_eq!(path, format!("{outputs}/{prefix}1.output"));
         if self.ticks {
             let content: String = (1..=12).map(|n| format!("tick-{n}\n")).collect();
@@ -222,6 +234,7 @@ impl Background for Shells {
                     status: BackgroundStatus::Running,
                     kind: *kind,
                     description: (*description).to_owned(),
+                    output: None,
                 }));
         }
         if !task.task.as_str().starts_with(self.prefix) {
@@ -232,9 +245,33 @@ impl Background for Shells {
         } else {
             BackgroundStatus::Completed
         };
+        // Fork: the running command reports the file it writes; the others predate the field.
+        let output = (status == BackgroundStatus::Running).then(|| {
+            rust_cli_kernel_api::env::EnvPath::new(format!(
+                "/logs/s1/toolu_{}-stdout.log",
+                task.task
+            ))
+        });
         Ok(Some(BackgroundInfo {
             command: format!("run {}", task.task),
             status,
+            output,
+            ..BackgroundInfo::default()
+        }))
+    }
+
+    /// Fork: `e1` ended and its notice was acknowledged: `background_command` no longer knows it, the terminal
+    /// record does.
+    async fn ended_background_command(
+        &self,
+        task: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        Ok((task.task.as_str() == "e1").then(|| BackgroundInfo {
+            command: "run e1".to_owned(),
+            status: BackgroundStatus::Failed,
+            output: Some(rust_cli_kernel_api::env::EnvPath::new(
+                "/logs/s1/toolu_e1-stdout.log",
+            )),
             ..BackgroundInfo::default()
         }))
     }
@@ -278,6 +315,23 @@ impl AgentSignals for OneAgent {
             Ok("Successfully stopped task: agent_1 (Review)".to_owned())
         } else {
             Err(format!("No task found with ID: {task}"))
+        }
+    }
+    async fn stop_subagent(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+        _operation: OperationContext,
+    ) -> Result<(), rust_cli_kernel_api::agents::SubagentStopRefusal> {
+        self.stopped
+            .lock()
+            .unwrap()
+            .push(format!("{session}/{agent}@{execution}"));
+        match (agent.as_str(), execution) {
+            ("agent_1", "0") => Ok(()),
+            ("agent_1", _) => Err(rust_cli_kernel_api::agents::SubagentStopRefusal::NotRunning),
+            _ => Err(rust_cli_kernel_api::agents::SubagentStopRefusal::NotFound),
         }
     }
 }
@@ -638,4 +692,112 @@ async fn closing_does_not_wait_for_a_reconnecting_machine() {
     )
     .await
     .expect("closing does not wait for a reconnecting machine");
+}
+
+/// Fork: the desktop background Bash detail reads the output file's tail with the ledger's status; a missing
+/// file is `ENOENT` (Node `readBackgroundBashOutput`).
+#[tokio::test]
+async fn the_bash_output_window_reads_the_output_file() {
+    use rust_cli_kernel_api::panels::BashOutputRead;
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let Some(BashOutputRead::Window {
+        status,
+        text,
+        truncated,
+        path,
+    }) = built.session.background_bash_output("b1").await.unwrap()
+    else {
+        panic!("expected a window");
+    };
+    assert_eq!(status, Some(BackgroundStatus::Running));
+    assert!(
+        text.starts_with("line 1\n") && text.ends_with("line 45"),
+        "{text}"
+    );
+    assert!(!truncated);
+    // Fork: the path shown is the file the command writes, read through the `.output` link.
+    assert_eq!(path.as_str(), "/logs/s1/toolu_b1-stdout.log");
+    assert_eq!(
+        built.session.background_bash_output("b3").await.unwrap(),
+        Some(BashOutputRead::ReadFailed {
+            code: Some("ENOENT".to_owned())
+        })
+    );
+}
+
+/// Fork: after the notice's ack the detail pane still reads the command's status and file from the ledger's terminal
+/// record, whichever subscriber acknowledged the notice (specs/fork-rust-agent-parity.md, "Subagent child sessions: one
+/// owner for background-command notices"). Before, a subagent child read `unavailable` here when the agents forwarder
+/// acknowledged first.
+#[tokio::test]
+async fn the_bash_output_window_reads_an_acknowledged_command() {
+    use rust_cli_kernel_api::panels::BashOutputRead;
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let read = built.session.background_bash_output("e1").await.unwrap();
+    assert_eq!(
+        read,
+        Some(BashOutputRead::Window {
+            status: Some(BackgroundStatus::Failed),
+            text: "ended output".to_owned(),
+            truncated: false,
+            path: rust_cli_kernel_api::env::EnvPath::new("/logs/s1/toolu_e1-stdout.log"),
+        })
+    );
+}
+
+/// Fork (B2): `Command::StopSubagent` reaches the agents' guarded stop with this session, and a refusal's reason is
+/// its code.
+#[tokio::test]
+async fn stop_subagent_goes_through_the_guarded_stop() {
+    let agents = std::sync::Arc::new(OneAgent::default());
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.agents = agents.clone();
+    let built = setup.build().await;
+    let session = built.session.id().clone();
+    let stop = |agent: &str, execution: &str| Command::StopSubagent {
+        agent: AgentId::new(agent),
+        execution: execution.to_owned(),
+    };
+    let ack = built
+        .session
+        .send(envelope("c1", stop("agent_1", "0")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Done
+        }
+    );
+    let ack = built
+        .session
+        .send(envelope("c2", stop("agent_1", "3")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "not_running".to_owned()
+        }
+    );
+    let ack = built
+        .session
+        .send(envelope("c3", stop("agent_9", "0")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "not_found".to_owned()
+        }
+    );
+    assert_eq!(
+        *agents.stopped.lock().unwrap(),
+        [
+            format!("{session}/agent_1@0"),
+            format!("{session}/agent_1@3"),
+            format!("{session}/agent_9@0"),
+        ]
+    );
 }

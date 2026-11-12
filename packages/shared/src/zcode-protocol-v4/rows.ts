@@ -6,10 +6,12 @@ import { botGroupInputSourceSchema } from "../bots.js";
 import { z } from "zod";
 import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
-import { timestampSchema } from "./core.js";
+import { timestampSchema, type Timestamp } from "./core.js";
 import { conversationInputSourceSchema } from "./input-intent.js";
 import { backgroundResultOriginMetaSchema, workflowLaunchMetaSchema } from "./workflow-row-meta.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
+import { modelSelectionSchema } from "../model-selection.js";
+import { submissionModeSchema } from "./submission.js";
 
 // RowBase. rowId is monotonic and never reused within a session; deterministic pure function of the event log.
 const rowBaseFields = {
@@ -67,8 +69,11 @@ export const turnHeaderRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("turnHeader"),
   // workflowLaunch: controlOnly turn started directly by the hub.
-  // Known skew behavior: adding a closed-enum value means an older Desktop with a newer CLI drops the row on parse failure (same tier as adding
-  // backgroundSource: "workflow" below); acceptable when CLI and Desktop ship together.
+  // Recorded skew: adding a closed-enum value means an older Desktop with a newer CLI fails to parse that row (same tier as adding
+  // backgroundSource: "workflow" below); accepted when CLI and Desktop ship together.
+  // Correction (2026-11-04): the note above used to say the row is dropped, which the code cannot do: window is
+  // z.array(conversationRowSchema), so one failing row rejects the whole frame and the subscription fails closed. Per-row degradation
+  // is provided by displayConversationRowSchema, so the row now degrades only to an unreadable placeholder row.
   origin: z.enum([
     "userInput",
     "backgroundResult",
@@ -118,6 +123,11 @@ export const userInputRowSchema = z.object({
   inputOrigin: z.enum(["desktop", "mobile"]).optional(),
   botGroupSource: botGroupInputSourceSchema.optional(),
   conversationQuotes: conversationQuotesSchema.optional(),
+  // 该输入提交时的执行配置（canonical intent 原样投影）：编辑最后一条消息时载入工具栏，
+  // 与排队项编辑一致（docs/ui/composer-edit-mode.md）。旧输入缺省，客户端沿用当前配置。
+  modelSelection: modelSelectionSchema.optional(),
+  mode: submissionModeSchema.optional(),
+  planEnabled: z.boolean().optional(),
   text: z.string(),
   // Text from this index onward is appended by the engine (dwf ask suffix /
   // nudge); GUI folds it into a disclosure collapsed by default. 0 = entire text; absent = none (old transcript or non-workflow session).
@@ -396,6 +406,14 @@ export const timelineMarkerPayloadSchema = z.union([
     toModel: z.string(),
     toThought: z.string(),
   }),
+  // 受管 worktree 的创建结果，出现在 worktree 任务第一轮（docs/git/worktree.md §6.6.4）。
+  z.object({
+    type: z.literal("worktreeCreated"),
+    path: z.string(),
+    sha: z.string(),
+    ref: z.string().nullable(),
+    output: z.string(),
+  }),
   z.object({
     type: z.literal("goalSet"),
     objective: z.string(),
@@ -445,6 +463,10 @@ export const timelineMarkerRowSchema = z.object({
 });
 export type TimelineMarkerRow = z.infer<typeof timelineMarkerRowSchema>;
 
+/**
+ * wire 上的行：发送端产出的九种。deltas（`row.appended` / `row.upserted`）与分享导出用它，
+ * 解析失败必须拒帧——丢一条行变更会让投影与权威发散。
+ */
 export const conversationRowSchema = z.discriminatedUnion("kind", [
   turnHeaderRowSchema,
   userInputRowSchema,
@@ -456,8 +478,72 @@ export const conversationRowSchema = z.discriminatedUnion("kind", [
   hookInvocationRowSchema,
   timelineMarkerRowSchema,
 ]);
-export type ConversationRow = z.infer<typeof conversationRowSchema>;
+export type WireConversationRow = z.infer<typeof conversationRowSchema>;
+
+/**
+ * 「这一行读不懂」的占位行（10-protocol-spec §4.4.9）。**发送端永远不产出它**，由消费端合成。
+ *
+ * 为什么需要它：恢复阶梯的最后一级是 forceSnapshot，而它走同一个全帧 schema，所以在此之前
+ * 「读不懂一行」等于「读不懂一帧」——一张工具卡多两个键、或者新 CLI 给某个闭集枚举加一个值，
+ * 就能让整个会话永久打不开（2026-09-21 sess_4142de31 即如此）。逐行降级让最后一级不可拒绝，
+ * 阶梯才有终点。
+ *
+ * 只保留 RowBase 里最稳定的四个字段：rowId/turnId 决定身份、排序与分轮，createdAt/createdAtSeq
+ * 决定时间轴位置。这四个字段自 V4 冻结起未变过，连它们都读不懂说明信封本身坏了。其余字段一律
+ * 不保留——无法判断偏斜的那一处是否就在其中。
+ */
+export interface UnreadableConversationRow {
+  kind: "unreadable";
+  rowId: number;
+  turnId: string;
+  createdAt: Timestamp;
+  createdAtSeq: number;
+  /** 原帧里那一行自报的 kind，原样保留，用于区分「未知行类型」与「已知类型但字段偏斜」。 */
+  sourceKind: string;
+  // 占位行没有这些事实。显式声明为 undefined，而不是让消费端在二十来处读取点各写一次类型分支：
+  // 分享资格、fork 目标、重试入口读到 undefined 时本来就应该跳过这一行，这正是想要的行为。
+  // 必填字段（例如 toolCallId）仍然不声明，所以误把占位行当成具体行用仍是编译错误。
+  entityId?: undefined;
+  productTurnId?: undefined;
+  visibility?: undefined;
+  actions?: undefined;
+}
+
+export const unreadableRowSchema = z
+  .object({
+    rowId: z.number(),
+    turnId: z.string(),
+    createdAt: timestampSchema,
+    createdAtSeq: z.number(),
+    kind: z.string(),
+  })
+  .transform(
+    (row): UnreadableConversationRow => ({
+      kind: "unreadable",
+      rowId: row.rowId,
+      turnId: row.turnId,
+      createdAt: row.createdAt,
+      createdAtSeq: row.createdAtSeq,
+      sourceKind: row.kind,
+    }),
+  );
+
+/**
+ * 展示用的行：先按严格 union 解析，失败才退到占位行。只用于 snapshot 的 `rows.window` 与
+ * `rows/range` 的历史回补，不用于 deltas（封闭规则 13 的三档表）。
+ *
+ * union 的顺序是语义的一部分：严格成员必须排在前面，否则合法行也会被当成占位行。
+ */
+export const displayConversationRowSchema = z.union([conversationRowSchema, unreadableRowSchema]);
+
+/** 消费端能持有的行。比 wire 多一个占位行，所以渲染侧的 switch 必须覆盖 `unreadable`。 */
+export type ConversationRow = WireConversationRow | UnreadableConversationRow;
 export type ConversationRowKind = ConversationRow["kind"];
+
+/** 窄化到 wire 行。分享导出、fork 目标等只能作用于真正读得懂的行。 */
+export function isWireConversationRow(row: ConversationRow): row is WireConversationRow {
+  return row.kind !== "unreadable";
+}
 
 /**
  * "Frozen history + tail turns" partition of rows.window (spec: docs/ui/chat-virtual-scroll.md,

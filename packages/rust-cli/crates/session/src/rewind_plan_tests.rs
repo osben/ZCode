@@ -9,7 +9,9 @@ fn write(path: &str, before: Option<&str>, after: &str) -> Artifact {
             existed_before: before.is_some(),
             before_content: before.map(str::to_owned),
             after_content: Some(after.into()),
+            structured_patch: Vec::new(),
         }],
+        tool_name: None,
     }
 }
 
@@ -49,4 +51,101 @@ fn changes_count_lines_from_first_before_to_last_after() {
     let changes = changes(&artifacts);
     assert_eq!(changes.len(), 1);
     assert_eq!((changes[0].additions, changes[0].deletions), (2, 1));
+}
+
+mod anchor {
+    //! Fork: the file anchor of a rewind target (`rewind_anchor`).
+
+    use rust_cli_kernel_api::hooks::{SteerSender, queued_command};
+    use rust_cli_kernel_api::message::AttachmentMessage;
+
+    use super::*;
+
+    fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
+        Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new(id),
+            content: vec![ContentBlock::Text { text: text.into() }],
+            origin,
+        })
+    }
+
+    fn guided(id: &str) -> Message {
+        Message::Attachment(queued_command::steer_attachment(
+            MessageId::new(id),
+            "also b",
+            SteerSender::User,
+            Some("c2"),
+            None,
+        ))
+    }
+
+    fn tool_result(id: &str) -> Message {
+        user(
+            id,
+            "ok",
+            UserOrigin::ToolResult {
+                assistant: MessageId::new("a1"),
+            },
+        )
+    }
+
+    #[test]
+    fn a_typed_input_anchors_at_itself() {
+        let messages = [user("u1", "hi", UserOrigin::Human)];
+        let anchor = rewind_anchor(&messages, &MessageId::new("u1"));
+        assert_eq!(anchor.map(MessageId::as_str), Some("u1"));
+    }
+
+    #[test]
+    fn a_guided_steer_anchors_at_the_turns_typed_input() {
+        let messages = [
+            user("u0", "earlier", UserOrigin::Human),
+            user("u1", "hi", UserOrigin::Human),
+            tool_result("t1"),
+            guided("g1"),
+        ];
+        let anchor = rewind_anchor(&messages, &MessageId::new("g1"));
+        assert_eq!(anchor.map(MessageId::as_str), Some("u1"));
+    }
+
+    #[test]
+    fn a_guided_steer_in_a_notice_turn_anchors_at_the_notice() {
+        let notice = UserOrigin::Meta {
+            source: NOTICE_SOURCE.to_owned(),
+        };
+        let messages = [
+            user("u1", "hi", UserOrigin::Human),
+            user("n1", "<task-notification>done</task-notification>", notice),
+            tool_result("t1"),
+            guided("g1"),
+        ];
+        let anchor = rewind_anchor(&messages, &MessageId::new("g1"));
+        assert_eq!(anchor.map(MessageId::as_str), Some("n1"));
+    }
+
+    #[test]
+    fn a_guided_steer_without_an_opener_anchors_at_itself() {
+        let messages = [tool_result("t1"), guided("g1")];
+        let anchor = rewind_anchor(&messages, &MessageId::new("g1"));
+        assert_eq!(anchor.map(MessageId::as_str), Some("g1"));
+    }
+
+    #[test]
+    fn other_attachments_and_replies_are_no_target() {
+        let messages = [
+            user("u1", "hi", UserOrigin::Human),
+            Message::Attachment(AttachmentMessage {
+                id: MessageId::new("x1"),
+                source: "hook_additional_context".into(),
+                text: "context".into(),
+                data: serde_json::Value::Null,
+            }),
+            tool_result("t1"),
+        ];
+        assert_eq!(rewind_anchor(&messages, &MessageId::new("x1")), None);
+        assert_eq!(rewind_anchor(&messages, &MessageId::new("t1")), None);
+        assert_eq!(rewind_anchor(&messages, &MessageId::new("missing")), None);
+    }
 }

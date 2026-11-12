@@ -54,6 +54,8 @@ fn tool_call_output_round_trips() {
     round_trip(&ToolCallOutput {
         output: output.clone(),
         new_messages: vec![Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("msg_skill"),
             content: vec![ContentBlock::Text {
                 text: "Base directory for this skill: /w/.zcode/skills/greet".to_owned(),
@@ -62,10 +64,12 @@ fn tool_call_output_round_trips() {
                 source: "skill".to_owned(),
             },
         })],
+        stop_turn: false,
     });
     // 没有新消息时不写这个字段，旧形状照常能读。
     let plain: ToolCallOutput = serde_json::from_value(json!({"output": output})).unwrap();
     assert!(plain.new_messages.is_empty());
+    assert!(!plain.stop_turn);
 }
 
 #[test]
@@ -397,6 +401,9 @@ fn command_and_generation_ids_default_to_fresh_operation_ids() {
             unreachable!()
         }
         fn run(&self) -> crate::ids::RunId {
+            unreachable!()
+        }
+        fn execution(&self) -> String {
             unreachable!()
         }
         fn operation(&self) -> crate::ids::OperationId {

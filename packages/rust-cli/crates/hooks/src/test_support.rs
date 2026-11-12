@@ -157,6 +157,7 @@ impl Commands for ScriptedEnv {
                 () = cancel.cancelled() => true,
             };
             let finish = |outcome, exit_code| CommandEvent::Finished {
+                output_unreadable: None,
                 outcome,
                 exit_code,
                 timed_out: false,

@@ -22,8 +22,10 @@ import { invalidateDeferredDraftSessionForSkillChange } from "@/lib/zcodeDraftSk
 import { logger } from "@/logger.js";
 import { startUserAction } from "@/lib/userActionTelemetry.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { FileTreeHtmlOpenSetting } from "@/settings/FileTreeHtmlOpenSetting.js";
 import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
 import { useSkillStore } from "@/store/skillStore.js";
+import { clearBrowserRecentVisits } from "@/store/browserRecentVisitsStore.js";
 import { formatImportSummary } from "./browserImportSummary.js";
 
 const OFFICIAL_BROWSER_USE_PLUGIN_ID = "browser-use@zcode-plugins-official";
@@ -205,6 +207,7 @@ export function BrowserSettingsSection({
       });
       try {
         const result = await platform.clearEmbeddedBrowserData(mode);
+        if (result.success && mode === "all") clearBrowserRecentVisits();
         trace.complete({ resultSource: "platform_result" });
         toast(
           intl.formatMessage({
@@ -239,6 +242,7 @@ export function BrowserSettingsSection({
       <section className="space-y-3">
         <SettingsGroupCard>
           <SettingsRow
+            searchId="settings.browser.control.title"
             label={intl.formatMessage({ id: "settings.browser.control.title" })}
             description={intl.formatMessage({
               id: "settings.browser.control.description",
@@ -264,6 +268,7 @@ export function BrowserSettingsSection({
               The Windows App-Bound import path is not yet available, so hide its entry point while retaining the underlying implementation and cleanup capability. */}
           {!isWindowsDesktop ? (
             <SettingsRow
+              searchId="settings.browser.import.title"
               label={intl.formatMessage({ id: "settings.browser.import.title" })}
               description={intl.formatMessage({
                 id: "settings.browser.import.description",
@@ -290,7 +295,19 @@ export function BrowserSettingsSection({
         </SettingsGroupCard>
       </section>
 
-      {/* Certificate policy is configurable only when Desktop has a built-in browser; main applies changes to Session at startup, so a restart is required. */}
+      {/* 文件树 HTML 打开方式只在桌面端有内置浏览器时有意义。 */}
+      {isDesktop ? (
+        <section className="space-y-3">
+          <div className="text-ui-base font-medium text-foreground-subtle">
+            {intl.formatMessage({ id: "settings.browser.open.section" })}
+          </div>
+          <SettingsGroupCard>
+            <FileTreeHtmlOpenSetting />
+          </SettingsGroupCard>
+        </section>
+      ) : null}
+
+      {/* 证书策略只在桌面端有内置浏览器时可配；改动由 main 在启动时装到 Session，需重启生效。 */}
       {isDesktop ? (
         <section className="space-y-3">
           <div className="text-ui-base font-medium text-foreground-subtle">
@@ -298,6 +315,7 @@ export function BrowserSettingsSection({
           </div>
           <SettingsGroupCard>
             <SettingsRow
+              searchId="settings.embeddedBrowserAllowInsecureCertificates"
               label={intl.formatMessage({
                 id: "settings.embeddedBrowserAllowInsecureCertificates",
               })}
@@ -331,6 +349,7 @@ export function BrowserSettingsSection({
         ) : null}
         <SettingsGroupCard>
           <SettingsRow
+            searchId="settings.browser.clearCache.title"
             label={intl.formatMessage({
               id: "settings.browser.clearCache.title",
             })}
@@ -351,6 +370,7 @@ export function BrowserSettingsSection({
             }
           />
           <SettingsRow
+            searchId="settings.browser.clearAll.title"
             label={intl.formatMessage({
               id: "settings.browser.clearAll.title",
             })}

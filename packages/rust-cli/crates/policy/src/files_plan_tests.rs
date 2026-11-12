@@ -70,6 +70,7 @@ fn context(mode: PermissionMode, home: Option<&str>) -> ToolUseContext {
             root: EnvPath::new("/w"),
         },
         mode,
+        base_mode: mode,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),
@@ -159,6 +160,7 @@ async fn other_writes_stay_blocked_in_plan_mode() {
 async fn without_the_classifier_plan_mode_asks_with_the_plan_mode_text() {
     let gate = PolicyGate::default().with_options(PolicyOptions {
         auto_in_plan: false,
+        node_plan: false,
     });
     let decision = decide(&gate, "Write", "/w/src/a.rs", PermissionMode::Plan).await;
     assert_eq!(
@@ -175,6 +177,7 @@ async fn edit_allow_rules_no_longer_override_plan_mode() {
     let gate = PolicyGate::new(rules(&[(RuleBehavior::Allow, "Edit(src/**)")])).with_options(
         PolicyOptions {
             auto_in_plan: false,
+            node_plan: false,
         },
     );
     let path = "/w/src/a.rs";
@@ -199,10 +202,36 @@ async fn deny_and_ask_rules_still_apply_to_the_plan_file() {
     let asked = PolicyGate::new(rules(&[(RuleBehavior::Ask, "Edit(//w/.zcode/**)")])).with_options(
         PolicyOptions {
             auto_in_plan: false,
+            node_plan: false,
         },
     );
     assert_eq!(
         decide(&asked, "Write", PLAN, PermissionMode::Plan).await,
         PermissionDecision::ask(texts::file_write_request(PLAN), Vec::new())
     );
+}
+
+/// Fork: the app-server's plan mode denies what would ask with Node's reason; the plan file and reads still pass.
+#[tokio::test]
+async fn node_plan_mode_denies_writes_with_the_node_reason() {
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    assert_eq!(
+        decide(&gate, "Write", "/w/src/a.rs", PermissionMode::Plan).await,
+        PermissionDecision::Deny {
+            message: texts::PLAN_MODE_READ_ONLY.to_owned()
+        }
+    );
+    assert!(matches!(
+        decide(&gate, "Write", PLAN, PermissionMode::Plan).await,
+        PermissionDecision::Allow { .. }
+    ));
+    assert!(matches!(
+        decide(&gate, "Read", "/w/src/a.rs", PermissionMode::Plan).await,
+        PermissionDecision::Allow { .. }
+    ));
+    // Outside plan mode nothing changes.
+    assert!(matches!(
+        decide(&gate, "Write", "/w/src/a.rs", PermissionMode::Default).await,
+        PermissionDecision::Ask { .. }
+    ));
 }

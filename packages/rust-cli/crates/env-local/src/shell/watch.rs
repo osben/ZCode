@@ -55,6 +55,22 @@ async fn read_from(path: &std::path::Path, position: u64) -> std::io::Result<Vec
     Ok(buffer)
 }
 
+/// Fork (node_desktop): delete the output files the supervisor marked for deletion once the
+/// output has been read to the end (see `Finish::discard`). A second watcher finds them gone.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "env-local 是进程 IO 的入口：输出文件在执行侧（docs/specs/rust-cli/README.md §4）"
+)]
+async fn discard(paths: &[std::path::PathBuf]) {
+    for path in paths {
+        if let Err(error) = tokio::fs::remove_file(path).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "could not remove a settled output file");
+        }
+    }
+}
+
 async fn next(mut cursor: Cursor) -> Option<(Result<CommandEvent, EnvError>, Cursor)> {
     loop {
         match cursor.phase {
@@ -129,6 +145,7 @@ async fn next(mut cursor: Cursor) -> Option<(Result<CommandEvent, EnvError>, Cur
                 }
             }
             cursor.phase = Phase::Done;
+            discard(&finish.discard).await;
             return Some((Ok(finish.event()), cursor));
         }
         tokio::select! {

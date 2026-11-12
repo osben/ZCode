@@ -88,7 +88,10 @@ impl AgentActivity {
                 delta: BlockDelta::Thinking(text),
             } => self.stream(message, index, text, true),
             QueryEvent::ModelNotice { notice } => Notice::fold(&mut self.notice, notice, now_ms),
-            QueryEvent::Delta { .. } | QueryEvent::ToolProgress { .. } => {}
+            // The TUI shows a tool when it starts (the desktop projection also shows the streaming input).
+            QueryEvent::Delta { .. }
+            | QueryEvent::ToolInputStarted { .. }
+            | QueryEvent::ToolProgress { .. } => {}
         }
     }
 }

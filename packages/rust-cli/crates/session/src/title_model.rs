@@ -28,7 +28,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// Node `AUXILIARY_MAX_OUTPUT_TOKENS`。
 const AUXILIARY_MAX_OUTPUT_TOKENS: u64 = 5_000;
 /// 请求来源（`querySource`；用量表与请求头写成 Node 的 `session_title`，工作线 F71）。
-const SOURCE: SideSource = SideSource::SessionTitle;
+pub(crate) const SOURCE: SideSource = SideSource::SessionTitle;
 
 /// 标题生成用的模型端口与模型目录（交互形态的会话才有，`-p` 不生成，titles.md §2）。
 #[derive(Clone)]
@@ -36,6 +36,9 @@ pub struct TitleModel {
     pub model: Arc<dyn ModelPort>,
     /// 取辅助选项（推理档位、输出上限）；显式覆盖时没有。
     pub directory: Option<Arc<dyn ModelDirectory>>,
+    /// Fork: Node desktop titles. Node's title prompt ([`title::node_system`], the input as the user message) instead
+    /// of this CLI's, and the first-input title starts once its turn completes (crate::title, `deferred`).
+    pub node_prompt: bool,
 }
 
 /// 一次标题请求的结果：候选标题（失败、超时或解析为空时没有）与这次请求的用量事实（Node 不论结果都写一行，
@@ -64,9 +67,15 @@ impl Reply {
     }
 }
 
+/// Fork: the text a title request is made of (Node `normalizeTitleInput(sanitizeTitleSeed(input))`, used for both the
+/// length guard and the request): composer mentions keep their label, the manual skill template becomes its request.
+pub(crate) fn request_input(input: &str) -> String {
+    normalize_input(&rust_cli_kernel_api::title::seed(input))
+}
+
 /// 首条输入能不能生成标题（长度下限按码点数，同 Node）。
 pub(crate) fn long_enough(input: &str) -> bool {
-    let normalized = normalize_input(input);
+    let normalized = request_input(input);
     !normalized.is_empty() && normalized.chars().count() >= title::limits().min_input_chars
 }
 
@@ -104,22 +113,29 @@ impl TitleModel {
         input: &str,
         (clock, request_id): (&dyn Clock, MessageId),
         cancel: CancellationToken,
+        source: SideSource,
     ) -> Generated {
         let (selection, max_tokens) = self.auxiliary(small_fast_model(main)).await;
-        let content = normalize_input(input);
-        let user = render(
-            title::user(),
-            &[
-                ("content", content.as_str()),
-                ("language", title::language_default()),
-            ],
-        );
-        let source = QuerySource::Side(SOURCE);
+        let content = request_input(input);
+        let (system, user) = if self.node_prompt {
+            (title::node_system(), content)
+        } else {
+            let user = render(
+                title::user(),
+                &[
+                    ("content", content.as_str()),
+                    ("language", title::language_default()),
+                ],
+            );
+            (title::system(), user)
+        };
+        let side = source;
+        let source = QuerySource::Side(side);
         let mut request = ModelRequest::side(
             selection.clone(),
-            SOURCE,
+            side,
             vec![SystemBlock {
-                text: title::system().to_owned(),
+                text: system.to_owned(),
                 cache_control: None,
             }],
             vec![ApiMessage::user_text(user)],

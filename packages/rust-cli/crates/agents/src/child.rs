@@ -7,6 +7,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::agents::ChildLive;
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::{AgentId, MessageId, SessionId};
 use rust_cli_kernel_api::message::{AssistantMessage, ContentBlock, Message};
@@ -74,9 +75,15 @@ pub(crate) struct ChildSink {
     asks: Option<Asks>,
     /// 写进询问的子代理名字（agent 类型）。
     name: String,
+    /// Fork: the subagent behind this sink, fixed when the run starts (Node's subagent ask always carries
+    /// `payload.origin`). It is not looked up in `live` at ask time: an agent already gone from `live` would leave the
+    /// ask without origin, and the App would offer it a permission mode switch.
+    origin: Option<rust_cli_kernel_api::orchestration::AskOrigin>,
     record: Mutex<Record>,
     /// 子代理里的 Monitor 交给 agents（agents.md §5.3，工作线 F83）；没有时（测试）不支持。
     core: Option<Arc<crate::Core>>,
+    /// 这次运行的 execution（`Shown::execution`）：活动只记在它还是 agent 当前运行时。
+    execution: u64,
 }
 
 impl ChildSink {
@@ -99,9 +106,18 @@ impl ChildSink {
             parent,
             asks: None,
             name: String::new(),
+            origin: None,
             record: Mutex::default(),
             core: None,
+            execution: 0,
         }
+    }
+
+    /// The run this sink belongs to (`Shown::execution` when it started). Its events update the clock only while it is
+    /// still the agent's run.
+    pub(crate) fn with_execution(mut self, execution: u64) -> Self {
+        self.execution = execution;
+        self
     }
 
     /// 子代理里的 Monitor 经 agents 起转发任务（`spawn::drive` 给出）。
@@ -141,6 +157,13 @@ impl ChildSink {
         }
     }
 
+    /// Fork (node_desktop): relays this run to the child session's actor (crate::mirror).
+    fn mirror(&self, event: ChildLive) {
+        if let Some(core) = self.core.as_ref().filter(|core| core.node_desktop) {
+            core.mirrors.publish(&self.session, event);
+        }
+    }
+
     fn record(&self) -> std::sync::MutexGuard<'_, Record> {
         self.record.lock_unpoisoned()
     }
@@ -162,22 +185,44 @@ impl ChildSink {
     }
 }
 
+impl ChildSink {
+    /// Fork: fixes the subagent behind this sink as its asks' origin (`spawn::drive`, from the run's agent).
+    pub(crate) fn with_origin(self, agent: &crate::live::LiveAgent) -> Self {
+        Self {
+            origin: Some(rust_cli_kernel_api::orchestration::AskOrigin {
+                agent: agent.agent.clone(),
+                agent_type: agent.definition.agent_type.clone(),
+                child_session: agent.child.clone(),
+                parent_session: agent.parent.clone(),
+                description: agent.description.clone(),
+                parent_tool_use: agent.tool_use.clone(),
+            }),
+            ..self
+        }
+    }
+}
+
 /// 经父会话询问的这段时间：开始时记一次等待，结束（含被取消、future 被丢弃）时复原。
 struct Waiting<'a> {
     live: &'a Live,
     agent: &'a AgentId,
+    execution: u64,
 }
 
 impl<'a> Waiting<'a> {
-    fn start(live: &'a Live, agent: &'a AgentId) -> Self {
-        live.waiting(agent, true);
-        Self { live, agent }
+    fn start(live: &'a Live, agent: &'a AgentId, execution: u64) -> Self {
+        live.waiting(agent, execution, true);
+        Self {
+            live,
+            agent,
+            execution,
+        }
     }
 }
 
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
-        self.live.waiting(self.agent, false);
+        self.live.waiting(self.agent, self.execution, false);
     }
 }
 
@@ -207,6 +252,9 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: None,
                 machine,
+                once,
+                independent,
+                origin,
             } => InteractionRequest::Permission {
                 machine,
                 tool_use,
@@ -216,11 +264,19 @@ impl Interactions for ChildSink {
                 suggestions,
                 rule_seed,
                 asked_by: Some(self.name.clone()),
+                once,
+                independent,
+                origin,
             },
             other => other,
         };
+        // Fork: the App shows a delegated ask with the subagent it came from (Node `payload.origin`).
+        let request = match self.origin.clone() {
+            Some(origin) => request.asked_from(origin),
+            None => request,
+        };
         // 等用户回答期间列表显示 ` · waiting`（tui-panels.md §1.1）；被取消时 guard 复原。
-        let _waiting = Waiting::start(&self.live, &self.agent);
+        let _waiting = Waiting::start(&self.live, &self.agent, self.execution);
         asker.ask(request).await
     }
 
@@ -253,6 +309,7 @@ impl SessionOps for ChildSink {
         };
         Some(RunView {
             selection,
+            execution_worktree: agent.execution_worktree,
             ..RunView::new(agent.mode, agent.workspace)
         })
     }
@@ -327,6 +384,7 @@ impl ChildSink {
         self.commit(settled.facts).await?;
         // 提交之后才加版本：只读查看看到新版本时去取，存储里一定已有这条消息（tui-panels.md §1.4）。
         self.live.committed(&self.agent, speed);
+        self.mirror(ChildLive::Committed(message.clone()));
         if let Message::Assistant(assistant) = message {
             let mut record = self.record();
             record.tool_uses += tool_use_blocks(&assistant.content);
@@ -349,6 +407,10 @@ impl RunSink for ChildSink {
         message: Option<Message>,
         metered: rust_cli_kernel_api::metering::Metered,
     ) -> Result<(), StoreError> {
+        // 模型请求完成是进展（stall.rs，Node `ModelComplete`）。
+        if matches!(metered, rust_cli_kernel_api::metering::Metered::Model(_)) {
+            self.live.progress(&self.agent, self.execution);
+        }
         let speed = match &metered {
             rust_cli_kernel_api::metering::Metered::Model(call) => matches!(
                 call.source,
@@ -365,15 +427,45 @@ impl RunSink for ChildSink {
         }
     }
 
+    async fn request_started(&self) {
+        self.live.progress(&self.agent, self.execution);
+    }
+
+    async fn tool_scheduled(
+        &self,
+        tool_use: &rust_cli_kernel_api::ids::ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        self.live
+            .tool_scheduled(&self.agent, self.execution, tool_use, name, input);
+    }
+
     async fn emit(&self, event: QueryEvent) -> bool {
         // `ToolFinished` 先于工具结果的提交到达（同一个任务里按顺序调用）：记下 checkpoint 与子代理关联。
         if let QueryEvent::ToolFinished { tool_use, output } = &event {
             self.record().ledger.tool_finished(tool_use, output);
         }
+        // 无进展提醒的进展：工具调用开始与结束（stall.rs，Node `ToolCallStarted` / `ToolCallResult`）。
+        match &event {
+            QueryEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => self
+                .live
+                .tool_started(&self.agent, self.execution, tool_use, name, input),
+            QueryEvent::ToolFinished { tool_use, .. } => {
+                self.live
+                    .tool_finished(&self.agent, self.execution, tool_use)
+            }
+            _ => {}
+        }
         // 列表行的当前活动（前台与后台都记，L35，stall-visibility.md §4.3）。
         if let Some(doing) = Doing::after(&event) {
             self.live.doing(&self.agent, doing);
         }
+        self.mirror(ChildLive::Event(event.clone()));
         // 进度只给 UI：通道满了就丢，不拖慢子循环。
         if let Some(parent) = &self.parent {
             let data = json!({ "agentId": self.agent, "event": event });
@@ -410,7 +502,10 @@ impl RunSink for ChildSink {
             .into_iter()
             .map(|notice| rust_cli_prompts::agents::notification_wrap(&notice.envelope))
             .collect();
-        Absorbed::ordered(steered.into_iter().map(Steered::plain).collect(), notices)
+        Absorbed::ordered(
+            steered.into_iter().map(Steered::coordinator).collect(),
+            notices,
+        )
     }
 
     /// 子代理没有目标（goal.md §4）：不提交。

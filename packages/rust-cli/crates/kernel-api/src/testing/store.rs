@@ -97,14 +97,53 @@ pub struct MemoryStore {
     split: std::sync::atomic::AtomicBool,
     /// 下一个带 `TitleChanged` 的批次提交失败（[`Self::fail_next_title_change`]）。
     fail_title: std::sync::atomic::AtomicBool,
+    /// Fork: the next `session_rules` fails ([`Self::fail_next_session_rules`]).
+    fail_rules: std::sync::atomic::AtomicBool,
+    /// Fork: the next `set_execution_worktree` fails ([`Self::fail_next_execution_worktree`]).
+    fail_execution: std::sync::atomic::AtomicBool,
+    /// Fork: the next `records` read fails ([`Self::fail_next_records`]).
+    fail_records: std::sync::atomic::AtomicBool,
+    /// Fork: the next `put_record` of this kind fails ([`Self::fail_next_put_record`]).
+    fail_put_kind: Mutex<Option<String>>,
+    /// Fork: rows a Node agent wrote with a `workspace_id` (a remote identity) besides their directory.
+    workspace_keys: Mutex<HashMap<SessionId, String>>,
     /// 下一次 `load` 等这道门（[`Self::hold_next_load`]）。
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
+    /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
+    execution: Mutex<HashMap<SessionId, (crate::env::EnvPath, Option<String>)>>,
 }
 
 impl MemoryStore {
     /// 下一个带 `TitleChanged` 的批次整批提交失败（`Storage` 错误），之后照常（titles.md §4：改名被拒绝时它的记录也不在）。
     pub fn fail_next_title_change(&self) {
         self.fail_title.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `session_rules` read fails (`Storage`), later ones succeed: an open that fails after its load.
+    pub fn fail_next_session_rules(&self) {
+        self.fail_rules.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
+    pub fn fail_next_execution_worktree(&self) {
+        self.fail_execution.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `put_record` of `kind` fails (a storage error); other kinds and later writes work.
+    pub fn fail_next_put_record(&self, kind: &str) {
+        *self.fail_put_kind.lock_unpoisoned() = Some(kind.to_owned());
+    }
+
+    /// Fork: the session's row carries a Node `workspace_id` (a remote identity) besides its directory.
+    pub fn set_workspace_key(&self, session: &SessionId, key: &str) {
+        self.workspace_keys
+            .lock_unpoisoned()
+            .insert(session.clone(), key.to_owned());
+    }
+
+    /// Fork: the next `records` read fails (a storage error), later ones work.
+    pub fn fail_next_records(&self) {
+        self.fail_records.store(true, Ordering::SeqCst);
     }
 
     /// 下一次 `load` 等到测试放行（`notify_one`）才读，之后的照常：让测试停在“会话正在打开”的窗口里（titles.md §4）。
@@ -118,6 +157,14 @@ impl MemoryStore {
     /// （保留段接在摘要之后），之前的放进 `earlier`。缺省不切分（`messages` 是重放出的全部消息）。
     pub fn split_at_compaction(&self) {
         self.split.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the stored meta of a session (`None` when it was never created).
+    pub fn meta(&self, session: &SessionId) -> Option<SessionMeta> {
+        self.sessions
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(meta, _)| meta.clone())
     }
 
     /// 已写下的信任记录（按写入顺序，重复写只留一条）。
@@ -150,6 +197,11 @@ impl MemoryStore {
     }
 
     /// 已删除的会话（修复线 F29）。
+    /// Fork: removes the session row, as `erase_session_tree` hard-deletes it.
+    pub fn erase(&self, session: &SessionId) {
+        self.sessions.lock_unpoisoned().remove(session);
+    }
+
     pub fn is_deleted(&self, session: &SessionId) -> bool {
         self.deleted.lock_unpoisoned().contains(session)
     }
@@ -252,10 +304,34 @@ impl SessionStore for MemoryStore {
         let (messages, checkpoints) = replay(facts);
         // 标题与 node-store 的会话行一样取最后一次写入（会话关闭后再打开时 actor 从这里拿标题）。
         let title = last_title(facts);
+        let title_pending = title.is_none();
+        let goal_target = facts.iter().rev().find_map(|fact| match fact {
+            Fact::GoalTargetSaved { goal, .. } => Some(Some(goal.clone())),
+            Fact::GoalTargetCleared => Some(None),
+            _ => None,
+        });
+        let goal_verifications =
+            crate::goal::latest_steps(facts.iter().filter_map(|fact| match fact {
+                Fact::GoalVerificationRecorded {
+                    verification,
+                    at_ms,
+                } => Some(crate::goal::RecordedVerification {
+                    verification: verification.clone(),
+                    at_ms: *at_ms,
+                }),
+                _ => None,
+            }));
         let mut meta = meta.clone();
         if let Some(title) = title {
             meta.title = title;
         }
+        let execution_worktree = match self.execution.lock_unpoisoned().get(session) {
+            Some((path, _)) => {
+                meta.workspace.root = path.clone();
+                true
+            }
+            None => false,
+        };
         let (earlier, messages) = if self.split.load(Ordering::SeqCst) {
             split_cold(messages)
         } else {
@@ -277,6 +353,17 @@ impl SessionStore for MemoryStore {
                 .get(session)
                 .and_then(|turns| turns.iter().rev().find_map(Clone::clone)),
             last_turn_failed: last_turn_failed(facts),
+            title_pending,
+            title_source: None,
+            // Fork (B3): the last committed grant receipt, as node-store reads it back.
+            permission_grant: facts.iter().rev().find_map(|fact| match fact {
+                Fact::PermissionGranted { interaction, .. } => Some(interaction.clone()),
+                _ => None,
+            }),
+            goal_target: goal_target.flatten(),
+            goal_verifications,
+            message_models: Default::default(),
+            execution_worktree,
         })
     }
 
@@ -291,6 +378,11 @@ impl SessionStore for MemoryStore {
                 id: meta.id.clone(),
                 title: meta.title.clone(),
                 updated_at_ms: meta.created_at_ms,
+                created_at_ms: meta.created_at_ms,
+                last_outcome: None,
+                parent: meta.parent.clone(),
+                title_source: None,
+                incognito: meta.incognito.is_some(),
             })
             .collect())
     }
@@ -353,6 +445,7 @@ impl SessionStore for MemoryStore {
             title: format!("Fork of {title}"),
             trace: parent.trace.clone(),
             created_at_ms: fork.created_at_ms,
+            incognito: parent.incognito,
         };
         let notice = Message::Attachment(AttachmentMessage {
             id: MessageId::new(format!("msg_fork_notice_{}", fork.child)),
@@ -516,6 +609,11 @@ impl LocalSettings for MemoryStore {
         &self,
         _session: &SessionId,
     ) -> Result<Option<crate::permission::ProjectRules>, StoreError> {
+        if self.fail_rules.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "injected session rules failure".to_owned(),
+            });
+        }
         Ok(None)
     }
 
@@ -650,6 +748,15 @@ impl StoreQueries for MemoryStore {
                 session: session.clone(),
             });
         }
+        {
+            let mut failing = self.fail_put_kind.lock_unpoisoned();
+            if failing.as_deref() == Some(record.kind.as_str()) {
+                *failing = None;
+                return Err(StoreError::Unsupported {
+                    what: "frontend records".to_owned(),
+                });
+            }
+        }
         let mut records = self.records.lock_unpoisoned();
         let list = records.entry(session.clone()).or_default();
         match list.iter_mut().find(|known| known.key == record.key) {
@@ -664,6 +771,11 @@ impl StoreQueries for MemoryStore {
         session: &SessionId,
         kind: &str,
     ) -> Result<Vec<crate::store::FrontendRecord>, StoreError> {
+        if self.fail_records.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Unsupported {
+                what: "frontend records".to_owned(),
+            });
+        }
         Ok(self
             .records
             .lock_unpoisoned()
@@ -675,6 +787,128 @@ impl StoreQueries for MemoryStore {
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    /// Fork: `session/subagents` rows for the protocol tests: the parent lookup answers Node's
+    /// session-unavailable error; parts/children stay empty (tests seed the projection directly).
+    async fn subagent_rows(&self, session: &SessionId) -> Result<serde_json::Value, StoreError> {
+        let sessions = self.sessions.lock_unpoisoned();
+        let Some((meta, _)) = sessions.get(session) else {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        };
+        let time_updated = self
+            .updated
+            .lock_unpoisoned()
+            .get(session)
+            .copied()
+            .unwrap_or(meta.created_at_ms);
+        Ok(serde_json::json!({
+            "parent": {"id": session.as_str(), "timeUpdated": time_updated},
+            "parts": [],
+        }))
+    }
+
+    /// Fork: the subagent sessions whose parent chain reaches `root` through subagent sessions only.
+    async fn subagent_child_ids(&self, root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        let sessions = self.sessions.lock_unpoisoned();
+        let mut found: Vec<SessionId> = Vec::new();
+        let mut frontier = vec![root.clone()];
+        while let Some(parent) = frontier.pop() {
+            let mut children: Vec<SessionId> = sessions
+                .values()
+                .filter(|(meta, _)| {
+                    meta.kind == crate::store::SessionKind::Subagent
+                        && meta.parent.as_ref() == Some(&parent)
+                })
+                .map(|(meta, _)| meta.id.clone())
+                .collect();
+            children.sort();
+            frontier.extend(children.iter().cloned());
+            found.extend(children);
+        }
+        Ok(found)
+    }
+
+    /// Fork: the memory store persists no child rows.
+    async fn subagent_children(&self, _ids: Vec<String>) -> Result<serde_json::Value, StoreError> {
+        Ok(serde_json::json!({"children": []}))
+    }
+
+    async fn execution_worktree(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::store::ExecutionWorktree>, StoreError> {
+        let directory = match self.sessions.lock_unpoisoned().get(session) {
+            Some((meta, _)) => meta.workspace.root.clone(),
+            None => return Ok(None),
+        };
+        Ok(self
+            .execution
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(path, branch)| crate::store::ExecutionWorktree {
+                directory,
+                path: path.clone(),
+                branch: branch.clone(),
+            }))
+    }
+
+    async fn session_workspace_key(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<String>, StoreError> {
+        let stored = self.workspace_keys.lock_unpoisoned().get(session).cloned();
+        Ok(self
+            .sessions
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(meta, _)| stored.unwrap_or_else(|| meta.workspace.root.as_str().to_owned())))
+    }
+
+    async fn set_execution_worktree(
+        &self,
+        session: &SessionId,
+        path: &crate::env::EnvPath,
+        branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        if !self.sessions.lock_unpoisoned().contains_key(session) {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        }
+        if self.fail_execution.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Unsupported {
+                what: "execution worktree columns".to_owned(),
+            });
+        }
+        self.execution
+            .lock_unpoisoned()
+            .entry(session.clone())
+            .or_insert_with(|| (path.clone(), branch.map(str::to_owned)));
+        Ok(())
+    }
+
+    /// Fork: the reserved row's profile, set once (the meta's `incognito` while it is `None`).
+    async fn set_incognito(
+        &self,
+        session: &SessionId,
+        profile: &crate::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        let mut sessions = self.sessions.lock_unpoisoned();
+        let Some((meta, _)) = sessions.get_mut(session) else {
+            return Err(StoreError::NotFound {
+                session: session.clone(),
+            });
+        };
+        if *meta.incognito.get_or_insert(*profile) == *profile {
+            Ok(())
+        } else {
+            Err(StoreError::Storage {
+                message: "the session already has another incognito profile".to_owned(),
+            })
+        }
     }
 }
 

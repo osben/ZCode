@@ -19,6 +19,7 @@ fn catalog_types_round_trip() {
         tools: vec!["Task".to_owned(), "Bash".to_owned()],
         agents: vec!["general-purpose".to_owned()],
         skills: vec!["greet".to_owned()],
+        mcp_servers: vec!["files".to_owned()],
     };
     let back: SessionCatalog =
         serde_json::from_value(serde_json::to_value(&catalog).unwrap()).unwrap();

@@ -46,6 +46,7 @@ fn each_setting_changes_only_its_own_text() {
         background_deadline: false,
         bash_first_trimmed: true,
         monitor: true,
+        node_desktop: false,
     }
     .render();
     let description = all.description.as_str();

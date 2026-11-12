@@ -21,9 +21,15 @@ use crate::inbox::{LaneItem, NoticeKey, Screening, is_slash};
 use crate::sink::{ActorSink, SinkRequest};
 
 /// 领取到的一项，按通道顺序。
+/// Fork: a steer's typed text and its App input intent (the quotes join the model text when it is absorbed).
+pub(crate) type Typed = (
+    String,
+    Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
+);
+
 pub(crate) enum ClaimedItem {
     /// 插话，带组装好的 UPS 事件。
-    Prompt(CommandId, String, Box<HookEvent>),
+    Prompt(CommandId, Typed, Box<HookEvent>),
     /// 通知与它的全文。
     Notice(NoticeKey, String),
 }
@@ -55,8 +61,9 @@ pub(crate) enum Fate {
 
 impl Actor {
     /// 按通道顺序给出插话与通知。遇到留下的插话后不再给插话（筛查屏障只挡 `prompt`），通知照常
-    /// 给出。已中止或没有回合时不领取，都继续排队。
-    pub(crate) fn claim_steering(&self) -> Option<Claimed> {
+    /// 给出。已中止或没有回合时不领取，都继续排队。Fork: `prompts_only` (the text-only boundary) leaves the
+    /// notices in the lane.
+    pub(crate) fn claim_steering(&self, prompts_only: bool) -> Option<Claimed> {
         let running = self.running.as_ref()?;
         if running.abort.is_aborted() {
             return None;
@@ -79,10 +86,11 @@ impl Actor {
                     let event = self.user_prompt_submit(&input.text);
                     items.push(ClaimedItem::Prompt(
                         input.command.clone(),
-                        input.text.clone(),
+                        (input.text.clone(), input.intent.clone()),
                         Box::new(event),
                     ));
                 }
+                LaneItem::Notice(_) if prompts_only => {}
                 LaneItem::Notice(notice) => {
                     items.push(ClaimedItem::Notice(notice.key, notice.waiting.text()));
                 }
@@ -102,23 +110,31 @@ impl Actor {
 
     /// 结局：并入与丢弃的出队（丢弃时发提示）；留下的记下结果（回合结束后由 `start_next` 取用）。并入的通知（按顺序）
     /// 各得到一个 attachment 的消息 ID，返回给主循环；提交之后按它出通道（C8）。同时返回出了队、可以并入的插话。
-    pub(crate) fn settle_steering(
+    pub(crate) async fn settle_steering(
         &mut self,
         fates: Vec<(CommandId, Fate)>,
         notices: Vec<NoticeKey>,
     ) -> Settled {
         let mut absorbed = Vec::new();
+        let mut execution = None;
         for (command, fate) in fates {
             if !self.inbox.contains_input(&command) {
                 continue;
             }
             match fate {
                 Fate::Absorbed => {
-                    self.inbox.remove_input(&command);
+                    if let Some(queued) = self
+                        .inbox
+                        .remove_input(&command, crate::inbox::Left::Promoted)
+                        && queued.input.execution.is_some()
+                    {
+                        execution = queued.input.execution;
+                    }
                     absorbed.push(command);
                 }
                 Fate::Dropped(notice) => {
-                    self.inbox.remove_input(&command);
+                    self.inbox
+                        .remove_input(&command, crate::inbox::Left::Cancelled("hook_blocked"));
                     // 只供显示，排在本次工具边界的 queued_command 之前（先给出 notices）。
                     if let Some(text) = notice {
                         self.log.append(KernelEvent::SystemNotice {
@@ -131,6 +147,14 @@ impl Actor {
             }
         }
         self.emit_queue();
+        // Fork: the last absorbed guide's frozen permission mode and Plan switch join the running turn, like Node's
+        // drain (`applyRuntimeExecutionState` with the last intent), so later tool calls in this turn run under them. Its
+        // model is not switched mid-run (see specs/fork-rust-agent-parity.md).
+        if let Some(execution) = execution
+            && let Err(reason) = self.absorbed_execution(execution.state).await
+        {
+            tracing::warn!(%reason, "an absorbed guide's execution state could not be applied");
+        }
         let notices = notices
             .into_iter()
             .map(|key| {
@@ -145,29 +169,32 @@ impl Actor {
 
 /// 领取之后、交回之前的一项。
 enum Screened {
-    Prompt(CommandId, String, Box<HookOutcome>),
+    Prompt(CommandId, Typed, Box<HookOutcome>),
     Notice(NoticeKey, String),
 }
 
 /// 交回之前的并入项：插话要等 actor 说出了队才并入，通知的消息 ID 要等 actor 给出。
 enum Taken {
-    Prompt(CommandId, Box<HookOutcome>, String),
+    Prompt(CommandId, Box<HookOutcome>, Typed),
     Notice(String),
 }
 
 impl ActorSink {
-    async fn claim(&self) -> Option<Claimed> {
+    async fn claim(&self, prompts_only: bool) -> Option<Claimed> {
         let (reply, answer) = oneshot::channel();
         self.sender
-            .send(SinkRequest::ClaimSteering { reply })
+            .send(SinkRequest::ClaimSteering {
+                prompts_only,
+                reply,
+            })
             .await
             .ok()?;
         answer.await.ok().flatten()
     }
 
     /// 领取 → 逐条跑插话的 UPS → 交回结局（query.md §4.1 的表），按到达顺序给出插话与通知。
-    pub(crate) async fn absorbed(&self) -> Vec<Absorbed> {
-        let Some(claimed) = self.claim().await else {
+    pub(crate) async fn absorbed(&self, prompts_only: bool) -> Vec<Absorbed> {
+        let Some(claimed) = self.claim(prompts_only).await else {
             return Vec::new();
         };
         let mut fates = Vec::new();
@@ -246,7 +273,7 @@ impl ActorSink {
         let mut absorbed = Vec::new();
         for item in taken {
             match item {
-                Taken::Prompt(command, outcome, text) => {
+                Taken::Prompt(command, outcome, (text, intent)) => {
                     if !settled.absorbed.contains(&command) {
                         continue;
                     }
@@ -254,8 +281,11 @@ impl ActorSink {
                         self.title(title).await;
                     }
                     absorbed.push(Absorbed::Prompt(Steered {
+                        intent,
                         text,
                         after: outcome.messages,
+                        from: rust_cli_kernel_api::hooks::SteerSender::User,
+                        command: Some(command.as_str().to_owned()),
                     }));
                 }
                 Taken::Notice(text) => absorbed.push(Absorbed::Notice(AbsorbedNotice {

@@ -74,7 +74,7 @@ impl Actor {
             if let Some(rules) = self
                 .deps
                 .directory_rules
-                .directory_rules(&moved, &self.messages)
+                .directory_rules(&self.meta.id, &moved, &self.messages)
                 .await
             {
                 note.push_str("\n\n");
@@ -96,6 +96,55 @@ impl Actor {
         }
     }
 
+    /// Fork: `Command::SetExecutionRoot` (prepared-worktree activation, specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). Moves the shell cwd and the workspace without a note: Node starts the runtime in the
+    /// worktree, so the model never sees a move.
+    ///
+    /// Idempotent: a session already at `root` (a retried activation, or a cold reopen in the stored worktree after
+    /// the first input was admitted) only releases the held SessionStart. Nothing held, it is a no-op even while busy.
+    pub(crate) async fn set_execution_root(&mut self, root: EnvPath) -> Ack {
+        if root == self.meta.workspace.root {
+            self.execution_worktree = true;
+            if self.deferred_start.is_some() {
+                // SessionStart takes the job slot: while a turn or another job runs it stays held for a retry.
+                if self.busy() {
+                    return rejected(BUSY);
+                }
+                if let Some(source) = self.deferred_start.take() {
+                    self.start_session(source);
+                }
+            }
+            return accepted();
+        }
+        if self.busy() {
+            return rejected(BUSY);
+        }
+        match self.change_workspace(root).await {
+            Ok(()) => {
+                self.execution_worktree = true;
+                // A prepared session starts here: SessionStart runs in the worktree, after the move.
+                if let Some(source) = self.deferred_start.take() {
+                    self.start_session(source);
+                }
+                accepted()
+            }
+            Err(error) => rejected(error.to_string()),
+        }
+    }
+
+    /// Fork: `Command::SetIncognito` (a prepared worktree's activation): the meta takes the frozen profile once, so a
+    /// fork of the session keeps it (the gates read the kernel's `IncognitoProfiles`, recorded before this command).
+    pub(crate) fn set_incognito(
+        &mut self,
+        profile: rust_cli_kernel_api::incognito::IncognitoProfile,
+    ) -> Ack {
+        if *self.meta.incognito.get_or_insert(profile) == profile {
+            accepted()
+        } else {
+            rejected("the session already has another incognito profile".to_owned())
+        }
+    }
+
     /// 给模型的说明（来源 `rust-cli/cd` 的 meta 用户消息），先提交再进历史、发事件；`record` 的消息排在它前面、同一批。
     async fn commit_note(
         &mut self,
@@ -107,6 +156,8 @@ impl Actor {
             .map(|record| crate::local_record::record_messages(self.deps.ids.as_ref(), &record))
             .unwrap_or_default();
         messages.push(Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: self.deps.ids.message(),
             content: vec![ContentBlock::Text { text: note }],
             origin: UserOrigin::Meta {

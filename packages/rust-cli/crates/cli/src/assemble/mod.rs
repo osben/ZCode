@@ -44,7 +44,7 @@ use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::Platform;
 use rust_cli_runtime::{
-    AutoCompactAt, ContextConfig, Defaults, LocalKernel, Ports, Surface, TitleModel,
+    AutoCompactAt, ContextConfig, Defaults, DesktopContext, LocalKernel, Ports, Surface, TitleModel,
 };
 
 use crate::assemble::deployment::Deployment;
@@ -124,12 +124,22 @@ impl CliInputs {
     }
 }
 
+/// Fork: whether sessions get generated titles, and with which prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Titles {
+    Off,
+    /// This CLI's prompt (titles.md §1).
+    Cli,
+    /// Node's prompt ([`rust_cli_prompts::title::node_system`]), for the desktop app-server.
+    Node,
+}
+
 /// 一个 controller 前端的组装规格。
 pub(crate) struct Controller {
     /// 提示词与工具的形态：`-p` 是 Print，交互界面与 App 是 Interactive。
     pub(crate) surface: Surface,
-    /// 会话标题（只在交互界面生成，titles.md §2）。
-    pub(crate) titles: bool,
+    /// 会话标题（只在交互界面生成，titles.md §2）。Fork: the app-server generates them too, like the Node desktop agent.
+    pub(crate) titles: Titles,
     pub(crate) peers: Peering,
     /// 远端机器（R3，remote-exec.md §20）：None 是没有机器清单（app-server：注册表只有主 env）。
     pub(crate) machines: Option<machines::When>,
@@ -140,6 +150,14 @@ pub(crate) struct Controller {
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
     pub(crate) wait_model: bool,
+    /// Fork: [`ContextConfig::token_budget`]; the app-server leaves it off like the Node desktop agent.
+    pub(crate) token_budget: bool,
+    /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
+    /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
+    pub(crate) node_desktop: bool,
+    /// Fork: Node's "ZCode Desktop Context" system section ([`ContextConfig::desktop`]); only the app-server started
+    /// with `--surface desktop` (the Host's rollout decision) turns it on.
+    pub(crate) desktop_context: bool,
     pub(crate) cli: CliInputs,
 }
 
@@ -148,13 +166,16 @@ impl Controller {
     pub(crate) fn tui(cli: CliInputs) -> Self {
         Self {
             surface: Surface::Interactive,
-            titles: true,
+            titles: Titles::Cli,
             peers: Peering::Interactive,
             machines: Some(machines::When::Background),
             primary: Primary::Configured,
             headers: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
+            token_budget: true,
+            node_desktop: false,
+            desktop_context: false,
             cli,
         }
     }
@@ -164,7 +185,7 @@ impl Controller {
         let declared = hooks.assume.loopback_machines || hooks.assume.ssh_machines;
         Self {
             surface: Surface::Print,
-            titles: false,
+            titles: Titles::Off,
             peers: Peering::Print,
             machines: Some(if declared {
                 machines::When::Now
@@ -175,22 +196,28 @@ impl Controller {
             headers: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
+            token_budget: true,
+            node_desktop: false,
+            desktop_context: false,
             cli,
         }
     }
 
-    /// app-server（app-protocol.md §3.7）：交互形态的提示词；不生成标题、不登记跨会话通信、不连远端机器、只接受本地主
+    /// app-server（app-protocol.md §3.7）：交互形态的提示词；Fork: 标题照 Node 桌面端生成（Node 的提示词）；不登记跨会话通信、不连远端机器、只接受本地主
     /// env；账号凭据经 Host；root 下的 bypass 照 Node 不拒绝。
-    pub(crate) fn app(headers: Arc<dyn HeaderSource>) -> Self {
+    pub(crate) fn app(headers: Arc<dyn HeaderSource>, desktop_context: bool) -> Self {
         Self {
             surface: Surface::Interactive,
-            titles: false,
+            titles: Titles::Node,
             peers: Peering::Off,
             machines: None,
             primary: Primary::LocalOnly,
             headers: Some(headers),
             root_bypass: RootBypass::Allow,
             wait_model: true,
+            token_budget: false,
+            node_desktop: true,
+            desktop_context,
             cli: CliInputs::default(),
         }
     }
@@ -210,7 +237,18 @@ pub(crate) struct LocalEnv {
 pub(crate) async fn local_env(
     process: &ProcessFacts,
     egress: &Arc<Egress>,
+    flags: (bool, bool),
+) -> LocalEnv {
+    local_env_with(process, egress, flags, false).await
+}
+
+/// Fork (node_desktop): `desktop` (the app-server's `node_desktop`) additionally configures the
+/// Node adapter's temp output layout for Bash tool commands (see `shell::desktop_root`).
+pub(crate) async fn local_env_with(
+    process: &ProcessFacts,
+    egress: &Arc<Egress>,
     (find_and_grep, expanding_vars): (bool, bool),
+    desktop: bool,
 ) -> LocalEnv {
     let shell =
         crate::assemble::shell::config(process.env.clone(), &process.temp, find_and_grep).await;
@@ -229,6 +267,11 @@ pub(crate) async fn local_env(
         .with_shell(shell)
         // WebFetch 的网络出口（tools-more.md §4），与模型请求共用出口策略。
         .with_web(egress.clone());
+    let env = if desktop {
+        env.with_bash_outputs(crate::assemble::shell::desktop_root(&process.temp))
+    } else {
+        env
+    };
     LocalEnv { env, mcp, bash }
 }
 
@@ -291,7 +334,13 @@ pub(crate) async fn open(
         directory
     });
     let find_and_grep = !names_search_tools(&spec.cli.allowed);
-    let local = local_env(&facts.process, &egress, (find_and_grep, false)).await;
+    let local = local_env_with(
+        &facts.process,
+        &egress,
+        (find_and_grep, false),
+        spec.node_desktop,
+    )
+    .await;
     let monitor = options::monitor(&facts.hooks.assume, local.bash.is_some());
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);
@@ -349,6 +398,8 @@ pub(crate) async fn open(
     })
     .await;
     env_assembly::drop_remote_plugins(&deployment, &mut config.plugins);
+    // Fork: the desktop surface has the App's inline view host, so `visualize` loads (specs/fork-rust-agent-parity.md).
+    config.plugins.view_host = spec.desktop_context;
     // 会话库与产物目录按 Node 的 `storage.sessionDbPath` / `storage.dir`（用户级 → 项目级 → 环境变量，
     // config.md §2.3）：先读配置再开库。修复线 F2：以前总在缺省位置，Node 设了这些值时两边各用一个库。
     let paths = facts.storage_paths(&config.storage.settings());
@@ -360,7 +411,14 @@ pub(crate) async fn open(
         (Some(_) | None, _) => None,
     };
     let ids = Arc::new(NodeIds::new(clock.clone()));
-    let store = Arc::new(NodeStore::new(paths.clone(), ids.clone()).with_version(VERSION));
+    let store = NodeStore::new(paths.clone(), ids.clone()).with_version(VERSION);
+    // Fork: the app-server defers prewarmed sessions like the Node desktop agent
+    // (specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"); TUI and `-p` do not.
+    let store = Arc::new(if spec.node_desktop {
+        store.with_deferred_drafts()
+    } else {
+        store
+    });
     Ok(Opened {
         deployment,
         egress,
@@ -528,6 +586,13 @@ pub(crate) async fn kernel(
     };
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
+    context.token_budget = spec.token_budget;
+    // Fork: the Host decides the Gen UI output root for every agent it starts (`zcodeAgentProcessManager.ts`).
+    context.desktop = spec.desktop_context.then(|| DesktopContext {
+        gen_ui_root: env
+            .raw(rust_cli_base::names::env::ZCODE_GEN_UI_OUTPUT_ROOT)
+            .map(str::to_owned),
+    });
     context.custom_system_prompt = opened.resolved.system_prompt.clone();
     context.append_system_prompt = opened.resolved.append_system_prompt.clone();
     // 附加目录只归会话（deployment.md §21）：环境段、嵌套规则文件与权限规则读这一份。
@@ -536,7 +601,9 @@ pub(crate) async fn kernel(
     let layout = env_assembly::layout(&opened.deployment, &opened.primary_paths);
     context.memory_dir = options::memory_dir(primary, &layout, &opened.paths, workspace, env).await;
     // 压缩的上限两种模式都接（显式覆盖按内置规则，修复线 F61：以前显式覆盖时是“没有目录”，按 200,000）。
-    let compact = options::compact(env, facts.controller.max_output_tokens, model_limits);
+    let mut compact = options::compact(env, facts.controller.max_output_tokens, model_limits);
+    // Fork: the desktop app-server has no pre-request blocking limit, like Node (specs/fork-rust-agent-parity.md).
+    compact.blocking = !spec.node_desktop;
     // 所有模式都按配置的位置压缩；设置页与 `/autocompact` 写回后换掉的就是内核读的这一份（compact.md §2.3）。
     compact.at.set(config.compact_at);
     let compact_at = compact.at.clone();
@@ -557,6 +624,7 @@ pub(crate) async fn kernel(
     )
     .await;
     extensions.monitor = opened.monitor;
+    extensions.node_desktop = spec.node_desktop;
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened
@@ -602,10 +670,11 @@ pub(crate) async fn kernel(
         extensions,
     );
     // 会话标题只在交互界面生成（titles.md §2），模型经小模型槽位从会话当前的主模型得出。
-    let kernel = Arc::new(if spec.titles {
+    let kernel = Arc::new(if spec.titles != Titles::Off {
         let titles = TitleModel {
             model: kernel.ports().model.clone(),
             directory: opened.directory.clone(),
+            node_prompt: spec.titles == Titles::Node,
         };
         kernel.with_titles(titles)
     } else {

@@ -139,6 +139,7 @@ fn the_ask_proxy_has_no_lasting_entry_unless_overridden() {
 #[tokio::test]
 async fn no_one_to_ask_answers_by_the_kind_of_question() {
     let permission = InteractionRequest::Permission {
+        origin: None,
         tool_use: ToolUseId::new("toolu_1"),
         tool: "Bash".to_owned(),
         input: serde_json::json!({"command": "ls"}),
@@ -147,8 +148,11 @@ async fn no_one_to_ask_answers_by_the_kind_of_question() {
         rule_seed: None,
         asked_by: None,
         machine: crate::ids::MachineName::primary(),
+        once: false,
+        independent: false,
     };
     let question = InteractionRequest::Question {
+        origin: None,
         tool_use: ToolUseId::new("toolu_2"),
         questions: serde_json::Value::Null,
     };

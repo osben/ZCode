@@ -1,13 +1,10 @@
 //! Node 用量表的原文 SQL（`apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts`：
-//! `recordModelUsage`、`upsertTurnUsage`、`upsertToolUsage`、`pruneUsage`，docs/specs/rust-cli/usage.md §2）。
+//! `recordModelUsage`、`upsertTurnUsage`、`upsertToolUsage`，docs/specs/rust-cli/usage.md §2）。
 //!
 //! 只有 SQL 与参数绑定；取值规则在 `crate::usage`。所有函数都在存储事务里调用。用量写入的 savepoint 也在这里（F138；
 //! 写失败时回不回退、记不记日志是 `crate::usage::observe` 的规则）。
 use anyhow::Result;
 use rusqlite::{Connection, params};
-
-/// Node `USAGE_RETENTION_DAYS`。
-pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// 一个用量事实写入之前：开 savepoint（usage.md §2.5，工作线 F77）。
 pub fn savepoint(conn: &Connection) -> Result<()> {
@@ -455,17 +452,6 @@ pub fn upsert_turn(conn: &Connection, row: &TurnRow) -> Result<()> {
         None::<String>,
         None::<String>,
     ])?;
-    Ok(())
-}
-
-/// Node `pruneUsage` 的三条 delete（Node 自己再开一个 `begin immediate`；这里已在提交的事务里）。
-pub fn prune(conn: &Connection, before: i64) -> Result<()> {
-    conn.prepare_cached("delete from model_usage where started_at < ?")?
-        .execute([before])?;
-    conn.prepare_cached("delete from turn_usage where started_at < ?")?
-        .execute([before])?;
-    conn.prepare_cached("delete from tool_usage where started_at < ?")?
-        .execute([before])?;
     Ok(())
 }
 

@@ -220,3 +220,31 @@ fn the_window_override_still_caps_the_configured_window() {
         .map(|found| (found.used_tokens, found.max_tokens));
     assert_eq!(usage, Some((10, 280_000)));
 }
+
+/// Fork: the App protocol shows the model window (Node `usage.contextWindow.maxTokens`), not the window
+/// minus the summary reserve that the footer and the thresholds use; an unknown model has none
+/// (Node publishes no context window instead of the 200,000 fallback).
+#[test]
+fn the_occupancy_carries_the_model_window_for_known_models_only() {
+    let runner = ScriptedRunner::new(Vec::new());
+    let compaction = compaction(
+        runner,
+        CompactConfig {
+            limits: glm(),
+            ..CompactConfig::default()
+        },
+    );
+    let configured = compaction
+        .context_usage(&history(10), &selection(GLM_5_3))
+        .unwrap();
+    assert_eq!(configured.max_tokens, 980_000);
+    assert_eq!(configured.window_tokens, Some(1_000_000));
+    let carded = compaction
+        .context_usage(&history(10), &selection(OPUS_5_5))
+        .unwrap();
+    assert_eq!(carded.window_tokens, Some(1_000_000));
+    let unknown = compaction
+        .context_usage(&history(10), &selection("unknown-model"))
+        .unwrap();
+    assert_eq!(unknown.window_tokens, None);
+}

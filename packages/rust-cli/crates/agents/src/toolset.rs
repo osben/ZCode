@@ -60,6 +60,9 @@ pub(crate) struct ToolRule {
     background: bool,
     /// 这个子代理的深度（主线程派生的是 1）。
     depth: u32,
+    /// Fork (node_desktop): a foreground subagent may ask the user (AskUserQuestion), delegated to
+    /// the parent's ask (Node `filterSubagentChildToolNames` only removes the plan tools).
+    questions: bool,
 }
 
 impl ToolRule {
@@ -72,12 +75,21 @@ impl ToolRule {
             deny: definition.disallowed_tools.clone(),
             background,
             depth,
+            questions: false,
         }
+    }
+
+    /// Fork (node_desktop): see [`ToolRule::questions`].
+    #[must_use]
+    pub(crate) fn with_questions(mut self, questions: bool) -> Self {
+        self.questions = questions;
+        self
     }
 
     pub(crate) fn allows(&self, name: &str) -> bool {
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
-        if !mcp && ALL_AGENT_DISALLOWED.contains(&name) {
+        let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
+        if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
             return false;
         }
         // Agent 只看深度，不受异步白名单限制（先判 Agent；后台的 general-purpose 有它）。
@@ -174,6 +186,20 @@ impl ToolRegistry for FilteredTools {
         if let Some(tool) = self
             .inner
             .find(name)
+            .filter(|tool| self.rule.allows(tool.name()))
+        {
+            return Some(tool);
+        }
+        if !SEARCH_TOOLS.contains(&name) {
+            return None;
+        }
+        self.tools().into_iter().find(|tool| tool.name() == name)
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self
+            .inner
+            .find_for(session, name)
             .filter(|tool| self.rule.allows(tool.name()))
         {
             return Some(tool);

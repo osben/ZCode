@@ -52,6 +52,7 @@ fn main_app(lang: Lang) -> App {
             used_tokens: 66_600,
             max_tokens: 180_000,
             compact_at: None,
+            window_tokens: None,
         },
     );
     event(
@@ -117,6 +118,7 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
             used_tokens: 9_000,
             max_tokens: 45_000,
             compact_at: None,
+            window_tokens: None,
         }),
         context_notice: ContextNotice::Hidden,
         output_speed: stats.then_some(OutputSpeed {
@@ -136,6 +138,7 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
                 title: "Find callers".into(),
                 trace: TraceId::new("sess_main"),
                 created_at_ms: 0,
+                incognito: None,
             },
             Vec::new(),
             ModelSelection {
@@ -151,6 +154,9 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
 
 fn entry() -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
+        execution: 0,
+        previous: None,
         agent: AgentId::new("agent_a"),
         child: SessionId::new("sess_subagent_agent_a"),
         agent_type: "Explore".into(),
@@ -468,6 +474,7 @@ fn snapshot_of(view: Transcript) -> SessionView {
                 title: view.title().to_owned(),
                 trace: TraceId::new("sess_main"),
                 created_at_ms: 0,
+                incognito: None,
             },
             Vec::new(),
             view.selection().clone(),

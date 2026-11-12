@@ -37,6 +37,11 @@ import type {
 } from "./rendererActionTrace.js";
 import type { RendererHeapSample } from "./validation.js";
 import type {
+  ExtensionNotificationClick,
+  ExtensionNotificationPayload,
+  NotificationsShowResult,
+} from "#src/extension-host/notifications.js";
+import type {
   CancelPendingRemoteConnectionRequest,
   BindRemoteWorkspaceSessionContextRequest,
   BrowserViewScreenshotSurfacePreparePayload,
@@ -44,6 +49,7 @@ import type {
   BrowserViewScreenshotSurfaceReleasePayload,
   BrowserViewCloseTabNotification,
   BrowserViewCloseTabRequest,
+  BrowserViewPromoteDraftTabsRequest,
   BrowserViewResidencyReportPayload,
   BrowserViewResidencyTransitionPayload,
   BrowserViewRestoredTabShell,
@@ -69,6 +75,11 @@ import type {
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
+  MicrophoneAccessResult,
+  MicrophoneResetResult,
+  MicrophoneSettingsTarget,
+  CaptureBrowserGuestPageRequest,
+  CaptureBrowserGuestPageResult,
   OpenInEditorOptions,
   PostUpdateReleaseNotesPayload,
   RemoteSessionClosedEvent,
@@ -124,6 +135,8 @@ export const ServiceChannels = {
   /** ZCode session application service */
   ZCodeSession: "zcode-session",
   Project: "project",
+  /** 受管 worktree 任务管理（列表、删除、起点、fork 到新 worktree），仅本地桌面 Host。 */
+  ManagedWorktrees: "managed-worktrees",
   TaskGroups: "task-groups",
   /** Fork: composer quick prompts (specs/composer-quick-prompts.md). */
   QuickPrompts: "quick-prompts",
@@ -154,6 +167,12 @@ export const ServiceChannels = {
   DeviceSyncState: "device-sync-state",
   /** Desktop Host's data-sync page model providers: read / retry the Main coordinator's Provisioning lane (registered locally only) */
   ProviderProvisioningStatus: "provider-provisioning-status",
+  /** Desktop Host extension facade (docs/plugins/extension-host.md): contribution table, extension process status, commands, reload (registered on this machine only) */
+  Extensions: "extensions",
+  /** Desktop Host extension view facade (docs/plugins/extension-host.md §8): view instances, page requests and notifications, views.open (registered on this machine only) */
+  ExtensionViews: "extension-views",
+  /** Desktop Host extension grant facade (docs/plugins/extension-host.md §17.7): grant, revoke, grant status, enable confirmation, recent actions (registered on this machine only) */
+  ExtensionGrants: "extension-grants",
   /** Local usage statistics service */
   UsageStats: "usage-stats",
   /** Coding Plan subscription purchase service */
@@ -163,6 +182,8 @@ export const ServiceChannels = {
   ClientScenes: "client-scenes",
   CloudContent: "cloud-content",
   MarketingTouch: "marketing-touch",
+  /** Desktop Host voice input: connects to zcode-server ASR (docs/chat/composer-voice-input.md; local base connection only) */
+  VoiceInput: "voice-input",
   /** Skills management service */
   Skills: "skills",
   /** SSH remote skills synchronization service */
@@ -247,6 +268,14 @@ export const PlatformChannels = {
   SaveFile: "zcode:save-file",
   /** Renderer → Main: export the current page's print media layout to PDF using Chromium's print engine */
   PrintToPdf: "zcode:print-to-pdf",
+  /** Renderer → Main: check and request the system microphone permission on demand */
+  MicrophoneAccess: "zcode:microphone-access",
+  /** Renderer → Main: open the system microphone permission / sound input settings page */
+  OpenMicrophoneSettings: "zcode:open-microphone-settings",
+  /** Renderer → Main: clear the macOS microphone decision and request it again */
+  ResetMicrophoneAccess: "zcode:reset-microphone-access",
+  /** Renderer → Main: capture the current viewport of the built-in browser guest as PNG in main (capturePage on the renderer side crashes) */
+  CaptureBrowserGuestPage: "zcode:capture-browser-guest-page",
   /** Main → Renderer: forward remote connection progress logs */
   RemoteConnectionLog: "zcode:remote-connection-log",
   /** Main → Renderer: the remote workspace session has closed */
@@ -447,7 +476,11 @@ export const PlatformChannels = {
   TaskNotificationSound: "zcode:task-notification-sound",
   /** Main → Preload: the user clicked a system notification; include taskId so the renderer can navigate to that task */
   TaskNotificationClick: "zcode:task-notification-click",
-  /** Renderer → Main: export logs (zip ~/.zcode/v2 and external Agent logs, then reveal the archive in Finder) */
+  /** Renderer → Main: show an extension system notification and return the result (§18.1 H8) */
+  ShowExtensionNotification: "zcode:show-extension-notification",
+  /** Main → Preload: the user clicked an extension notification; carries the plugin id and the view to open */
+  ExtensionNotificationClick: "zcode:extension-notification-click",
+  /** Renderer → Main: export logs (zip ~/.zcode/v2 and external agent logs, then reveal the archive in Finder) */
   ExportLogs: "zcode:export-logs",
   /** Renderer → Main: capture the current window as a feedback attachment */
   CaptureWindowScreenshot: "zcode:capture-window-screenshot",
@@ -465,6 +498,8 @@ export const PlatformChannels = {
   BrowserViewCloseTabFromRenderer: "zcode:browser-view-close-tab-from-renderer",
   /** Renderer → Main: report Browser tab residency/display facts. */
   BrowserViewReportResidency: "zcode:browser-view-report-residency",
+  /** Renderer → Main: after a draft's first send, upgrade the owner of the draft human tab to the new session. */
+  BrowserViewPromoteDraftTabs: "zcode:browser-view-promote-draft-tabs",
   /** Renderer → Main: the guest for the specified generation has been unloaded. */
   BrowserViewSuspendReady: "zcode:browser-view-suspend-ready",
   /** Renderer → Main: the user visited a suspended tab and requested its restoration. */
@@ -557,6 +592,22 @@ export type PlatformChannelName = (typeof PlatformChannels)[keyof typeof Platfor
 export const EmbeddedBrowserWebviewChannels = {
   /** When the guest cannot consume scrolling in a direction, forward the two-dimensional delta to the resizable canvas. */
   WheelBoundary: "zcode:embedded-browser-wheel-boundary",
+  /**
+   * 设计运行时的页面事件（docs/browser-use/2026-11-03-browser-design-mode-spec.md）：页面主世界
+   * `window.postMessage` 带命名空间的信封，preload 校验后把 `events` 数组转给宿主。
+   */
+  DesignEvents: "zcode:embedded-browser-design-events",
+  /**
+   * 页面上按下 Cmd/Ctrl + Z（Shift 为重做），且按键当下的目标不是可编辑元素：preload 隔离世界只认 isTrusted 的按键，
+   * 页面脚本发不出这条，设计工具据此撤销 / 重做源码写回。
+   */
+  DesignUndoShortcut: "zcode:embedded-browser-design-undo-shortcut",
+} as const;
+
+/** 设计运行时 postMessage 信封：`{ [messageKey]: 1, events: unknown[] }`；events 序列化后超过上限（UTF-8 字节）的消息 preload 直接丢弃。 */
+export const EMBEDDED_BROWSER_DESIGN_BRIDGE = {
+  messageKey: "__zcodeDesign",
+  maxMessageBytes: 256 * 1024,
 } as const;
 
 export interface EmbeddedBrowserWheelBoundaryPayload {
@@ -621,6 +672,8 @@ export const InternalChannels = {
   ScopedServicePort: "zcode:scoped-service-port",
   /** renderer → main: the scoped MessagePort is registered and its attachment can be switched safely */
   ScopedServicePortReady: "zcode:scoped-service-port-ready",
+  /** main → renderer: the ready ACK arrived after the route no longer existed; the window releases the registration of this attachment */
+  ScopedServicePortReleased: "zcode:scoped-service-port-released",
   /** main → renderer: settings-dedicated MessagePort for an online Source */
   SourceSettingsServicePort: "zcode:source-settings-service-port",
   /** preload → renderer: the main process confirmed the system notification was shown; the renderer may play the sound */
@@ -640,6 +693,8 @@ export const ZCODE_RPC_HOST_CAPABILITY_HEADER = "x-zcode-rpc-host-capability";
 
 /** Initialization message types from main to the host process */
 export const HostMessageTypes = {
+  /** Main → Host: returns encrypt/decrypt results only over the bound private channel; contains no system master key. */
+  CredentialCipherResult: "credential-cipher-result",
   /** main → Host: prepare the mobile project directory, reusing only already-online physical Sources. */
   PrepareProjectWorkspace: "prepare-project-workspace",
   DatabaseStartupControl: "database-startup-control",
@@ -716,6 +771,8 @@ export const HostMessageTypes = {
 
 /** Response message types from the host process to the main process */
 export const HostResponseTypes = {
+  /** Host → Main: run encrypt/decrypt against the credential directory bound to this Host. */
+  CredentialCipherRequest: "credential-cipher-request",
   /** Host → main: admitted directories and scopes; main interprets no project business. */
   ProjectWorkspacePrepared: "project-workspace-prepared",
   DatabaseStartupState: "database-startup-state",
@@ -761,7 +818,9 @@ export const HostResponseTypes = {
   NetworkCaptureBatch: "network-capture-batch",
   /** Number of Agent sessions currently executing prompts inside the host changed */
   AgentRunningTaskCountChanged: "agent-running-task-count-changed",
-  /** Number of tasks in the specified workspace that have not yet reached a terminal state changed */
+  /** Changes to items within the host that block quitting (for example a worktree being created) */
+  QuitBlockersChanged: "quit-blockers-changed",
+  /** Changes in the number of tasks in the specified workspace that have not yet reached a terminal state, within the host */
   WorkspaceRunningTaskCountChanged: "workspace-running-task-count-changed",
   /** host → main: operation-prompt state for a Windows desktop-local CUA turn */
   CuaOperationState: "cua-operation-state",
@@ -872,6 +931,22 @@ export interface PlatformChannelMap {
   [PlatformChannels.PrintToPdf]: {
     request: void;
     response: PrintPageToPdfResult;
+  };
+  [PlatformChannels.MicrophoneAccess]: {
+    request: void;
+    response: MicrophoneAccessResult;
+  };
+  [PlatformChannels.ResetMicrophoneAccess]: {
+    request: void;
+    response: MicrophoneResetResult;
+  };
+  [PlatformChannels.OpenMicrophoneSettings]: {
+    request: MicrophoneSettingsTarget;
+    response: boolean;
+  };
+  [PlatformChannels.CaptureBrowserGuestPage]: {
+    request: CaptureBrowserGuestPageRequest;
+    response: CaptureBrowserGuestPageResult;
   };
   [PlatformChannels.RemoteConnectionLog]: {
     request: {
@@ -1232,6 +1307,14 @@ export interface PlatformChannelMap {
     request: string;
     response: void;
   };
+  [PlatformChannels.ShowExtensionNotification]: {
+    request: ExtensionNotificationPayload;
+    response: NotificationsShowResult;
+  };
+  [PlatformChannels.ExtensionNotificationClick]: {
+    request: ExtensionNotificationClick;
+    response: void;
+  };
   [PlatformChannels.WindowFullscreenChanged]: {
     request: boolean;
     response: void;
@@ -1289,6 +1372,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.BrowserViewReportResidency]: {
     request: BrowserViewResidencyReportPayload;
     response: void;
+  };
+  [PlatformChannels.BrowserViewPromoteDraftTabs]: {
+    request: BrowserViewPromoteDraftTabsRequest;
+    response: string[];
   };
   [PlatformChannels.BrowserViewSuspendReady]: {
     request: { tabId: string; generation: number };

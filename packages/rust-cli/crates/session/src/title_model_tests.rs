@@ -27,6 +27,7 @@ impl ModelDirectory for Directory {
                 context_window: 200_000,
                 max_output_tokens: self.0,
                 connection: None,
+                host: None,
             }],
             default: None,
         }
@@ -42,6 +43,7 @@ async fn the_request_uses_the_title_prompt_and_node_auxiliary_options() {
     let titles = TitleModel {
         model: model.clone(),
         directory: Some(Arc::new(Directory(4_096))),
+        node_prompt: false,
     };
     let generated = titles
         .generate(
@@ -53,6 +55,7 @@ async fn the_request_uses_the_title_prompt_and_node_auxiliary_options() {
             "  read the   Node config files  ",
             (&FixedClock(7_000), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     assert_eq!(generated.title.as_deref(), Some("Config files"));
@@ -99,6 +102,7 @@ async fn without_a_directory_the_output_cap_is_5000() {
     let titles = TitleModel {
         model: model.clone(),
         directory: None,
+        node_prompt: false,
     };
     let generated = titles
         .generate(
@@ -107,6 +111,7 @@ async fn without_a_directory_the_output_cap_is_5000() {
             "trust the project hooks",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     assert_eq!(generated.title.as_deref(), Some("Hook trust"));
@@ -128,6 +133,7 @@ async fn a_catalog_cap_above_5000_hands_5000_to_the_provider_patch() {
     let titles = TitleModel {
         model: model.clone(),
         directory: Some(Arc::new(Directory(128_000))),
+        node_prompt: false,
     };
     titles
         .generate(
@@ -136,6 +142,7 @@ async fn a_catalog_cap_above_5000_hands_5000_to_the_provider_patch() {
             "trust the project hooks",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await;
     let request = &model.requests()[0];
@@ -157,6 +164,7 @@ async fn title_usage(started: Usage, reported: Usage) -> Option<Usage> {
     let titles = TitleModel {
         model: Arc::new(ScriptedModel::new(vec![events])),
         directory: None,
+        node_prompt: false,
     };
     titles
         .generate(
@@ -165,6 +173,7 @@ async fn title_usage(started: Usage, reported: Usage) -> Option<Usage> {
             "trust the project hooks",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
+            super::SOURCE,
         )
         .await
         .call
@@ -201,4 +210,48 @@ async fn usage_with_the_input_in_the_message_start_is_unchanged() {
         ..started
     };
     assert_eq!(title_usage(started, reported).await, Some(reported));
+}
+
+/// Fork: the app-server sends Node's title prompt, with the seeded, normalized input as the whole user message (Node
+/// `buildTitleMessages`: `normalizeTitleInput(sanitizeTitleSeed(input))`).
+#[tokio::test]
+async fn the_node_prompt_sends_the_input_as_the_user_message() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust\"}",
+    ])]));
+    let titles = TitleModel {
+        model: model.clone(),
+        directory: None,
+        node_prompt: true,
+    };
+    let generated = titles
+        .generate(
+            &selection(),
+            (&SessionId::new("sess_title"), None),
+            "  trust   the [hooks.json](./.zcode/hooks.json) project hooks ",
+            (&FixedClock(0), MessageId::new("msg_title")),
+            CancellationToken::new(),
+            super::SOURCE,
+        )
+        .await;
+    assert_eq!(generated.title.as_deref(), Some("Hook trust"));
+    let request = &model.requests()[0];
+    assert!(
+        request.system[0]
+            .text
+            .starts_with("Generate a concise title for this coding session.")
+    );
+    assert_eq!(
+        request.messages[0].content[0].block,
+        ContentBlock::Text {
+            text: "trust the hooks.json project hooks".to_owned()
+        }
+    );
+}
+
+/// Node checks the length on the seeded input: a lone file mention is as short as its label.
+#[test]
+fn the_length_guard_reads_the_seeded_input() {
+    let long_path = format!("[a.ts](./{}/a.ts)", "deep/".repeat(20));
+    assert!(!super::long_enough(&long_path));
 }

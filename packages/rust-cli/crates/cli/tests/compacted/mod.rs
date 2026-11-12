@@ -59,6 +59,8 @@ fn usage(n: usize) -> Option<Usage> {
 
 fn user(n: usize) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: id("u", n),
         content: vec![ContentBlock::Text {
             text: format!("question {n}"),
@@ -88,6 +90,8 @@ fn call(n: usize) -> Message {
 
 fn result(n: usize) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: id("r", n),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(format!("toolu_{n:05}")),
@@ -143,6 +147,8 @@ fn compaction(k: usize, preserved: Option<(MessageId, MessageId)>) -> Vec<Messag
             discovered_tools: Vec::new(),
         })),
         Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: summary,
             content: vec![ContentBlock::Text {
                 text: format!(
@@ -205,6 +211,7 @@ pub async fn seed(store: &NodeStore, root: &Path, turns: usize, after: &[(usize,
             title: "Compacted work".to_owned(),
             trace: TraceId::new(SESSION),
             created_at_ms: 1_000_000,
+            incognito: None,
         })
         .await
         .unwrap();

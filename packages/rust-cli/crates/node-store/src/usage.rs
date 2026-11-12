@@ -5,7 +5,7 @@
 use rust_cli_kernel_api::message::Usage;
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall, ToolCall};
 use rust_cli_kernel_api::model::ModelError;
-use rust_cli_kernel_api::store::{Fact, StoreError};
+use rust_cli_kernel_api::store::StoreError;
 
 use crate::append::finish_reason;
 use crate::facts::Commit;
@@ -15,22 +15,6 @@ use crate::repo::usage::{self, ModelRow, ToolRow, TurnRow};
 use crate::repo::{messages, sessions};
 use crate::state;
 use crate::{OrStorage, storage};
-
-/// 这一批里有用量事实：提交前按保留期删旧行。
-pub fn touches_usage(facts: &[Fact]) -> bool {
-    facts.iter().any(|fact| {
-        matches!(
-            fact,
-            Fact::ModelCalled { .. } | Fact::ToolCalled { .. } | Fact::TurnEnded { .. }
-        )
-    })
-}
-
-/// Node `pruneUsage`：`started_at` 早于提交时间 30 天的行。
-pub fn prune(ctx: &Commit<'_>) -> Result<(), StoreError> {
-    let now = i64::try_from(ctx.now).unwrap_or(i64::MAX);
-    usage::prune(ctx.conn, now.saturating_sub(usage::RETENTION_MS)).storage()
-}
 
 /// 用量是观测（usage.md §2.5，工作线 F77）：`write` 在一个 savepoint 里执行；失败时只回退这个 savepoint、记 warn
 /// （`event` 用 Node 的名字），返回 Ok，这一批其余的事实照常提交（Node 的用量写入失败也只记日志）。

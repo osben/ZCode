@@ -109,6 +109,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             peers: rust_cli_session::PeerDeps::off(),
             streaming_input: false,
             monitor: false,
+            node_desktop: false,
         },
     );
     kernel.start_extensions().await;
@@ -119,6 +120,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -160,4 +162,101 @@ async fn plugin_agents_reach_the_agent_listing() {
         listing.contains("- kit:helper: Plugin helper. (Tools: All tools)"),
         "{listing}"
     );
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): `system/init` of `-p` reads the session catalog, so an
+/// incognito session without `plugins` lists neither plugin skills nor plugin MCP servers; a normal session does.
+#[tokio::test]
+async fn the_session_catalog_follows_the_incognito_profile() {
+    let env = MemoryEnvironment::new(EnvFacts {
+        cwd: EnvPath::new("/Users/dev/work"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    })
+    .with_file(
+        &format!("{KIT}/skills/hello/SKILL.md"),
+        "---\ndescription: Say hello.\n---\nHello.",
+    )
+    .with_file(
+        &format!("{KIT}/.mcp.json"),
+        r#"{"mcpServers": {"api": {"command": "node", "args": []}}}"#,
+    );
+    let store = Arc::new(MemoryStore::default());
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let kernel = LocalKernel::with_extensions(
+        Ports {
+            model,
+            environments: environments(Arc::new(env)),
+            store: store.clone(),
+            artifacts: store,
+            clock: Arc::new(FixedClock(1_000)),
+            ids: Arc::new(SequentialIds::default()),
+        },
+        Defaults {
+            selection: selection().into(),
+            mode: PermissionMode::Default,
+            max_turns: None,
+            search_tools: false,
+            task_tools: None,
+            limits: Default::default(),
+        },
+        ContextConfig::new(Surface::Print),
+        CompactConfig::default(),
+        Arc::new(MemoryTaskLists::default()),
+        Extensions {
+            config: ExtConfig {
+                plugin_dirs: vec![EnvPath::new(KIT)],
+                workspace: Some(workspace()),
+                ..ExtConfig::default()
+            },
+            cron_store: None,
+            peers: rust_cli_session::PeerDeps::off(),
+            streaming_input: false,
+            monitor: false,
+            node_desktop: false,
+        },
+    );
+    kernel.start_extensions().await;
+    let create = |incognito| CreateSession {
+        id: None,
+        workspace: workspace(),
+        selection: selection(),
+        mode: PermissionMode::Default,
+        plan: false,
+        incognito,
+    };
+    let normal = kernel.create_session(create(None)).await.unwrap();
+    let without_plugins = kernel
+        .create_session(create(Some(
+            rust_cli_kernel_api::incognito::IncognitoProfile {
+                skills: true,
+                mcp: true,
+                ..rust_cli_kernel_api::incognito::IncognitoProfile::LOCKDOWN
+            },
+        )))
+        .await
+        .unwrap();
+    let catalog = |session| {
+        kernel.session_catalog(rust_cli_kernel_api::catalog::CatalogQuery {
+            session,
+            workspace: workspace(),
+            selection: selection(),
+        })
+    };
+    let normal = catalog(normal).await.unwrap();
+    let plugin_skill = |catalog: &rust_cli_kernel_api::catalog::SessionCatalog| {
+        catalog.skills.iter().any(|name| name.contains("hello"))
+    };
+    let plugin_server = |catalog: &rust_cli_kernel_api::catalog::SessionCatalog| {
+        catalog.mcp_servers.iter().any(|name| name.contains("api"))
+    };
+    assert!(plugin_skill(&normal), "{normal:?}");
+    assert!(plugin_server(&normal), "{normal:?}");
+    let locked = catalog(without_plugins).await.unwrap();
+    assert!(!plugin_skill(&locked), "{locked:?}");
+    assert!(!plugin_server(&locked), "{locked:?}");
 }

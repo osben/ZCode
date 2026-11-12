@@ -30,16 +30,17 @@ The access tag reuses the catalog's `labelBadge`: account plans show personal/te
 
 The submenu uses a Portal so the parent menu cannot clip it. When side space is tight, the submenu may overlap the parent while avoiding the Provider trigger row, at a higher z-order; Provider selection and model-switch logic are unchanged.
 
-Provider rows are browse-only (2026-10-23 ISSUE-058 user ruling, see [`specs/composer-model-picker-browse-only-providers.md`](../specs/composer-model-picker-browse-only-providers.md)): clicking, keyboard-confirming, or hovering a Provider only switches which group the Models list shows — it never changes model, tier, or account connection. Only selecting a model row changes the selection; a new model takes the target model's default tier by the existing rules, and re-selecting the current model does not rewrite the tier. While browsing a non-current Provider, Think shows 「—」 disabled and the popup stays open. The slider steps through the Option Spec's original order — no sorting, no conversion to a Token Budget. Selecting a tier keeps the popup open; clicking outside or Escape closes it. Desktop restores input focus after close; mobile does not pop the soft keyboard.
+Provider rows are browse-only (2026-10-23 ISSUE-058 user ruling, see [`specs/composer-model-picker-browse-only-providers.md`](../specs/composer-model-picker-browse-only-providers.md)): clicking, keyboard-confirming, or hovering a Provider only switches which group the Models list shows — it never changes model, tier, or account connection. Only selecting a model row changes the selection; a new model takes the target model's default tier by the existing rules, and re-selecting the current model does not rewrite the tier. While browsing a non-current Provider, Think shows 「—」 disabled and the popup stays open. The slider steps through the Option Spec's original order — no sorting, no conversion to a Token Budget. Selecting a tier keeps the popup open; for an existing session, model items, Provider and the slider are disabled while the config ACK is pending and resume in the same panel after the ACK. Clicking outside or Escape closes it. Desktop restores input focus after close; mobile does not pop the soft keyboard.
 
 ### Model menu close behavior
 
-- Confirming an available model (including re-selecting the current one) keeps the menu open so the tier can still be adjusted; a locked model does not submit or close. Browsing Providers and changing tiers also keep the menu open.
+- For both drafts and existing sessions, confirming a model by click or keyboard keeps the menu open so the tier can still be adjusted; an existing session disables the config controls, entries and shortcuts until the ACK, without changing the menu's open state. A locked model does not submit. Browsing Providers and changing tiers also keep the menu open; during Provider catalog refresh the old menu behavior applies, and once a session config submission starts the ACK gate applies.
 - The normal input and the floating input in fullscreen plugins share one menu open state. A single click outside the menu closes it, including over plugin webview areas; that click only closes the menu and must not trigger the underlying plugin action. Escape keeps its close behavior.
-- After close, existing focus rules apply: desktop restores the input, mobile does not pop the soft keyboard. Model selection owner, submission, and protocol are unchanged.
+- After close, existing focus rules apply: desktop restores the input, mobile does not pop the soft keyboard. The config is still submitted through the original Session command entry.
 
 ```text
-confirm an available model -> existing model selection callback -> menu stays open
+unbound draft select -> update draft -> menu stays open
+existing session select -> keep model panel, disable config controls/send -> config ACK -> panel resumes, send resumes
 pointer outside the menu    -> host outside-menu interaction  -> menu open=false
 Provider / Effort action    -> existing selection chain        -> menu stays open
 ```
@@ -47,6 +48,47 @@ Provider / Effort action    -> existing selection chain        -> menu stays ope
 Outside-click rationale: with a modal Radix menu open, `body` has `pointer-events: none`, but the plugin webview explicitly sets `auto` and keeps receiving clicks; guest-page events do not bubble to the host document, so the menu never saw the outside pointerdown (event sampling confirmed the click had activated a plugin button while the menu stayed open). While the merged menu is open, a transparent pointer layer sits above the plugin page and below the Composer and its popovers, reusing Radix's outside-close logic and keeping toolbar menu inter-switching. The layer shares the menu's open state and stores nothing extra.
 
 Regression coverage: menu component unit tests plus Electron webview / mobile-width iframe interactions across both themes cover keep-open after model selection and the following single outside click. Browser candidates run via `node --test packages/ui/test/browser/manual-review/pending/composer-menu-dismiss.test.mjs`; artifacts in `packages/desktop/.e2e-artifacts/composer-menu-dismiss/`. Not covered: Windows/Linux native windows, mobile real devices, remote connections; plugin resources were test pages — plugin install and Agent handshake are not verified.
+
+A Highspeed card locks only the Provider/Model identity, not the thinking tier of the same model. An existing session submits the full config through the separate tier dropdown and Ctrl+T, still confirmed by the CLI; the model identity lock must not swallow it early. While a config ACK is in flight the separate tier entry closes and is disabled, and the shortcut and send use the same gate. Desktop wide/narrow windows and mobile shared-host use the same rule. The config affects only later input and never rewrites the frozen Selection of a running turn or an accepted queue.
+
+### Send gate during a Provider connection switch
+
+A Provider connection switch spans from the click through account-setting persistence, target Host config refresh, the full model selection submit and target display confirmation. `useComposerConnectionSwitch` is the single owner of this pending; the Composer only receives its projection for the send gate and adds no timeout or request queue. Closing the menu does not end the pending.
+
+During the switch, the send button, Enter, send-now and new-message enqueue entries must not submit the old provider; text and attachments stay editable and are not cleared or resent automatically. After success the user sends again with the new provider/model/options fixed; on failure the gate ends and the existing error hint, rollback and retry stay. A task/workspace switch or component unmount releases the gate of that input box; an old result must not lock a new input box or rewrite a new task. Desktop and mobile Web share this gate.
+
+The Active Model of a running turn and the modelSelection snapshots of accepted/queued messages do not change; stop, queue consumption and restoring existing messages are unaffected. The gate only blocks new input not yet accepted.
+
+```text
+click Provider -> pending=true -> refresh target config -> confirm model and display -> pending=false
+                     └→ new submits blocked, draft kept                └→ new selection can be submitted
+running / queued -> each keeps its frozen model snapshot
+```
+
+Regression: same-name model across Providers, real catalog read held, click send and press Enter at once: no sendText/new enqueue, draft kept; after release, send and the message snapshot and actual request carry the target Provider. Cover wide/narrow viewports, release on failure/unmount, and no rewrite of running or queued messages. A real-device quick plan switch needs the refresh and send timing recorded.
+
+### Model selection in an existing session takes effect at once
+
+In an existing session, the model chosen automatically by a Provider switch and a manually chosen model both submit `switchModelConfig` with the full Provider, Model and reasoningLevel. The CLI/runtime is the single owner of the session model. Only after a successful ACK is the selection confirmed as effective and the Composer updated; on failure the old selection stays and an error shows. While switching, pending shows and repeated submits and sends are blocked; an old receipt after a task switch must not update the new task. A new unbound session still only edits the draft and creates no extra session.
+
+While the config command awaits its ACK, the current session keeps the merged model menu and disables its model items, Provider, slider and Ctrl+M, Ctrl+T; the separate tier dropdown keeps its close-on-select behavior, with the pending display and send gate. The user selects again after confirmation; nothing is accepted and then silently dropped. Pending belongs to the workspace/session and request identity: switching to B does not wait for A's config barrier, returning to A still shows A's in-flight state, and A's receipt can only release A's request, never confirm a B draft or lift B's gate. Running turns and accepted queues keep their frozen Selection, and a config command already submitted by the old session is not cancelled.
+
+When an existing session is restored, text, editor and attachments still read the original draft; the model selection is restored from the current Session snapshot and must not keep an old model/tier because the draft already has a mode. If A's config succeeded while away, the first snapshot on return adopts the confirmed selection; if the command is still in flight on return, A's gate stays and the current owner receives the ACK. New-task and message-edit scopes keep their original config initialization and do not rewrite running turns or accepted queues.
+
+A tier change on the same model (including the shortcut) takes the same submit path: an existing session reuses the model config command and its ordering barrier with the current Provider/Model and the target tier, and the draft is confirmed after the ACK. Do not change only the draft and let later Feishu input read the old Session tier. A tier change does not rewrite the snapshot of the running turn or accepted queue. Regression checks the persisted Session selection without sending from the desktop, and confirms the actual request tier from a Feishu send; desktop and mobile use the same entry, and a new unbound session still edits only the draft.
+
+```text
+existing session select -> config barrier -> CLI CommandInbox serial admit -> save Session Selection -> ACK / projection
+                                                        ├→ Composer confirms
+                                                        └→ later Feishu input fixes the new selection
+running / accepted queue -> each keeps its frozen Submission / Active Model (not rewritten by the config command)
+```
+
+Model config affects only new input afterwards. The running request and later tool rounds keep their own Active Model; accepted queues keep their Submissions, and consuming an old queue must not write back over a newer session selection. A Bot input carries `modelSelectionBasis` (the original Session Selection when read), and the CLI checks Provider, Model and reasoningLevel at admission: if the basis matches, the Host-resolved effective selection is kept; if it changed, the current Session Selection is fixed. The basis is not written into the accepted queue. A selection read asynchronously before the switch must not overwrite an already confirmed new session model. Desktop continuous and mobile replayable reuse the same command and owner, with no Bot model cache, input queue or timeout sync.
+
+Acceptance: after Start → BigModel (same-name model), without picking the model again and without sending from the desktop, a Feishu send makes the actual request BigModel; running A, queued A and new input B after switching to B keep request identities A/A/B. Cover failure leaving the value unchanged, same-value no-op, stale receipt across tasks, desktop/mobile paths. Real Feishu verification and stand-in E2E evidence are recorded separately.
+
+2026-11-03 verification: a real Feishu Start → BigModel same-name GLM-5.3 follow-up passed, the actual network request identity being `bigmodel-standard-api / GLM-5.3`; in the queue E2E both auto drain and send-now kept the originally submitted model. CLI model config, input admission, gateway and execution isolation regressions passed; real mobile devices and Windows/Linux were not tested.
 
 ## Overall compression priority
 
@@ -67,7 +109,7 @@ ModelSelectionView (supported models and tiers)
                  ↓
 browse Provider     -> popup-local browse state (no draft write)
 select a model row  -> existing onSelectModel / connection-switch owner -> Composer draft
-merged popup        -> existing onSelectModel / onSelectThought -> Composer draft (single selection owner)
+merged popup        -> existing session: submit and confirm model selection / new session: edit Composer draft
                                                      ↓ on send
                                                frozen Submission
 ```
@@ -165,6 +207,8 @@ select a model on that row -> root settings save the full identity -> existing P
 failure -> restore original settings and sync -> keep the original model and show a retryable error
 ```
 
+Exception: re-selecting the already effective connection neither saves nor syncs, see "Re-selecting the effective plan connection" below.
+
 Shared settings are the single source of plan identity; the Composer keeps model selection. Team rows are a catalog projection — no new Provider or extra runtime. While syncing, provider, model, and Effort duplicate operations are disabled and the main menu stays open; the new menu identity is adopted only after the full sync. Async results bind to the Host and `workspaceIdentity.trim() || workspacePath`; remote must compare the root/target Provider connectionKey so an old team's same-name model is not misread as success. API selection does not write plan settings. Closing the menu and the narrow-screen back do not modify the model; use the existing narrow back navigation, theme tokens, and i18n. Desktop continuous and mobile replayable message paths are unchanged.
 
 ### Same-name models across personal/team
@@ -231,6 +275,57 @@ The personal, team, and API lists scroll vertically only. A plan/API divider ins
 An explicit refresh returns a ready or superseded receipt; reads superseded by a newer request or input of the same owner — whether they succeed or fail — must not decide the connection's final state. The current request's failure still rejects and publishes a failure receipt. The Composer settles only after the re-read ends, against the current presentation state and the target revision/selection. After an OAuth session succeeds, connection-domain initialization is a separate auxiliary step: a CAS conflict keeps the concurrent new settings, records the init failure separately, continues the Provider refresh and the login-success marker, and does not auto-retry the init.
 
 An OAuth connection init conflict permanently disables auto-connection correction for that login operation: it only reads the latest App settings snapshot, refreshes the Provider facts, and completes the login-success marker. It must not re-read the new version to regain CAS write eligibility for the old login operation; normal initialization still runs the existing auto-selection flow.
+
+### Re-selecting the effective plan connection (2026-11-05)
+
+Problem: in an SSH workspace, "personal plan -> ordinary API -> same personal plan" took 1.5-8 s each time it switched back (ZCT-2118278184274395136). The ordinary API writes no plan setting, so shared settings still held that connection on return, yet the flow still saved unconditionally:
+
+1. An equal value still bumped the operation version.
+2. The write pushed one Provisioning round to every online remote through the `account-settings` trigger.
+3. The target Host's refresh returns only a round that started after the request, so it waited for the push to finish.
+
+In the user's log, 5 switch-backs triggered one remote sync each, 1.4-5.5 s per round.
+
+Rule: after a plan row is clicked, the connection owner `useComposerConnectionSwitch` first decides whether the connection is already effective. It is effective only if all three hold:
+
+1. The shared setting `providerFamilyDomain` equals the row's brand, and the saved connection identity of that brand equals the row's (compared with `composerConnectionKey`).
+2. The root Host first refreshes ProviderSettings, giving the `connectionKey` resolved from the current shared settings. For a remote workspace, the `connectionKey` of that Provider in the target Host's current ProviderSettings (read only, no refresh) equals it. A local workspace's target is the root Host, whose refreshed catalog already matches the current settings, so no comparison.
+3. The target Host's current model catalog has an available model for that Provider.
+
+When effective: no settings save, no Provisioning, no target Host refresh; select the model from the target Host's current catalog directly, re-reading the Renderer shared-settings snapshot before selecting. The model selection, display receipt and send gate afterwards are the same as before. If any item fails, run the original "save -> sync -> verify" flow; when the remote is not synced yet, that save also re-pushes.
+
+The root Host must refresh, not read the cache (CR-01): the root Host's account snapshot is not necessarily resolved from the current settings.
+
+- In the same window, after settings are written the root Host's account refresh is asynchronous and includes the entitlement query.
+- Each window has its own Window Host. When another window writes settings, this window's Host receives no settings update event and its account snapshot does not refresh.
+
+Then the root and target caches can both sit on the old team. They are equal but not current. Two teams share a Provider ID and the old team's catalog also has models, so comparing the two caches would treat "not switched" as "effective", select from the old team catalog and show no error. Refresh returns a round that started after the request, so the root Host identity always comes from the current settings. The target Host is still read from cache: the slow part was waiting for remote Provisioning, not the root Host refresh.
+
+The Renderer shared-settings snapshot must also be re-read: the old flow refreshed it through the `update` of the save, which the fast path skips. The Composer checkmark and connection label read this snapshot; when another window writes settings it is still stale, so without the re-read it would show the old team.
+
+```text
+click a plan row
+  ├ same setting identity
+  │     -> root Host refresh (per current settings)
+  │     ├ target connectionKey equals root (not compared locally) + has available model
+  │     │     -> re-read shared settings snapshot -> target Host current catalog -> select model -> display receipt
+  │     └ otherwise ↓
+  └ anything else
+        -> save settings (CAS) -> Provisioning -> root/target refresh -> verify -> select model -> display receipt
+```
+
+Accepted behavior changes:
+
+- Re-selecting an effective connection refreshes only the root Host (account source, entitlement and Builtin config, same as the root Host refresh in the old flow), not the target Host, and does not wait for remote Provisioning. If the target Host's entitlement has just lapsed, the target Environment validates and reports at send time, the same as the ordinary API and as sending without switching. If the root Host refresh fails, the switch reports a retryable error, as before.
+- The re-select no longer re-pushes personal Provider config and credentials. They are still driven by the `personal-config` / `credential` triggers and the retry on the data sync page.
+
+Unchanged: the sync cost of a real identity change (personal <-> team, between teams). Switching the connection in the settings page does not go through this owner and is unaffected. When two windows switch the same brand at once, the final identity still follows the shared settings. When another window has already switched to a team, clicking that team row in this window also takes effect per the shared settings.
+
+Acceptance: CTP-32 (`docs/testing/coding-plan-team-e2e-cases.md`): run "personal -> ordinary API -> personal" and "team -> ordinary API -> same team"; after switching back `providerFamilyDomainUpdatedAt` and the connection mapping are unchanged, the model returns to the plan Provider, the thinking tiers are complete, no error. CTP-33: simulate another window changing team A to team B while this window's Host is not refreshed; click the team B row in the Composer: the root Host `connectionKey` becomes team B, the connection label shows team B, the settings version is unchanged, no error. CTP-28/29/31 same-connection retries and CTP-22 cross-identity switching regress with the original assertions. Remote workspaces are covered by RPR-01 (`docs/conversation-session-case-catalog.md`): switching back to an effective connection causes no `account-settings` sync; when the remote is not synced, it falls back to the original flow and re-pushes once.
+
+### Legacy CLI attachment input compatibility
+
+When Bot attachment input goes through legacy `session/send`, `modelSelectionBasis` is an admission-time concurrency guard and must not be stripped as an optional compatibility field. When an old CLI rejects the field with a structured `unrecognized_keys` error, the Host returns the stable `ModelSelectionBasisUnsupportedError` and the Bot shows a zh/en prompt that the target CLI needs an upgrade. It does not downgrade and retry even when other optional fields are rejected too; errors other than unknown fields keep the existing handling. Attachments, selection and execution constraints are kept, nothing is resent automatically and no Worker restarts, and a running turn or accepted queue is not modified. After upgrading the user retries manually.
 
 ## Verification status
 

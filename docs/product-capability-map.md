@@ -200,7 +200,7 @@ Engineering Infrastructure
 | ZCode CLI      | 多智能体                 | Subagent profiles, child runtime, coordination and background tasks                                                           |
 | ZCode CLI      | 扩展运行时               | MCP, Skills, Hooks, Commands, Memory resources                                                                                |
 | ZCode CLI      | 浏览器运行时             | Browser Use Plugin, Node REPL/Playwright, Headless backend                                                                    |
-| ZCode CLI      | 用量可观测存储           | model/turn/tool usage facts, SQLite 30-day retention and App Usage SQL aggregation                                            |
+| ZCode CLI      | 用量可观测存储           | model/turn/tool usage facts, SQLite permanent retention and App Usage SQL aggregation                                         |
 | 基础设施       | 构建与发布工程           | GitLab pipeline, cross-platform builds, packaging/signing, notarization, artifacts, CDN, canary/stable release                |
 | 基础设施       | 测试自动化平台           | Desktop/CLI E2E harness, capture/replay, cross-platform execution, fault injection, case admission and promotion              |
 | 基础设施       | 质量数据与工程治理       | E2E reports, coverage, quality trends, static gates, engineering performance and failure artifacts                            |
@@ -224,7 +224,7 @@ ZCode CLI |
   App Usage SQL Aggregation
           ^
           |
-  model_usage / turn_usage / tool_usage SQLite（30 天）
+  model_usage / turn_usage / tool_usage SQLite (kept forever)
           ^
           |
   Model / Turn / Tool lifecycle facts

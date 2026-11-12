@@ -67,6 +67,7 @@ function mergeTranscriptRow(
     sourceCommandId: row.sourceCommandId,
     card: {
       cardId: meta.cardId,
+      ...(meta.ownerKey ? { ownerKey: meta.ownerKey } : {}),
       taskId: meta.taskId,
       provider: meta.provider,
       model: meta.model,
@@ -77,7 +78,9 @@ function mergeTranscriptRow(
     createdAt: row.createdAt,
   };
   let next = base;
-  // regularTps sampled at send time is a persisted fact; backfill it when the in-memory record lacks it.
+  if (next.card.ownerKey !== meta.ownerKey)
+    next = { ...next, card: { ...next.card, ownerKey: meta.ownerKey } };
+  // 发送时采样的 regularTps 是持久事实；内存记录缺失时补齐。
   if (meta.regularTps !== undefined && next.card.regularTps !== meta.regularTps) {
     next = { ...next, card: { ...next.card, regularTps: meta.regularTps } };
   }

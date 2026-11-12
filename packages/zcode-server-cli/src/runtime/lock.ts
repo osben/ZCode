@@ -303,6 +303,9 @@ async function isHolderAlive(record: LockOwnerRecord): Promise<boolean> {
   }
   // Locks written by older versions carry no identity field, and some platforms cannot read one;
   // fall back to the PID check for those.
+  // Bug cause: kill(pid, 0) also succeeds for an exited but unreaped process (a zombie). In containers where PID 1 does not reap children, a lock in the old format stays "held" by a zombie forever.
+  // On Linux, exclude zombies by process state first, then decide by PID.
+  if (process.platform === "linux" && (await readProcessIdentity(pid)) === null) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -334,7 +337,14 @@ async function readProcessIdentity(pid: number): Promise<string | null | undefin
     }
     // The comm field may contain spaces and parentheses; count from after the last ")". There state
     // is field 3 and starttime is field 22, i.e. index 19 after the split.
-    const startTime = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    // Bug cause (ZCT-2117275161536565248): Docker containers often run a PID 1 such as `sleep infinity` that does not reap child processes.
+    // After an abnormal Supervisor death it becomes a zombie; /proc/<pid>/stat still exists and starttime is unchanged, so identity matching treats it as the live lock holder.
+    // The new Supervisor then exits with code 1 on every start, and the device cannot connect until the container restarts.
+    // Zombies (Z) and dead processes (X) have already released all fds, ports and memory, so they cannot hold the lock; treat them as nonexistent.
+    // A Node main thread exiting ends the process, so a live Supervisor is never in either state.
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    if (fields[0] === "Z" || fields[0] === "X") return null;
+    const startTime = fields[19];
     if (!startTime) return undefined;
     const bootId = await readFile("/proc/sys/kernel/random/boot_id", "utf8").catch(() => "");
     return `${bootId.trim()}:${startTime}`;

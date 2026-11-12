@@ -55,7 +55,7 @@ fn validates_zod_subset_semantics() {
     for bad in [
         json!({}),
         json!({"name":""}),
-        json!({"name":"😀😀"}),
+        json!({"name":"😀😀😀"}),
         json!({"name":"a","count":0}),
         json!({"name":"a","count":1.5}),
         json!({"name":"a","mode":"c"}),
@@ -94,4 +94,24 @@ fn datetime_format_requires_and_enforces_the_zod_pattern() {
     .unwrap();
     assert!(schema.validate(&json!("2026-10-11T00:00:00Z"), "").is_ok());
     assert!(schema.validate(&json!("not a date"), "").is_err());
+}
+
+/// zod 4's `z.string().max(n)` / `.min(n)` count code points (`[...value].length`), not UTF-16 units: run against zod
+/// 4.6.5, `"😀".repeat(4001)` passes `max(8000)`, `"😀".repeat(8001)` fails it, and one `😀` fails `min(2)`.
+#[test]
+fn string_lengths_count_code_points_like_zod() {
+    let max = Node::compile(&json!({"type":"string","maxLength":8000})).unwrap();
+    assert!(max.validate(&json!("😀".repeat(4001)), "").is_ok());
+    assert!(max.validate(&json!("😀".repeat(8000)), "").is_ok());
+    assert!(max.validate(&json!("😀".repeat(8001)), "").is_err());
+    let min = Node::compile(&json!({"type":"string","minLength":2})).unwrap();
+    assert!(min.validate(&json!("😀"), "").is_err());
+    assert!(min.validate(&json!("😀😀"), "").is_ok());
+    // Property names are zod strings too.
+    let names = Node::compile(
+        &json!({"type":"object","propertyNames":{"type":"string","maxLength":1},
+        "additionalProperties":{}}),
+    )
+    .unwrap();
+    assert!(names.validate(&json!({"😀": 1}), "").is_ok());
 }

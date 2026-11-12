@@ -80,6 +80,8 @@ const TOOL_FILES: &[&str] = &[
     include_lf!("../../../prompts/tools/ListAgents.json"),
     include_lf!("../../../prompts/tools/SendMessage.json"),
     include_lf!("../../../prompts/tools/TaskStop.json"),
+    // Fork (node_desktop): Node's TaskOutput tool (task-output.ts) for the desktop agent.
+    include_lf!("../../../prompts/tools/TaskOutput.json"),
     include_lf!("../../../prompts/tools/TaskCreate.json"),
     include_lf!("../../../prompts/tools/TaskGet.json"),
     include_lf!("../../../prompts/tools/TaskList.json"),

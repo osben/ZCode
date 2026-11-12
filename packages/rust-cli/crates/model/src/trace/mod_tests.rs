@@ -195,3 +195,20 @@ fn stop_reasons_and_usage_take_the_node_names() {
                            "cacheReadTokens": 30, "cacheWriteTokens": 2})
     );
 }
+
+/// Fork: the recording decoder forwards a whole JSON reply to the decoder it wraps (E2E title replies are recorded).
+#[test]
+fn the_recording_decoder_reads_a_whole_json_reply() {
+    let capture = Capture::shared();
+    let mut decoder = Capture::wrap(&capture, Box::new(AnthropicStream::default()), None);
+    let mut out = VecDeque::new();
+    let body = json!({
+        "id": "t1", "type": "message", "role": "assistant", "model": "m",
+        "content": [{"type": "text", "text": "{\"title\":\"Upstream E2E Fixture\"}"}],
+        "stop_reason": "end_turn", "usage": {"input_tokens": 3, "output_tokens": 2}
+    });
+    assert_eq!(decoder.whole(body, &mut out).ok(), Some(true));
+    assert!(decoder.finished());
+    assert_eq!(out.len(), 6);
+    assert_eq!(capture.lock().unwrap().take().chunks.len(), 1);
+}

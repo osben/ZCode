@@ -43,6 +43,7 @@ export function TaskActionMenuContent({
   disableTaskTargetActions = false,
   disablePinTaskAction = false,
   disabledReason,
+  archiveDisabledReason,
   hideMobileUnsupportedActions = false,
   Item,
   Separator,
@@ -90,6 +91,8 @@ export function TaskActionMenuContent({
   disableTaskTargetActions?: boolean;
   disablePinTaskAction?: boolean;
   disabledReason?: string;
+  /** Disabled reason specific to archiving (running task); other actions are unaffected. */
+  archiveDisabledReason?: string;
   hideMobileUnsupportedActions?: boolean;
   Item: React.ComponentType<TaskActionMenuItemProps>;
   Separator: React.ComponentType<TaskActionMenuSeparatorProps>;
@@ -99,7 +102,8 @@ export function TaskActionMenuContent({
   SubContent?: React.ComponentType<TaskActionMenuSubProps>;
   onTogglePinTask: () => void;
   onStartRenameTask: () => void;
-  onArchiveTask: () => void;
+  /** When omitted the archive item is hidden: the Header has no live running state, so archiving is only offered in the sidebar. */
+  onArchiveTask?: () => void;
   onMarkTaskAsUnread: () => void;
   onRestartTask?: () => void;
   restartPending?: boolean;
@@ -362,19 +366,21 @@ export function TaskActionMenuContent({
         </>
       ) : null}
       <Separator />
-      <Item
-        disabled={taskTargetActionsDisabled}
-        title={disabledReason}
-        onSelect={() => {
-          if (!taskTargetActionsDisabled) {
-            onArchiveTask();
-          }
-        }}
-      >
-        {intl.formatMessage({
-          id: isArchived ? "taskList.unarchive" : "taskList.archive",
-        })}
-      </Item>
+      {onArchiveTask ? (
+        <Item
+          disabled={taskTargetActionsDisabled || Boolean(archiveDisabledReason)}
+          title={disabledReason ?? archiveDisabledReason}
+          onSelect={() => {
+            if (!taskTargetActionsDisabled && !archiveDisabledReason) {
+              onArchiveTask();
+            }
+          }}
+        >
+          {intl.formatMessage({
+            id: isArchived ? "taskList.unarchive" : "taskList.archive",
+          })}
+        </Item>
+      ) : null}
       {onDeleteTask ? (
         <Item
           data-testid={TID_TASK_DELETE}

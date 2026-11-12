@@ -8,8 +8,16 @@ import {
   type WebRemoteControlRelayV2HttpResponse,
 } from "@zcode/shared/web-remote-relay";
 
-/** Main uses Node fetch directly and not the services HTTP client, which triggers a global logout. */
-export function createWebRemoteControlV2Http(endpointOrigin: string, fetcher = fetch) {
+/**
+ * Main uses Node fetch directly and not the services HTTP client, which triggers a global logout.
+ * This also means it does not get NodeApiClient's source headers: the caller passes the current UI language as X-Client-Language,
+ * since without this header the server could only guess the language.
+ */
+export function createWebRemoteControlV2Http(
+  endpointOrigin: string,
+  fetcher = fetch,
+  getClientLanguage?: () => string | undefined,
+) {
   async function request<K extends WebRemoteControlRelayV2HttpOperation>(
     operation: K,
     body: WebRemoteControlRelayV2HttpRequest<K>,
@@ -20,7 +28,11 @@ export function createWebRemoteControlV2Http(endpointOrigin: string, fetcher = f
     try {
       const response = await fetcher(new URL(path, endpointOrigin), {
         method,
-        headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          "Content-Type": "application/json",
+          ...buildWebRemoteControlClientLanguageHeader(getClientLanguage),
+        },
         body: method === "GET" ? undefined : JSON.stringify(body),
         signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
         redirect: "error",
@@ -57,7 +69,11 @@ export function createWebRemoteControlV2Http(endpointOrigin: string, fetcher = f
           new URL("/api/v1/remote/notification/events", endpointOrigin),
           {
             method: "POST",
-            headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+            headers: {
+              Authorization: `Bearer ${jwt}`,
+              "Content-Type": "application/json",
+              ...buildWebRemoteControlClientLanguageHeader(getClientLanguage),
+            },
             body: JSON.stringify({ device_sid: deviceSid, event }),
             signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
             redirect: "error",
@@ -95,4 +111,12 @@ export function createWebRemoteControlV2Http(endpointOrigin: string, fetcher = f
       await request("delete", { device_sid: deviceSid }, jwt, signal);
     },
   };
+}
+
+/** Send X-Client-Language only when the UI language is known; otherwise do not guess the system language, to avoid mismatching the UI. */
+export function buildWebRemoteControlClientLanguageHeader(
+  getClientLanguage: (() => string | undefined) | undefined,
+): Record<string, string> {
+  const clientLanguage = getClientLanguage?.()?.trim();
+  return clientLanguage ? { "X-Client-Language": clientLanguage } : {};
 }

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
 
@@ -23,9 +24,38 @@ pub struct Context {
     sessions: Mutex<HashMap<String, String>>,
     /// 本进程的随机前缀（代际标识与订阅 ID 用）。
     prefix: String,
+    /// Fork: the model directory the projection reads reasoning levels from (Node `listThoughtLevels`).
+    models: std::sync::OnceLock<Arc<dyn ModelDirectory>>,
+    /// Fork: the storage root for per-session directories (session erase); set once by the
+    /// app-server. Without it the erase removes the rows and skips the files.
+    storage_root: std::sync::OnceLock<std::path::PathBuf>,
 }
 
 impl Context {
+    /// Fork: the model directory (the app-server sets it once at startup; without it the projection offers only the
+    /// selected reasoning level).
+    pub fn set_models(&self, models: Arc<dyn ModelDirectory>) {
+        let _ = self.models.set(models);
+    }
+
+    /// Fork: the storage root (Node `context.deps.storageRoot`).
+    pub fn set_storage_root(&self, root: std::path::PathBuf) {
+        let _ = self.storage_root.set(root);
+    }
+
+    /// Fork: the storage root, when the entry point provided one.
+    pub fn storage_root(&self) -> Option<&std::path::Path> {
+        self.storage_root.get().map(std::path::PathBuf::as_path)
+    }
+
+    /// Fork: the selectable models, empty without a directory.
+    pub(crate) async fn catalog(&self) -> Arc<[CatalogModel]> {
+        match self.models.get() {
+            Some(models) => models.catalog().await.models.into(),
+            None => Arc::from(Vec::new()),
+        }
+    }
+
     pub fn new(peer: Peer, clock: Arc<dyn Clock>) -> Self {
         let prefix = format!(
             "{:x}-{:x}",
@@ -39,6 +69,8 @@ impl Context {
             counter: Mutex::new(0),
             sessions: Mutex::new(HashMap::new()),
             prefix,
+            models: std::sync::OnceLock::new(),
+            storage_root: std::sync::OnceLock::new(),
         }
     }
 

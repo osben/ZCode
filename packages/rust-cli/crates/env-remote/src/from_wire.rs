@@ -243,6 +243,8 @@ pub(crate) fn background_info(info: ws::BackgroundInfo) -> BackgroundInfo {
         status: background_status(info.status),
         kind: background_kind(info.kind),
         description: info.description,
+        // Fork: a remote executor's paths are not readable here; the pane shows the command's own path instead.
+        output: None,
     }
 }
 
@@ -339,6 +341,7 @@ pub(crate) fn command_event(
             output_bytes,
             output_limit,
         } => CommandEvent::Finished {
+            output_unreadable: None,
             outcome: outcome(ended),
             exit_code,
             timed_out,

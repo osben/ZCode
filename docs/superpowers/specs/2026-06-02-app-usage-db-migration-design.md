@@ -2,6 +2,11 @@
 
 Date: 2026-06-02. Branch: feat/new-agent
 
+> 2026-11-06 update: this doc records the historical design at migration time. The 30-day auto-cleanup
+> policy was cancelled and the three usage tables are kept permanently; 7 / 30 days is only a query
+> range. Current retention and display rules: [App usage spec](../../usage-stats-app-coding-plan-split.md)
+> and [CLI usage contract](../../../apps/zcode-cli/docs/design/v2/usage-observability.md).
+
 ## Goal and background
 
 The App Usage panel was fed by local session JSON files (`~/.zcode/sessions/*.json`) aggregated by

@@ -18,6 +18,7 @@ import {
   SOURCE_SERVER_INSTALL_REQUIRED_ERROR_CODE,
   SOURCE_SERVER_IDENTITY_CHANGE_PENDING_ERROR_CODE,
   SOURCE_SERVER_UPGRADE_REQUIRED_ERROR_CODE,
+  SOURCE_SERVER_UPDATE_IN_PROGRESS_ERROR_CODE,
   REMOTE_RECOVERY_BUDGET_EXHAUSTED_ERROR_CODE,
   ZCODE_COMPATIBILITY_MANIFEST,
   compareCompatibilityVersions,
@@ -142,13 +143,35 @@ class SourceServerProfileRemovedError extends Error {
   }
 }
 
-/** A stop, restart, or update is already in progress on this device (R3 §8.4.5 mutual-exclusion matrix); not a public error code, the UI shows it with management error copy. */
+/**
+ * A stop, restart, or update is already in progress on this device, or an update is already in progress for the same Profile (R3 §8.4.5 mutual-exclusion matrix); not a public error code, the UI shows it with management error copy. `subject` is only for logs, e.g. `Source Server <id>`, `Profile <id>`.
+ */
 class SourceServerLifecycleOperationInProgressError extends Error {
   public readonly code = "source-server-operation-in-progress";
   public readonly retryable = true;
-  public constructor(public readonly sourceServerId: string) {
-    super(`Another lifecycle operation is in progress for Source Server: ${sourceServerId}`);
+  public constructor(subject: string) {
+    super(`Another lifecycle operation is in progress for ${subject}`);
     this.name = "SourceServerLifecycleOperationInProgressError";
+  }
+}
+
+/** 同一设备的更新进行中，公开连接入口被拒绝（R3 §6.3「更新期间的连接」）。 */
+class SourceServerUpdateInProgressError extends Error {
+  public readonly code = SOURCE_SERVER_UPDATE_IN_PROGRESS_ERROR_CODE;
+  public readonly retryable = true;
+  public constructor(public readonly profileId: string) {
+    super("Source Server update is in progress; connect after the update finishes");
+    this.name = "SourceServerUpdateInProgressError";
+  }
+}
+
+/** 用户在本机阶段取消更新（R3 §6.3）；取消不是失败，设备操作日志记为 info。 */
+class SourceServerUpdateCanceledError extends Error {
+  public readonly code = "remote-connection-canceled";
+  public readonly retryable = true;
+  public constructor(public readonly profileId: string) {
+    super("Source Server update canceled");
+    this.name = "SourceServerUpdateCanceledError";
   }
 }
 
@@ -189,7 +212,7 @@ export interface SourceServerConnectionManagerOptions {
   resolveRelease?: (
     probe: Awaited<ReturnType<SourceServerTransportAdapter["probe"]>>,
     target: Exclude<RemoteTarget, { kind: "server" }>,
-    options?: { metadataOnly?: boolean },
+    options?: { metadataOnly?: boolean } & Pick<TransportContext, "signal" | "onLog">,
   ) => Promise<ServerReleaseAsset>;
   /** known_hosts files the trust step appends to; tests inject a temp dir. */
   knownHostsFiles?: KnownHostsFiles;
@@ -236,13 +259,18 @@ interface ConnectFlight {
 /**
  * Lifecycle operation flight: while an update or restart exists, closing of a same-Source online connection counts as an expected disconnect; it only invalidates the connection,
  * and does not schedule retries. Explicit disconnect, profile removal, and dispose abort it. Only multiple update flights may coexist for one Source
- * (initiated through sibling Profiles); stop and restart are mutually exclusive with every operation (R3 §8.4.5).
+ * (initiated through sibling Profiles, at most one per Profile); stop and restart are mutually exclusive with every operation (R3 §8.4.5).
  */
 interface LifecycleOperationFlight {
   kind: LifecycleOperationKind;
   profileId: string;
   sourceServerId?: string;
   controller: AbortController;
+  /**
+   * 更新本机阶段的取消（R3 §6.3）；进入远端阶段前置空，此后 cancelUpdate 不再生效。
+   * 快照的 `updateCancelable` 只由它推导（见 setState）。
+   */
+  localStageCancel?: AbortController;
 }
 
 /** Connection and credentials used by device-level operations (stop, restart, reading running tasks) to run remote commands. */
@@ -481,6 +509,21 @@ export class SourceServerConnectionManager {
   public async connect(
     options: ConnectSourceServerOptions,
   ): Promise<ManagedSourceServerConnection> {
+    // Bug 原因（ZCT-2116085848489570304）：更新上传期间，同一向导又对同一设备连接了一次。
+    // 连接照常 probe 到旧版本，把 updating 改成 needs-upgrade，并替换设备操作日志；更新仍在后台
+    // 进行，用户却只看到“必须升级”。更新的内部重连走 connectForSource，不经过这里；其他入口在
+    // 写状态、写日志和建 transport 之前拒绝，原连接意图由发起更新的一方继续。
+    const { profile } = options;
+    for (const flight of this.lifecycleOperationFlights) {
+      if (
+        flight.kind === "update" &&
+        (flight.profileId === profile.profileId ||
+          (profile.sourceServerId !== undefined &&
+            flight.sourceServerId === profile.sourceServerId))
+      ) {
+        throw new SourceServerUpdateInProgressError(profile.profileId);
+      }
+    }
     try {
       return await this.connectForSource(
         { ...options, membershipIntent: options.membershipIntent ?? "add" },
@@ -678,6 +721,14 @@ export class SourceServerConnectionManager {
     if (profile.sourceServerId) {
       this.assertLifecycleOperationCanStart(profile.sourceServerId, "update");
     }
+    // Bug cause (CR-01): two updates used to be allowed to coexist for one Profile. The later update recorded the earlier update's "updating" as the pre-update state,
+    // and a cancel or failure wrote that back, so the device still showed "updating" after all updates ended; a late finish of a canceled old update could also overwrite the new update's state.
+    // Only one update per Profile: the flight is removed only after its wrap-up, so a new update always reads a stable pre-update state.
+    for (const flight of this.lifecycleOperationFlights) {
+      if (flight.kind === "update" && flight.profileId === profile.profileId) {
+        throw new SourceServerLifecycleOperationInProgressError(`Profile ${profile.profileId}`);
+      }
+    }
     // Bug cause: updates are not in connectFlights, so a late install result after a disconnect could still republish the connection.
     // Register by operation identity, so profiles that have not handshaken can also be canceled; cancellation removes the owner first, so an old update no longer blocks recovery of a new connection.
     const flight = this.registerLifecycleOperation(
@@ -685,16 +736,19 @@ export class SourceServerConnectionManager {
       profile.profileId,
       profile.sourceServerId,
     );
-    const signal = options.context?.signal
-      ? AbortSignal.any([options.context.signal, flight.controller.signal])
-      : flight.controller.signal;
+    flight.localStageCancel = new AbortController();
+    const signal = AbortSignal.any([
+      ...(options.context?.signal ? [options.context.signal] : []),
+      flight.controller.signal,
+      flight.localStageCancel.signal,
+    ]);
     try {
       return await this.operationLogs.run(
         "update",
         profile,
         options.target,
         { ...options.context, signal },
-        (context) => this.updateServerOnce({ ...options, context }, flight.controller),
+        (context) => this.updateServerOnce({ ...options, context }, flight),
       );
     } finally {
       this.lifecycleOperationFlights.delete(flight);
@@ -702,13 +756,31 @@ export class SourceServerConnectionManager {
     }
   }
 
+  /**
+   * 取消该线路处于本机阶段（probe、release 解析与本机下载）的更新（R3 §6.3），返回是否取消了更新。
+   * 远端阶段或没有更新时为空操作并返回 false。取消不是断开：不删除恢复意图，由 updateServerOnce
+   * 按失败路径收口且不写错误字段。
+   */
+  public cancelUpdate(profileId: string): boolean {
+    let canceled = false;
+    for (const flight of this.lifecycleOperationFlights) {
+      if (flight.kind !== "update" || flight.profileId !== profileId || !flight.localStageCancel)
+        continue;
+      flight.localStageCancel.abort(new SourceServerUpdateCanceledError(profileId));
+      canceled = true;
+    }
+    return canceled;
+  }
+
   private async updateServerOnce(
     options: Parameters<SourceServerConnectionManager["updateServer"]>[0] & {
       context: TransportContext;
     },
-    controller: AbortController,
+    flight: LifecycleOperationFlight,
   ): Promise<ManagedSourceServerConnection> {
     const { context } = options;
+    const { controller } = flight;
+    const localStageSignal = flight.localStageCancel?.signal;
     const sourceServerId = options.profile.sourceServerId;
     const previousState = this.getStateByProfile(options.profile.profileId);
     const previousCompatibility = preserveCompatibilityState(previousState);
@@ -729,10 +801,25 @@ export class SourceServerConnectionManager {
       const probe = await adapter.probe(options.target, context);
       context.signal?.throwIfAborted();
       const releaseResolver = options.resolveRelease ?? this.options.resolveRelease;
+      // Bug 原因（ZCT-2117527614209818624）：resolver 在本机下载约 90MB archive，过去不接收取消信号也不写
+      // 进度，更新停在“Checking the remote device”几分钟且无法取消。现在下载随更新取消立即中止并写进度。
       const release =
-        options.release ?? (releaseResolver ? await releaseResolver(probe, options.target) : null);
+        options.release ??
+        (releaseResolver
+          ? await releaseResolver(probe, options.target, {
+              signal: context.signal,
+              onLog: context.onLog,
+            })
+          : null);
       context.signal?.throwIfAborted();
       if (!release) throw new Error("Source Server update release is unavailable");
+      // 远端阶段从 installOrUpdate 开始，此后取消会留下写了一半的远端；同步去掉可取消标记（R3 §6.3）。
+      flight.localStageCancel = undefined;
+      this.setState(options.profile.profileId, {
+        state: "updating",
+        ...(sourceServerId ? { sourceServerId } : {}),
+        ...previousCompatibility,
+      });
       await adapter.installOrUpdate(options.target, release, context, {
         force: options.force === true,
         ...(options.allowDowngrade ? { allowDowngrade: true } : {}),
@@ -757,6 +844,19 @@ export class SourceServerConnectionManager {
     } catch (error) {
       // Terminal states are published by disconnect/remove/release operations; the success or failure of an old update must not write back the captured old state.
       controller.signal.throwIfAborted();
+      if (localStageSignal?.aborted) {
+        // 本机阶段被取消：远端没有写入。按失败收口恢复更新前状态，但不写错误字段（R3 §6.3）。
+        const canceled: unknown = localStageSignal.reason;
+        this.settleFailedLifecycleOperation({
+          kind: "update",
+          profileId: options.profile.profileId,
+          sourceServerId,
+          previousState,
+          error: canceled,
+          canceled: true,
+        });
+        throw canceled;
+      }
       if (
         error &&
         typeof error === "object" &&
@@ -853,12 +953,14 @@ export class SourceServerConnectionManager {
     previousState: SourceServerConnectionStateSnapshot;
     runningTasks?: SourceServerRunningTask[];
     error: unknown;
+    /** 用户取消更新：不是失败事实，不写错误字段，仍需升级的设备继续显示“需要更新”。 */
+    canceled?: boolean;
   }): void {
     const { profileId, sourceServerId, previousState, runningTasks, error } = input;
     const failure = {
       ...preserveCompatibilityState(previousState),
       ...(runningTasks ? { runningTasks } : {}),
-      ...describeLifecycleOperationFailure(error),
+      ...(input.canceled ? {} : describeLifecycleOperationFailure(error)),
     };
     if (sourceServerId && !this.onlineBySourceServerId.has(sourceServerId)) {
       // If the transport disconnected during the operation, the captured online snapshot must not be restored, or a fake online with no connection and no timer would result.
@@ -877,8 +979,8 @@ export class SourceServerConnectionManager {
       return;
     }
     this.setState(profileId, {
-      // A failure is not a new compatibility fact; if the real connection is still up, restore the state from before the operation.
-      state: previousState.state === "absent" ? "failed" : previousState.state,
+      // A failure is not a new compatibility fact; if the real connection is still up, restore the state from before the operation. Cancellation is not a failure, so the previous state is restored as-is.
+      state: previousState.state === "absent" && !input.canceled ? "failed" : previousState.state,
       ...(sourceServerId ? { sourceServerId } : {}),
       ...failure,
     });
@@ -1341,10 +1443,17 @@ export class SourceServerConnectionManager {
           throwIfAborted();
         }
         const releaseResolver = options.resolveRelease ?? this.options.resolveRelease;
+        // 首次安装同样在本机下载 archive：「取消连接」与显式断开要立即中止下载，并写下载进度（R3 §6.3）。
+        const releaseSignals = [signal, explicitDisconnectSignal].filter(
+          (item): item is AbortSignal => item !== undefined,
+        );
         const release =
           options.release ??
           (options.allowInstall && releaseResolver
-            ? await releaseResolver(probe, target)
+            ? await releaseResolver(probe, target, {
+                signal: AbortSignal.any(releaseSignals),
+                onLog: options.context?.onLog,
+              })
             : undefined);
         throwIfAborted();
         if (!release) {
@@ -1711,7 +1820,10 @@ export class SourceServerConnectionManager {
     return undefined;
   }
 
-  /** Same-Source mutual exclusion: stop and restart are exclusive with every operation; multiple updates may coexist through sibling Profiles, as before. */
+  /**
+   * Same-Source mutual exclusion: stop and restart are exclusive with every operation; multiple updates may coexist through sibling Profiles, as before.
+   * At most one update per Profile, checked separately by updateServer by profileId (also applies to routes that do not have a sourceServerId yet).
+   */
   private assertLifecycleOperationCanStart(
     sourceServerId: string,
     kind: LifecycleOperationKind,
@@ -1720,7 +1832,9 @@ export class SourceServerConnectionManager {
       (flight) =>
         flight.sourceServerId === sourceServerId && (kind !== "update" || flight.kind !== "update"),
     );
-    if (conflict) throw new SourceServerLifecycleOperationInProgressError(sourceServerId);
+    if (conflict) {
+      throw new SourceServerLifecycleOperationInProgressError(`Source Server ${sourceServerId}`);
+    }
   }
 
   /**
@@ -1922,7 +2036,10 @@ export class SourceServerConnectionManager {
 
   private setState(
     profileId: string,
-    patch: Omit<SourceServerConnectionStateSnapshot, "profileId" | "updatedAt">,
+    patch: Omit<
+      SourceServerConnectionStateSnapshot,
+      "profileId" | "updatedAt" | "updateCancelable"
+    >,
   ): void {
     const previous = this.states.get(profileId);
     const inheritedCompatibility =
@@ -1930,12 +2047,24 @@ export class SourceServerConnectionManager {
         ? (this.compatibilityByProfileId.get(profileId) ??
           (previous ? preserveCompatibilityState(previous) : {}))
         : {};
+    // Bug 原因（CR-02）：updateCancelable 曾只在更新开始时手写一次。本机下载期间旧在线连接关闭时，
+    // 连接失效投影重新写 updating 且不带该字段，Host 仍可取消，快照却不再可取消。
+    // 改为每次写 updating 时按更新 flight 推导：有处于本机阶段、尚未取消的更新才带上（R3 §6.3）。
+    const updateCancelable =
+      patch.state === "updating" &&
+      [...this.lifecycleOperationFlights].some(
+        (flight) =>
+          flight.kind === "update" &&
+          flight.profileId === profileId &&
+          flight.localStageCancel?.signal.aborted === false,
+      );
     const snapshot: SourceServerConnectionStateSnapshot = {
       profileId,
       // Recovery, offline, and update are connection lifecycle states and produce no new version-compatibility fact; keep the last
       // Host handshake judgment, so the UI does not lose the current/available/minimum version fields during state transitions.
       ...inheritedCompatibility,
       ...patch,
+      ...(updateCancelable ? { updateCancelable: true } : {}),
       updatedAt: this.now(),
     };
     if (snapshot.currentVersion || snapshot.updateAvailability) {

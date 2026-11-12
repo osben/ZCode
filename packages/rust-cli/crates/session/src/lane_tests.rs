@@ -1,7 +1,7 @@
 //! next 通道（docs/specs/rust-cli/query.md §5，L18）：后台通知在下一个工具边界并入当前回合，与插话按
 //! 到达顺序交错；回合结束后连续的通知合成一个回合，排在 `Queue` 输入之前；提交之后才 ack。
 
-use rust_cli_kernel_api::message::{Message, UserOrigin};
+use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::testing::{NoticeEnvironment, shell_notice, tool_use_response};
 use rust_cli_kernel_api::tool::Tool;
 
@@ -156,6 +156,77 @@ async fn notices_left_at_the_end_share_one_turn_before_queued_input() {
     assert_eq!(env.acked(), [1, 2]);
 }
 
+/// Fork: with the Node desktop drain, the notices that open a turn are one meta user message with a
+/// text block per notification (Node `persistBackgroundTaskNotificationBatch`); a notification
+/// delivered again is found in that message and only acked.
+#[tokio::test]
+async fn a_desktop_notice_batch_is_one_message_with_a_block_per_notice() {
+    let gate = Arc::new(Notify::new());
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(
+        ScriptedModel::new(vec![
+            text_response(&["ok"]),
+            text_response(&["notices seen"]),
+        ])
+        .gated_at(0, gate.clone()),
+    );
+    let session = super::notice::session_with_drain(
+        &scope,
+        rust_cli_kernel_api::testing::registry(rust_cli_kernel_api::testing::machine(env.clone())),
+        model.clone(),
+        Vec::new(),
+        Vec::new(),
+        Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
+        true,
+    )
+    .await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "first")).await;
+    env.finish(shell_notice(1, "b1"));
+    queued(&mut events, "b1").await;
+    env.finish(shell_notice(2, "b2"));
+    queued(&mut events, "b2").await;
+    gate.notify_one();
+    until_finished(&mut events, 2).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let second = format!("{:?}", requests[1].messages);
+    assert!(second.contains("b1") && second.contains("b2"), "{second}");
+    let view = session.view().await.unwrap();
+    let batch: Vec<&UserMessage> = view
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) if matches!(&user.origin, UserOrigin::Meta { .. }) => Some(user),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(batch.len(), 1);
+    assert_eq!(
+        batch[0].content,
+        vec![
+            ContentBlock::Text {
+                text: task_notification(&shell_notice(1, "b1")),
+            },
+            ContentBlock::Text {
+                text: task_notification(&shell_notice(2, "b2")),
+            },
+        ]
+    );
+    assert_eq!(env.acked(), [1, 2]);
+    // Delivered again: found in the batch message, acked, no new turn.
+    env.finish(shell_notice(2, "b2"));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while env.acked().len() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(model.requests().len(), 2);
+}
+
 #[tokio::test]
 async fn a_notice_already_absorbed_is_only_acked_when_it_comes_again() {
     let scope = TaskScope::root("test", |_| {});
@@ -188,4 +259,349 @@ async fn a_notice_already_absorbed_is_only_acked_when_it_comes_again() {
     assert!(!session.view().await.unwrap().messages.iter().any(|message| {
         matches!(message, Message::User(user) if matches!(user.origin, UserOrigin::Meta { .. }))
     }));
+}
+
+/// Fork: the foreground promotion lease (`Command::ReserveForeground`, Node `acquireForegroundPromotionLease`): the
+/// turn end while it is held starts no waiting background notice, so a send-now input submitted to the idle session
+/// starts first; releasing the lease lets the notice turn follow.
+#[tokio::test]
+async fn a_reserved_foreground_keeps_a_waiting_notice_behind_the_promoted_input() {
+    let gate = Arc::new(Notify::new());
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(
+        ScriptedModel::new(vec![
+            text_response(&["ok"]),
+            text_response(&["promoted seen"]),
+            text_response(&["notice seen"]),
+        ])
+        .gated_at(0, gate.clone()),
+    );
+    let session = session(&scope, env.clone(), model.clone(), Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "first")).await;
+    env.finish(shell_notice(1, "b1"));
+    queued(&mut events, "b1").await;
+    let reserve = |id: &str, reserved: bool| CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveForeground {
+            reserved,
+            lease: "p1".to_owned(),
+        },
+    };
+    assert!(matches!(
+        session.send(reserve("c2", true)).await,
+        Ack::Accepted { .. }
+    ));
+    gate.notify_one();
+    until_finished(&mut events, 1).await;
+    // The turn end started nothing: the notice still waits and the session is idle.
+    assert_eq!(model.requests().len(), 1);
+    assert!(!session.view().await.unwrap().running);
+    session.send(submit("c3", "promoted")).await;
+    until_finished(&mut events, 1).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let second = format!("{:?}", requests[1].messages);
+    assert!(
+        second.contains("promoted") && !second.contains("b1"),
+        "{second}"
+    );
+    assert!(matches!(
+        session.send(reserve("c4", false)).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 3);
+    assert!(format!("{:?}", requests[2].messages).contains("b1"));
+    assert_eq!(env.acked(), [1]);
+}
+
+fn lease(id: &str, reserved: bool) -> CommandEnvelope {
+    owned_lease(id, "r1", reserved)
+}
+
+fn owned_lease(id: &str, owner: &str, reserved: bool) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveRelease {
+            reserved,
+            lease: owner.to_owned(),
+        },
+    }
+}
+
+fn foreground(id: &str, owner: &str, reserved: bool) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveForeground {
+            reserved,
+            lease: owner.to_owned(),
+        },
+    }
+}
+
+/// Fork: the foreground promotion lease has one owner (Node `acquireForegroundPromotionLease` answers `conflict` to
+/// another lease, and `releaseForegroundPromotionLease` ends only its own): a second `sendQueuedNow` is refused, and
+/// the first promotion's release cannot end a lease another promotion would still need.
+#[tokio::test]
+async fn the_foreground_lease_has_one_owner() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    assert!(matches!(
+        session.send(foreground("c1", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(foreground("c2", "b", true)).await,
+        refused(rust_cli_kernel_api::session_api::FOREGROUND_BUSY)
+    );
+    assert!(matches!(
+        session.send(foreground("c3", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    // Another lease's release changes nothing: the foreground is still held, so the release lease is refused.
+    assert!(matches!(
+        session.send(foreground("c4", "b", false)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(lease("c5", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY)
+    );
+    assert!(matches!(
+        session.send(foreground("c6", "a", false)).await,
+        Ack::Accepted { .. }
+    ));
+    assert!(matches!(
+        session.send(foreground("c7", "b", true)).await,
+        Ack::Accepted { .. }
+    ));
+}
+
+fn submit_as(id: &str, text: &str, lease: Option<&str>) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::SubmitWith {
+            intent: None,
+            kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+            text: text.to_owned(),
+            content: Vec::new(),
+            delivery: Delivery::Queue,
+            execution: None,
+            behind_held: false,
+            lease: lease.map(str::to_owned),
+        },
+    }
+}
+
+/// Fork: while a promotion owns the foreground, Node's admission sees `hasActiveOrQueuedTurnWork` and queues any other
+/// input; only the promoted input starts. A submit that does not name the owner is queued even though the session is
+/// idle (a start-now `sendText` that read an idle projection must not start ahead of the promotion), and it drains
+/// after the promoted turn once the owner releases the lease.
+#[tokio::test]
+async fn only_the_owners_submit_starts_while_the_foreground_is_held() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["promoted seen"]),
+        text_response(&["intruder seen"]),
+    ]));
+    let session = session(&scope, env, model.clone(), Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    assert!(matches!(
+        session.send(foreground("c1", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(submit_as("c2", "intruder", None)).await,
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Queued
+        }
+    );
+    let view = session.view().await.unwrap();
+    assert!(!view.running);
+    assert_eq!(view.queue.len(), 1);
+    assert!(model.requests().is_empty());
+    assert_eq!(
+        session.send(submit_as("c3", "promoted", Some("a"))).await,
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Done
+        }
+    );
+    until_finished(&mut events, 1).await;
+    session.send(foreground("c4", "a", false)).await;
+    until_finished(&mut events, 1).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let first = format!("{:?}", requests[0].messages);
+    assert!(first.contains("promoted") && !first.contains("intruder"));
+    assert!(format!("{:?}", requests[1].messages).contains("intruder"));
+}
+
+fn refused(reason: &str) -> Ack {
+    Ack::Rejected {
+        reason: reason.to_owned(),
+    }
+}
+
+/// Fork: the release lease (`Command::ReserveRelease`, `session/releaseUnderDirectory`, spec A3) is answered from
+/// the actor's own state: a running turn, a queued input and a pending interaction refuse it.
+#[tokio::test]
+async fn the_release_lease_is_refused_while_the_session_has_work() {
+    let gate = Arc::new(Notify::new());
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(
+        ScriptedModel::new(vec![text_response(&["ok"]), text_response(&["next"])])
+            .gated_at(0, gate.clone()),
+    );
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "first")).await;
+    // The turn runs.
+    assert_eq!(
+        session.send(lease("c2", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY)
+    );
+    // Held queue: the turn end leaves an input queued, the session is idle.
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("c3"),
+            command: Command::HoldQueue { held: true },
+        })
+        .await;
+    session.send(submit("c4", "waits")).await;
+    gate.notify_one();
+    until_finished(&mut events, 1).await;
+    assert!(!session.view().await.unwrap().running);
+    assert_eq!(
+        session.send(lease("c5", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY),
+        "a queued input is busy"
+    );
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, asking) = asking_session(&scope).await;
+    let mut events = asking.subscribe(Some(0));
+    asking.send(submit("a1", "ask me")).await;
+    asked(&mut events).await;
+    assert_eq!(
+        asking.send(lease("a2", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY),
+        "a pending interaction is busy"
+    );
+}
+
+/// While the lease is held the actor refuses every other command and starts no turn on its own; returning it lets a
+/// waiting notice start, as a turn end would, and commands are taken again.
+#[tokio::test]
+async fn a_held_release_lease_refuses_commands_and_holds_the_drain() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["notice seen"]),
+        text_response(&["after"]),
+    ]));
+    let session = session(&scope, env.clone(), model.clone(), Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    assert!(matches!(
+        session.send(lease("c1", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(submit("c2", "too late")).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_RELEASING)
+    );
+    env.finish(shell_notice(1, "b1"));
+    queued(&mut events, "b1").await;
+    assert!(
+        model.requests().is_empty(),
+        "no turn starts under the lease"
+    );
+    assert!(matches!(
+        session.send(lease("c3", false)).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    assert!(format!("{:?}", model.requests()[0].messages).contains("b1"));
+    assert!(matches!(
+        session.send(submit("c4", "welcome back")).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    assert_eq!(model.requests().len(), 2);
+}
+
+/// `sendQueuedNow` holds the foreground from its `Dequeue` to its `SubmitWith` (Node keeps the whole promotion
+/// `inFlight`): a release lease taken in between would refuse the submit and lose the dequeued item.
+#[tokio::test]
+async fn the_release_lease_is_refused_while_a_promotion_holds_the_foreground() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    let foreground = |id: &str, reserved: bool| CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveForeground {
+            reserved,
+            lease: "p1".to_owned(),
+        },
+    };
+    assert!(matches!(
+        session.send(foreground("c1", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(lease("c2", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY)
+    );
+    session.send(foreground("c3", false)).await;
+    assert!(matches!(
+        session.send(lease("c4", true)).await,
+        Ack::Accepted { .. }
+    ));
+}
+
+/// The lease has one owner: another release cannot take it, and its return does not end the owner's lease.
+#[tokio::test]
+async fn the_release_lease_has_one_owner() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    assert!(matches!(
+        session.send(owned_lease("c1", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(owned_lease("c2", "b", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY),
+        "held by another release"
+    );
+    assert!(
+        matches!(
+            session.send(owned_lease("c3", "a", true)).await,
+            Ack::Accepted { .. }
+        ),
+        "the owner taking it again is idempotent"
+    );
+    assert!(matches!(
+        session.send(owned_lease("c4", "b", false)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(submit("c5", "too early")).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_RELEASING),
+        "another release's return leaves the owner's lease"
+    );
+    session.send(owned_lease("c6", "a", false)).await;
+    assert!(matches!(
+        session.send(submit("c7", "now")).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
 }

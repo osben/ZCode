@@ -505,6 +505,7 @@ impl Transcript {
             }
             let shell = rust_cli_kernel_api::user_input::display(&item.text).is_some();
             (!shell).then(|| QueuedInput {
+                edit_lock: None,
                 delivery: Delivery::Steer,
                 ..item.clone()
             })

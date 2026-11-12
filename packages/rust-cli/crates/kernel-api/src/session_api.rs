@@ -18,6 +18,9 @@ use crate::orchestration::InteractionRequest;
 use crate::permission::PermissionMode;
 use crate::store::{ArtifactRef, SessionFilter, SessionMeta, SessionSummary};
 
+/// Fork: [`Command::SubmitWith`]'s rejection while a compaction runs or is queued (Node `compactOperationLock`).
+pub const COMPACT_LOCKED: &str = "Compact is already running or queued";
+
 /// 运行中提交的输入怎样投递（工具边界吸收排队消息）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +37,86 @@ pub enum RewindScope {
     Conversation,
     Code,
     Both,
+}
+
+/// Fork: what a code rewind to `target` would do, computed without changing anything (Node's file rewind preview).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RewindPreview {
+    /// Files the rewind would restore (or delete) without conflicts.
+    pub safe: Vec<RewindSafeFile>,
+    /// Files the rewind cannot restore, each with why.
+    pub unsafe_files: Vec<RewindUnsafeFile>,
+}
+
+/// A file a code rewind would restore without conflicts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindSafeFile {
+    /// As the checkpoint stores it (absolute).
+    pub path: String,
+    /// True when the file did not exist before and the rewind deletes it.
+    pub delete: bool,
+    /// Checkpoint operations on this path in the rewound range.
+    pub operation_count: u32,
+    /// Distinct tool names that wrote it; empty when the checkpoint records no name.
+    pub tool_names: Vec<String>,
+}
+
+/// A file a code rewind cannot restore, with why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindUnsafeFile {
+    /// As the checkpoint stores it (absolute); the artifact id when the checkpoint cannot be read.
+    pub path: String,
+    pub reason: RewindUnsafeReason,
+    pub operation_count: u32,
+    pub tool_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Why a file cannot be restored by a code rewind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewindUnsafeReason {
+    /// The checkpoint references a snapshot that is gone.
+    CheckpointMissing,
+    /// The checkpoint artifact cannot be parsed.
+    CheckpointUnreadable,
+    /// The file changed on disk after ZCode edited it.
+    ExternalModified,
+    /// Reading the current content failed.
+    FileReadFailed,
+    /// The checkpoint content cannot be turned into a restore plan.
+    UnsupportedCheckpoint,
+}
+
+/// Fork: the files the turn opened by one typed user message changed, answering the App's
+/// per-turn summary query (Node `v4/conversation/fileChanges`): per-path counts with the writes'
+/// diff hunks, plus whether the turn's checkpoints were already restored by a summary rewind.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TurnFileChanges {
+    /// Per path, sorted by path.
+    pub items: Vec<TurnFileItem>,
+    /// True when every checkpoint of the turn was already restored.
+    pub reverted: bool,
+}
+
+/// One path's summary inside [`TurnFileChanges`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnFileItem {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+    /// How many checkpoint writes touched the path in this turn.
+    pub write_count: u32,
+    /// Distinct tools that wrote it, sorted; empty when the checkpoints record no name.
+    pub tool_names: Vec<String>,
+    /// The writes' hunks in write order, shaped like the App's `readonlyDiffHunkSchema`
+    /// (`{oldStart, oldLines, newStart, newLines, lines}`).
+    pub patches: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,14 +155,76 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instructions: Option<String>,
     },
+    /// Fork (desktop App): an input submitted with its own execution state (Node `sendText`,
+    /// `sendGoalCommand`, `compact`). Idle: the session first commits `execution` (model, mode, plan)
+    /// through the same facts as [`Command::SetModel`] / [`Command::SetMode`] / [`Command::SetPlan`],
+    /// then starts the turn, or the compaction for [`QueuedKind::Compact`]. Busy: the input is queued
+    /// with `execution` frozen on it, and the session's state is left alone until the item drains.
+    /// A compaction is refused with [`COMPACT_LOCKED`] while one runs or is queued. Non-empty
+    /// `content` is the input's blocks (attachments); `text` is then its display text.
+    /// `behind_held`: idle with a held queue that has inputs, the input joins the queue tail instead of
+    /// starting (Node `compact` "held queue → append to the tail"; a queue promotion passes false).
+    SubmitWith {
+        kind: QueuedKind,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<crate::message::ContentBlock>,
+        delivery: Delivery,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        execution: Option<InputExecution>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        behind_held: bool,
+        /// Fork: the App input's intent; `text` is the typed text and the quotes join it after slash expansion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent: Option<Box<crate::input_intent::InputIntent>>,
+        /// Fork: the foreground lease ([`Command::ReserveForeground`]) this submit is the promoted input of. While a
+        /// lease is held, a submit that does not name its owner is queued as if busy (Node's admission sees
+        /// `hasActiveOrQueuedTurnWork` while a promotion lease exists), so it cannot start ahead of the promotion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease: Option<String>,
+    },
+    /// Fork (desktop App, specs/fork-rust-agent-parity.md B3): the permission dialog's mode switch (Node
+    /// `resolvePermissionMode`): "Full access" grants `BypassPermissions`, "allow and switch to guarded" grants
+    /// `Guarded`. In one step the session actor checks the pending ask `interaction`, makes `mode` the session's
+    /// permission mode and every queued input's frozen mode (plan switches kept), emits
+    /// [`crate::session_api_events::KernelEvent::PermissionGranted`] (Node `config.permissionGrant`), then answers the
+    /// ask allow once. Refused, nothing changes and the ask stays pending; an ask that is no longer pending answers
+    /// [`crate::session_api_results::CommandResult::NotPending`].
+    GrantPermissionMode {
+        interaction: String,
+        mode: crate::permission::PermissionMode,
+    },
+    /// Fork (desktop App): Node `pauseGoal`: an active goal becomes paused (persisted as a
+    /// `goal_status` attachment), then the running turn is aborted. No active goal: a no-op.
+    PauseGoal,
+    /// Fork (desktop App): Node `resumeGoal`: a paused goal becomes active and a continuation turn
+    /// starts. Rejected while a turn runs ([`GOAL_ACTIVE_TURN`]) or with plan on
+    /// ([`GOAL_PLAN_EXCLUSIVE`]); no paused goal: a no-op.
+    ResumeGoal,
     Rewind {
         target: MessageId,
         scope: RewindScope,
+    },
+    /// Fork: restore only the checkpoints of the turn opened by `target` (the App's per-turn
+    /// summary rewind, Node `applyFileRewind`): the conversation is not cut, and the turn's
+    /// summary flips to reverted ([`KernelEvent::TurnFilesReverted`]). Rejected while busy or when
+    /// the turn has no unrestored checkpoints; the reply waits for the transaction, like
+    /// [`Command::Rewind`], and reports the restored files with `removed: 0`.
+    RewindTurnFiles {
+        target: MessageId,
     },
     /// 从 `at` 处分叉出新会话；回执是 [`CommandResult::Forked`]。
     Fork {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<MessageId>,
+    },
+    /// Fork: the store wrote `title` as the session's `first_input` title at an input's admission
+    /// ([`crate::store::Admission::title`]). The actor takes it in memory and emits
+    /// [`crate::session_api_events::KernelEvent::TitleChanged`] without a commit of its own, so the live views show
+    /// the stored title before the input's `UserPromptSubmit` hooks (Node emits `SessionTitleUpdated` at the
+    /// persistence). Ignored once the title is `custom`. Always `Accepted`.
+    AdoptTitle {
+        title: String,
     },
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
@@ -114,6 +259,12 @@ pub enum Command {
     ForkFromInput {
         input: MessageId,
     },
+    /// Fork from an assistant reply (Node `forkAssistant`, the row action of a turn opened by a notification): the
+    /// new session carries the history through `assistant`. `assistant` must be a stored assistant reply (not the
+    /// resume sentinel); a running turn's reply is refused (`Rejected`), like [`Command::ForkFromInput`].
+    ForkFromAssistant {
+        assistant: MessageId,
+    },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是
     /// [`crate::peers::HeldPeerMessage::msg_id`]。已经解决（过期、改模式放行）时 `Rejected`。
     ResolvePeerMessage {
@@ -126,11 +277,32 @@ pub enum Command {
     StopTask {
         task: String,
     },
+    /// Fork (desktop `stopSubagent`): the user's guarded stop of one run of a subagent this session spawned
+    /// ([`crate::agents::AgentSignals::stop_subagent`]). `Accepted` with [`CommandResult::Done`]; a refusal is
+    /// `Rejected` whose reason is [`crate::agents::SubagentStopRefusal::as_str`].
+    StopSubagent {
+        agent: crate::ids::AgentId,
+        execution: String,
+    },
     /// `/cd` 由会话 actor 判定（docs/specs/rust-cli/tui-manage.md §7.1，F1）：运行中 `Rejected`（固定的文字）；
     /// 否则回执是 [`CommandResult::Directory`]。移动时 actor 设 shell cwd、改工作区、
     /// 发 [`KernelEvent::WorkspaceChanged`]，给模型的说明（固定的说明文字加新目录的规则文件）由 actor 组成并提交。
     ChangeDirectory {
         root: crate::env::EnvPath,
+    },
+    /// Fork: the session runs in the execution worktree `root` from now on (desktop prepared-worktree activation,
+    /// specs/fork-rust-agent-parity.md "Execution worktree"). Like [`Command::ChangeDirectory`] the actor sets the
+    /// shell cwd and the workspace and emits [`KernelEvent::WorkspaceChanged`], but it commits no note: Node starts
+    /// the runtime in the worktree, so the model sees no move. `Rejected` while a turn or compaction runs.
+    SetExecutionRoot {
+        root: crate::env::EnvPath,
+    },
+    /// Fork: the incognito profile a prepared execution worktree's activation freezes (specs/fork-rust-agent-parity.md,
+    /// "Incognito sessions"). The actor's meta takes it while it has none, so a fork of the session keeps it; the same
+    /// profile again is `Accepted`, another one `Rejected`. Sent after [`Kernel::freeze_incognito`] and before
+    /// [`Command::SetExecutionRoot`] releases the held SessionStart.
+    SetIncognito {
+        profile: crate::incognito::IncognitoProfile,
     },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
@@ -157,6 +329,73 @@ pub enum Command {
     /// 取回还在排队的输入（query.md §4.4）：`command` 是提交它的 [`CommandEnvelope::id`]。在队列里时出队（`QueueChanged`）、`Accepted`；已经发出（开了回合或并入了回合）时 `Rejected`，`reason` 给用户看。
     Dequeue {
         command: CommandId,
+    },
+    /// Fork: edit a queued input in place (Node `editQueueItem`): the text and the other fields of [`QueuedEdit`],
+    /// keeping its place and delivery. With `editor_id` the lock must be held by that editor (and is released by the
+    /// edit); without it a locked input is refused. Rejected with [`QUEUE_ITEM_MISSING`] when the input is no
+    /// longer queued, with the lock verdict reasons otherwise.
+    EditQueued {
+        command: CommandId,
+        edit: QueuedEdit,
+    },
+    /// Fork: take the composer edit lock of a queued input (Node `lockQueueItemEdit`). Accepted for the same editor
+    /// again (idempotent); rejected with [`QUEUE_ITEM_EDIT_LOCKED`], [`QUEUE_ITEM_MISSING`] or
+    /// [`QUEUE_ITEM_NOT_EDITABLE`] otherwise. Reservation (`guard.queueItemReserved`) is the protocol's check.
+    LockQueuedEdit {
+        command: CommandId,
+        lock: QueueEditLock,
+    },
+    /// Fork: release the composer edit lock of a queued input (Node `releaseQueueItemEdit`); rejected with
+    /// [`QUEUE_EDIT_LOCK_MISSING`] when nothing holds it. An idle session re-evaluates the drain.
+    ReleaseQueuedEdit {
+        command: CommandId,
+    },
+    /// Fork: apply a model and/or mode to several queued inputs (Node `applyQueueItemsConfig`). Missing, compact,
+    /// locked and not-queued inputs are skipped; none applied is rejected with [`QUEUE_ITEM_MISSING`].
+    ApplyQueuedConfig {
+        commands: Vec<CommandId>,
+        edit: QueuedEdit,
+    },
+    /// Fork: remove a queued input whatever its lock (Node `clearAllPendingInputs`, the "clear queue and send"
+    /// disposition). Otherwise as [`Command::Dequeue`].
+    ClearQueued {
+        command: CommandId,
+    },
+    /// Move a queued input before another queued input, or to the end of the queue when `before` is `None`
+    /// (Node `reorderQueueItem`). Rejected with the same reason as [`Command::Dequeue`] when either input is
+    /// no longer queued.
+    ReorderQueued {
+        command: CommandId,
+        before: Option<CommandId>,
+    },
+    /// Pause or resume the automatic drain of the queue (Node `setAutoDrain`; `held` is `!autoDrain`). While
+    /// held, a finished turn does not start the next queued input; releasing the hold while idle starts the
+    /// head of the queue, as a turn end would. Always `Accepted`; every change emits `QueueChanged` once.
+    HoldQueue {
+        held: bool,
+    },
+    /// Fork: the foreground promotion lease (Node `acquireForegroundPromotionLease`, `send-now:`/`sendQueuedNow`). While
+    /// reserved, nothing starts a turn on its own (queued inputs, background notices, cron): the caller interrupts the
+    /// running turn and submits the promoted input to the idle session. Releasing while idle resumes the drain as a turn
+    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. The lease
+    /// has one owner (`lease`, Node's `leaseId`): another lease is refused with [`FOREGROUND_BUSY`], the owner taking it
+    /// again is accepted, and only the owner's release ends it (another lease's release is accepted and changes
+    /// nothing), as Node `acquireForegroundPromotionLease` / `releaseForegroundPromotionLease`.
+    ReserveForeground {
+        reserved: bool,
+        lease: String,
+    },
+    /// Fork: the release lease of `session/releaseUnderDirectory` (specs/fork-rust-agent-parity.md, A3). Taking it
+    /// (`reserved: true`) is refused with [`SESSION_BUSY`] while a turn, compaction or job runs, an input is queued or
+    /// in the lane, or an interaction is pending. While held, every other command is refused with
+    /// [`SESSION_RELEASING`] and no turn starts on its own; the lease ends when the session closes or when it is
+    /// returned (`reserved: false`, always `Accepted`), which resumes the drain as a turn end would. The lease has one
+    /// owner (`lease`, one per release): another lease is refused with [`SESSION_BUSY`], the owner taking it again is
+    /// accepted, and only the owner's return ends it. It is refused too while a promotion holds the foreground
+    /// ([`Command::ReserveForeground`]), whose dequeued item must still be submitted.
+    ReserveRelease {
+        reserved: bool,
+        lease: String,
     },
 }
 
@@ -192,12 +431,24 @@ pub struct CreateSession {
     /// plan 开关（修复线 F20；serde 缺省 false）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan: bool,
+    /// Fork: the incognito profile, frozen into the new row (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 会话的当前视图（前端重连或首次打开时用）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionView {
     pub meta: SessionMeta,
+    /// Fork: where `meta.title` came from (the stored `title_source`, then each `TitleChanged`), so a projection
+    /// opened on a renamed session reports `custom`. `None` when the producer does not know it (derived from the
+    /// title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the session's last permission mode grant (the stored receipt, then each grant),
+    /// projected as `config.permissionGrant` (Node `lastPermissionGrantId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,
@@ -216,6 +467,10 @@ pub struct SessionView {
     /// 有回合正在运行。
     #[serde(default)]
     pub running: bool,
+    /// Fork: the running turn's id (the actor's own turn, else the mirrored subagent run's), so a projection rebuilt
+    /// while it runs keys that turn like the events that follow. `None` when idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_turn: Option<crate::ids::TurnId>,
     /// 执行环境里还没有处理完的后台命令（`ShellState::background`）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub background: Vec<ShellTaskId>,
@@ -236,12 +491,112 @@ pub struct SessionView {
     /// put `sourceCommandId` on its rows after an agent restart. Empty when unknown.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: per-turn file-change summaries for the projection (the App's turn header
+    /// `fileChanges`), keyed by the typed user message that opened the turn. Filled by the session
+    /// actor from its checkpoints; empty for sessions without file writes.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub turn_files: std::collections::BTreeMap<MessageId, TurnFileFacts>,
+    /// Fork: the desktop goal state (Node snapshot `goal`); None without a goal or outside the
+    /// desktop App.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<crate::goal::GoalState>,
+    /// Fork: the model each assistant message ran on (stored, or recorded at commit), so a cold projection draws Node's
+    /// model switch dividers between turns. Empty when unknown.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
+}
+
+/// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so
+/// it is no evidence that a client's first input was admitted (fork prepared-worktree activation).
+pub const SESSION_START_INPUT: &str = "session-start-";
+
+/// Fork: the queued input is not there any more (Node `queue.itemMissing`, a noop).
+pub const QUEUE_ITEM_MISSING: &str = "queue.itemMissing";
+/// Fork: the queued input is locked by another editor (Node `guard.queueItemEditLocked`).
+pub const QUEUE_ITEM_EDIT_LOCKED: &str = "guard.queueItemEditLocked";
+/// Fork: the edit names an editor that no longer holds the lock (Node `guard.queueEditLockLost`).
+pub const QUEUE_EDIT_LOCK_LOST: &str = "guard.queueEditLockLost";
+/// Fork: a release with no lock on the input (Node `queue.editLockMissing`, a noop).
+pub const QUEUE_EDIT_LOCK_MISSING: &str = "queue.editLockMissing";
+/// Fork: a compaction is not editable (Node `guard.queueItemNotEditable`).
+pub const QUEUE_ITEM_NOT_EDITABLE: &str = "guard.queueItemNotEditable";
+
+/// Fork: the fields of an in-place queue edit (Node `editQueueItem` / `applyQueueItemsConfig` payload). `None` keeps
+/// the item's value. `mode` is Node's mode name (`build`, `edit`, `yolo`, `guarded`, `auto`, or the legacy `plan`),
+/// resolved against the item's own execution state with [`crate::permission::resolve_execution`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedEdit {
+    /// The editor whose lock the edit needs (Node `editorId`); `None` for an edit that needs no lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The quotes as sent (Node `conversationQuotes`), stored on the intent as given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_quotes: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_selection: Option<ModelSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_enabled: Option<bool>,
+    /// The App's `modelSelection` as sent, stored on the intent unchanged (Node `editedIntent` keeps the payload's
+    /// shape); `model_selection` is the same choice parsed for the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_model_selection: Option<serde_json::Value>,
+    /// The new attachments: `[]` clears them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<QueuedAttachments>,
+}
+
+/// Fork: the attachments of a queue edit, resolved by the protocol before the edit is sent (Node maps the refs before
+/// the write-back).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedAttachments {
+    /// The App's refs as sent (the intent's `attachmentRefs`).
+    pub refs: serde_json::Value,
+    /// The refs' content blocks, without the typed text block (the queue owns the text).
+    pub content: Vec<crate::message::ContentBlock>,
+}
+
+/// Fork: `Command::ReserveRelease` while the session has work (`session/releaseUnderDirectory` busy).
+pub const SESSION_BUSY: &str = "session.busy";
+/// Fork: a command reached a session whose release lease is held (`Command::ReserveRelease`).
+pub const SESSION_RELEASING: &str = "session.releasing";
+/// Fork: `Command::ReserveForeground` refused because another promotion owns the foreground (Node's lease `conflict`).
+pub const FOREGROUND_BUSY: &str = "session.foregroundBusy";
+
+/// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
+pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
+/// Fork: `Command::ResumeGoal` with plan on (Node `guard.planGoalMutuallyExclusive`).
+pub const GOAL_PLAN_EXCLUSIVE: &str = "guard.planGoalMutuallyExclusive";
+
+/// One turn's file summary carried in [`SessionView::turn_files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileFacts {
+    /// Per path, sorted by path.
+    pub files: Vec<TurnFileCount>,
+    /// The turn's checkpoints can be rewound (they were when they settled).
+    pub rewindable: bool,
+    /// Every checkpoint of the turn was already restored.
+    pub reverted: bool,
+}
+
+/// One path's counts inside [`SessionView::turn_files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileCount {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
 }
 
 // 内核事件与回合结局放在分出的文件里（800 行上限，工作线 F131；路径与名字不变）。
 #[path = "session_api_events.rs"]
 mod events;
-pub use events::{FileChange, KernelEvent, NoticeLevel, QueuedInput, SequencedEvent, TurnOutcome};
+pub use events::{
+    FileChange, InputExecution, KernelEvent, NoticeLevel, QueueEditLock, QueuedInput, QueuedKind,
+    SequencedEvent, TurnOutcome,
+};
 
 // 命令的结果放在分出的文件里（800 行上限，工作线 F134）。
 #[path = "session_api_results.rs"]
@@ -286,6 +641,25 @@ pub trait SessionHandle: Send + Sync {
     /// rewind 选择器的条目（活动历史里可选的 user 消息，按顺序）。
     async fn rewind_options(&self) -> Result<Vec<RewindOption>, KernelError>;
 
+    /// Fork: what a code rewind to `target` would restore and which files conflicts block, computed
+    /// without changing anything (Node's file rewind preview).
+    async fn rewind_preview(&self, target: &MessageId) -> Result<RewindPreview, KernelError>;
+
+    /// Fork: the files the turn opened by the typed user message `turn_input` changed (the App's
+    /// per-turn "N files changed" summary query, Node `v4/conversation/fileChanges`). The actor
+    /// picks the turn's unrestored checkpoints; the artifact reads run in the caller's task.
+    async fn turn_file_changes(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<TurnFileChanges, KernelError>;
+
+    /// Fork: what restoring only that turn's own checkpoints would do (the App's per-turn
+    /// `v4/conversation/fileRewindPreview`), computed without changing anything.
+    async fn turn_rewind_preview(
+        &self,
+        turn_input: &MessageId,
+    ) -> Result<RewindPreview, KernelError>;
+
     /// `/goal` 面板的数据：会话 actor 的当前目标与最近一次达成的结果（docs/specs/rust-cli/goal.md §6.2）。
     async fn goal(&self) -> Result<crate::goal::GoalView, KernelError>;
 
@@ -298,6 +672,12 @@ pub trait SessionHandle: Send + Sync {
     /// 子代理的状态有变化时产生一项（多次变化可能合并成一项）；收到后重取 [`SessionHandle::tasks_snapshot`]
     /// （修复线 F34）。
     fn subagent_changes(&self) -> BoxStream<'static, ()>;
+
+    /// Fork: the run feed of one of this session's subagent child sessions ([`crate::agents::AgentSignals::child_run`]),
+    /// read by the App's telemetry facts. None when the kernel keeps no live runs (the TUI).
+    fn child_run(&self, _child: &SessionId) -> Option<crate::agents::ChildLiveFeed> {
+        None
+    }
 
     /// 子代理列表与后台任务的同一份快照（修复线 F34，tui-panels.md §0、§3.1）：一次查询、一次回执。前端在子代理的变化
     /// 通知与后台任务相关的事件之后都重取它，不再分别取 [`SessionHandle::subagents`] 与
@@ -312,6 +692,13 @@ pub trait SessionHandle: Send + Sync {
         &self,
         task: &str,
     ) -> Result<Option<crate::panels::ShellDetail>, KernelError>;
+
+    /// Fork: a background Bash command's output window (the desktop detail pane); None when this session has
+    /// no such Bash command or output file.
+    async fn background_bash_output(
+        &self,
+        task: &str,
+    ) -> Result<Option<crate::panels::BashOutputRead>, KernelError>;
 }
 
 #[async_trait]
@@ -335,6 +722,59 @@ pub trait Kernel: Send + Sync {
         _source: StartSource,
     ) -> Result<SessionId, KernelError> {
         self.create_session(request).await
+    }
+
+    /// Fork: a new session that runs in an execution worktree from its first moment (specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). `request.workspace` is the stored workspace the session is listed under; the worktree
+    /// is stored before the session starts, so SessionStart and every turn run in it. A kernel without it refuses.
+    async fn create_session_in_worktree(
+        &self,
+        _request: CreateSession,
+        _worktree: crate::env::EnvPath,
+        _branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "execution worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: a new session reserved for a prepared execution worktree (specs/fork-rust-agent-parity.md "Execution
+    /// worktree"). It is listed under `request.workspace`; SessionStart waits for `Command::SetExecutionRoot`, so
+    /// the hook runs in the worktree at activation, as Node starts the runtime there. A kernel without it refuses.
+    async fn create_prepared_session(
+        &self,
+        _request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: freezes the incognito profile of a prepared execution worktree at its activation
+    /// (specs/fork-rust-agent-parity.md, "Incognito sessions"): the row's `fork_incognito` once, then the in-memory
+    /// profile every gate reads, before the activation releases SessionStart or admits the first input. A row that
+    /// holds another profile, or a store that cannot hold one, fails it. A kernel without it refuses.
+    async fn freeze_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: crate::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        Err(KernelError::Unsupported {
+            what: "incognito profiles".to_owned(),
+        })
+    }
+
+    /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
+    /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
+    /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it
+    /// refuses.
+    async fn open_prepared_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
     }
 
     /// 同 [`Kernel::open_session`]，另给 SessionStart 的来源（刚 fork 出的会话是 `Fork`）。
@@ -365,6 +805,14 @@ pub trait Kernel: Send + Sync {
         Err(KernelError::Unsupported {
             what: "workspace files".to_owned(),
         })
+    }
+
+    /// Fork (desktop App): the Composer skill reference catalog of this workspace. Default: none.
+    async fn skill_references(
+        &self,
+        _workspace: &crate::env::WorkspaceRef,
+    ) -> Vec<crate::user_command::SkillReference> {
+        Vec::new()
     }
 
     /// 这个工作区里用户可调用的斜杠命令（skill，TUI 的补全；ext.md §2.7，L22）。默认没有。
@@ -512,6 +960,17 @@ pub trait Kernel: Send + Sync {
         Err(KernelError::Unsupported {
             what: "deleting sessions".to_owned(),
         })
+    }
+
+    /// Fork: the store erased these sessions (`session/eraseTree`, after their runtimes closed). The kernel stops what it
+    /// still runs for them: the agents' notice forwarders, and on every machine their background commands and pending
+    /// notices (`close_session` with `forget`), as Node's runtime close cancels them.
+    async fn sessions_erased(&self, _sessions: Vec<SessionId>) {}
+
+    /// Fork: the sessions among `sessions` that a running subagent runs in (`AgentSignals::running_agent_sessions`).
+    /// `session/eraseTree` counts them as running and refuses the erase.
+    fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
     }
 
     /// 会话的只读快照（F29，`/resume` 页的预览与全屏对话）：打开着的问它的 actor，否则从存储冷加载；不打开会话、

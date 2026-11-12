@@ -34,6 +34,8 @@ pub(super) async fn compacted(store: &NodeStore) -> Result<SessionId> {
     store.commit(&id, batch(None, vec![calls])).await?;
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: r2.clone(),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("toolu_c1"),
@@ -66,6 +68,8 @@ pub(super) async fn compacted(store: &NodeStore) -> Result<SessionId> {
         },
         Fact::MessageAppended {
             message: Message::User(UserMessage {
+                stall_execution: None,
+                intent: None,
                 id: summary,
                 content: vec![text(
                     "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\nThe user asked about a.rs.",

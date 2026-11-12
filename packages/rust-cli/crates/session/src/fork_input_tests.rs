@@ -15,10 +15,20 @@ use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use super::through;
+use super::{completed_while_running, through};
 use crate::Opened;
 use crate::rewind::tests::{Writing, file};
 use crate::test_support::{Setup, envelope, finished, meta, submit, until};
+
+/// 从一条 assistant 回答分叉（协议的 fork 行动，`ForkFromAssistant`）。
+fn fork_assistant(assistant: &MessageId) -> CommandEnvelope {
+    envelope(
+        &format!("fork-{assistant}"),
+        Command::ForkFromAssistant {
+            assistant: assistant.clone(),
+        },
+    )
+}
 
 /// 命令 ID 取输入的 ID：同一个 ID 再发是重复的命令（`Duplicate`）。
 fn fork(input: &MessageId) -> CommandEnvelope {
@@ -32,6 +42,8 @@ fn fork(input: &MessageId) -> CommandEnvelope {
 
 fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -247,6 +259,8 @@ async fn only_an_input_can_be_forked_and_not_while_a_turn_runs() {
 #[test]
 fn the_turn_runs_until_the_next_input() {
     let result = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("r2"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("t"),
@@ -295,4 +309,208 @@ fn the_turn_runs_until_the_next_input() {
             "{not_an_input}"
         );
     }
+}
+
+/// Answers the first request, then never answers (a turn that keeps running).
+struct OnceThenSilent(std::sync::atomic::AtomicUsize);
+
+impl ModelPort for OnceThenSilent {
+    fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: CancellationToken,
+    ) -> BoxStream<'static, Result<ModelEvent, ModelError>> {
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            ScriptedModel::new(vec![text_response(&["one"])]).stream(request, cancel)
+        } else {
+            futures_util::stream::pending().boxed()
+        }
+    }
+}
+
+/// Fork (node_desktop): a completed turn forks while a later turn runs; the running turn does not.
+#[tokio::test]
+async fn a_desktop_session_forks_a_completed_turn_while_another_runs() {
+    let mut setup = Setup::new(Arc::new(OnceThenSilent(Default::default())));
+    setup.fork_while_running = true;
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "first")).await;
+    until(&mut events, finished).await;
+    built.session.send(submit("c2", "second")).await;
+    let messages = built.session.view().await.unwrap().messages;
+    let inputs: Vec<MessageId> = messages
+        .iter()
+        .filter(
+            |message| matches!(message, Message::User(user) if user.origin == UserOrigin::Human),
+        )
+        .map(|message| message.id().clone())
+        .collect();
+    assert_eq!(inputs.len(), 2, "{messages:?}");
+    let ack = built.session.send(fork(&inputs[0])).await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let ack = built.session.send(fork(&inputs[1])).await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "a turn is running; fork after it finishes".to_owned()
+        }
+    );
+}
+
+/// Fork from a reply of a turn opened by a notification: the copy runs through that reply, and the
+/// notification and the work before the reply come with it.
+#[tokio::test]
+async fn forking_through_a_notification_reply_copies_through_it() {
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let notice = user(
+        "msg_notice",
+        "<task-notification>done</task-notification>",
+        UserOrigin::Meta {
+            source: "task-notification".to_owned(),
+        },
+    );
+    let history = vec![
+        human("msg_u1", "first"),
+        assistant("msg_a1", said("one")),
+        notice,
+        assistant("msg_n1", said("checking")),
+        assistant("msg_n2", said("noted")),
+    ];
+    let batch = FactBatch {
+        owner_epoch: OwnerEpoch::LOCAL,
+        command: None,
+        facts: history
+            .iter()
+            .map(|message| Fact::MessageAppended {
+                message: message.clone(),
+            })
+            .collect(),
+        turn: None,
+    };
+    store.commit(&meta().id, batch).await.unwrap();
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.store = Some(store.clone());
+    setup.messages = history.clone();
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    let ack = built
+        .session
+        .send(fork_assistant(&MessageId::new("msg_n2")))
+        .await;
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Forked(forked),
+    } = ack
+    else {
+        panic!("{ack:?}")
+    };
+    assert_eq!(forked.through, Some(MessageId::new("msg_n2")));
+    let loaded = store.load(&forked.session).await.unwrap();
+    assert_eq!(loaded.messages[..5], history[..]);
+    assert_eq!(loaded.messages.len(), 6, "{:?}", loaded.messages);
+    assert!(matches!(&loaded.messages[5], Message::Attachment(a) if a.source == "fork"));
+}
+
+/// A fork target must be an assistant reply: inputs, notifications and unknown ids are refused.
+#[tokio::test]
+async fn forking_from_assistant_takes_only_an_assistant_reply() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.messages = history;
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    for target in ["msg_u1", "msg_nope"] {
+        let ack = built
+            .session
+            .send(fork_assistant(&MessageId::new(target)))
+            .await;
+        assert_eq!(
+            ack,
+            Ack::Rejected {
+                reason: format!("{target} is not a message to fork from")
+            }
+        );
+    }
+}
+
+/// A reply of a turn that runs is no fork target: refused while a turn runs (without
+/// `fork_while_running`), and a reply before the running turn's input still forks with it.
+#[tokio::test]
+async fn forking_from_assistant_refuses_a_running_turn() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let mut setup = Setup::new(Arc::new(Silent));
+    setup.messages = history.clone();
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    built.session.send(submit("c2", "second")).await;
+    let ack = built
+        .session
+        .send(fork_assistant(&MessageId::new("msg_a1")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "a turn is running; fork after it finishes".to_owned()
+        }
+    );
+
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let batch = FactBatch {
+        owner_epoch: OwnerEpoch::LOCAL,
+        command: None,
+        facts: history
+            .iter()
+            .map(|message| Fact::MessageAppended {
+                message: message.clone(),
+            })
+            .collect(),
+        turn: None,
+    };
+    store.commit(&meta().id, batch).await.unwrap();
+    let mut setup = Setup::new(Arc::new(Silent));
+    setup.fork_while_running = true;
+    setup.store = Some(store);
+    setup.messages = history;
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    built.session.send(submit("c2", "second")).await;
+    let ack = built
+        .session
+        .send(fork_assistant(&MessageId::new("msg_a1")))
+        .await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+}
+
+/// While a notification turn runs, the replies before its opening notification are completed turns (the typed
+/// turn's reply and an earlier notification turn's reply); its own replies are not.
+#[test]
+fn a_running_notification_turn_starts_at_its_notification() {
+    let meta_origin = || UserOrigin::Meta {
+        source: "task-notification".to_owned(),
+    };
+    let history = vec![
+        human("msg_u1", "first"),
+        assistant("msg_a1", said("one")),
+        user(
+            "msg_n1",
+            "<task-notification>a</task-notification>",
+            meta_origin(),
+        ),
+        assistant("msg_r1", said("noted a")),
+        user(
+            "msg_n2",
+            "<task-notification>b</task-notification>",
+            meta_origin(),
+        ),
+        assistant("msg_r2", said("checking b")),
+    ];
+    let running = MessageId::new("msg_n2");
+    assert!(completed_while_running(&history, 1, Some(&running)));
+    assert!(completed_while_running(&history, 3, Some(&running)));
+    assert!(!completed_while_running(&history, 5, Some(&running)));
+    // Without a stored prompt the last typed input bounds the running turn, as before.
+    assert!(!completed_while_running(&history, 3, None));
+    assert!(!completed_while_running(&history, 1, None));
 }

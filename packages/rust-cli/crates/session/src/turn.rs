@@ -40,6 +40,8 @@ pub(crate) fn output_speed(call: &ModelCall) -> Option<OutputSpeed> {
 #[derive(Debug)]
 pub(crate) struct MorePrompt {
     pub(crate) text: String,
+    /// Fork: the App input's intent; its quotes join `text` when the input is committed.
+    pub(crate) intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     /// 在工具边界已跑过的 UserPromptSubmit 结果。
     pub(crate) screened: Option<Box<HookOutcome>>,
 }
@@ -53,6 +55,8 @@ pub(crate) enum TurnInput {
         screened: Option<Box<HookOutcome>>,
         /// 与它成批进这个回合的后续排队输入（修复线 L-A，query.md §4.3），按队列顺序。
         more: Vec<MorePrompt>,
+        /// Fork: the App input's intent (`text` is the typed text).
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
     /// 回合结束后还没并入的后台通知（命令与子代理，到达顺序）：连续的几条合成一个回合，每条一条
     /// meta user 消息、只调一次模型（docs/specs/rust-cli/query.md §5，通知合并）。
@@ -65,7 +69,14 @@ pub(crate) enum TurnInput {
     Content {
         command: CommandId,
         content: Vec<ContentBlock>,
+        /// Fork: the App input's intent (the text block is the typed text).
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
+    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
+    Compact { command: CommandId },
+    /// Fork (desktop App): a resumed goal's continuation (Node `goal-continuation`, model-only):
+    /// `text` is the wrapped continuation prompt, a meta user message.
+    GoalContinuation { text: String },
 }
 
 impl Actor {
@@ -82,25 +93,48 @@ impl Actor {
                 text,
                 screened,
                 more,
+                intent,
             } => {
-                self.start_human_turn(command, vec![ContentBlock::Text { text }], screened, more);
+                let content = if text.is_empty() && intent.is_some() {
+                    // Quotes alone are an input (Node `session-flow.ts`); the block becomes its text.
+                    Vec::new()
+                } else {
+                    vec![ContentBlock::Text { text }]
+                };
+                self.start_human_turn(command, content, screened, more, intent);
                 return Ok(());
             }
-            TurnInput::Content { command, content } => {
-                self.start_human_turn(command, content, None, Vec::new());
+            TurnInput::Content {
+                command,
+                content,
+                intent,
+            } => {
+                self.start_human_turn(command, content, None, Vec::new(), intent);
                 return Ok(());
             }
             TurnInput::Bash { command, line } => {
                 self.start_bash_turn(command, line);
                 return Ok(());
             }
+            TurnInput::Compact { command } => {
+                if let Err(reason) = self.start_compaction(command, None) {
+                    tracing::warn!(%reason, "queued compaction could not start");
+                }
+                return Ok(());
+            }
+            TurnInput::GoalContinuation { text } => (
+                vec![(text, meta(rust_cli_kernel_api::goal::CONTINUATION_SOURCE))],
+                Vec::new(),
+            ),
             TurnInput::Cron(fire) => {
                 fired = Some(self.fire_prelude(fire.kind));
                 // `/loop` 的哨兵在这里展开（tools-more.md §17.3）。
                 let prompt = self.resolve_loop_prompt(fire.prompt).await;
                 (vec![(prompt, meta(crate::cron::CRON_SOURCE))], Vec::new())
             }
-            TurnInput::Notices(notices) => {
+            TurnInput::Notices(mut notices) => {
+                // Node `orderTaskNotificationsForParsing`: the batch's terminal notices come first.
+                crate::lane::order_for_parsing(&mut notices);
                 // 同伴消息开回合时用空闲的写法与自己的来源（cross-session.md §1.7）。
                 let texts = notices
                     .iter()
@@ -109,19 +143,64 @@ impl Actor {
                 (texts, notices)
             }
         };
+        // Fork: the Node desktop agent stores a batch of task notifications as one user message with a
+        // text block per notification (`persistBackgroundTaskNotificationBatch`); the model request is
+        // the same either way. Mixed sources (a peer message among them) keep a message each.
+        // The run of each stall reminder, index-aligned with the notices (None for every other notice).
+        let stalls: Vec<Option<String>> = notices
+            .iter()
+            .map(|notice| match notice {
+                Waiting::Stall(stall) => {
+                    (!stall.execution_id.is_empty()).then(|| stall.execution_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let blocks: Vec<(Vec<ContentBlock>, UserOrigin, Option<String>)> = if self.deps.one_input_per_turn
+            && texts.len() > 1
+            && texts.iter().all(|(_, origin)| {
+                matches!(origin, UserOrigin::Meta { source } if source == crate::notices::NOTICE_SOURCE)
+            }) {
+            let origin = texts[0].1.clone();
+            let content = texts
+                .into_iter()
+                .map(|(text, _)| ContentBlock::Text { text })
+                .collect();
+            // One block for the whole batch: its execution only when the batch is exactly one stall reminder.
+            let execution = if stalls.len() == 1 { stalls[0].clone() } else { None };
+            vec![(content, origin, execution)]
+        } else {
+            texts
+                .into_iter()
+                .enumerate()
+                .map(|(index, (text, origin))| {
+                    (
+                        vec![ContentBlock::Text { text }],
+                        origin,
+                        stalls.get(index).cloned().flatten(),
+                    )
+                })
+                .collect()
+        };
         let before = fired
             .as_ref()
             .map(|fired| fired.before.clone())
             .unwrap_or_default();
         let users: Vec<Message> = before
             .into_iter()
-            .chain(texts.into_iter().map(|(text, origin)| {
-                Message::User(UserMessage {
-                    id: self.deps.ids.message(),
-                    content: vec![ContentBlock::Text { text }],
-                    origin,
-                })
-            }))
+            .chain(
+                blocks
+                    .into_iter()
+                    .map(|(content, origin, stall_execution)| {
+                        Message::User(UserMessage {
+                            stall_execution,
+                            intent: None,
+                            id: self.deps.ids.message(),
+                            content,
+                            origin,
+                        })
+                    }),
+            )
             .collect();
         // 一个事务：几条通知一起成立；折叠说明与定时任务的 prompt 一起成立；同伴项“已并入”的事实与它们的 user 消息
         // 一起成立（cross-session.md §2.4，F139）。checkpoint 挂在这次运行最后一条 user 消息上（drive 的同一规则）。
@@ -170,15 +249,20 @@ impl Actor {
                 self.ask(request, reply, crate::actor::AskScope::Turn);
             }
             SinkRequest::CancelAsk { tool_use } => self.cancel_ask(&tool_use),
-            SinkRequest::ClaimSteering { reply } => {
-                let _ = reply.send(self.claim_steering());
+            SinkRequest::ClaimSteering {
+                prompts_only,
+                reply,
+            } => {
+                self.prune_stalls().await;
+                let _ = reply.send(self.claim_steering(prompts_only));
             }
             SinkRequest::SettleSteering {
                 fates,
                 notices,
                 reply,
             } => {
-                let _ = reply.send(self.settle_steering(fates, notices));
+                let settled = self.settle_steering(fates, notices).await;
+                let _ = reply.send(settled);
             }
             SinkRequest::Metered {
                 message,
@@ -208,8 +292,15 @@ impl Actor {
                 self.log
                     .append(KernelEvent::CompactFailed { trigger, message });
             }
-            SinkRequest::SetPlan { enabled, reply } => {
-                let changed = self.change_plan(enabled).await;
+            SinkRequest::CompactSkipped(trigger) => {
+                self.log.append(KernelEvent::CompactSkipped { trigger });
+            }
+            SinkRequest::SetPlan {
+                enabled,
+                tool_call,
+                reply,
+            } => {
+                let changed = self.change_plan(enabled, tool_call).await;
                 let _ = reply.send(changed.map_err(failed));
             }
             SinkRequest::View { reply } => {
@@ -236,9 +327,12 @@ impl Actor {
     /// 目标，同一时刻的值。
     fn run_view(&self) -> RunView {
         RunView {
+            base_mode: self.execution.mode,
             plan_flags: self.plan_flags,
             selection: Some(self.selection.clone()),
-            goal: self.goal.condition(),
+            // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
+            goal: self.goal.condition().filter(|_| !self.deps.desktop_goals),
+            execution_worktree: self.execution_worktree,
             ..RunView::new(self.mode(), self.meta.workspace.clone())
         }
     }
@@ -290,37 +384,10 @@ impl Actor {
         let Some(turn) = self.running.as_ref().map(|running| running.turn.clone()) else {
             return;
         };
-        let event = match event {
-            QueryEvent::Delta {
-                message,
-                index,
-                delta,
-            } => KernelEvent::StreamDelta {
-                turn,
-                response: u32::try_from(message).unwrap_or(u32::MAX),
-                index,
-                delta,
-            },
-            QueryEvent::ToolStarted {
-                tool_use,
-                name,
-                input,
-            } => KernelEvent::ToolStarted {
-                tool_use,
-                name,
-                input,
-            },
-            QueryEvent::ToolProgress { tool_use, progress } => {
-                KernelEvent::ToolProgress { tool_use, progress }
-            }
-            QueryEvent::ToolFinished { tool_use, output } => {
-                self.ledger.tool_finished(&tool_use, &output);
-                KernelEvent::ToolDone { tool_use, output }
-            }
-            // 模型通知只供显示，不落库（stall-visibility.md §1）。
-            QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
-        };
-        self.log.append(event);
+        if let QueryEvent::ToolFinished { tool_use, output } = &event {
+            self.ledger.tool_finished(tool_use, output);
+        }
+        self.log.append(kernel_event(turn, event));
     }
 
     pub(crate) async fn finish_turn(&mut self) {
@@ -332,6 +399,7 @@ impl Actor {
         let outcome = match (running.failure, result) {
             (Some(error), _) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: None,
             },
             (None, Ok(Ok(QueryStop::Completed))) => TurnOutcome::Success,
             (None, Ok(Ok(QueryStop::Aborted))) => TurnOutcome::Interrupted,
@@ -339,15 +407,21 @@ impl Actor {
             (None, Ok(Ok(QueryStop::StopHookPrevented))) => TurnOutcome::StopHookPrevented,
             (None, Ok(Ok(QueryStop::MaxTurns))) => TurnOutcome::Failed {
                 message: "reached the maximum number of turns".to_owned(),
+                code: None,
             },
             (None, Ok(Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message }))) => {
-                TurnOutcome::Failed { message }
+                TurnOutcome::Failed {
+                    message,
+                    code: None,
+                }
             }
             (None, Ok(Err(error))) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: error.code().map(str::to_owned),
             },
             (None, Err(error)) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: None,
             },
         };
         // Node `turn_usage`（usage.md §2.4）：只在这次运行的输入已经落库时写；压缩运行没有输入。用量行是观测，
@@ -378,13 +452,44 @@ impl Actor {
             });
         // 回合结束那一行（修复线 F118，tui-display.md §2.7）：排在 TurnFinished 之后、下一个回合之前。
         let interrupted = matches!(outcome, TurnOutcome::Interrupted);
+        let completed = matches!(
+            outcome,
+            TurnOutcome::Success | TurnOutcome::HookStopped | TurnOutcome::StopHookPrevented
+        );
+        let failed = matches!(outcome, TurnOutcome::Failed { .. });
+        // A compaction turn has no run (`start_compaction`); only main-loop turns pause the queue.
+        let main_loop = running.run.is_some();
         let turn = running.turn.clone();
+        let anchor_turn = running.turn.clone();
         self.log.append(KernelEvent::TurnFinished {
             turn: running.turn,
             outcome,
             usage,
         });
         self.turn_duration(turn, running.timing, interrupted).await;
+        self.goal_touched = true;
+        self.after_turn(completed);
+        if interrupted {
+            self.pause_goal_after_cancel().await;
+        }
+        // Fork: Node core pauses the queue on a turn error (`queueAutoDrain = false`), so the waiting inputs stay
+        // queued until the user continues (`setAutoDrain`); the projection shows `pauseReason: "error"`.
+        if failed
+            && main_loop
+            && self.deps.error_holds_queue
+            && self.inbox.has_inputs()
+            && self.inbox.set_held(true)
+        {
+            self.emit_queue();
+        }
+        // The `/goal X` control turn: its continuation is the first, unverified one (Node `verifyBeforeFirstContinue`).
+        let control = self.goal.continue_after_set;
+        if self.continue_goal_after_set(completed).await {
+            return;
+        }
+        if !control && completed && self.verify_goal_after_turn(anchor_turn).await {
+            return;
+        }
         self.start_next().await;
     }
 
@@ -396,15 +501,29 @@ impl Actor {
         if self.closing.is_some() || self.shutting_down {
             return;
         }
+        // Fork: a promoted input holds the foreground (`Command::ReserveForeground`); it starts its own turn.
+        if self.inbox.reserved() {
+            return;
+        }
         // 这次工作期间到达的本地命令记录先进对话，再开下一个回合（修复线 L-A，tui-manage.md §11.3）。
         self.flush_held_records().await;
-        let input = if let Some(input) = self.next_turn_input() {
-            input
+        self.prune_stalls().await;
+        let (input, execution) = if let Some(next) = self.next_turn_input() {
+            next
         } else if let Some(fire) = self.next_cron().await {
-            TurnInput::Cron(fire)
+            (TurnInput::Cron(fire), None)
         } else {
             return;
         };
+        // Fork: the item's frozen state becomes the session's through the same facts as `SetModel` /
+        // `SetMode` / `SetPlan`, so a cold open sees what the turn ran with.
+        if let Some(execution) = execution
+            // Boxed: the mode change's peer release is an async path back into `start_next` (not taken
+            // here, `submitted_execution` does not start peers, but the future type is recursive).
+            && let Err(reason) = Box::pin(self.submitted_execution(execution)).await
+        {
+            tracing::warn!(%reason, "queued input's execution state could not be applied");
+        }
         // 提交失败时只记日志：排队输入已出队，前端从 QueueChanged 看到它消失；通知没有 ack，
         // 会再次送达。
         if let Err(reason) = self.start_turn(input).await {
@@ -416,6 +535,18 @@ impl Actor {
 #[path = "turn_interact.rs"]
 mod interact;
 
+/// The log event of a query event in `turn` (the actor's own run and a mirrored child run, crate::child_live).
+pub(crate) fn kernel_event(
+    turn: rust_cli_kernel_api::ids::TurnId,
+    event: QueryEvent,
+) -> KernelEvent {
+    event.into_kernel_event(turn)
+}
+
 #[cfg(test)]
 #[path = "write_failure_tests.rs"]
 mod write_failure_tests;
+
+#[cfg(test)]
+#[path = "error_hold_tests.rs"]
+mod error_hold_tests;

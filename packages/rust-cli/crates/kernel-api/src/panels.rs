@@ -53,6 +53,20 @@ pub struct SubagentEntry {
     /// R4，§21.6）。
     #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
     pub machine: crate::ids::MachineName,
+    /// Fork: which run of the agent this is: 0 at spawn, plus one on every return to running (a SendMessage resume,
+    /// a parked agent's wake). In memory only; the desktop's guarded Stop (`stopSubagent`) names it, so a late stop
+    /// never ends a later run (specs/fork-rust-agent-parity.md, B2).
+    #[serde(default)]
+    pub execution: u64,
+    /// Fork: the run's execution id (Node `executionId`, a UUID per run). `stopControl` names it, and a stall reminder's
+    /// `subagentStall.executionId` is the same value. `execution` above orders the runs.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub execution_id: String,
+    /// Fork: how the agent's previous run ended, when this is not its first (set when a new run begins). A reader that
+    /// missed the previous run's end (coalesced table changes) still closes that run before the new one
+    /// (specs/fork-rust-agent-parity.md, B2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<SubagentStatus>,
 }
 
 /// 子代理的当前活动：子循环事件的投影（stall-visibility.md §4.3）。
@@ -110,6 +124,27 @@ pub enum ShellOutput {
     TooLarge { bytes: u64 },
     /// 读不到（没有输出目录、读取失败）。
     Unavailable,
+}
+
+/// Fork: the most bytes of a background Bash output window (Node `BACKGROUND_BASH_OUTPUT_MAX_BYTES`).
+pub const BASH_OUTPUT_WINDOW_BYTES: usize = 8192;
+
+/// Fork: a background Bash command's output window for the desktop detail pane (Node
+/// `readBackgroundBashOutput`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BashOutputRead {
+    /// The tail of the output file (at most [`BASH_OUTPUT_WINDOW_BYTES`], cut at a character boundary).
+    Window {
+        /// The ledger's status; None once the ledger no longer lists the command (its notice was acknowledged).
+        status: Option<BackgroundStatus>,
+        text: String,
+        /// The file holds more than the window.
+        truncated: bool,
+        path: crate::env::EnvPath,
+    },
+    /// The command is known but its output file could not be read (`code`: `ENOENT` for a missing file).
+    ReadFailed { code: Option<String> },
 }
 
 /// 一个后台命令的详情（tui-panels.md §3.3）。

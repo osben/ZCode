@@ -395,4 +395,24 @@ impl StreamDecoder for Recording {
     fn finished(&self) -> bool {
         self.inner.finished()
     }
+
+    fn whole(
+        &mut self,
+        body: Value,
+        out: &mut VecDeque<ModelEvent>,
+    ) -> Result<bool, crate::errors::Verdict> {
+        let data = body.to_string();
+        let before = out.len();
+        let result = self.inner.whole(body, out);
+        if matches!(result, Ok(true)) {
+            let mut capture = lock(&self.capture);
+            capture.decoded(out.iter().skip(before));
+            capture.chunks.push(data);
+            if !capture.finished && self.inner.finished() {
+                capture.finished = true;
+                capture.finished_ms = self.clock.as_ref().map(|clock| clock.now_ms());
+            }
+        }
+        result
+    }
 }

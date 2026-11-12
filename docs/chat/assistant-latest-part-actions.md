@@ -6,8 +6,8 @@ The action area of an assistant turn offers copy, like, dislike, fork and retry,
 
 - Copy copies the merged assistant text of the turn, not just the last part.
 - Like / dislike are mutually exclusive feedback. Clicking the currently selected one clears the feedback; clicking the other switches directly.
-- Feedback lives only in the local state of the current `ConversationAssistantTextActions` component; it is cleared on remount, refresh or reopening the task, and is not written to the transcript, database or renderer store.
-- A click only updates the current button state and reports app telemetry; it sends no V4 command, does not enter provider-visible history and is not injected into later Agent prompts.
+- Feedback is written through V4 `setAssistantFeedback` to `info.metadata.assistantFeedback` of the assistant message (the transcript is the durable authority), then advances the live projection through the `AssistantFeedbackUpdated` event; cold resume replays the same event after the message's parts. The projection writes the feedback onto the last assistant text row of that entity, the same latest row the UI reads. When a message has several text blocks (one row per block, live and cold), feedback never lands on a middle row.
+- Feedback does not enter provider-visible history and is not injected into later Agent prompts.
 - Whether Fork is available is decided entirely by the CLI-projected `row.actions.canFork`; a stable assistant row that is still running can also be released by the CLI stable resolver, and the pane does not guess by phase.
 - Retry sends V4 `retryTurn`, targeting the corresponding turn/row.
 - Fork sends V4 `forkAssistant`; the successful ACK returns the child sessionId, which then converges through the authoritative sessions/projection.
@@ -33,17 +33,21 @@ Live continuous uses the CLI event time directly; cold hydration must pass the t
 ## Feedback state chain
 
 ```text
-desktop / mobile assistant action toolbar
+desktop / mobile assistant action toolbar (selected state shown locally first)
                     |
                     v
-          localReaction: null / like / dislike
+        V4 setAssistantFeedback(messageId, entityId, feedback)
                     |
-          +---------+---------+
-          v                   v
-  aria-pressed / style   fire-and-forget telemetry
+                    v
+CLI writes assistant message info.metadata.assistantFeedback (durable authority)
+                    |
+                    v
+AssistantFeedbackUpdated ──► projection: row.feedback on the entity's last assistant text row
+                    ▲
+cold hydration: replays the same event after the message's parts
 ```
 
-Feedback has no authoritative fact across the component lifecycle and does not take part in the desktop continuous or mobile replayable message chain. CLI, host, relay, desktop main, transcript and database neither read nor store this state.
+Desktop continuous and mobile replayable both consume the same `row.feedback`.
 
 ## Display and accessibility
 

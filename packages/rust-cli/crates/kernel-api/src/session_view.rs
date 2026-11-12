@@ -16,6 +16,8 @@ impl SessionView {
     ) -> Self {
         Self {
             meta,
+            title_source: None,
+            permission_grant: None,
             messages,
             selection,
             mode,
@@ -25,12 +27,16 @@ impl SessionView {
             last_seq: 0,
             revision: 0,
             running: false,
+            running_turn: None,
             background: Vec::new(),
             peer_held: Vec::new(),
             context_usage: None,
             context_notice: crate::compaction::ContextNotice::default(),
             output_speed: None,
             commands: Default::default(),
+            turn_files: Default::default(),
+            goal: None,
+            message_models: Default::default(),
         }
     }
 }

@@ -52,8 +52,45 @@ pub(crate) async fn session_on_machines(
     messages: Vec<Message>,
     clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
 ) -> Session {
+    session_with_drain(scope, registry, model, tools, messages, clock, false).await
+}
+
+/// Fork: [`session_on_machines`] with `SessionDeps::one_input_per_turn` (the Node desktop drain).
+pub(crate) async fn session_with_drain(
+    scope: &TaskScope,
+    registry: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
+    model: Arc<dyn ModelPort>,
+    tools: Vec<Arc<dyn Tool>>,
+    messages: Vec<Message>,
+    clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+    one_input_per_turn: bool,
+) -> Session {
+    session_as(
+        scope,
+        registry,
+        model,
+        messages,
+        (tools, clock, one_input_per_turn),
+        meta(),
+    )
+    .await
+}
+
+/// Fork: [`session_with_drain`] for a session with its own meta (a subagent's child session).
+async fn session_as(
+    scope: &TaskScope,
+    registry: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
+    model: Arc<dyn ModelPort>,
+    messages: Vec<Message>,
+    (tools, clock, one_input_per_turn): (
+        Vec<Arc<dyn Tool>>,
+        Arc<dyn rust_cli_kernel_api::clock::Clock>,
+        bool,
+    ),
+    meta: SessionMeta,
+) -> Session {
     let store = Arc::new(MemoryStore::default());
-    store.create(meta()).await.unwrap();
+    store.create(meta.clone()).await.unwrap();
     let ids = Arc::new(SequentialIds::default());
     let runner = Arc::new(QueryLoop::new(QueryParts {
         model,
@@ -97,18 +134,31 @@ pub(crate) async fn session_on_machines(
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn,
+            desktop_goals: false,
+            fork_while_running: false,
+            error_holds_queue: false,
         },
         SessionState {
             commands: Default::default(),
-            meta: meta(),
+            meta,
             messages,
             earlier: Vec::new(),
             selection: selection(),
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
+            title_pending: true,
+            title_source: None,
+            permission_grant: None,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Loaded,
     )
@@ -199,6 +249,8 @@ async fn a_notice_that_is_already_in_the_conversation_is_only_acked() {
     let env = Arc::new(NoticeEnvironment::default());
     let model = Arc::new(ScriptedModel::new(Vec::new()));
     let delivered = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_notice"),
         content: vec![ContentBlock::Text {
             text: task_notification(&shell_notice(1, "b1")),
@@ -271,4 +323,49 @@ async fn a_slash_steer_waits_while_a_notice_and_a_plain_steer_join() {
     assert!(!second.contains("/greet Ada"), "{second}");
     assert!(format!("{:?}", requests[2].messages.last()).contains("/greet Ada"));
     assert_eq!(env.acked(), [1]);
+}
+
+/// Fork: a subagent's child session leaves its notices to the agents crate forwarder (their only consumer): its actor
+/// neither records, acknowledges nor opens a turn for one. Before, it raced the forwarder for the ack, and when it saw
+/// the notice it started its own turn next to the agent's run (specs/fork-rust-agent-parity.md, "Subagent child
+/// sessions: one owner for background-command notices").
+#[tokio::test]
+async fn a_subagent_child_session_does_not_consume_its_notices() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["reply"])]));
+    let child = SessionMeta {
+        id: SessionId::new("sess_subagent_agent_1"),
+        kind: SessionKind::Subagent,
+        parent: Some(SessionId::new("sess_1")),
+        ..meta()
+    };
+    let session = session_as(
+        &scope,
+        rust_cli_kernel_api::testing::registry(machine(env.clone())),
+        model.clone(),
+        Vec::new(),
+        (
+            Vec::new(),
+            Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
+            false,
+        ),
+        child,
+    )
+    .await;
+    let mut events = session.subscribe(Some(0));
+    env.finish(shell_notice(1, "b1"));
+    // A full turn: the actor's loop goes round many times while the notice is ready on the environment.
+    session.send(submit("c1", "hello")).await;
+    let seen = until_finished(&mut events, 1).await;
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, KernelEvent::BackgroundWork { .. }))
+    );
+    assert_eq!(model.requests().len(), 1);
+    assert!(env.acked().is_empty());
+    let view = session.view().await.unwrap();
+    assert!(notices_in(&view.messages).is_empty());
+    assert_eq!(view.background, [ShellTaskId::new("b1")]);
 }

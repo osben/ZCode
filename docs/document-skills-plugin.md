@@ -27,6 +27,8 @@ Filesystem seed, SEA, the Electron Node bundle, remote prebuild, server remote d
 
 Acceptance covers: all four plugins discovered by default and independently disable-able; the old aggregate entry no longer built in; the four format skills and qualified agent names each discoverable; filesystem/SEA integrity rejects a missing review agent; desktop and remote packaging manifests omit none of the plugins. This work changes only plugin content and distribution manifests — desktop continuous and mobile replayable session semantics are untouched.
 
+Built-in subagents carry an identity color per plugin: documents blue, pdf red, presentations purple, spreadsheets green. The color changes only each agent's frontmatter, not the agent name, model or permissions. Versions are documents/presentations/spreadsheets 0.2.2 and pdf 0.2.3, published as new version caches; the Bootstrap definition, package and plugin manifest are bumped together. The 0.1.8 above is the import record of the initial split; later versions follow the definition and each plugin manifest.
+
 ## Dependency boundary
 
 Built-in skills are not built-in system dependencies. LibreOffice, Poppler, Playwright, ReportLab, Tectonic, python-pptx, openpyxl, and friends come from the runtime environment or install via the upstream skill's environment checks. Script-relative paths resolve against the base directory the Skill tool returns.

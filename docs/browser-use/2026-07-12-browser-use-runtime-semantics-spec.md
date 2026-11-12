@@ -39,10 +39,29 @@ So the ZCode skill no longer claims `file://` is a navigable local target; the s
 | `cua.drag({path, keys})`                     | non-empty path; move along the original point sequence, press at the first point, release at the last | the protocol keeps the full path, no longer taking only the endpoints and re-interpolating                                                                                                                       |
 | `cua.scroll({x,y,scrollX,scrollY,keypress})` | the mouse first moves to `(x,y)`, then scrolls by delta with `Input.synthesizeScrollGesture`          | anchor, delta and modifier are not lost; the Electron `<webview>` guest uses an equivalent CDP `mouseWheel` transport (see 2026-08-03 note) to avoid Chromium 146 silently not executing the synthesized gesture |
 | `cua.move({x,y,keys})`                       | mouse move carries modifiers                                                                          | keys preserved                                                                                                                                                                                                   |
-| `cua.keypress({keys})`                       | keys denote a combination; keyDown in order, down/up for the last key, then release in reverse        | no longer attaching only a bitmask to the last key                                                                                                                                                               |
+| `cua.keypress({keys})`                       | keys denote a combination; keyDown in order, down/up for the last key, then release in reverse        | no longer attaching only a bitmask to the last key; delivery rules in "Keyboard input delivery" below                                                                                                            |
 | `dom_cua.scroll({node_id?,x,y})`             | with a node, delta-scroll at the node center; without, at the viewport center                         | no longer degrading node scroll to `scrollIntoView`                                                                                                                                                              |
 
 The IAB dynamic API does not expose CUA/DOM CUA `downloadMedia`. In the static manifest these two helpers are `unsupportedByDefaultIn: ["iab"]` and `documented: false`; IAB must not fake success with an ordinary click.
+
+#### Keyboard input delivery
+
+CUA/DOM CUA `keypress`, `press` and locator `press` share one keyboard delivery. A key can reach only the web page of the target tab, never the ZCode UI.
+
+- Whether the page has keyboard focus does not affect delivery. A new Agent tab, focus set only by page script, or the user typing in the Composer all leave the page without focus; the key still goes only into the page.
+- Each key first resolves the focused frame inside the page (shared with the `type` virtual paste):
+  - Focus in an out-of-process iframe (OOPIF): send `Input.dispatchKeyEvent` on that iframe's own CDP session.
+  - Otherwise (main frame, same-process iframe): send to the guest with Electron `webContents.sendInputEvent`.
+- Never send keys through the guest main frame's CDP session. That session delivers by whole-window focus; when the page has no focus the key lands in the ZCode UI: Escape triggers "stop session", Enter and Backspace rewrite the Composer draft.
+- Typable keys get a character event after keyDown, behaving like a real keyboard:
+  - A single character key types that character; Shift plus a letter types the uppercase letter.
+  - `Enter` types `\r`, so it triggers implicit form submission; `Space` types a space.
+  - Combinations with Alt, Control or Meta, and Shift plus a non-letter key, add no character.
+- Arrow keys on the `sendInputEvent` path are converted to Electron key names (`Up`/`Down`/`Left`/`Right`).
+- On Mac, editing shortcuts such as Cmd+A do not run the editing command; the page receives the keydown. Shortcuts the page does not handle do not trigger ZCode menus.
+- Implemented only in the desktop main process. `desktop-continuous` and `web-remote-replayable` use the same shared-host BrowserControl chain and behave the same.
+
+Regression case: BU-E2E-028 (`docs/testing/browser-use-coverage-matrix.md`).
 
 ### 2.3 Playwright
 

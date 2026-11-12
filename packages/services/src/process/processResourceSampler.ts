@@ -379,7 +379,8 @@ function ownerToRow(
       name: isOwnerRoot
         ? formatZCodeAgentProcessName(owner.agent.provider, owner.agent.workspacePath)
         : commandDisplayName(sample.command),
-      category: "base",
+      // Agent 本身是基础开销；其非插件后代随用户任务变化，单独归入任务进程。
+      category: isOwnerRoot ? "base" : "task",
       groupKey: "cli",
       groupLabel: "cli",
       cpuPercent,
@@ -412,9 +413,9 @@ function ownerToRow(
 }
 
 /**
- * Assign all Host descendants to their “nearest known ancestor”:
- * MCP root pid → corresponding plugin; Agent pid → core service cli; no owner → core service host child process.
- * Exclude Host itself (its metrics come from main's app.getAppMetrics).
+ * Assign all Host descendants to their "nearest known ancestor":
+ * MCP root pid → corresponding plugin; Agent root → core service cli; non-plugin descendants → task process; no owner → core service host.
+ * The Host itself is not in the result (its metrics come from main's app.getAppMetrics).
  */
 export function attributeHostProcessTree(
   options: AttributeHostProcessTreeOptions,

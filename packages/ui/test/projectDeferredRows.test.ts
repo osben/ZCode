@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useBaseWorkspaceServices: () => ({ windowControllerService: {}, zcodeTaskService: {} }),
+  // Upstream sidebar modules read optional services (extension slots, managed worktrees);
+  // no services are wired in this test, which is the optional hook's null case.
+  useOptionalBaseWorkspaceServices: () => null,
 }));
 vi.mock("@/hooks/useResolvedRemoteWorkspaceSessionId.js", () => ({
   useResolvedRemoteWorkspaceSessionId: () => null,

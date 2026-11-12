@@ -27,6 +27,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Opened, Session, SessionDeps, SessionState};
 
+/// Fork: the desktop compactor's skipped text; the fake answers it with `OrchestrationError::Skipped`.
+const UP_TO_DATE: &str = "Context is up to date; no compression needed";
+
 /// 成功时给出固定的结果；`fail` 时以固定的原文失败。
 struct FakeCompactor {
     fail: Option<String>,
@@ -69,6 +72,7 @@ impl Compactor for FakeCompactor {
             used_tokens: history.len() as u64,
             max_tokens: window,
             compact_at: None,
+            window_tokens: None,
         })
     }
 
@@ -78,6 +82,11 @@ impl Compactor for FakeCompactor {
         _cancel: CancellationToken,
     ) -> Result<CompactResult, OrchestrationError> {
         if let Some(message) = &self.fail {
+            if message == UP_TO_DATE {
+                return Err(OrchestrationError::Skipped {
+                    message: message.clone(),
+                });
+            }
             return Err(OrchestrationError::Failed {
                 message: message.clone(),
             });
@@ -96,6 +105,8 @@ impl Compactor for FakeCompactor {
                 discovered_tools: Vec::new(),
             },
             summary: UserMessage {
+                stall_execution: None,
+                intent: None,
                 id: MessageId::new("msg_s"),
                 content: vec![ContentBlock::Text {
                     text: "S".to_owned(),
@@ -119,6 +130,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -147,6 +159,8 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
         limits: rust_cli_query::RequestLimits::default(),
     }));
     let history = vec![Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_u"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -183,6 +197,10 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
             peers: crate::PeerDeps::off(),
             detached: None,
+            one_input_per_turn: false,
+            desktop_goals: false,
+            fork_while_running: false,
+            error_holds_queue: false,
         },
         SessionState {
             commands: Default::default(),
@@ -193,8 +211,17 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
+            child_live: None,
+            title_pending: true,
+            title_source: None,
+            permission_grant: None,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
         },
         Opened::Loaded,
     );
@@ -271,6 +298,7 @@ async fn compact_runs_as_a_turn_and_commits_one_batch() {
         used_tokens: 7,
         max_tokens: 100,
         compact_at: None,
+        window_tokens: None,
     }));
     assert!(matches!(
         events.last(),
@@ -335,7 +363,8 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
                 other => panic!("{other:?}"),
             },
             outcome: TurnOutcome::Failed {
-                message: "Not enough messages to compact.".to_owned()
+                message: "Not enough messages to compact.".to_owned(),
+                code: None,
             },
             usage: None,
         })
@@ -345,6 +374,33 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
     assert_eq!(
         record_texts(&view.messages)[2],
         "<local-command-stderr>Not enough messages to compact.</local-command-stderr>"
+    );
+}
+
+/// Fork: a desktop `/compact` with too little history is Node's skipped compaction: `CompactSkipped`, a completed
+/// turn, and the stdout record with Node's text.
+#[tokio::test]
+async fn a_skipped_compaction_completes_the_turn() {
+    let (_scope, _store, session) = session(Some(UP_TO_DATE)).await;
+    assert!(matches!(
+        session.send(compact()).await,
+        Ack::Accepted { .. }
+    ));
+    let events = events_until_finished(&session).await;
+    assert!(events.contains(&KernelEvent::CompactSkipped {
+        trigger: CompactTrigger::Manual
+    }));
+    assert!(matches!(
+        events.last(),
+        Some(KernelEvent::TurnFinished {
+            outcome: TurnOutcome::Success,
+            ..
+        })
+    ));
+    let view = session.view().await.unwrap();
+    assert_eq!(
+        record_texts(&view.messages)[2],
+        format!("<local-command-stdout>{UP_TO_DATE}</local-command-stdout>")
     );
 }
 
@@ -360,6 +416,7 @@ async fn the_view_carries_the_context_usage_and_notice() {
             used_tokens: 2,
             max_tokens: 100,
             compact_at: None,
+            window_tokens: None,
         })
     );
     assert_eq!(
@@ -411,6 +468,7 @@ async fn changing_the_model_recomputes_the_context() {
                 used_tokens: 2,
                 max_tokens: 1_000,
                 compact_at: None,
+                window_tokens: None,
             }
         ]
     );

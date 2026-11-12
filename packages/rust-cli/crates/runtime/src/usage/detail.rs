@@ -98,7 +98,9 @@ fn is_human_prompt(attachment: &AttachmentMessage) -> bool {
 
 fn assistant_kind(block: &ContentBlock) -> Kind {
     match block {
-        ContentBlock::Text { .. } | ContentBlock::Image { .. } => Kind::Replies,
+        ContentBlock::Text { .. } | ContentBlock::Image { .. } | ContentBlock::Video { .. } => {
+            Kind::Replies
+        }
         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => Kind::Thinking,
         ContentBlock::ToolUse { .. } | ContentBlock::ServerToolUse { .. } => Kind::Calls,
         ContentBlock::ToolResult { .. } | ContentBlock::WebSearchToolResult { .. } => Kind::Results,

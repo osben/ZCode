@@ -194,6 +194,8 @@ pub(crate) async fn mark_interrupted(
             texts::INTERRUPT_MESSAGE
         };
         let message = Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: scope.parts.ids.message(),
             content: vec![ContentBlock::Text {
                 text: text.to_owned(),
@@ -312,6 +314,8 @@ async fn stream(
         first_content: None,
         retries: 0,
     };
+    // 请求开始是进展（Node `ModelRequest`）：子代理的无进展提醒的钟在这里重新计时（stall.rs）。
+    scope.sink.request_started().await;
     // 运行日志（logging.md §4）：请求的开始与结束、失败。计时与重试数和用量行同一份（`Timing`，usage.md §1），
     // 不另外计时。
     tracing::info!(
@@ -350,6 +354,19 @@ async fn stream(
                 Some(Ok(ModelStreamItem::Event(event))) => {
                     // 首字（Node `firstModelTokenAt`）与首个内容（F105）。
                     timing.observe(&event, scope.parts.clock.as_ref());
+                    if let ModelEvent::BlockStart {
+                        index,
+                        block: ContentBlock::ToolUse { id, name, .. },
+                    } = &event
+                    {
+                        let started = QueryEvent::ToolInputStarted {
+                            message: response,
+                            index: *index,
+                            tool_use: id.clone(),
+                            name: name.clone(),
+                        };
+                        let _ = scope.sink.emit(started).await;
+                    }
                     if let ModelEvent::BlockDelta { index, delta } = &event {
                         deltas += 1;
                         let delta = QueryEvent::Delta {
@@ -363,9 +380,12 @@ async fn stream(
                     // assistant 消息、结果与计量都不落库。错误改为结束读流，走下面流中途出错的路径（等工具、提交）。
                     match assembler.push(event) {
                         Ok(Some(mut block)) => {
-                            defaults::apply(scope.parts.tools.as_ref(), &mut block);
+                            defaults::apply(scope.parts.tools.as_ref(), &scope.session, &mut block);
                             if let ContentBlock::ToolUse { id, name, input } = block {
                                 batch.add(id, name, input, assistant_id.clone());
+                                if let Some((tool_use, name, input)) = batch.scheduled() {
+                                    scope.sink.tool_scheduled(&tool_use, &name, &input).await;
+                                }
                                 // 找不到的工具加入时就有结果。
                                 hand_out(scope, &mut batch, &mut handed);
                             }
@@ -512,7 +532,7 @@ fn finish(
             .content
             .into_iter()
             .map(|mut block| {
-                defaults::apply(scope.parts.tools.as_ref(), &mut block);
+                defaults::apply(scope.parts.tools.as_ref(), &scope.session, &mut block);
                 block
             })
             .collect(),

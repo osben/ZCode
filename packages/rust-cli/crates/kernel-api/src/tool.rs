@@ -28,6 +28,14 @@ use crate::store::ArtifactStore;
 /// 共用（F55：以前两边各写一份）。
 pub const REJECT_MESSAGE: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
 
+/// Fork: Node's plan-mode denial (`mode.plan.nonReadOnly`, core `permission/service.ts`), for the desktop app-server:
+/// the policy's denial text, and the desktop projection settles a tool result with it as cancelled (Node emits
+/// `PermissionDenied`, not a tool error).
+pub const PLAN_MODE_READ_ONLY: &str = "Plan mode only allows read-only, non-destructive tools";
+
+/// Fork: Node's message for a foreground subagent stopped on its own (`ToolCancelled`, core `subagent/runner.ts`).
+pub const SUBAGENT_STOPPED_BY_USER: &str = "Subagent was stopped by user";
+
 /// 工具结果落盘的通用上限（字符）：结果超过它就落盘为 Artifact，只把预览交给模型（[`Tool::max_result_size_chars`]）。
 /// 多数工具用这个值；值不同的工具在自己那里命名（工作线 F122，用户决定 2026-10-30，docs/specs/rust-cli/constants.md §5.1）。
 pub const DEFAULT_MAX_RESULT_CHARS: usize = 100_000;
@@ -86,7 +94,11 @@ pub struct ToolUseContext {
     /// 子代理里的调用带子代理 ID。
     pub agent: Option<AgentId>,
     pub workspace: WorkspaceRef,
+    /// The effective mode for decisions and tools (`Plan` while plan is on).
     pub mode: PermissionMode,
+    /// Fork: the session's permission mode under plan (`ExecutionState.mode`, the same snapshot as `mode`); equal to
+    /// `mode` when plan is off. Node's plan gate reads it (specs/fork-rust-agent-parity.md, "MCP tools in plan mode").
+    pub base_mode: PermissionMode,
     pub cancel: CancellationToken,
     /// 这次调用在哪台机器上执行：缺省是会话的主 env，工具写了 `machine` 时换成那台额外机器（remote-exec.md §15.8.1）。
     /// Git 与 worktree 也在这台机器上。
@@ -145,6 +157,10 @@ pub struct ToolCallOutput {
     pub output: ToolOutput,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub new_messages: Vec<Message>,
+    /// Fork: end the turn once this batch's results are committed, like a hook's `continue: false` (Node's
+    /// `turnControl.stopTurnAfterResult`, e.g. a plan exit declined without feedback).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stop_turn: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -154,6 +170,12 @@ pub enum ToolError {
     InvalidInput { message: String },
     #[error("tool call cancelled")]
     Cancelled,
+    /// Fork: this call alone was stopped while its turn goes on (Node `ToolCancelled`, core `subagent/runner.ts`: a
+    /// foreground subagent stopped by the user). The executor runs the failure hooks as an interrupt and settles the
+    /// call as an error with `message`, keeping `display` (the Agent call's child link); the desktop projection reads
+    /// `display` to show the row as cancelled.
+    #[error("{message}")]
+    Stopped { message: String, display: Value },
     #[error(transparent)]
     Environment(#[from] EnvError),
     #[error("{message}")]
@@ -252,6 +274,12 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Fork: the call may destroy data (an MCP tool's `destructiveHint: true`, Node `destructive`). Node's plan mode
+    /// denies such an MCP call before the server runs it (specs/fork-rust-agent-parity.md, "MCP tools in plan mode").
+    fn is_destructive(&self, _input: &Value) -> bool {
+        false
+    }
+
     /// 并发安全的调用可以和其他并发安全的调用同时执行（按输入判定）。
     fn is_concurrency_safe(&self, _input: &Value) -> bool {
         false
@@ -302,6 +330,7 @@ pub trait Tool: Send + Sync {
         Ok(ToolCallOutput {
             output: self.call(input, context, progress).await?,
             new_messages: Vec::new(),
+            stop_turn: false,
         })
     }
 

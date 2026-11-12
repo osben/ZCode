@@ -50,6 +50,7 @@ it("ISSUE-033: 远端 Host 读取失败时，目录 owner 保留其已知删除�
     tree: { projects: [], tasks: [], deletedTasks: [deletedRemoteTask] },
     directory,
     availability: new Map(),
+    onlineHostIds: new Set(["local", REMOTE]),
     errors: new Map(),
   });
   const { result, unmount } = renderHook(() => useProjectTree());
@@ -67,6 +68,7 @@ it("ISSUE-033: 远端 Host 读取失败时，目录 owner 保留其已知删除�
     tree: { projects: [], tasks: [] },
     directory,
     availability: new Map(),
+    onlineHostIds: new Set(["local"]),
     errors: new Map([[REMOTE, "host offline"]]),
   });
   await act(async () => {

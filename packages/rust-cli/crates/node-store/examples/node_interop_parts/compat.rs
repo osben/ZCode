@@ -228,6 +228,7 @@ async fn subagent(store: &NodeStore) -> Result<(SessionId, SessionId)> {
             title: "Look around".into(),
             trace: TraceId::new(id.as_str()),
             created_at_ms: now_ms(),
+            incognito: None,
         })
         .await?;
     let handback = "Here is the report:\n  main.rs is the entry point.";

@@ -27,7 +27,6 @@ use crate::request::{Prepared, orchestration, prepare};
 use crate::respond::{Responded, commit, commit_metered, respond};
 use crate::step::StepTools;
 use crate::stop_hooks::{StopHook, stop_hooks};
-use crate::texts;
 
 /// 一次运行内不变的请求参数。
 struct Inputs {
@@ -118,6 +117,8 @@ async fn conclude(
         Outcome::Failed { message } => Ok(Some(QueryStop::ApiError { message })),
         Outcome::Retry { nudge, source, .. } => {
             let message = Message::User(UserMessage {
+                stall_execution: None,
+                intent: None,
                 id: scope.parts.ids.message(),
                 content: vec![ContentBlock::Text {
                     text: nudge.to_owned(),
@@ -161,15 +162,55 @@ async fn reached_max_turns(
 /// `absorbed_mid_turn`；query.md §4、§5）。每条插话的 UserPromptSubmit 消息紧跟在它的 `queued_command`
 /// 之后（query.md §4.1）；通知是 `commandMode: task-notification`（§5.1）。
 async fn absorb_steering(scope: &RunScope, history: &mut Vec<Message>) -> Result<(), QueryError> {
-    for item in scope.sink.take_absorbed().await {
+    let items = scope.sink.take_absorbed().await;
+    commit_absorbed(scope, history, items).await
+}
+
+/// Fork: a reply without tool calls is a continuation boundary for pending steers (Node
+/// `finishModelStepWithoutToolCalls` → `drainInlineGuideForNextRequest`, before the Stop hooks): they join this turn
+/// as `queued_command` attachments after the reply and the loop requests again. Notices are not taken here. True when
+/// a steer was taken.
+async fn absorb_text_only_steers(
+    scope: &RunScope,
+    history: &mut Vec<Message>,
+) -> Result<bool, QueryError> {
+    let items = scope.sink.take_steered_prompts().await;
+    if items.is_empty() {
+        return Ok(false);
+    }
+    commit_absorbed(scope, history, items).await?;
+    Ok(true)
+}
+
+async fn commit_absorbed(
+    scope: &RunScope,
+    history: &mut Vec<Message>,
+    items: Vec<Absorbed>,
+) -> Result<(), QueryError> {
+    for item in items {
         let (id, text, data, after) = match item {
             Absorbed::Prompt(steered) => {
-                let text = texts::queued_prompt(&steered.text);
-                let data = json!({
-                    queued_command::PROMPT_KEY: steered.text,
-                    queued_command::MODE_KEY: queued_command::PROMPT_MODE,
-                });
-                (None, text, data, steered.after)
+                // Fork: the steer's quotes reach the model with its text (Node `steering.ts` composes the guide).
+                let prompt = match &steered.intent {
+                    Some(intent) => intent.compose(&steered.text),
+                    None => steered.text.clone(),
+                };
+                let mut steer = queued_command::steer_attachment(
+                    scope.parts.ids.message(),
+                    &prompt,
+                    steered.from,
+                    steered.command.as_deref(),
+                    None,
+                );
+                if let Some(intent) = &steered.intent
+                    && let Some(data) = steer.data.as_object_mut()
+                {
+                    data.insert(
+                        queued_command::INTENT_KEY.to_owned(),
+                        serde_json::to_value(intent).unwrap_or_default(),
+                    );
+                }
+                (Some(steer.id), steer.text, steer.data, steered.after)
             }
             // 输出端给了消息 ID 时用它：提交之后它按这个 ID 认出是哪一条通知（会话 actor 的通道，工作线 F130）。
             Absorbed::Notice(notice) => {
@@ -405,6 +446,9 @@ async fn reply_ended(
 ) -> Result<Option<QueryStop>, QueryError> {
     match conclude(scope, history, outcome, assistant, call).await? {
         Some(QueryStop::Completed) => {
+            if absorb_text_only_steers(scope, history).await? {
+                return Ok(None);
+            }
             let hook = stop_hooks(
                 scope,
                 history,

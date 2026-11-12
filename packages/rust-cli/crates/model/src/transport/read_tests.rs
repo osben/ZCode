@@ -306,3 +306,48 @@ async fn a_failure_after_the_boundary_goes_to_the_caller() {
         Some(r#"error(Protocol { message: "stream ended before message_stop" })"#)
     );
 }
+
+/// Fork: a streaming request answered with the whole JSON message (the desktop E2E title replay, the shape Node's
+/// non-streaming title call gets) is read as that message instead of a truncated stream.
+#[tokio::test]
+async fn a_whole_json_message_is_read_as_the_stream() {
+    let body = r#"{"id":"t1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"{\"title\":\"Bash output regression\"}"},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"path":"a"}}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":32,"output_tokens":8}}"#;
+    let (head, tail) = body.split_at(40);
+    let mut read = finite(vec![head.to_owned(), tail.to_owned()]);
+    let cancel = CancellationToken::new();
+    let mut events = Vec::new();
+    while let Some(next) = read.next(&cancel).await {
+        match next {
+            Next::Item(Ok(ModelStreamItem::Event(event))) => events.push(event),
+            other => panic!("unexpected {}", shape(Some(other))),
+        }
+    }
+    assert!(
+        matches!(&events[0], ModelEvent::MessageStart { id, usage, .. } if id == "t1" && usage.input_tokens == 32)
+    );
+    assert!(matches!(
+        &events[1],
+        ModelEvent::BlockStart { index: 0, .. }
+    ));
+    assert!(
+        matches!(&events[2], ModelEvent::BlockDelta { index: 0, delta: rust_cli_kernel_api::model::BlockDelta::Text(text) } if text == r#"{"title":"Bash output regression"}"#)
+    );
+    assert!(matches!(&events[3], ModelEvent::BlockStop { index: 0 }));
+    assert!(matches!(
+        &events[4],
+        ModelEvent::BlockStart { index: 1, .. }
+    ));
+    assert!(
+        matches!(&events[5], ModelEvent::BlockDelta { index: 1, delta: rust_cli_kernel_api::model::BlockDelta::InputJson(json) } if json == r#"{"path":"a"}"#)
+    );
+    assert!(matches!(&events[6], ModelEvent::BlockStop { index: 1 }));
+    assert!(
+        matches!(&events[7], ModelEvent::MessageDelta { stop_reason: Some(rust_cli_kernel_api::message::StopReason::EndTurn), usage } if usage.output_tokens == 8)
+    );
+    assert!(matches!(&events[8], ModelEvent::MessageStop));
+    assert_eq!(events.len(), 9);
+
+    // A body that is not a message stays a truncated stream.
+    let mut other = finite(vec![r#"{"unexpected":true}"#.to_owned()]);
+    assert_eq!(drain(&mut other).await, ["early(Truncated)"]);
+}

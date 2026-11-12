@@ -29,6 +29,8 @@ pub(crate) enum SinkRequest {
     },
     /// 工具边界领取插话与通知（不出队，query.md §4.1、§5）。
     ClaimSteering {
+        /// Fork: claim steers only (the text-only boundary); notices stay in the lane.
+        prompts_only: bool,
         reply: oneshot::Sender<Option<crate::steering::Claimed>>,
     },
     /// 插话的结局（出队或留下）与并入的通知（按顺序）：回复出了队、可以并入的插话，与每条通知的 attachment 用的
@@ -53,9 +55,13 @@ pub(crate) enum SinkRequest {
     CompactStarted(CompactTrigger),
     /// 开始了的压缩失败了（compact.md §4.1）。
     CompactFailed(CompactTrigger, String),
+    /// Fork (desktop): the compaction had nothing to summarize.
+    CompactSkipped(CompactTrigger),
     /// 工具请求打开或关掉 plan 开关（EnterPlanMode / ExitPlanMode，修复线 F20）。
     SetPlan {
         enabled: bool,
+        /// Fork: the plan tool call that asked for it (`KernelEvent::PlanTransition`).
+        tool_call: Option<String>,
         reply: oneshot::Sender<Result<(), OrchestrationError>>,
     },
     /// 主循环与工具读会话现在的状态（判决用的模式、计划模式的会话标志、工作目录、主模型、目标，一次往返，工作线
@@ -197,8 +203,26 @@ impl SessionOps for ActorSink {
     }
 
     async fn set_plan(&self, enabled: bool) -> Result<(), OrchestrationError> {
-        self.command(|reply| SinkRequest::SetPlan { enabled, reply })
-            .await
+        self.command(|reply| SinkRequest::SetPlan {
+            enabled,
+            tool_call: None,
+            reply,
+        })
+        .await
+    }
+
+    async fn set_plan_from_tool(
+        &self,
+        enabled: bool,
+        tool_call: &str,
+    ) -> Result<(), OrchestrationError> {
+        let tool_call = Some(tool_call.to_owned());
+        self.command(|reply| SinkRequest::SetPlan {
+            enabled,
+            tool_call,
+            reply,
+        })
+        .await
     }
 
     async fn set_workspace(
@@ -324,13 +348,21 @@ impl RunSink for ActorSink {
             .await;
     }
 
+    async fn compact_skipped(&self, trigger: CompactTrigger) {
+        let _ = self.sender.send(SinkRequest::CompactSkipped(trigger)).await;
+    }
+
     async fn emit(&self, event: QueryEvent) -> bool {
         self.sender.send(SinkRequest::Event(event)).await.is_ok()
     }
 
     /// 插话（并入前先跑 UserPromptSubmit）与后台通知，按到达顺序（steering.rs，query.md §5）。
     async fn take_absorbed(&self) -> Vec<Absorbed> {
-        self.absorbed().await
+        self.absorbed(false).await
+    }
+
+    async fn take_steered_prompts(&self) -> Vec<Absorbed> {
+        self.absorbed(true).await
     }
 
     async fn goal_checked(

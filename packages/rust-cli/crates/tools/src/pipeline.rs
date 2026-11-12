@@ -29,7 +29,9 @@ use crate::texts;
 use crate::validate::{strip_unknown, validate};
 
 pub(crate) const REJECT_MESSAGE: &str = rust_cli_kernel_api::tool::REJECT_MESSAGE;
-pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n";
+/// Fork: the Node agent's denial with feedback (`buildPermissionDeniedContent`, bootstrap `permission-options.ts`):
+/// the full denial, STOP sentence included, then the user's words.
+pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. To tell you how to proceed, the user said:\n";
 /// 工具使用被中断时的文字（kernel-api 的定义，F55）。
 const INTERRUPT_FOR_TOOL_USE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[1];
 const NO_OUTPUT: &str = "Command failed with no output";
@@ -42,6 +44,9 @@ pub struct Pipeline {
     hooks: Arc<dyn HookRunner>,
     /// 按调用的 `machine` 选机器（R3，remote-exec.md §20.6）；没有时不路由。
     machines: Machines,
+    /// Fork: the incognito tool gate; a tool the session's profile removes is not called even when the model names
+    /// it (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    incognito: Option<Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>>,
 }
 
 /// 子代理里的询问被拒时的结果文字（主线程是 [`REJECT_MESSAGE`]，docs/specs/rust-cli/agents.md §4.1.1）。
@@ -54,8 +59,10 @@ const SUBAGENT_REJECT_WITH_REASON: &str = "Permission for this tool use was deni
 /// 而不是停下来等用户。
 fn rejection(context: &ToolUseContext, feedback: Option<&str>) -> String {
     match (context.agent.is_some(), feedback) {
-        (false, None) => REJECT_MESSAGE.to_owned(),
-        (false, Some(feedback)) => format!("{REJECT_WITH_REASON}{feedback}"),
+        (false, Some(feedback)) if !feedback.trim().is_empty() => {
+            format!("{REJECT_WITH_REASON}{}", feedback.trim())
+        }
+        (false, _) => REJECT_MESSAGE.to_owned(),
         (true, None) => SUBAGENT_REJECT.to_owned(),
         (true, Some(feedback)) => format!("{SUBAGENT_REJECT_WITH_REASON}{feedback}"),
     }
@@ -85,6 +92,7 @@ struct Asking {
     message: String,
     suggestions: Vec<PermissionRule>,
     once: bool,
+    independent: bool,
 }
 
 fn wrapped(text: &str) -> ToolOutput {
@@ -117,7 +125,18 @@ impl Pipeline {
             gate,
             hooks,
             machines: Machines::default(),
+            incognito: None,
         }
+    }
+
+    /// Fork: check every call against the session's incognito profile.
+    #[must_use]
+    pub fn with_incognito(
+        mut self,
+        gate: Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>,
+    ) -> Self {
+        self.incognito = Some(gate);
+        self
     }
 
     /// 接上执行环境的注册表：带 `machine` 参数的工具按调用选机器（remote-exec.md §20.6）。
@@ -152,6 +171,7 @@ impl Pipeline {
             message,
             suggestions,
             once,
+            independent,
         } = asking;
         // 修复线 F20：guarded 的危险命令只批准这一次（Node `approvalMode: "user-once"` 时 `runHooks: false`）：
         // 不跑 PermissionRequest hooks，hook 不能替用户批准；没有“总是允许”（判决链不给建议规则）。工作线 F137：这个事实
@@ -172,6 +192,7 @@ impl Pipeline {
         // “不再询问”一行的种子与建议规则出自同一套命令分析（shell-permissions.md §4.10）；前端不再自己算（F133）。
         let rule_seed = rust_cli_policy::ask_rule_seed(tool.name(), input, &suggestions);
         let request = InteractionRequest::Permission {
+            origin: None,
             tool_use: context.tool_use.clone(),
             tool: tool.name().to_owned(),
             input: input.clone(),
@@ -181,6 +202,8 @@ impl Pipeline {
             asked_by: None,
             // 额外机器上的调用，询问带机器名（R3，remote-exec.md §20.8；主 env 不写出）。
             machine: call.machine.clone(),
+            once,
+            independent,
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));
@@ -245,11 +268,13 @@ impl Pipeline {
                 message,
                 suggestions,
                 once,
+                independent,
             } => {
                 let asking = Asking {
                     message,
                     suggestions,
                     once,
+                    independent,
                 };
                 self.ask_for(tool, schema, input, asking, call).await
             }
@@ -259,6 +284,7 @@ impl Pipeline {
                     message: rust_cli_policy::texts::request_message(tool.name(), None),
                     suggestions: Vec::new(),
                     once: false,
+                    independent: false,
                 };
                 self.ask_for(tool, schema, input, asking, call).await
             }
@@ -305,6 +331,14 @@ impl Pipeline {
             .route(tool, &mut input, context, &plan)
             .map_err(|message| Rejection::Other(wrapped(&message)))?;
         let context = &call.context;
+        // Fork: a tool that runs in the workspace is refused while the session's execution worktree is gone, like
+        // Node's `getMissingExecutionWorktreeToolError`; nothing runs in or recreates it. An ordinary session is not
+        // guarded (`missing_workspace`).
+        if tool.machine_param() == rust_cli_kernel_api::machine_param::MachineParam::RunsThere
+            && let Some(message) = crate::common::missing_workspace(context).await
+        {
+            return Err(Rejection::Other(wrapped(&message)));
+        }
         if let Validation::Invalid { message, .. } = tool.validate_input(&input, context).await {
             return Err(Rejection::Other(wrapped(&message)));
         }
@@ -345,6 +379,7 @@ impl Pipeline {
                 message,
                 suggestions,
                 once,
+                independent,
             }) => match self.gate.check_rules(tool, &input, context).await {
                 Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                 Some(PermissionDecision::Ask { .. }) => self
@@ -356,6 +391,7 @@ impl Pipeline {
                         message,
                         suggestions,
                         once,
+                        independent,
                     };
                     self.ask_for(tool, &schema, input, asking, &call)
                         .await
@@ -392,7 +428,9 @@ impl Pipeline {
             Ok(ToolCallOutput {
                 mut output,
                 mut new_messages,
+                stop_turn,
             }) => {
+                messages.stop_turn |= stop_turn;
                 let payload = tag(
                     hooks::post_tool_use(tool.name(), &input, &output, &context),
                     machine,
@@ -417,11 +455,17 @@ impl Pipeline {
                 .await
             }
             Err(failure) => {
-                let interrupted = matches!(failure, ToolError::Cancelled);
-                let text = if interrupted {
-                    INTERRUPT_FOR_TOOL_USE.to_owned()
-                } else {
-                    format_error(&failure.to_string())
+                // Fork: a call stopped on its own keeps its display and reaches the model as its own message (Node keeps
+                // the `ToolCancelled` text), while the hooks see an interrupt (Node `isInterrupt`).
+                let (failure, display) = match failure {
+                    ToolError::Stopped { message, display } => (Err(message), display),
+                    other => (Ok(other), Value::Null),
+                };
+                let interrupted = matches!(failure, Ok(ToolError::Cancelled) | Err(_));
+                let text = match &failure {
+                    Ok(ToolError::Cancelled) => INTERRUPT_FOR_TOOL_USE.to_owned(),
+                    Ok(other) => format_error(&other.to_string()),
+                    Err(message) => message.clone(),
                 };
                 let payload = tag(
                     hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context),
@@ -431,7 +475,10 @@ impl Pipeline {
                     hooks::event(HookEventName::PostToolUseFailure, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;
                 messages.after.append(&mut post.messages);
-                error(text)
+                ToolOutput {
+                    display,
+                    ..error(text)
+                }
             }
         }
     }
@@ -446,6 +493,17 @@ impl ToolExecutor for Pipeline {
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
     ) -> ToolExecution {
+        if self
+            .incognito
+            .as_ref()
+            .is_some_and(|gate| gate.hides(&context.session, tool.as_ref()))
+        {
+            // Same answer as a tool that is not registered: the session never had it.
+            return ToolExecution::output(error(format!(
+                "<tool_use_error>Error: No such tool available: {}</tool_use_error>",
+                tool.name()
+            )));
+        }
         let mut messages = HookMessages::default();
         let (input, call) = match self
             .admit(tool.as_ref(), input, context, &mut messages)

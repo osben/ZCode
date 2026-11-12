@@ -9,7 +9,7 @@ use rust_cli_kernel_api::env::{EnvError, EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::machine::{MachineEnv, Shell};
 use rust_cli_kernel_api::message::{ContentBlock, Message, ToolResultContent};
-use rust_cli_kernel_api::session_api::SessionHandle;
+use rust_cli_kernel_api::session_api::{SessionHandle, StartSource};
 use rust_cli_kernel_api::testing::{
     MemoryEnvironment, ScriptedModel, text_response, tool_use_response, unsupported_machine,
 };
@@ -190,6 +190,7 @@ struct OneRule;
 impl rust_cli_kernel_api::orchestration::DirectoryRules for OneRule {
     async fn directory_rules(
         &self,
+        _session: &rust_cli_kernel_api::ids::SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String> {
@@ -371,9 +372,261 @@ async fn delivering_moves_the_foreground_only_while_an_input_waits() {
         memory.moved(),
         [BackgroundReason::DeliverMessage, BackgroundReason::User]
     );
-    // 第一个请求放行后插话开下一个回合（没有工具边界），再放行一次。
+    // The first reply ends without tool calls: the steer joins that turn (Node 3.17 text-only drain) and the
+    // model is asked again; release that request too. One turn finishes.
+    gate.notify_one();
+    for _ in 0..200 {
+        if built.session.view().await.unwrap().queue.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(built.session.view().await.unwrap().queue.is_empty());
     gate.notify_one();
     until(&mut events, finished).await;
+}
+
+/// Fork: the prepared-worktree activation (`Command::SetExecutionRoot`, specs/fork-rust-agent-parity.md "Execution
+/// worktree") moves the shell cwd and the workspace like `/cd` but commits no note: the first turn starts in the
+/// worktree with nothing about the parent in its history. A running turn refuses it.
+#[tokio::test]
+async fn the_execution_root_moves_the_session_without_a_note() {
+    use rust_cli_kernel_api::session_api::{Ack, Command, KernelEvent};
+
+    use crate::test_support::envelope;
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let cwd_env = Arc::new(CwdEnv {
+        inner: env(),
+        cwd: Mutex::default(),
+        refuse: false,
+    });
+    let mut setup = Setup::new(Arc::new(GatedModel::new(gate.clone())));
+    setup.set_machine(cwd_env.clone().machine());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    let set = |id: &str, root: &str| {
+        envelope(
+            id,
+            Command::SetExecutionRoot {
+                root: EnvPath::new(root),
+            },
+        )
+    };
+    assert!(matches!(
+        built.session.send(set("c1", "/work/.worktrees/a")).await,
+        Ack::Accepted { .. }
+    ));
+    let seen = until(&mut events, |event| {
+        matches!(event, KernelEvent::WorkspaceChanged { .. })
+    })
+    .await;
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        KernelEvent::WorkspaceChanged { workspace } if workspace.root.as_str() == "/work/.worktrees/a"
+    )));
+    let view = built.session.view().await.unwrap();
+    assert_eq!(view.meta.workspace.root.as_str(), "/work/.worktrees/a");
+    assert!(view.messages.is_empty(), "{:?}", view.messages);
+    assert_eq!(*cwd_env.cwd.lock_unpoisoned(), ["/work/.worktrees/a"]);
+
+    built.session.send(submit("c2", "go")).await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::TurnStarted { .. })
+    })
+    .await;
+    let Ack::Rejected { reason } = built.session.send(set("c3", "/elsewhere")).await else {
+        panic!("a running turn must refuse the move");
+    };
+    assert!(reason.starts_with("A turn is in progress"), "{reason}");
     gate.notify_one();
     until(&mut events, finished).await;
+    assert_eq!(
+        built
+            .session
+            .view()
+            .await
+            .unwrap()
+            .meta
+            .workspace
+            .root
+            .as_str(),
+        "/work/.worktrees/a"
+    );
+}
+
+/// Fork: a session created for a prepared worktree (`SessionState::start_held`) holds SessionStart until the activation
+/// moves it, so the hook runs in the worktree, as Node starts the runtime there.
+#[tokio::test]
+async fn a_prepared_session_runs_session_start_in_the_worktree_after_the_move() {
+    held_start_runs_in_the_worktree(crate::Opened::Created, StartSource::Startup, "startup").await;
+}
+
+/// Fork: a prepared session reopened cold before its activation (an agent restart) still holds SessionStart, so the
+/// hook never runs in the parent checkout.
+#[tokio::test]
+async fn a_prepared_session_reopened_cold_holds_session_start_until_the_move() {
+    held_start_runs_in_the_worktree(crate::Opened::Loaded, StartSource::Resume, "resume").await;
+}
+
+async fn held_start_runs_in_the_worktree(opened: crate::Opened, start: StartSource, source: &str) {
+    use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+    use rust_cli_kernel_api::session_api::{Ack, Command};
+
+    use crate::test_support::{ScriptedHooks, envelope};
+
+    let hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome::default(),
+    ));
+    let cwd_env = Arc::new(CwdEnv {
+        inner: env(),
+        cwd: Mutex::default(),
+        refuse: false,
+    });
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(cwd_env.clone().machine());
+    setup.hooks = hooks.clone();
+    setup.start_held = true;
+    setup.opened = opened;
+    setup.start = start;
+    let built = setup.build().await;
+    // A round trip through the actor: it has started, and SessionStart has not.
+    let view = built.session.view().await.unwrap();
+    assert!(!view.running);
+    assert!(hooks.seen().is_empty(), "{:?}", hooks.seen());
+
+    let moved = built
+        .session
+        .send(envelope(
+            "c1",
+            Command::SetExecutionRoot {
+                root: EnvPath::new("/work/.worktrees/a"),
+            },
+        ))
+        .await;
+    assert!(matches!(moved, Ack::Accepted { .. }), "{moved:?}");
+    let started = async {
+        loop {
+            if let Some(event) = hooks.seen().first().cloned() {
+                return event;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), started)
+        .await
+        .unwrap();
+    assert_eq!(event.name, HookEventName::SessionStart);
+    assert_eq!(event.workspace.root.as_str(), "/work/.worktrees/a");
+    assert_eq!(event.payload["source"], source);
+}
+
+/// Fork: an activation retried after a restart between the admitted first input and the active marker. The session
+/// was reopened cold in its stored worktree with SessionStart held; the same-root move releases it (source `resume`)
+/// without moving the shell, and a further same-root move is an accepted no-op.
+#[tokio::test]
+async fn a_same_root_move_releases_the_held_start_once() {
+    use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+    use rust_cli_kernel_api::session_api::{Ack, Command};
+
+    use crate::test_support::{ScriptedHooks, envelope};
+
+    let hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome::default(),
+    ));
+    let cwd_env = Arc::new(CwdEnv {
+        inner: env(),
+        cwd: Mutex::default(),
+        refuse: false,
+    });
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(cwd_env.clone().machine());
+    setup.hooks = hooks.clone();
+    setup.start_held = true;
+    setup.opened = crate::Opened::Loaded;
+    setup.start = StartSource::Resume;
+    setup.root = "/work/.worktrees/a";
+    let built = setup.build().await;
+    built.session.view().await.unwrap();
+    assert!(hooks.seen().is_empty(), "{:?}", hooks.seen());
+
+    let same_root = |id: &str| {
+        envelope(
+            id,
+            Command::SetExecutionRoot {
+                root: EnvPath::new("/work/.worktrees/a"),
+            },
+        )
+    };
+    let moved = built.session.send(same_root("c1")).await;
+    assert!(matches!(moved, Ack::Accepted { .. }), "{moved:?}");
+    let started = async {
+        loop {
+            if let Some(event) = hooks.seen().first().cloned() {
+                return event;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), started)
+        .await
+        .unwrap();
+    assert_eq!(event.name, HookEventName::SessionStart);
+    assert_eq!(event.workspace.root.as_str(), "/work/.worktrees/a");
+    assert_eq!(event.payload["source"], "resume");
+    assert!(cwd_env.cwd.lock_unpoisoned().is_empty());
+
+    let again = built.session.send(same_root("c2")).await;
+    assert!(matches!(again, Ack::Accepted { .. }), "{again:?}");
+    built.session.view().await.unwrap();
+    assert_eq!(hooks.seen().len(), 1, "{:?}", hooks.seen());
+}
+
+/// Fork: deleting a prepared session that was never activated closes its actor without SessionEnd: SessionStart is
+/// still held, and Node has no runtime for such a session, so no hook runs in the parent checkout. Once the move has
+/// released SessionStart, closing runs SessionEnd as usual.
+#[tokio::test]
+async fn a_never_activated_prepared_session_closes_without_session_end() {
+    use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+    use rust_cli_kernel_api::session_api::{Ack, Command, EndReason};
+
+    use crate::test_support::{ScriptedHooks, envelope};
+
+    for activated in [false, true] {
+        let hooks = Arc::new(ScriptedHooks::with(
+            HookEventName::SessionEnd,
+            HookOutcome::default(),
+        ));
+        let cwd_env = Arc::new(CwdEnv {
+            inner: env(),
+            cwd: Mutex::default(),
+            refuse: false,
+        });
+        let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+        setup.set_machine(cwd_env.clone().machine());
+        setup.hooks = hooks.clone();
+        setup.start_held = true;
+        let built = setup.build().await;
+        if activated {
+            let moved = built
+                .session
+                .send(envelope(
+                    "c1",
+                    Command::SetExecutionRoot {
+                        root: EnvPath::new("/work/.worktrees/a"),
+                    },
+                ))
+                .await;
+            assert!(matches!(moved, Ack::Accepted { .. }), "{moved:?}");
+        }
+        built.session.close(EndReason::Other).await;
+        let ended = hooks
+            .seen()
+            .iter()
+            .filter(|event| event.name == HookEventName::SessionEnd)
+            .count();
+        assert_eq!(ended, usize::from(activated), "activated: {activated}");
+    }
 }

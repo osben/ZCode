@@ -234,3 +234,19 @@ fn a_wildcard_tool_list_is_sorted_by_name_and_gets_nothing_back() {
     assert!(!all.keeps_order());
     assert!(all.find("Grep").is_none());
 }
+
+/// Fork (node_desktop): a foreground subagent may ask the user; a background one and the TUI may not.
+#[test]
+fn a_desktop_foreground_subagent_may_ask_the_user() {
+    let definition = builtins()
+        .into_iter()
+        .find(|definition| definition.agent_type == "general-purpose")
+        .unwrap();
+    let asks = |background, questions| {
+        ToolRule::new(&definition, background, 1)
+            .with_questions(questions)
+            .allows("AskUserQuestion")
+    };
+    assert!(asks(false, true));
+    assert!(!asks(false, false) && !asks(true, true));
+}

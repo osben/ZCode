@@ -3,7 +3,6 @@
 ## Design reference
 
 - Date: 2026-07-23
-- Figma file: `IGDrByFuL2wY5fLUWku4sb`, node `4835:5515`
 - Design state: `Automations - Task list all`
 - Scope: populated `All` state of the desktop Automations main view
 

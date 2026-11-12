@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::env::WorkspaceRef;
+use crate::env::{EnvPath, WorkspaceRef};
 use crate::ids::{
     AgentId, ArtifactId, CommandId, MessageId, OwnerEpoch, SessionId, ToolUseId, TraceId, TurnId,
 };
@@ -34,6 +34,10 @@ pub struct SessionMeta {
     pub title: String,
     pub trace: TraceId,
     pub created_at_ms: u64,
+    /// Fork: the incognito profile frozen at creation or at a prepared worktree's activation (`session.fork_incognito`);
+    /// None for a normal session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 对话分支切点（Node `session.revert`）：活动分支 = `kept` + 切点之后追加的消息。
@@ -87,6 +91,16 @@ pub enum Fact {
     RevertSet {
         cursor: RevertCursor,
     },
+    /// Fork (B3): the receipt of a permission mode grant from a permission ask (Node `runtime/permission_full_access`,
+    /// `commitPermissionFullAccess`), committed in the grant's batch with its `ExecutionChanged`. `previous` and `next`
+    /// are the session's execution state before and after; `queue_items` the ledger ids (`queue_<command>`) of the
+    /// queued inputs whose frozen mode the grant rewrote.
+    PermissionGranted {
+        interaction: String,
+        previous: crate::permission::ExecutionState,
+        next: crate::permission::ExecutionState,
+        queue_items: Vec<String>,
+    },
     /// 本工程独有的状态，映射成带 `rust-cli/` 前缀的 session_entry（Node 忽略未知类型）。`kind` 取 [`entry_kinds`]。
     Entry {
         kind: String,
@@ -107,6 +121,20 @@ pub enum Fact {
         title: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<MessageId>,
+    },
+    /// Fork (desktop App): the goal as Node's `session_target` row stores it (specs/fork-rust-agent-parity.md, Goals);
+    /// `seen_at_ms` is the write time (`active_run_last_seen_at` while a stretch runs).
+    GoalTargetSaved {
+        goal: crate::goal::GoalState,
+        seen_at_ms: u64,
+    },
+    /// Fork (desktop App): the goal was cleared (Node `clearSessionTarget`).
+    GoalTargetCleared,
+    /// Fork (desktop App): a goal completion verification step, a Node `target_completion_verification` session entry
+    /// (specs/fork-rust-goal-verifier.md).
+    GoalVerificationRecorded {
+        verification: crate::goal::GoalVerification,
+        at_ms: u64,
     },
     /// 用户选“总是允许”时加入本机项目规则集的规则（Node `local_setting(permission/ruleset)`，
     /// docs/specs/rust-cli/shell-permissions.md §5）；与交互的解决在同一批提交。
@@ -144,6 +172,65 @@ pub enum Fact {
         child: SessionId,
         agent_type: String,
     },
+    /// Fork: an input queued behind a running turn, Node's `session_input` row `admitted` (specs/fork-rust-agent-parity.md,
+    /// Input ledger). Written again when the queued input is edited (the row's sequence is kept).
+    ///
+    /// The ledger facts are observations like the usage facts: a failed write drops only that row and is logged.
+    InputAdmitted {
+        input: AdmittedInput,
+    },
+    /// Fork: the queued input left the queue into a turn (`promoted`).
+    InputPromoted {
+        command: CommandId,
+    },
+    /// Fork: the queued input left the queue without a turn (`cancelled` with `reason`).
+    InputCancelled {
+        command: CommandId,
+        reason: String,
+    },
+    /// Fork: the session was opened from the store; its queue did not survive. Every `admitted` row becomes `promoted`
+    /// when its command is in `transcript`, else `discarded`/`session_resumed` (Node `discardPersistedPendingSteerInputs`).
+    InputsResumed {
+        transcript: Vec<CommandId>,
+    },
+}
+
+/// Fork: a queued input as the `session_input` ledger stores it ([`Fact::InputAdmitted`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdmittedInput {
+    pub command: CommandId,
+    /// Node's ledger `kind`: `sendText`, `sendGoalCommand` or `compact`.
+    pub kind: String,
+    pub delivery: InputDelivery,
+    pub text: String,
+}
+
+/// Fork: Node's ledger `delivery` of a queued input (`startNow` inputs are never queued here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InputDelivery {
+    /// A steer (`Delivery::Steer`).
+    Guide,
+    Queue,
+}
+
+impl InputDelivery {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Guide => "guide",
+            Self::Queue => "queue",
+        }
+    }
+}
+
+/// Fork: the `session_input` row of a command that left the queue without a turn ([`StoreQueries::settled_input`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettledInput {
+    /// `discarded` or `cancelled`.
+    pub status: String,
+    pub reason: Option<String>,
+    /// The row's `delivery` (`startNow`, `guide` or `queue`).
+    pub delivery: String,
 }
 
 /// 本机项目规则集的一次修改（`SessionStore::change_project_rules`）：`behavior` 这一类里先删 `remove`、再加
@@ -243,6 +330,33 @@ pub struct LoadedSession {
     /// Fork: the stored `anchor.sourceCommandId` of each typed user message ([`crate::session_api::SessionView::commands`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
+    /// Fork: the stored title is still automatic (`title_source` `default` or `first_input`, Node
+    /// `isAutoTitlePending`), so a later input may retry the generated title.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub title_pending: bool,
+    /// Fork: the stored `title_source`, so the session actor's view reports a renamed session as `custom` (Node
+    /// `normalizeStoredTitleSource`). `None` when the store does not keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the last stored permission mode grant receipt (Node `restorePermissionGrantMarker`,
+    /// `lastPermissionGrantId`), the composer's one-shot adoption key after a cold read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
+    /// Fork (desktop App): the stored goal row (Node `session_target`), an interrupted active stretch already counted
+    /// into `time_used_seconds` (Node `recoverInterruptedSessionTargetRun`); `iteration` is not stored (0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_target: Option<crate::goal::GoalState>,
+    /// Fork (desktop App): the stored goal verification steps, the latest step per target and iteration, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goal_verifications: Vec<crate::goal::RecordedVerification>,
+    /// Fork: the stored model of each assistant message (Node `providerId`, `modelId`, `reasoningLevel`), for the
+    /// cold model switch divider ([`crate::session_api::SessionView::message_models`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
+    /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
+    /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub execution_worktree: bool,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、
@@ -273,6 +387,24 @@ pub struct SessionSummary {
     pub id: SessionId,
     pub title: String,
     pub updated_at_ms: u64,
+    /// Fork: the creation time and the persisted outcome of the last turn (Node `session.last_outcome`).
+    /// A cold sessions-index row must not report its last update as its creation, or every session as
+    /// completed, because the Host stores those facts as authoritative.
+    #[serde(default)]
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<String>,
+    /// Fork: the session this one was forked from (Node cold summary `parentSessionId`). Without it the Host admits a
+    /// cold fork as an ordinary session instead of inheriting its parent's project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
+    /// Fork: the stored `title_source` (`default`, `first_input`, `generated`, `custom`), which Node's cold summary
+    /// normalizes into its `titleSource`. `None` for a session the store keeps no row or no source for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<String>,
+    /// Fork: the session is incognito (its row has `fork_incognito`). Only the flag is projected, never the profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -327,6 +459,17 @@ pub struct SessionPage {
     /// 超出 `limit` 还有更多会话。
     #[serde(default)]
     pub more: bool,
+}
+
+/// Fork: what [`StoreQueries::persist_for_input`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Admission {
+    /// A draft was persisted.
+    pub persisted: bool,
+    /// The first-input title it wrote over the `default` placeholder (`first_input`); `None` when the row kept its
+    /// title or the input is blank. The caller hands it to the session actor ([`crate::session_api::Command::AdoptTitle`])
+    /// before the input's hooks, as Node emits `SessionTitleUpdated` at the persistence.
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -452,6 +595,194 @@ pub trait LocalSettings: Send + Sync {
     ) -> Result<(), StoreError>;
 }
 
+/// Fork: the session mix of a session tree (Node `SessionTreeCounts`, `session/treeCounts`). The
+/// running count is process-local (live runtimes) and stays with the protocol caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTreeCounts {
+    pub total: u64,
+    pub side_chats: u64,
+    pub subagents: u64,
+    pub workflow_sessions: u64,
+    pub workflow_runs: u64,
+}
+
+/// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
+/// `execution_branch`, fork migration `9002_fork_session_execution_worktree`). `directory` is the row's
+/// `directory`: the parent workspace the session is listed under; `path` is where the session runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionWorktree {
+    pub directory: EnvPath,
+    pub path: EnvPath,
+    pub branch: Option<String>,
+}
+
+/// Fork: what a `session/eraseTree` deleted. `erased_roots` pairs each erased requested root with
+/// the workspace its session row carried (read inside the delete transaction), for the
+/// sessions-index announcement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErasedSessionTree {
+    pub erased_ids: Vec<String>,
+    pub erased_roots: Vec<(String, String)>,
+}
+
+/// Fork: one app-level usage query span (`v4/usage/stats`; Node `UsageQuerySpan`): an inclusive
+/// `[since_ms, until_ms]` instant range plus the fixed offset days are bucketed with, and the
+/// rollup-only extras the caller asked for (the raw-table fallback ignores the flags; specs/
+/// fork-rust-agent-parity.md).
+#[derive(Debug, Clone)]
+pub struct AppUsageSpan {
+    pub since_ms: i64,
+    pub until_ms: i64,
+    pub tz_offset_ms: i64,
+    pub filters: AppUsageFilters,
+    pub include_facets: bool,
+    pub hourly: bool,
+    pub top_sessions: bool,
+}
+
+/// Fork: the App Usage filters (Node `appUsageFiltersSchema`). Only the rollup can answer a
+/// non-empty filter; the raw-table fallback refuses it with `usage_rollup_unavailable`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageFilters {
+    pub model_ids: Vec<String>,
+    pub provider_ids: Vec<String>,
+    pub query_sources: Vec<String>,
+    pub workspace_keys: Vec<String>,
+}
+
+impl AppUsageFilters {
+    pub fn is_empty(&self) -> bool {
+        self.model_ids.is_empty()
+            && self.provider_ids.is_empty()
+            && self.query_sources.is_empty()
+            && self.workspace_keys.is_empty()
+    }
+}
+
+/// The error message Node throws when neither the rollup nor the raw tables can answer a read
+/// correctly; stores report it as `StoreError::Storage` with exactly this message.
+pub const USAGE_ROLLUP_UNAVAILABLE: &str = "usage_rollup_unavailable";
+
+/// Fork: the aggregated rows of one span (Node `queryAppUsage` result). The three `Option`
+/// groups and the reason are rollup territory: the raw-table fallback leaves them `None` and
+/// sets `rollup_fallback_reason` (protocol layer logs it like Node's "App Usage rollup
+/// unavailable" warn).
+#[derive(Debug, Clone, Default)]
+pub struct AppUsageRows {
+    pub totals: AppUsageTotals,
+    pub turn_totals: AppUsageTurnTotals,
+    pub tool_totals: AppUsageToolTotals,
+    pub models: Vec<AppUsageModelRow>,
+    pub tools: Vec<AppUsageToolRow>,
+    pub days: Vec<AppUsageDayRow>,
+    pub day_models: Vec<AppUsageDayModelRow>,
+    pub facets: Option<AppUsageFacets>,
+    pub hourly_tokens: Option<Vec<i64>>,
+    pub top_sessions: Option<Vec<AppUsageSessionRow>>,
+    pub rollup_fallback_reason: Option<String>,
+}
+
+/// Token totals over the span (Node `appUsageTotalsSchema`); the averages are null when no row
+/// carries the column.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageTotals {
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub model_request_count: i64,
+    pub model_error_count: i64,
+    pub avg_time_to_first_token_ms: Option<f64>,
+}
+
+/// Turn/session totals (completed turns only for the averages and the per-session sums).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageTurnTotals {
+    pub total_sessions: i64,
+    pub total_turns: i64,
+    pub avg_turn_duration_ms: Option<f64>,
+    pub longest_session_ms: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageToolTotals {
+    pub tool_call_count: i64,
+    pub tool_error_count: i64,
+}
+
+/// `model_id` is `Option` on purpose: the raw tables can hold NULL model ids and Node's raw
+/// path keeps them null in the models list.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageModelRow {
+    pub model_id: Option<String>,
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageToolRow {
+    pub tool_name: String,
+    pub call_count: i64,
+    pub error_count: i64,
+    pub avg_duration_ms: Option<f64>,
+}
+
+/// One local day (index = floor((started_at + tz_offset_ms) / 86_400_000)).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageDayRow {
+    pub day_index: i64,
+    pub total_tokens: i64,
+    pub turn_count: i64,
+    pub tool_call_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageDayModelRow {
+    pub day_index: i64,
+    pub model_id: Option<String>,
+    pub total_tokens: i64,
+}
+
+/// Rollup-only facet values for the App's filter menus.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageFacets {
+    pub models: Vec<String>,
+    pub providers: Vec<String>,
+    pub query_sources: Vec<String>,
+    pub workspaces: Vec<String>,
+}
+
+/// Rollup-only top-sessions entry (already sorted by the store).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppUsageSessionRow {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub workspace_key: String,
+    pub total_tokens: i64,
+    pub turn_count: i64,
+    pub duration_ms: i64,
+}
+
+/// Fork: one session's incremental token totals (`v4/conversation/usage`; Node
+/// `queryTaskUsage`). `input_baseline_by_source` keeps first-seen order (main_turn /
+/// subagent / workflow_child), matching Node's object key order on the wire.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TaskUsageTotals {
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub model_request_count: i64,
+    pub model_error_count: i64,
+    pub input_baseline_by_source: Vec<(String, i64)>,
+}
+
 /// 用量的只读查询与前端记录（审查 K7）：前端经 `Kernel::queries` 直接用，不经会话 actor（这些都不是会话状态）。以前
 /// runtime 为它们各写一个透传的 `Kernel` 方法，加一个查询要改 9 个文件。
 #[async_trait]
@@ -488,6 +819,192 @@ pub trait StoreQueries: Send + Sync {
         session: &SessionId,
         kind: &str,
     ) -> Result<Vec<FrontendRecord>, StoreError>;
+
+    /// Fork: the `discarded` or `cancelled` ledger row of a queued command (Node `loadPersistentCommandFacts`); `None`
+    /// when the command has no row or its row is `admitted`, `promoted` or `failed`. Stores without the ledger: `None`.
+    async fn settled_input(
+        &self,
+        _session: &SessionId,
+        _command: &CommandId,
+    ) -> Result<Option<SettledInput>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: the tree mix of the given roots, descendants through the session-tree child task
+    /// types (Node `countSessionTree`; archived included, forks never walked into).
+    async fn session_tree_counts(
+        &self,
+        _root_ids: Vec<String>,
+    ) -> Result<SessionTreeCounts, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree counts".to_owned(),
+        })
+    }
+
+    /// Fork: ids of the roots plus their tree descendants (Node `listSessionTreeIds`).
+    async fn session_tree_ids(&self, _root_ids: Vec<String>) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree ids".to_owned(),
+        })
+    }
+
+    /// Fork: tree sessions with a child outside the tree, a fork whose copied parts still point
+    /// at their files (Node `listSessionTreeIdsWithSurvivingChildren`).
+    async fn session_tree_ids_with_surviving_children(
+        &self,
+        _root_ids: Vec<String>,
+    ) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree surviving children".to_owned(),
+        })
+    }
+
+    /// Fork: hard-delete the trees of the given roots in one `BEGIN IMMEDIATE` transaction (Node
+    /// `deleteSessionTree`, with the fork-usage preserve step inside it). The caller closes open
+    /// runtimes first.
+    async fn erase_session_tree(
+        &self,
+        _root_ids: Vec<String>,
+    ) -> Result<ErasedSessionTree, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session tree erase".to_owned(),
+        })
+    }
+
+    /// Fork: the aggregated usage rows of one span (`v4/usage/stats`). The default answers
+    /// `Unsupported`: a store without the app-level read gets the empty snapshot from the protocol
+    /// layer (Node's missing-usageStore guard).
+    async fn app_usage(&self, _span: AppUsageSpan) -> Result<AppUsageRows, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "app usage".to_owned(),
+        })
+    }
+
+    /// Fork: one session's incremental token totals (`v4/conversation/usage`).
+    async fn task_usage(&self, _session: &SessionId) -> Result<TaskUsageTotals, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "task usage".to_owned(),
+        })
+    }
+
+    /// Fork: the App's subagent directory (`session/subagents`): the parent row plus the subagent
+    /// tool parts of the active branch (node-store `subagent_rows`).
+    async fn subagent_rows(&self, _session: &SessionId) -> Result<Value, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent rows".to_owned(),
+        })
+    }
+
+    /// Fork: the persisted subagent child sessions under `root`, reached through subagent child rows only (a side
+    /// chat or workflow child stops the walk: it is a top-level session for the agents it spawns). The agents crate
+    /// starts a notice forwarder for each when `root` opens (specs/fork-rust-agent-parity.md, "After a restart, and
+    /// on a remote executor").
+    async fn subagent_child_ids(&self, _root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent child ids".to_owned(),
+        })
+    }
+
+    /// Fork: the child rows for the collected candidate ids, resolved by id like Node's
+    /// `getSession` per candidate (missing ids are absent).
+    async fn subagent_children(&self, _ids: Vec<String>) -> Result<Value, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent children".to_owned(),
+        })
+    }
+
+    /// Fork: the stored row behind the session-list reconcile (Node `reconcileSessions` reads
+    /// `getSession`, soft-deleted rows included): `{directory, workspaceId, title, titleSource,
+    /// timeCreated, timeUpdated, timeTitleUpdated, timeDeleted, lastOutcome}`; `None` when the
+    /// session has no row. Stores without that read answer `Unsupported`.
+    async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "reconcile row".to_owned(),
+        })
+    }
+
+    /// Fork: the session is a draft the store has not persisted yet (Node `persistence:
+    /// "deferred"`, specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"). Stores
+    /// that write every session at create answer `false`.
+    async fn is_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: drops the session if it is still a draft and answers whether it did, in one step,
+    /// so a concurrent first write either materializes before (`false`) or finds the draft gone.
+    async fn discard_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: the session is a draft that never got a row: still held, or dropped without one. The
+    /// sessions index skips it either way (Node `isDraftSession`), so a flush racing a deferred
+    /// close cannot publish it.
+    async fn is_rowless_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: the admission of a session's input (Node `admitInputCommand` →
+    /// `ensureSessionPersistedForExternalActivity(input.text)`): persists a draft with the input's first-input title,
+    /// or gives a stored row still on the `default` placeholder that title, before the input's hooks run (see
+    /// [`Admission`]); `NotFound` when a deferred close dropped it first.
+    async fn persist_for_input(
+        &self,
+        _session: &SessionId,
+        _input: &str,
+    ) -> Result<Admission, StoreError> {
+        Ok(Admission::default())
+    }
+
+    /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the
+    /// `workspaceKey` of `resolveWorkspaceRefFromId`): a remote identity when the row has one, else the directory.
+    /// Never the directory it runs in (an execution worktree); `None` for an unknown session. Stores without that
+    /// read answer `Unsupported`.
+    async fn session_workspace_key(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<String>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session workspace key".to_owned(),
+        })
+    }
+
+    /// Fork: the session's execution worktree (`None`: an ordinary session). Stores without the columns answer
+    /// `None`: they cannot hold one.
+    async fn execution_worktree(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<ExecutionWorktree>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: store the session's execution worktree, set once like Node's `coalesce` (a stored value is kept).
+    /// `NotFound` without the session row; `Unsupported` when the store has no execution columns, so the
+    /// caller never runs a worktree session that would resume in the parent.
+    async fn set_execution_worktree(
+        &self,
+        _session: &SessionId,
+        _path: &EnvPath,
+        _branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "execution worktree".to_owned(),
+        })
+    }
+
+    /// Fork: freeze the incognito profile of an existing row that has none yet (a prepared execution worktree, whose
+    /// reserved row has no profile; Node `createSessionRecord` freezes it at the activation). Set once like the create
+    /// (`fork_incognito` is written only while NULL); a row that already holds this profile is `Ok`, one that holds
+    /// another is an error. `NotFound` without the row, `Unsupported` without the column, so the caller never runs a
+    /// session it could not freeze.
+    async fn set_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: &crate::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "incognito profile".to_owned(),
+        })
+    }
 }
 
 /// 一个存储适配器实现的全部会话端口（组装根与 runtime 的 `Ports` 用；各能力只拿自己用的那一个）。node-store 与测试的
@@ -541,6 +1058,12 @@ pub trait ArtifactStore: Send + Sync {
         Err(StoreError::Unsupported {
             what: "artifact lookup by id".to_owned(),
         })
+    }
+
+    /// Fork: the local file holding an artifact, for content the model is told to read by path (Node names the file of
+    /// written text material, `writeToolResultBinaryArtifact`). `None` when the store keeps no local files.
+    fn local_path(&self, _artifact: &ArtifactRef) -> Option<std::path::PathBuf> {
+        None
     }
 }
 

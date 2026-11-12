@@ -17,8 +17,16 @@ use std::collections::VecDeque;
 
 use rust_cli_kernel_api::hooks::HookOutcome;
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
+use rust_cli_kernel_api::input_intent;
 use rust_cli_kernel_api::message::ContentBlock;
-use rust_cli_kernel_api::session_api::{Delivery, QueuedInput};
+use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::permission::{ExecutionState, resolve_execution};
+use rust_cli_kernel_api::session_api::{
+    Delivery, InputExecution, QUEUE_EDIT_LOCK_LOST, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING,
+    QUEUE_ITEM_NOT_EDITABLE, QueueEditLock, QueuedEdit, QueuedInput, QueuedKind,
+};
+use rust_cli_kernel_api::store::{AdmittedInput, InputDelivery};
+use serde_json::Value;
 
 use crate::lane::Waiting;
 
@@ -31,6 +39,8 @@ pub(crate) enum InputKind {
     Bash(String),
     /// 带内容块的输入（粘贴的图片）。
     Content(Vec<ContentBlock>),
+    /// Fork: a manual compaction queued behind the running turn (`Command::SubmitWith`).
+    Compact,
 }
 
 /// 并入点的筛查（steering.rs）。
@@ -50,6 +60,11 @@ pub(crate) struct Queued {
     pub(crate) screening: Screening,
     /// 在 next 通道里：插话，与 SessionStart 给的首条输入；其余是 later。
     lane: bool,
+    /// Fork: the input has a `session_input` ledger row (a submitted input; not the SessionStart hook's first input).
+    ledger: bool,
+    /// Fork: the composer edit lock (Node `pendingInputEditLocks`). A locked input stops the drain and batching
+    /// before it; it lives and dies with the input, so clearing the queue drops the lock too.
+    edit_lock: Option<QueueEditLock>,
 }
 
 impl Queued {
@@ -58,6 +73,7 @@ impl Queued {
         matches!(self.kind, InputKind::Text)
             && !is_slash(&self.input.text)
             && !self.input.text.contains('@')
+            && self.edit_lock.is_none()
     }
 
     /// 并入点筛查留下的结果（回合结束后开它时用，不再跑 hook）。
@@ -111,24 +127,117 @@ pub(crate) fn is_slash(text: &str) -> bool {
     text.trim().starts_with('/')
 }
 
+/// Fork: a change of a queued input for Node's `session_input` ledger (specs/fork-rust-agent-parity.md, Input ledger).
+/// The inbox journals it where the input enters or leaves; the actor writes the journal ([`Inbox::take_journal`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LedgerChange {
+    Admitted(AdmittedInput),
+    Promoted(CommandId),
+    Cancelled(CommandId, &'static str),
+}
+
+/// Fork: why [`Inbox::remove_input`] took an input out of the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Left {
+    /// Into the running turn (absorbed at a tool boundary).
+    Promoted,
+    /// Without a turn, with the ledger reason.
+    Cancelled(&'static str),
+}
+
+/// The ledger row of a queued input.
+fn admitted(queued: &Queued) -> AdmittedInput {
+    // Node's queue item kinds; a bash-mode or content input is typed text there.
+    let kind = match (&queued.kind, queued.input.kind) {
+        (InputKind::Compact, _) | (_, QueuedKind::Compact) => "compact",
+        (_, QueuedKind::Goal) => "sendGoalCommand",
+        _ => "sendText",
+    };
+    AdmittedInput {
+        command: queued.input.command.clone(),
+        kind: kind.to_owned(),
+        delivery: match queued.input.delivery {
+            Delivery::Steer => InputDelivery::Guide,
+            _ => InputDelivery::Queue,
+        },
+        text: queued.input.text.clone(),
+    }
+}
+
+/// The typed text block of a content input follows a text edit: `attachments::content` puts the typed text first
+/// when it is not empty.
+fn retype(content: &mut Vec<ContentBlock>, old: &str, new: &str) {
+    let typed = !old.is_empty()
+        && matches!(content.first(), Some(ContentBlock::Text { text }) if text == old);
+    match (typed, new.is_empty()) {
+        (true, true) => {
+            content.remove(0);
+        }
+        (true, false) => {
+            content[0] = ContentBlock::Text {
+                text: new.to_owned(),
+            }
+        }
+        (false, true) => {}
+        (false, false) => content.insert(
+            0,
+            ContentBlock::Text {
+                text: new.to_owned(),
+            },
+        ),
+    }
+}
+
 /// 会话 actor 的输入调度：只在 actor 里经 `&mut` 访问。
 #[derive(Debug, Default)]
 pub(crate) struct Inbox {
     items: VecDeque<Item>,
+    /// Fork: ledger changes not written yet, in order.
+    journal: Vec<LedgerChange>,
     /// 下一条通知的 [`NoticeKey`]。
     next_key: u64,
+    /// Fork: the drain is paused (`Command::HoldQueue`, Node `setAutoDrain` with `autoDrain: false`):
+    /// turn ends do not start queued inputs until it is released.
+    held: bool,
+    /// Fork: the foreground promotion lease's owner (`Command::ReserveForeground`): while held no turn starts on its
+    /// own.
+    reserved: Option<String>,
+    /// Fork: the release lease's owner (`Command::ReserveRelease`): while held no turn starts on its own and the actor
+    /// takes no command.
+    releasing: Option<String>,
 }
 
 impl Inbox {
     /// 运行中到达的输入：插话（`Steer`）进通道，其余是 later。
     pub(crate) fn push_input(&mut self, input: QueuedInput, kind: InputKind) {
         let lane = input.delivery == Delivery::Steer;
-        self.items.push_back(Item::Input(Queued {
+        let queued = Queued {
             input,
             kind,
             screening: Screening::Unscreened,
             lane,
-        }));
+            ledger: true,
+            edit_lock: None,
+        };
+        self.journal.push(LedgerChange::Admitted(admitted(&queued)));
+        self.items.push_back(Item::Input(queued));
+    }
+
+    /// Fork: the ledger changes since the last call, in order.
+    pub(crate) fn take_journal(&mut self) -> Vec<LedgerChange> {
+        std::mem::take(&mut self.journal)
+    }
+
+    /// Fork: journal an input leaving the queue.
+    fn left(&mut self, queued: &Queued, how: Left) {
+        if !queued.ledger {
+            return;
+        }
+        let command = queued.input.command.clone();
+        self.journal.push(match how {
+            Left::Promoted => LedgerChange::Promoted(command),
+            Left::Cancelled(reason) => LedgerChange::Cancelled(command, reason),
+        });
     }
 
     /// SessionStart 给的首条输入：排在最前（通道与队列的头部），回合结束后先开它（hooks.rs）。
@@ -138,6 +247,8 @@ impl Inbox {
             kind: InputKind::Text,
             screening: Screening::Unscreened,
             lane: true,
+            ledger: false,
+            edit_lock: None,
         }));
     }
 
@@ -153,7 +264,69 @@ impl Inbox {
 
     /// 排队的输入，按到达顺序（`QueueChanged` 与视图的唯一来源）。
     pub(crate) fn queued(&self) -> Vec<QueuedInput> {
-        self.inputs().map(|queued| queued.input.clone()).collect()
+        self.inputs()
+            .map(|queued| {
+                let mut input = queued.input.clone();
+                input.edit_lock = queued.edit_lock.clone();
+                input
+            })
+            .collect()
+    }
+
+    /// Fork: whether the next thing to start is a queued input that is locked for editing. Notices in front of it
+    /// still run; a locked input stops the drain (Node `shouldAutoDrainV4QueueHead` with `editLocked`).
+    pub(crate) fn head_locked(&self) -> bool {
+        match self.lane_front() {
+            Some(LaneItem::Input(queued)) => queued.edit_lock.is_some(),
+            Some(LaneItem::Notice(_)) => false,
+            None => self
+                .inputs()
+                .next()
+                .is_some_and(|queued| queued.edit_lock.is_some()),
+        }
+    }
+
+    /// Fork: the composer edit lock of a queued input, `None` when it is not locked or not queued.
+    pub(crate) fn edit_lock_of(&self, command: &CommandId) -> Option<&QueueEditLock> {
+        self.inputs()
+            .find(|queued| queued.input.command == *command)
+            .and_then(|queued| queued.edit_lock.as_ref())
+    }
+
+    /// Fork: lock a queued input for `lock.editor_id`. `Ok(true)` when the lock is new, `Ok(false)` when the same
+    /// editor already holds it (idempotent; the original client and origin are kept).
+    pub(crate) fn lock(
+        &mut self,
+        command: &CommandId,
+        lock: QueueEditLock,
+    ) -> Result<bool, &'static str> {
+        let Some(queued) = self.input_mut(command) else {
+            return Err(QUEUE_ITEM_MISSING);
+        };
+        if matches!(queued.kind, InputKind::Compact) {
+            return Err(QUEUE_ITEM_NOT_EDITABLE);
+        }
+        match &queued.edit_lock {
+            Some(held) if held.editor_id == lock.editor_id => Ok(false),
+            Some(_) => Err(QUEUE_ITEM_EDIT_LOCKED),
+            None => {
+                queued.edit_lock = Some(lock);
+                Ok(true)
+            }
+        }
+    }
+
+    /// Fork: drop the lock of a queued input; `false` when there is none.
+    pub(crate) fn release(&mut self, command: &CommandId) -> bool {
+        self.input_mut(command)
+            .is_some_and(|queued| queued.edit_lock.take().is_some())
+    }
+
+    fn input_mut(&mut self, command: &CommandId) -> Option<&mut Queued> {
+        self.items.iter_mut().find_map(|item| match item {
+            Item::Input(queued) if queued.input.command == *command => Some(queued),
+            _ => None,
+        })
     }
 
     fn inputs(&self) -> impl Iterator<Item = &Queued> {
@@ -191,14 +364,277 @@ impl Inbox {
     }
 
     /// 去掉一条输入（并入、丢弃、成批取走）。
-    pub(crate) fn remove_input(&mut self, command: &CommandId) -> Option<Queued> {
+    pub(crate) fn remove_input(&mut self, command: &CommandId, how: Left) -> Option<Queued> {
         let at = self.items.iter().position(
             |item| matches!(item, Item::Input(queued) if queued.input.command == *command),
         )?;
         match self.items.remove(at) {
-            Some(Item::Input(queued)) => Some(queued),
+            Some(Item::Input(queued)) => {
+                self.left(&queued, how);
+                Some(queued)
+            }
             Some(Item::Notice(_)) | None => None,
         }
+    }
+
+    /// Fork: edit a still-queued input in place (Node `editQueueItem`, kernel `EditQueued`): the input keeps its
+    /// position, delivery and screening. The verdicts follow Node `editLockVerdict`: a compaction is not editable;
+    /// with an editor the lock must be held by that editor (`QUEUE_EDIT_LOCK_LOST`, also when the input is gone);
+    /// without one a locked input is refused; a missing input is `QUEUE_ITEM_MISSING`. Returns whether the edit
+    /// released the editor's lock. Fields the edit does not name keep their values; the execution state resolves
+    /// against the input's own state, or `current` when it has none (Node `resolveExecutionState`).
+    pub(crate) fn edit(
+        &mut self,
+        command: &CommandId,
+        editor: Option<&str>,
+        edit: &QueuedEdit,
+        current: ExecutionState,
+    ) -> Result<bool, &'static str> {
+        let Some(at) = self.items.iter().position(
+            |item| matches!(item, Item::Input(queued) if queued.input.command == *command),
+        ) else {
+            return Err(if editor.is_some() {
+                QUEUE_EDIT_LOCK_LOST
+            } else {
+                QUEUE_ITEM_MISSING
+            });
+        };
+        let Item::Input(queued) = &mut self.items[at] else {
+            return Err(QUEUE_ITEM_MISSING);
+        };
+        if matches!(queued.kind, InputKind::Compact) {
+            return Err(QUEUE_ITEM_NOT_EDITABLE);
+        }
+        match (editor, &queued.edit_lock) {
+            (Some(id), Some(lock)) if lock.editor_id == id => {}
+            (Some(_), _) => return Err(QUEUE_EDIT_LOCK_LOST),
+            (None, Some(_)) => return Err(QUEUE_ITEM_EDIT_LOCKED),
+            (None, None) => {}
+        }
+        if let Some(text) = &edit.text {
+            // Node `editPendingInputById`: the intent's text follows; its quotes stay unless the edit sends new ones.
+            if let Some(intent) = &mut queued.input.intent {
+                intent.set_text(text);
+            }
+            // The typed text is the first block of an input with attachments (`attachments::content`).
+            if let InputKind::Content(content) = &mut queued.kind {
+                retype(content, &queued.input.text, text);
+            }
+            queued.input.text.clone_from(text);
+            if queued.ledger {
+                self.journal.push(LedgerChange::Admitted(admitted(queued)));
+            }
+        }
+        if let (Some(quotes), Some(intent)) = (&edit.conversation_quotes, &mut queued.input.intent)
+        {
+            intent.set_quotes(quotes.clone());
+        }
+        if let Some(attachments) = &edit.attachments {
+            if let Some(intent) = &mut queued.input.intent {
+                intent.set(input_intent::ATTACHMENT_REFS, attachments.refs.clone());
+            }
+            // A running-turn guide stays text: Rust never steers content into a running turn (spec A1 rule 15).
+            if !queued.lane && matches!(queued.kind, InputKind::Text | InputKind::Content(_)) {
+                queued.kind = if attachments.content.is_empty() {
+                    InputKind::Text
+                } else {
+                    let typed = (!queued.input.text.is_empty()).then(|| ContentBlock::Text {
+                        text: queued.input.text.clone(),
+                    });
+                    InputKind::Content(
+                        typed
+                            .into_iter()
+                            .chain(attachments.content.iter().cloned())
+                            .collect(),
+                    )
+                };
+            }
+        }
+        if edit.model_selection.is_some() || edit.mode.is_some() || edit.plan_enabled.is_some() {
+            let previous = queued.input.execution.clone();
+            let base = previous.as_ref().map_or(current, |frozen| frozen.state);
+            let previous_selection = previous.and_then(|frozen| frozen.selection);
+            // Node `dropHighspeed`: the frozen Highspeed card belongs to the model it was chosen for. Node compares the
+            // payload with the item's own selection, which is the intent's when it has one.
+            let stored = queued
+                .input
+                .intent
+                .as_ref()
+                .and_then(|intent| intent.get(input_intent::MODEL_SELECTION).cloned());
+            let model_changed = match (&edit.intent_model_selection, &stored) {
+                (Some(sent), Some(stored)) => sent != stored,
+                _ => edit.model_selection.is_some() && edit.model_selection != previous_selection,
+            };
+            let mut mode = edit.mode.clone().filter(|mode| !mode.is_empty());
+            let mut plan = edit.plan_enabled;
+            if let Some(intent) = &mut queued.input.intent {
+                if model_changed {
+                    intent.drop_highspeed();
+                }
+                // Node `editedIntent`: an edited field replaces the intent's, the omitted ones stay.
+                if let Some(selection) = &edit.intent_model_selection {
+                    intent.set(input_intent::MODEL_SELECTION, selection.clone());
+                }
+                if let Some(mode) = &mode {
+                    intent.set(input_intent::MODE, Value::String(mode.clone()));
+                }
+                if let Some(plan) = plan {
+                    intent.set(input_intent::PLAN_ENABLED, Value::Bool(plan));
+                }
+                // Node resolves the edited intent when the item starts (`applyRuntimeExecutionState`): a mode-only
+                // edit keeps the intent's earlier `planEnabled`.
+                mode = mode.or_else(|| intent.str(input_intent::MODE).map(str::to_owned));
+                plan = plan.or_else(|| {
+                    intent
+                        .get(input_intent::PLAN_ENABLED)
+                        .and_then(Value::as_bool)
+                });
+            }
+            let state = if edit.mode.is_some() || edit.plan_enabled.is_some() {
+                resolve_execution(mode.as_deref(), plan, base).unwrap_or(base)
+            } else {
+                base
+            };
+            let selection = edit.model_selection.clone().or(previous_selection);
+            queued.input.execution = Some(InputExecution { state, selection });
+        }
+        let released = editor.is_some();
+        if released {
+            queued.edit_lock = None;
+        }
+        Ok(released)
+    }
+
+    /// Fork: a compaction is already queued (Node `compactOperationLock`).
+    pub(crate) fn has_compact(&self) -> bool {
+        self.items.iter().any(
+            |item| matches!(item, Item::Input(queued) if matches!(queued.kind, InputKind::Compact)),
+        )
+    }
+
+    /// Fork (B3): the ledger ids (`queue_<command>`, Node `queueItemIdForCommand`) of the queued inputs with a ledger
+    /// row, in queue order: the items a permission mode grant rewrites (its receipt's `queueItemIds`). They are Node's
+    /// `pendingSteerInputs`: every queued input, steer or later, compaction included, emits `TurnSteerQueued`; only
+    /// the SessionStart hook's first input has no ledger row, and Node does not queue it as a steer either.
+    pub(crate) fn ledger_queue_ids(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Input(queued) if queued.ledger => {
+                    Some(format!("queue_{}", queued.input.command.as_str()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Fork: full access rewrites the frozen permission mode of every queued input that carries one,
+    /// keeping its plan switch (Node's `fullAccess` rewrites the queued intents). `true` when one changed.
+    pub(crate) fn set_queued_mode(&mut self, mode: PermissionMode) -> bool {
+        let mut changed = false;
+        for item in &mut self.items {
+            if let Item::Input(queued) = item
+                && let Some(execution) = &mut queued.input.execution
+                && execution.state.mode != mode
+            {
+                execution.state = execution.state.with_mode(mode);
+                // Node's grant rewrites the queued intent's mode too (`{...item.intent, mode}`).
+                if let Some(intent) = &mut queued.input.intent {
+                    intent.set(
+                        input_intent::MODE,
+                        Value::String(mode.node_name().to_owned()),
+                    );
+                }
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Fork: move a queued input before another queued input, or to the end of the queue when `before`
+    /// is `None` (Node `reorderQueueItem`, kernel `ReorderQueued`). `false` — leaving everything
+    /// unchanged — when either input is no longer queued (a `before` equal to the moved input counts as
+    /// a miss: it is not there once the moved one is taken out).
+    pub(crate) fn reorder_input(
+        &mut self,
+        command: &CommandId,
+        before: Option<&CommandId>,
+    ) -> bool {
+        let Some(at) = self.items.iter().position(
+            |item| matches!(item, Item::Input(queued) if queued.input.command == *command),
+        ) else {
+            return false;
+        };
+        let Some(Item::Input(moved)) = self.items.remove(at) else {
+            return false;
+        };
+        let target = before.and_then(|before| {
+            self.items.iter().position(
+                |item| matches!(item, Item::Input(queued) if queued.input.command == *before),
+            )
+        });
+        match target {
+            // The position is taken after the removal, so the moved input lands right before the target.
+            Some(target) => {
+                self.items.insert(target, Item::Input(moved));
+                true
+            }
+            None if before.is_none() => {
+                self.items.push_back(Item::Input(moved));
+                true
+            }
+            // The anchor is gone: put the input back where it was.
+            None => {
+                self.items.insert(at, Item::Input(moved));
+                false
+            }
+        }
+    }
+
+    /// Fork: the queue is held (`Command::HoldQueue`, Node `setAutoDrain`): turn ends do not start
+    /// queued inputs.
+    pub(crate) fn held(&self) -> bool {
+        self.held
+    }
+
+    /// Fork: the foreground is reserved for a promoted input (`Command::ReserveForeground`).
+    pub(crate) fn reserved(&self) -> bool {
+        self.reserved.is_some() || self.releasing.is_some()
+    }
+
+    /// Fork: a promotion holds the foreground (`Command::ReserveForeground`), without the release lease.
+    pub(crate) fn foreground_reserved(&self) -> bool {
+        self.reserved.is_some()
+    }
+
+    /// Fork: the owner of the foreground promotion lease, if one holds it.
+    pub(crate) fn foreground_owner(&self) -> Option<&str> {
+        self.reserved.as_deref()
+    }
+
+    /// Fork: the release lease is held (`Command::ReserveRelease`).
+    pub(crate) fn releasing(&self) -> bool {
+        self.releasing.is_some()
+    }
+
+    /// Fork: the owner of the release lease, if one holds it.
+    pub(crate) fn release_owner(&self) -> Option<&str> {
+        self.releasing.as_deref()
+    }
+
+    /// Fork: take (`Some(owner)`) or end (`None`) the release lease.
+    pub(crate) fn set_release_owner(&mut self, owner: Option<String>) {
+        self.releasing = owner;
+    }
+
+    /// Fork: take (`Some(owner)`) or end (`None`) the foreground promotion lease.
+    pub(crate) fn set_foreground_owner(&mut self, owner: Option<String>) {
+        self.reserved = owner;
+    }
+
+    /// Fork: set the hold; returns whether it changed (the actor emits `QueueChanged` on a change).
+    pub(crate) fn set_held(&mut self, held: bool) -> bool {
+        std::mem::replace(&mut self.held, held) != held
     }
 
     /// 并入点筛查后留下（`Fate::Waits`）。
@@ -214,6 +650,13 @@ impl Inbox {
     }
 
     /// 通道里有没有同一条通知（重复送达）。
+    /// Removes a queued reminder that is no longer current (it must not drain).
+    pub(crate) fn drop_stall(&mut self, stall: &rust_cli_kernel_api::agents::AgentStall) {
+        self.items.retain(|item| {
+            !matches!(item, Item::Notice(notice) if matches!(&notice.waiting, Waiting::Stall(queued) if queued == stall))
+        });
+    }
+
     pub(crate) fn has_notice(&self, notice: &Waiting) -> bool {
         self.items
             .iter()
@@ -286,7 +729,11 @@ impl Inbox {
     /// 取走通道头上的项。
     pub(crate) fn pop_lane_front(&mut self) -> Option<Item> {
         let at = self.items.iter().position(Item::in_lane)?;
-        self.items.remove(at)
+        let item = self.items.remove(at)?;
+        if let Item::Input(queued) = &item {
+            self.left(queued, Left::Promoted);
+        }
+        Some(item)
     }
 
     /// 取走第一条 later 输入（通道为空时，优先级 `later`）。
@@ -296,7 +743,10 @@ impl Inbox {
             .iter()
             .position(|item| matches!(item, Item::Input(queued) if !queued.lane))?;
         match self.items.remove(at) {
-            Some(Item::Input(queued)) => Some(queued),
+            Some(Item::Input(queued)) => {
+                self.left(&queued, Left::Promoted);
+                Some(queued)
+            }
             Some(Item::Notice(_)) | None => None,
         }
     }
@@ -319,7 +769,10 @@ impl Inbox {
             Item::Input(_) | Item::Notice(_) => return None,
         }
         match self.items.remove(at) {
-            Some(Item::Input(queued)) => Some(queued),
+            Some(Item::Input(queued)) => {
+                self.left(&queued, Left::Promoted);
+                Some(queued)
+            }
             Some(Item::Notice(_)) | None => None,
         }
     }

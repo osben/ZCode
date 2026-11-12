@@ -24,7 +24,7 @@ import {
 interface WorkflowDraftRowSlots {
   /** Detail slot: “Draft n.” */
   secondaryText: ReactNode | undefined;
-  /** Status label “n issues to fix · not run,” present only when compilation fails. */
+  /** 状态词「n 处待修正 未运行」，编不过时才有。 */
   statusLabel: ReactNode | undefined;
   /** Hollow ring before the status label, present only when compilation fails. */
   statusIndicator: ReactNode | undefined;
@@ -65,8 +65,9 @@ export function useWorkflowDraftRowSlots({
   const superseded = draft?.superseded === true;
   const lede = intl.formatMessage({ id: workflowFeedbackLedeMessageId(saved) });
   const words = compileErrors
-    ? `${intl.formatMessage({ id: "chat.toolCall.workflow.toFix" }, { count: errorCount })} · ${intl.formatMessage({ id: "chat.toolCall.workflow.notRun" })}`
+    ? intl.formatMessage({ id: "chat.toolCall.workflow.toFix" }, { count: errorCount })
     : undefined;
+  const notRun = intl.formatMessage({ id: "chat.toolCall.workflow.notRun" });
 
   // ToolLayout is memoized: nodes passed to it must be memoized by value, or every parent render rerenders the entire row.
   const secondaryText = useMemo(
@@ -75,8 +76,13 @@ export function useWorkflowDraftRowSlots({
   );
   const statusLabel = useMemo(
     () =>
-      words === undefined ? undefined : <span data-testid="workflow-draft-status">{words}</span>,
-    [words],
+      words === undefined ? undefined : (
+        <span data-testid="workflow-draft-status" className="inline-flex items-center gap-2">
+          <span>{words}</span>
+          <span>{notRun}</span>
+        </span>
+      ),
+    [words, notRun],
   );
   const statusIndicator = useMemo(
     () => (compileErrors ? <WorkflowDraftLamp superseded={superseded} /> : undefined),

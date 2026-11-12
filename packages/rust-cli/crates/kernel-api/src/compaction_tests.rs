@@ -104,12 +104,14 @@ fn the_used_percent_is_the_context_used_formula() {
         used_tokens: 66_600,
         max_tokens: 180_000,
         compact_at: None,
+        window_tokens: None,
     };
     assert_eq!(occupancy.percent(), 37);
     let event = KernelEvent::ContextUsage {
         used_tokens: 1,
         max_tokens: 2,
         compact_at: Some(3),
+        window_tokens: None,
     };
     assert_eq!(
         serde_json::to_value(&event).unwrap(),
@@ -126,6 +128,7 @@ fn the_used_percent_is_the_context_used_formula() {
             used_tokens: 1,
             max_tokens: 2,
             compact_at: None,
+            window_tokens: None,
         }
     );
 }
@@ -201,6 +204,8 @@ fn rough_tokens_round_the_utf16_length() {
 
 fn user(text: &str) -> crate::message::Message {
     crate::message::Message::User(crate::message::UserMessage {
+        stall_execution: None,
+        intent: None,
         id: crate::ids::MessageId::new("u"),
         content: vec![crate::message::ContentBlock::Text {
             text: text.to_owned(),

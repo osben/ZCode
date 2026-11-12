@@ -27,6 +27,10 @@ pub enum TurnOutcome {
     StopHookPrevented,
     Failed {
         message: String,
+        /// Fork: Node's error code for the failure ([`crate::model::ModelError::code`]), which the App localizes
+        /// (`lastError.code`); `None` is the generic turn fault.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
 }
 
@@ -46,6 +50,75 @@ pub struct QueuedInput {
     pub command: CommandId,
     pub text: String,
     pub delivery: Delivery,
+    /// Fork: what the queued item does when it drains (the App's queue item `kind`).
+    #[serde(default, skip_serializing_if = "QueuedKind::is_text")]
+    pub kind: QueuedKind,
+    /// Fork: the execution state frozen when the input was submitted (Node's queued intent
+    /// `mode`/`planEnabled`/`modelSelection`). The session applies it when the item starts its turn;
+    /// `None` keeps the session's state (TUI inputs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<InputExecution>,
+    /// Fork: the App input's intent ([`crate::input_intent`]); `text` stays the typed text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
+    /// Fork: the composer edit lock on this item (Node `pendingInputEditLocks`, `editLock` in the App's queue item).
+    /// Held in the session actor's memory only; it is not replayed after the agent process exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_lock: Option<QueueEditLock>,
+}
+
+impl QueuedInput {
+    /// A plain text input without a frozen execution state.
+    pub fn text(command: CommandId, text: String, delivery: Delivery) -> Self {
+        Self {
+            command,
+            text,
+            delivery,
+            kind: QueuedKind::Text,
+            execution: None,
+            intent: None,
+            edit_lock: None,
+        }
+    }
+}
+
+/// Fork: who holds the composer edit lock of a queued input (Node `PendingInputEditLock`). `client_id` is the
+/// envelope's client, `input_origin` the trusted Host field (`desktop` or `mobile`), shown to the other clients.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueEditLock {
+    pub editor_id: String,
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_origin: Option<String>,
+}
+
+/// Fork: the kind of a queued input (Node's queue item `kind`: `sendText`, `sendGoalCommand`, `compact`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueuedKind {
+    /// A user input that opens a turn.
+    #[default]
+    Text,
+    /// A `/goal <objective>` input: drains like text (the goal command is read from the text).
+    Goal,
+    /// A manual compaction queued behind the running turn; it is not a user message.
+    Compact,
+}
+
+impl QueuedKind {
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::Text)
+    }
+}
+
+/// Fork: the execution state an input was submitted with (Node's Submission `mode`, `planEnabled`,
+/// `modelSelection`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputExecution {
+    pub state: crate::permission::ExecutionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<ModelSelection>,
 }
 
 /// 只供显示的系统提示的级别（informational system 消息的 `level`）。
@@ -65,6 +138,10 @@ pub enum KernelEvent {
     },
     TitleChanged {
         title: String,
+        /// Fork: where the title came from (Node `SessionTitleUpdated.source`); an event without it reads as
+        /// `generated`.
+        #[serde(default)]
+        source: crate::title::Source,
     },
     ModelChanged {
         selection: ModelSelection,
@@ -81,6 +158,11 @@ pub enum KernelEvent {
         turn: TurnId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<CommandId>,
+    },
+    /// Fork (desktop App): the turn that just started makes no model call, like Node's `/goal X` control turn
+    /// (`executionKind: "controlOnly"`): the App shows no work footer for it.
+    TurnControlOnly {
+        turn: TurnId,
     },
     TurnFinished {
         turn: TurnId,
@@ -99,6 +181,15 @@ pub enum KernelEvent {
     MessageDone {
         message: Message,
     },
+    /// Fork: the model started a tool call in response `response` of `turn` (block `index`); its input streams as
+    /// [`KernelEvent::StreamDelta`] with `BlockDelta::InputJson` (Node `tool_input_start`).
+    ToolInputStarted {
+        turn: TurnId,
+        response: u32,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,
@@ -116,6 +207,11 @@ pub enum KernelEvent {
         turn: TurnId,
         files: Vec<FileChange>,
         rewindable: bool,
+        /// Fork: the message that opened the turn (the checkpoints' `prompt`), typed or
+        /// model-only. The desktop's per-turn file queries address the turn by it; a turn opened
+        /// by a background task notification has no typed user row to take it from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_input: Option<MessageId>,
     },
     InteractionAsked {
         interaction: InteractionId,
@@ -130,6 +226,9 @@ pub enum KernelEvent {
         /// 生效的自动压缩阈值（[`crate::compaction::ContextOccupancy::compact_at`]，compact.md §2.3）。serde 缺省 None。
         #[serde(default)]
         compact_at: Option<u64>,
+        /// Fork: [`crate::compaction::ContextOccupancy::window_tokens`]. serde default None.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_tokens: Option<u64>,
     },
     /// 上下文快满的提示（docs/specs/rust-cli/compact.md §2.1）：提交带用量的 assistant 与压缩结果之后重算。
     ContextNotice {
@@ -161,9 +260,44 @@ pub enum KernelEvent {
         trigger: CompactTrigger,
         message: String,
     },
+    /// Fork (desktop): the compaction had too little history to summarize and did nothing (Node `skipped`, shown as
+    /// "Context is up to date; no compression needed").
+    CompactSkipped {
+        trigger: CompactTrigger,
+    },
     /// 历史被改写（rewind、编辑重发）；前端丢弃旧视图后重新取快照。
     HistoryRewritten {
         generation: u64,
+    },
+    /// Fork: the checkpoints of the turn opened by `turn_input` were all restored
+    /// ([`crate::session_api::Command::RewindTurnFiles`]); the turn header's file summary flips to
+    /// reverted and stops offering the rewind-files action.
+    TurnFilesReverted {
+        turn_input: MessageId,
+    },
+    /// Fork: a permission mode (full access or guarded) was granted from the permission ask `interaction`
+    /// ([`crate::session_api::Command::GrantPermissionMode`]), right after the mode change. The desktop
+    /// composer adopts the session mode once per grant (Node `config.permissionGrant`).
+    PermissionGranted {
+        interaction: String,
+    },
+    /// Fork: a plan tool (EnterPlanMode / ExitPlanMode call `tool_call`) set the plan switch to
+    /// `enabled`, right after the plan change. The desktop composer adopts the plan switch once per
+    /// transition (Node `config.planTransition`).
+    PlanTransition {
+        tool_call: String,
+        enabled: bool,
+    },
+    /// Fork: the desktop goal changed (set, paused, resumed, evaluated, cleared); `goal` is the
+    /// state after the change (Node `TargetChanged`, projected as the snapshot `goal`).
+    GoalChanged {
+        goal: Option<crate::goal::GoalState>,
+    },
+    /// Fork: a step of a desktop goal completion verification (Node `TargetCompletionVerification`), for the
+    /// `goalVerify` timeline marker (specs/fork-rust-goal-verifier.md).
+    GoalVerification {
+        verification: crate::goal::GoalVerification,
+        at_ms: u64,
     },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。

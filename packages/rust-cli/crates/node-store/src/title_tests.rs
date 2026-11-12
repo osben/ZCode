@@ -19,6 +19,9 @@ async fn generated_titles_follow_the_node_source_condition() {
         .await
         .unwrap();
     assert_eq!(row(&test), [json!(""), json!("default"), json!(null)]);
+    // Fork: a cold load reports whether the stored title is still automatic (a later input may retry it).
+    let pending = async || test.store.load(&session).await.unwrap().title_pending;
+    assert!(pending().await);
     test.store
         .commit(
             &session,
@@ -34,6 +37,7 @@ async fn generated_titles_follow_the_node_source_condition() {
             json!(null)
         ]
     );
+    assert!(pending().await);
     let generated = Fact::TitleGenerated {
         title: "Hook trust digest".to_owned(),
         message: Some(MessageId::new("msg_1")),
@@ -43,6 +47,7 @@ async fn generated_titles_follow_the_node_source_condition() {
         .await
         .unwrap();
     assert_eq!(row(&test), ["Hook trust digest", "generated", "msg_1"]);
+    assert!(!pending().await);
     // 改名之后（custom）生成的标题不再写入，整批失败。
     let renamed = Fact::TitleChanged {
         title: "Mine".to_owned(),
@@ -82,4 +87,97 @@ async fn a_command_input_titles_the_session_as_typed() {
         row(&test),
         [json!("/greet Ada"), json!("first_input"), json!(null)]
     );
+}
+
+/// Fork: an input without text (an attachment-only message) keeps the `New session` placeholder as `default`, and the
+/// first real input replaces it (Node `persistSession`, specs/fork-rust-agent-parity.md, Blank first input title).
+#[tokio::test]
+async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
+    let test = TestStore::new();
+    let session = SessionId::new("sess_title");
+    test.store
+        .create(meta("sess_title", "/w", ""))
+        .await
+        .unwrap();
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", "  \n ")]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test),
+        [json!("New session"), json!("default"), json!(null)]
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_2", "real question")]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test),
+        [json!("real question"), json!("first_input"), json!(null)]
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_3", " ")]))
+        .await
+        .unwrap();
+    assert_eq!(row(&test)[..2], ["real question", "first_input"]);
+}
+
+/// Fork: quotes are an input intent's (quote_intent_tests.rs); a text that merely ends with a quote block, without an
+/// intent, is plain text: the title and the part keep it whole.
+#[tokio::test]
+async fn a_quote_block_without_an_intent_is_plain_text() {
+    use rust_cli_kernel_api::conversation_quote::{Quote, compose};
+    let test = TestStore::new();
+    let session = SessionId::new("sess_quoted");
+    test.store
+        .create(meta("sess_quoted", "/w", ""))
+        .await
+        .unwrap();
+    let quoted = compose(
+        "explain this",
+        &[Quote {
+            text: "E2E selection".to_owned(),
+            path: None,
+            sender_name: None,
+            sender_id: None,
+            message_id: None,
+            sent_at: None,
+            comment: None,
+            agent: None,
+        }],
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", &quoted)]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test)[0],
+        json!(rust_cli_node_records::records::title_from_input(&quoted))
+    );
+    let parts = test.rows("select data from part");
+    let text: serde_json::Value = serde_json::from_str(parts[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(text["text"], quoted);
+    assert!(text.get("metadata").is_none());
+}
+
+/// Fork: a cold load carries the stored `title_source`, so the reopened session's actor and projection report a
+/// rename as `custom` (Node `normalizeStoredTitleSource`).
+#[tokio::test]
+async fn a_load_reports_the_stored_title_source() {
+    use rust_cli_kernel_api::title::Source;
+    let test = TestStore::new();
+    let session = SessionId::new("sess_source");
+    test.store
+        .create(meta("sess_source", "/w", ""))
+        .await
+        .unwrap();
+    let source = async || test.store.load(&session).await.unwrap().title_source;
+    assert_eq!(source().await, Some(Source::Default));
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", "hello there")]))
+        .await
+        .unwrap();
+    assert_eq!(source().await, Some(Source::FirstInput));
+    test.store.rename(&session, "Renamed").await.unwrap();
+    assert_eq!(source().await, Some(Source::Custom));
 }

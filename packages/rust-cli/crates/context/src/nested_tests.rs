@@ -27,6 +27,8 @@ fn assistant(calls: &[(&str, &str, Value)]) -> Message {
 
 fn results(answers: &[(&str, bool)]) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("u"),
         content: answers
             .iter()

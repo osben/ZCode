@@ -6,7 +6,7 @@
 //! | --------------------------------------- | ------------------------------------------------------------------ |
 //! | `system` 块                             | 一个 [`Item::System`]，块之间用空行连接；`cache_control` 丢弃      |
 //! | 对话中间的 `role: system` 消息          | user 内容里的 `<system-reminder>` 文本（关掉 beta 时的形状），挪到下一条 user 的工具结果之后 |
-//! | user 的 text / image                    | [`Item::User`] 的文本 / 图片片段，相邻的 user 合并                 |
+//! | user 的 text / image                    | [`Item::User`] 的文本 / 图片片段（fork：相邻的 user 不合并）       |
 //! | user 的 tool_result                     | [`Item::ToolResult`]（文本连接）；结果里的图片与 PDF 放进紧随的 user 片段 |
 //! | assistant 的 text / tool_use            | [`Item::Assistant`] 的正文与函数调用（参数是 JSON 文本）          |
 //! | assistant 的 thinking                   | 正文进 `reasoning`；签名与 redacted_thinking 丢弃                  |
@@ -26,6 +26,8 @@ pub(crate) enum Part {
     Image(String),
     /// PDF 文档（Read 整读的 document 块，model.md §10.6）：`data:application/pdf;base64,<data>`。
     File(String),
+    /// Fork: an attached video, `data:<video mime>;base64,<data>` (Node's patched `@ai-sdk/openai-compatible`).
+    Video(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +109,9 @@ pub(crate) fn items(
                         | ContentBlock::ServerToolUse { .. }
                         | ContentBlock::WebSearchToolResult { .. }
                         | ContentBlock::File { .. } => {}
-                        ContentBlock::Image { .. } | ContentBlock::ToolResult { .. } => {
+                        ContentBlock::Image { .. }
+                        | ContentBlock::Video { .. }
+                        | ContentBlock::ToolResult { .. } => {
                             return Err(invalid(
                                 "assistant messages carry only text and tool calls",
                             ));
@@ -137,7 +141,8 @@ fn user(
     for block in blocks {
         match block {
             ContentBlock::Text { text } => parts.push(Part::Text(text)),
-            ContentBlock::Image { source } => parts.push(Part::Image(data_url(source)?)),
+            ContentBlock::Image { source, .. } => parts.push(Part::Image(data_url(source)?)),
+            ContentBlock::Video { source, .. } => parts.push(Part::Video(data_url(source)?)),
             // Fork: `query::normalize` expands attached files before lowering.
             ContentBlock::File { .. } => {
                 return Err(invalid(
@@ -187,15 +192,16 @@ fn user(
     Ok(())
 }
 
-/// 追加 user 片段，与前一个 user 合并。
+/// 追加 user 片段。
+///
+/// Fork: each user message stays its own message. Node's OpenAI-compatible path never merges adjacent user content
+/// (`mergesAdjacentUserContent` is Anthropic Messages only), and `query::normalize` already merges on the protocols
+/// that do.
 fn push_user(out: &mut Vec<Item>, parts: Vec<Part>) {
     if parts.is_empty() {
         return;
     }
-    match out.last_mut() {
-        Some(Item::User(existing)) => existing.extend(parts),
-        _ => out.push(Item::User(parts)),
-    }
+    out.push(Item::User(parts));
 }
 
 fn data_url(source: ImageSource) -> Result<String, ModelError> {

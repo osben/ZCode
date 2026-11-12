@@ -88,6 +88,8 @@ fn user(record: &WithParts) -> Option<Message> {
         return None;
     }
     let summary = truthy(info.get("summary"));
+    // Node names an unnamed attachment by its place among the message's file parts.
+    let mut file_index = 0;
     let content: Vec<ContentBlock> = record
         .parts
         .iter()
@@ -95,13 +97,15 @@ fn user(record: &WithParts) -> Option<Message> {
             // 人类输入的图片（Node `file` part，tui-input.md §3.2）按 part 的顺序读回；其他附件与读不出的
             // 图片仍然不读（node-store.md §5）。
             if part["type"] == "file" {
-                // Fork: an App attachment (a part with a `filename`) is read back whole, for its reminders and chip.
-                if !summary && let Some(file) = crate::attached_file::from_part(part) {
+                // Fork: an App attachment is read back whole, for its reminders and chip.
+                let index = file_index;
+                file_index += 1;
+                if !summary && let Some(file) = crate::attached_file::from_part(part, index) {
                     return Some(ContentBlock::File { file });
                 }
                 return match crate::tool_content::from_file_part(part) {
                     ToolResultContent::Image { source } if !summary => {
-                        Some(ContentBlock::Image { source })
+                        Some(ContentBlock::Image { source, name: None })
                     }
                     _ => None,
                 };
@@ -123,6 +127,12 @@ fn user(record: &WithParts) -> Option<Message> {
         return None;
     }
     Some(Message::User(UserMessage {
+        stall_execution: None,
+        // Fork: an App input's typed text and quotes (Node `inputIntentOfMessage`).
+        intent: (!summary)
+            .then(|| crate::input_intent::of_message(info))
+            .flatten()
+            .map(Box::new),
         id: MessageId::new(record.id()),
         content,
         origin: if summary {

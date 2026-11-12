@@ -67,6 +67,8 @@ pub struct AgentCatalog {
     files: Arc<dyn Files>,
     /// 插件 agent 文件；只由 runtime 在插件加载后设置（agents.md §3）。
     plugins: RwLock<Vec<PluginAgentFile>>,
+    /// Fork: the sessions' incognito profiles (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
 }
 
 impl AgentCatalog {
@@ -75,7 +77,14 @@ impl AgentCatalog {
             info,
             files,
             plugins: RwLock::default(),
+            incognito: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Fork: set once by the runtime. Without custom agents a session sees only the built-in agents (Node resolves
+    /// every agent source as the built-in fallback, plugin agents included); without plugins it sees no plugin agents.
+    pub fn set_incognito(&self, profiles: rust_cli_kernel_api::incognito::IncognitoProfiles) {
+        let _ = self.incognito.set(profiles);
     }
 
     /// 换上插件加载得到的 agent 文件（`LocalKernel::start_extensions`）。
@@ -85,7 +94,29 @@ impl AgentCatalog {
 
     /// 当前可用的 agent 类型（`/context` 的自定义 agent 也用它，context-usage.md §3）。
     pub async fn definitions(&self, workspace: &WorkspaceRef) -> Vec<AgentDefinition> {
-        let files = self.plugins.read_unpoisoned().clone();
+        self.definitions_in(workspace, None).await
+    }
+
+    /// Fork: [`Self::definitions`] as `session`'s incognito profile allows.
+    pub async fn definitions_in(
+        &self,
+        workspace: &WorkspaceRef,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+    ) -> Vec<AgentDefinition> {
+        use rust_cli_kernel_api::incognito::IncognitoKey;
+        let excludes = |key| {
+            session
+                .zip(self.incognito.get())
+                .is_some_and(|(session, profiles)| profiles.excludes(session, key))
+        };
+        if excludes(IncognitoKey::CustomAgents) {
+            return merge(vec![builtins()]);
+        }
+        let files = if excludes(IncognitoKey::Plugins) {
+            Vec::new()
+        } else {
+            self.plugins.read_unpoisoned().clone()
+        };
         let mut layers = vec![
             builtins(),
             plugin::load(self.files.as_ref(), workspace, &files).await,
@@ -102,7 +133,7 @@ impl AgentCatalog {
 impl ListingSource for AgentCatalog {
     async fn listings(&self, request: &ContextRequest) -> Result<Listings, OrchestrationError> {
         let agents = self
-            .definitions(&request.workspace)
+            .definitions_in(&request.workspace, Some(&request.session))
             .await
             .iter()
             .map(|definition| ListingEntry {

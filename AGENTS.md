@@ -48,6 +48,7 @@ Test entry points are defined by the target package's current `package.json` and
 - PR descriptions state the background, design intent, and behavior before and after the change. For each bugfix, describe the trigger scenario, root-cause evidence, fix mechanism, and regression verification, and link existing tickets where possible. Mark unconfirmed root causes or introducing commits as such; do not attribute them by module or time proximity.
 - For solutions involving state, timing, remote, or asynchronous synchronization, use a diagram to show owners and event order.
 - You must run `pnpm typecheck` and `pnpm lint` and report the real results; do not report pre-existing failures as passing.
+- After changing React components or hooks, run `pnpm lint` (Oxlint) and check `react/exhaustive-deps` and `react/rules-of-hooks`. Review the missing, extra and unstable dependency and call-site diagnostics that the change adds or touches; do not ignore them because they are only warnings or the exit code is 0, and do not mechanically add whole-object dependencies or disable the rules. Files ignored by the root config need the dedicated scan in [React Hooks lint](docs/testing/react-hooks-lint.md); render problems still need runtime verification.
 - Use asynchronous file and network IO; cross-package imports use public entry points and follow existing path aliases.
 - Forbidden: UI directly calling a Repo, a Service referencing a concrete Runtime implementation, cross-domain imports of implementation details, and circular dependencies.
 

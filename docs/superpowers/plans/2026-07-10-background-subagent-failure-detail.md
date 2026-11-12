@@ -41,6 +41,6 @@ notification, user-visible Agent result, failure hover, and snapshot restore.
   `apps/zcode-cli/packages/core/src/subagent/completion-notification.ts`.
 - Unit: `subagent-background.test.ts`, `backgroundTaskNotifications.test.ts`,
   `zcodeSessionProjection.test.ts`, `zcodeLegacyTaskCompatTaskIndex.test.ts`.
-- E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-background-subagent-rate-limit.test.ts`
+- E2E: `packages/desktop/test/e2e/conversation-session/background/conversation-session-background-subagent-rate-limit.test.ts`
   with case-local child-only 429 fixtures (`retry-after: 0`, `lastUserMessageIncludes`
   scoping so parent requests cannot match).

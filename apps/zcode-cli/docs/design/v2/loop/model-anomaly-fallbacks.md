@@ -41,7 +41,11 @@ retry limits, unrecoverable context overflow.
 3. **The model self-corrects first**: any anomaly warning is a model-visible prompt only — it never
    disables tools, throws `ToolMaxCalls`, or ends the turn.
 4. **Resource boundaries stay hard**: tool timeouts, output size, process cancellation, permission
-   denial, user interruption, and unrecoverable provider errors may hard-fail or interrupt.
+   denial, user interruption, and unrecoverable provider errors may hard-fail or interrupt. A per-tool
+   resource budget is in this class too, for example the per-ask WebSearch count of dynamic-workflow
+   subagents (`tool/13-websearch.md`): exceeding it returns a model-visible error from that tool only.
+   It does not change the tools list, end the turn, or count other tools' calls, so it is not a tool
+   call cap.
 5. **Never swallow errors**: low-level errors keep their original cause; only the loop boundary
    decides whether to convert them into a model-visible warning, a user prompt, or a turn error.
 

@@ -7,6 +7,121 @@
   },
   "overrides": [
     {
+      // Only add the Hooks rules in this override and keep the original plugins, so the full React default rule set is not enabled.
+      "files": ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
+      "plugins": ["unicorn", "typescript", "oxc", "react"],
+      "rules": {
+        "react/rules-of-hooks": "error",
+        "react/exhaustive-deps": "warn"
+      }
+    },
+    {
+      // The 20 existing call-site diagnostics from the first scan stay warnings; remove each exception once its file is fixed, never widen to a directory.
+      // Dependency diagnostics and other rules are not downgraded; see docs/testing/react-hooks-lint.md.
+      "files": [
+        "**/packages/desktop/test/e2e/helpers/web-remote-visibility-browser.ts",
+        "**/packages/ui/src/ToolCallBlocks/renderers/resume-workflow-run.tsx",
+        "**/packages/ui/src/hooks/useOnboardingRecordService.ts",
+        "**/packages/ui/src/hooks/useZCodeAgentService.ts",
+        "**/packages/ui/src/hooks/useZCodeSessionService.ts",
+        "**/packages/ui/src/hooks/useZCodeTaskService.ts",
+        "**/packages/ui/src/project-sidebar/grouped/task-row.tsx",
+        // Fork tests: a plain test helper named use*, and hooks called inside renderHook callbacks.
+        "**/packages/services/test/zcodeLegacyTaskCompatTaskIndex.test.ts",
+        "**/packages/ui/test/pullRequestRefreshSignals.test.ts"
+      ],
+      "plugins": ["unicorn", "typescript", "oxc", "react"],
+      "rules": {
+        "react/rules-of-hooks": "warn"
+      }
+    },
+    {
+      // The session-control core depends only on contracts and injected ports; never couple the runtime environment back into use cases.
+      "files": ["packages/session-control/src/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "node:*",
+                  "node:*/**",
+                  "fs",
+                  "fs/**",
+                  "child_process",
+                  "worker_threads",
+                  "net",
+                  "http",
+                  "https",
+                  "http2",
+                  "dgram",
+                  "dns",
+                  "dns/**",
+                  "tls",
+                  "os",
+                  "path",
+                  "path/**",
+                  "crypto",
+                  "stream",
+                  "stream/**",
+                  "timers",
+                  "timers/**",
+                  "process",
+                  "module",
+                  "vm",
+                  "electron",
+                  "react",
+                  "react/**",
+                  "react-dom",
+                  "react-dom/**",
+                  "zustand",
+                  "zustand/**",
+                  "@zcode/services",
+                  "@zcode/services/**",
+                  "@zcode/shared",
+                  "@zcode/shared/**",
+                  "@zcode/core",
+                  "@zcode/core/**",
+                  "@zcode/bootstrap",
+                  "@zcode/bootstrap/**",
+                  "@zcode/adapters",
+                  "@zcode/adapters/**",
+                  "**/services/src/**",
+                  "**/apps/zcode-cli/**"
+                ],
+                "message": "Session control uses injected ports; environment and host implementations belong in adapters."
+              },
+              {
+                "group": [
+                  "../cli/**",
+                  "../app/**",
+                  "../../cli/**",
+                  "../../app/**",
+                  "@zcode/session-control/cli",
+                  "@zcode/session-control/app",
+                  "#src/application/cli/**",
+                  "#src/application/app/**",
+                  "#session-control/application/cli/**",
+                  "#session-control/application/app/**"
+                ],
+                "message": "CLI and App use cases are independent; share contracts or pure domain rules instead."
+              }
+            ]
+          }
+        ],
+        "no-restricted-globals": [
+          "error",
+          "process",
+          "window",
+          "fetch",
+          "setTimeout",
+          "setInterval",
+          "Date"
+        ]
+      }
+    },
+    {
       // Existing large implementations kept as warnings only; they are not split mechanically in this sync.
       "files": [
         // Marketplace keeps the upstream large-file shape and only adds directory field projection.

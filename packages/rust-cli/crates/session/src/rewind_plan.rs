@@ -6,11 +6,15 @@ use std::collections::HashMap;
 use rust_cli_base::text;
 use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::env_rewind::{RestoreFile, content_hash};
+use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::{MachineName, MessageId};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::session_api::FileChange;
 use rust_cli_kernel_api::store::WorkspaceCheckpoint;
 use serde::Deserialize;
+
+use crate::notices::NOTICE_SOURCE;
+use crate::peers::PEER_SOURCE;
 
 /// 中断文本（合成的消息）；这两条不是可选的 user 消息（kernel-api 的定义，F55）。
 const INTERRUPTS: [&str; 2] = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
@@ -45,6 +49,30 @@ pub(crate) fn selectable(message: &Message) -> Option<&UserMessage> {
         return None;
     }
     Some(user)
+}
+
+/// Fork: where a rewind to `target` undoes files from (Node edits a drained guide row through the
+/// same canonical target as a typed input, and restores the files of the whole turn). A typed input
+/// is its own anchor. A guided steer attachment (`queued_command::guided`) anchors at the turn's
+/// opener: the nearest earlier typed input or notice/peer meta message, else the attachment itself.
+/// `None` when `target` is neither.
+pub(crate) fn rewind_anchor<'a>(
+    messages: &'a [Message],
+    target: &MessageId,
+) -> Option<&'a MessageId> {
+    let index = messages.iter().position(|m| m.id() == target)?;
+    match &messages[index] {
+        message if selectable(message).is_some() => Some(message.id()),
+        Message::Attachment(attachment) if queued_command::guided(attachment).is_some() => {
+            let opener = messages[..index].iter().rev().find(|m| {
+                selectable(m).is_some()
+                    || matches!(m, Message::User(user) if matches!(&user.origin,
+                        UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE))
+            });
+            Some(opener.unwrap_or(&messages[index]).id())
+        }
+        _ => None,
+    }
 }
 
 /// esc 撤回的判断（修复线 F38，spec §5.5）：输入之后的这些消息里有没有
@@ -84,9 +112,13 @@ pub(crate) fn checkpoints_from<'a>(
 }
 
 /// checkpoint artifact 里本工程用到的字段（Node `workspaceCheckpointArtifactSchema`）。
+/// Fork: `toolName` is recorded by the tools' checkpoint writer; older artifacts have none.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Artifact {
     pub files: Vec<ArtifactFile>,
+    #[serde(default)]
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,6 +128,10 @@ pub(crate) struct ArtifactFile {
     pub existed_before: bool,
     pub before_content: Option<String>,
     pub after_content: Option<String>,
+    /// The write's hunks (Node `structuredPatch`, the App's `readonlyDiffHunkSchema` on the wire);
+    /// the App's per-turn summary shows them. Older artifacts omit it.
+    #[serde(default)]
+    pub structured_patch: Vec<serde_json::Value>,
 }
 
 /// 恢复计划：按写入的逆序、按路径模拟（Node `buildWorkspaceFileRewindPlan`）。每个路径期望磁盘上是
@@ -180,7 +216,7 @@ const DIAGONAL_STEP: isize = 2;
 
 /// 增删行数：先去掉公共前后缀，再用 Myers 求最小编辑距离 D（与 jsdiff 的统计相同）；
 /// LCS = (N + M - D) / 2，新增 = M - LCS，删除 = N - LCS。
-fn line_changes(before: &str, after: &str) -> (u64, u64) {
+pub(crate) fn line_changes(before: &str, after: &str) -> (u64, u64) {
     let split = |text: &str| -> Vec<String> {
         if text.is_empty() {
             return Vec::new();

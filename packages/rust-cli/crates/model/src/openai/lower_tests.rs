@@ -14,6 +14,7 @@ pub(crate) fn content(block: ContentBlock) -> ApiContent {
             ttl: None,
             scope: None,
         }),
+        meta: false,
     }
 }
 
@@ -112,9 +113,10 @@ fn messages_lower_to_protocol_neutral_items() {
             Item::User(vec![
                 Part::Text("<system-reminder>ctx</system-reminder>".to_owned()),
                 Part::Text("read a.png".to_owned()),
-                // 中途的 system 消息并进它之前的 user 回合（在 assistant 之前写出）。
-                reminder("# Environment"),
             ]),
+            // Fork: the mid-conversation system message is its own user message (written before the assistant);
+            // adjacent user messages are not merged on the OpenAI protocols.
+            Item::User(vec![reminder("# Environment")]),
             Item::Assistant {
                 text: String::new(),
                 reasoning: "need the file".to_owned(),
@@ -180,7 +182,10 @@ fn unmaterialized_images_are_rejected() {
     };
     let messages = vec![message(
         ApiRole::User,
-        vec![ContentBlock::Image { source: artifact }],
+        vec![ContentBlock::Image {
+            source: artifact,
+            name: None,
+        }],
     )];
     assert!(matches!(
         items(Vec::new(), messages),
@@ -251,4 +256,21 @@ fn documents_lower_to_file_parts_after_the_tool_result() {
             )]),
         ]
     );
+}
+
+/// A user turn carrying an attached video (Node `normalizeTurnAttachments`' video block).
+pub(crate) fn video_turn() -> Vec<ApiMessage> {
+    vec![message(
+        ApiRole::User,
+        vec![
+            text("what happens?"),
+            ContentBlock::Video {
+                source: ImageSource::Base64 {
+                    media_type: "video/mp4".to_owned(),
+                    data: "AAAA".to_owned(),
+                },
+                name: Some("clip.mp4".to_owned()),
+            },
+        ],
+    )]
 }

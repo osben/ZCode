@@ -11,6 +11,7 @@ fn asked_once() -> PermissionDecision {
         message: DANGER.to_owned(),
         suggestions: Vec::new(),
         once: true,
+        independent: false,
     }
 }
 
@@ -112,6 +113,7 @@ async fn plan_overrides_yolo_and_guarded() {
     // auto_in_plan 关掉时 plan 下询问用户（yolo 也问）。
     let asking = PolicyGate::default().with_options(PolicyOptions {
         auto_in_plan: false,
+        node_plan: false,
     });
     let state = ExecutionState::from(PermissionMode::BypassPermissions).with_plan(true);
     assert!(matches!(

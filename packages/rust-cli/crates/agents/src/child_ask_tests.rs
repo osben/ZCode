@@ -27,6 +27,7 @@ fn sink(parent: Option<Parent>, asks: Option<Asks>) -> ChildSink {
 
 fn permission(asked_by: Option<&str>) -> InteractionRequest {
     InteractionRequest::Permission {
+        origin: None,
         machine: Default::default(),
         tool_use: ToolUseId::new("toolu_1"),
         tool: "Bash".to_owned(),
@@ -35,6 +36,8 @@ fn permission(asked_by: Option<&str>) -> InteractionRequest {
         suggestions: Vec::new(),
         rule_seed: None,
         asked_by: asked_by.map(str::to_owned),
+        once: false,
+        independent: false,
     }
 }
 
@@ -89,4 +92,60 @@ async fn without_an_entry_a_background_agent_is_not_asked() {
     let answer = sink.ask(permission(None)).await.unwrap();
     assert_eq!(answer.answer, PermissionAnswer::NoPrompts.into());
     assert!(sink.lasting().is_none());
+}
+
+/// Fork (B3 review): the ask's origin is fixed when the run starts (Node's subagent ask always carries
+/// `payload.origin`). An agent no longer in `live` still asks with its origin, so the App offers no permission mode
+/// switch for it.
+#[tokio::test]
+async fn the_origin_is_fixed_at_run_start_even_when_the_agent_left_live() {
+    use crate::live::{AgentState, LiveAgent};
+    let agent = LiveAgent {
+        machine: Default::default(),
+        agent: AgentId::new("agent_1"),
+        child: SessionId::new("sess_subagent_agent_1"),
+        parent: SessionId::new("sess_main"),
+        root: SessionId::new("sess_main"),
+        owner: None,
+        depth: 1,
+        tool_use: Some(ToolUseId::new("toolu_parent")),
+        description: "explore".to_owned(),
+        definition: Arc::new(
+            crate::definitions::builtins()
+                .into_iter()
+                .find(|definition| definition.agent_type == "Explore")
+                .unwrap(),
+        ),
+        workspace: crate::test_support::workspace(),
+        execution_worktree: false,
+        selection: rust_cli_kernel_api::testing::selection(),
+        mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+        background: true,
+        asks: None,
+        state: AgentState::Running {
+            abort: rust_cli_kernel_api::abort::Abort::new(),
+            mailbox: Vec::new(),
+        },
+        shown: crate::live::Shown::default(),
+        delivered: Vec::new(),
+        fork_prefix: None,
+        stopped_by_user: false,
+        erased: false,
+        late_messages: Vec::new(),
+    };
+    let entry = Arc::new(ScriptedInteractions::allowing());
+    // `live` is empty: the agent is not (or no longer) registered there.
+    let sink = sink(None, Some(Asks(entry.clone()))).with_origin(&agent);
+    sink.ask(permission(None)).await.unwrap();
+    let asked = entry.asked();
+    let InteractionRequest::Permission {
+        origin: Some(origin),
+        ..
+    } = &asked[0]
+    else {
+        panic!("no origin: {:?}", asked[0]);
+    };
+    assert_eq!(origin.agent, AgentId::new("agent_1"));
+    assert_eq!(origin.agent_type, "Explore");
+    assert_eq!(origin.parent_tool_use, Some(ToolUseId::new("toolu_parent")));
 }

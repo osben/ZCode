@@ -126,6 +126,7 @@ pub(crate) fn meta(id: &str, root: &str, title: &str) -> SessionMeta {
         title: title.to_owned(),
         trace: TraceId::new(id),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 
@@ -141,6 +142,8 @@ pub(crate) fn batch(command: Option<&str>, facts: Vec<Fact>) -> FactBatch {
 pub(crate) fn user(id: &str, text: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],
             origin: UserOrigin::Human,
@@ -373,6 +376,12 @@ async fn sessions_and_forks_are_listed_per_directory() {
         ids,
         vec![("sess_a", 5000), ("sess_f", 4000), ("sess_b", 3000)]
     );
+    // Fork: the listed fork keeps its stored parent, which cold sessions-index rows report as `parentSessionId`.
+    let parents: Vec<Option<&str>> = listed
+        .iter()
+        .map(|s| s.parent.as_ref().map(SessionId::as_str))
+        .collect();
+    assert_eq!(parents, vec![None, Some("sess_a"), None]);
     assert_eq!(t.store.list(filter(1)).await.unwrap().len(), 1);
     let row = t.rows("select task_type, parent_id from session where id = 'sess_c'");
     assert_eq!(

@@ -34,6 +34,8 @@ fn boundary(preserved: Option<(&str, &str)>) -> Message {
 
 fn summary() -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_s"),
         content: vec![ContentBlock::Text {
             text: "This session is being continued…".to_owned(),
@@ -44,6 +46,8 @@ fn summary() -> Message {
 
 fn summary_message(id: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: format!("summary {id}"),
@@ -147,6 +151,8 @@ async fn a_tool_result_tail_maps_to_its_assistant_row() {
         usage: None,
     });
     let result = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("toolu_1"),

@@ -22,6 +22,8 @@ fn plan(dir: &Path) -> Plan {
         bash: PathBuf::from("/bin/bash"),
         env: BTreeMap::new(),
         prelude: None,
+        desktop: false,
+        link: None,
     }
 }
 

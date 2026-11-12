@@ -145,6 +145,11 @@ pub enum CommandEvent {
         /// 前台 Bash 把它放在输出前面；不是这种结束时为 None。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_limit: Option<String>,
+        /// Fork (desktop): the OS error code (`ENOENT`, ...) when the settlement read of the merged
+        /// output file failed once the process exited (Node's `<bash output unavailable ...>`);
+        /// `None` when it was read, and always `None` outside the desktop layout.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_unreadable: Option<String>,
     },
 }
 

@@ -1,4 +1,10 @@
+import { createNodePluginAdapter } from "@zcode/adapters/plugins";
+import { createOfficialPluginPreparation } from "./app/bundled-plugins.js";
+import { resolveZCodePlugins } from "./plugins.js";
 import { createMcpTransportFetch } from "@zcode/adapters";
+import { createSharedZCodeCredentialStore } from "@zcode/adapters/auth";
+import { createCredentialCipherBridge } from "@zcode/shared/credential-security";
+import { credentialCipherReplySchema, zcodeProtocolMethods } from "@zcode/shared";
 import { createConfig, resolvePath } from "@zcode/adapters/config";
 import { createNodeFileSystemAdapter } from "@zcode/adapters/fs";
 import { createLanguageServerPool } from "@zcode/adapters/lsp";
@@ -24,7 +30,6 @@ import type { RunZCodeProtocolAgentOptions, ZCodeAppOptions } from "./app/types.
 import { createZCodeApp } from "./app/create-app.js";
 import { createLspPreferencesStore } from "./app/lsp-preferences.js";
 import { createLspRuntimeHub, type LspRuntimeHub } from "./app/lsp-runtime-hub.js";
-import { resolveZCodePlugins } from "./plugins.js";
 import {
   createNodeReplBrowserBroker,
   type NodeReplBrowserBroker,
@@ -34,8 +39,9 @@ import {
   prepareProtocolStartupStorage,
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
+import { seedOfficialPluginsForForkRustAgent } from "./fork-agent-runtime/contract.js";
 import { resolveMcpNodeFallbackProvider } from "./app/mcp-node-fallback.js";
-import { getCliStorageRoot, getProjectMemoryRoot } from "./app/paths.js";
+import { getCliStorageRoot, getPluginStorageRoot, getProjectMemoryRoot } from "./app/paths.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 import type { AcpSessionPool } from "./acp-agent/acp-session-pool.js";
 import { createAcpWorkerAgents } from "./acp-agent/acp-worker-agents.js";
@@ -62,6 +68,7 @@ import { ZCodeProtocolAgentServer } from "./zcode-protocol/server.js";
 import { ZCodeProtocolNdjsonConnection } from "./zcode-protocol/transport.js";
 import { cleanupProtocolRuntime } from "./zcode-protocol/runtime-cleanup.js";
 import { startProtocolResourceSampler } from "./zcode-protocol/resource-sampler.js";
+import { attachCliMemoryDiagnostics } from "./memory-diagnostics/contract.js";
 import { acquireProtocolStartupResource } from "./zcode-protocol/startup-resource.js";
 import { prepareZCodeTelemetryEnv, shutdownZCodeTelemetry } from "./telemetry-bootstrap.js";
 import type { ZCodeProcessResourceSampler } from "./process-resource-sampler.js";
@@ -106,6 +113,13 @@ export async function runZCodeProtocolAgent(
       input: options.input ?? process.stdin,
       output: options.output ?? process.stdout,
     });
+    // Fork patch: lay out the official plugin cache for the Rust agent, after the database so the
+    // Host's first-frame timer never waits on it (specs/fork-agent-runtime-selection.md, rule 3).
+    await seedOfficialPluginsForForkRustAgent({
+      cwd: options.cwd ?? process.cwd(),
+      env: options.env,
+      logger: createNodeLoggerFactory({ env: options.env }).createLogger("zcode"),
+    });
     return;
   }
   const startupStartedAt = startupNow();
@@ -138,12 +152,19 @@ export async function runZCodeProtocolAgent(
     stage: "start",
   });
 
+  // 修复原因：原先给 seed+discovery 共 3 秒预算，超时后整个进程到重启前都不加载插件。
+  // Windows 实测冷启动 seed 官方插件约 3.0~3.1 秒，插件版本升级后的首次启动必然超时。
+  // 先停用启动预算：seed 等锁仍由 15 秒共享锁预算兜住，超时按单插件降级回退旧缓存。
+  const pluginPreparation = createOfficialPluginPreparation();
+  let pluginDiscovery: ReturnType<typeof createNodePluginAdapter> | undefined;
+  let pluginPrewarm: Promise<void> | undefined;
   let sessionStore: SqliteSessionStore | undefined;
   let serverForCleanup: ZCodeProtocolAgentServer | undefined;
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let officialCommandEndpoint: OfficialCommandEndpoint | undefined;
   let mcpConnectionPool: McpConnectionPool | undefined;
   let lspRuntimeHub: LspRuntimeHub | undefined;
+  let credentialCipherBridge: ReturnType<typeof createProtocolCredentialCipher> | undefined;
   let mcpPort: McpPort | undefined;
   let mcpTelemetryTracker: McpTelemetryTracker | undefined;
   let mcpResourceSink: ((samples: ZCodeMcpResourceSample[]) => void) | undefined;
@@ -171,6 +192,28 @@ export async function runZCodeProtocolAgent(
             }),
         }),
     });
+    pluginDiscovery = createNodePluginAdapter({
+      storageRoot: getPluginStorageRoot(
+        getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
+      ),
+    });
+    pluginPrewarm = resolveZCodePlugins({
+      pluginDiscovery,
+      workspaceIdentity: (options.env ?? process.env)[ZCODE_WORKSPACE_IDENTITY_ENV]?.trim(),
+      env: options.env,
+      logger,
+      workingDirectory: options.cwd,
+      pluginPreparation,
+    }).then(
+      () => undefined,
+      (error: unknown) => {
+        if (!pluginPreparation.signal.aborted)
+          logger.warn("Plugin startup preparation failed", {
+            event: "zcode_protocol.plugins.prewarm.failed",
+            errorType: error instanceof Error ? error.name : typeof error,
+          });
+      },
+    );
     const runtimeEnv = options.env ?? process.env;
     options.lifecycle?.signal.throwIfAborted();
     providerRegistryRuntime = await acquireProtocolStartupResource({
@@ -208,39 +251,47 @@ export async function runZCodeProtocolAgent(
             onEvent: (event) => mcpTelemetrySink?.(event),
             onResourceSamples: (samples) => mcpResourceSink?.(samples),
           });
+    // 官方 MCP 身份头端口（spec §7.1/§7.2）：连接池构造早于 server，故用惰性 holder 回填。
+    // server 就绪前该端口返回 official_auth_unavailable；HTTP tools/call 会匿名交给服务端
+    // 返回结构化权限错误，stdio 则把 reason 下发给插件。连接与工具发现都不受影响。
+    let officialMcpAuthContext: OfficialMcpAuthRequestContext | undefined;
+    credentialCipherBridge = createProtocolCredentialCipher(() => officialMcpAuthContext);
+    const mcpCredentialStore = createSharedZCodeCredentialStore({
+      env: options.env,
+      cipher: credentialCipherBridge.cipher,
+    });
     const providerEndpointRoutingPort =
       options.providerEndpointRoutingPort ??
       resolveProcessProviderEndpointRoutingPort({
+        credentialStore: mcpCredentialStore,
         appVersion: options.version,
         env: options.env,
         logger,
         network: configResult.config.network,
         sourceTitle: "electron",
       });
-    // Official MCP identity-header port (spec §7.1/§7.2): the connection pool is constructed before the server, so
-    // populate a lazy holder later. Before the server is ready, the port returns
-    // official_auth_unavailable. HTTP tools/call reaches the server anonymously and receives a
-    // structured permission error; stdio passes the reason to the plugin. Connection and tool discovery are unaffected.
-    let officialMcpAuthContext: OfficialMcpAuthRequestContext | undefined;
-    // Official stdio MCP has no URL to validate, so the host must provide targetOrigin.
-    // It must use the same expression as resolveZCodeApiOrigin for trustedOrigins below, or the two checks can diverge.
+    // stdio 官方 MCP 没有 url 可供校验，targetOrigin 只能由宿主给出。
+    // 与下面 trustedOrigins 的 resolveZCodeApiOrigin 必须是同一个表达式，否则两侧判定分叉。
     const resolveZCodeApiOrigin = (): string =>
       resolveRuntimeZCodeEndpointOrigin(options.env ?? process.env);
     const workspaceIdentity = (options.env ?? process.env)[ZCODE_WORKSPACE_IDENTITY_ENV]?.trim();
     const officialMcpAuth = {
       authHeadersPort: createOfficialMcpAuthHeadersPort({
         resolveContext: () => officialMcpAuthContext,
-        // workspaceKey must follow the repository convention `workspaceIdentity?.trim() || workspacePath`,
-        // or remote workspaces with the same path and different identities cannot be distinguished in audit context.
-        // Note: the agent process currently has no identity source, so this is usually undefined and the key
-        // falls back to path; see "Remaining gap" in official-mcp-auth-port.ts.
-        resolveWorkspace: ({ workspaceIdentity, workspacePath }) => {
+        // workspaceKey 必须遵守仓库约定 `workspaceIdentity?.trim() || workspacePath`，
+        // 否则同路径不同 identity 的远端 workspace 在审计上下文里无法区分。
+        // 注意：agent 进程当前没有 identity 来源，因此实际多为 undefined，key 退化为 path；
+        // 详见 official-mcp-auth-port.ts 的"剩余缺口"说明。
+        // 修复原因：本地会话曾按 MCP 工作目录重算 key，受管 worktree 会话得到 worktree 路径，
+        // Host 按 key 路由时找不到所属项目，官方 MCP 授权头请求被拒（docs/git/worktree.md §9.3）。
+        // 会话带有协议入口给出的 key 时直接使用。
+        resolveWorkspace: ({ workspaceIdentity, workspacePath, workspaceKey }) => {
           const path = workspacePath ?? options.cwd;
           if (!path) return undefined;
           const identity = workspaceIdentity?.trim();
           return {
             ...(identity ? { workspaceIdentity: identity } : {}),
-            workspaceKey: identity || path,
+            workspaceKey: workspaceKey || identity || path,
             workspacePath: path,
           };
         },
@@ -278,6 +329,7 @@ export async function runZCodeProtocolAgent(
       configResult.config.features.mcp === false
         ? undefined
         : createMcpAdapterConnectionPool({
+            mcpOAuth: { credentialStore: mcpCredentialStore },
             elicitation: {
               requestElicitation: (request, elicitationOptions) =>
                 elicitationServer
@@ -315,8 +367,8 @@ export async function runZCodeProtocolAgent(
         fileSystem: createNodeFileSystemAdapter(),
         logger,
       }),
-      resolveServers: (workspacePath) =>
-        resolveZCodePlugins({ logger, workingDirectory: workspacePath }).lspServers,
+      resolveServers: async (workspacePath) =>
+        (await resolveZCodePlugins({ logger, workingDirectory: workspacePath })).lspServers,
       logger,
     });
     const activeLspRuntimeHub = lspRuntimeHub;
@@ -368,12 +420,14 @@ export async function runZCodeProtocolAgent(
               }
             : {}),
           providerEndpointRoutingPort,
-          officialCommandEnv: (sessionId, workspace) =>
-            activeOfficialCommandEndpoint.envForSession(sessionId, workspace),
+          officialCommandEnv: (sessionId, workspace, observer) =>
+            activeOfficialCommandEndpoint.envForSession(sessionId, workspace, observer),
           sourceTitle: "electron",
           onToolExecResource: (params) =>
             connection.send({ method: zcodeProtocolNotifications.toolExecResource, params }),
         }),
+      pluginPreparation,
+      pluginDiscovery,
       cwd: options.cwd,
       env: options.env,
       loggerFactory,
@@ -437,10 +491,9 @@ export async function runZCodeProtocolAgent(
     };
     connection.start();
     mcpTelemetryTracker?.start();
-    processResourceSampler = startProtocolResourceSampler(
-      server,
-      (message) => connection.send(message),
-      logger,
+    processResourceSampler = attachCliMemoryDiagnostics(
+      startProtocolResourceSampler(server, (message) => connection.send(message), logger),
+      () => server.collectMemoryDiagnostics({ includeEventStats: false }),
     );
     startupTimer.complete("ZCode Protocol agent startup completed", {
       event: "zcode_protocol.startup.completed",
@@ -458,6 +511,7 @@ export async function runZCodeProtocolAgent(
     });
     throw error;
   } finally {
+    credentialCipherBridge?.dispose();
     options.lifecycle?.requestShutdown();
     await officialCommandEndpoint?.close().catch((error: unknown) => {
       logger.warn("Official command endpoint close failed", {
@@ -469,6 +523,13 @@ export async function runZCodeProtocolAgent(
       logger,
       deadlineAt: options.lifecycle?.deadlineAt,
       server: serverForCleanup,
+      pluginPreparation: {
+        dispose: async () => {
+          pluginDiscovery?.dispose();
+          await pluginPreparation.dispose();
+          await pluginPrewarm;
+        },
+      },
       processResourceSampler,
       mcpTelemetryTracker,
       nodeReplBrowserBroker,
@@ -495,4 +556,36 @@ function resolveProtocolRuntimeSurface(
   return env.ZCODE_TELEMETRY_RUNTIME_SURFACE?.trim() === "remote_workspace_host"
     ? "remote_workspace_host"
     : "desktop_local_host";
+}
+
+/** 内置 CLI 的凭据加解密只委托已连接 Host，禁止失败后改为本机系统库读取。 */
+function createProtocolCredentialCipher(
+  resolveContext: () => OfficialMcpAuthRequestContext | undefined,
+) {
+  const bridge = createCredentialCipherBridge((request) => {
+    const context = resolveContext();
+    if (!context) throw new Error("Credential cipher host is unavailable");
+    void context
+      .requestClient(
+        zcodeProtocolMethods.interactionRequestCredentialCipher,
+        request,
+        credentialCipherReplySchema,
+        {},
+      )
+      .then(
+        (reply) => bridge.receive(reply),
+        () =>
+          bridge.receive({
+            requestId: request.requestId,
+            result: {
+              ok: false,
+              error: {
+                code: "CREDENTIAL_SECURE_STORAGE_UNAVAILABLE",
+                message: "Credential cipher host is unavailable",
+              },
+            },
+          }),
+      );
+  });
+  return bridge;
 }

@@ -206,3 +206,166 @@ async fn http_and_agent_hooks() {
     let body: Value = serde_json::from_str(&request.body).unwrap();
     assert_eq!(body["hook_event_name"], "Stop");
 }
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): without hooks an incognito session runs none;
+/// without plugins it runs only the settings hooks. Other sessions are unchanged.
+#[tokio::test]
+async fn an_incognito_profile_drops_all_hooks_or_the_plugin_hooks() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let env = Arc::new(ScriptedEnv::with(&[
+        ("user.sh", script("", "", 0)),
+        ("kit.sh", script("", "", 0)),
+    ]));
+    let profiles = IncognitoProfiles::default();
+    let engine = engine(env.clone(), &command_settings("Stop", "", "user.sh"))
+        .with_incognito(profiles.clone());
+    let (kit, warnings) = PluginHooks::from_json(
+        "kit",
+        "/Users/dev/plugins/kit",
+        &[json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "kit.sh"}]}]}})],
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    engine.register_plugins(vec![kit]);
+    let ran = |session: &'static str| {
+        let engine = &engine;
+        let env = env.clone();
+        async move {
+            let before = env.started().len();
+            let mut stop = event(HookEventName::Stop, json!({"stop_hook_active": false}));
+            stop.session = rust_cli_kernel_api::ids::SessionId::new(session);
+            engine.run(stop, CancellationToken::new()).await;
+            env.started().len() - before
+        }
+    };
+    profiles.record(
+        &rust_cli_kernel_api::ids::SessionId::new("no_hooks"),
+        Some(IncognitoProfile {
+            plugins: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    profiles.record(
+        &rust_cli_kernel_api::ids::SessionId::new("no_plugins"),
+        Some(IncognitoProfile {
+            hooks: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    assert_eq!(ran("sess_1").await, 2);
+    assert_eq!(ran("no_hooks").await, 0);
+    assert_eq!(ran("no_plugins").await, 1);
+}
+
+/// #422 review P2-2: a PermissionRequest hook that answers `continue: false` denies the ask with its `stopReason`
+/// (Node `hooks/output.ts` preventContinuation, checked first in `hook-flow.ts`), even when it also allows.
+#[tokio::test]
+async fn a_permission_request_hook_that_stops_denies_the_ask() {
+    let stops = r#"{"continue": false, "stopReason": "not now", "hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}"#;
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", script(stops, "", 0))]));
+    let engine = engine(
+        env.clone(),
+        &command_settings("PermissionRequest", "Bash", "stop.sh"),
+    );
+    let ask = event(
+        HookEventName::PermissionRequest,
+        json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+    );
+    let outcome = engine.run(ask, CancellationToken::new()).await;
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Deny {
+            message: "not now".to_owned()
+        })
+    );
+    assert_eq!(outcome.updated_input, None);
+}
+
+/// Node `createExitCodeBlockOutput`: a PermissionRequest hook that exits 2 denies with
+/// `trimForPreview(stderr) ?? trimForPreview(stdout) ?? "Hook blocked execution"` (trimmed, cut at 4000 UTF-16 units
+/// with `...`), before any JSON on stdout is read.
+#[tokio::test]
+async fn a_permission_request_hook_that_exits_two_denies_the_ask() {
+    let long = "é".repeat(4001);
+    let cases = [
+        (script("", "  not allowed\n", 2), "not allowed".to_owned()),
+        (script(" from stdout ", " \n ", 2), "from stdout".to_owned()),
+        (
+            script(r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#, "", 2),
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#.to_owned(),
+        ),
+        (script("", "", 2), "Hook blocked execution".to_owned()),
+        (script("", &long, 2), format!("{}...", "é".repeat(4000))),
+    ];
+    for (hook, expected) in cases {
+        let env = Arc::new(ScriptedEnv::with(&[("no.sh", hook)]));
+        let engine = engine(env, &command_settings("PermissionRequest", "Bash", "no.sh"));
+        let ask = event(
+            HookEventName::PermissionRequest,
+            json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+        );
+        let outcome = engine.run(ask, CancellationToken::new()).await;
+        assert_eq!(
+            outcome.decision,
+            Some(PermissionDecision::Deny {
+                message: expected.clone()
+            }),
+            "{expected}"
+        );
+    }
+}
+
+/// #423 review P1-1: Node runs PermissionRequest hooks one by one in config order and the last decision wins
+/// (`mergeHookRunResult`). Rust runs them concurrently, so the fold reads them in config order, not completion order.
+#[tokio::test(start_paused = true)]
+async fn permission_request_hooks_fold_in_config_order() {
+    let decision = |behavior: &str| {
+        format!(
+            r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{{"behavior":"{behavior}","message":"no"}}}}}}"#
+        )
+    };
+    let allow_slow = Script {
+        delay_ms: 50,
+        ..script(&decision("allow"), "", 0)
+    };
+    let deny_slow = Script {
+        delay_ms: 50,
+        ..script(&decision("deny"), "", 0)
+    };
+    for (first, second, expected) in [
+        (
+            ("allow", allow_slow),
+            ("deny", script(&decision("deny"), "", 0)),
+            PermissionDecision::Deny {
+                message: "no".to_owned(),
+            },
+        ),
+        (
+            ("deny", deny_slow),
+            ("allow", script(&decision("allow"), "", 0)),
+            PermissionDecision::Allow {
+                updated_input: None,
+            },
+        ),
+    ] {
+        let env = Arc::new(ScriptedEnv::with(&[first.clone(), second.clone()]));
+        let settings = json!({"hooks": {"PermissionRequest": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": first.0}, {"type": "command", "command": second.0}
+        ]}]}});
+        let outcome = engine(env, &settings)
+            .run(
+                event(
+                    HookEventName::PermissionRequest,
+                    json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+                ),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(
+            outcome.decision,
+            Some(expected),
+            "{} then {}",
+            first.0,
+            second.0
+        );
+    }
+}

@@ -22,7 +22,7 @@ export function WorkflowSettingsChangeRow({
   /** providerId → provider name (same lookup as the model segment on the card); absent falls back to bare modelId. */
   providerName?: (providerId: string) => string | undefined;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const segments = workflowSettingsChangeSegments(amend, {
     formatMessage: intl.formatMessage.bind(intl),
     ...(providerName === undefined ? {} : { providerName }),
@@ -30,7 +30,8 @@ export function WorkflowSettingsChangeRow({
   const time =
     at === undefined
       ? undefined
-      : new Intl.DateTimeFormat(undefined, {
+      : // 时间按界面语言格式化，不跟系统语言
+        new Intl.DateTimeFormat(locale, {
           hour: "2-digit",
           minute: "2-digit",
           hour12: false,

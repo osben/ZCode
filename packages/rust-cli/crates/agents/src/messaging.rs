@@ -2,11 +2,12 @@
 //! （docs/specs/rust-cli/cross-session.md，F28；段落与同伴寻址在 `peer_send`）。描述与 schema 在 `prompts/tools/`
 //! （ListAgents、SendMessage），删掉了不实的产品句（cross-session.md §2.7）。TaskStop 在 `task_stop`。
 
+use crate::live::Enqueued;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::abort::Abort;
-use rust_cli_kernel_api::ids::AgentId;
+use rust_cli_kernel_api::ids::{AgentId, CommandId};
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, parse,
@@ -79,7 +80,9 @@ impl Messaging {
             .core
             .live
             .get(&id)
-            .filter(|agent| agent.parent == context.session);
+            // Fork: an erased agent's session rows are gone; it is no longer addressable (a restart would write into
+            // the erased session).
+            .filter(|agent| agent.parent == context.session && !agent.erased);
         let Some(agent) = known else {
             // 进程内没有：按本机的同伴会话寻址（cross-session.md §1.4）。都没有时是打开跨会话后的
             // `No agent named '<to>' is reachable.`（结果 `success: false`、不标 is_error）。以前是关闭跨会话时的
@@ -94,23 +97,62 @@ impl Messaging {
             .await;
             return Ok(rust_cli_kernel_api::tool::text(text));
         };
-        if self.core.live.enqueue(&id, input.message.clone()) {
-            let text = format!(
-                "Message queued for delivery to {} at its next tool round.",
-                input.to
-            );
-            return Ok(rust_cli_kernel_api::tool::text(text));
+        match self
+            .core
+            .live
+            .enqueue(&id, input.message.clone(), &context.tool_use)
+        {
+            // Fork: a later message after the stop waits for the run the first one resumes: Node queues it to that
+            // running agent (core `runner.ts`).
+            Enqueued::Steered | Enqueued::AfterStop { first: false } => {
+                return Ok(rust_cli_kernel_api::tool::text(steered_text(
+                    &self.core.ports.ids.command(),
+                    input.to.trim(),
+                )));
+            }
+            // Fork: a stop claimed the run; it resumes with this message once it settles (`routing::settle`).
+            Enqueued::AfterStop { first: true } => {
+                return Ok(rust_cli_kernel_api::tool::text(resumed_text(
+                    self.core.node_desktop,
+                    &input.to,
+                    "killed",
+                )));
+            }
+            Enqueued::NotRunning => {}
         }
         // 已结束：在后台续跑子会话。
         let status = agent.status().as_str();
-        if !self.core.live.restart(&id, Abort::new()) {
+        // Fork: on the desktop the resumed run belongs to this SendMessage call (Node's notification carries its
+        // `<tool-use-id>`); the TUI keeps the earlier call.
+        let tool_use = if self.core.node_desktop {
+            Some(context.tool_use.clone())
+        } else {
+            agent.tool_use.clone()
+        };
+        let Some(claimed) =
+            self.core
+                .live
+                .restart(&id, Abort::new(), tool_use, self.core.ports.ids.execution())
+        else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
-            self.core.live.enqueue(&id, input.message.clone());
-            let text = format!(
-                "Message queued for delivery to {} at its next tool round.",
-                input.to
-            );
+            let text = match self
+                .core
+                .live
+                .enqueue(&id, input.message.clone(), &context.tool_use)
+            {
+                Enqueued::AfterStop { first: true } => {
+                    resumed_text(self.core.node_desktop, &input.to, "killed")
+                }
+                Enqueued::Steered | Enqueued::AfterStop { first: false } | Enqueued::NotRunning => {
+                    steered_text(&self.core.ports.ids.command(), input.to.trim())
+                }
+            };
             return Ok(rust_cli_kernel_api::tool::text(text));
+        };
+        // Fork: the forwarder claimed by the restart starts before the resumed run, so a command of that run has a
+        // consumer from its first turn.
+        if let Some(started) = claimed {
+            crate::shell_notices::start(&self.core, &agent.child, &agent.root, started);
         }
         let origin = rust_cli_kernel_api::message::UserOrigin::Human;
         let opening = match spawn::resume(&self.core, &agent, &input.message, origin).await {
@@ -128,11 +170,25 @@ impl Messaging {
             });
         };
         spawn::background(&self.core, running, opening);
-        let text = format!(
-            "Agent \"{}\" was stopped ({status}); it was resumed in the background with your message. You'll be notified when it finishes.",
-            input.to
-        );
-        Ok(rust_cli_kernel_api::tool::text(text))
+        Ok(rust_cli_kernel_api::tool::text(resumed_text(
+            self.core.node_desktop,
+            &input.to,
+            status,
+        )))
+    }
+}
+
+/// The reply to a message that resumes a stopped agent. Fork: the desktop reads Node's wording (core subagent/runner.ts
+/// resume text); zcode-rs has no per-agent output file, so Node's trailing `Output:` path is absent.
+fn resumed_text(node_desktop: bool, to: &str, status: &str) -> String {
+    if node_desktop {
+        format!(
+            "Agent \"{to}\" was stopped ({status}); resumed it in the background with your message. You'll be notified when it finishes."
+        )
+    } else {
+        format!(
+            "Agent \"{to}\" was stopped ({status}); it was resumed in the background with your message. You'll be notified when it finishes."
+        )
     }
 }
 
@@ -200,3 +256,17 @@ impl Tool for Messaging {
         }
     }
 }
+
+/// Node 3.17 steers a message for a running agent into its active turn (`message-steering.ts`, delivery
+/// `steered`) and answers with this text; the mailbox here delivers at the same boundary, the next model request.
+/// Node's message id is `msg_<uuid>`; the native `command` id is a bare uuid.
+pub(crate) fn steered_text(id: &CommandId, agent: &str) -> String {
+    format!(
+        "Message msg_{} was sent to its active turn for local agent {agent}.",
+        id.as_str()
+    )
+}
+
+#[cfg(test)]
+#[path = "messaging_tests.rs"]
+mod tests;

@@ -13,6 +13,7 @@ impl LocalEnvironment {
             os_version: tokio::sync::OnceCell::new(),
             web: None,
             poppler: pdf::Poppler::default(),
+            bash_outputs: None,
         }
     }
 
@@ -23,12 +24,28 @@ impl LocalEnvironment {
         self
     }
 
+    /// Fork (node_desktop): write Bash tool outputs under the Node adapter's temp layout
+    /// `<root>/<session>/<toolCallId>-stdout.log` (the desktop app resolves these paths).
+    /// Applies to an already-configured shell and is re-applied by a later `with_shell`.
+    #[must_use]
+    pub fn with_bash_outputs(mut self, root: PathBuf) -> Self {
+        if let Some(shells) = self.shells.as_mut() {
+            shells.set_bash_outputs(Some(root.clone()));
+        }
+        self.bash_outputs = Some(root);
+        self
+    }
+
     /// 启用 shell 命令（Bash 工具）。
     #[must_use]
     pub fn with_shell(mut self, config: ShellConfig) -> Self {
         self.snapshot = config.env.clone();
         self.bash = config.bash.is_some();
-        self.shells = Some(Shells::new(config));
+        let mut shells = Shells::new(config);
+        if let Some(root) = self.bash_outputs.clone() {
+            shells.set_bash_outputs(Some(root));
+        }
+        self.shells = Some(shells);
         self
     }
 

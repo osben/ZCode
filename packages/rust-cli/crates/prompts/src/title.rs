@@ -13,6 +13,12 @@ pub fn system() -> &'static str {
     trim(include_lf!("../../../prompts/title/system.txt"))
 }
 
+/// Fork: Node's `SESSION_TITLE_SYSTEM_PROMPT` (core `runtime/methods/title-generation-sidecar.ts`), verbatim. The
+/// app-server uses it with the normalized first input as the whole user message, like the Node desktop agent.
+pub fn node_system() -> &'static str {
+    trim(include_lf!("../../../prompts/title/node-system.txt"))
+}
+
 /// user 提示的模板：`{{content}}` 与 `{{language}}`。
 pub fn user() -> &'static str {
     trim(include_lf!("../../../prompts/title/user.txt"))

@@ -6,7 +6,7 @@ use rust_cli_kernel_api::message::{
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::store::LocalSettings;
-use rust_cli_kernel_api::store::{Fact, SessionStore};
+use rust_cli_kernel_api::store::{Fact, SessionFilter, SessionStore};
 use serde_json::{Value, json};
 
 use crate::tests::{TestStore, batch, started, text, user};
@@ -96,6 +96,26 @@ async fn the_assistant_records_the_requested_catalog_model() {
         models,
         vec![(json!("p2"), json!("m2")), (json!("p"), json!("m"))]
     );
+    // Fork: a cold load reads them back for the model switch divider.
+    let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
+    let read: Vec<_> = loaded
+        .message_models
+        .iter()
+        .map(|(id, selection)| {
+            (
+                id.as_str().to_owned(),
+                selection.provider.clone(),
+                selection.model.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("msg_a1".to_owned(), "p2".to_owned(), "m2".to_owned()),
+            ("msg_a2".to_owned(), "p".to_owned(), "m".to_owned())
+        ]
+    );
 }
 
 /// 回合结束写会话的 `lastOutcome`（Node `persistDurableSessionEvent` 的三个值）与 `time_updated`。
@@ -119,6 +139,18 @@ async fn the_turn_end_records_the_last_outcome() {
             t.rows("select last_outcome, time_updated from session"),
             vec![vec![json!(expected), json!(at)]]
         );
+        // Fork: the workspace list carries the outcome and the creation time for cold index rows.
+        let workspace = t.store.load(&session).await.unwrap().meta.workspace;
+        let listed = t
+            .store
+            .list(SessionFilter {
+                workspace,
+                limit: 10,
+            })
+            .await
+            .unwrap();
+        assert_eq!(listed[0].last_outcome.as_deref(), Some(expected));
+        assert!(listed[0].created_at_ms > 0 && listed[0].created_at_ms < at);
     }
 }
 
@@ -331,6 +363,8 @@ async fn a_subagent_link_lands_in_the_tool_part_state() {
     };
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("toolu_1"),

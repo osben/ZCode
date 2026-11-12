@@ -182,6 +182,8 @@ The settings detail form exposes no manual connection fields for Start Plan. `Ba
 and `API Key` are replaced by a Start Plan card, because OAuth/preset sync maintains those values and
 they must not look user-editable.
 
+The settings page renders the model list only when the Start entitlement is actually available (Account snapshot `availability=available`). `pending` only means the plan is claimed and the entitlement has not reached its effective time: the balance snapshot then also carries plan details (status projected as purchased), but the account entitlement is not executable, so the detail page shows only the plan card and the effective schedule, and must not render the model list or the empty state "No models configured; add one manually". Signed-out, not activated, querying/query failed and unknown also do not render the model area; the status card keeps the matching login, retry and purchase entries.
+
 The Start Plan model catalog stays managed jointly by `billing/balance` and
 `client/configs.builtinModels`; users cannot add, delete or rename models, nor change server-owned
 model facts such as max output tokens or input/output modalities. A model row opens only two local

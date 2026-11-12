@@ -28,6 +28,8 @@ pub struct Summary<'a> {
     pub session: &'a str,
     pub workspace: &'a str,
     pub title: &'a str,
+    /// Fork: where the title came from (stored, or the live projection's); shown as Node normalizes it.
+    pub title_source: rust_cli_kernel_api::title::Source,
     pub phase: Phase,
     pub created_at: u64,
     pub activity_at: u64,
@@ -41,7 +43,7 @@ impl Summary<'_> {
             "sessionId": self.session,
             "workspaceId": self.workspace,
             "title": self.title,
-            "titleSource": if self.title.is_empty() { "default" } else { "generated" },
+            "titleSource": self.title_source.shown(),
             "phase": self.phase.name(),
             "sessionEnded": self.phase.ended(),
             "hasBackgroundWork": false,
@@ -259,4 +261,56 @@ impl Topics {
             })
             .collect()
     }
+
+    /// Fork: a session left the list (`deleteSession`; Node `SessionsIndexPublisher.removeSession`
+    /// plus `flushIndex`). Drops the live row and records a `session.removed` delta through the
+    /// single writer, so started subscribers see the removal and a later snapshot cannot resurrect
+    /// the row (the store's soft-deleted listing keeps it out of the stored half too).
+    pub fn remove(self: &Arc<Self>, workspace: &str, session: &str) {
+        let topics = self.clone();
+        let topic = format!("{INDEX_PREFIX}{workspace}");
+        let session = session.to_owned();
+        self.serial.run(Box::pin(async move {
+            let outgoing = topics.dropped(&topic, &session);
+            Self::write(&topics.context, outgoing).await;
+        }));
+    }
+
+    /// The live rows of a workspace's sessions index (tests only).
+    #[cfg(test)]
+    pub(crate) fn live_rows(&self, workspace: &str) -> Vec<String> {
+        self.table()
+            .get(&format!("{INDEX_PREFIX}{workspace}"))
+            .map(|entry| entry.rows.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// The lock-held half of [`Topics::remove`]: drop the row, then record the removal delta.
+    /// The delta is recorded even when this process held no live row: a subscriber's snapshot may
+    /// have carried the row from the store, and Node's projection (seeded with stored rows) emits
+    /// the removal in that case too.
+    fn dropped(&self, topic: &str, session: &str) -> Vec<Outgoing> {
+        let mut table = self.table();
+        let entry = Self::entry(&self.context, &mut table, topic);
+        let _removed = entry.rows.remove(session);
+        entry
+            .log
+            .record(vec![json!({"op": "session.removed", "sessionId": session})]);
+        entry
+            .log
+            .flush()
+            .into_iter()
+            .map(|batch| Outgoing {
+                topic: topic.to_owned(),
+                subscription: batch.subscription,
+                range: (batch.from, batch.to),
+                payload: json!({"kind": "deltas", "deltas": batch.deltas}),
+                purpose: Purpose::Online,
+            })
+            .collect()
+    }
 }
+
+#[cfg(test)]
+#[path = "index_tests.rs"]
+mod tests;

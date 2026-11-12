@@ -217,6 +217,36 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "workspacePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceIdentity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remoteSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspacePath",
+            "workspaceKey"
+          ],
+          "additionalProperties": false
+        },
+        "pluginDiscoveryUi": {
+          "type": "boolean",
+          "const": true
+        },
         "inputOrigin": {
           "type": "string",
           "enum": [
@@ -270,19 +300,25 @@
           "type": "string",
           "enum": [
             "createSession",
+            "updateWorktreePreparation",
             "createSelectionSideSession",
             "sendText",
             "sendGoalCommand",
             "stop",
+            "stopSubagent",
             "compact",
             "forkAssistant",
             "applyFileRewind",
             "editUserQuery",
             "retryTurn",
             "setAssistantFeedback",
+            "setRowPinned",
             "setHighspeedMetrics",
             "sendQueuedNow",
+            "lockQueueItemEdit",
+            "releaseQueueItemEdit",
             "editQueueItem",
+            "applyQueueItemsConfig",
             "reorderQueueItem",
             "deleteQueueItem",
             "setAutoDrain",
@@ -294,6 +330,7 @@
             "snoozeInteractionAutoResolution",
             "switchModelConfig",
             "switchCollaborationMode",
+            "setExternalAgentConfigOption",
             "setFollowupMode",
             "pauseGoal",
             "resumeGoal",
@@ -525,11 +562,22 @@
             "minLength": 1
           }
         },
+        "worktreeSessionIds": {
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "resumeThoughtLevel": {
           "type": "string",
           "minLength": 1
         },
         "workflowRunDeltas": {
+          "type": "boolean"
+        },
+        "pluginDiscoveryUi": {
           "type": "boolean"
         },
         "historyFirst": {
@@ -881,6 +929,60 @@
         "target"
       ]
     },
+    "applyQueueItemsConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "queueItemIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modelSelection": {
+          "type": "object",
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "reasoningLevel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "providerId",
+            "modelId"
+          ],
+          "additionalProperties": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "build",
+            "edit",
+            "plan",
+            "yolo",
+            "guarded"
+          ]
+        }
+      },
+      "required": [
+        "queueItemIds"
+      ]
+    },
     "cancelBackgroundWork": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -992,6 +1094,97 @@
         "workspaceId": {
           "type": "string"
         },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreeCreation": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "output": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "path",
+            "sha",
+            "ref",
+            "output"
+          ],
+          "additionalProperties": false
+        },
+        "submissionPreparation": {
+          "type": "object",
+          "properties": {
+            "submissionId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "submissionId"
+          ]
+        },
+        "expectedSubmissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedFirstInputCommandId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreePreparation": {
+          "type": "object",
+          "properties": {
+            "branchName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "targetPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "branchName",
+            "targetPath"
+          ]
+        },
+        "expectedAttemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preparedSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
         "permissionScope": {
           "type": "string",
           "const": "session"
@@ -1084,6 +1277,95 @@
             },
             "planEnabled": {
               "type": "boolean"
+            },
+            "source": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "pluginUi"
+                    },
+                    "pluginId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "toolCallId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "pluginId",
+                    "toolCallId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "session"
+                    },
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sessionId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "genUi"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 250
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "extension"
+                    },
+                    "pluginId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "pluginId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
             }
           },
           "required": [
@@ -1144,6 +1426,23 @@
               "type": "boolean"
             }
           }
+        },
+        "executionWorktree": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "branchName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
         },
         "mcpServers": {
           "type": "array",
@@ -1388,6 +1687,66 @@
             "onDemand",
             "alwaysOn"
           ]
+        },
+        "incognito": {
+          "type": "object",
+          "properties": {
+            "projectInstructions": {
+              "type": "boolean"
+            },
+            "skills": {
+              "type": "boolean"
+            },
+            "hooks": {
+              "type": "boolean"
+            },
+            "plugins": {
+              "type": "boolean"
+            },
+            "mcp": {
+              "type": "boolean"
+            },
+            "customAgents": {
+              "type": "boolean"
+            },
+            "memory": {
+              "type": "boolean"
+            },
+            "outputStyle": {
+              "type": "boolean"
+            },
+            "systemPromptOverrides": {
+              "type": "boolean"
+            },
+            "identity": {
+              "type": "boolean"
+            },
+            "harness": {
+              "type": "boolean"
+            },
+            "environment": {
+              "type": "boolean"
+            },
+            "automationTools": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "projectInstructions",
+            "skills",
+            "hooks",
+            "plugins",
+            "mcp",
+            "customAgents",
+            "memory",
+            "outputStyle",
+            "systemPromptOverrides",
+            "identity",
+            "harness",
+            "environment",
+            "automationTools"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1434,6 +1793,134 @@
         },
         "newText": {
           "type": "string"
+        },
+        "editorId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "mime": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "number"
+              },
+              "sourceKind": {
+                "type": "string",
+                "enum": [
+                  "clipboard-text",
+                  "topic-history"
+                ]
+              },
+              "messageCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "previewRef": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "fileName",
+              "mime",
+              "bytes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "conversationQuotes": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 8000
+              },
+              "path": {
+                "type": "string"
+              },
+              "senderName": {
+                "type": "string"
+              },
+              "senderId": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "sentAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "comment": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "agent": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        },
+        "modelSelection": {
+          "type": "object",
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "reasoningLevel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "providerId",
+            "modelId"
+          ],
+          "additionalProperties": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "build",
+            "edit",
+            "plan",
+            "yolo",
+            "guarded"
+          ]
+        },
+        "planEnabled": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1493,6 +1980,14 @@
                 "type": "string",
                 "format": "date-time",
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "comment": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "agent": {
+                "type": "string",
+                "maxLength": 200
               }
             },
             "required": [
@@ -1738,6 +2233,10 @@
               "type": "string",
               "minLength": 1
             },
+            "ownerKey": {
+              "type": "string",
+              "pattern": "^v1:[a-f0-9]{64}$"
+            },
             "taskId": {
               "type": "string",
               "minLength": 1
@@ -1824,6 +2323,19 @@
             "preserve",
             "rewind"
           ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "build",
+            "edit",
+            "plan",
+            "yolo",
+            "guarded"
+          ]
+        },
+        "planEnabled": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1853,16 +2365,99 @@
             "entityId"
           ],
           "additionalProperties": false
+        },
+        "targetCwd": {
+          "type": "object",
+          "properties": {
+            "cwd": {
+              "type": "string",
+              "minLength": 1
+            },
+            "childSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "worktreeCreation": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "output": {
+                  "type": "string",
+                  "maxLength": 65536
+                }
+              },
+              "required": [
+                "path",
+                "sha",
+                "ref",
+                "output"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "cwd",
+            "childSessionId",
+            "worktreeCreation"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
         "target"
       ]
     },
+    "lockQueueItemEdit": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "queueItemId": {
+          "type": "string"
+        },
+        "editorId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "queueItemId",
+        "editorId"
+      ]
+    },
     "pauseGoal": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {}
+    },
+    "releaseQueueItemEdit": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "queueItemId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "queueItemId"
+      ]
     },
     "renameSession": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2463,6 +3058,10 @@
               "type": "string",
               "minLength": 1
             },
+            "ownerKey": {
+              "type": "string",
+              "pattern": "^v1:[a-f0-9]{64}$"
+            },
             "taskId": {
               "type": "string",
               "minLength": 1
@@ -2696,6 +3295,27 @@
               "properties": {
                 "kind": {
                   "type": "string",
+                  "const": "session"
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "sessionId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
                   "const": "genUi"
                 },
                 "path": {
@@ -2711,6 +3331,24 @@
               "required": [
                 "kind",
                 "path"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "extension"
+                },
+                "pluginId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "pluginId"
               ],
               "additionalProperties": false
             }
@@ -2731,6 +3369,34 @@
           }
         },
         "modelSelection": {
+          "type": "object",
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "reasoningLevel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "providerId",
+            "modelId"
+          ],
+          "additionalProperties": false
+        },
+        "modelSelectionBasis": {
           "type": "object",
           "properties": {
             "providerId": {
@@ -2938,6 +3604,10 @@
             "cardId": {
               "type": "string",
               "minLength": 1
+            },
+            "ownerKey": {
+              "type": "string",
+              "pattern": "^v1:[a-f0-9]{64}$"
             },
             "taskId": {
               "type": "string",
@@ -3356,6 +4026,14 @@
                           "type": "string",
                           "format": "date-time",
                           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "comment": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "agent": {
+                          "type": "string",
+                          "maxLength": 200
                         }
                       },
                       "required": [
@@ -3568,6 +4246,14 @@
                 "type": "string",
                 "format": "date-time",
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "comment": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "agent": {
+                "type": "string",
+                "maxLength": 200
               }
             },
             "required": [
@@ -3581,6 +4267,10 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "firstSubmissionId": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -3641,6 +4331,30 @@
       "required": [
         "autoDrain"
       ]
+    },
+    "setExternalAgentConfigOption": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "sessionId",
+        "configId",
+        "value"
+      ],
+      "additionalProperties": false
     },
     "setFollowupMode": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3724,6 +4438,38 @@
         "savedDurationMs"
       ]
     },
+    "setRowPinned": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "object",
+          "properties": {
+            "rowId": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "entityId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "rowId",
+            "entityId"
+          ],
+          "additionalProperties": false
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target",
+        "pinned"
+      ]
+    },
     "snoozeInteractionAutoResolution": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -3772,6 +4518,25 @@
           "minLength": 1
         }
       }
+    },
+    "stopSubagent": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "taskId",
+        "executionId"
+      ],
+      "additionalProperties": false
     },
     "switchCollaborationMode": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3874,12 +4639,59 @@
         "enabled"
       ],
       "additionalProperties": false
+    },
+    "updateWorktreePreparation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "failureMessage": {
+          "type": "string"
+        },
+        "expectedAttemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreePreparation": {
+          "type": "object",
+          "properties": {
+            "branchName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "targetPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "branchName",
+            "targetPath"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ]
     }
   },
   "requiresBaseRevision": [
     "applyFileRewind",
     "deleteQueueItem",
-    "editQueueItem",
     "editUserQuery",
     "forkAssistant",
     "pauseGoal",
@@ -3890,6 +4702,7 @@
     "setAssistantFeedback",
     "setAutoDrain",
     "setFollowupMode",
+    "setRowPinned",
     "switchCollaborationMode",
     "switchModelConfig"
   ],
@@ -3899,7 +4712,8 @@
     "forkAssistant",
     "retryTurn",
     "setAssistantFeedback",
-    "setHighspeedMetrics"
+    "setHighspeedMetrics",
+    "setRowPinned"
   ],
   "replies": {
     "interaction/requestProviderRuntimeHeaders": {
