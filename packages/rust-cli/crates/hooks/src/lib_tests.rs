@@ -279,3 +279,27 @@ async fn a_permission_request_hook_that_stops_denies_the_ask() {
     );
     assert_eq!(outcome.updated_input, None);
 }
+
+/// Node `createExitCodeBlockOutput`: a PermissionRequest hook that exits 2 denies with the blocking text.
+#[tokio::test]
+async fn a_permission_request_hook_that_exits_two_denies_the_ask() {
+    let env = Arc::new(ScriptedEnv::with(&[(
+        "no.sh",
+        script("", "not allowed", 2),
+    )]));
+    let engine = engine(
+        env.clone(),
+        &command_settings("PermissionRequest", "Bash", "no.sh"),
+    );
+    let ask = event(
+        HookEventName::PermissionRequest,
+        json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+    );
+    let outcome = engine.run(ask, CancellationToken::new()).await;
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Deny {
+            message: "[no.sh]: not allowed".to_owned()
+        })
+    );
+}

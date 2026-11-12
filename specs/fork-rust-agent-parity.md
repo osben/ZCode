@@ -299,6 +299,30 @@ Acceptance:
 - Projection unit test: an independent ask offers allow once and deny only.
 - E2E (when allowed): `conversation-session-plan-mode-mcp-permission` on both runtimes.
 
+## Hook output for PermissionRequest and PostToolUse (Node `hooks/output.ts`, `hook-flow.ts`)
+
+Node turns a hook's JSON output into a `HookRunResult` (`processHookOutput`) and merges the results in run order (`mergeHookRunResult`).
+
+- **PermissionRequest.** Three outputs stop the call: `continue: false`, top-level `decision: "block"`, and exit code 2 (`createExitCodeBlockOutput`: `continue: false` with the stderr as `reason`). Each one sets `preventContinuation` and a deny behavior. `hook-flow.ts` reads `preventContinuation` first and denies with the last stopping hook's `stopReason`, or `Denied by PermissionRequest hook` when there is none. The `stopReason` depends on the output:
+  - `continue: false`: `stopReason ?? reason`;
+  - `decision: "block"`: `stopReason ?? reason ?? systemMessage`;
+  - exit 2: the blocking text (Rust keeps its `[command]: stderr` form).
+
+  If no hook stops the call, the last `hookSpecificOutput.decision` wins (Node `target.permissionRequestResult = next`). If no hook gave one, a top-level `decision: "approve"` allows (`Allowed by PermissionRequest hook`). The user is not asked in any of these cases. Rust `fold::permission_request` folds the results this way. It used to take the first decision and to ignore `continue: false`, `block`, exit 2 and `approve`.
+
+- **PostToolUse.** Node uses only a PostToolUse hook's additional context: `continue: false` does not stop the turn, because `shouldPreventContinuation` covers only PreToolUse, PermissionRequest and UserPromptSubmit. Rust `fold::post_tool_use` used to stop the turn with `Execution stopped by PostToolUse hook`. It now ignores `continue: false` for this event. Blocking output, `updatedToolOutput` and additional context are unchanged.
+
+Acceptance:
+
+- Hooks fold unit tests cover the following:
+  - `decision: "block"` denies with `stopReason ?? reason ?? systemMessage`, or Node's default text;
+  - exit 2 denies with the blocking text;
+  - the last stopping hook wins over an earlier decision;
+  - the last decision wins;
+  - `approve` without a decision allows;
+  - a PostToolUse `continue: false` keeps the turn going and still delivers the context.
+- Hooks engine test: a PermissionRequest hook that exits 2 denies.
+
 ## Tool rows while the tool input streams (Node `tool_input_start`)
 
 Node opens a `toolCall` row as soon as the model starts a tool call (`product-projection.ts` `openToolRow` on `tool_input_start`): status `inputStreaming`, `inputText` empty, then appends each `tool_input_delta` to `inputText` (file tools throttled); the scheduled call later upserts the row with the full `input` and `inputText`. A row still `inputStreaming` when the stream ends without a call is cancelled. The desktop shows the tool block (for ExitPlanMode, the plan preview) before the arguments are complete, and a session switched away and back finds the row in the snapshot.

@@ -130,8 +130,10 @@ fn pre_tool_use_passthrough_context_and_stop() {
     );
 }
 
+/// Node uses only a PostToolUse hook's context: `continue: false` does not stop the turn (`shouldPreventContinuation`
+/// covers PreToolUse, PermissionRequest and UserPromptSubmit only); later results still apply.
 #[test]
-fn post_tool_use_stops_at_prevent() {
+fn post_tool_use_ignores_continue_false() {
     let ids = SequentialIds::default();
     let f = fold(&ids, "PostToolUse", "PostToolUse:Bash");
     let out = post_tool_use(
@@ -147,27 +149,24 @@ fn post_tool_use_stops_at_prevent() {
                 ..HookResult::default()
             },
             HookResult {
-                additional_context: Some("dropped".to_owned()),
+                additional_context: Some("kept".to_owned()),
                 ..HookResult::default()
             },
         ],
     );
     assert_eq!(out.updated_tool_output, Some(json!("new")));
-    assert_eq!(out.messages.len(), 2);
     assert!(
         text(&out.messages[0])
             .contains("PostToolUse:Bash hook blocking error from command: \"g\": [g]: bad")
     );
-    assert!(text(&out.messages[1]).contains("PostToolUse:Bash hook stopped continuation: enough"));
-    assert!(out.prevent_continuation && out.additional_context.is_empty());
-    let default_stop = post_tool_use(
-        &f,
-        &[HookResult {
-            prevent: true,
-            ..HookResult::default()
-        }],
+    assert!(!out.prevent_continuation);
+    assert_eq!(out.stop_reason, None);
+    assert_eq!(out.additional_context, ["kept"]);
+    assert!(
+        out.messages
+            .iter()
+            .all(|message| !text(message).contains("stopped continuation"))
     );
-    assert!(text(&default_stop.messages[0]).contains("Execution stopped by PostToolUse hook"));
 }
 
 #[test]
@@ -192,7 +191,8 @@ fn failure_and_permission_request() {
         }),
         ..HookResult::default()
     };
-    let out = permission_request(&[deny, allow.clone()]);
+    // The last decision wins (Node `mergeHookRunResult`: `target.permissionRequestResult = next`).
+    let out = permission_request(&[allow.clone(), deny]);
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
@@ -246,4 +246,72 @@ fn a_stopping_permission_request_hook_denies() {
             message: "Denied by PermissionRequest hook".to_owned()
         })
     );
+}
+
+/// Node `processHookOutput`: top-level `decision: "block"` stops a PermissionRequest with
+/// `stopReason ?? reason ?? systemMessage`; exit code 2 stops it with the blocking text; `approve` without a decision
+/// allows. A stop wins over any decision; the last stopping hook gives the text.
+#[test]
+fn permission_request_reads_block_exit_two_and_approve() {
+    let deny = |message: &str| {
+        Some(PermissionDecision::Deny {
+            message: message.to_owned(),
+        })
+    };
+    let block = |stop: Option<&str>, reason: Option<&str>, system: Option<&str>| HookResult {
+        stop_reason: stop.map(str::to_owned),
+        system_message: system.map(str::to_owned),
+        ..decided(Behavior::Deny, reason, None)
+    };
+    assert_eq!(
+        permission_request(&[block(Some("s"), Some("r"), Some("m"))]).decision,
+        deny("s")
+    );
+    assert_eq!(
+        permission_request(&[block(None, Some("r"), Some("m"))]).decision,
+        deny("r")
+    );
+    assert_eq!(
+        permission_request(&[block(None, None, Some("m"))]).decision,
+        deny("m")
+    );
+    assert_eq!(
+        permission_request(&[HookResult {
+            blocking: Some(Blocking {
+                error: "Blocked by hook".to_owned(),
+                command: "g".to_owned(),
+            }),
+            ..block(None, None, None)
+        }])
+        .decision,
+        deny("Denied by PermissionRequest hook")
+    );
+    let allow = HookResult {
+        permission_request: Some(PermissionRequestDecision::Allow {
+            updated_input: Some(json!({"a": 1})),
+        }),
+        ..HookResult::default()
+    };
+    let out = permission_request(&[blocking("[g]: no"), allow.clone()]);
+    assert_eq!(out.decision, deny("[g]: no"));
+    assert_eq!(out.updated_input, None);
+    assert_eq!(
+        permission_request(&[blocking("[g]: first"), block(Some("last"), None, None)]).decision,
+        deny("last")
+    );
+    let approve = decided(Behavior::Allow, None, None);
+    assert_eq!(
+        permission_request(std::slice::from_ref(&approve)).decision,
+        Some(PermissionDecision::Allow {
+            updated_input: None
+        })
+    );
+    // A decision wins over `approve`.
+    let denied = HookResult {
+        permission_request: Some(PermissionRequestDecision::Deny {
+            message: Some("no".to_owned()),
+        }),
+        ..HookResult::default()
+    };
+    assert_eq!(permission_request(&[approve, denied]).decision, deny("no"));
 }

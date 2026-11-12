@@ -13,7 +13,6 @@ use crate::result::Blocking;
 /// PreToolUse 的 `continue: false`。
 pub(crate) const STOPPED_BY_HOOK: &str = "Execution stopped by hook";
 /// PostToolUse 的 `continue: false`（`ooe`）。
-pub(crate) const STOPPED_BY_POST_TOOL_USE: &str = "Execution stopped by PostToolUse hook";
 /// Stop 的 `continue: false`。
 pub(crate) const STOP_PREVENTED: &str = "Stop hook prevented continuation";
 /// UserPromptSubmit 的 `continue: false`。
