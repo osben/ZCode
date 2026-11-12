@@ -366,6 +366,14 @@ pub enum Command {
     ReserveForeground {
         reserved: bool,
     },
+    /// Fork: the release lease of `session/releaseUnderDirectory` (specs/fork-rust-agent-parity.md, A3). Taking it
+    /// (`reserved: true`) is refused with [`SESSION_BUSY`] while a turn, compaction or job runs, an input is queued or
+    /// in the lane, or an interaction is pending. While held, every other command is refused with
+    /// [`SESSION_RELEASING`] and no turn starts on its own; the lease ends when the session closes or when it is
+    /// returned (`reserved: false`, always `Accepted`), which resumes the drain as a turn end would.
+    ReserveRelease {
+        reserved: bool,
+    },
 }
 
 /// 带 ID 的命令；同一个 ID 重复提交时返回 [`Ack::Duplicate`]，不重复执行。
@@ -505,7 +513,29 @@ pub struct QueuedEdit {
     pub mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_enabled: Option<bool>,
+    /// The App's `modelSelection` as sent, stored on the intent unchanged (Node `editedIntent` keeps the payload's
+    /// shape); `model_selection` is the same choice parsed for the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_model_selection: Option<serde_json::Value>,
+    /// The new attachments: `[]` clears them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<QueuedAttachments>,
 }
+
+/// Fork: the attachments of a queue edit, resolved by the protocol before the edit is sent (Node maps the refs before
+/// the write-back).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedAttachments {
+    /// The App's refs as sent (the intent's `attachmentRefs`).
+    pub refs: serde_json::Value,
+    /// The refs' content blocks, without the typed text block (the queue owns the text).
+    pub content: Vec<crate::message::ContentBlock>,
+}
+
+/// Fork: `Command::ReserveRelease` while the session has work (`session/releaseUnderDirectory` busy).
+pub const SESSION_BUSY: &str = "session.busy";
+/// Fork: a command reached a session whose release lease is held (`Command::ReserveRelease`).
+pub const SESSION_RELEASING: &str = "session.releasing";
 
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";

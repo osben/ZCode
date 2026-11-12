@@ -19,8 +19,8 @@ use rust_cli_kernel_api::manage::{BackgroundEntry, BackgroundKind};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, CommandEnvelope, CreateSession, EndReason, Kernel, KernelError,
-    SequencedEvent, SessionHandle, SessionView,
+    Ack as KernelAck, Command, CommandEnvelope, CreateSession, EndReason, Kernel, KernelError,
+    SESSION_BUSY, SequencedEvent, SessionHandle, SessionView,
 };
 use rust_cli_kernel_api::store::{
     SessionFilter, SessionKind, SessionMeta, SessionSummary, StoreQueries,
@@ -37,12 +37,34 @@ use crate::worktree::{Execution, Facts};
 const PROJECT: &str = "/fixture/repo";
 const WORKTREE: &str = "/fixture/worktrees/3f2a/repo";
 
-/// The handle double: a fixed view, the kernel's background ledger, and a record of `close` calls.
+/// The handle double: a fixed view, the actor's own busy state (what it answers to the release lease), the kernel's
+/// background ledger, and a record of the commands and `close` calls.
 struct TestHandle {
     id: SessionId,
     view: SessionView,
+    busy: bool,
     background: Vec<BackgroundEntry>,
+    sent: StdMutex<Vec<Command>>,
     closes: StdMutex<Vec<EndReason>>,
+}
+
+impl TestHandle {
+    /// The actor is busy exactly when its view says so (a running turn or a pending interaction).
+    fn of(view: SessionView) -> Self {
+        let busy = view.running || !view.pending.is_empty();
+        Self::with(view, busy, Vec::new())
+    }
+
+    fn with(view: SessionView, busy: bool, background: Vec<BackgroundEntry>) -> Self {
+        Self {
+            id: view.meta.id.clone(),
+            view,
+            busy,
+            background,
+            sent: StdMutex::new(Vec::new()),
+            closes: StdMutex::new(Vec::new()),
+        }
+    }
 }
 
 #[async_trait]
@@ -51,8 +73,17 @@ impl HandleOverride for TestHandle {
         &self.id
     }
 
-    async fn send(&self, _command: CommandEnvelope) -> KernelAck {
-        KernelAck::Duplicate
+    async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
+        self.sent.lock_unpoisoned().push(envelope.command.clone());
+        match envelope.command {
+            Command::ReserveRelease { reserved: true } if self.busy => KernelAck::Rejected {
+                reason: SESSION_BUSY.to_owned(),
+            },
+            Command::ReserveRelease { .. } => KernelAck::Accepted {
+                result: Default::default(),
+            },
+            _ => KernelAck::Duplicate,
+        }
     }
 
     fn subscribe(&self, _after: Option<u64>) -> BoxStream<'static, SequencedEvent> {
@@ -163,15 +194,16 @@ async fn fixture(
         .into_iter()
         .map(|view| {
             let id = view.meta.id.as_str().to_owned();
-            let handle = Arc::new(TestHandle {
-                id: SessionId::new(&id),
-                view,
-                background: Vec::new(),
-                closes: StdMutex::new(Vec::new()),
-            });
-            (id, handle)
+            (id, Arc::new(TestHandle::of(view)))
         })
         .collect();
+    serve(handles).await
+}
+
+/// Builds the server over the given handles, every one open.
+async fn serve(
+    handles: HashMap<String, Arc<TestHandle>>,
+) -> (TaskScope, Arc<Server>, HashMap<String, Arc<TestHandle>>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
@@ -207,6 +239,10 @@ fn is_open(server: &Server, id: &str) -> bool {
 
 fn closes(handles: &HashMap<String, Arc<TestHandle>>, id: &str) -> Vec<EndReason> {
     handles[id].closes.lock_unpoisoned().clone()
+}
+
+fn sent(handles: &HashMap<String, Arc<TestHandle>>, id: &str) -> Vec<Command> {
+    handles[id].sent.lock_unpoisoned().clone()
 }
 
 #[tokio::test]
@@ -317,6 +353,14 @@ async fn one_running_session_blocks_every_release() {
     assert!(closes(&handles, "run").is_empty());
     assert!(is_open(&server, "idle"));
     assert!(is_open(&server, "run"));
+    assert_eq!(
+        sent(&handles, "idle"),
+        vec![
+            Command::ReserveRelease { reserved: true },
+            Command::ReserveRelease { reserved: false }
+        ],
+        "the idle session's lease is returned, so it takes commands again"
+    );
 }
 
 #[tokio::test]
@@ -335,55 +379,72 @@ async fn a_pending_interaction_is_busy() {
     assert!(closes(&handles, "ask").is_empty());
 }
 
-/// Node `hasResidencyBlockingWork` includes registry background tasks. The shell is read from the kernel ledger
-/// when the session opens, like the App's `backgroundWorks`.
+/// Node `hasResidencyBlockingWork` includes registry background tasks. They are read from the kernel's registry
+/// while the lease is held, not from the projection's `backgroundWorks`.
 #[tokio::test]
 async fn a_running_background_command_is_busy() {
-    let handle = Arc::new(TestHandle {
-        id: SessionId::new("bg"),
-        view: idle("bg", WORKTREE),
-        background: vec![BackgroundEntry::new(
+    let handle = TestHandle::with(
+        idle("bg", WORKTREE),
+        false,
+        vec![BackgroundEntry::new(
             "b1",
             BackgroundKind::Shell,
             "sleep 30",
             BackgroundStatus::Running,
         )],
-        closes: StdMutex::new(Vec::new()),
-    });
-    let handles = HashMap::from([("bg".to_owned(), handle)]);
-    let scope = TaskScope::root("test", |_| {});
-    let (out, _reader) = tokio::io::duplex(1 << 16);
-    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
-    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
-    let kernel = Arc::new(ReleaseKernel {
-        handles: handles.clone(),
-    });
-    let server = Arc::new(Server::new(
-        context,
-        kernel,
-        scope.spawner(),
-        Defaults {
-            selection: selection(),
-            mode: PermissionMode::Default,
-            environment: EnvironmentId::new("local"),
-        },
-    ));
-    let live = server.live(&SessionId::new("bg")).await.unwrap();
-    for _ in 0..200 {
-        if live.sink.snapshot()["backgroundWorks"]
-            .as_array()
-            .is_some_and(|works| !works.is_empty())
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    );
+    let (_scope, server, handles) =
+        serve(HashMap::from([("bg".to_owned(), Arc::new(handle))])).await;
     assert_eq!(
         release(&server, WORKTREE).await,
         json!({"released": [], "busy": ["bg"]})
     );
     assert!(closes(&handles, "bg").is_empty());
-    drop(scope);
+    assert_eq!(
+        sent(&handles, "bg"),
+        vec![
+            Command::ReserveRelease { reserved: true },
+            Command::ReserveRelease { reserved: false }
+        ],
+        "the lease it took is returned"
+    );
+}
+
+/// The busy facts come from the actor, not from the event projection: a projection that still shows a running turn
+/// does not keep an idle actor open.
+#[tokio::test]
+async fn a_stale_running_projection_does_not_make_an_idle_actor_busy() {
+    let handle = TestHandle::with(running("stale", WORKTREE), false, Vec::new());
+    let (_scope, server, handles) =
+        serve(HashMap::from([("stale".to_owned(), Arc::new(handle))])).await;
+    assert_eq!(
+        release(&server, WORKTREE).await,
+        json!({"released": ["stale"], "busy": []})
+    );
+    assert_eq!(closes(&handles, "stale"), vec![EndReason::Other]);
+    assert_eq!(
+        sent(&handles, "stale"),
+        vec![Command::ReserveRelease { reserved: true }],
+        "closed while it holds the lease"
+    );
+}
+
+/// The actor's refusal of the lease is busy even when the projection looks idle (input admitted a moment ago).
+#[tokio::test]
+async fn an_actor_that_refuses_the_lease_is_busy() {
+    let handle = TestHandle::with(idle("fresh", WORKTREE), true, Vec::new());
+    let (_scope, server, handles) =
+        serve(HashMap::from([("fresh".to_owned(), Arc::new(handle))])).await;
+    assert_eq!(
+        release(&server, WORKTREE).await,
+        json!({"released": [], "busy": ["fresh"]})
+    );
+    assert!(closes(&handles, "fresh").is_empty());
+    assert_eq!(
+        sent(&handles, "fresh"),
+        vec![Command::ReserveRelease { reserved: true }],
+        "a refused lease is not returned"
+    );
 }
 
 /// A first submission still preparing is accepted input that has not started (busy).

@@ -314,3 +314,103 @@ async fn a_reserved_foreground_keeps_a_waiting_notice_behind_the_promoted_input(
     assert!(format!("{:?}", requests[2].messages).contains("b1"));
     assert_eq!(env.acked(), [1]);
 }
+
+fn lease(id: &str, reserved: bool) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveRelease { reserved },
+    }
+}
+
+fn refused(reason: &str) -> Ack {
+    Ack::Rejected {
+        reason: reason.to_owned(),
+    }
+}
+
+/// Fork: the release lease (`Command::ReserveRelease`, `session/releaseUnderDirectory`, spec A3) is answered from
+/// the actor's own state: a running turn, a queued input and a pending interaction refuse it.
+#[tokio::test]
+async fn the_release_lease_is_refused_while_the_session_has_work() {
+    let gate = Arc::new(Notify::new());
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(
+        ScriptedModel::new(vec![text_response(&["ok"]), text_response(&["next"])])
+            .gated_at(0, gate.clone()),
+    );
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "first")).await;
+    // The turn runs.
+    assert_eq!(
+        session.send(lease("c2", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY)
+    );
+    // Held queue: the turn end leaves an input queued, the session is idle.
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("c3"),
+            command: Command::HoldQueue { held: true },
+        })
+        .await;
+    session.send(submit("c4", "waits")).await;
+    gate.notify_one();
+    until_finished(&mut events, 1).await;
+    assert!(!session.view().await.unwrap().running);
+    assert_eq!(
+        session.send(lease("c5", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY),
+        "a queued input is busy"
+    );
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, asking) = asking_session(&scope).await;
+    let mut events = asking.subscribe(Some(0));
+    asking.send(submit("a1", "ask me")).await;
+    asked(&mut events).await;
+    assert_eq!(
+        asking.send(lease("a2", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY),
+        "a pending interaction is busy"
+    );
+}
+
+/// While the lease is held the actor refuses every other command and starts no turn on its own; returning it lets a
+/// waiting notice start, as a turn end would, and commands are taken again.
+#[tokio::test]
+async fn a_held_release_lease_refuses_commands_and_holds_the_drain() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["notice seen"]),
+        text_response(&["after"]),
+    ]));
+    let session = session(&scope, env.clone(), model.clone(), Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    assert!(matches!(
+        session.send(lease("c1", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(submit("c2", "too late")).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_RELEASING)
+    );
+    env.finish(shell_notice(1, "b1"));
+    queued(&mut events, "b1").await;
+    assert!(
+        model.requests().is_empty(),
+        "no turn starts under the lease"
+    );
+    assert!(matches!(
+        session.send(lease("c3", false)).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    assert!(format!("{:?}", model.requests()[0].messages).contains("b1"));
+    assert!(matches!(
+        session.send(submit("c4", "welcome back")).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    assert_eq!(model.requests().len(), 2);
+}

@@ -10,7 +10,7 @@ use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::session_api::{
     Ack as KernelAck, Command, Delivery, KernelEvent, QUEUE_EDIT_LOCK_LOST,
     QUEUE_EDIT_LOCK_MISSING, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING, QUEUE_ITEM_NOT_EDITABLE,
-    QueueEditLock, QueuedEdit,
+    QueueEditLock, QueuedAttachments, QueuedEdit,
 };
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -20,6 +20,7 @@ use crate::commands::{ack_of, payload, send};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::projection::InputMeta;
+use crate::server::Server;
 
 /// Node `V4QueueItemTextUnavailableError` carries no domain reason code, so the gateway settles it as
 /// the generic execution failure.
@@ -150,10 +151,12 @@ pub(super) async fn delete_queue_item(
 }
 
 /// `editQueueItem` → kernel `EditQueued`: the item is edited in place, its position kept. The body's fields the App
-/// did not send keep their values (Node: `newText` is the text; `attachments` is the chips, `[]` clears them and
-/// is applied here, the protocol's input metadata). Node's `guard.queueItemNotEditable` is the kernel's refusal of a
-/// compaction.
+/// did not send keep their values (Node: `newText` is the text; `attachments` replaces the refs, `[]` clears them).
+/// The refs are resolved into content blocks before the kernel sees the edit (Node maps them before the write-back), so
+/// a ref that cannot be resolved refuses the edit and changes nothing; the chips (the protocol's input metadata) follow
+/// once the kernel accepted it. Node's `guard.queueItemNotEditable` is the kernel's refusal of a compaction.
 pub(super) async fn edit_queue_item(
+    server: &Server,
     live: &Bridged<Live>,
     envelope: &Envelope,
     revision: u64,
@@ -163,6 +166,13 @@ pub(super) async fn edit_queue_item(
         Err(ack) => return *ack,
     };
     let source = source_of(&body.queue_item_id);
+    let attachments = match &body.attachments {
+        None => None,
+        Some(refs) => match queued_attachments(server, live, envelope, refs, revision).await {
+            Ok(attachments) => Some(attachments),
+            Err(ack) => return *ack,
+        },
+    };
     let command = Command::EditQueued {
         command: CommandId::new(source),
         edit: QueuedEdit {
@@ -170,8 +180,13 @@ pub(super) async fn edit_queue_item(
             text: body.new_text.clone(),
             conversation_quotes: body.conversation_quotes.clone(),
             model_selection: crate::commands::selection(body.model_selection.as_ref()),
+            intent_model_selection: body
+                .model_selection
+                .clone()
+                .filter(|value| !value.is_null()),
             mode: body.mode.clone(),
             plan_enabled: body.plan_enabled,
+            attachments,
         },
     };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
@@ -187,6 +202,46 @@ pub(super) async fn edit_queue_item(
         }
         KernelAck::Rejected { reason } => queue_refusal(envelope, revision, &reason),
     }
+}
+
+/// The edit's attachments as the kernel queues them: the refs as sent, and their content blocks without the typed text
+/// (the queue owns the text). The refusals are `sendText`'s: a ref that does not match the schema is invalid, material
+/// that cannot be written fails.
+async fn queued_attachments(
+    server: &Server,
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    refs: &[Value],
+    revision: u64,
+) -> Result<QueuedAttachments, Box<Ack>> {
+    let parsed = crate::attachments::parse_refs(refs).map_err(|error| {
+        Box::new(Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            error.message,
+            revision,
+        ))
+    })?;
+    let content = if parsed.is_empty() {
+        Vec::new()
+    } else {
+        crate::attachments::content(server, live.handle.id(), "", parsed)
+            .await
+            .map_err(|error| {
+                Box::new(Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    revision,
+                ))
+            })?
+    };
+    Ok(QueuedAttachments {
+        refs: Value::Array(refs.to_vec()),
+        content,
+    })
 }
 
 /// `lockQueueItemEdit` → kernel `LockQueuedEdit` (Node `lockQueueItemEdit`). The protocol holds the item's promotion
@@ -278,6 +333,7 @@ pub(super) async fn apply_queue_items_config(
         commands,
         edit: QueuedEdit {
             model_selection: crate::commands::selection(body.model_selection.as_ref()),
+            intent_model_selection: body.model_selection.filter(|value| !value.is_null()),
             mode: body.mode,
             ..QueuedEdit::default()
         },
@@ -556,3 +612,7 @@ pub(super) async fn send_queued_now(
     send(handle, &part("resume"), release()).await;
     ack
 }
+
+#[cfg(test)]
+#[path = "queue_tests.rs"]
+mod tests;

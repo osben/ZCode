@@ -610,6 +610,15 @@ impl Actor {
                     let _ = reply.send(Ack::Duplicate);
                     return;
                 }
+                // Fork: the release lease is held (`Command::ReserveRelease`): the session is about to close.
+                if self.inbox.releasing()
+                    && !matches!(envelope.command, Command::ReserveRelease { .. })
+                {
+                    let _ = reply.send(rejected(
+                        rust_cli_kernel_api::session_api::SESSION_RELEASING,
+                    ));
+                    return;
+                }
                 if self.mirror.running() && crate::child_live::starts_turn(&envelope.command) {
                     let _ =
                         reply.send(rejected(rust_cli_kernel_api::session_api::GOAL_ACTIVE_TURN));
@@ -758,6 +767,7 @@ impl Actor {
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
             Command::ReserveForeground { reserved } => self.reserve_foreground(reserved).await,
+            Command::ReserveRelease { reserved } => self.reserve_release(reserved).await,
             // 在 `handle` 里处理（回执要等事务结束或名字）。
             Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")

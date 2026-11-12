@@ -33,7 +33,7 @@ pub(crate) async fn decide(
         "applyFileRewind" => file_summary::apply(live, envelope, revision).await,
         "deleteSession" => session_delete::delete(server, live, envelope, revision).await,
         "deleteQueueItem" => queue::delete_queue_item(live, envelope, revision).await,
-        "editQueueItem" => queue::edit_queue_item(live, envelope, revision).await,
+        "editQueueItem" => queue::edit_queue_item(server, live, envelope, revision).await,
         "reorderQueueItem" => queue::reorder_queue_item(live, envelope, revision).await,
         "setAutoDrain" => queue::set_auto_drain(live, envelope, revision).await,
         "sendQueuedNow" => queue::send_queued_now(live, envelope, revision).await,

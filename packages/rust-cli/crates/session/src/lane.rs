@@ -358,6 +358,30 @@ impl Actor {
         crate::actor::accepted()
     }
 
+    /// Fork: `Command::ReserveRelease` (`session/releaseUnderDirectory`, specs/fork-rust-agent-parity.md A3). The lease
+    /// is taken only when the actor itself has no work: no turn, compaction or job, no queued or lane input, no pending
+    /// interaction. Returning it while idle resumes the drain as a turn end would.
+    pub(crate) async fn reserve_release(
+        &mut self,
+        reserved: bool,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        if !reserved {
+            if self.inbox.set_releasing(false) && !self.busy() {
+                self.start_next().await;
+            }
+            return crate::actor::accepted();
+        }
+        if self.busy()
+            || self.mirror.running()
+            || self.inbox.has_inputs()
+            || !self.pending.is_empty()
+        {
+            return crate::actor::rejected(rust_cli_kernel_api::session_api::SESSION_BUSY);
+        }
+        self.inbox.set_releasing(true);
+        crate::actor::accepted()
+    }
+
     /// 回合结束后的下一项（query.md §5）：通道头是输入就是它；是通知就取走头部连续的通知，合成一个
     /// 回合（通知合并）；通道空时是 `Queue` 输入（优先级 `later`）。定时任务由调用方最后看。
     /// The next turn's input, with the execution state frozen on it when it was submitted
