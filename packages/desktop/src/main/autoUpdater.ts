@@ -1348,9 +1348,7 @@ function publishDownloadedUpdate(info: UpdateDownloadedInfoLike): void {
   readyUpdateReleaseNotes = toPostUpdateReleaseNotesPayload(info) ?? downloadingUpdateReleaseNotes;
   clearAvailableUpdateState();
   clearDownloadingUpdateState();
-  logger.info(
-    `[auto-update] downloaded: ${info.version}, ${process.platform === "win32" ? "waiting for explicit install" : "ready to install on quit or explicit install"}`,
-  );
+  logger.info(`[auto-update] downloaded: ${info.version}, waiting for explicit install`);
   setAutoUpdaterMenuState(buildUpdateDownloadedState(info.version));
   notifyForceAutoUpdate({ kind: "ready", version: info.version });
   if (!activeForceAutoUpdateListener) {
@@ -1703,10 +1701,9 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // before deciding to download. If electron-updater downloads automatically based only on the current app version, it may
   // download 3.1.3 repeatedly on every poll when 3.1.3 is already ready for 3.1.2.
   autoUpdater.autoDownload = false;
-  // Bugfix: Windows/NSIS starts installation asynchronously after the window closes. If the user immediately shuts down, the
-  // installer may be interrupted, leaving a partial update that fails on next startup. macOS/Linux also disable install-on-quit;
-  // before-quit installs proactively only while the ready package still equals the current target, so quitting cannot
-  // install an older package after the target moves up.
+  // An ordinary quit is not a confirmation to install. Installing from before-quit on macOS/Linux, combined with the
+  // relaunch after a failed install, made a process with a pending package install and restart on every quit
+  // (upstream 3.18.0). Every platform installs only from the explicit entry, which also avoids partial updates at shutdown.
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = logger;
   if (autoUpdater instanceof pkg.NsisUpdater) {
@@ -1979,13 +1976,6 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
 
   triggerCheckForUpdates("startup");
   ensureAutoUpdatePollInterval();
-  app.on("before-quit", (event) => {
-    if (process.platform === "win32" || isUpdateTargetLocked() || !isReadyUpdateCurrentTarget()) {
-      return;
-    }
-    event.preventDefault();
-    void quitAndInstallUpdate();
-  });
 }
 
 function ensureAutoUpdatePollInterval() {

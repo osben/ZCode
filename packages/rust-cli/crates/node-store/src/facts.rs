@@ -164,10 +164,6 @@ pub(crate) fn commit_in(
     for fact in &batch.facts {
         apply(&ctx, fact)?;
     }
-    // 写过用量行：同一事务里按 Node 的保留期删旧行（usage.md §2.5）；删不掉只记日志（工作线 F77）。
-    if crate::usage::touches_usage(&batch.facts) {
-        crate::usage::observe(&ctx, "usage.prune.failed", || crate::usage::prune(&ctx))?;
-    }
     let sequence = next_sequence(&ctx)?;
     Ok(CommitReceipt { sequence })
 }

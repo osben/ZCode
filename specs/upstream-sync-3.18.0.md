@@ -21,7 +21,7 @@ The rules match `specs/upstream-sync-3.16.2.md` and `specs/desktop-upstream-sync
 - A conflict with real code changes on both sides follows upstream structure, with the fork hunks
   re-applied on top.
 - A conflict that cannot be resolved without a product decision keeps the fork behavior and is listed
-  under "Open questions"; it is not guessed.
+  under "Owner decisions" (formerly "Open questions"); it is not guessed.
 - Migration SQL, ids, checksum inputs and schema baseline strings take upstream verbatim (shared
   `~/.zcode` databases, `AGENTS.md`). Fork migrations stay `9xxx_fork_*`.
 - A file upstream deleted (UD) is deleted unless the fork edit carries a fork feature.
@@ -44,7 +44,8 @@ task-index CLI facts admission, pane session restore precedence.
 ## Overlapping features (fork behaviour kept, decision for the owner)
 
 Upstream 3.18.0 ships counterparts of fork features. The merge keeps both code paths compiling and
-the fork behaviour active; it does not pick a winner:
+the fork behaviour active; it does not pick a winner. The owner's choices are under "Owner decisions"
+(voice: decision 5; worktrees: 6; permanent deletion: 7; login: 3; locales: 12):
 
 - Voice input (upstream, zcode-server ASR) vs fork voice dictation.
 - Managed worktrees (upstream, `0010_task_worktree_root`) vs fork session execution worktree.
@@ -75,14 +76,14 @@ the fork behaviour active; it does not pick a winner:
 ### CLI (apps/zcode-cli) first pass
 
 - read-session-context handler and bash-shell-snapshot deleted with upstream.
-- usage.ts: fork 30-day usage prune kept (OPEN: upstream keeps usage facts permanently).
+- usage.ts: fork 30-day usage prune kept at merge time; removed by owner decision 1 (usage facts kept forever).
 - project-memory.ts / events.ts: fork workspace identity kept (overlap with managed worktrees).
 - marketplace.ts: fork lspServers manifest field kept.
 - context-builder/subagent-explore/runtime-trace tests and request-user-context hunks: upstream (autonomy appendix removed upstream).
 
 ### desktop first pass
 
-- autoUpdater.ts: OPEN — fork install-on-quit kept; upstream removed it to stop a quit-install loop.
+- autoUpdater.ts: fork install-on-quit kept at merge time; removed by owner decision 2 (upstream quit-install loop).
 - package.json: @modelcontextprotocol/server added; @napi-rs/keyring 2.1.2; electron-builder fork uk language list + NSMicrophoneUsageDescription kept.
 - wdio.conf.ts: upstream voice-input fixture, fork seeds; upstream auth-gate fixture dropped (fork deleted it).
 - UD e2e conversation-session-fork-cold-start-membership / v4-queue deleted with upstream; fork-deleted auth-gate / session-events / settings-personalization tests stay deleted.
@@ -96,7 +97,7 @@ the fork behaviour active; it does not pick a winner:
 - errors.ts: fork provider facts + upstream unsettled-call note. bash.ts: fork backgroundDisabled + cwd write-back guard + upstream process log.
 - startup-marks.ts: upstream async plugin preparation/discovery, fork incognito plugin exclusion.
 - session-store.port.ts: fork session tree types + upstream deletion snapshot types.
-- OPEN: context-builder test expects the fork AUTONOMY appendix that upstream removed.
+- context-builder test vs fork AUTONOMY appendix: resolved by owner decision 9 (appendix removed, as upstream).
 
 ### CLI third pass (hard files)
 
@@ -147,31 +148,48 @@ the fork behaviour active; it does not pick a winner:
 - coding-plan-team-usage e2e: fork-deleted CTP-20..31 cluster stays deleted; upstream CTP-32, CTP-33, CTP-CN-03 added.
 - `check-test-copy.mjs`: renamed suites remapped; 40 upstream-3.18 suites listed as verbatim.
 
-## Open questions for the owner
+## Owner decisions (2026-11-12)
 
-1. Usage facts: fork 30-day prune vs upstream permanent retention.
-2. autoUpdater: fork install-on-quit vs upstream removal (quit-install loop).
-3. Web login: BigModel no longer selectable upstream.
-4. Web credential read path: fork `clearAll()` on expired JWT vs upstream session epoch.
-5. Voice input (upstream ASR) vs fork dictation; upstream input is disabled while dictation is on.
-6. Managed worktree (upstream) vs fork execution worktree; fork marker wins when both exist.
-7. Permanent deletion: fork tombstone erase and dialog vs upstream hard delete and inline preview; upstream archive
-   confirm flow not ported.
-8. Upstream `TaskRowIdentityHoverCard` not mounted (fork hover card kept).
-9. context-builder test expects the fork AUTONOMY appendix that upstream removed; memory-as-context instruction delta.
-10. MR-GOAL-07 follows upstream (edited queue item stays frozen).
-11. Credential cipher now defaults to upstream `enc:v2` system keychain; OAuth corrupt-session recovery keeps fork
-    behaviour.
-12. uk-UA in `SUPPORTED_LOCALES` vs fork locale storage routing in settingService.
-13. Visualize plugin default-on (fork) vs off (upstream); toolGrouping fields kept.
-14. Bots: fork remote workspace service vs upstream bot project runtime.
-15. zh-CN `noArchivedTasks` takes upstream wording; new uk-UA strings need a native-speaker check.
-16. Attachment ref trust must be re-checked on the upstream composer edit submit path.
-17. Translation debt: new upstream documents and some upstream comments (zcodeStdioTransport, coding-plan e2e) remain
-    in Chinese.
-18. Explore aggregate card: upstream deleted `ExploreToolCallBlock`; Explore calls now use the fallback card and the
-    fork test is removed. `ToolCallBlocks/useStageDurationText.tsx` has no consumers left.
-19. Bootstrap official plugin build follows upstream (clean `dist` every build); the fork reuse of a complete `dist`
-    is dropped because upstream saw stale plugin runtimes shipped.
-20. macOS `electronLanguages` gains `uk`; confirm `uk.lproj` in a real mac build.
-21. Update release notes keep the fork D14 fallback (en-US -> zh-CN; other locales -> en-US -> default).
+The owner accepted the proposed resolution of all 21 questions. Each entry names the question and the
+decision; entries that changed code name the PR change and its test.
+
+Changed code (test written first, then the change):
+
+1. Usage facts: kept forever, as upstream. Node `pruneUsage` / `pruneUsageIfDue` and the `zcode-rs` raw prune
+   (#407) are removed; the fork rollup stays for history that builds up to 3.17 already pruned. Tests
+   `usage-retention`, `usage_writes_keep_raw_rows_of_any_age`; specs `fork-agent-runtime-selection.md`,
+   `usage-observability.md`, `docs/specs/usage-stats-history-and-filters.md`.
+2. autoUpdater: no install on quit, as upstream. The `before-quit` handler is removed; every platform installs
+   only from the explicit entry. Test `autoUpdaterNoInstallOnQuit`.
+3. Web credential read: `loadCachedSessionState` no longer calls `clearAll()` on an expired legacy JWT; it
+   returns `reauthentication-required` and changes nothing, as upstream. Test `webOAuthCachedSessionReadOnly`.
+4. Voice: one composer mic, fork dictation. Upstream voice input (ASR through zcode-server, needs a ZCode
+   account) is never enabled or rendered in the composer; its service stays. Test
+   `v4ConversationComposerSingleMic`; spec `voice-dictation.md`. Consequence: the 3.18.1 microphone permission
+   guide (`specs/upstream-backport-3.18.1.md` item 4) belongs to the upstream input and is not reachable from
+   the composer.
+5. context-builder: follows upstream; the four autonomy paragraphs are removed from the fork's editable
+   context-management default (`packages/shared/src/system-prompt.ts`), not only from the test. This changes
+   the prompt for every user without a `context-management` override. Still undecided: the memory-as-context
+   instruction delta path in `request-user-context.ts` (only the full announcement is re-applied).
+6. `packages/ui/src/ToolCallBlocks/useStageDurationText.tsx` deleted (fork-only, no consumers).
+
+Recorded, no code change:
+
+3. Web login: upstream (`zai_cn` plus a linked BigModel, `oauth:linked_bigmodel`).
+4. Managed worktree vs fork execution worktree: the fork worktree wins (the owner chose the full port).
+5. Permanent deletion: the fork erase window stays. Node already uses `session_purge`; Rust is in wave 2
+   (`specs/fork-rust-agent-parity.md`). The upstream archive confirm flow is not ported.
+6. `TaskRowIdentityHoverCard` stays unmounted; the upstream file is not touched.
+7. MR-GOAL-07: upstream (an edited queue item stays frozen).
+8. Credential cipher: upstream `enc:v2` by default; fork OAuth corrupt-session recovery kept.
+9. uk-UA locale storage: fork routing (`setting.json` is not fork-safe storage).
+10. Visualize plugin on by default (#409).
+11. Bots: fork (`/remote`, relay V2).
+12. zh-CN `noArchivedTasks` takes upstream wording. Owner-side: a native-speaker review of the new uk-UA strings.
+13. Closed: composer edit -> `handleEdit` -> `editUserQuery`; Host re-checks attachment refs in
+    `sendConversationCommandV4`; the UI shows a toast on rejection (verified by reading the code).
+14. Translation debt (upstream documents and comments still in Chinese): a separate task.
+15. Bootstrap official plugin build: upstream (clean `dist` every build).
+16. Owner-side: confirm `uk.lproj` in a real mac build after the next release.
+17. Update release notes: fork D14 fallback (`setting.json` is not fork-safe storage).

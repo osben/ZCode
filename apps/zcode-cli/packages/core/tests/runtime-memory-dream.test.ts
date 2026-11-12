@@ -803,7 +803,6 @@ describe("background Dream lifecycle", () => {
       },
       upsertTurnUsage: async () => {},
       upsertToolUsage: async () => {},
-      pruneUsage: async () => {},
     });
     const runtime = createTestAgentRuntime(
       createSessionId("background-dream"),

@@ -310,7 +310,7 @@ export class BrowserOAuthCredentialRepo {
 
     if (resolveJwtExpiration(zcodeJwtToken, this.now()).kind === "expired") {
       // Web localStorage previously checked only whether the JWT existed, which restored a fake logged-in state after expiry.
-      this.clearAll();
+      // The read stays free of side effects (upstream 3.18.0): clearing here also wiped a login started in another tab.
       return { status: "reauthentication-required", reason: "jwt-expired" };
     }
 
@@ -321,7 +321,7 @@ export class BrowserOAuthCredentialRepo {
       }
     } catch {
       // localStorage may contain corrupt JSON left by an older version or by manual edits.
-      // Treat it as signed out and clear the partial state, so the Web remote-control entry does not mistake it for a logged-in session and connect.
+      // Return signed out without clearing, so a render or a stale read cannot wipe a newer session.
     }
 
     return { status: "signed-out" };

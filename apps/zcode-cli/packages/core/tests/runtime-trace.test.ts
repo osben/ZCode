@@ -1311,7 +1311,7 @@ describe("AgentRuntime trace propagation", () => {
     );
     expect(
       requests[0]?.[2]?.content.endsWith(
-        "A signal that pattern-matches to a known failure may have a different cause.",
+        "If you are weighing a choice, give a recommendation, not an exhaustive survey\n\n<total_tokens>15000000 tokens left</total_tokens>",
       ),
     ).toBe(true);
     expect(requests[0]?.[2]?.content).not.toContain("not a git repository");

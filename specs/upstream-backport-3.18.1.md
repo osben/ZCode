@@ -46,7 +46,9 @@ format `zcode-cli-memory-v1`, the `font-smoothing-enabled` class, storage keys a
 3. Origin badge wraps (`basis-full`, `[overflow-wrap:anywhere]`) and sits under the question;
    resizable side pane `maxSize` 100%; project composer menu `[app-region:no-drag]`; reasoning
    collapsible `min-w-0`; queued summary shows same-key updates immediately.
-4. A denied microphone on macOS/Windows opens a permission popover instead of an error toast. macOS
+4. (Not reachable from the composer since owner decision 5 of the 3.18.0 sync, `specs/upstream-sync-3.18.0.md`: the
+   composer has one mic, fork dictation, and the upstream voice input button is not rendered.) A denied microphone on
+   macOS/Windows opens a permission popover instead of an error toast. macOS
    "Request again" runs `tccutil reset Microphone <own bundle id>` (packaged builds only, bundle id
    read with PlistBuddy and validated), then asks again; when macOS still reports denied the popover
    asks to restart ZCode. Concurrent resets share one in-flight request. Linux keeps the old error.

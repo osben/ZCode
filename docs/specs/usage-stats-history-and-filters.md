@@ -2,6 +2,8 @@
 
 Status: implemented (P0–P4, PR #151). This is the spec of record; sections describe shipped behavior and "Deviations" lists where the implementation differs from the original plan. Goals in priority order: (1) break nothing, (2) stay backward compatible, (3) stay cheap.
 
+Update 2026-11-12 (upstream 3.18.0, owner decision 1 in `specs/upstream-sync-3.18.0.md`): neither build prunes the raw usage tables any more; both Node and `zcode-rs` keep them forever. The rollup stays, because builds up to 3.17 already pruned older raw rows and the rollup is the only copy of that history. The problem and constraints below describe the 3.17 situation the rollup was built for.
+
 ## Problem
 
 `model_usage` / `turn_usage` / `tool_usage` are pruned after 30 days (`USAGE_RETENTION_DAYS`, `apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts`). App Usage "all-time" metrics (total tokens, peak day, longest streak) and the 52-week heatmap therefore cover at most 30 days, and date presets longer than 30 days would show nothing until history is retained.

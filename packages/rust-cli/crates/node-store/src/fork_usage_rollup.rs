@@ -281,42 +281,6 @@ pub(crate) fn refresh_for_read(conn: &Connection, now_ms: u64) -> Option<String>
     recompute(conn, now_ms).err().map(store_error_message)
 }
 
-/// Fork: the bound and the reconcile of the 30-day raw prune (specs/fork-agent-runtime-selection.md
-/// "Usage rollup in Rust mode"). Returns the `started_at` cutoff below which every raw row is
-/// covered by the last recompute (`align_down(watermark - 7 days)`, capped by `retention_cutoff`),
-/// or `None` when no recompute ran yet and nothing may be pruned. The usage write path never
-/// recomputes: that would move the watermark in the middle of a turn. The protected reconcile
-/// always runs first: it needs a raw row to apply a change another process made since the last
-/// reconcile. An error must stop the prune (the caller rolls the savepoint back).
-pub(crate) fn raw_prune_cutoff(
-    conn: &Connection,
-    retention_cutoff: i64,
-    now_ms: u64,
-) -> Result<Option<i64>, StoreError> {
-    let Some(watermark) = read_watermark_if_present(conn)? else {
-        return Ok(None);
-    };
-    ensure_detached_schema(conn, now_ms)?;
-    sync_protected_raw_rows(conn)?;
-    let covered = align_down_to_bucket(watermark.saturating_sub(REPLACE_WINDOW_MS));
-    Ok(Some(retention_cutoff.min(covered)))
-}
-
-/// The watermark when the rollup schema exists; a database no build has rolled up yet has no
-/// `fork_usage_meta` table, which reads as "never computed".
-fn read_watermark_if_present(conn: &Connection) -> Result<Option<i64>, StoreError> {
-    let exists = conn
-        .query_row(
-            "select 1 from sqlite_master where type = 'table' and name = 'fork_usage_meta'",
-            [],
-            |_| Ok(()),
-        )
-        .optional()
-        .storage()?
-        .is_some();
-    Ok(if exists { read_watermark(conn) } else { None })
-}
-
 /// Node `isForkUsageRollupReady`: a recompute completed at least once, i.e. the rollup holds a
 /// usable history.
 pub(crate) fn is_ready(conn: &Connection) -> bool {
