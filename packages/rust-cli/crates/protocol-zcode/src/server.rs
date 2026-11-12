@@ -255,7 +255,7 @@ impl Server {
     }
 
     /// Fork: records a lifecycle change and tells the App (crate::lifecycle).
-    async fn announce_lifecycle(&self, session: &SessionId, state: &str) {
+    pub(crate) async fn announce_lifecycle(&self, session: &SessionId, state: &str) {
         let snapshot = self.lifecycles.changed(session, state);
         self.context
             .peer

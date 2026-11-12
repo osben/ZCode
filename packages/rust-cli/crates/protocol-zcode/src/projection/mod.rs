@@ -485,6 +485,20 @@ impl Projection {
             .is_some_and(|items| !items.is_empty())
     }
 
+    /// Fork: a turn or a compaction runs, input waits in the queue, an interaction is pending, or a background command or
+    /// subagent still runs (Node `hasResidencyBlockingWork`, `hasPendingInteractions`, `hasQueuedCommands`).
+    pub fn residency_blocking(&self) -> bool {
+        self.phase == Phase::Running
+            || self.active.is_some()
+            || self.compacting
+            || self.has_queue()
+            || !self.pending.is_empty()
+            || self
+                .background_works_value()
+                .as_array()
+                .is_some_and(|works| !works.is_empty())
+    }
+
     /// Fork: a user stop cancelled the turn and held the queue (Node's cancelled `TurnComplete` without the preserve
     /// intent: `autoDrain: false`, `pauseReason: "stopped"`).
     pub fn hold_for_stop(&mut self) -> Value {
