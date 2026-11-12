@@ -121,6 +121,8 @@ impl Restore<'_> {
             agent: request.agent.clone(),
             workspace: request.workspace.clone(),
             mode: request.mode.unwrap_or(PermissionMode::Default),
+            // The reread calls Read directly, without the permission gate, so no decision reads `base_mode`; the
+            // request carries only the effective mode.
             base_mode: request.mode.unwrap_or(PermissionMode::Default),
             cancel: cancel.clone(),
             machine: self.machine.clone(),

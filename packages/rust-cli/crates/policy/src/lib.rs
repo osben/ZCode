@@ -269,17 +269,17 @@ impl ScopedGate for PolicyGate {
         };
         let evaluate =
             |mode: PermissionMode| evaluate_with(mode, mode == PermissionMode::BypassPermissions);
-        let plan_mcp = (context.mode == PermissionMode::Plan
-            && self.options.node_plan
-            && tool.mcp_info().is_some())
-        .then(|| chain::PlanMcp {
+        let node_plan = context.mode == PermissionMode::Plan && self.options.node_plan;
+        let plan_mcp = (node_plan && tool.mcp_info().is_some()).then(|| chain::PlanMcp {
             read_only: tool.is_read_only(input),
             destructive: tool.is_destructive(input),
         });
-        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and the base
-        // mode decides it. Plan skips Node's early yolo allow, so deny and ask rules still apply: the base mode runs
-        // without full access.
-        let base_bypass = plan_mcp.is_some()
+        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and any
+        // read-only, non-destructive tool (WebFetch, WebSearch), and the base mode decides it. Plan skips Node's early
+        // yolo allow, so deny and ask rules still apply: the base mode runs without full access.
+        let passes_gate = plan_mcp.is_some()
+            || (node_plan && tool.is_read_only(input) && !tool.is_destructive(input));
+        let base_bypass = passes_gate
             && matches!(
                 context.base_mode,
                 PermissionMode::BypassPermissions | PermissionMode::Guarded
@@ -302,7 +302,7 @@ impl ScopedGate for PolicyGate {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
             node_plan: self.options.node_plan,
-            plan_mcp: plan_mcp.is_some(),
+            plan_ask: plan_mcp.is_some() || base_bypass,
         };
         chain::outer(
             &call,

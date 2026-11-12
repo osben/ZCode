@@ -282,8 +282,9 @@ pub struct Outer {
     pub avoid_prompts: bool,
     /// Fork: plan mode denies anything that would ask, like the Node desktop agent (no classifier, no prompt).
     pub node_plan: bool,
-    /// Fork: the call already went through [`plan_mcp`]: under `node_plan` its ask goes to the user (no classifier).
-    pub plan_mcp: bool,
+    /// Fork: the call already went through Node's plan gate ([`plan_mcp`], or a base-mode decision over a guarded or
+    /// bypass base): under `node_plan` its ask goes to the user (no classifier).
+    pub plan_ask: bool,
 }
 
 /// 一次调用。
@@ -326,7 +327,7 @@ pub async fn outer(
         };
     }
     if mode == PermissionMode::Plan && options.node_plan {
-        if !options.plan_mcp {
+        if !options.plan_ask {
             return PermissionDecision::Deny {
                 message: texts::PLAN_MODE_READ_ONLY.to_owned(),
             };

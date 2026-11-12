@@ -145,6 +145,8 @@ impl RunScope {
         self.sink
             .view()
             .await
+            // Without session state there is no plan flag either: the request's mode is both the effective and the
+            // base mode (`RunView::new`).
             .unwrap_or_else(|| RunView::new(self.mode, self.workspace.clone()))
     }
 }
