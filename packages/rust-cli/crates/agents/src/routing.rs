@@ -348,7 +348,7 @@ pub(crate) async fn release(core: &Core, id: &AgentId) -> Vec<Wake> {
 /// `user`）。不是停放状态时返回 None。
 /// Fork: it ends only while it is still parked in `execution`, checked in the same lock section as the transition
 /// (Node rechecks the execution and claims the task synchronously).
-/// `ending` is `KilledParked`, or (node_desktop) `KilledParkedByZCode` for the model's TaskStop.
+/// `ending` is upstream's `KilledParked`, or (node_desktop) `Killed` / `KilledByUser`, which carry no report.
 pub(crate) fn stop_parked(
     core: &Core,
     id: &AgentId,
@@ -377,6 +377,15 @@ fn end_parked(agents: &mut Agents, id: &AgentId, ending: Ending) -> Option<(Live
     let entry = agents.get(id).cloned()?;
     let AgentState::Parked { report, .. } = &entry.state else {
         return None;
+    };
+    // Fork (node_desktop): Node's killed notification has no `<result>` (runner.ts) and no `<usage>`
+    // (completion-notification.ts); only upstream's `KilledParked` forwards the parked report.
+    let kept;
+    let report = if ending == Ending::KilledParked {
+        report
+    } else {
+        kept = Report::default();
+        &kept
     };
     let notice = notice_of(&entry, ending, report, None, false);
     if let Some(slot) = agents.get_mut(id) {

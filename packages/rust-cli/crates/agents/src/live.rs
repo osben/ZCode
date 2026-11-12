@@ -467,6 +467,9 @@ impl Live {
             return GuardedStop::NotRunning;
         }
         match &entry.state {
+            // An aborted run is already ending: the stop that aborted it claimed the ending, so a second stop
+            // before it settles is refused, as Node claims `killed` synchronously (core `runner.ts`).
+            AgentState::Running { abort, .. } if abort.is_aborted() => GuardedStop::NotRunning,
             AgentState::Running { abort, .. } => {
                 abort.abort(AbortReason::User);
                 entry.stopped_by_user = true;

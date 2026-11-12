@@ -130,9 +130,6 @@ pub(crate) enum Ending {
     Killed,
     /// 停放时被 TaskStop 停止（`killedBy` 缺省为 `"user"`，通知带最后的报告与用量）。
     KilledParked,
-    /// Fork (node_desktop): a parked agent stopped by the model's TaskStop. Like `KilledParked` (last report and usage),
-    /// but stopped by ZCode, as Node's model stop reads (`completion-notification.ts`).
-    KilledParkedByZCode,
     /// Fork: a running agent stopped by the user from the desktop (Node `stoppedBy: "user"`); no usage, like `Killed`.
     KilledByUser,
 }
@@ -142,9 +139,7 @@ impl Ending {
         match self {
             Self::Completed => BackgroundStatus::Completed,
             Self::Failed => BackgroundStatus::Failed,
-            Self::Killed | Self::KilledParked | Self::KilledParkedByZCode | Self::KilledByUser => {
-                BackgroundStatus::Killed
-            }
+            Self::Killed | Self::KilledParked | Self::KilledByUser => BackgroundStatus::Killed,
         }
     }
 
@@ -158,7 +153,7 @@ impl Ending {
                     .filter(|error| !error.is_empty())
                     .unwrap_or("Unknown error")
             ),
-            Self::Killed | Self::KilledParkedByZCode => "was stopped by ZCode".to_owned(),
+            Self::Killed => "was stopped by ZCode".to_owned(),
             Self::KilledParked | Self::KilledByUser => "was stopped by user".to_owned(),
         }
     }
@@ -196,10 +191,7 @@ pub(crate) fn envelope(
         ));
     }
     // 用量：完成时有；停放时被停止也有，运行中失败或被停止时没有。
-    if matches!(
-        ending,
-        Ending::Completed | Ending::KilledParked | Ending::KilledParkedByZCode
-    ) {
+    if matches!(ending, Ending::Completed | Ending::KilledParked) {
         let tokens = report.tokens.to_string();
         let tool_uses = report.tool_uses.to_string();
         let duration = report.duration_ms.to_string();

@@ -447,7 +447,7 @@ impl AgentSignals for Signals {
     }
 
     /// Fork (desktop `stopSubagent`, specs/fork-rust-agent-parity.md B2): the guarded user stop of one run. A parked
-    /// agent ends as a `/tasks` stop of it does (`KilledParked`, its child's background commands stopped).
+    /// agent ends as a `/tasks` stop of it does (`KilledByUser` on the desktop, its child's background commands stopped).
     async fn stop_subagent(
         &self,
         session: &SessionId,

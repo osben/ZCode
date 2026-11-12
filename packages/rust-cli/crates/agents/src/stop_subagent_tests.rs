@@ -553,22 +553,28 @@ async fn a_task_stop_that_ends_nothing_is_refused() {
     assert!(watcher.stopped.lock().unwrap().is_empty());
 }
 
-/// #418 review (3): on the desktop the model's TaskStop of a parked agent reads `was stopped by ZCode`, as Node's model
-/// stop does (`completion-notification.ts`), and keeps the parked stop's last report and usage. The user's stop, and the
-/// TUI's, keep `was stopped by user`.
+/// #418 reviews: on the desktop a stop of a parked agent is Node's killed notification. The model's TaskStop reads
+/// `was stopped by ZCode` and the user's `was stopped by user` (`completion-notification.ts`), and neither carries the
+/// parked report (`<result>`, runner.ts) or `<usage>` (excluded for killed). The TUI keeps upstream's `KilledParked`.
 #[tokio::test]
-async fn a_model_stop_of_a_parked_agent_is_stopped_by_zcode() {
-    for (by_user, ending) in [
-        (false, crate::report::Ending::KilledParkedByZCode),
-        (true, crate::report::Ending::KilledParked),
+async fn a_desktop_stop_of_a_parked_agent_is_a_killed_notice_without_report() {
+    for (by_user, ending, stopper) in [
+        (false, crate::report::Ending::Killed, "ZCode"),
+        (true, crate::report::Ending::KilledByUser, "user"),
     ] {
         let harness = desktop_harness();
         let parent = SessionId::new("sess_parent");
+        let mut stream = harness.agents.signals().signals(&parent);
         let agent = undriven(&harness, "agent_u");
         let live = harness.agents.core.live.clone();
         live.with(|agents| {
             agents.get_mut(&agent).unwrap().state = crate::live::AgentState::Parked {
-                report: crate::report::Report::default(),
+                report: crate::report::Report {
+                    text: "Parked report.".to_owned(),
+                    tokens: 42,
+                    tool_uses: 3,
+                    duration_ms: 1_000,
+                },
                 notified: true,
             };
         });
@@ -589,20 +595,40 @@ async fn a_model_stop_of_a_parked_agent_is_stopped_by_zcode() {
             live.get(&agent).unwrap().state,
             crate::live::AgentState::Finished(found) if found == ending
         ));
+        let Some(AgentSignal::Notice(notice)) = stream.next().await else {
+            panic!("expected the stop notice");
+        };
+        assert!(
+            notice.text.contains(&format!(
+                "<summary>Agent \"Undriven\" was stopped by {stopper}</summary>"
+            )),
+            "{}",
+            notice.text
+        );
+        assert!(!notice.text.contains("Parked report."), "{}", notice.text);
+        assert!(!notice.text.contains("<result>"), "{}", notice.text);
+        assert!(!notice.text.contains("<usage>"), "{}", notice.text);
     }
-    let report = crate::report::Report::default();
-    let text = crate::report::envelope(
-        "agent_u",
-        None,
-        "Long job",
-        crate::report::Ending::KilledParkedByZCode,
-        &report,
-        None,
-        false,
+}
+
+/// #418 review @f9521dce9 (1): the first stop claims the ending at once. A second stop of the same run that arrives
+/// before the run settles (another command id) is refused `not_running`, as Node claims `killed` synchronously.
+#[tokio::test]
+async fn a_second_stop_before_the_run_settles_is_not_running() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    assert_eq!(
+        live.stop_execution(&parent, &agent, "0"),
+        crate::live::GuardedStop::Aborted
     );
-    assert!(
-        text.contains("<summary>Agent \"Long job\" was stopped by ZCode</summary>"),
-        "{text}"
+    assert!(matches!(
+        live.get(&agent).unwrap().state,
+        crate::live::AgentState::Running { .. }
+    ));
+    assert_eq!(
+        live.stop_execution(&parent, &agent, "0"),
+        crate::live::GuardedStop::NotRunning
     );
-    assert!(text.contains("<usage>"), "{text}");
 }
