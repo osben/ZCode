@@ -191,6 +191,7 @@ async fn a_dequeued_content_input_hands_back_its_content() {
                 delivery: Delivery::Queue,
                 execution: None,
                 behind_held: false,
+                lease: None,
             },
         })
         .await;
@@ -236,6 +237,7 @@ async fn a_dequeued_input_is_the_edited_one() {
                 delivery: Delivery::Queue,
                 execution: None,
                 behind_held: false,
+                lease: None,
             },
         })
         .await;

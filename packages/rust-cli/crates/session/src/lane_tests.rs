@@ -382,6 +382,62 @@ async fn the_foreground_lease_has_one_owner() {
     ));
 }
 
+fn submit_as(id: &str, text: &str, lease: Option<&str>) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::SubmitWith {
+            intent: None,
+            kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+            text: text.to_owned(),
+            content: Vec::new(),
+            delivery: Delivery::Queue,
+            execution: None,
+            behind_held: false,
+            lease: lease.map(str::to_owned),
+        },
+    }
+}
+
+/// Fork: while a promotion owns the foreground, Node's admission sees `hasActiveOrQueuedTurnWork` and queues any other
+/// input; only the promoted input starts. A submit that does not name the owner is queued even though the session is
+/// idle (a start-now `sendText` that read an idle projection must not start ahead of the promotion), and it drains
+/// after the promoted turn once the owner releases the lease.
+#[tokio::test]
+async fn only_the_owners_submit_starts_while_the_foreground_is_held() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["promoted seen"]),
+        text_response(&["intruder seen"]),
+    ]));
+    let session = session(&scope, env, model.clone(), Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    assert!(matches!(
+        session.send(foreground("c1", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert!(matches!(
+        session.send(submit_as("c2", "intruder", None)).await,
+        Ack::Accepted { .. }
+    ));
+    let view = session.view().await.unwrap();
+    assert!(!view.running);
+    assert_eq!(view.queue.len(), 1);
+    assert!(model.requests().is_empty());
+    assert!(matches!(
+        session.send(submit_as("c3", "promoted", Some("a"))).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
+    session.send(foreground("c4", "a", false)).await;
+    until_finished(&mut events, 1).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let first = format!("{:?}", requests[0].messages);
+    assert!(first.contains("promoted") && !first.contains("intruder"));
+    assert!(format!("{:?}", requests[1].messages).contains("intruder"));
+}
+
 fn refused(reason: &str) -> Ack {
     Ack::Rejected {
         reason: reason.to_owned(),

@@ -219,6 +219,7 @@ pub(super) async fn compact(
         delivery: Delivery::Queue,
         execution,
         behind_held: true,
+        lease: None,
     };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
     if let KernelAck::Rejected { reason } = &kernel

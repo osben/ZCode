@@ -695,8 +695,16 @@ impl Actor {
                 delivery,
                 execution,
                 behind_held,
+                lease,
             } => {
-                let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
+                // Fork: while a promotion owns the foreground only its own input starts; any other is queued like
+                // busy (Node's admission sees `hasActiveOrQueuedTurnWork` while a promotion lease exists).
+                let foreign = self
+                    .inbox
+                    .foreground_owner()
+                    .is_some_and(|owner| lease.as_deref() != Some(owner));
+                let queue =
+                    foreign || (behind_held && self.inbox.held() && self.inbox.has_inputs());
                 self.submit_with(
                     id,
                     kind,

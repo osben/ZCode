@@ -177,6 +177,11 @@ pub enum Command {
         /// Fork: the App input's intent; `text` is the typed text and the quotes join it after slash expansion.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         intent: Option<Box<crate::input_intent::InputIntent>>,
+        /// Fork: the foreground lease ([`Command::ReserveForeground`]) this submit is the promoted input of. While a
+        /// lease is held, a submit that does not name its owner is queued as if busy (Node's admission sees
+        /// `hasActiveOrQueuedTurnWork` while a promotion lease exists), so it cannot start ahead of the promotion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease: Option<String>,
     },
     /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
     /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are

@@ -22,6 +22,7 @@ fn submit_with(id: &str, text: &str, mode: PermissionMode, plan: bool) -> Comman
                 selection: None,
             }),
             behind_held: false,
+            lease: None,
         },
     }
 }
@@ -37,6 +38,7 @@ fn compact(id: &str) -> CommandEnvelope {
             delivery: Delivery::Queue,
             execution: None,
             behind_held: true,
+            lease: None,
         },
     }
 }

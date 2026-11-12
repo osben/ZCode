@@ -279,7 +279,7 @@ pub async fn command(server: &Server, params: Value) -> Result<Value, RpcError> 
     Ok(ack.to_value())
 }
 
-async fn decide(server: &Server, envelope: &Envelope) -> Ack {
+pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     if envelope.kind == "createSession" {
         return create_session(server, envelope).await;
     }
@@ -316,14 +316,13 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             } else {
                 QueuedKind::Text
             };
-            let ack = if phase == Phase::Running
-                && kind == QueuedKind::Text
-                && requests_start_now(envelope)
-            {
-                send_text_now(server, &live, envelope, revision).await
+            // Node `forceStartNow`: every explicit `startNow` text takes the foreground lease, whatever the projected
+            // phase (an idle projection may lag behind a promotion that holds the lease).
+            let ack = if kind == QueuedKind::Text && requests_start_now(envelope) {
+                send_text_now(server, &live, envelope, phase, revision).await
             } else {
                 send_text(
-                    server, handle, &live.sink, envelope, kind, phase, revision, false,
+                    server, handle, &live.sink, envelope, kind, phase, revision, None,
                 )
                 .await
             };
@@ -660,6 +659,7 @@ async fn submit_first(
         delivery: Delivery::Queue,
         execution,
         behind_held: false,
+        lease: None,
     };
     Ok(
         match send(live.handle.as_ref(), &envelope.command_id, submit).await {
@@ -1375,25 +1375,28 @@ async fn send_text_now(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
+    phase: Phase,
     revision: u64,
 ) -> Ack {
     let handle = live.handle.as_ref();
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
     // Node `send-now:<commandId>`: the lease's owner. Another promotion owning the foreground refuses the input as
-    // Node does (`send now foreground promotion is busy`), and that lease is left alone.
+    // Node does (`send now foreground promotion is busy`), and that lease is left alone. Node throws
+    // `V4InputAdmissionRejectedError` and the gateway answers a thrown command error with `status: "failed"`.
+    let lease = format!("send-now:{}", envelope.command_id);
     if let rust_cli_kernel_api::session_api::Ack::Rejected { .. } = send(
         handle,
         &part("reserve"),
         Command::ReserveForeground {
             reserved: true,
-            lease: format!("send-now:{}", envelope.command_id),
+            lease: lease.clone(),
         },
     )
     .await
     {
         return Ack::refused(
             &envelope.command_id,
-            Status::Rejected,
+            Status::Failed,
             "fault.command.inputRejected",
             "send now foreground promotion is busy",
             revision,
@@ -1407,15 +1410,16 @@ async fn send_text_now(
                 &live.sink,
                 envelope,
                 QueuedKind::Text,
-                Phase::Running,
+                phase,
                 revision,
-                true,
+                Some(&lease),
             )
             .await
         }
+        // A failed preemption is a thrown error in Node too (`preemptActiveTurnAndWait`): `failed`.
         Err(reason) => Ack::refused(
             &envelope.command_id,
-            Status::Rejected,
+            Status::Failed,
             "fault.command.inputRejected",
             reason,
             revision,
@@ -1438,7 +1442,7 @@ async fn send_text_now(
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the sendText admission inputs plus the preempted flag"
+    reason = "the sendText admission inputs plus the promotion lease"
 )]
 async fn send_text(
     server: &Server,
@@ -1448,7 +1452,7 @@ async fn send_text(
     kind: QueuedKind,
     phase: Phase,
     revision: u64,
-    preempted: bool,
+    promotion: Option<&str>,
 ) -> Ack {
     let input: Input = match payload(envelope) {
         Ok(input) => input,
@@ -1528,7 +1532,7 @@ async fn send_text(
     let execution = input_execution(&input, view.as_ref());
     let requested = input.requested_delivery;
     // A preempted turn has settled: the input starts now even though the snapshot still said running.
-    let admission_phase = if preempted {
+    let admission_phase = if promotion.is_some() {
         Phase::CompletedInterrupted
     } else {
         phase
@@ -1568,6 +1572,8 @@ async fn send_text(
         delivery,
         execution,
         behind_held: false,
+        // The start-now input is the promotion's own: it starts while its lease holds the foreground.
+        lease: promotion.map(str::to_owned),
     };
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(

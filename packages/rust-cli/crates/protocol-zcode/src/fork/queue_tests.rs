@@ -369,3 +369,37 @@ async fn send_now_is_refused_while_another_promotion_owns_the_foreground() {
         }]
     );
 }
+
+/// Node `session-flow.ts` takes the foreground lease for every `requestedDelivery: "startNow"` `sendText`, whatever the
+/// phase: while another promotion owns it the input fails (`V4InputAdmissionRejectedError`, which the gateway answers
+/// with `status: "failed"`) and is not submitted, even when the projection already shows the session idle.
+#[tokio::test]
+async fn a_start_now_text_is_failed_while_a_promotion_owns_the_foreground_of_an_idle_session() {
+    let (_scope, server, handle) = fixture_with(Vec::new(), None, true).await;
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "cmd-1",
+        "clientId": "app",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {"text": "now", "requestedDelivery": "startNow"},
+    }))
+    .expect("an envelope");
+    let ack = crate::commands::decide(&server, &envelope).await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert_eq!(
+        ack.reason_code.as_deref(),
+        Some("fault.command.inputRejected"),
+        "{ack:?}"
+    );
+    let sent = handle.sent.lock_unpoisoned().clone();
+    assert!(
+        !sent
+            .iter()
+            .any(|command| matches!(command, Command::SubmitWith { .. })),
+        "{sent:?}"
+    );
+    assert!(sent.contains(&Command::ReserveForeground {
+        reserved: true,
+        lease: "send-now:cmd-1".to_owned(),
+    }));
+}

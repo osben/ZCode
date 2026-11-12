@@ -378,6 +378,7 @@ async fn resubmit(
         delivery: Delivery::Queue,
         execution: None,
         behind_held: false,
+        lease: None,
         intent: Some(Box::new(intent)),
     };
     send(live.handle.as_ref(), &envelope.command_id, submit).await

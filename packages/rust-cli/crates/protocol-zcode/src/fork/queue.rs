@@ -638,6 +638,8 @@ pub(super) async fn send_queued_now(
             delivery: Delivery::Queue,
             execution,
             behind_held: false,
+            // The promoted input is the lease owner's: it starts while the lease holds the foreground.
+            lease: Some(lease.clone()),
         },
     )
     .await;
