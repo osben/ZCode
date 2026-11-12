@@ -428,6 +428,7 @@
   "packages/ui/test/worktreeTaskRowMarker.test.ts",
   "packages/ui/test/worktreesSettingsSection.test.ts",
   "packages/ui/test/zcodeTaskMetaMerge.test.ts",
+  "packages/web/test/webOAuthCachedSessionReadOnly.test.ts",
   "packages/web/test/webPlatformOpenOnDesktop.test.ts",
   "packages/web/test/webRemoteControlEntryPairing.test.ts",
   "packages/web/test/webRemoteControlRelayEndpoints.test.ts",
