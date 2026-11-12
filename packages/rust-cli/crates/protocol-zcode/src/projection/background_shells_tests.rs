@@ -167,6 +167,7 @@ fn an_absorbed_notification_records_status_and_output_without_settling_rows() {
             }],
         ),
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {

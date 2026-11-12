@@ -20,6 +20,7 @@ const COMPACTED: &str = "✓ Compact";
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
@@ -54,6 +55,7 @@ fn compaction(k: usize, kept: Option<&str>) -> Vec<Message> {
             discovered_tools: Vec::new(),
         })),
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: summary,
             content: vec![ContentBlock::Text {

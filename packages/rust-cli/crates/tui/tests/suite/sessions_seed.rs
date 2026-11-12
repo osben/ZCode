@@ -43,6 +43,7 @@ pub async fn seed(store: &MemoryStore, seeds: &[Seed]) {
             .await
             .unwrap();
         let user = Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(format!("msg_u_{}", seed.id)),
             content: vec![ContentBlock::Text {

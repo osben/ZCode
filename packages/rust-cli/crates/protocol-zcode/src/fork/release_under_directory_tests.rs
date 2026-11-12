@@ -173,6 +173,7 @@ fn idle(id: &str, root: &str) -> SessionView {
 fn running(id: &str, root: &str) -> SessionView {
     let mut view = idle(id, root);
     view.messages = vec![Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("m1"),
         content: vec![ContentBlock::Text {

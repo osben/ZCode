@@ -117,6 +117,7 @@ async fn conclude(
         Outcome::Failed { message } => Ok(Some(QueryStop::ApiError { message })),
         Outcome::Retry { nudge, source, .. } => {
             let message = Message::User(UserMessage {
+                stall_execution: None,
                 intent: None,
                 id: scope.parts.ids.message(),
                 content: vec![ContentBlock::Text {

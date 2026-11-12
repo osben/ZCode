@@ -142,6 +142,7 @@ pub(crate) fn success(ids: &dyn Ids, hook_name: &str, event: &str, content: &str
 /// meta user 消息（`createUserMessage({isMeta: true})`），文本原样。
 pub(crate) fn meta(ids: &dyn Ids, source: &str, text: String) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: ids.message(),
         content: vec![ContentBlock::Text { text }],

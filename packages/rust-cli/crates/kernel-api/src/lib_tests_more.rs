@@ -54,6 +54,7 @@ fn tool_call_output_round_trips() {
     round_trip(&ToolCallOutput {
         output: output.clone(),
         new_messages: vec![Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_skill"),
             content: vec![ContentBlock::Text {

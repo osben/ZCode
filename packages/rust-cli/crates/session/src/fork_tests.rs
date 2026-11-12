@@ -74,6 +74,7 @@ fn the_resume_reply_is_not_copied() {
     use rust_cli_kernel_api::testing::SequentialIds;
     let input = |id: &str| {
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text {

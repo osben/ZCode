@@ -58,6 +58,7 @@ pub(crate) fn mode(parent: PermissionMode, declared: Option<PermissionMode>) -> 
 
 fn user(core: &Core, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: core.ports.ids.message(),
         content: vec![ContentBlock::Text {

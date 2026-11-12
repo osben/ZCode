@@ -38,6 +38,7 @@ impl Actor {
             .collect::<Vec<_>>()
             .join("\n");
         let user = Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: prompt.clone(),
             content,
@@ -129,6 +130,7 @@ impl Actor {
                     None => extra.text,
                 };
                 let message = Message::User(UserMessage {
+                    stall_execution: None,
                     intent: extra.intent,
                     id: ids.message(),
                     content: vec![ContentBlock::Text { text }],

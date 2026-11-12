@@ -205,6 +205,7 @@ impl SkillTool {
             display: Value::Null,
         };
         let message = Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: self.ids.message(),
             content: vec![ContentBlock::Text { text: content }],

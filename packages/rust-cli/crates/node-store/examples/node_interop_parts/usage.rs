@@ -88,6 +88,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
     store.commit(&session, anchored(&mut turn, facts)).await?;
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: r1,
             content: vec![ContentBlock::ToolResult {

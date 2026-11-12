@@ -248,6 +248,7 @@ async fn a_notice_that_is_already_in_the_conversation_is_only_acked() {
     let env = Arc::new(NoticeEnvironment::default());
     let model = Arc::new(ScriptedModel::new(Vec::new()));
     let delivered = Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_notice"),
         content: vec![ContentBlock::Text {

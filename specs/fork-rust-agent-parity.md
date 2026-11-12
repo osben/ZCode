@@ -1057,7 +1057,7 @@ Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4
   - Node writes a `session_input` admission row (`backgroundNotification`) for each reminder and settles it `discarded` when stale. Rust's notices write no admission row, terminal ones included, so a reminder writes none either.
   - A call that is aborted before it starts emits no finish event, so it can stay listed until its run ends. Node removes it on its result. This only happens while the run is being aborted.
   - `runtimeConfig.subagents.*` has no path into the Rust runtime. Only the env and the defaults apply.
-  - `subagentStall.executionId` is not in the stored `originMeta`. The stored meta is derived from the notice text (`origin_meta`), and the text is fixed byte for byte by Node's formatter, so the execution cannot reach the store that way. Writing it needs a field on the kernel `UserMessage` (a model change touching every construction site), which is not done here. The drain check does use the execution.
+  - `subagentStall.executionId` on a stall reminder that is absorbed at a tool boundary (an attachment, not a turn-opening user message) is not written: the execution rides on the kernel `UserMessage` only (`stall_execution`), and an attachment has no such field. The turn-opening case writes it in the store and the projection (`node-store/src/notices.rs`, `protocol-zcode/src/projection/background_result.rs`), in Node's order (`noProgressForMs`, `lastProgressAt`, `executionId`).
 
 ## Known differences kept on purpose
 

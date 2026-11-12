@@ -24,6 +24,7 @@ struct Loader;
 
 fn loaded() -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_body"),
         content: vec![ContentBlock::Text {

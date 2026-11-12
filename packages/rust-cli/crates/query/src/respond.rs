@@ -194,6 +194,7 @@ pub(crate) async fn mark_interrupted(
             texts::INTERRUPT_MESSAGE
         };
         let message = Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: scope.parts.ids.message(),
             content: vec![ContentBlock::Text {

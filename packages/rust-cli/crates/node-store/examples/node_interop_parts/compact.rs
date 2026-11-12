@@ -34,6 +34,7 @@ pub(super) async fn compacted(store: &NodeStore) -> Result<SessionId> {
     store.commit(&id, batch(None, vec![calls])).await?;
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: r2.clone(),
             content: vec![ContentBlock::ToolResult {
@@ -67,6 +68,7 @@ pub(super) async fn compacted(store: &NodeStore) -> Result<SessionId> {
         },
         Fact::MessageAppended {
             message: Message::User(UserMessage {
+                stall_execution: None,
                 intent: None,
                 id: summary,
                 content: vec![text(

@@ -91,6 +91,7 @@ fn batch(facts: Vec<Fact>) -> FactBatch {
 fn user(id: MessageId, text: String) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id,
             content: vec![ContentBlock::Text { text }],

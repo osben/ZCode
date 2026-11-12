@@ -11,6 +11,17 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     Some(&text[start..end])
 }
 
+/// `origin_meta` of one notification block, with the run a no-progress reminder was built for. Node writes
+/// `subagentStall.executionId` after `lastProgressAt` (subagent-stall-reminder.ts), only when the reminder has one.
+/// `execution` is given only for a message that is exactly this one block (a batch keeps base fields, as Node).
+pub fn origin_meta_with_execution(text: &str, execution: Option<&str>) -> Option<Value> {
+    let mut meta = origin_meta(text)?;
+    if let (Some(execution), Some(stall)) = (execution, meta.get_mut("subagentStall")) {
+        stall["executionId"] = json!(execution);
+    }
+    Some(meta)
+}
+
 /// The quoted description in a notification summary: `Agent "<title>" completed`, `Background
 /// command "<title>" failed with exit code 1`. The closing quote is the one before the ending words,
 /// so a quote inside the title or the error text does not cut it short.

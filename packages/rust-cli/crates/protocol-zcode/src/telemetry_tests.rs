@@ -332,6 +332,7 @@ fn a_wake_turn_gets_a_fresh_command_and_its_background_source() {
     assert!(run.facts.is_empty(), "the start waits for the notification");
     run.event(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_n"),
             content: vec![ContentBlock::Text {
@@ -456,6 +457,7 @@ fn a_subagent_notification_merged_into_a_user_turn_marks_it_consumed() {
     run.event(turn_started("turn_1", Some("cmd-1")));
     run.event(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_n"),
             content: vec![ContentBlock::Text {

@@ -121,6 +121,7 @@ fn view(running: bool, running_turn: bool) -> SessionView {
     let mut view = SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default);
     if running_turn {
         view.messages = vec![Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: rust_cli_kernel_api::ids::MessageId::new("m1"),
             content: vec![ContentBlock::Text {
