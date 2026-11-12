@@ -21,6 +21,7 @@
   "packages/acp-agent-runtime/test/updates.test.ts",
   "packages/desktop/src/main/storage-sweep-gate/contract.test.ts",
   "packages/desktop/test/armsRumShared.test.ts",
+  "packages/desktop/test/autoUpdaterNoInstallOnQuit.test.ts",
   "packages/desktop/test/broadcastHub.test.ts",
   "packages/desktop/test/buildPipelineEntrypoints.test.ts",
   "packages/desktop/test/desktopCommandHandlersClearAll.test.ts",
