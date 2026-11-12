@@ -216,19 +216,36 @@ impl TaskStopTool {
     /// 停止停放的子代理时，停掉它子会话里还在跑的后台命令（L18：
     /// `killing orphaned shell task`）。它派生的后台子代理不停（不级联停止子代理）。每次停止的 operationId
     /// 由这次 TaskStop 的 operationId 加任务 ID 派生，重放时相同（README §6 规则 3）；已结束、不认识的忽略。
-    async fn stop_commands_of(&self, agent: &AgentId, context: &Caller<'_>) {
-        let Some(entry) = self.core.live.get(agent) else {
-            return;
-        };
-        let Ok(state) = context
+    /// The background commands in a parked agent's child session, read while it is parked in `execution`: the cleanup
+    /// targets of stopping it. None when it is no longer parked in that execution.
+    async fn parked_commands(
+        &self,
+        agent: &AgentId,
+        execution: u64,
+        context: &Caller<'_>,
+    ) -> Option<(LiveAgent, Vec<ShellTaskId>)> {
+        let entry = self.core.live.get(agent)?;
+        if entry.shown.execution != execution || !matches!(entry.state, AgentState::Parked { .. }) {
+            return None;
+        }
+        let commands = context
             .machine
             .shell()
             .shell_state(&entry.workspace, &entry.child)
             .await
-        else {
-            return;
-        };
-        for task in state.background {
+            .map(|state| state.background)
+            .unwrap_or_default();
+        Some((entry, commands))
+    }
+
+    /// Stops the commands read by [`Self::parked_commands`].
+    async fn stop_commands(
+        &self,
+        entry: &LiveAgent,
+        commands: Vec<ShellTaskId>,
+        context: &Caller<'_>,
+    ) {
+        for task in commands {
             let mut operation = context.operation.clone();
             operation.operation = OperationId::new(format!("{}_{}", operation.operation, task));
             let key = BackgroundTask {
@@ -268,16 +285,24 @@ impl TaskStopTool {
 
     /// Fork: ends `agent` if it is still parked in `execution`, as [`Self::stop`] does for a parked agent; false when
     /// it no longer is (it woke, and may be parked again in a later execution).
+    ///
+    /// The cleanup targets are read before the transition, while it is parked in `execution`: once it has ended, a
+    /// SendMessage may restart it in the same child session, and a later read would stop that new run's commands.
+    /// The transition checks the same execution, so no run started between the read and the transition (Node captures
+    /// the stopped execution's controller before it publishes the terminal state, core `runner.ts`).
     pub(crate) async fn stop_parked(
         &self,
         agent: &AgentId,
         execution: u64,
         context: &Caller<'_>,
     ) -> bool {
-        let Some(wakes) = routing::stop_parked(&self.core, agent, Some(execution)) else {
+        let Some((entry, commands)) = self.parked_commands(agent, execution, context).await else {
             return false;
         };
-        self.stop_commands_of(agent, context).await;
+        let Some(wakes) = routing::stop_parked(&self.core, agent, execution) else {
+            return false;
+        };
+        self.stop_commands(&entry, commands, context).await;
         routing::wake(&self.core, wakes).await;
         true
     }
@@ -297,9 +322,13 @@ impl TaskStopTool {
                     if self.core.node_desktop && !context.by_user {
                         self.core.live.left_running(&agent).await;
                     }
-                } else if let Some(wakes) = routing::stop_parked(&self.core, &agent, None) {
-                    self.stop_commands_of(&agent, context).await;
-                    routing::wake(&self.core, wakes).await;
+                } else if let Some(execution) = self
+                    .core
+                    .live
+                    .get(&agent)
+                    .map(|entry| entry.shown.execution)
+                {
+                    self.stop_parked(&agent, execution, context).await;
                 }
                 Ok(StoppedTask {
                     id: id.to_owned(),

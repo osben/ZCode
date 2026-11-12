@@ -346,15 +346,14 @@ pub(crate) async fn release(core: &Core, id: &AgentId) -> Vec<Wake> {
 
 /// TaskStop 停放的子代理（§5.1 第 7 条）：结束，通知带最后的报告与用量（`killedBy` 缺省
 /// `user`）。不是停放状态时返回 None。
-/// Fork: `execution` (the desktop's guarded stop) ends it only while it is still parked in that execution, checked in
-/// the same lock section as the transition (Node rechecks the execution and claims the task synchronously).
-pub(crate) fn stop_parked(core: &Core, id: &AgentId, execution: Option<u64>) -> Option<Vec<Wake>> {
+/// Fork: it ends only while it is still parked in `execution`, checked in the same lock section as the transition
+/// (Node rechecks the execution and claims the task synchronously).
+pub(crate) fn stop_parked(core: &Core, id: &AgentId, execution: u64) -> Option<Vec<Wake>> {
     core.live.with(|agents| {
-        if execution.is_some_and(|execution| {
-            agents
-                .get(id)
-                .is_none_or(|entry| entry.shown.execution != execution)
-        }) {
+        if agents
+            .get(id)
+            .is_none_or(|entry| entry.shown.execution != execution)
+        {
             return None;
         }
         let (entry, notice) = end_parked(agents, id)?;

@@ -33,6 +33,11 @@ pub const REJECT_MESSAGE: &str = "The user doesn't want to proceed with this too
 /// `PermissionDenied`, not a tool error).
 pub const PLAN_MODE_READ_ONLY: &str = "Plan mode only allows read-only, non-destructive tools";
 
+/// Fork: the result of a foreground Agent call whose child was stopped on its own, the parent turn still running
+/// (Node `ToolCancelled` "Subagent was stopped by user", core `subagent/runner.ts`). The desktop projection settles a tool
+/// error with this text as cancelled, live and on a cold read, as Node's `onToolCallError` does for `ToolCancelled`.
+pub const SUBAGENT_STOPPED_BY_USER: &str = "Subagent was stopped by user";
+
 /// 工具结果落盘的通用上限（字符）：结果超过它就落盘为 Artifact，只把预览交给模型（[`Tool::max_result_size_chars`]）。
 /// 多数工具用这个值；值不同的工具在自己那里命名（工作线 F122，用户决定 2026-10-30，docs/specs/rust-cli/constants.md §5.1）。
 pub const DEFAULT_MAX_RESULT_CHARS: usize = 100_000;

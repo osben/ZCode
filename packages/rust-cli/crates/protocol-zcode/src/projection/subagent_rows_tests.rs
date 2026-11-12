@@ -362,3 +362,45 @@ fn the_stop_control_comes_from_the_live_table() {
     feed.projection.subagent_table(&[own, inner], 30);
     assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
 }
+
+/// A foreground child stopped on its own (Node `ToolCancelled`, `onToolCallError`): the Agent row and the child's row
+/// are cancelled, not an error, while the parent turn goes on.
+#[test]
+fn a_stopped_foreground_child_settles_its_rows_as_cancelled() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let tool = agent_call(&mut feed, 1);
+    progress(&mut feed, &tool, 1);
+    let deltas = feed.apply(KernelEvent::ToolDone {
+        tool_use: tool.clone(),
+        output: ToolOutput {
+            content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {
+                text: rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER.to_owned(),
+            }],
+            is_error: true,
+            display: json!({"agent": {
+                "agentId": "agent_1",
+                "childSessionId": "sess_subagent_agent_1",
+                "agentType": "general-purpose",
+                "status": "killed",
+            }}),
+        },
+    });
+    let status_of = |kind: &str| {
+        deltas
+            .iter()
+            .rev()
+            .find(|delta| delta["row"]["kind"] == kind)
+            .map(|delta| delta["row"]["status"].clone())
+    };
+    assert_eq!(
+        status_of("subagent"),
+        Some(json!("cancelled")),
+        "{deltas:?}"
+    );
+    assert_eq!(
+        status_of("toolCall"),
+        Some(json!("cancelled")),
+        "{deltas:?}"
+    );
+}

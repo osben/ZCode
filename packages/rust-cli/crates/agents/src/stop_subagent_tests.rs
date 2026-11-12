@@ -335,14 +335,144 @@ async fn a_stale_stop_leaves_an_agent_parked_again_in_a_later_execution() {
     });
     park();
     assert_eq!(execution(&harness, &agent), 1);
-    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, Some(checked)).is_none());
+    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, checked).is_none());
     assert!(matches!(
         live.get(&agent).unwrap().state,
         AgentState::Parked { .. }
     ));
-    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, Some(1)).is_some());
+    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, 1).is_some());
     assert!(matches!(
         live.get(&agent).unwrap().state,
         AgentState::Finished(crate::report::Ending::KilledParked)
     ));
+}
+
+/// A shell that records, at each read of the child's background commands, whether the agent was still parked.
+struct ReadWatcher {
+    live: Arc<crate::live::Live>,
+    agent: AgentId,
+    parked_at_read: std::sync::Mutex<Vec<bool>>,
+    stopped: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::machine::Shell for ReadWatcher {
+    async fn shell_state(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+        _session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::env_shell::ShellState, rust_cli_kernel_api::env::EnvError>
+    {
+        let parked = self
+            .live
+            .get(&self.agent)
+            .is_some_and(|entry| matches!(entry.state, crate::live::AgentState::Parked { .. }));
+        self.parked_at_read.lock().unwrap().push(parked);
+        Ok(rust_cli_kernel_api::env_shell::ShellState {
+            cwd: workspace.root.clone(),
+            outputs: None,
+            background: vec![rust_cli_kernel_api::ids::ShellTaskId::new("b_old")],
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::machine::Background for ReadWatcher {
+    async fn background_command(
+        &self,
+        _request: rust_cli_kernel_api::env_shell::BackgroundTask,
+    ) -> Result<
+        Option<rust_cli_kernel_api::env_shell::BackgroundInfo>,
+        rust_cli_kernel_api::env::EnvError,
+    > {
+        Ok(None)
+    }
+
+    async fn stop_background_command(
+        &self,
+        _context: OperationContext,
+        request: rust_cli_kernel_api::env_shell::BackgroundTask,
+    ) -> Result<rust_cli_kernel_api::env_shell::BackgroundStop, rust_cli_kernel_api::env::EnvError>
+    {
+        self.stopped.lock().unwrap().push(request.task.to_string());
+        Ok(rust_cli_kernel_api::env_shell::BackgroundStop::NotFound)
+    }
+}
+
+/// Codex review of #418 @390c2bc4e (2): the cleanup targets of a parked stop are read while the agent is still parked
+/// in the stopped execution, before the transition that lets a SendMessage restart it in the same child session; a read
+/// after it could list the new run's commands.
+#[tokio::test]
+async fn a_parked_stop_reads_its_cleanup_targets_before_the_agent_can_restart() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    live.with(|agents| {
+        agents.get_mut(&agent).unwrap().state = crate::live::AgentState::Parked {
+            report: crate::report::Report::default(),
+            notified: true,
+        };
+    });
+    let watcher = Arc::new(ReadWatcher {
+        live: live.clone(),
+        agent: agent.clone(),
+        parked_at_read: std::sync::Mutex::default(),
+        stopped: std::sync::Mutex::default(),
+    });
+    let machine = rust_cli_kernel_api::testing::unsupported_machine()
+        .with_shell(watcher.clone())
+        .with_background(watcher.clone());
+    let tool = crate::task_stop::TaskStopTool {
+        core: harness.agents.core.clone(),
+    };
+    let operation = operation(&parent);
+    let caller = crate::task_stop::Caller {
+        session: &parent,
+        agent: None,
+        machine: &machine,
+        operation: &operation,
+        by_user: true,
+    };
+    // A stale execution reads nothing and ends nothing.
+    assert!(!tool.stop_parked(&agent, 1, &caller).await);
+    assert!(watcher.parked_at_read.lock().unwrap().is_empty());
+    assert!(tool.stop_parked(&agent, 0, &caller).await);
+    assert_eq!(*watcher.parked_at_read.lock().unwrap(), vec![true]);
+    assert_eq!(*watcher.stopped.lock().unwrap(), vec!["b_old".to_owned()]);
+    assert!(matches!(
+        live.get(&agent).unwrap().state,
+        crate::live::AgentState::Finished(crate::report::Ending::KilledParked)
+    ));
+}
+
+/// Codex review of #418 @390c2bc4e (1): a foreground child stopped on its own ends only its Agent call, as cancelled
+/// (Node `ToolCancelled`), and the result keeps `display.agent`, the child link that cold subagent queries read.
+#[tokio::test]
+async fn a_stopped_foreground_child_is_a_cancelled_call_that_keeps_its_link() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let call = harness.call(
+        "sess_parent",
+        "Agent",
+        json!({"description": "Long job", "prompt": "Work.", "run_in_background": false}),
+    );
+    let stop = async {
+        harness.started(1).await;
+        signals
+            .stop_subagent(&parent, &AgentId::new("agent_1"), "0", operation(&parent))
+            .await
+    };
+    let (output, stopped) = tokio::join!(call, stop);
+    assert_eq!(stopped, Ok(()));
+    assert!(output.is_error);
+    assert_eq!(
+        text(&output),
+        rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER
+    );
+    let agent = &output.display["agent"];
+    assert_eq!(agent["agentId"], "agent_1");
+    assert_eq!(agent["childSessionId"], "sess_subagent_agent_1");
+    assert_eq!(agent["status"], "killed");
 }
