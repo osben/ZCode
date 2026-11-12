@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use rust_cli_kernel_api::agents::{AgentNotice, AgentSignal};
+use rust_cli_kernel_api::agents::{AgentNotice, AgentSignal, AgentStall};
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::ids::{AgentId, SessionId};
 use serde_json::Value;
@@ -32,6 +32,8 @@ struct Channel {
     pending: Vec<(u64, AgentNotice)>,
     /// 最新的任务清单与它的到达顺序。
     tasks: Option<(u64, Value)>,
+    /// 无进展提醒（不 ack，不计入 `pending`）：交给订阅方时就从这里取走。
+    stalls: Vec<(u64, AgentStall)>,
 }
 
 impl Channel {
@@ -73,8 +75,8 @@ fn lock(inner: &Inner) -> MutexGuard<'_, HashMap<SessionId, Channel>> {
     inner.channels.lock_unpoisoned()
 }
 
-/// 下一个要交出的信号：通知与任务清单里到达顺序最小、还没交出的一个。
-fn next_signal(channel: &Channel, cursor: &Cursor) -> Option<(u64, AgentSignal)> {
+/// 下一个要交出的信号：通知、任务清单与无进展提醒里到达顺序最小、还没交出的一个。交出的提醒从通道取走。
+fn next_signal(channel: &mut Channel, cursor: &Cursor) -> Option<(u64, AgentSignal)> {
     let notice = channel
         .pending
         .iter()
@@ -88,18 +90,28 @@ fn next_signal(channel: &Channel, cursor: &Cursor) -> Option<(u64, AgentSignal)>
             let tasks = tasks.clone();
             (*order, AgentSignal::TasksChanged { tasks })
         });
-    match (notice, tasks) {
-        (Some(notice), Some(tasks)) => Some(if notice.0 < tasks.0 { notice } else { tasks }),
-        (one, other) => one.or(other),
+    let stall = channel
+        .stalls
+        .iter()
+        .find(|(order, _)| *order > cursor.delivered)
+        .map(|(order, stall)| (*order, AgentSignal::Stall(stall.clone())));
+    let (order, signal) = [notice, tasks, stall]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(order, _)| *order)?;
+    if matches!(signal, AgentSignal::Stall(_)) {
+        channel.stalls.retain(|(stalled, _)| *stalled != order);
     }
+    Some((order, signal))
 }
 
 async fn next(mut cursor: Cursor) -> Option<(AgentSignal, Cursor)> {
     let mut changed = cursor.inner.changed.subscribe();
     loop {
         changed.borrow_and_update();
+        // 找与取走在同一把锁里：提醒只交出一次。
         let found = lock(&cursor.inner)
-            .get(&cursor.session)
+            .get_mut(&cursor.session)
             .and_then(|channel| next_signal(channel, &cursor));
         if let Some((order, signal)) = found {
             cursor.delivered = order;
@@ -161,6 +173,18 @@ impl Hub {
         };
         self.wake();
         seq
+    }
+
+    /// 无进展提醒（Node `enqueueBackgroundTaskNotification` 的 stall 命令）：记下并唤醒订阅者。不进 `pending`，
+    /// 所以不算后台工作，也不要求 ack。
+    pub(crate) fn stall(&self, session: &SessionId, stall: AgentStall) {
+        {
+            let mut channels = self.channels();
+            let channel = channels.entry(session.clone()).or_default();
+            let order = channel.order();
+            channel.stalls.push((order, stall));
+        }
+        self.wake();
     }
 
     /// 换上最新的任务清单（旧的没交出就被替换：快照可重建）。

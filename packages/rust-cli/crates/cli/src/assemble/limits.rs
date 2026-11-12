@@ -179,7 +179,26 @@ pub(crate) fn limits(env: &EnvSnapshot, max_output_tokens: Option<u32>) -> Limit
         },
         bash: bash(env),
         fork_subagent: fork_subagent(env),
+        subagent_stall_notify_ms: subagent_stall_notify_ms(env),
     }
+}
+
+/// Node `SUBAGENT_STALL_NOTIFY_MIN_MS`: a smaller value still means 10 seconds.
+const SUBAGENT_STALL_NOTIFY_MIN_MS: u64 = 10_000;
+/// `Number.MAX_SAFE_INTEGER`: a larger value is not a safe integer, so Node ignores it.
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+/// `ZCODE_SUBAGENT_STALL_NOTIFY_MS` (Node `readSubagentStallNotifyOverride`): trimmed, digits only, a safe integer
+/// above 0, and at least 10 seconds. Anything else is ignored and the default (15 minutes) applies.
+pub(crate) fn subagent_stall_notify_ms(env: &EnvSnapshot) -> Option<u64> {
+    let raw = rust_cli_base::js::string::trim(
+        env.raw(rust_cli_base::names::env::ZCODE_SUBAGENT_STALL_NOTIFY_MS)?,
+    );
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let value: u64 = raw.parse().ok()?;
+    (value > 0 && value <= MAX_SAFE_INTEGER).then(|| value.max(SUBAGENT_STALL_NOTIFY_MIN_MS))
 }
 
 /// `ZCODE_FORK_SUBAGENT`（修复线 L-A，agents.md §8.1.1；真假值的写法同对照实现）：真值打开，假值关掉，

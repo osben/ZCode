@@ -31,6 +31,7 @@ mod runs;
 mod shell_notices;
 mod signals;
 mod spawn;
+mod stall;
 mod task_output;
 mod task_stop;
 mod tasks;
@@ -55,6 +56,7 @@ pub use agent_tool::AgentTool;
 pub use context::AgentCatalog;
 pub use definitions::{AgentDefinition, AgentSource, builtins};
 pub use plugin::PluginAgentFile;
+pub use stall::StallConfig;
 pub use tasks::{MemoryTaskLists, task_tools_enabled};
 
 use crate::live::Live;
@@ -129,6 +131,8 @@ pub struct AgentsConfig {
     /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
     /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
     pub node_desktop: bool,
+    /// 后台子代理的无进展提醒（Node `subagents.backgroundStallNotifyMs` 与 `backgroundStallMaxIntervalMs`）。
+    pub stall: StallConfig,
 }
 
 impl AgentsPorts {
@@ -284,6 +288,12 @@ impl Agents {
             }
             AgentRegistry { base, own, core }
         });
+        // 无进展提醒的钟：弱引用，注册表释放后驱动结束（stall.rs）。
+        stall::spawn(
+            Arc::downgrade(&registry.core),
+            config.stall,
+            &registry.core.ports.spawner,
+        );
         Self {
             core: registry.core.clone(),
             registry,

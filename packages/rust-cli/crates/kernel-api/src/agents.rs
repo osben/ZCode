@@ -85,11 +85,23 @@ pub struct ChildLiveFeed {
     pub live: BoxStream<'static, ChildLive>,
 }
 
+/// 后台子代理的无进展提醒（Node `subagent-stall-reminder.ts`，specs/fork-rust-agent-parity.md「Background subagent
+/// stall reminder」）。不是终态通知：不 ack、不计入后台工作，只进对话的通知通道，全文不再包装。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentStall {
+    /// 长时间没有进展的后台子代理。
+    pub agent: AgentId,
+    /// 提醒全文（`[SYSTEM NOTIFICATION …]` 开头，Node 的 `formatBackgroundSubagentStallNotification` 原样）。
+    pub text: String,
+}
+
 /// 发给某个会话的信号。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentSignal {
     Notice(AgentNotice),
+    /// 无进展提醒（不 ack，交出后即不再保留）。
+    Stall(AgentStall),
     /// 任务清单变了；`tasks` 是变化后的完整清单（[`TaskList::tasks`] 的 JSON）。
     TasksChanged {
         tasks: Value,

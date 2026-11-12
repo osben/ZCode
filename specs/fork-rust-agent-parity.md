@@ -1005,10 +1005,36 @@ Until then it is a known gap that a concurrent Node purge can delete an open Rus
 
 ### (c) Model-facing, telemetry and skew-safe
 
-- Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): absent in Rust and model-facing.
+- Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): done on this branch, see "Background subagent stall reminder" below.
 - `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported.
 
 Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4, then the stall reminder. B1 waits for a design agreed with the user.
+
+## Background subagent stall reminder (Node `subagent-stall-reminder.ts`, `background-stall.ts`)
+
+- **Status.** Ported (2026-11-12). Before, Rust had no reminder. Now a background agent that goes quiet is reported to the top-level session as a model-visible notice, on the same lane as the agent's completion notice.
+- **Progress.** A model request starting or completing, a tool call starting or finishing, and a permission answer (granted or denied) are progress. Tool-progress heartbeats and stream deltas are not. A model request starting counts because Node's `ModelRequest` does (the query loop reports it through `RunSink::request_started`).
+- **Clock per agent** (`agents/src/stall.rs`, `StallClock`). The first reminder is due `firstAfterMs` after the last progress. Reminder `n` (counted since the last progress) is due `min(firstAfterMs * 2^n, maxIntervalMs)` after the previous one. Progress clears the count and the last-reminder time.
+- **Permission wait.** While an agent waits for a permission answer it sends nothing and its timer does not run. The answer is progress, so the wait restarts from it.
+- **Who is reminded.** Background agents that are `Running`, have no owner (launched by the top-level session), and are not erased. Parked, finished, and agents with an owner are not reminded. Node runs no nested subagents (`subagents.enabled: false` in child runtimes), so the owner rule is Rust-only.
+- **Restart.** A `SendMessage` restart is a new run: its clock starts at the restart and its tool list is empty.
+- **Delivery.** The reminder is a lane notice with the raw text. It is not wrapped again, because Node's text starts with the `[SYSTEM NOTIFICATION - NOT USER INPUT]` banner. It is not kept in `AgentSignals::pending` and is not acknowledged. It does not count as background work (`-p` waiting), does not emit `BackgroundWork`, and does not settle an Agent card. It drains in arrival order with other notices.
+- **Persistence.** The committed user message is the raw text, with `inputPresentation: task_notification` and `originMeta` `{backgroundSource: "subagent", workId, title, subagentStall: {noProgressForMs, lastProgressAt}}`. `title` is `<description> — no progress for <N> min` (em dash, `N` rounded to minutes, at least 1). The live projection and the cold read both derive it from the text (`kernel-api/src/background_origin.rs`, `origin_meta`).
+- **Stale.** Node drops a queued reminder at dequeue when the agent is no longer running, is waiting for permission, is in another execution, or has made progress since the reminder was built. Rust builds each reminder from the agent's state at that moment (running, not waiting, last progress), so a reminder is never built for an agent that has stopped. Nothing re-checks it at drain, and there is no execution id (see the gap list).
+- **Config.** `subagents.backgroundStallNotifyMs` (first reminder, default 15 min) and `subagents.backgroundStallMaxIntervalMs` (cap, default 4 h). In Node the first value also comes from `ZCODE_SUBAGENT_STALL_NOTIFY_MS` (JS trim, `^\d+$`, safe integer above 0, floor 10 s), and `runtimeConfig` wins over the env. Rust reads the env once in `cli/src/assemble/` with the same rule. Rust has no `runtimeConfig` path for `subagents`, so only the env and the defaults apply. Neither key is a `setting.json` key.
+- **Node references.** `apps/zcode-cli/packages/core/src/subagent/background-stall.ts` (clock, text, `isBackgroundSubagentStallReminderCurrent`), `runtime/methods/subagent-stall-reminder.ts` (wiring, eligible agents, `originMeta`), `runtime/methods/background-notifications.ts` (`enqueueBackgroundTaskNotification`, `shouldSuppressTaskNotificationRuntimeCommand`), `runtime/methods/runtime-command-queue.ts` and `runtime-command-active-loop.ts` (a stall is not `backgroundSubagentResultConsumed`), `bootstrap/src/app/runtime-config.ts` (env and config), `core/tests/background-subagent-stall.test.ts`, `bootstrap/tests/runtime-config.test.ts`.
+- **Acceptance cases.**
+  1. Text: the formatter output equals Node's for the golden fixtures in `agents/src/stall_tests.rs` (escaping, more than five running tools, a description over 200 UTF-16 units, 1 minute, 120 minutes, truncation at 120 000 units). The fixtures come from Node's `formatBackgroundSubagentStallNotification`.
+  2. Timing, on a fake clock with no real sleeps: first reminder after the last progress; doubling; cap; progress resets the count; a permission wait pauses the timer and the answer restarts it; a finished, parked, or owned agent gets none.
+  3. Delivery: the reminder is a lane notice with the raw text, not acknowledged, not counted as background work, and no `BackgroundWork` event (`session/src/agent_signals_tests.rs`).
+  4. Persistence: `origin_meta` on the text gives the title and `subagentStall` above (`kernel-api` background_origin tests).
+  5. Config: the env rule matches Node (`30s` is refused, `5` becomes 10 000, `0` is ignored).
+- **Gaps, kept on purpose until the owner decides.**
+  - Node writes a `session_input` admission row (`backgroundNotification`) for each reminder and settles it `discarded` when stale. Rust's notices write no admission row, terminal ones included, so a reminder writes none either.
+  - Stale is checked when the reminder is produced, not again at drain. A reminder queued behind a busy parent can be stale when it drains, where Node drops it. The window is a parent turn that runs past the reminder.
+  - Node counts a tool as running from `ToolCallScheduled`. Rust has only the started event, so a tool queued but not yet started is not listed.
+  - `runtimeConfig.subagents.*` has no path into the Rust runtime. Only the env and the defaults apply.
+  - `subagentStall.executionId` is absent: Rust has no execution id, and a restart is identified by its start time only.
 
 ## Known differences kept on purpose
 

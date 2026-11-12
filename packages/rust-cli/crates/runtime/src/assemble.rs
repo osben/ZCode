@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rust_cli_agents::{AgentCatalog, Agents, AgentsConfig, AgentsPorts, TaskTools};
+use rust_cli_agents::{AgentCatalog, Agents, AgentsConfig, AgentsPorts, StallConfig, TaskTools};
 use rust_cli_base::Spawner;
 use rust_cli_compact::{CompactConfig, CompactPorts, Compaction, DenyTools, Disabled};
 use rust_cli_context::{ContextConfig, ContextPorts, PromptAssembler};
@@ -334,6 +334,8 @@ pub(crate) fn agents(
                 .unwrap_or(traits.interactive && !node_desktop),
             // Fork (node_desktop): Node's TaskOutput only on the app-server's agent.
             node_desktop,
+            // 无进展提醒：`ZCODE_SUBAGENT_STALL_NOTIFY_MS`（入口已读）；没设时用 core 的缺省。
+            stall: StallConfig::new(defaults.limits.subagent_stall_notify_ms, None),
         },
     )
 }

@@ -33,6 +33,8 @@ pub(crate) enum Waiting {
     /// 后台命令的终态通知，带它所在的机器（R3：ack 发给那台机器）。
     Shell(MachineNotice),
     Agent(AgentNotice),
+    /// 无进展提醒（Node `task-notification` 命令的 stall 形式）：全文原样，不 ack，不计入后台工作。
+    Stall(String),
     Peer(PeerItem),
     /// Monitor 的事件或说明（工作线 F83，tools-more.md §19.6）：actor 自己产生，全文已包装；不 ack，也不按文字去重
     /// （同样的一行可以出现多次）。
@@ -50,6 +52,7 @@ impl Waiting {
         match self {
             Self::Shell(notice) => task_notification(&notice.notice),
             Self::Agent(notice) => notice.text.clone(),
+            Self::Stall(text) => text.clone(),
             Self::Peer(item) => item.text(),
             Self::MonitorEvent(text) | Self::MonitorEnd { text, .. } => text.clone(),
         }
@@ -90,6 +93,7 @@ impl Waiting {
                 a.machine == b.machine && a.notice.seq == b.notice.seq
             }
             (Self::Agent(a), Self::Agent(b)) => a.seq == b.seq,
+            (Self::Stall(a), Self::Stall(b)) => a == b,
             (Self::Peer(a), Self::Peer(b)) => a == b,
             (Self::MonitorEnd { notice: a, .. }, Self::MonitorEnd { notice: b, .. }) => {
                 a.machine == b.machine && a.notice.seq == b.notice.seq
@@ -149,7 +153,7 @@ impl Actor {
             Waiting::Shell(notice) => self.ack(notice).await,
             Waiting::MonitorEnd { notice, .. } => self.ack(notice).await,
             Waiting::Agent(notice) => self.ack_agent(notice.seq).await,
-            Waiting::Peer(_) | Waiting::MonitorEvent(_) => {}
+            Waiting::Stall(_) | Waiting::Peer(_) | Waiting::MonitorEvent(_) => {}
         }
     }
 

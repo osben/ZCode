@@ -106,6 +106,8 @@ pub struct Limits {
     /// `ZCODE_FORK_SUBAGENT`（对照实现有同义的开关，修复线 L-A，agents.md §8.1.1）：Some(true) 打开 fork
     /// 子代理（`-p` 也开），Some(false) 关掉，None 按形态（交互会话开，`-p` 关）。
     pub fork_subagent: Option<bool>,
+    /// `ZCODE_SUBAGENT_STALL_NOTIFY_MS` 的生效值（毫秒，入口已按 Node 的规则读过：至少 10 秒）；None 用 core 的缺省（15 分钟）。
+    pub subagent_stall_notify_ms: Option<u64>,
 }
 
 pub struct LocalKernel {

@@ -21,6 +21,19 @@ impl Actor {
                 self.log.append(KernelEvent::TasksChanged { tasks });
             }
             AgentSignal::Notice(notice) => self.on_agent_notice(notice).await,
+            AgentSignal::Stall(stall) => self.on_agent_stall(stall.text).await,
+        }
+    }
+
+    /// 无进展提醒（stall.rs）：进通道、空闲时开一轮，不记 `BackgroundWork`（Node 的 stall 命令不是终态通知），
+    /// 也不 ack（`Hub` 已经在交出时取走）。
+    async fn on_agent_stall(&mut self, text: String) {
+        if self.closing.is_some() {
+            return;
+        }
+        self.inbox.push_notice(Waiting::Stall(text));
+        if self.running.is_none() {
+            self.start_next().await;
         }
     }
 

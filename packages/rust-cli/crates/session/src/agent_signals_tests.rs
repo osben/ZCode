@@ -170,3 +170,129 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
     );
     assert!(view.background.is_empty());
 }
+
+/// Opens a session whose agent signals are `signals` (the setup of the notice test above).
+async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let ids = Arc::new(SequentialIds::default());
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["noted"])]));
+    let env = Arc::new(UnusedEnvironment);
+    let runner = Arc::new(QueryLoop::new(QueryParts {
+        model,
+        context: Arc::new(FixedContext(Vec::new())),
+        tools: Arc::new(NoTools),
+        executor: Arc::new(FailingExecutor),
+        compactor: Arc::new(NeverCompact),
+        hooks: Arc::new(NoHooks),
+        ids: ids.clone(),
+        clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
+        machines: rust_cli_kernel_api::testing::environments(env.clone()),
+        artifacts: store.clone(),
+        operations: rust_cli_kernel_api::env::Operations::new(Generation::new("g1"), ids.clone()),
+        non_interactive: false,
+        limits: rust_cli_query::RequestLimits::default(),
+    }));
+    Session::spawn(
+        SessionDeps {
+            agents: signals,
+            cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
+            store,
+            ids: ids.clone(),
+            runner,
+            compactor: Arc::new(rust_cli_kernel_api::testing::NeverCompact),
+            machines: rust_cli_kernel_api::testing::environments(env),
+            max_turns: None,
+            hooks: Arc::new(rust_cli_kernel_api::testing::NoHooks),
+            commands: Arc::new(rust_cli_kernel_api::user_command::NoUserCommands),
+            inputs: Arc::new(rust_cli_kernel_api::user_input::NoUserInputs),
+            artifacts: Arc::new(rust_cli_kernel_api::testing::MemoryArtifacts::default()),
+            clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
+            operations: rust_cli_kernel_api::env::Operations::new(
+                rust_cli_kernel_api::ids::Generation::new("g1"),
+                ids,
+            ),
+            spawner: scope.spawner(),
+            closing: scope.spawner(),
+            titles: None,
+            side_model: Arc::new(rust_cli_kernel_api::testing::ScriptedModel::new(Vec::new())),
+            released: Arc::new(crate::NothingToRelease),
+            directory_rules: Arc::new(rust_cli_kernel_api::orchestration::NoDirectoryRules),
+            peers: crate::PeerDeps::off(),
+            detached: None,
+            one_input_per_turn: false,
+            desktop_goals: false,
+            fork_while_running: false,
+            error_holds_queue: false,
+        },
+        SessionState {
+            commands: Default::default(),
+            meta: meta(),
+            messages: Vec::new(),
+            earlier: Vec::new(),
+            selection: selection(),
+            mode: PermissionMode::Default.into(),
+            checkpoints: Vec::new(),
+            start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
+            turn: None,
+            last_turn_failed: false,
+            child_live: None,
+            title_pending: true,
+            title_source: None,
+            goal_target: None,
+            goal_verifications: Vec::new(),
+            message_models: Default::default(),
+        },
+        Opened::Loaded,
+    )
+}
+
+/// The stall reminder text, as the agents crate builds it (the banner, then the tags and the sentence).
+const STALL_TEXT: &str = "[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated status report about a background agent, NOT a message from the user.\nDo NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n\n<background-agent-stall>\n  <task-id>agent_1</task-id>\n</background-agent-stall>\n\nBackground agent \"x\" (agent_1) has been running for 15 minutes and has made no progress for 15 minutes.";
+
+/// A no-progress reminder is a lane notice: it opens a turn with its raw text, is never acknowledged, is not background
+/// work, and emits no `BackgroundWork` (Node's stall command is not a terminal notice; specs/fork-rust-agent-parity.md).
+#[tokio::test]
+async fn a_stall_reminder_opens_a_turn_with_its_raw_text_and_is_never_acked() {
+    let scope = TaskScope::root("test", |_| {});
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let signals = Arc::new(FakeSignals {
+        receiver: Mutex::new(Some(receiver)),
+        acked: Mutex::default(),
+        background: Mutex::default(),
+    });
+    let session = open_with(signals.clone(), &scope).await;
+    let mut events = session.subscribe(Some(0));
+    sender
+        .send(AgentSignal::Stall(
+            rust_cli_kernel_api::agents::AgentStall {
+                agent: AgentId::new("agent_1"),
+                text: STALL_TEXT.to_owned(),
+            },
+        ))
+        .unwrap();
+    let seen = until_finished(&mut events, 1).await;
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, KernelEvent::BackgroundWork { .. })),
+        "a stall reminder is not background work"
+    );
+    let view = session.view().await.unwrap();
+    let notices: Vec<&Message> = view
+        .messages
+        .iter()
+        .filter(|message| matches!(message, Message::User(user) if user.origin == UserOrigin::Meta { source: "task-notification".to_owned() }))
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert!(
+        matches!(notices[0], Message::User(user) if matches!(user.content.as_slice(), [ContentBlock::Text { text }] if text == STALL_TEXT)),
+        "the turn carries the raw reminder text, with no wrapper"
+    );
+    assert!(
+        signals.acked.lock().unwrap().is_empty(),
+        "a reminder is never acknowledged"
+    );
+}

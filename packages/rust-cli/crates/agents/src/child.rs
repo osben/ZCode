@@ -383,6 +383,10 @@ impl RunSink for ChildSink {
         message: Option<Message>,
         metered: rust_cli_kernel_api::metering::Metered,
     ) -> Result<(), StoreError> {
+        // 模型请求完成是进展（stall.rs，Node `ModelComplete`）。
+        if matches!(metered, rust_cli_kernel_api::metering::Metered::Model(_)) {
+            self.live.progress(&self.agent);
+        }
         let speed = match &metered {
             rust_cli_kernel_api::metering::Metered::Model(call) => matches!(
                 call.source,
@@ -403,6 +407,18 @@ impl RunSink for ChildSink {
         // `ToolFinished` 先于工具结果的提交到达（同一个任务里按顺序调用）：记下 checkpoint 与子代理关联。
         if let QueryEvent::ToolFinished { tool_use, output } = &event {
             self.record().ledger.tool_finished(tool_use, output);
+        }
+        // 无进展提醒的进展：工具调用开始与结束（stall.rs，Node `ToolCallStarted` / `ToolCallResult`）。
+        match &event {
+            QueryEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => self.live.tool_started(&self.agent, tool_use, name, input),
+            QueryEvent::ToolFinished { tool_use, .. } => {
+                self.live.tool_finished(&self.agent, tool_use)
+            }
+            _ => {}
         }
         // 列表行的当前活动（前台与后台都记，L35，stall-visibility.md §4.3）。
         if let Some(doing) = Doing::after(&event) {
