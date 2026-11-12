@@ -512,10 +512,10 @@ impl Inbox {
         )
     }
 
-    /// Fork: full access rewrites the frozen permission mode of every queued input that carries one,
-    /// keeping its plan switch (Node's `fullAccess` rewrites the queued intents). `true` when one changed.
     /// Fork (B3): the ledger ids (`queue_<command>`, Node `queueItemIdForCommand`) of the queued inputs with a ledger
-    /// row, in queue order: the items a permission mode grant rewrites (its receipt's `queueItemIds`).
+    /// row, in queue order: the items a permission mode grant rewrites (its receipt's `queueItemIds`). They are Node's
+    /// `pendingSteerInputs`: every queued input, steer or later, compaction included, emits `TurnSteerQueued`; only
+    /// the SessionStart hook's first input has no ledger row, and Node does not queue it as a steer either.
     pub(crate) fn ledger_queue_ids(&self) -> Vec<String> {
         self.items
             .iter()
@@ -528,6 +528,8 @@ impl Inbox {
             .collect()
     }
 
+    /// Fork: full access rewrites the frozen permission mode of every queued input that carries one,
+    /// keeping its plan switch (Node's `fullAccess` rewrites the queued intents). `true` when one changed.
     pub(crate) fn set_queued_mode(&mut self, mode: PermissionMode) -> bool {
         let mut changed = false;
         for item in &mut self.items {

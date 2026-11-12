@@ -178,16 +178,85 @@ pub fn permission_full_access_entry(session: &str, now: u64, receipt: &GrantRece
     )
 }
 
-/// Fork (B3): the interaction of a stored grant receipt when it is one of `session`'s (Node
-/// `restorePermissionGrantMarker`: an invalid receipt or another session's is ignored).
+/// Fork (B3): the interaction of a stored grant receipt when it is one of `session`'s and matches Node's
+/// `permissionFullAccessReceiptSchema` (every level `.strict()`, enum modes, the grant naming the receipt's interaction).
+/// An invalid receipt or another session's is ignored (Node `restorePermissionGrantMarker`).
 pub fn permission_grant_of(session: &str, data: &Value) -> Option<String> {
-    let interaction = data["interactionId"].as_str().filter(|id| !id.is_empty())?;
-    let event = &data["event"];
-    let granted = event["payload"]["permissionGrant"]["interactionId"].as_str();
-    (event["sessionId"] == session
+    let receipt = strict(data, &["interactionId", "event"], &[])?;
+    let interaction = non_empty(&receipt["interactionId"])?;
+    let event = strict(
+        &receipt["event"],
+        &[
+            "id",
+            "sessionId",
+            "traceId",
+            "type",
+            "timestamp",
+            "sequenceNumber",
+            "payload",
+        ],
+        &["turnId"],
+    )?;
+    non_empty(&event["id"])?;
+    non_empty(&event["traceId"])?;
+    let turn_ok = event.get("turnId").is_none_or(Value::is_string);
+    // `z.coerce.date`: `new Date(value)` accepts numbers, strings, booleans and null; objects and arrays are invalid.
+    let time_ok = matches!(
+        event["timestamp"],
+        Value::Number(_) | Value::String(_) | Value::Bool(_) | Value::Null
+    );
+    let payload = strict(
+        &event["payload"],
+        &[
+            "mode",
+            "planEnabled",
+            "previousMode",
+            "previousPlanEnabled",
+            "source",
+            "permissionGrant",
+        ],
+        &[],
+    )?;
+    let grant = strict(
+        &payload["permissionGrant"],
+        &["interactionId", "queueItemIds"],
+        &[],
+    )?;
+    let queue_ok = grant["queueItemIds"]
+        .as_array()
+        .is_some_and(|ids| ids.iter().all(|id| non_empty(id).is_some()));
+    let valid = turn_ok
+        && time_ok
+        && queue_ok
+        && event["sessionId"] == session
         && event["type"] == "session_mode_changed"
-        && granted == Some(interaction))
-    .then(|| interaction.to_owned())
+        && event["sequenceNumber"].as_u64().is_some()
+        && matches!(payload["mode"].as_str(), Some("guarded" | "yolo"))
+        && matches!(
+            payload["previousMode"].as_str(),
+            Some("build" | "edit" | "yolo" | "guarded" | "auto" | "plan")
+        )
+        && payload["planEnabled"].is_boolean()
+        && payload["previousPlanEnabled"].is_boolean()
+        && payload["source"] == "command"
+        && grant["interactionId"].as_str() == Some(interaction);
+    valid.then(|| interaction.to_owned())
+}
+
+/// The object `value` when it has every `required` key and no key outside `required` and `optional` (zod `.strict()`).
+fn strict<'a>(
+    value: &'a Value,
+    required: &[&str],
+    optional: &[&str],
+) -> Option<&'a serde_json::Map<String, Value>> {
+    let object = value.as_object()?;
+    let known = |key: &str| required.contains(&key) || optional.contains(&key);
+    (required.iter().all(|key| object.contains_key(*key)) && object.keys().all(|key| known(key)))
+        .then_some(object)
+}
+
+fn non_empty(value: &Value) -> Option<&str> {
+    value.as_str().filter(|text| !text.is_empty())
 }
 
 const USER_SEMANTICS: [(&str, &str); 5] = [
@@ -360,3 +429,7 @@ pub fn assistant_message(a: &Assistant) -> Value {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "records_tests.rs"]
+mod tests;
