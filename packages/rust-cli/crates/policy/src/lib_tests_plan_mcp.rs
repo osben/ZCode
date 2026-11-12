@@ -85,6 +85,21 @@ async fn a_tool_that_is_not_read_only_asks_once_even_with_an_allow_rule() {
     }
 }
 
+/// B3: the plan gate's ask is an independent confirmation (Node `optionsPolicy: "no-always-allow"`), so the App offers
+/// no permission mode switch for it; an ask from a whole-tool ask rule is not one.
+#[tokio::test]
+async fn the_plan_gate_ask_is_an_independent_confirmation() {
+    let independent = |decision: &PermissionDecision| match decision {
+        PermissionDecision::Ask { independent, .. } => *independent,
+        other => panic!("not ask: {other:?}"),
+    };
+    assert!(independent(
+        &plan(&node_plan(None), &mcp(false, false)).await
+    ));
+    let rule = node_plan(Some(RuleBehavior::Ask));
+    assert!(!independent(&plan(&rule, &mcp(false, false)).await));
+}
+
 #[tokio::test]
 async fn a_destructive_tool_is_denied_with_the_node_reason_even_with_an_allow_rule() {
     for gate in [node_plan(None), node_plan(Some(RuleBehavior::Allow))] {

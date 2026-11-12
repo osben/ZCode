@@ -35,6 +35,8 @@ pub enum Inner {
         suggestions: Vec<PermissionRule>,
         /// 只批准这一次（guarded 的危险命令，shell-permissions.md §4.6.1）：成为 `PermissionDecision::Ask.once`。
         once: bool,
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy`): becomes `PermissionDecision::Ask.independent`.
+        independent: bool,
     },
 }
 
@@ -132,6 +134,7 @@ pub fn own(
             message,
             suggestions,
             once: _,
+            independent: _,
         } => (
             Check::Ask {
                 message,
@@ -166,6 +169,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             // 危险命令又命中整个工具的 ask 规则时，这一问同样只批准这一次（工作线 F137 以前 `ask_once` 只看命令，不看是
             // 哪一条询问；判决逐项不变）。
             once: inputs.dangerous,
+            independent: false,
         };
     }
     let (message, reason, kind, suggestions) = match check {
@@ -178,6 +182,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
                 kind: AskKind::Immune,
                 suggestions: Vec::new(),
                 once: true,
+                independent: false,
             };
         }
         Check::Allow => return Inner::Allow { updated_input },
@@ -193,6 +198,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
                 kind,
                 suggestions,
                 once: false,
+                independent: false,
             };
         }
         Check::Ask {
@@ -214,6 +220,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
         kind,
         suggestions,
         once: false,
+        independent: false,
     }
 }
 
@@ -254,6 +261,8 @@ pub fn plan_mcp(tool: &str, mcp: PlanMcp, result: Inner) -> Inner {
             kind: AskKind::Other,
             suggestions: Vec::new(),
             once: true,
+            // Node `mode.plan.mcp`: `optionsPolicy: "no-always-allow"`, no permission mode switch.
+            independent: true,
         },
         _ => result,
     }
@@ -295,7 +304,7 @@ pub async fn outer(
         session,
         mode,
     } = *call;
-    let (message, kind, suggestions, once) = match result {
+    let (message, kind, suggestions, once, independent) = match result {
         Inner::Allow { updated_input } => return PermissionDecision::Allow { updated_input },
         Inner::Deny { message } => return PermissionDecision::Deny { message },
         Inner::Ask {
@@ -303,7 +312,8 @@ pub async fn outer(
             kind,
             suggestions,
             once,
-        } => (message, kind, suggestions, once),
+            independent,
+        } => (message, kind, suggestions, once, independent),
     };
     if mode == PermissionMode::DontAsk {
         return PermissionDecision::Deny {
@@ -323,6 +333,7 @@ pub async fn outer(
             message,
             suggestions,
             once,
+            independent,
         };
     }
     let automatic =
@@ -357,6 +368,7 @@ pub async fn outer(
         message,
         suggestions,
         once,
+        independent,
     }
 }
 

@@ -7,10 +7,10 @@ use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
-use rust_cli_kernel_api::permission::ExecutionState;
+use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, InputExecution,
-    QueuedKind, SessionHandle,
+    Ack as KernelAck, Command, CommandEnvelope, CommandResult, CreateSession, Delivery,
+    InputExecution, QueuedKind, SessionHandle,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
@@ -1672,6 +1672,10 @@ async fn resolve(
     };
     let interaction = resolved.interaction_id.as_str();
     let option = resolved.answer.option_id.as_deref();
+    // Fork (B3): a mode switch is one kernel step that checks the ask itself (Node `permissionGrantMode`).
+    if let Some(mode) = option.and_then(grant_mode) {
+        return grant(handle, envelope, revision, interaction, mode).await;
+    }
     let pending = handle.view().await.ok().and_then(|view| {
         view.pending
             .into_iter()
@@ -1698,23 +1702,8 @@ async fn resolve(
             );
         }
     };
-    // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。Fork: queued inputs' frozen modes become yolo
-    // too, plan switches kept (Node `fullAccess`).
-    if option == Some("fullAccess") {
-        let ack = send(
-            handle,
-            &format!("{}:mode", envelope.command_id),
-            Command::GrantFullAccess {
-                interaction: interaction.to_owned(),
-            },
-        )
-        .await;
-        if !matches!(ack, KernelAck::Accepted { .. }) {
-            tracing::warn!(event = "protocol.full_access.refused", ack = ?ack, "full access was not granted");
-        }
-    }
     let answer = match option {
-        Some("allowOnce" | "fullAccess") => PermissionAnswer::Allow {
+        Some("allowOnce") => PermissionAnswer::Allow {
             remember: Vec::new(),
         },
         Some("allowAlways") => PermissionAnswer::Allow {
@@ -1751,6 +1740,66 @@ async fn resolve(
             )
         },
     )
+}
+
+/// Fork (B3): the permission mode an answer's option grants (Node `permissionGrantMode`): `fullAccess` is yolo
+/// (`BypassPermissions`), `allowAndSwitchGuarded` is guarded.
+fn grant_mode(option: &str) -> Option<PermissionMode> {
+    match option {
+        "fullAccess" => Some(PermissionMode::BypassPermissions),
+        "allowAndSwitchGuarded" => Some(PermissionMode::Guarded),
+        _ => None,
+    }
+}
+
+/// Fork (B3): answers a permission ask with a mode switch (Node `resolveInteraction` with `resolvePermissionMode`).
+/// The session actor checks the ask, grants the mode and allows the call once in one step. A real grant answers
+/// `resolvedBy` (the App writes its recent permission preference only from it); an ask no longer pending is a late
+/// answer; a refusal leaves the ask pending and fails the command with the reason.
+async fn grant(
+    handle: &dyn SessionHandle,
+    envelope: &Envelope,
+    revision: u64,
+    interaction: &str,
+    mode: PermissionMode,
+) -> Ack {
+    let command = Command::GrantPermissionMode {
+        interaction: interaction.to_owned(),
+        mode,
+    };
+    let option = envelope.payload["answer"]["optionId"].clone();
+    let result = json!({
+        "type": "resolveInteraction",
+        "resolvedBy": {"clientId": envelope.client_id, "optionId": option},
+    });
+    let granted = Ack::accepted(&envelope.command_id, revision, Some(result));
+    match send(handle, &envelope.command_id, command).await {
+        KernelAck::Accepted {
+            result: CommandResult::NotPending,
+        } => Ack::refused(
+            &envelope.command_id,
+            Status::Noop,
+            "proto.alreadyResolved",
+            "the interaction is no longer pending",
+            revision,
+        ),
+        KernelAck::Accepted { .. } => granted,
+        KernelAck::Duplicate => inbox::duplicate(&granted),
+        KernelAck::Rejected { reason } => {
+            tracing::warn!(
+                event = "protocol.permission_grant.refused",
+                mode = mode.node_name(),
+                "permission mode grant refused"
+            );
+            Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.executionFailed",
+                reason,
+                revision,
+            )
+        }
+    }
 }
 
 /// Fork: answers a question or plan approval (Node's interaction broker mapping, projection/elicitation.rs).

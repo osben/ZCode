@@ -231,6 +231,7 @@ impl Interactions for ChildSink {
                 asked_by: None,
                 machine,
                 once,
+                independent,
                 origin,
             } => InteractionRequest::Permission {
                 machine,
@@ -242,6 +243,7 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: Some(self.name.clone()),
                 once,
+                independent,
                 origin,
             },
             other => other,

@@ -603,6 +603,10 @@ pub enum InteractionRequest {
         /// `approvalMode: "user-once"`): the App offers no "always allow" option for it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         once: bool,
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy`): the App offers no permission mode switch
+        /// for it, and a grant answering it is refused (specs/fork-rust-agent-parity.md B3).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        independent: bool,
         /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
         /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
         #[serde(default, skip_serializing_if = "Option::is_none")]

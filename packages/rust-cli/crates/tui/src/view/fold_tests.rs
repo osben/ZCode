@@ -337,6 +337,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
         rule_seed: None,
         asked_by: None,
         once: false,
+        independent: false,
     };
     feed.push(started())
         .push(KernelEvent::ToolStarted {

@@ -37,6 +37,7 @@ fn permission(asked_by: Option<&str>) -> InteractionRequest {
         rule_seed: None,
         asked_by: asked_by.map(str::to_owned),
         once: false,
+        independent: false,
     }
 }
 

@@ -1,7 +1,6 @@
-//! Fork: `Command::SubmitWith` (the desktop App's inputs) and `Command::GrantFullAccess`
-//! (specs/fork-rust-agent-parity.md, "Queued input kinds and execution state"): a queued input
-//! freezes its execution state without touching the running turn's, applies it when it drains, and
-//! full access rewrites the queued modes while keeping each plan switch.
+//! Fork: `Command::SubmitWith` (the desktop App's inputs, specs/fork-rust-agent-parity.md, "Queued input kinds and
+//! execution state"): a queued input freezes its execution state without touching the running turn's and applies it
+//! when it drains. The permission mode grant's rewrite of the queued modes is in grant_mode_tests.rs.
 
 use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
 use rust_cli_kernel_api::session_api::{COMPACT_LOCKED, InputExecution, QueuedKind};
@@ -95,50 +94,6 @@ async fn a_queued_input_freezes_its_state_and_applies_it_when_it_drains() {
     let view = session.view().await.unwrap();
     assert!(view.queue.is_empty());
     assert_eq!((view.mode, view.plan), (PermissionMode::Guarded, true));
-}
-
-#[tokio::test]
-async fn full_access_rewrites_queued_modes_and_keeps_plan() {
-    let scope = TaskScope::root("test", |_| {});
-    let (_store, _model, session) = asking_session(&scope).await;
-    let mut events = session.subscribe(Some(0));
-    session
-        .send(submit_with("c1", "ask me", PermissionMode::Default, false))
-        .await;
-    asked(&mut events).await;
-    session
-        .send(submit_with("c2", "plan", PermissionMode::Default, true))
-        .await;
-    session
-        .send(submit_with("c3", "guarded", PermissionMode::Guarded, false))
-        .await;
-    let ack = session
-        .send(CommandEnvelope {
-            id: CommandId::new("c4"),
-            command: Command::GrantFullAccess {
-                interaction: "i1".to_owned(),
-            },
-        })
-        .await;
-    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
-    let view = session.view().await.unwrap();
-    assert_eq!(
-        (view.mode, view.plan),
-        (PermissionMode::BypassPermissions, false)
-    );
-    let bypass = |plan| {
-        Some(ExecutionState {
-            mode: PermissionMode::BypassPermissions,
-            plan,
-        })
-    };
-    assert_eq!(
-        frozen(&view),
-        [
-            (QueuedKind::Text, bypass(true)),
-            (QueuedKind::Text, bypass(false))
-        ]
-    );
 }
 
 #[tokio::test]

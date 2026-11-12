@@ -721,11 +721,9 @@ impl Actor {
             }
             Command::PauseGoal => self.pause_goal().await,
             Command::ResumeGoal => self.resume_goal().await,
-            Command::GrantFullAccess { interaction } => {
-                match self.grant_full_access(id, interaction).await {
-                    Ok(()) => accepted(),
-                    Err(reason) => rejected(reason),
-                }
+            Command::GrantPermissionMode { interaction, mode } => {
+                self.grant_permission_mode(id, InteractionId::new(interaction), mode)
+                    .await
             }
             Command::SetMode { mode } => match self.user_mode(id, mode).await {
                 Ok(()) => accepted(),

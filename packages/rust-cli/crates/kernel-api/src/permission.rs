@@ -208,6 +208,10 @@ pub enum PermissionDecision {
         /// 路径风格（远端执行时多一个往返）；现在是判决结果的一部分，一次判决只取一次路径事实。
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         once: bool,
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy: "no-always-allow"`, Plan mode's ask for an MCP
+        /// tool that is not read-only): the App offers no permission mode switch for it. Only the decision chain gives it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        independent: bool,
     },
     Deny {
         message: String,
@@ -223,6 +227,7 @@ impl PermissionDecision {
             message: message.into(),
             suggestions,
             once: false,
+            independent: false,
         }
     }
 }

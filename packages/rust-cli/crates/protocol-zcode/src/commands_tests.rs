@@ -632,3 +632,123 @@ fn the_ack_follows_the_kernels_admission_both_ways() {
     assert_eq!(acked_delivery("queue", &queued), "queue");
     assert_eq!(acked_delivery("guide", &queued), "guide");
 }
+
+/// A session stub that answers every command with one kernel ACK and records the commands it got.
+struct GrantHandle {
+    id: rust_cli_kernel_api::ids::SessionId,
+    ack: rust_cli_kernel_api::session_api::Ack,
+    sent: std::sync::Mutex<Vec<rust_cli_kernel_api::session_api::Command>>,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::testing::HandleOverride for GrantHandle {
+    fn id(&self) -> &rust_cli_kernel_api::ids::SessionId {
+        &self.id
+    }
+
+    async fn send(
+        &self,
+        command: rust_cli_kernel_api::session_api::CommandEnvelope,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        self.sent.lock().unwrap().push(command.command);
+        self.ack.clone()
+    }
+
+    fn subscribe(
+        &self,
+        _after: Option<u64>,
+    ) -> futures_util::stream::BoxStream<'static, rust_cli_kernel_api::session_api::SequencedEvent>
+    {
+        Box::pin(futures_util::stream::empty())
+    }
+
+    async fn view(
+        &self,
+    ) -> Result<
+        rust_cli_kernel_api::session_api::SessionView,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        unreachable!("the grant never reads the view")
+    }
+}
+
+/// B3 (Node `resolvePermissionMode` through the gateway): the mode switch options send one
+/// `GrantPermissionMode`; a real grant answers `resolvedBy` (the App's recent permission preference reads it), a late
+/// answer is a noop `proto.alreadyResolved`, a refusal is `failed` with `fault.command.executionFailed` and the
+/// broker's reason.
+#[tokio::test]
+async fn a_mode_switch_answer_grants_through_one_command() {
+    use rust_cli_kernel_api::session_api::{
+        Ack as KernelAck, Command as KernelCommand, CommandResult,
+    };
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "cmd_1", "clientId": "client_a", "sessionId": "s1", "type": "resolveInteraction",
+        "payload": {"interactionId": "int_1", "answer": {"optionId": "allowAndSwitchGuarded"}},
+    }))
+    .unwrap();
+    assert_eq!(
+        grant_mode("allowAndSwitchGuarded"),
+        Some(PermissionMode::Guarded)
+    );
+    assert_eq!(
+        grant_mode("fullAccess"),
+        Some(PermissionMode::BypassPermissions)
+    );
+    assert_eq!(grant_mode("allowOnce"), None);
+    let run = |ack: KernelAck| {
+        let envelope = envelope.clone();
+        async move {
+            let handle = GrantHandle {
+                id: rust_cli_kernel_api::ids::SessionId::new("s1"),
+                ack,
+                sent: Default::default(),
+            };
+            let reply = grant(&handle, &envelope, 7, "int_1", PermissionMode::Guarded).await;
+            let sent = handle.sent.into_inner().unwrap();
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [KernelCommand::GrantPermissionMode { interaction, mode: PermissionMode::Guarded }]
+                        if interaction == "int_1"
+                ),
+                "{sent:?}"
+            );
+            reply
+        }
+    };
+    let granted = run(KernelAck::Accepted {
+        result: CommandResult::Done,
+    })
+    .await;
+    assert_eq!(granted.status, Status::Accepted);
+    assert_eq!(
+        granted.result,
+        Some(json!({"type": "resolveInteraction",
+            "resolvedBy": {"clientId": "client_a", "optionId": "allowAndSwitchGuarded"}}))
+    );
+    let late = run(KernelAck::Accepted {
+        result: CommandResult::NotPending,
+    })
+    .await;
+    assert_eq!(
+        (late.status, late.reason_code.as_deref(), late.result),
+        (Status::Noop, Some("proto.alreadyResolved"), None)
+    );
+    let refused = run(KernelAck::Rejected {
+        reason: "Already in autonomous mode".to_owned(),
+    })
+    .await;
+    assert_eq!(
+        (
+            refused.status,
+            refused.reason_code.as_deref(),
+            refused.message.as_deref()
+        ),
+        (
+            Status::Failed,
+            Some("fault.command.executionFailed"),
+            Some("Already in autonomous mode")
+        )
+    );
+    assert_eq!(run(KernelAck::Duplicate).await.status, Status::Duplicate);
+}

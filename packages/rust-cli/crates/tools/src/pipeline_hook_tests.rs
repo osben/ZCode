@@ -386,6 +386,7 @@ async fn ask_once_questions_skip_permission_request_hooks() {
             message: "Dangerous command requires your approval for this execution".to_owned(),
             suggestions: Vec::new(),
             once: true,
+            independent: false,
         },
         None,
     );
