@@ -217,6 +217,8 @@ pub struct SessionState {
     /// Fork: where the title came from (cold load: `LoadedSession.title_source`; a new session: `None`, derived from
     /// the title).
     pub title_source: Option<rust_cli_kernel_api::title::Source>,
+    /// Fork (B3): the last permission mode grant (cold load: `LoadedSession.permission_grant`; a new session: none).
+    pub permission_grant: Option<String>,
     /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
@@ -250,6 +252,7 @@ impl SessionState {
             child_live: None,
             title_pending: true,
             title_source: None,
+            permission_grant: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -286,6 +289,7 @@ impl SessionState {
             child_live: None,
             title_pending: loaded.title_pending,
             title_source: loaded.title_source,
+            permission_grant: loaded.permission_grant,
             goal_target: loaded.goal_target,
             goal_verifications: loaded.goal_verifications,
             message_models: loaded.message_models,

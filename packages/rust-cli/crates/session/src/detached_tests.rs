@@ -29,6 +29,7 @@ fn permission(tool_use: &str) -> InteractionRequest {
         rule_seed: None,
         asked_by: Some("general-purpose".to_owned()),
         once: false,
+        independent: false,
     }
 }
 

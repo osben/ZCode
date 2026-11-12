@@ -1,16 +1,16 @@
 //! 命令的处理（[`crate::inbox`] 的裁决与转交）：P1 的五个命令。
 
 use rust_cli_base::sync::LockUnpoisoned;
-use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
+use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId, ToolUseId};
 use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
-use rust_cli_kernel_api::permission::ExecutionState;
+use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, InputExecution,
-    QueuedKind, SessionHandle,
+    Ack as KernelAck, Command, CommandEnvelope, CommandResult, CreateSession, Delivery,
+    InputExecution, QueuedKind, SessionHandle,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
@@ -332,7 +332,7 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             ack
         }
         "stop" => stop(handle, &live.sink, envelope, phase, revision).await,
-        "resolveInteraction" => resolve(handle, &live.sink, envelope, revision).await,
+        "resolveInteraction" => resolve(server, handle, &live.sink, envelope, revision).await,
         "setFollowupMode" => set_followup(server, handle, &live, envelope).await,
         // Fork: command kinds ported for desktop parity (specs/fork-rust-agent-parity.md).
         _ => match crate::fork::commands::decide(server, &live, envelope, phase, revision).await {
@@ -1661,6 +1661,7 @@ async fn send_text(
 }
 
 async fn resolve(
+    server: &Server,
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
     envelope: &Envelope,
@@ -1672,64 +1673,38 @@ async fn resolve(
     };
     let interaction = resolved.interaction_id.as_str();
     let option = resolved.answer.option_id.as_deref();
+    // Fork (B3): a mode switch is one kernel step that checks the ask itself (Node `permissionGrantMode`).
+    if let Some(mode) = option.and_then(grant_mode) {
+        let others = || {
+            server
+                .bridge
+                .sessions()
+                .into_iter()
+                .map(|bridged| bridged.handle.clone())
+                .filter(|other| other.id() != handle.id())
+                .collect()
+        };
+        return grant(handle, others, envelope, revision, interaction, mode).await;
+    }
     let pending = handle.view().await.ok().and_then(|view| {
         view.pending
             .into_iter()
             .find(|(id, _)| id.as_str() == interaction)
             .map(|(_, request)| request)
     });
-    let (suggestions, tool) = match pending {
-        Some(InteractionRequest::Permission {
-            suggestions,
-            tool_use,
-            ..
-        }) => (suggestions, tool_use),
-        Some(request) => {
-            return resolve_elicitation(handle, live, envelope, revision, &resolved, &request)
-                .await;
-        }
-        None => {
-            return Ack::refused(
-                &envelope.command_id,
-                Status::Noop,
-                "proto.alreadyResolved",
-                "the interaction is no longer pending",
-                revision,
-            );
-        }
+    let Some(request) = pending else {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Noop,
+            "proto.alreadyResolved",
+            "the interaction is no longer pending",
+            revision,
+        );
     };
-    // “完全访问”：先把会话切到 yolo（之后不再询问），再放行这一次。Fork: queued inputs' frozen modes become yolo
-    // too, plan switches kept (Node `fullAccess`).
-    if option == Some("fullAccess") {
-        let ack = send(
-            handle,
-            &format!("{}:mode", envelope.command_id),
-            Command::GrantFullAccess {
-                interaction: interaction.to_owned(),
-            },
-        )
-        .await;
-        if !matches!(ack, KernelAck::Accepted { .. }) {
-            tracing::warn!(event = "protocol.full_access.refused", ack = ?ack, "full access was not granted");
-        }
-    }
-    let answer = match option {
-        Some("allowOnce" | "fullAccess") => PermissionAnswer::Allow {
-            remember: Vec::new(),
-        },
-        Some("allowAlways") => PermissionAnswer::Allow {
-            remember: suggestions,
-        },
-        _ => PermissionAnswer::Deny {
-            feedback: resolved
-                .answer
-                .free_text
-                .as_deref()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_owned),
-        },
+    let Some((offered, tool)) = Offered::of(&request) else {
+        return resolve_elicitation(handle, live, envelope, revision, &resolved, &request).await;
     };
+    let answer = permission_answer(option, offered, resolved.answer.free_text.as_deref());
     if let PermissionAnswer::Deny { .. } = &answer {
         live.deny(&tool);
     }
@@ -1753,7 +1728,145 @@ async fn resolve(
     )
 }
 
+/// Node `interaction-registry.ts` `resolvePermissionMode`: the grant's refusal for an ask it cannot grant.
+const NOT_SUPPORTED: &str = "Full access is not supported for this interaction";
+
+/// Fork (B3): the permission mode an answer's option grants (Node `permissionGrantMode`): `fullAccess` is yolo
+/// (`BypassPermissions`), `allowAndSwitchGuarded` is guarded.
+fn grant_mode(option: &str) -> Option<PermissionMode> {
+    match option {
+        "fullAccess" => Some(PermissionMode::BypassPermissions),
+        "allowAndSwitchGuarded" => Some(PermissionMode::Guarded),
+        _ => None,
+    }
+}
+
+/// Fork (B3): answers a permission ask with a mode switch (Node `resolveInteraction` with `resolvePermissionMode`).
+/// The session actor checks the ask, grants the mode and allows the call once in one step. A real grant answers
+/// `resolvedBy` (the App writes its recent permission preference only from it). An ask pending in another session fails
+/// like Node's registry (`Full access is not supported for this interaction`); an ask pending nowhere is a late answer,
+/// accepted without a result (Node `interaction-background.ts`: a miss is an idempotent success). A refusal leaves the
+/// ask pending and fails the command with the reason.
+async fn grant(
+    handle: &dyn SessionHandle,
+    others: impl FnOnce() -> Vec<std::sync::Arc<dyn SessionHandle>>,
+    envelope: &Envelope,
+    revision: u64,
+    interaction: &str,
+    mode: PermissionMode,
+) -> Ack {
+    let command = Command::GrantPermissionMode {
+        interaction: interaction.to_owned(),
+        mode,
+    };
+    let option = envelope.payload["answer"]["optionId"].clone();
+    let result = json!({
+        "type": "resolveInteraction",
+        "resolvedBy": {"clientId": envelope.client_id, "optionId": option},
+    });
+    let granted = Ack::accepted(&envelope.command_id, revision, Some(result));
+    match send(handle, &envelope.command_id, command).await {
+        KernelAck::Accepted {
+            result: CommandResult::NotPending,
+        } => {
+            for other in others() {
+                let pending = other.view().await.is_ok_and(|view| {
+                    view.pending
+                        .iter()
+                        .any(|(id, _)| id.as_str() == interaction)
+                });
+                if pending {
+                    tracing::warn!(
+                        event = "protocol.permission_grant.refused",
+                        mode = mode.node_name(),
+                        "permission mode grant for another session's ask"
+                    );
+                    return Ack::refused(
+                        &envelope.command_id,
+                        Status::Failed,
+                        "fault.command.executionFailed",
+                        NOT_SUPPORTED,
+                        revision,
+                    );
+                }
+            }
+            tracing::info!(
+                event = "zcode_protocol.v4.interaction_already_resolved",
+                "permission mode grant for an ask no longer pending (idempotent)"
+            );
+            Ack::accepted(&envelope.command_id, revision, None)
+        }
+        KernelAck::Accepted { .. } => granted,
+        KernelAck::Duplicate => inbox::duplicate(&granted),
+        KernelAck::Rejected { reason } => {
+            tracing::warn!(
+                event = "protocol.permission_grant.refused",
+                mode = mode.node_name(),
+                "permission mode grant refused"
+            );
+            Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.executionFailed",
+                reason,
+                revision,
+            )
+        }
+    }
+}
+
 /// Fork: answers a question or plan approval (Node's interaction broker mapping, projection/elicitation.rs).
+/// What a pending permission ask offers: its always-allow suggestions, and whether it offers always-allow at all
+/// (not for a `once` or an `independent` ask; the projection shows allow once and deny only).
+struct Offered {
+    suggestions: Vec<rust_cli_kernel_api::permission::PermissionRule>,
+    always: bool,
+}
+
+impl Offered {
+    /// A permission ask's offer and its tool use; `None` for any other ask.
+    fn of(request: &InteractionRequest) -> Option<(Self, ToolUseId)> {
+        let InteractionRequest::Permission {
+            suggestions,
+            tool_use,
+            once,
+            independent,
+            ..
+        } = request
+        else {
+            return None;
+        };
+        let offered = Self {
+            suggestions: suggestions.clone(),
+            always: !once && !independent,
+        };
+        Some((offered, tool_use.clone()))
+    }
+}
+
+/// The answer to a permission ask for an option that is not a mode switch. `allowAlways` on an ask that does not offer
+/// it is a deny, like any option the ask did not offer (Node `interaction-broker.ts`).
+fn permission_answer(
+    option: Option<&str>,
+    offered: Offered,
+    free_text: Option<&str>,
+) -> PermissionAnswer {
+    match option {
+        Some("allowOnce") => PermissionAnswer::Allow {
+            remember: Vec::new(),
+        },
+        Some("allowAlways") if offered.always => PermissionAnswer::Allow {
+            remember: offered.suggestions,
+        },
+        _ => PermissionAnswer::Deny {
+            feedback: free_text
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned),
+        },
+    }
+}
+
 async fn resolve_elicitation(
     handle: &dyn SessionHandle,
     live: &crate::live::Live,

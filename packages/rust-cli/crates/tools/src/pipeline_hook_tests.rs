@@ -386,6 +386,7 @@ async fn ask_once_questions_skip_permission_request_hooks() {
             message: "Dangerous command requires your approval for this execution".to_owned(),
             suggestions: Vec::new(),
             once: true,
+            independent: false,
         },
         None,
     );
@@ -397,6 +398,38 @@ async fn ask_once_questions_skip_permission_request_hooks() {
     let names: Vec<_> = ran.events.iter().map(|e| e.name).collect();
     assert!(
         !names.contains(&HookEventName::PermissionRequest),
+        "{names:?}"
+    );
+}
+
+/// An independent ask (Plan mode's MCP ask, Node `optionsPolicy: "no-always-allow"` without `user-once`) still runs
+/// PermissionRequest hooks, and a hook may answer it before the user (Node `permission-flow.ts` `runHooks`).
+#[tokio::test]
+async fn an_independent_ask_runs_permission_request_hooks() {
+    let allow = (
+        HookEventName::PermissionRequest,
+        HookOutcome {
+            decision: Some(PermissionDecision::Allow {
+                updated_input: None,
+            }),
+            ..HookOutcome::default()
+        },
+    );
+    let gate = Gate::new(
+        PermissionDecision::Ask {
+            message: "Plan mode requires approval".to_owned(),
+            suggestions: Vec::new(),
+            once: false,
+            independent: true,
+        },
+        None,
+    );
+    let ran = run(gate, &[allow]).await;
+    assert!(ran.asked.is_empty(), "{:?}", ran.asked);
+    assert_eq!(text(&ran.execution.output), "ran ls");
+    let names: Vec<_> = ran.events.iter().map(|e| e.name).collect();
+    assert!(
+        names.contains(&HookEventName::PermissionRequest),
         "{names:?}"
     );
 }

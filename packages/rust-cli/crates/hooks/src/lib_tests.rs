@@ -255,3 +255,27 @@ async fn an_incognito_profile_drops_all_hooks_or_the_plugin_hooks() {
     assert_eq!(ran("no_hooks").await, 0);
     assert_eq!(ran("no_plugins").await, 1);
 }
+
+/// #422 review P2-2: a PermissionRequest hook that answers `continue: false` denies the ask with its `stopReason`
+/// (Node `hooks/output.ts` preventContinuation, checked first in `hook-flow.ts`), even when it also allows.
+#[tokio::test]
+async fn a_permission_request_hook_that_stops_denies_the_ask() {
+    let stops = r#"{"continue": false, "stopReason": "not now", "hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}"#;
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", script(stops, "", 0))]));
+    let engine = engine(
+        env.clone(),
+        &command_settings("PermissionRequest", "Bash", "stop.sh"),
+    );
+    let ask = event(
+        HookEventName::PermissionRequest,
+        json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+    );
+    let outcome = engine.run(ask, CancellationToken::new()).await;
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Deny {
+            message: "not now".to_owned()
+        })
+    );
+    assert_eq!(outcome.updated_input, None);
+}

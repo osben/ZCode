@@ -355,6 +355,11 @@ impl SessionStore for MemoryStore {
             last_turn_failed: last_turn_failed(facts),
             title_pending,
             title_source: None,
+            // Fork (B3): the last committed grant receipt, as node-store reads it back.
+            permission_grant: facts.iter().rev().find_map(|fact| match fact {
+                Fact::PermissionGranted { interaction, .. } => Some(interaction.clone()),
+                _ => None,
+            }),
             goal_target: goal_target.flatten(),
             goal_verifications,
             message_models: Default::default(),

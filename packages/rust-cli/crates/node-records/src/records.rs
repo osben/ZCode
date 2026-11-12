@@ -13,6 +13,8 @@ pub const MODEL_SELECTION_ENTRY: &str = crate::codecs::MODEL_SELECTION_ENTRY;
 /// part `metadata` 里本工程的成员名。
 pub const RUST_CLI: &str = "rustCli";
 pub const EXECUTION_STATE_ENTRY: &str = "runtime/execution_state";
+/// Fork (B3): Node `PERMISSION_FULL_ACCESS_ENTRY`, a permission mode grant's receipt.
+pub const PERMISSION_FULL_ACCESS_ENTRY: &str = "runtime/permission_full_access";
 
 /// Node `titleFromInput`（唯一定义在 kernel-api，会话 actor 用同一个函数更新内存里的标题）。
 pub fn title_from_input(input: &str) -> String {
@@ -121,6 +123,71 @@ pub fn execution_state_entry(session: &str, now: u64, mode: &str, plan: bool) ->
         json!({"mode": mode, "planEnabled": plan}),
         false,
     )
+}
+
+/// One side of a permission mode grant: the Node mode name and plan switch.
+#[derive(Debug, Clone, Copy)]
+pub struct GrantState<'a> {
+    pub mode: &'a str,
+    pub plan: bool,
+}
+
+/// What a permission mode grant's receipt records ([`permission_full_access_entry`]).
+#[derive(Debug, Clone)]
+pub struct GrantReceipt<'a> {
+    pub interaction: &'a str,
+    /// The `session_mode_changed` event's id and trace (both non-empty) and sequence number.
+    pub event: &'a str,
+    pub trace: &'a str,
+    pub sequence: u64,
+    pub previous: GrantState<'a>,
+    pub next: GrantState<'a>,
+    pub queue_items: &'a [String],
+}
+
+/// Fork (B3): Node `grantPermissionMode`'s receipt (`permissionFullAccessReceiptSchema`, every level `.strict()`):
+/// `{interactionId, event}`, the event a `session_mode_changed` with `source: "command"` and `permissionGrant`. No
+/// `turnId` (optional in Node, absent rather than null); `timestamp` is epoch milliseconds (`z.coerce.date`).
+pub fn permission_full_access_entry(session: &str, now: u64, receipt: &GrantReceipt<'_>) -> Value {
+    let event = json!({
+        "id": receipt.event,
+        "sessionId": session,
+        "traceId": receipt.trace,
+        "type": "session_mode_changed",
+        "timestamp": now,
+        "sequenceNumber": receipt.sequence,
+        "payload": {
+            "mode": receipt.next.mode,
+            "planEnabled": receipt.next.plan,
+            "previousMode": receipt.previous.mode,
+            "previousPlanEnabled": receipt.previous.plan,
+            "source": "command",
+            "permissionGrant": {
+                "interactionId": receipt.interaction,
+                "queueItemIds": receipt.queue_items,
+            },
+        },
+    });
+    entry(
+        format!("{session}:permission-full-access:{}", receipt.interaction),
+        session,
+        PERMISSION_FULL_ACCESS_ENTRY,
+        now,
+        json!({"interactionId": receipt.interaction, "event": event}),
+        false,
+    )
+}
+
+/// Fork (B3): the interaction of a stored grant receipt when it is one of `session`'s (Node
+/// `restorePermissionGrantMarker`: an invalid receipt or another session's is ignored).
+pub fn permission_grant_of(session: &str, data: &Value) -> Option<String> {
+    let interaction = data["interactionId"].as_str().filter(|id| !id.is_empty())?;
+    let event = &data["event"];
+    let granted = event["payload"]["permissionGrant"]["interactionId"].as_str();
+    (event["sessionId"] == session
+        && event["type"] == "session_mode_changed"
+        && granted == Some(interaction))
+    .then(|| interaction.to_owned())
 }
 
 const USER_SEMANTICS: [(&str, &str); 5] = [

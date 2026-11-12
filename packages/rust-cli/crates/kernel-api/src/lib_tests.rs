@@ -115,6 +115,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         earlier: vec![assistant()],
         title_pending: true,
         title_source: None,
+        permission_grant: Some("int_1".to_owned()),
         goal_target: None,
         goal_verifications: Vec::new(),
         message_models: Default::default(),

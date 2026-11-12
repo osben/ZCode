@@ -274,6 +274,7 @@ pub(crate) async fn drive(
         )
         .with_ledger(ledger)
         .asking(&agent.definition.agent_type, agent.asks.clone())
+        .with_origin(agent)
         .with_core(core.clone())
         .with_execution(agent.shown.execution),
     );

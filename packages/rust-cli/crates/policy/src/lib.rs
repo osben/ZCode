@@ -361,11 +361,13 @@ impl PermissionGate for PolicyGate {
                 message,
                 suggestions,
                 once,
+                independent,
                 kind: _,
             } => Some(PermissionDecision::Ask {
                 message,
                 suggestions,
                 once,
+                independent,
             }),
         }
     }

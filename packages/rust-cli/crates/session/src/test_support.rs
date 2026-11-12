@@ -334,6 +334,7 @@ impl Setup {
                 child_live: self.child_live,
                 title_pending: self.title_pending,
                 title_source: None,
+                permission_grant: None,
                 goal_target: self.goal_target,
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),

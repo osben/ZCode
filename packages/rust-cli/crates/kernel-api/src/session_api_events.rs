@@ -275,8 +275,8 @@ pub enum KernelEvent {
     TurnFilesReverted {
         turn_input: MessageId,
     },
-    /// Fork: full access was granted from the permission ask `interaction`
-    /// ([`crate::session_api::Command::GrantFullAccess`]), right after the mode change. The desktop
+    /// Fork: a permission mode (full access or guarded) was granted from the permission ask `interaction`
+    /// ([`crate::session_api::Command::GrantPermissionMode`]), right after the mode change. The desktop
     /// composer adopts the session mode once per grant (Node `config.permissionGrant`).
     PermissionGranted {
         interaction: String,

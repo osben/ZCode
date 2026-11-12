@@ -194,6 +194,12 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
         }
         Fact::ModeChanged { mode } => change_mode(ctx, *mode),
         Fact::ExecutionChanged { state } => write_execution(ctx, *state),
+        Fact::PermissionGranted {
+            interaction,
+            previous,
+            next,
+            queue_items,
+        } => write_grant(ctx, interaction, *previous, *next, queue_items),
         Fact::RevertSet { cursor } => {
             // Node `rewindConversationToMessage` → `setRevert`；游标按库里的行算（rewind.rs）。
             let update = sessions::Update {
@@ -314,6 +320,56 @@ fn change_mode(ctx: &Commit<'_>, mode: PermissionMode) -> Result<(), StoreError>
 }
 
 /// 执行状态（修复线 F20）：权限模式 × plan 开关整体写入。
+/// Fork (B3): Node `commitPermissionFullAccess`'s receipt, in the grant's transaction (the session actor commits it in
+/// one batch with the grant's `ExecutionChanged`). Its id is fixed per interaction; one already stored is kept (Node
+/// commits nothing when the receipt exists). The event's sequence number counts this session's receipts (Node uses
+/// its event store's sequence; only a non-negative integer is required to read the receipt back).
+fn write_grant(
+    ctx: &Commit<'_>,
+    interaction: &str,
+    previous: rust_cli_kernel_api::permission::ExecutionState,
+    next: rust_cli_kernel_api::permission::ExecutionState,
+    queue_items: &[String],
+) -> Result<(), StoreError> {
+    let stored = entries::list(
+        ctx.conn,
+        ctx.session,
+        Some(records::PERMISSION_FULL_ACCESS_ENTRY),
+    )
+    .storage()?;
+    let id = format!("{}:permission-full-access:{interaction}", ctx.session);
+    if stored.iter().any(|entry| entry.id == id) {
+        return Ok(());
+    }
+    let row = sessions::get(ctx.conn, ctx.session)
+        .storage()?
+        .ok_or_else(|| storage(format!("session {} disappeared", ctx.session)))?;
+    let trace = row
+        .trace_id
+        .unwrap_or_else(|| format!("trace_{}", ctx.session));
+    let (previous, next) = (mode::to_node(previous), mode::to_node(next));
+    let event = (ctx.uuid)();
+    let receipt = records::GrantReceipt {
+        interaction,
+        event: &event,
+        trace: &trace,
+        sequence: stored.len() as u64,
+        previous: records::GrantState {
+            mode: &previous.mode,
+            plan: previous.plan,
+        },
+        next: records::GrantState {
+            mode: &next.mode,
+            plan: next.plan,
+        },
+        queue_items,
+    };
+    save_entry(
+        ctx,
+        &records::permission_full_access_entry(ctx.session, ctx.now, &receipt),
+    )
+}
+
 fn write_execution(
     ctx: &Commit<'_>,
     state: rust_cli_kernel_api::permission::ExecutionState,

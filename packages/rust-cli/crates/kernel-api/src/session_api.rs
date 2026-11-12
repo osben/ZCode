@@ -183,12 +183,16 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lease: Option<String>,
     },
-    /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
-    /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are
-    /// kept. The pending ask itself is answered separately. `interaction` is the ask that granted it
-    /// (Node `config.permissionGrant`, [`crate::session_api_events::KernelEvent::PermissionGranted`]).
-    GrantFullAccess {
+    /// Fork (desktop App, specs/fork-rust-agent-parity.md B3): the permission dialog's mode switch (Node
+    /// `resolvePermissionMode`): "Full access" grants `BypassPermissions`, "allow and switch to guarded" grants
+    /// `Guarded`. In one step the session actor checks the pending ask `interaction`, makes `mode` the session's
+    /// permission mode and every queued input's frozen mode (plan switches kept), emits
+    /// [`crate::session_api_events::KernelEvent::PermissionGranted`] (Node `config.permissionGrant`), then answers the
+    /// ask allow once. Refused, nothing changes and the ask stays pending; an ask that is no longer pending answers
+    /// [`crate::session_api_results::CommandResult::NotPending`].
+    GrantPermissionMode {
         interaction: String,
+        mode: crate::permission::PermissionMode,
     },
     /// Fork (desktop App): Node `pauseGoal`: an active goal becomes paused (persisted as a
     /// `goal_status` attachment), then the running turn is aborted. No active goal: a no-op.
@@ -441,6 +445,10 @@ pub struct SessionView {
     /// title).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the session's last permission mode grant (the stored receipt, then each grant),
+    /// projected as `config.permissionGrant` (Node `lastPermissionGrantId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,

@@ -17,6 +17,7 @@ impl SessionView {
         Self {
             meta,
             title_source: None,
+            permission_grant: None,
             messages,
             selection,
             mode,

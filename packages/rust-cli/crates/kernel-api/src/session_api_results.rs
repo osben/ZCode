@@ -19,6 +19,9 @@ pub enum CommandResult {
     /// 没有要带回的。
     #[default]
     Done,
+    /// Fork: `GrantPermissionMode` found no pending ask with that id (answered, cancelled or unknown): nothing
+    /// changed, like a late answer.
+    NotPending,
     /// `Fork` 与 `ForkFromInput`：分出的新会话（两种 fork 同一种回执）。
     Forked(Forked),
     /// `GenerateName`：起的名字与给用户的说明（`Session renamed to: …`，或新的改名先落地时的说明）。

@@ -92,6 +92,7 @@ struct Asking {
     message: String,
     suggestions: Vec<PermissionRule>,
     once: bool,
+    independent: bool,
 }
 
 fn wrapped(text: &str) -> ToolOutput {
@@ -170,6 +171,7 @@ impl Pipeline {
             message,
             suggestions,
             once,
+            independent,
         } = asking;
         // 修复线 F20：guarded 的危险命令只批准这一次（Node `approvalMode: "user-once"` 时 `runHooks: false`）：
         // 不跑 PermissionRequest hooks，hook 不能替用户批准；没有“总是允许”（判决链不给建议规则）。工作线 F137：这个事实
@@ -201,6 +203,7 @@ impl Pipeline {
             // 额外机器上的调用，询问带机器名（R3，remote-exec.md §20.8；主 env 不写出）。
             machine: call.machine.clone(),
             once,
+            independent,
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));
@@ -265,11 +268,13 @@ impl Pipeline {
                 message,
                 suggestions,
                 once,
+                independent,
             } => {
                 let asking = Asking {
                     message,
                     suggestions,
                     once,
+                    independent,
                 };
                 self.ask_for(tool, schema, input, asking, call).await
             }
@@ -279,6 +284,7 @@ impl Pipeline {
                     message: rust_cli_policy::texts::request_message(tool.name(), None),
                     suggestions: Vec::new(),
                     once: false,
+                    independent: false,
                 };
                 self.ask_for(tool, schema, input, asking, call).await
             }
@@ -373,6 +379,7 @@ impl Pipeline {
                 message,
                 suggestions,
                 once,
+                independent,
             }) => match self.gate.check_rules(tool, &input, context).await {
                 Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                 Some(PermissionDecision::Ask { .. }) => self
@@ -384,6 +391,7 @@ impl Pipeline {
                         message,
                         suggestions,
                         once,
+                        independent,
                     };
                     self.ask_for(tool, &schema, input, asking, &call)
                         .await
