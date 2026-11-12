@@ -1464,6 +1464,15 @@ async fn send_text_now(
     ack
 }
 
+/// B4: Node's `sendGoalCommand` schema has no `source` (zod strips it); only `sendText` and `firstInput` carry one.
+/// The goal's intent therefore never has a source, and its card shows no extension origin.
+fn without_goal_source(kind: QueuedKind, mut input: Input) -> Input {
+    if kind == QueuedKind::Goal {
+        input.source = None;
+    }
+    input
+}
+
 /// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
 /// now and queueing, and applies the input's execution state only when its turn starts
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
@@ -1483,7 +1492,7 @@ async fn send_text(
     let handle = bridged.handle.as_ref();
     let live = bridged.sink.as_ref();
     let input: Input = match payload(envelope) {
-        Ok(input) => input,
+        Ok(input) => without_goal_source(kind, input),
         Err(ack) => return *ack,
     };
     let command = envelope.command_id.as_str();

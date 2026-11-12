@@ -528,6 +528,49 @@ fn an_extension_source_is_copied_onto_the_intent() {
     assert!(intent.get("source").is_none());
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): `sendGoalCommand` drops the source, valid or not, because Node's goal schema
+/// has no `source` (zod strips it). A goal's intent and card carry no extension origin; `sendText` keeps it.
+#[test]
+fn a_goal_command_never_carries_a_source() {
+    let valid = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let invalid = json!({"kind": "extension"});
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "g1",
+        "clientId": "plugin-host",
+        "sessionId": "s1",
+        "type": "sendGoalCommand",
+        "payload": {},
+    }))
+    .unwrap();
+    for source in [valid.clone(), invalid] {
+        let input: Input =
+            serde_json::from_value(json!({"text": "objective", "source": source})).unwrap();
+        let goal = without_goal_source(QueuedKind::Goal, input);
+        let intent = input_intent(
+            &envelope,
+            &goal,
+            QueuedKind::Goal,
+            None,
+            ("startNow", "startNow"),
+            (1, 1),
+        );
+        assert_eq!(intent.str("kind"), Some("sendGoalCommand"));
+        assert!(intent.get("source").is_none(), "{intent:?}");
+        assert!(intent.fields().get("source").is_none());
+    }
+    let text: Input = serde_json::from_value(json!({"text": "hi", "source": valid})).unwrap();
+    let text = without_goal_source(QueuedKind::Text, text);
+    let intent = input_intent(
+        &envelope,
+        &text,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(intent.get("source"), Some(&valid));
+}
+
 /// Node `session-flow.ts` answers a `sendText` from Core's admission in both directions: a started input is
 /// `startNow`, a queued one `queue`. The projection's prediction loses in both races: a turn that ended between the
 /// snapshot and the submit (predicted `queue` or `guide`, the kernel started it) and a lease or turn that appeared
