@@ -292,7 +292,7 @@ fn permission_request_reads_block_exit_two_and_approve() {
         }),
         ..HookResult::default()
     };
-    let out = permission_request(&[blocking("[g]: no"), allow.clone()]);
+    let out = permission_request(&[blocking("[g]: no"), allow]);
     assert_eq!(out.decision, deny("[g]: no"));
     assert_eq!(out.updated_input, None);
     assert_eq!(
