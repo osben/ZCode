@@ -286,7 +286,8 @@ Acceptance:
 - MCP unit test: `destructiveHint: true` sets `is_destructive`; a missing or false hint does not.
 - Pipeline unit test: a PermissionRequest hook answers an independent ask before the user; a `once` ask still skips the hook.
 - Hooks unit tests (engine and fold): a PermissionRequest hook with `continue: false` denies with its `stopReason` (the last one when several stop, Node's default text when it has none), even when it also allows; the existing pipeline test shows a hook deny is answered before the user is asked.
-- Gateway unit test: `allowAlways` on a `once` or an independent ask denies, and the tool does not run.
+- Gateway unit tests: only an ask that is neither `once` nor independent offers always-allow; `allowAlways` on one that does not is answered as a deny.
+- Hooks unit test: `continue: false` without `stopReason` stops with `reason` (Node `stopReason ?? reason`), except for Stop.
 - Projection unit test: an independent ask offers allow once and deny only.
 - E2E (when allowed): `conversation-session-plan-mode-mcp-permission` on both runtimes.
 

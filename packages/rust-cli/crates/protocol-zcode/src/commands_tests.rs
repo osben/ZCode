@@ -863,3 +863,31 @@ fn allow_always_denies_an_ask_that_does_not_offer_it() {
         }
     );
 }
+
+/// #422 review P2-1: only an ask that is neither `once` nor independent offers always-allow.
+#[test]
+fn only_a_normal_ask_offers_always_allow() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::InteractionRequest;
+    let ask = |once: bool, independent: bool| InteractionRequest::Permission {
+        origin: None,
+        tool_use: ToolUseId::new("toolu_1"),
+        tool: "Bash".into(),
+        input: json!({}),
+        message: "ask".into(),
+        suggestions: Vec::new(),
+        rule_seed: None,
+        asked_by: None,
+        machine: Default::default(),
+        once,
+        independent,
+    };
+    let always = |request: InteractionRequest| {
+        let (offered, tool) = Offered::of(&request).unwrap();
+        assert_eq!(tool.as_str(), "toolu_1");
+        offered.always
+    };
+    assert!(always(ask(false, false)));
+    assert!(!always(ask(true, false)));
+    assert!(!always(ask(false, true)));
+}

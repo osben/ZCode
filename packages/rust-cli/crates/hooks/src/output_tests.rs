@@ -155,3 +155,15 @@ fn event_specific_fields() {
         "Hook returned incorrect event name: expected 'PreToolUse' but got 'Stop'. Full stdout: {"
     ));
 }
+
+/// #422 review P2-2: `continue: false` stops with `stopReason ?? reason` (Node `hooks/output.ts`) for every event but
+/// Stop.
+#[test]
+fn a_stop_without_stop_reason_uses_the_reason() {
+    let stop = json!({"continue": false, "reason": "not now"});
+    let result = process(&json(stop.clone()), "c", "PermissionRequest").unwrap();
+    assert!(result.prevent);
+    assert_eq!(result.stop_reason.as_deref(), Some("not now"));
+    let stop_event = process(&json(stop), "c", "Stop").unwrap();
+    assert_eq!(stop_event.stop_reason, None);
+}

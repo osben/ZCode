@@ -1,7 +1,7 @@
 //! 命令的处理（[`crate::inbox`] 的裁决与转交）：P1 的五个命令。
 
 use rust_cli_base::sync::LockUnpoisoned;
-use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
+use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId, ToolUseId};
 use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::message::ContentBlock;
@@ -1692,33 +1692,17 @@ async fn resolve(
             .find(|(id, _)| id.as_str() == interaction)
             .map(|(_, request)| request)
     });
-    let (offered, tool) = match pending {
-        Some(InteractionRequest::Permission {
-            suggestions,
-            tool_use,
-            once,
-            independent,
-            ..
-        }) => (
-            Offered {
-                suggestions,
-                always: !once && !independent,
-            },
-            tool_use,
-        ),
-        Some(request) => {
-            return resolve_elicitation(handle, live, envelope, revision, &resolved, &request)
-                .await;
-        }
-        None => {
-            return Ack::refused(
-                &envelope.command_id,
-                Status::Noop,
-                "proto.alreadyResolved",
-                "the interaction is no longer pending",
-                revision,
-            );
-        }
+    let Some(request) = pending else {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Noop,
+            "proto.alreadyResolved",
+            "the interaction is no longer pending",
+            revision,
+        );
+    };
+    let Some((offered, tool)) = Offered::of(&request) else {
+        return resolve_elicitation(handle, live, envelope, revision, &resolved, &request).await;
     };
     let answer = permission_answer(option, offered, resolved.answer.free_text.as_deref());
     if let PermissionAnswer::Deny { .. } = &answer {
@@ -1837,6 +1821,27 @@ async fn grant(
 struct Offered {
     suggestions: Vec<rust_cli_kernel_api::permission::PermissionRule>,
     always: bool,
+}
+
+impl Offered {
+    /// A permission ask's offer and its tool use; `None` for any other ask.
+    fn of(request: &InteractionRequest) -> Option<(Self, ToolUseId)> {
+        let InteractionRequest::Permission {
+            suggestions,
+            tool_use,
+            once,
+            independent,
+            ..
+        } = request
+        else {
+            return None;
+        };
+        let offered = Self {
+            suggestions: suggestions.clone(),
+            always: !once && !independent,
+        };
+        Some((offered, tool_use.clone()))
+    }
 }
 
 /// The answer to a permission ask for an option that is not a mode switch. `allowAlways` on an ask that does not offer
