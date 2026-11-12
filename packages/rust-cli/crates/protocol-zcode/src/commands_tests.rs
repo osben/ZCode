@@ -469,6 +469,47 @@ fn an_app_input_is_admitted_with_nodes_intent() {
 
 /// B4 (specs/fork-rust-agent-parity.md): `sendText` and `createSession.firstInput` carry an extension source onto the
 /// intent as Node's last key; an input without a source has no key.
+/// B4: the stored source uses the schema's key order whatever order the Host sent (zod rebuilds the object).
+#[test]
+fn a_source_is_stored_in_the_schema_key_order() {
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "c2",
+        "clientId": "plugin-host",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {},
+    }))
+    .unwrap();
+    let reversed = json!({"pluginId": "p", "kind": "extension"});
+    let input: Input = serde_json::from_value(json!({"text": "hi", "source": reversed})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(
+        serde_json::to_string(intent.get("source").unwrap()).unwrap(),
+        r#"{"kind":"extension","pluginId":"p"}"#
+    );
+    let session = json!({"title": "t", "sessionId": "s", "kind": "session"});
+    let input: Input = serde_json::from_value(json!({"text": "hi", "source": session})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(
+        serde_json::to_string(intent.get("source").unwrap()).unwrap(),
+        r#"{"kind":"session","sessionId":"s","title":"t"}"#
+    );
+}
+
 #[test]
 fn an_extension_source_is_copied_onto_the_intent() {
     let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});

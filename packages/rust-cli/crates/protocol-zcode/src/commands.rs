@@ -1234,14 +1234,34 @@ fn input_intent(
     if !input.attachments.is_empty() {
         fields.insert("attachmentRefs".into(), json!(input.attachments));
     }
-    // B4: Node `inputIntentMetadata` puts `source` last and only when the command carries one.
+    // B4: Node `inputIntentMetadata` puts `source` last and only when the command carries one; zod rebuilds it in
+    // the schema's key order, so the stored object does too.
     if let Some(source) = input.source.as_ref().filter(|source| !source.is_null()) {
         fields.insert(
             rust_cli_kernel_api::input_intent::SOURCE.into(),
-            source.clone(),
+            source_in_schema_order(source),
         );
     }
     rust_cli_kernel_api::input_intent::InputIntent::from_fields(fields)
+}
+
+/// B4: the source's keys in `conversationInputSourceSchema` order (`input-intent.ts`). The inbound schema has already
+/// refused unknown keys, so only the schema's own fields are copied, in its order. An unknown kind is returned as is.
+fn source_in_schema_order(source: &Value) -> Value {
+    let fields: &[&str] = match source.get("kind").and_then(Value::as_str) {
+        Some("pluginUi") => &["kind", "pluginId", "toolCallId"],
+        Some("session") => &["kind", "sessionId", "title"],
+        Some("genUi") => &["kind", "path", "title"],
+        Some("extension") => &["kind", "pluginId"],
+        _ => return source.clone(),
+    };
+    let mut ordered = serde_json::Map::new();
+    for key in fields {
+        if let Some(value) = source.get(*key) {
+            ordered.insert((*key).to_owned(), value.clone());
+        }
+    }
+    Value::Object(ordered)
 }
 
 /// Fork: Node's `applyHeldQueueDisposition`. After a finished turn a paused queue (`autoDrain` off, items
