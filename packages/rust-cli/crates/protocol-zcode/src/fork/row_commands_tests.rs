@@ -12,6 +12,8 @@ fn quote(text: &str) -> Quote {
         sender_id: None,
         message_id: None,
         sent_at: None,
+        comment: None,
+        agent: None,
     }
 }
 

@@ -380,23 +380,7 @@ impl Server {
     async fn dispatch(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
         let reply = |value: Value| Ok(Reply::new(value));
         match method {
-            // 不支持的能力给 false（app-protocol.md §4.3）。
-            "runtime/capabilities" => reply(json!({
-                // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
-                "durableFirstSubmission": true,
-                // Fork: plan is a switch beside the permission mode, frozen per queued input
-                // (`Command::SubmitWith`); yolo with plan on still runs in plan mode.
-                "independentPlanState": true,
-                "historyFirst": false,
-                "sessionDirectorySource": false,
-                "genUiContext": false,
-                "sessionWorkspaceRouting": true,
-                "residentRowsRange": true,
-                // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,
-                // specs/fork-rust-agent-parity.md "Incognito sessions").
-                "incognitoSession": true,
-                "incognitoPromptToggles": true,
-            })),
+            "runtime/capabilities" => reply(capabilities()),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({
                 "receivedRevision": params["revision"],
@@ -486,6 +470,32 @@ impl Service for Handler {
     }
 }
 
+/// `runtime/capabilities`: an unsupported capability is false (app-protocol.md §4.3).
+pub(crate) fn capabilities() -> Value {
+    json!({
+        // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
+        "durableFirstSubmission": true,
+        // Fork: plan is a switch beside the permission mode, frozen per queued input
+        // (`Command::SubmitWith`); yolo with plan on still runs in plan mode.
+        "independentPlanState": true,
+        "historyFirst": false,
+        "sessionDirectorySource": false,
+        "genUiContext": false,
+        "sessionWorkspaceRouting": true,
+        "residentRowsRange": true,
+        // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,
+        // specs/fork-rust-agent-parity.md "Incognito sessions").
+        "incognitoSession": true,
+        "incognitoPromptToggles": true,
+        // Fork: a quote's `comment` / `agent` reach the model with Node's guidance (kernel_api::conversation_quote).
+        "conversationQuoteComment": true,
+    })
+}
+
 #[cfg(test)]
 #[path = "server_close_tests.rs"]
 mod close_tests;
+
+#[cfg(test)]
+#[path = "server_capabilities_tests.rs"]
+mod capabilities_tests;

@@ -45,3 +45,14 @@ fn the_intent_keeps_nodes_key_order() {
         r#"{"sourceCommandId":"c","text":"t","admissionSeq":1}"#
     );
 }
+
+/// A commented quote's block ends with Node's guidance; the typed text is still what comes before both.
+#[test]
+fn typed_strips_the_block_and_the_comment_guidance() {
+    let intent =
+        intent(json!({"text": "hi", "conversationQuotes": [{"text": "q", "comment": "why?"}]}));
+    let composed = intent.compose("hi");
+    assert!(composed.ends_with(crate::conversation_quote::COMMENT_GUIDANCE));
+    assert_eq!(intent.typed(&composed), "hi");
+    assert_eq!(intent.typed(&intent.compose("")), "");
+}

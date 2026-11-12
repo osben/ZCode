@@ -142,6 +142,8 @@ async fn a_quote_block_without_an_intent_is_plain_text() {
             sender_id: None,
             message_id: None,
             sent_at: None,
+            comment: None,
+            agent: None,
         }],
     );
     test.store

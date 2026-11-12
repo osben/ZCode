@@ -13,6 +13,13 @@ pub const MAX_COUNT: usize = 8;
 pub const MAX_TEXT_CHARS: usize = 8_000;
 /// `CONVERSATION_SELECTION_MAX_TOTAL_LENGTH` (the schema's refine sums JS `.length`, UTF-16 units).
 pub const MAX_TOTAL_UTF16: usize = 16_000;
+/// `CONVERSATION_SELECTION_MAX_COMMENT_LENGTH`.
+pub const MAX_COMMENT_CHARS: usize = 2_000;
+/// `CONVERSATION_SELECTION_MAX_AGENT_LENGTH`.
+pub const MAX_AGENT_CHARS: usize = 200;
+
+/// Node `QUOTE_COMMENT_GUIDANCE`: without it the model reads a comment as part of the quoted text.
+pub const COMMENT_GUIDANCE: &str = "Each conversation_quote item with a `comment` field is a user annotation on that exact quoted text: treat the comment as the user's question or instruction about that passage. An `agent` field names the subagent that produced the quoted text.";
 
 const OPEN: &str = "<conversation_quote>\n";
 const CLOSE: &str = "\n</conversation_quote>";
@@ -34,6 +41,12 @@ pub struct Quote {
     pub message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sent_at: Option<String>,
+    /// The user's comment on this selection (the App's selection-comment action); absent on a plain quote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    /// The subagent type whose output the selection came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// `conversationQuotesSchema`'s limits; the message names the broken one.
@@ -46,6 +59,24 @@ pub fn validate(quotes: &[Quote]) -> Result<(), String> {
         if quote.text.chars().count() > MAX_TEXT_CHARS {
             return Err(format!(
                 "conversationQuotes: a quote's text is over {MAX_TEXT_CHARS} characters"
+            ));
+        }
+        if quote
+            .comment
+            .as_ref()
+            .is_some_and(|comment| comment.chars().count() > MAX_COMMENT_CHARS)
+        {
+            return Err(format!(
+                "conversationQuotes: a quote's comment is over {MAX_COMMENT_CHARS} characters"
+            ));
+        }
+        if quote
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.chars().count() > MAX_AGENT_CHARS)
+        {
+            return Err(format!(
+                "conversationQuotes: a quote's agent is over {MAX_AGENT_CHARS} characters"
             ));
         }
         total += quote.text.encode_utf16().count();
@@ -63,14 +94,23 @@ pub fn validate(quotes: &[Quote]) -> Result<(), String> {
     Ok(())
 }
 
-/// Node `withConversationQuotes(text, quotes)`: the typed text, then the block; an empty part is dropped.
+/// Node `withConversationQuotes(text, quotes)`: the typed text, the block, then the comment guidance when a quote
+/// has a non-blank comment; an empty part is dropped.
 pub fn compose(text: &str, quotes: &[Quote]) -> String {
     if quotes.is_empty() {
         return text.to_owned();
     }
     // Serializing plain strings cannot fail.
     let json = serde_json::to_string(quotes).unwrap_or_default();
-    let block = format!("{OPEN}{json}{CLOSE}");
+    let mut block = format!("{OPEN}{json}{CLOSE}");
+    if quotes.iter().any(|quote| {
+        quote
+            .comment
+            .as_deref()
+            .is_some_and(|c| !rust_cli_base::js::string::trim(c).is_empty())
+    }) {
+        block = format!("{block}{SEPARATOR}{COMMENT_GUIDANCE}");
+    }
     if text.is_empty() {
         block
     } else {

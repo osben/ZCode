@@ -990,7 +990,7 @@ Until then it is a known gap that a concurrent Node purge can delete an open Rus
 - **B2 `stopSubagent` and `runningSubagentSummary.stopControl`**: the status-panel Stop button for running subagents is hidden on Rust.
 - **B3 Permission `modeSwitch` (`choose` / `fullAccessOnly`) and the `allowAndSwitchGuarded` grant**: Rust once-asks offer no full-access switch.
 - **B4 `extensionInputSource`**: the Host refuses extension-originated input for Rust.
-- **B5 `conversationQuoteComment`**: the selection-comment entry is hidden. It is cheap if Rust's `conversation_quote` already keeps `comment` and `agent`.
+- **B5 `conversationQuoteComment`**: done. Rust's quote keeps `comment` and `agent`, adds Node's comment guidance after the block, and reports the flag (specs/fork-agent-runtime-selection.md, Conversation quotes in Rust mode).
 - `pluginDiscoveryUi` stays out of scope (plugins). `highspeedCardOwner`, `providerRegistryRefresh` and `pluginExtensionSummary` are cosmetic.
 
 ### (c) Model-facing, telemetry and skew-safe
