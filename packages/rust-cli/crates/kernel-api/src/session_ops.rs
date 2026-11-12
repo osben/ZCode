@@ -26,6 +26,8 @@ use crate::plan::PlanModeFlags;
 pub struct RunView {
     /// 判决用的权限模式（plan 开时是 plan）。
     pub mode: PermissionMode,
+    /// Fork: the permission mode under plan (`ExecutionState.mode`); equal to `mode` when plan is off.
+    pub base_mode: PermissionMode,
     /// 计划模式的会话标志（与 `mode` 同一个快照）。
     pub plan_flags: PlanModeFlags,
     pub workspace: WorkspaceRef,
@@ -45,6 +47,7 @@ impl RunView {
     pub fn new(mode: PermissionMode, workspace: WorkspaceRef) -> Self {
         Self {
             mode,
+            base_mode: mode,
             plan_flags: PlanModeFlags::default(),
             workspace,
             selection: None,

@@ -144,22 +144,8 @@ pub(crate) fn post_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutc
                 .updated_tool_output
                 .clone_from(&result.updated_tool_output);
         }
-        if result.prevent {
-            let message = result
-                .stop_reason
-                .clone()
-                .unwrap_or_else(|| texts::STOPPED_BY_POST_TOOL_USE.to_owned());
-            outcome.prevent_continuation = true;
-            outcome.stop_reason.clone_from(&result.stop_reason);
-            outcome.messages.push(texts::stopped_continuation(
-                fold.ids,
-                fold.hook_name,
-                fold.event,
-                &message,
-            ));
-            // 遇到停止请求即返回，后面的结果不再处理。
-            break;
-        }
+        // Node uses only a PostToolUse hook's context: `continue: false` does not stop the turn
+        // (`shouldPreventContinuation`), so `result.prevent` is not read here.
         if let Some(blocking) = &result.blocking {
             outcome
                 .blocking_error
@@ -208,44 +194,63 @@ pub(crate) fn post_tool_use_failure(fold: &Fold<'_>, results: &[HookResult]) -> 
     outcome
 }
 
-/// A `continue: false` hook denies first; otherwise the first hook that decides wins.
+/// Node `processHookOutput` + `hook-flow.ts` (specs/fork-rust-agent-parity.md, "Hook output for PermissionRequest and
+/// PostToolUse"): a stopping hook (`continue: false`, `decision: "block"`, exit code 2) denies first, with the last
+/// stopping hook's text; otherwise the last decision wins; otherwise `decision: "approve"` allows.
 pub(crate) fn permission_request(results: &[HookResult]) -> HookOutcome {
     let mut outcome = HookOutcome {
         notices: notices(results),
         ..HookOutcome::default()
     };
-    // Node `hook-flow.ts` checks `preventContinuation` (`continue: false`) before the decision; the last stopping
-    // hook's `stopReason` replaces earlier ones (`mergeHookRunResult`).
-    if let Some(stop) = results.iter().rev().find(|result| result.prevent) {
+    if let Some(stop) = results.iter().rev().find_map(permission_request_stop) {
         outcome.decision = Some(PermissionDecision::Deny {
-            message: stop
-                .stop_reason
-                .clone()
-                .unwrap_or_else(|| texts::DENIED_BY_PERMISSION_REQUEST_HOOK.to_owned()),
+            message: stop.unwrap_or_else(|| texts::DENIED_BY_PERMISSION_REQUEST_HOOK.to_owned()),
         });
         return outcome;
     }
-    if let Some(decision) = results
+    match results
         .iter()
+        .rev()
         .find_map(|result| result.permission_request.clone())
     {
-        match decision {
-            PermissionRequestDecision::Allow { updated_input } => {
-                outcome.decision = Some(PermissionDecision::Allow {
-                    updated_input: None,
-                });
-                outcome.updated_input = updated_input;
-            }
-            PermissionRequestDecision::Deny { message } => {
-                outcome.decision = Some(PermissionDecision::Deny {
-                    message: message
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or_else(|| texts::PERMISSION_DENIED_BY_HOOK.to_owned()),
-                });
-            }
+        Some(PermissionRequestDecision::Allow { updated_input }) => {
+            outcome.decision = Some(PermissionDecision::Allow {
+                updated_input: None,
+            });
+            outcome.updated_input = updated_input;
         }
+        Some(PermissionRequestDecision::Deny { message }) => {
+            outcome.decision = Some(PermissionDecision::Deny {
+                // Node `decision.message ?? "Denied by PermissionRequest hook"`: an empty message is kept.
+                message: message
+                    .unwrap_or_else(|| texts::DENIED_BY_PERMISSION_REQUEST_HOOK.to_owned()),
+            });
+        }
+        None if results
+            .iter()
+            .any(|result| result.behavior == Some(Behavior::Allow)) =>
+        {
+            outcome.decision = Some(PermissionDecision::Allow {
+                updated_input: None,
+            });
+        }
+        None => {}
     }
     outcome
+}
+
+/// Whether a PermissionRequest hook stops the call, and its Node `stopReason`. Node stops only on
+/// `preventContinuation`: `continue: false` (`stopReason ?? reason`), top-level `decision: "block"`
+/// (`stopReason ?? reason ?? systemMessage`), both folded into `stop_reason` by `output::process`, and exit code 2
+/// (the blocking text). A `hookSpecificOutput` deny is a decision, not a stop (Node `permissionRequestResult`).
+fn permission_request_stop(result: &HookResult) -> Option<Option<String>> {
+    if result.prevent || result.block_requested {
+        return Some(result.stop_reason.clone());
+    }
+    result
+        .blocking
+        .as_ref()
+        .map(|blocking| Some(blocking.error.clone()))
 }
 
 /// PermissionDenied：任何 hook 给出 `retry: true` 即重试。

@@ -178,16 +178,174 @@ pub fn permission_full_access_entry(session: &str, now: u64, receipt: &GrantRece
     )
 }
 
-/// Fork (B3): the interaction of a stored grant receipt when it is one of `session`'s (Node
-/// `restorePermissionGrantMarker`: an invalid receipt or another session's is ignored).
+/// Fork (B3): the interaction of a stored grant receipt when it is one of `session`'s and matches Node's
+/// `permissionFullAccessReceiptSchema` (every level `.strict()`, enum modes, the grant naming the receipt's interaction).
+/// An invalid receipt or another session's is ignored (Node `restorePermissionGrantMarker`).
 pub fn permission_grant_of(session: &str, data: &Value) -> Option<String> {
-    let interaction = data["interactionId"].as_str().filter(|id| !id.is_empty())?;
-    let event = &data["event"];
-    let granted = event["payload"]["permissionGrant"]["interactionId"].as_str();
-    (event["sessionId"] == session
+    let receipt = strict(data, &["interactionId", "event"], &[])?;
+    let interaction = non_empty(&receipt["interactionId"])?;
+    let event = strict(
+        &receipt["event"],
+        &[
+            "id",
+            "sessionId",
+            "traceId",
+            "type",
+            "timestamp",
+            "sequenceNumber",
+            "payload",
+        ],
+        &["turnId"],
+    )?;
+    non_empty(&event["id"])?;
+    non_empty(&event["traceId"])?;
+    let turn_ok = event.get("turnId").is_none_or(Value::is_string);
+    let time_ok = js_date(&event["timestamp"]);
+    let payload = strict(
+        &event["payload"],
+        &[
+            "mode",
+            "planEnabled",
+            "previousMode",
+            "previousPlanEnabled",
+            "source",
+            "permissionGrant",
+        ],
+        &[],
+    )?;
+    let grant = strict(
+        &payload["permissionGrant"],
+        &["interactionId", "queueItemIds"],
+        &[],
+    )?;
+    let queue_ok = grant["queueItemIds"]
+        .as_array()
+        .is_some_and(|ids| ids.iter().all(|id| non_empty(id).is_some()));
+    let valid = turn_ok
+        && time_ok
+        && queue_ok
+        && event["sessionId"] == session
         && event["type"] == "session_mode_changed"
-        && granted == Some(interaction))
-    .then(|| interaction.to_owned())
+        // `z.number().int().nonnegative()`: `1.0` is an integer.
+        && event["sequenceNumber"]
+            .as_f64()
+            .is_some_and(|number| number >= 0.0 && number.fract() == 0.0)
+        && matches!(payload["mode"].as_str(), Some("guarded" | "yolo"))
+        && matches!(
+            payload["previousMode"].as_str(),
+            Some("build" | "edit" | "yolo" | "guarded" | "auto" | "plan")
+        )
+        && payload["planEnabled"].is_boolean()
+        && payload["previousPlanEnabled"].is_boolean()
+        && payload["source"] == "command"
+        && grant["interactionId"].as_str() == Some(interaction);
+    valid.then(|| interaction.to_owned())
+}
+
+/// The object `value` when it has every `required` key and no key outside `required` and `optional` (zod `.strict()`).
+fn strict<'a>(
+    value: &'a Value,
+    required: &[&str],
+    optional: &[&str],
+) -> Option<&'a serde_json::Map<String, Value>> {
+    let object = value.as_object()?;
+    let known = |key: &str| required.contains(&key) || optional.contains(&key);
+    (required.iter().all(|key| object.contains_key(*key)) && object.keys().all(|key| known(key)))
+        .then_some(object)
+}
+
+/// `z.coerce.date()`: `new Date(value)` is not an Invalid Date. Booleans and null are 0 or 1 ms, a number is valid within
+/// ±8.64e15 ms, objects and arrays are invalid. A string must be in the ECMAScript date-time format (what
+/// `toISOString` writes, and its shorter forms); V8's legacy fallback (`"Nov 12 2026"`) is not accepted.
+fn js_date(value: &Value) -> bool {
+    const MAX_TIME_MS: f64 = 8.64e15;
+    match value {
+        Value::Bool(_) | Value::Null => true,
+        Value::Number(number) => number
+            .as_f64()
+            .is_some_and(|ms| ms.trunc().abs() <= MAX_TIME_MS),
+        Value::String(text) => js_date_string(text.as_bytes()).is_some(),
+        Value::Array(_) | Value::Object(_) => false,
+    }
+}
+
+/// The ECMAScript date-time string format as V8 reads it: `YYYY[-MM[-DD]]` (or `±YYYYYY`, not `-000000`), then
+/// optionally `THH:mm[:ss[.s…]]` and `Z` or `±HH:mm`. V8 lets the day run to 31 in any month and allows hour 24 only
+/// at `24:00:00.000`.
+fn js_date_string(text: &[u8]) -> Option<()> {
+    let mut at = 0;
+    let digits = |count: usize, at: &mut usize| -> Option<u32> {
+        let slice = text.get(*at..*at + count)?;
+        if !slice.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        *at += count;
+        std::str::from_utf8(slice).ok()?.parse().ok()
+    };
+    match text.first()? {
+        b'+' | b'-' => {
+            let negative = text[0] == b'-';
+            at = 1;
+            let year = digits(6, &mut at)?;
+            if negative && year == 0 {
+                return None;
+            }
+        }
+        _ => {
+            digits(4, &mut at)?;
+        }
+    }
+    let part = |at: &mut usize, separator: u8, range: std::ops::RangeInclusive<u32>| {
+        if text.get(*at) != Some(&separator) {
+            return Some(None);
+        }
+        *at += 1;
+        let value = digits(2, at)?;
+        range.contains(&value).then_some(Some(value))
+    };
+    if part(&mut at, b'-', 1..=12)?.is_some() {
+        part(&mut at, b'-', 1..=31)?;
+    }
+    if text.get(at) == Some(&b'T') {
+        at += 1;
+        let hour = digits(2, &mut at)?;
+        let mut zero = true;
+        let minute = part(&mut at, b':', 0..=59)??;
+        zero &= minute == 0;
+        if let Some(second) = part(&mut at, b':', 0..=59)? {
+            zero &= second == 0;
+            if text.get(at) == Some(&b'.') {
+                at += 1;
+                let start = at;
+                while text.get(at).is_some_and(u8::is_ascii_digit) {
+                    zero &= text[at] == b'0';
+                    at += 1;
+                }
+                if at == start {
+                    return None;
+                }
+            }
+        }
+        if hour > 24 || (hour == 24 && !zero) {
+            return None;
+        }
+        match text.get(at) {
+            Some(b'Z') => at += 1,
+            Some(b'+' | b'-') => {
+                at += 1;
+                if digits(2, &mut at)? > 23 {
+                    return None;
+                }
+                part(&mut at, b':', 0..=59)??;
+            }
+            _ => {}
+        }
+    }
+    (at == text.len()).then_some(())
+}
+
+fn non_empty(value: &Value) -> Option<&str> {
+    value.as_str().filter(|text| !text.is_empty())
 }
 
 const USER_SEMANTICS: [(&str, &str); 5] = [
@@ -360,3 +518,7 @@ pub fn assistant_message(a: &Assistant) -> Value {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "records_tests.rs"]
+mod tests;

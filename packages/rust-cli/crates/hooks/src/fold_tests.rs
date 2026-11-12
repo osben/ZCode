@@ -130,8 +130,10 @@ fn pre_tool_use_passthrough_context_and_stop() {
     );
 }
 
+/// Node uses only a PostToolUse hook's context: `continue: false` does not stop the turn (`shouldPreventContinuation`
+/// covers PreToolUse, PermissionRequest and UserPromptSubmit only); later results still apply.
 #[test]
-fn post_tool_use_stops_at_prevent() {
+fn post_tool_use_ignores_continue_false() {
     let ids = SequentialIds::default();
     let f = fold(&ids, "PostToolUse", "PostToolUse:Bash");
     let out = post_tool_use(
@@ -147,27 +149,24 @@ fn post_tool_use_stops_at_prevent() {
                 ..HookResult::default()
             },
             HookResult {
-                additional_context: Some("dropped".to_owned()),
+                additional_context: Some("kept".to_owned()),
                 ..HookResult::default()
             },
         ],
     );
     assert_eq!(out.updated_tool_output, Some(json!("new")));
-    assert_eq!(out.messages.len(), 2);
     assert!(
         text(&out.messages[0])
             .contains("PostToolUse:Bash hook blocking error from command: \"g\": [g]: bad")
     );
-    assert!(text(&out.messages[1]).contains("PostToolUse:Bash hook stopped continuation: enough"));
-    assert!(out.prevent_continuation && out.additional_context.is_empty());
-    let default_stop = post_tool_use(
-        &f,
-        &[HookResult {
-            prevent: true,
-            ..HookResult::default()
-        }],
+    assert!(!out.prevent_continuation);
+    assert_eq!(out.stop_reason, None);
+    assert_eq!(out.additional_context, ["kept"]);
+    assert!(
+        out.messages
+            .iter()
+            .all(|message| !text(message).contains("stopped continuation"))
     );
-    assert!(text(&default_stop.messages[0]).contains("Execution stopped by PostToolUse hook"));
 }
 
 #[test]
@@ -192,11 +191,13 @@ fn failure_and_permission_request() {
         }),
         ..HookResult::default()
     };
-    let out = permission_request(&[deny, allow.clone()]);
+    // The last decision wins (Node `mergeHookRunResult`: `target.permissionRequestResult = next`); a deny without a
+    // message gets Node's `decision.message ?? "Denied by PermissionRequest hook"`.
+    let out = permission_request(&[allow.clone(), deny]);
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "Permission denied by hook".to_owned()
+            message: "Denied by PermissionRequest hook".to_owned()
         })
     );
     let out = permission_request(&[HookResult::default(), allow]);
@@ -245,5 +246,116 @@ fn a_stopping_permission_request_hook_denies() {
         Some(PermissionDecision::Deny {
             message: "Denied by PermissionRequest hook".to_owned()
         })
+    );
+}
+
+/// A PermissionRequest hook's JSON output, read as the engine reads it.
+fn processed(output: Value) -> HookResult {
+    crate::output::process(
+        output.as_object().expect("an object"),
+        "g",
+        "PermissionRequest",
+    )
+    .expect("valid output")
+}
+
+fn specific(decision: Value) -> HookResult {
+    processed(
+        json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}),
+    )
+}
+
+fn deny_with(message: &str) -> Option<PermissionDecision> {
+    Some(PermissionDecision::Deny {
+        message: message.to_owned(),
+    })
+}
+
+/// Node `processHookOutput`: top-level `decision: "block"` and `continue: false` set `preventContinuation`, which
+/// stops a PermissionRequest with `stopReason` (`block`: `stopReason ?? reason ?? systemMessage`; `continue: false`:
+/// `stopReason ?? reason`); exit code 2 stops it with the blocking text. A stop wins over any decision; the last
+/// stopping hook gives the text, Node's default when it has none. `approve` without a decision allows.
+#[test]
+fn permission_request_reads_block_exit_two_and_approve() {
+    let block = |extra: Value| {
+        let mut output = json!({"decision": "block"});
+        output
+            .as_object_mut()
+            .expect("an object")
+            .extend(extra.as_object().expect("an object").clone());
+        processed(output)
+    };
+    let cases = [
+        (
+            json!({"stopReason": "s", "reason": "r", "systemMessage": "m"}),
+            "s",
+        ),
+        (json!({"reason": "r", "systemMessage": "m"}), "r"),
+        (json!({"systemMessage": "m"}), "m"),
+        (json!({}), "Denied by PermissionRequest hook"),
+    ];
+    for (extra, text) in cases {
+        assert_eq!(
+            permission_request(&[block(extra)]).decision,
+            deny_with(text)
+        );
+    }
+    assert_eq!(
+        permission_request(&[processed(json!({"continue": false, "reason": "r"}))]).decision,
+        deny_with("r")
+    );
+    let allow = specific(json!({"behavior": "allow", "updatedInput": {"a": 1}}));
+    let out = permission_request(&[blocking("[g]: no"), allow.clone()]);
+    assert_eq!(out.decision, deny_with("[g]: no"));
+    assert_eq!(out.updated_input, None);
+    let out = permission_request(&[block(json!({"reason": "r"})), allow]);
+    assert_eq!(out.decision, deny_with("r"));
+    assert_eq!(
+        permission_request(&[blocking("[g]: first"), block(json!({"stopReason": "last"}))])
+            .decision,
+        deny_with("last")
+    );
+    let approve = processed(json!({"decision": "approve"}));
+    assert_eq!(
+        permission_request(std::slice::from_ref(&approve)).decision,
+        Some(PermissionDecision::Allow {
+            updated_input: None
+        })
+    );
+    // A decision wins over `approve`.
+    let denied = specific(json!({"behavior": "deny", "message": "no"}));
+    assert_eq!(
+        permission_request(&[approve, denied]).decision,
+        deny_with("no")
+    );
+}
+
+/// #423 review P1-2: a `hookSpecificOutput` deny is only a decision (Node sets `permissionRequestResult`, not
+/// `preventContinuation`), so a later allow wins; an empty message is kept (`decision.message ?? …`).
+#[test]
+fn a_hook_specific_deny_is_a_decision_not_a_stop() {
+    let deny = specific(json!({"behavior": "deny", "message": "no"}));
+    let allow = specific(json!({"behavior": "allow"}));
+    assert_eq!(
+        permission_request(&[deny.clone(), allow.clone()]).decision,
+        Some(PermissionDecision::Allow {
+            updated_input: None
+        })
+    );
+    assert_eq!(
+        permission_request(&[allow.clone(), deny]).decision,
+        deny_with("no")
+    );
+    assert_eq!(
+        permission_request(&[
+            allow.clone(),
+            specific(json!({"behavior": "deny", "message": ""}))
+        ])
+        .decision,
+        deny_with("")
+    );
+    assert_eq!(
+        permission_request(&[allow, specific(json!({"behavior": "deny"}))]).decision,
+        deny_with("Denied by PermissionRequest hook")
     );
 }

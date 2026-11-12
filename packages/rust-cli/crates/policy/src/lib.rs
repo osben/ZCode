@@ -255,28 +255,42 @@ impl ScopedGate for PolicyGate {
         let subject = tool.permission_subject(input);
         let name = tool.name();
         let guarded = guarded_command(subject.as_ref());
-        let evaluate = |mode: PermissionMode| {
+        let evaluate_with = |mode: PermissionMode, full_access: bool| {
             let inputs = Inputs {
                 mode,
                 rules: &rules,
                 paths: &paths,
                 root,
                 dangerous: guarded::applies(mode, guarded, paths.style),
-                full_access: mode == PermissionMode::BypassPermissions,
+                full_access,
             };
             let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
             chain::inner(name, check, updated, &inputs)
         };
-        let plan_mcp = (context.mode == PermissionMode::Plan
-            && self.options.node_plan
-            && tool.mcp_info().is_some())
-        .then(|| chain::PlanMcp {
+        let evaluate =
+            |mode: PermissionMode| evaluate_with(mode, mode == PermissionMode::BypassPermissions);
+        let node_plan = context.mode == PermissionMode::Plan && self.options.node_plan;
+        let plan_mcp = (node_plan && tool.mcp_info().is_some()).then(|| chain::PlanMcp {
             read_only: tool.is_read_only(input),
             destructive: tool.is_destructive(input),
         });
-        let mut result = evaluate(context.mode);
+        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and any
+        // read-only, non-destructive tool (WebFetch, WebSearch), and the base mode decides it. Plan skips Node's early
+        // yolo allow, so deny and ask rules still apply: the base mode runs without full access.
+        let passes_gate = plan_mcp.is_some()
+            || (node_plan && tool.is_read_only(input) && !tool.is_destructive(input));
+        let base_bypass = passes_gate
+            && matches!(
+                context.base_mode,
+                PermissionMode::BypassPermissions | PermissionMode::Guarded
+            );
+        let mut result = if base_bypass {
+            evaluate_with(context.base_mode, false)
+        } else {
+            evaluate(context.mode)
+        };
         if let Some(mcp) = plan_mcp {
-            result = chain::plan_mcp(name, mcp, result);
+            result = chain::plan_mcp(name, mcp, base_bypass, result);
         }
         let call = Call {
             tool: name,
@@ -288,7 +302,7 @@ impl ScopedGate for PolicyGate {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
             node_plan: self.options.node_plan,
-            plan_mcp: plan_mcp.is_some(),
+            plan_ask: plan_mcp.is_some() || base_bypass,
         };
         chain::outer(
             &call,

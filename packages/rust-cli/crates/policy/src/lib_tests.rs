@@ -64,6 +64,7 @@ fn context(mode: PermissionMode) -> ToolUseContext {
             root: EnvPath::new("/w"),
         },
         mode,
+        base_mode: mode,
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),
         session_ops: Arc::new(rust_cli_kernel_api::testing::NoSession),
         operation: OperationContext::new(

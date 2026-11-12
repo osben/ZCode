@@ -175,3 +175,215 @@ async fn other_tools_keep_the_node_plan_denial_and_other_modes_are_unchanged() {
         .await;
     assert_eq!(asked(&decision), (false, false, 0));
 }
+
+/// Plan over the given base mode (Node `context.mode` with `planEnabled`).
+async fn plan_over(gate: &PolicyGate, tool: &Mcp, base: PermissionMode) -> PermissionDecision {
+    let context = ToolUseContext {
+        base_mode: base,
+        ..context(PermissionMode::Plan)
+    };
+    gate.decide(tool, &json!({}), &context).await
+}
+
+const BYPASS_BASES: [PermissionMode; 2] =
+    [PermissionMode::BypassPermissions, PermissionMode::Guarded];
+
+/// Node `checkPlanMode`: over a yolo or guarded base, a non-destructive MCP tool passes the gate and `mode.yolo`
+/// allows it, read-only or not.
+#[tokio::test]
+async fn plan_over_a_bypass_base_allows_a_non_destructive_tool() {
+    for base in BYPASS_BASES {
+        for read_only in [false, true] {
+            assert_eq!(
+                plan_over(&node_plan(None), &mcp(read_only, false), base).await,
+                allow(),
+                "{base:?} read_only={read_only}"
+            );
+        }
+    }
+}
+
+/// Deny and ask rules come before the gate, and a destructive tool is still denied, over any base.
+#[tokio::test]
+async fn plan_over_a_bypass_base_keeps_rules_and_the_destructive_denial() {
+    for base in BYPASS_BASES {
+        assert_eq!(
+            plan_over(
+                &node_plan(Some(RuleBehavior::Deny)),
+                &mcp(false, false),
+                base
+            )
+            .await,
+            deny(texts::tool_denied(LOOKUP))
+        );
+        let (once, independent, _) = asked(
+            &plan_over(
+                &node_plan(Some(RuleBehavior::Ask)),
+                &mcp(false, false),
+                base,
+            )
+            .await,
+        );
+        assert!(!once && !independent, "{base:?}");
+        for gate in [node_plan(None), node_plan(Some(RuleBehavior::Allow))] {
+            assert_eq!(
+                plan_over(&gate, &mcp(false, true), base).await,
+                deny(texts::PLAN_MODE_READ_ONLY)
+            );
+        }
+    }
+}
+
+/// Plan over a default or accept-edits base keeps the plan gate's independent ask.
+#[tokio::test]
+async fn plan_over_another_base_still_asks() {
+    for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
+        assert_eq!(
+            asked(&plan_over(&node_plan(None), &mcp(false, false), base).await),
+            (false, true, 0)
+        );
+    }
+}
+
+/// A built-in read-only tool: its own check gives `own`, its subject comes from the test helper.
+struct ReadOnly(&'static str, PermissionDecision);
+
+#[async_trait]
+impl Tool for ReadOnly {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+        String::new()
+    }
+    fn is_read_only(&self, _input: &Value) -> bool {
+        true
+    }
+    fn permission_subject(
+        &self,
+        input: &Value,
+    ) -> Option<rust_cli_kernel_api::permission::PermissionSubject> {
+        crate::test_support::subject_of(self.0, input)
+    }
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        _context: &ToolUseContext,
+    ) -> PermissionDecision {
+        self.1.clone()
+    }
+    async fn call(
+        &self,
+        _input: Value,
+        _context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(ToolError::Unsupported {
+            what: "test".to_owned(),
+        })
+    }
+}
+
+/// WebFetch to a URL no rule names (passthrough) and WebSearch (its own check asks, like the real tool).
+fn web_tools() -> [(ReadOnly, Value); 2] {
+    [
+        (
+            ReadOnly("WebFetch", PermissionDecision::Passthrough),
+            json!({"url": "https://example.org/a"}),
+        ),
+        (
+            ReadOnly("WebSearch", PermissionDecision::ask("Search?", Vec::new())),
+            json!({"query": "q"}),
+        ),
+    ]
+}
+
+async fn read_only_over(
+    gate: &PolicyGate,
+    tool: &ReadOnly,
+    input: &Value,
+    base: PermissionMode,
+) -> PermissionDecision {
+    let context = ToolUseContext {
+        base_mode: base,
+        ..context(PermissionMode::Plan)
+    };
+    gate.decide(tool, input, &context).await
+}
+
+/// Node `checkPlanMode`: a read-only, non-destructive built-in tool passes the gate and the yolo or guarded base allows
+/// it; an ask rule still asks the user with the normal options.
+#[tokio::test]
+async fn plan_over_a_bypass_base_allows_built_in_read_only_tools() {
+    for base in BYPASS_BASES {
+        for (tool, input) in web_tools() {
+            assert_eq!(
+                read_only_over(
+                    &PolicyGate::default().with_node_plan_mode(true),
+                    &tool,
+                    &input,
+                    base
+                )
+                .await,
+                allow(),
+                "{} over {base:?}",
+                tool.0
+            );
+            let gate =
+                PolicyGate::new(rules(&[(RuleBehavior::Ask, tool.0)])).with_node_plan_mode(true);
+            let (once, independent, _) = asked(&read_only_over(&gate, &tool, &input, base).await);
+            assert!(!once && !independent, "{} over {base:?}", tool.0);
+            let gate =
+                PolicyGate::new(rules(&[(RuleBehavior::Deny, tool.0)])).with_node_plan_mode(true);
+            assert_eq!(
+                read_only_over(&gate, &tool, &input, base).await,
+                deny(texts::tool_denied(tool.0))
+            );
+        }
+    }
+}
+
+/// Over a default base the plan gate still denies them (known gap, see the spec).
+#[tokio::test]
+async fn plan_over_a_default_base_still_denies_built_in_tools_that_would_ask() {
+    for (tool, input) in web_tools() {
+        assert_eq!(
+            read_only_over(
+                &PolicyGate::default().with_node_plan_mode(true),
+                &tool,
+                &input,
+                PermissionMode::Default
+            )
+            .await,
+            deny(texts::PLAN_MODE_READ_ONLY),
+            "{}",
+            tool.0
+        );
+    }
+}
+
+/// Read-only Bash, Read and Grep that plan already allows keep their result over a bypass base.
+#[tokio::test]
+async fn plan_over_a_bypass_base_keeps_read_only_shell_and_file_tools() {
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    let calls = [
+        ("Bash", json!({"command": "ls"})),
+        ("Read", json!({"file_path": "/w/a.txt"})),
+        ("Grep", json!({"pattern": "x", "path": "/w"})),
+    ];
+    for (name, input) in calls {
+        let tool = ReadOnly(name, PermissionDecision::Passthrough);
+        let plain = read_only_over(&gate, &tool, &input, PermissionMode::Plan).await;
+        assert_eq!(plain, allow(), "{name} under plan");
+        for base in BYPASS_BASES {
+            assert_eq!(
+                read_only_over(&gate, &tool, &input, base).await,
+                plain,
+                "{name} over {base:?}"
+            );
+        }
+    }
+}

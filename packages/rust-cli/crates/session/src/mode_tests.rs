@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 
 use crate::{Opened, Session, SessionDeps, SessionState};
 
-/// 输入里有 `plan` 时请求打开 plan；结果总是调用时看到的模式。
+/// 输入里有 `plan` 时请求打开 plan；结果总是调用时看到的模式 (effective mode over the base mode).
 struct ModeTool;
 
 #[async_trait::async_trait]
@@ -50,7 +50,7 @@ impl Tool for ModeTool {
         context: ToolUseContext,
         _progress: tokio::sync::mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
-        let seen = format!("{:?}", context.mode);
+        let seen = format!("{:?} over {:?}", context.mode, context.base_mode);
         if input.get("plan").is_some() {
             context
                 .session_ops
@@ -213,8 +213,8 @@ async fn a_tool_changes_the_mode_for_the_rest_of_the_turn() {
     // 第一个调用看到的是旧模式，第二个调用（同一回合）看到 plan。
     let requests = model.requests();
     let third = format!("{:?}", requests[2].messages);
-    assert!(third.contains("Default"), "{third}");
-    assert!(third.contains("Plan"), "{third}");
+    assert!(third.contains("Default over Default"), "{third}");
+    assert!(third.contains("Plan over Default"), "{third}");
     // 模式先落库（没有命令 ID：来自工具）。
     let facts = store.facts(&SessionId::new("sess_1"));
     assert!(facts.contains(&Fact::ExecutionChanged {
@@ -296,4 +296,43 @@ async fn user_mode_switches_write_the_project_mode() {
     );
     let view = session.view().await.unwrap();
     assert_eq!((view.mode, view.plan), (PermissionMode::DontAsk, false));
+}
+
+/// Fork: a tool under plan sees the session's permission mode as `base_mode` (Node `context.mode` next to
+/// `planEnabled`), from the same view as the effective `mode`.
+#[tokio::test]
+async fn a_tool_under_plan_sees_the_base_mode() {
+    let scope = TaskScope::root("test", |_| {});
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let model = Arc::new(ScriptedModel::new(vec![
+        tool_use_response("toolu_1", "Mode", &json!({"plan": true})),
+        tool_use_response("toolu_2", "Mode", &json!({})),
+        text_response(&["done"]),
+    ]));
+    let session = spawn(&scope, &store, &model, PermissionMode::Guarded);
+    let mut events = session.subscribe(Some(0));
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("c1"),
+            command: Command::Submit {
+                text: "plan it".to_owned(),
+                attachments: Vec::new(),
+                delivery: Delivery::Queue,
+            },
+        })
+        .await;
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .event;
+        if matches!(event, KernelEvent::TurnFinished { .. }) {
+            break;
+        }
+    }
+    let third = format!("{:?}", model.requests()[2].messages);
+    assert!(third.contains("Guarded over Guarded"), "{third}");
+    assert!(third.contains("Plan over Guarded"), "{third}");
 }

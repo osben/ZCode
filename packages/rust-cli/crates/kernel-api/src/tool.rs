@@ -94,7 +94,11 @@ pub struct ToolUseContext {
     /// 子代理里的调用带子代理 ID。
     pub agent: Option<AgentId>,
     pub workspace: WorkspaceRef,
+    /// The effective mode for decisions and tools (`Plan` while plan is on).
     pub mode: PermissionMode,
+    /// Fork: the session's permission mode under plan (`ExecutionState.mode`, the same snapshot as `mode`); equal to
+    /// `mode` when plan is off. Node's plan gate reads it (specs/fork-rust-agent-parity.md, "MCP tools in plan mode").
+    pub base_mode: PermissionMode,
     pub cancel: CancellationToken,
     /// 这次调用在哪台机器上执行：缺省是会话的主 env，工具写了 `machine` 时换成那台额外机器（remote-exec.md §15.8.1）。
     /// Git 与 worktree 也在这台机器上。

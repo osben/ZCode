@@ -81,6 +81,7 @@ impl Ctx {
                 root: EnvPath::new("/Users/dev/work"),
             },
             mode: self.mode,
+            base_mode: self.mode,
             machine: self.machine,
             controller: self.controller,
             interactions: self.interactions,
