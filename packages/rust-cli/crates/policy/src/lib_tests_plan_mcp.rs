@@ -346,18 +346,32 @@ async fn plan_over_a_bypass_base_allows_built_in_read_only_tools() {
     }
 }
 
-/// Over a default base the plan gate still denies them (known gap, see the spec).
+/// Node `checkPlanMode` passes a read-only, non-destructive tool over any base, and `checkBuildMode` then asks when it
+/// needs approval (`mode.build.sideEffect`): over a default or accept-edits base the plan gate no longer denies it.
+/// WebSearch is allowed in Node (`needsApproval: false`) but asks in Rust in any mode (known gap, see the spec).
 #[tokio::test]
-async fn plan_over_a_default_base_still_denies_built_in_tools_that_would_ask() {
+async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
+    for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
+        for (tool, input) in web_tools() {
+            let gate = PolicyGate::default().with_node_plan_mode(true);
+            let (once, independent, _) = asked(&read_only_over(&gate, &tool, &input, base).await);
+            assert!(!once && !independent, "{} over {base:?}", tool.0);
+            let gate =
+                PolicyGate::new(rules(&[(RuleBehavior::Deny, tool.0)])).with_node_plan_mode(true);
+            assert_eq!(
+                read_only_over(&gate, &tool, &input, base).await,
+                deny(texts::tool_denied(tool.0))
+            );
+            let gate =
+                PolicyGate::new(rules(&[(RuleBehavior::Allow, tool.0)])).with_node_plan_mode(true);
+            assert_eq!(read_only_over(&gate, &tool, &input, base).await, allow());
+        }
+    }
+    // A view whose base is plan itself (a subagent, the fallback view) keeps the plan gate's denial.
     for (tool, input) in web_tools() {
+        let gate = PolicyGate::default().with_node_plan_mode(true);
         assert_eq!(
-            read_only_over(
-                &PolicyGate::default().with_node_plan_mode(true),
-                &tool,
-                &input,
-                PermissionMode::Default
-            )
-            .await,
+            read_only_over(&gate, &tool, &input, PermissionMode::Plan).await,
             deny(texts::PLAN_MODE_READ_ONLY),
             "{}",
             tool.0
@@ -365,7 +379,35 @@ async fn plan_over_a_default_base_still_denies_built_in_tools_that_would_ask() {
     }
 }
 
-/// Read-only Bash, Read and Grep that plan already allows keep their result over a bypass base.
+/// Node checks no file path before the plan gate, and yolo or guarded then allows: a Read outside the workspace (a
+/// secret included) under plan over a bypass base is allowed, as without plan. Over a default base it asks.
+#[tokio::test]
+async fn plan_over_a_bypass_base_reads_any_path() {
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    let read = ReadOnly("Read", PermissionDecision::Passthrough);
+    for path in ["/home/u/.ssh/id_rsa", "/w/.env", "/etc/hosts"] {
+        let input = json!({"file_path": path});
+        for base in BYPASS_BASES {
+            assert_eq!(
+                read_only_over(&gate, &read, &input, base).await,
+                allow(),
+                "{path} over {base:?}"
+            );
+        }
+    }
+    let (once, independent, _) = asked(
+        &read_only_over(
+            &gate,
+            &read,
+            &json!({"file_path": "/home/u/.ssh/id_rsa"}),
+            PermissionMode::Default,
+        )
+        .await,
+    );
+    assert!(!once && !independent);
+}
+
+/// Read-only Bash, Read and Grep that plan already allows keep their result over any base.
 #[tokio::test]
 async fn plan_over_a_bypass_base_keeps_read_only_shell_and_file_tools() {
     let gate = PolicyGate::default().with_node_plan_mode(true);
@@ -378,7 +420,10 @@ async fn plan_over_a_bypass_base_keeps_read_only_shell_and_file_tools() {
         let tool = ReadOnly(name, PermissionDecision::Passthrough);
         let plain = read_only_over(&gate, &tool, &input, PermissionMode::Plan).await;
         assert_eq!(plain, allow(), "{name} under plan");
-        for base in BYPASS_BASES {
+        for base in BYPASS_BASES
+            .into_iter()
+            .chain([PermissionMode::Default, PermissionMode::AcceptEdits])
+        {
             assert_eq!(
                 read_only_over(&gate, &tool, &input, base).await,
                 plain,
