@@ -97,6 +97,10 @@ pub(crate) struct LiveAgent {
     /// Fork: its child session was erased while it was live (`routing::end_erased`). Its ending reaches only an owner
     /// that is not erased itself, never a Hub (an erased top-level session's Hub has no reader).
     pub(crate) erased: bool,
+    /// Fork: SendMessage messages that arrived after a stop claimed this run (Node: a message to a killed agent resumes
+    /// it, core `runner.ts`). The run's own mailbox messages are dropped with the stop, as upstream does; these resume
+    /// it once the stopped run has settled (`routing::settle`). Cleared by each new run.
+    pub(crate) late_messages: Vec<String>,
 }
 
 /// 列表显示用的记录：启动顺序、这次运行的开始与结束时刻、等待中的交互、子会话的提交次数、当前活动。
@@ -120,6 +124,8 @@ pub(crate) struct Shown {
 impl LiveAgent {
     pub(crate) fn status(&self) -> BackgroundStatus {
         match &self.state {
+            // Fork: a claimed stop is the run's end already (Node takes `killed` synchronously, core `runner.ts`).
+            AgentState::Running { .. } if self.stop_claimed() => BackgroundStatus::Killed,
             AgentState::Running { .. } => BackgroundStatus::Running,
             // 停放的子代理状态是 completed（带 keepalive）。
             AgentState::Parked { .. } => BackgroundStatus::Completed,
@@ -132,10 +138,19 @@ impl LiveAgent {
     /// message or a leftover notice in `routing::settle`), which `settle_times` alone would not see as a new run.
     pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>) {
         self.state = AgentState::Running { abort, mailbox };
+        self.late_messages.clear();
         self.shown.execution += 1;
         // The previous run ended in this section when none was recorded: `settle_times` restarts the clock.
         self.shown.ended_ms.get_or_insert(0);
         self.shown.doing = None;
+    }
+
+    /// Fork (B2): the run is still running, but its abort is armed, so its ending is claimed: it ends as stopped
+    /// (`routing::settle`). Every stop path (`Live::stop`, `Live::stop_execution`), SendMessage (`Live::enqueue`), the
+    /// status and the subagent table read this one predicate, so a second stop is refused and the run leaves the
+    /// running list at the claim, not at the settle.
+    pub(crate) fn stop_claimed(&self) -> bool {
+        matches!(&self.state, AgentState::Running { abort, .. } if abort.is_aborted())
     }
 
     /// 还在跑或停放。
@@ -398,14 +413,23 @@ impl Live {
         });
     }
 
-    /// 排进正在跑的子代理的邮箱；不在跑时返回 false。
-    pub(crate) fn enqueue(&self, agent: &AgentId, message: String) -> bool {
-        match self.agents().get_mut(agent).map(|entry| &mut entry.state) {
-            Some(AgentState::Running { mailbox, .. }) => {
+    /// 排进正在跑的子代理的邮箱；不在跑时返回 [`Enqueued::NotRunning`]。
+    /// Fork: a run whose stop is claimed keeps the message for the resume after it settles ([`Enqueued::AfterStop`]).
+    pub(crate) fn enqueue(&self, agent: &AgentId, message: String) -> Enqueued {
+        let mut state = self.agents();
+        let Some(entry) = state.get_mut(agent) else {
+            return Enqueued::NotRunning;
+        };
+        if entry.stop_claimed() {
+            entry.late_messages.push(message);
+            return Enqueued::AfterStop;
+        }
+        match &mut entry.state {
+            AgentState::Running { mailbox, .. } => {
                 mailbox.push(Mail::Message(message));
-                true
+                Enqueued::Steered
             }
-            _ => false,
+            _ => Enqueued::NotRunning,
         }
     }
 
@@ -456,50 +480,82 @@ impl Live {
         agent: &AgentId,
         execution: &str,
     ) -> GuardedStop {
-        let mut state = self.agents();
-        let Some(entry) = state
-            .get_mut(agent)
-            .filter(|entry| entry.parent == *session && entry.owner.is_none())
-        else {
-            return GuardedStop::NotFound;
-        };
-        if entry.shown.execution.to_string() != execution {
-            return GuardedStop::NotRunning;
-        }
-        match &entry.state {
-            // An aborted run is already ending: the stop that aborted it claimed the ending, so a second stop
-            // before it settles is refused, as Node claims `killed` synchronously (core `runner.ts`).
-            AgentState::Running { abort, .. } if abort.is_aborted() => GuardedStop::NotRunning,
-            AgentState::Running { abort, .. } => {
-                abort.abort(AbortReason::User);
-                entry.stopped_by_user = true;
-                GuardedStop::Aborted
+        // A change: the claim leaves the running list at once (the change notice re-reads the table).
+        self.change(|agents| {
+            let Some(entry) = agents
+                .get_mut(agent)
+                .filter(|entry| entry.parent == *session && entry.owner.is_none())
+            else {
+                return GuardedStop::NotFound;
+            };
+            if entry.shown.execution.to_string() != execution {
+                return GuardedStop::NotRunning;
             }
-            AgentState::Parked { .. } => GuardedStop::Parked(entry.shown.execution),
-            AgentState::Finished(_) => GuardedStop::NotRunning,
-        }
+            // A claimed run is already ending: a second stop before it settles is refused, as Node claims `killed`
+            // synchronously (core `runner.ts`).
+            if entry.stop_claimed() {
+                return GuardedStop::NotRunning;
+            }
+            match &entry.state {
+                AgentState::Running { abort, .. } => {
+                    abort.abort(AbortReason::User);
+                    entry.stopped_by_user = true;
+                    drop_mailbox_messages(entry);
+                    GuardedStop::Aborted
+                }
+                AgentState::Parked { .. } => GuardedStop::Parked(entry.shown.execution),
+                AgentState::Finished(_) => GuardedStop::NotRunning,
+            }
+        })
     }
 
+    /// Claims the stop of a running agent; false when it is not running or its stop is already claimed (the first
+    /// stop keeps its attribution, Node `completion-notification.ts`).
     pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> bool {
-        match self.agents().get_mut(agent) {
-            Some(entry) => match &entry.state {
+        self.change(|agents| {
+            let Some(entry) = agents.get_mut(agent) else {
+                return false;
+            };
+            if entry.stop_claimed() {
+                return false;
+            }
+            match &entry.state {
                 AgentState::Running { abort, .. } => {
                     abort.abort(AbortReason::User);
                     entry.stopped_by_user = by_user;
+                    drop_mailbox_messages(entry);
                     true
                 }
                 _ => false,
-            },
-            None => false,
-        }
+            }
+        })
     }
+}
+
+/// The stop drops the messages queued to the stopped run (upstream: a stop clears the queued commands sent to it);
+/// notices stay for `routing::settle`. Messages that arrive later go to `late_messages`.
+fn drop_mailbox_messages(entry: &mut LiveAgent) {
+    if let AgentState::Running { mailbox, .. } = &mut entry.state {
+        mailbox.retain(|mail| matches!(mail, Mail::Notice(_)));
+    }
+}
+
+/// Fork: where [`Live::enqueue`] put a SendMessage message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Enqueued {
+    /// Into the running agent's mailbox (its next tool boundary).
+    Steered,
+    /// The run's stop is claimed: it resumes with the message after it settles.
+    AfterStop,
+    NotRunning,
 }
 
 /// 状态转移之后统一记时刻：进入运行时重新开始计时，离开运行（停放、结束）时记结束时刻。状态改在很多处
 /// （routing、TaskStop、SendMessage），时刻只在这里记，不在每个转移点各写一遍。
 fn settle_times(agents: &mut Agents, now: u64) {
     for agent in agents.values_mut() {
-        let running = matches!(agent.state, AgentState::Running { .. });
+        // A claimed stop ends the run's time (it no longer shows as running).
+        let running = matches!(agent.state, AgentState::Running { .. }) && !agent.stop_claimed();
         match (running, agent.shown.ended_ms) {
             (true, Some(_)) => {
                 agent.shown.started_ms = now;

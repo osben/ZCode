@@ -17,6 +17,7 @@ use crate::report::Ending;
 
 fn status(agent: &LiveAgent) -> SubagentStatus {
     match &agent.state {
+        AgentState::Running { .. } if agent.stop_claimed() => SubagentStatus::Killed,
         AgentState::Running { .. } => SubagentStatus::Running,
         // 停放的子代理状态是 completed。
         AgentState::Parked { .. } => SubagentStatus::Completed,

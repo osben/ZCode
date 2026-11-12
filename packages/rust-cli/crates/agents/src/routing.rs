@@ -209,8 +209,10 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
         }
         let stopped = ending == Ending::Killed;
         // 被中止时 SendMessage 留下的消息丢弃（停止时清掉发给它的排队命令）。
+        // Fork: the messages that arrived after the stop claimed the run resume it below, after its killed notice, as
+        // Node resumes a killed agent a message reaches (core `runner.ts`).
         if stopped {
-            stranded.clear();
+            stranded = entry.late_messages.clone();
         }
         // 后台子代理与 monitor 的保活推迟自己的通知（只在交互模式）。
         let deferred = deferred(core, agents, id);
@@ -297,6 +299,8 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             let first = stranded.remove(0);
             slot.background = true;
             slot.tool_use = None;
+            // The resumed run is a new run: the stop's attribution was its predecessor's.
+            slot.stopped_by_user = false;
             slot.begin_run(
                 Abort::new(),
                 stranded.into_iter().map(Mail::Message).collect(),

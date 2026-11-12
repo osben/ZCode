@@ -241,6 +241,7 @@ impl Tool for AgentTool {
             tool_use: Some(context.tool_use.clone()),
             stopped_by_user: false,
             erased: false,
+            late_messages: Vec::new(),
             description: input.description.clone(),
             // fork 总用父运行的模型与档位（`effort` 参数忽略）。
             selection: if fork {

@@ -215,6 +215,7 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
         fork_prefix: None,
         stopped_by_user: false,
         erased: false,
+        late_messages: Vec::new(),
     };
     harness.agents.core.live.insert(entry);
     AgentId::new(agent)
@@ -240,12 +241,13 @@ async fn a_run_replaced_in_the_settling_section_is_a_new_execution() {
     let parent = SessionId::new("sess_parent");
     let signals = harness.agents.signals();
     let agent = undriven(&harness, "agent_u");
-    assert!(
+    assert_eq!(
         harness
             .agents
             .core
             .live
-            .enqueue(&agent, "Go on.".to_owned())
+            .enqueue(&agent, "Go on.".to_owned()),
+        crate::live::Enqueued::Steered
     );
     let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
     assert!(!settled.parked);
@@ -645,5 +647,113 @@ async fn a_second_stop_before_the_run_settles_is_not_running() {
     assert_eq!(
         live.stop_execution(&parent, &agent, "0"),
         crate::live::GuardedStop::NotRunning
+    );
+}
+
+/// #418 final review (P1): a SendMessage that reaches a run after a stop claimed it is not lost. Node takes `killed`
+/// at once and a message to a killed agent resumes it (core `runner.ts`): it is answered as a resume, the stopped run
+/// still settles as stopped (killed notice), and then a new run (next execution) takes the message. A message queued
+/// before the stop is dropped with it, as upstream does.
+#[tokio::test]
+async fn a_message_after_a_claimed_stop_resumes_the_agent_after_it_settles() {
+    use crate::live::{AgentState, Enqueued};
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let mut stream = harness.agents.signals().signals(&parent);
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    assert_eq!(
+        live.enqueue(&agent, "Before.".to_owned()),
+        Enqueued::Steered
+    );
+    assert_eq!(
+        live.stop_execution(&parent, &agent, "0"),
+        crate::live::GuardedStop::Aborted
+    );
+    assert_eq!(
+        live.enqueue(&agent, "After.".to_owned()),
+        Enqueued::AfterStop
+    );
+    let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
+    assert_eq!(settled.ending, crate::report::Ending::Killed);
+    // One resume, with the late message; the message queued before the stop is not resumed.
+    assert_eq!(settled.wakes.len(), 1);
+    let entry = live.get(&agent).unwrap();
+    assert!(matches!(&entry.state, AgentState::Running { mailbox, .. } if mailbox.is_empty()));
+    assert!(!entry.stop_claimed());
+    assert!(!entry.stopped_by_user);
+    assert!(entry.late_messages.is_empty());
+    assert_eq!(execution(&harness, &agent), 1);
+    let Some(AgentSignal::Notice(notice)) = stream.next().await else {
+        panic!("expected the stop notice");
+    };
+    assert!(
+        notice.text.contains("was stopped by user"),
+        "{}",
+        notice.text
+    );
+}
+
+/// #418 final review (P1): the claim takes the run off the running list at once (the change notice fires and the table
+/// reports it killed), so the desktop drops its Stop before the run settles.
+#[tokio::test]
+async fn a_claimed_stop_leaves_the_running_list_at_once() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    let mut changes = live.subscribe();
+    changes.mark_unchanged();
+    assert_eq!(
+        live.stop_execution(&parent, &agent, "0"),
+        crate::live::GuardedStop::Aborted
+    );
+    assert!(changes.has_changed().unwrap());
+    let entries = harness.agents.signals().subagents(&parent).await;
+    assert_eq!(entries[0].status, SubagentStatus::Killed);
+    assert_eq!(live.get(&agent).unwrap().status(), BackgroundStatus::Killed);
+}
+
+/// #418 final review (P2): after the user's stop claimed the run, a model TaskStop before it settles is refused as not
+/// running and keeps the user's attribution (Node `task-stop.ts`, `completion-notification.ts`).
+#[tokio::test]
+async fn a_task_stop_after_a_claimed_user_stop_is_refused_and_keeps_the_user() {
+    let harness = desktop_harness();
+    let parent = SessionId::new("sess_parent");
+    let mut stream = harness.agents.signals().signals(&parent);
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    assert_eq!(
+        live.stop_execution(&parent, &agent, "0"),
+        crate::live::GuardedStop::Aborted
+    );
+    let machine = rust_cli_kernel_api::testing::unsupported_machine();
+    let tool = crate::task_stop::TaskStopTool {
+        core: harness.agents.core.clone(),
+    };
+    let operation = operation(&parent);
+    let caller = crate::task_stop::Caller {
+        session: &parent,
+        agent: None,
+        machine: &machine,
+        operation: &operation,
+        by_user: false,
+    };
+    let Err(refused) = tool.stop("agent_u", &caller).await else {
+        panic!("a second stop was accepted");
+    };
+    assert_eq!(
+        refused.to_string(),
+        "Task agent_u is not running (status: killed)"
+    );
+    assert!(live.get(&agent).unwrap().stopped_by_user);
+    crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
+    let Some(AgentSignal::Notice(notice)) = stream.next().await else {
+        panic!("expected the stop notice");
+    };
+    assert!(
+        notice.text.contains("was stopped by user"),
+        "{}",
+        notice.text
     );
 }
