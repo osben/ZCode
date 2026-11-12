@@ -1,0 +1,156 @@
+//! 不带参数的 `/rename` 的文本处理与请求（docs/specs/rust-cli/titles.md §8.3–§8.5）：对话文本、JSON 解析与
+//! 名字的清理。
+
+use std::ops::RangeInclusive;
+
+use rust_cli_base::chars;
+use rust_cli_kernel_api::history;
+use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
+use rust_cli_kernel_api::model::{
+    ApiMessage, ModelRequest, ModelSelection, OutputFormat, SystemBlock,
+};
+use rust_cli_kernel_api::side_request::{Requester, SideSource};
+use rust_cli_prompts::texts::{identity, render};
+use rust_cli_prompts::{models, title};
+use serde_json::Value;
+
+/// 对话文本只留末尾这么多 UTF-16 码元。
+const TAIL_UNITS: usize = 1000;
+/// 名字最多这么多个码点。
+const MAX_NAME_CHARS: usize = 200;
+/// 模型卡片里没有的模型用的输出上限（与主循环 `query::run` 相同，prompts 的一个常量，F58）。
+const DEFAULT_MAX_TOKENS: u32 = rust_cli_prompts::models::UNKNOWN_MAX_OUTPUT_TOKENS;
+/// 活动历史里的对话文本：user（去掉 meta）与 assistant 的 text 块，`\n` 连接，只留末尾 1000 个 UTF-16 码元。
+pub(crate) fn conversation(messages: &[Message]) -> String {
+    let mut parts = Vec::new();
+    for message in history::active(messages) {
+        let blocks = match message.as_ref() {
+            // 跳过 `isMeta` 与非人类 `origin` 的 user；工具结果与压缩摘要没有非人类的 origin。
+            Message::User(user) if !matches!(user.origin, UserOrigin::Meta { .. }) => &user.content,
+            Message::Assistant(assistant) => &assistant.content,
+            Message::User(_) | Message::Attachment(_) | Message::System(_) => continue,
+        };
+        parts.extend(blocks.iter().filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        }));
+    }
+    tail(&parts.join("\n"))
+}
+
+/// 末尾 1000 个 UTF-16 码元；截在代理对中间时丢掉那个字符（titles.md D10）。
+fn tail(text: &str) -> String {
+    let mut units = 0;
+    let mut start = text.len();
+    for (index, c) in text.char_indices().rev() {
+        units += c.len_utf16();
+        if units > TAIL_UNITS {
+            break;
+        }
+        start = index;
+    }
+    text[start..].to_owned()
+}
+
+/// 去掉代码围栏，按 JSON 解析，是对象且 `name` 是字符串才取。
+pub(crate) fn parse_name(reply: &str) -> Option<String> {
+    let mut text = reply.trim();
+    if let Some(fenced) = text.strip_prefix("```") {
+        text = fenced
+            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+            .trim_start();
+    }
+    if let Some(open) = text.strip_suffix("```") {
+        text = open.trim_end();
+    }
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    value.get("name")?.as_str().map(str::to_owned)
+}
+
+/// 名字的清理：去首尾空白，连续的控制 / 格式字符与 U+2028、U+2029 换成一个空格，只留前 200 个码点，再去首尾
+/// 空白；为空时 None。
+pub(crate) fn clean_name(name: &str) -> Option<String> {
+    let mut spaced = String::with_capacity(name.len());
+    let mut in_run = false;
+    for c in name.trim().chars() {
+        let invisible = c.is_control() || is_format(c) || chars::is_line_break_separator(c);
+        if invisible {
+            if !in_run {
+                spaced.push(' ');
+            }
+        } else {
+            spaced.push(c);
+        }
+        in_run = invisible;
+    }
+    let cut: String = spaced.chars().take(MAX_NAME_CHARS).collect();
+    let cleaned = cut.trim();
+    (!cleaned.is_empty()).then(|| cleaned.to_owned())
+}
+
+/// Unicode 的格式字符（General_Category = Cf）里双向与零宽之外的部分；双向控制符与零宽字符（U+061C、
+/// U+200B–U+200F、U+202A–U+202E、U+2066–U+206F、U+FEFF）用 base 的同一张表（constants.md §5.1.4）。
+const OTHER_FORMAT: [RangeInclusive<u32>; 16] = [
+    0xAD..=0xAD,
+    0x600..=0x605,
+    0x6DD..=0x6DD,
+    0x70F..=0x70F,
+    0x890..=0x891,
+    0x8E2..=0x8E2,
+    0x180E..=0x180E,
+    0x2060..=0x2064,
+    0xFFF9..=0xFFFB,
+    0x110BD..=0x110BD,
+    0x110CD..=0x110CD,
+    0x13430..=0x1343F,
+    0x1BCA0..=0x1BCA3,
+    0x1D173..=0x1D17A,
+    0xE0001..=0xE0001,
+    0xE0020..=0xE007F,
+];
+
+/// Unicode 的格式字符（General_Category = Cf）。
+fn is_format(c: char) -> bool {
+    let code = u32::from(c);
+    chars::is_bidi_or_zero_width(c) || OTHER_FORMAT.iter().any(|range| range.contains(&code))
+}
+
+/// 起名请求（titles.md §8.4）：身份句与起名提示、一条 user，没有工具与 thinking；输出上限与 effort 按模型
+/// 卡片（与主循环相同；借卡片形状的 GLM 的上限按目录 `configured_output`，工作线 F121），structured output 用起名的
+/// JSON schema。`session`：发请求的会话（工作线 F52：`metadata.user_id` 的 `session_id`，model.md §3.3）。
+pub(crate) fn request(
+    selection: &ModelSelection,
+    session: &SessionId,
+    (conversation, configured_output): (&str, Option<u64>),
+) -> ModelRequest {
+    let max_tokens = models::card_output_limit(&selection.model, configured_output)
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+    let block = |text: &str| SystemBlock {
+        text: text.to_owned(),
+        cache_control: None,
+    };
+    let user = render(title::rename_user(), &[("conversation", conversation)]);
+    let mut request = ModelRequest::side(
+        selection.clone(),
+        SideSource::Rename,
+        vec![block(identity()), block(title::rename_system())],
+        vec![ApiMessage::user_text(user)],
+        max_tokens,
+        // 没有回合（不发 `x-query-id`，model.md §2.4）。
+        Requester {
+            session: session.clone(),
+            run: None,
+            agent: None,
+        },
+    );
+    // 修 bug（F23）：没有卡片的模型以前也写选择的档位（`card_effort` 的注释）。
+    request.options.effort = models::card_effort(&selection.model, selection.reasoning.as_deref());
+    request.options.output_format =
+        serde_json::from_value::<OutputFormat>(title::rename_format()).ok();
+    request
+}
+
+#[cfg(test)]
+#[path = "rename_text_tests.rs"]
+mod tests;

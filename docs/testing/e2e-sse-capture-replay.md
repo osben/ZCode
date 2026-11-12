@@ -74,6 +74,13 @@ The replay server also writes the matched fixture into the capture artifact:
 
 It is for debugging fixture match order and fault-injection type, not an online capture field.
 
+Artifact write contract:
+
+- The only data source is the records in replay server memory; the artifact file is a full-snapshot projection of them. A running test (for example `waitForUpstreamRequest`) polls that file directly and never triggers a write.
+- Each record change only marks the artifact "dirty". A single serial write loop builds the snapshot from the latest records at write time. Several changes coalesce into one write, and an old snapshot never overwrites a newer one.
+- If a mid-run write hits a Windows file-occupation conflict (`EBUSY` / `EACCES` / `EPERM`), the request is still replayed, the loop stays dirty and retries with backoff until the file holds the latest snapshot. The retry does not depend on the next model request or on `stop()`.
+- Other write errors end the current request under the original contract. `stop()` closes the listener first, then waits for the write loop to settle and performs a final write; a failed final write throws.
+
 ## Run modes
 
 - `replay`: default; all DeepSeek requests hit the local replay server and use fixture responses. Suited to fully isolated Docker runs.
@@ -85,7 +92,7 @@ The container entry is `pnpm test:e2e:container`, driven by `scripts/test-deskto
 
 ```bash
 E2E_NETWORK_MODE=replay-isolated \
-E2E_SPEC=./test/e2e/conversation-session/conversation-session-compact.test.ts \
+E2E_SPEC=./test/e2e/conversation-session/context/conversation-session-compact.test.ts \
 pnpm test:e2e:container
 ```
 
@@ -104,7 +111,7 @@ Recording example:
 ```bash
 E2E_NETWORK_MODE=capture \
 E2E_PROVIDER_API_KEY=sk-... \
-E2E_SPEC=./test/e2e/conversation-session/conversation-session-compact.test.ts \
+E2E_SPEC=./test/e2e/conversation-session/context/conversation-session-compact.test.ts \
 pnpm test:e2e:container
 ```
 

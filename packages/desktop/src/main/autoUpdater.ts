@@ -121,6 +121,7 @@ interface InitAutoUpdaterOptions {
   updateFeedSource?: RuntimeUpdateFeedSource;
   deviceMid?: string;
   resolveEndpointOrigin?: () => string | Promise<string>;
+  resolveZcodeJwtToken?: () => Promise<string | null | undefined>;
 }
 
 // Upstream 3.15.3 parity: a single in-flight boolean could not distinguish "preparing to quit"
@@ -569,6 +570,8 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     // dictation mute must be released here or installing during a recording stays muted.
     await restoreDictationSystemMuteForShutdown();
     autoUpdater.quitAndInstall();
+    // macOS 安装入口会先返回，原生 staging 完成后才异步触发 before-quit。
+    // 成功交接后保留 installing 到进程退出，阻止迟到的检查、下载结果和重复安装命令重新准入。
   } catch (error) {
     // Defensive path: some electron-updater versions or future refactors may still throw from
     // quitAndInstall(). Report it, then relaunch so the user is not left with a quitting app
@@ -867,6 +870,7 @@ function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
     ...(manifestUrl ? { manifestUrl } : {}),
     releasePlatform: getElectronReleasePlatform(),
     deviceMid: options.deviceMid,
+    resolveZcodeJwtToken: options.resolveZcodeJwtToken,
     resolveEndpointOrigin: async () => {
       const origin = await (
         options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env))
@@ -1337,6 +1341,48 @@ async function clearSkippedUpdateVersionForManualCheck(
   }
 }
 
+function publishDownloadedUpdate(info: UpdateDownloadedInfoLike): void {
+  readyUpdateVersion = info.version;
+  readyUpdateRestoredFromPendingReleaseNotes = false;
+  readyUpdateChannel = downloadingUpdateChannel ?? availableUpdateChannel;
+  readyUpdateReleaseNotes = toPostUpdateReleaseNotesPayload(info) ?? downloadingUpdateReleaseNotes;
+  clearAvailableUpdateState();
+  clearDownloadingUpdateState();
+  logger.info(`[auto-update] downloaded: ${info.version}, waiting for explicit install`);
+  setAutoUpdaterMenuState(buildUpdateDownloadedState(info.version));
+  notifyForceAutoUpdate({ kind: "ready", version: info.version });
+  if (!activeForceAutoUpdateListener) {
+    recheckAfterDownload?.("download-finished");
+  }
+
+  if (activeForceAutoUpdateListener) {
+    notifyForceAutoUpdate({ kind: "installing" });
+    void quitAndInstallUpdate();
+  }
+
+  if (autoUpdaterSettingService) {
+    const releaseNotesPayload = readyUpdateReleaseNotes;
+    const persistTask = releaseNotesPayload
+      ? persistPendingPostUpdateReleaseNotes(
+          autoUpdaterSettingService,
+          releaseNotesPayload,
+          "update-downloaded",
+        )
+      : clearPendingPostUpdateReleaseNotes(
+          autoUpdaterSettingService,
+          "update-downloaded-without-release-notes",
+        );
+
+    void persistTask.catch((error) => {
+      logger.error("[auto-update] persist post-update release notes failed:", error);
+    });
+  }
+
+  for (const win of BrowserWindow.getAllWindows()) {
+    syncReadyUpdateToWindow(win);
+  }
+}
+
 export function downloadAvailableUpdate(reason = "renderer") {
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason} download: not packaged`);
@@ -1655,10 +1701,9 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // before deciding to download. If electron-updater downloads automatically based only on the current app version, it may
   // download 3.1.3 repeatedly on every poll when 3.1.3 is already ready for 3.1.2.
   autoUpdater.autoDownload = false;
-  // Bugfix: Windows/NSIS starts installation asynchronously after the window closes. If the user immediately shuts down, the
-  // installer may be interrupted, leaving a partial update that fails on next startup. macOS/Linux also disable install-on-quit;
-  // before-quit installs proactively only while the ready package still equals the current target, so quitting cannot
-  // install an older package after the target moves up.
+  // An ordinary quit is not a confirmation to install. Installing from before-quit on macOS/Linux, combined with the
+  // relaunch after a failed install, made a process with a pending package install and restart on every quit
+  // (upstream 3.18.0). Every platform installs only from the explicit entry, which also avoids partial updates at shutdown.
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = logger;
   if (autoUpdater instanceof pkg.NsisUpdater) {
@@ -1875,48 +1920,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   });
 
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedInfoLike) => {
-    readyUpdateVersion = info.version;
-    readyUpdateRestoredFromPendingReleaseNotes = false;
-    readyUpdateChannel = downloadingUpdateChannel ?? availableUpdateChannel;
-    readyUpdateReleaseNotes =
-      toPostUpdateReleaseNotesPayload(info) ?? downloadingUpdateReleaseNotes;
-    clearAvailableUpdateState();
-    clearDownloadingUpdateState();
-    logger.info(
-      `[auto-update] downloaded: ${info.version}, ${process.platform === "win32" ? "waiting for explicit install" : "ready to install on quit or explicit install"}`,
-    );
-    setAutoUpdaterMenuState(buildUpdateDownloadedState(info.version));
-    notifyForceAutoUpdate({ kind: "ready", version: info.version });
-    if (!activeForceAutoUpdateListener) {
-      recheckAfterDownload?.("download-finished");
-    }
-
-    if (activeForceAutoUpdateListener) {
-      notifyForceAutoUpdate({ kind: "installing" });
-      void quitAndInstallUpdate();
-    }
-
-    if (options.settingService) {
-      const releaseNotesPayload = readyUpdateReleaseNotes;
-      const persistTask = releaseNotesPayload
-        ? persistPendingPostUpdateReleaseNotes(
-            options.settingService,
-            releaseNotesPayload,
-            "update-downloaded",
-          )
-        : clearPendingPostUpdateReleaseNotes(
-            options.settingService,
-            "update-downloaded-without-release-notes",
-          );
-
-      void persistTask.catch((error) => {
-        logger.error("[auto-update] persist post-update release notes failed:", error);
-      });
-    }
-
-    for (const win of BrowserWindow.getAllWindows()) {
-      syncReadyUpdateToWindow(win);
-    }
+    publishDownloadedUpdate(info);
   });
 
   autoUpdater.on("error", (err) => {
@@ -1972,13 +1976,6 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
 
   triggerCheckForUpdates("startup");
   ensureAutoUpdatePollInterval();
-  app.on("before-quit", (event) => {
-    if (process.platform === "win32" || isUpdateTargetLocked() || !isReadyUpdateCurrentTarget()) {
-      return;
-    }
-    event.preventDefault();
-    void quitAndInstallUpdate();
-  });
 }
 
 function ensureAutoUpdatePollInterval() {

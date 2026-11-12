@@ -11,6 +11,9 @@ function setup(options: {
   let href = options.href;
   const auth = {
     getZCodeJwtToken: () => options.jwt ?? null,
+    // Session revision and change subscription are required by the entry's session-restart guard.
+    getSessionRevision: () => null,
+    subscribeSessionChange: () => () => {},
     getActiveAccount: () => null,
     startLogin: vi.fn(),
     logout: vi.fn(async () => {}),

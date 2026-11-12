@@ -31,6 +31,7 @@ import {
   buildContextManagementSection,
   buildDynamicBehaviorSection,
   buildSessionGuidanceSection,
+  buildTotalTokensSection,
 } from "./dynamic-sections.js";
 
 // -----------------------------------------------
@@ -167,7 +168,7 @@ export class ContextBuilder {
     // guidance—the contract already carries Report outcomes faithfully), while retaining memory and subsequent sections.
     if (!hasCustomSystemPrompt) {
       if (!isWorkflowActor && !harnessOff && this.config.presentationSurface === "zcode_desktop") {
-        sections.push(buildDesktopContextSection(this.config.genUiOutputDirectory));
+        sections.push(buildDesktopContextSection(Boolean(this.config.genUiOutputDirectory)));
       }
 
       // behaviour part right after stable sp...
@@ -202,6 +203,7 @@ export class ContextBuilder {
 
       // Context Management
       sections.push(buildContextManagementSection(promptOverrides?.["context-management"]));
+      sections.push(buildTotalTokensSection());
 
       const gitSystemContextSection = environmentOff
         ? null
@@ -322,6 +324,7 @@ export class ContextBuilder {
 // sections only as switches and for usage accounting.
 const RUNTIME_ANNOUNCED_SOURCES: ReadonlySet<ContextSection["source"]> = new Set([
   "env_info",
+  "desktop_context",
   "model",
   "current_date",
 ]);
@@ -336,15 +339,20 @@ export function buildMetaUserAttachments(sections: ContextSection[]): ContextMet
     };
   const attachments: ContextMetaUserAttachment[] = [];
   for (const attachmentSource of Object.values(sourceMap)) {
-    const content = buildSectionContent(
-      sections.filter(
-        (section) =>
-          section.injectionTarget === "meta_user" &&
-          !RUNTIME_ANNOUNCED_SOURCES.has(section.source) &&
-          (sourceMap[section.source] ?? "context_prefix") === attachmentSource,
-      ),
+    const grouped = sections.filter(
+      (section) =>
+        section.injectionTarget === "meta_user" &&
+        !RUNTIME_ANNOUNCED_SOURCES.has(section.source) &&
+        (sourceMap[section.source] ?? "context_prefix") === attachmentSource,
     );
-    if (content) attachments.push({ source: attachmentSource, content });
+    const content = buildSectionContent(grouped);
+    if (!content) continue;
+    const files = grouped.flatMap((section) => section.instructionFiles ?? []);
+    attachments.push({
+      source: attachmentSource,
+      content,
+      ...(files.length > 0 ? { files } : {}),
+    });
   }
   return attachments;
 }

@@ -18,42 +18,41 @@ While running, both an ordinary `sendText` and `sendGoalCommand` are admitted by
 
 ## Operations
 
-| User action      | V4 command         | Authoritative result                                                                                                                                         |
-| ---------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Delete           | `deleteQueueItem`  | projection removes the queue item                                                                                                                            |
-| Withdraw to edit | `deleteQueueItem`  | after projection removes it, the composer draft is restored on the initiating side only                                                                      |
-| Send now         | `sendQueuedNow`    | CLI preempts the current turn (`preserveQueueAutoDrainOnCancel`, no queue hold written); the sent item runs first and the remaining queue continues in order |
-| Reorder          | `reorderQueueItem` | projection returns the new order                                                                                                                             |
-| Auto-drain       | `setAutoDrain`     | snapshot updates the auto-drain state                                                                                                                        |
+| User action | V4 command                                                      | Authoritative result                                                                                                                                         |
+| ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Delete      | `deleteQueueItem`                                               | projection removes the queue item                                                                                                                            |
+| Edit        | `lockQueueItemEdit` -> `editQueueItem` / `releaseQueueItemEdit` | the item stays frozen in place while editing; submit replaces it in place and unlocks, cancel unlocks                                                        |
+| Send now    | `sendQueuedNow`                                                 | CLI preempts the current turn (`preserveQueueAutoDrainOnCancel`, no queue hold written); the sent item runs first and the remaining queue continues in order |
+| Reorder     | `reorderQueueItem`                                              | projection returns the new order                                                                                                                             |
+| Auto-drain  | `setAutoDrain`                                                  | snapshot updates the auto-drain state                                                                                                                        |
 
-Queue item commands (send now, delete, withdraw to edit, reorder) that hit `stale / proto.staleRevision` resend once using only the ACK's `revisionAtDecision`; if still unsuccessful, send-now and withdraw-to-edit show a retryable hint and the queue item keeps its original text (`specs/queue-command-stale-revision.md`, ISSUE-072).
+Queue item commands (send now, delete, reorder) that hit `stale / proto.staleRevision` resend once using only the ACK's `revisionAtDecision`; if still unsuccessful, send-now shows a retryable hint and the queue item keeps its original text (`specs/queue-command-stale-revision.md`, ISSUE-072).
 
 The UI may give brief pending/disabled feedback on a click but must not only change a local array. On refresh, pane switch, or desktop and mobile online at the same time, the snapshot/delta is authoritative.
 
-"Edit" in the first-party desktop, Web and mobile UI is not an in-place rewrite inside the queue; it withdraws the full input intent back to the composer that initiated the operation:
+"Edit" in the first-party desktop, Web and mobile UI reuses the bottom composer; the queue item stays in place and is frozen by the CLI while editing. Full interaction, draft stash, invalidation and lock release: [Composer edit mode](composer-edit-mode.md).
 
 ```text
-click edit (queueItem, baseRevision, sessionId, workspaceKey)
-  -> does the composer already hold text / attachment / web context / selection ref / uploading state
-       |- yes: send no command, queue and existing draft unchanged, hint to deal with the current draft first
-       `- no: lock the target queue row and the composer
-              -> deleteQueueItem(baseRevision)
-                   |- stale (proto.staleRevision)
-                   |    -> stay locked, resend once with ack.revisionAtDecision (new commandId), then follow the branches below by the resend ACK
-                   |- stale / noop / rejected / failed
-                   |    -> do not restore the draft, unlock and hint to retry
-                   `- accepted / duplicate
-                        -> all clients receive the authoritative queue removal projection
-                        -> only on the initiating side, and only if still the original session + workspaceKey,
-                           restore kind + text + AttachmentRef[]
-                        -> the user edits and resends, producing a new commandId / queueItemId
+click edit (queueItem, sessionId, workspaceKey)
+  -> composer busy (uploading / sending)? yes: send no command, hint to retry later
+  -> lockQueueItemEdit(queueItemId, editorId), target row shows pending
+       |- reserved / already locked / noop / failed -> do not enter edit mode, hint the reason
+       `- accepted (and still the original session + workspaceKey)
+            -> stash the current draft; composer loads the original kind + text + AttachmentRef[] + model/mode/Plan config
+                 |- cancel -> releaseQueueItemEdit -> restore the stash
+                 |- send -> editQueueItem(content, attachments, config, editorId) replaces in place and unlocks -> restore the stash
+                 `- item deleted / released by another client -> invalid, send as an ordinary new message
 ```
 
-`workspaceKey = workspaceIdentity?.trim() || workspacePath`. The withdraw request is bound to the session and workspaceKey at click time; switching task/workspace before the ACK returns must not write the old payload into the new composer. A duplicate ACK or duplicate restore request must be idempotent. When the target was already consumed or deleted by another client, `deleteQueueItem` returns a distinguishable `noop` and must not restore an old projection as a local draft again.
+A frozen item keeps `queueItemId`, `sourceCommandId`, position and kind. Auto-drain pauses when it reaches the frozen item and later items keep waiting in order; a frozen item cannot be deleted, reordered or sent now, and other items are unaffected. The lock lives only in CLI memory and is never released by timeout.
 
-Plain text and goal can be withdrawn; goal is restored as `/goal ...`. `compact` still has no edit entry. Attachments are restored as ready chips in their original queue order with the full `AttachmentRef`, marked as session-owned references; deleting, appending and resending directly do not upload/adopt again, and runtime restart and cleanup logic must not mistake them for staged refs not yet adopted. An image without a local object URL shows the file name and a type icon; no thumbnail download protocol is added.
+`workspaceKey = workspaceIdentity?.trim() || workspacePath`. Edit mode is bound to the session and workspaceKey at click time; switching task/workspace before the ACK returns must not write the old payload into the new composer and immediately calls `releaseQueueItemEdit`.
 
-The draft restored on the initiating side stays renderer-local and is not written into the conversation snapshot, relay or main process; other desktop or mobile clients consume only the authoritative queue removal. The underlying `editQueueItem` stays as a V4 compatibility capability but the first-party UI no longer calls it.
+Plain text and goal can be edited; goal shows as `/goal ...` and keeps its kind on submit. `compact` still has no edit entry. Attachments show as ready session-owned chips in their original queue order with the full `AttachmentRef`, are not uploaded/adopted again on submit, and attachments can be appended during editing as in a normal send. The model, reasoning, mode and Plan recorded on the item load into the toolbar and are written back in place with `editQueueItem` after the user changes them. An image without a local object URL shows the file name and a type icon; no thumbnail download protocol is added.
+
+With a single queue item, the target row keeps the same DOM from click to edit mode: first a pending "locking" state, then, once the lock is accepted, directly the "editing below" placeholder. It must not fall back to a normal row (brightening again or exposing action buttons), does not revert after the placeholder appears, and is not removed while editing. The lock ACK and the `editLock` projection are not ordered: if the ACK arrives first, the initiating side shows its own placeholder from local edit state and the projection confirms later; no timers or fixed waits. The composer loads the body once, only after the lock is accepted, and the height change after loading happens once. Short text, multi-line text and attachments follow the same order. The E2E (B09g) starts DOM/per-frame sampling before the single click and verifies that the desktop draft is unchanged when a phone starts the edit.
+
+Edit mode and the stash stay renderer-local and are not written into the conversation snapshot, relay or main process; other desktop or mobile clients see only the authoritative `editLock` and can release it manually ("Release").
 
 A `compact` queue item shows only the `/compact` command text, with no maintenance-command icon before it; it is still distinguished from ordinary messages by the "run now" button and its non-editable behavior.
 

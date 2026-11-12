@@ -42,6 +42,7 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => {
   };
   return {
     useBaseWorkspaceServices: () => base,
+    useOptionalBaseWorkspaceServices: () => base,
     useWorkspaceServices: () => ({
       ...base,
       gitService: { getRepositoryRemotes: async () => ({ remotes: [] }) },

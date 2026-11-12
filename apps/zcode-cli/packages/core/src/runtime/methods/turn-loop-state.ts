@@ -17,7 +17,8 @@ import type { ToolLoopHistory } from "../helpers/tool-loop-patterns.js";
 import type { ModelToolContract, ModelUsage, SubagentRunOptions } from "@zcode/contracts";
 import type { DrainedPendingInputDiagnostics, ModelExecutionContext } from "../types.js";
 import type { TurnMachineImpl } from "../deps.js";
-import type { RuntimeMessageEntry } from "../../agent/message-history.js";
+import type { RuntimeAttachmentEntry, RuntimeMessageEntry } from "../../agent/message-history.js";
+import type { InputAttachmentCollectionReason } from "../helpers/total-tokens-budget.js";
 
 export type PendingStreamRecoveryRequest = ModelStreamRecoveryStatus;
 
@@ -122,9 +123,14 @@ export interface RegularTurnLoopState {
   /** Number of assistant/compact artifacts of the current query already written into the provider-visible persistent history. */
   historyRoundCount: number;
   completedRealToolResultBatch: boolean;
-  /** Input attachments to collect on the next loop iteration: set at round start, after a full tool batch, and when a text reply is followed by a guide. */
-  inputAttachmentCollectionPending: boolean;
-  /** The turn was already stopped when the tool batch settled; decides that the interruption marker uses the tool-phase wording. */
+  /**
+   * 下一次 loop 迭代要收集输入附件时记录原因：轮首、完整工具批次之后、文本回复后续上 guide。
+   * 原因是唯一来源，total_tokens_reminder 按它决定是否提醒与重新起算。
+   */
+  inputAttachmentCollectionPending: InputAttachmentCollectionReason | false;
+  /** 本轮 UserPromptSubmit 的上下文，等第一次输入附件收集写在输入附件批次末尾。 */
+  userPromptHookContext?: RuntimeAttachmentEntry;
+  /** 工具批次结算时本轮已被停止；决定中断标记用工具阶段的文字。 */
   interruptedDuringToolBatch?: boolean;
   reactiveCompactAttemptedInCurrentModelStep: boolean;
   repeatedToolCallSignature?: string;
@@ -142,7 +148,8 @@ export interface RegularTurnLoopState {
   toolCallCount: number;
   /** Provider-local history of the current turn; released as soon as the turn ends. */
   turnRequestState: TurnRequestState;
-  /** Tool names not exposed to the provider this turn; the registry keeps them so the execution boundary can do defense-in-depth checks. */
+  /** 当前 turn 不向 provider 暴露的工具名；registry 仍保留，供执行边界做纵深校验。 */
+  pluginDiscoveryUi?: boolean;
   toolDisallowlist?: readonly string[];
   traceId: TraceId;
   turnAbortSignal: AbortSignal;
@@ -207,8 +214,8 @@ export function recordCompactSuccess(
 }
 
 export function recordCompletedToolBatch(state: RegularTurnLoopState): void {
-  state.inputAttachmentCollectionPending = true;
-  // The old guard lived for the whole user turn and stayed "used" after a full tool batch, so a later real overflow could not reactive-compact again.
+  state.inputAttachmentCollectionPending = "tool_batch";
+  // 旧 guard 活在整个用户 turn，完整工具批次结束后仍保持 used，导致后续真实 overflow 无法再次 reactive compact。
   state.reactiveCompactAttemptedInCurrentModelStep = false;
   if (state.compactTracking) {
     state.compactTracking.toolTurnsSinceCompact += 1;

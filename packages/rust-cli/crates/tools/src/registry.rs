@@ -1,0 +1,126 @@
+//! 工具注册表。
+
+use std::sync::Arc;
+
+use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::mcp_state::McpConnections;
+use rust_cli_kernel_api::orchestration::{ToolRegistry, ToolSnapshot};
+use rust_cli_kernel_api::tool::Tool;
+
+use rust_cli_kernel_api::tool_search::{SEARCH_TOOLS, search_covered};
+
+use crate::file_state::ReadFileState;
+
+/// 当前可用的工具。由 runtime 组装：内置工具、子代理工具、MCP 工具。
+///
+/// Glob / Grep 的暴露规则：
+/// 有 Bash 时由 Bash 承担文件名与内容搜索，Glob / Grep 不出现；没有 Bash，或启动参数
+/// （`--tools` / `--allowedTools`）点名了 Glob 或 Grep 时才出现（tools-files.md §1.1）。
+#[derive(Default)]
+pub struct BuiltinTools {
+    tools: Vec<Arc<dyn Tool>>,
+    search_opt_in: bool,
+    file_state: Option<Arc<ReadFileState>>,
+}
+
+impl BuiltinTools {
+    pub fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
+        Self {
+            tools,
+            search_opt_in: false,
+            file_state: None,
+        }
+    }
+
+    /// 启动参数点名了 Glob 或 Grep。
+    pub fn with_search_opt_in(mut self, opt_in: bool) -> Self {
+        self.search_opt_in = opt_in;
+        self
+    }
+
+    /// 加一个排在前面的工具（Bash 在文件与搜索工具之前）。
+    #[must_use]
+    pub fn with_leading(mut self, tool: Arc<dyn Tool>) -> Self {
+        self.tools.insert(0, tool);
+        self
+    }
+
+    /// 追加工具（顺序不影响请求：发给模型前按名字排序，tools-more.md §3.3）。
+    #[must_use]
+    pub fn with_tools(mut self, tools: Vec<Arc<dyn Tool>>) -> Self {
+        self.tools.extend(tools);
+        self
+    }
+
+    pub(crate) fn with_file_state(mut self, state: Arc<ReadFileState>) -> Self {
+        self.file_state = Some(state);
+        self
+    }
+
+    /// 文件工具共用的 readFileState；会话的 owner 用它在关闭时释放、冷恢复时重建。
+    pub fn file_state(&self) -> Option<&Arc<ReadFileState>> {
+        self.file_state.as_ref()
+    }
+
+    fn exposed(&self, tool: &dyn Tool) -> bool {
+        !SEARCH_TOOLS.contains(&tool.name()) || self.search_opt_in || !search_covered(&self.tools)
+    }
+}
+
+impl ToolRegistry for BuiltinTools {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools
+            .iter()
+            .filter(|tool| self.exposed(tool.as_ref()))
+            .cloned()
+            .collect()
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools
+            .iter()
+            .filter(|tool| self.exposed(tool.as_ref()))
+            .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
+            .cloned()
+    }
+
+    /// Fork: built-in tools are the same for every session.
+    fn find_for(&self, _session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.find(name)
+    }
+
+    /// 被 Bash 藏起来的 Glob / Grep（子代理点名它们、又没有 Bash 时补回，agents.md §4.2，修复线 F16）。
+    fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools
+            .iter()
+            .filter(|tool| !self.exposed(tool.as_ref()))
+            .find(|tool| tool.name() == name)
+            .cloned()
+    }
+
+    /// 内置注册表下面没有别的层：不藏叠在上面的工具（整个工具的 deny 规则在 `PolicyFiltered`）。
+    fn hides(&self, _name: &str) -> bool {
+        false
+    }
+
+    /// 发请求前按名字排序（tools-more.md §3.3）。
+    fn keeps_order(&self) -> bool {
+        false
+    }
+
+    /// 没有 MCP：快照就是清单。
+    fn snapshot(&self, _session: &SessionId) -> ToolSnapshot {
+        ToolSnapshot {
+            tools: self.tools(),
+            mcp: None,
+        }
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        None
+    }
+}
+
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

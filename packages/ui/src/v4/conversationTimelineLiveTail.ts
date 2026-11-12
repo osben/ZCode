@@ -51,10 +51,11 @@ export interface ConversationTimelineLiveTailSplit {
 }
 
 /**
- * When a running turn stays in an absolutely positioned virtual row, the body DOM grows first,
- * then ResizeObserver updates totalSize/scrollTop on the next frame, making the trailing ChatLoading jump around.
- * Split only the actual last running unit into a normal-flow live tail; historical or stale running rows remain virtualized
- * to avoid expanding the persistent DOM.
+ * running turn 继续放在绝对定位虚拟行里时，正文 DOM 会先长高，
+ * ResizeObserver 下一帧才回填 totalSize/scrollTop，导致轮尾 ChatLoading 来回跳。
+ * 最后一轮始终放在 normal-flow live tail；其余轮次仍归虚拟列表，只常驻一个尾轮。
+ * Bugfix：曾按 isRunning 切换父容器，Stop 后整轮重挂，过程区从透明重新淡入。
+ * 以轮次位置决定容器，让终态沿用已有组件；新一轮出现时旧轮才进入虚拟历史。
  *
  * The input is partitioned into "history + tail": the last running turn is usually the only
  * tail unit, so the virtual list uses the history array directly — its reference is stable
@@ -65,7 +66,7 @@ export function splitConversationTimelineLiveTail(
 ): ConversationTimelineLiveTailSplit {
   const { history, tail } = units;
   const liveUnit = tail.at(-1) ?? history.at(-1);
-  if (!liveUnit?.isRunning) {
+  if (!liveUnit) {
     return {
       virtualizedUnits: tail.length === 0 ? history : [...history, ...tail],
       liveUnit: null,

@@ -706,6 +706,7 @@ export function ComputerUseSection({
       {/* Master toggle: enable/disable the zcode-cua Plugin (including its MCP + skill). */}
       <SettingsGroupCard>
         <SettingsRow
+          searchId="settings.computerUse.toggleLabel"
           label={intl.formatMessage({ id: "settings.computerUse.toggleLabel" })}
           description={intl.formatMessage({
             id: "settings.computerUse.toggleDescription",
@@ -726,6 +727,7 @@ export function ComputerUseSection({
               When Computer Use is off, the button is hidden regardless (Plugin gate in cuaComposerEntryState),
               so disable the toggle and explain the prerequisite; a clickable switch with no visible effect looks broken. */}
         <SettingsRow
+          searchId="settings.computerUse.composerEntry.label"
           label={intl.formatMessage({ id: "settings.computerUse.composerEntry.label" })}
           description={intl.formatMessage({
             id: cuaEnabled

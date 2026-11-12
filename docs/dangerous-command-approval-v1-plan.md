@@ -8,6 +8,8 @@ Full history (verification runs, dated review fixes, stash/backup references): `
 
 Recognition only — the approval core is not restructured: rm recursive or explicit batch, CMD `rd/rmdir /s`, CMD `del/erase`, `find -delete`, effective Git clean force, Robocopy `/MIR` or `/PURGE`. rm keeps one ruleId for recursive and batch; the others add IDs to the catalog below.
 
+- The matcher acts only on Bash: MCP tools (including node_repl `js`) do not go through it and are allowed under guarded by the YOLO base policy; inline code in Bash such as `node -e` / `python -c` returns unsupported and is likewise allowed. This is a known coverage limit (recorded 2026-11-05), not a statement that these calls are safe.
+
 - rm no longer requires force; at least two targets, or an unreferenced/unescaped glob, also confirm. File existence, duplicates, and glob expansion counts are not checked. A single plain file, a single purely dynamic target, and a quoted/escaped literal glob add no confirmation; `rm -- -r` does not hit, `rm -- -r -f` hits via two targets. Help/interactive options cannot cancel known dangerous evidence.
 - CMD switches are case-insensitive; rd/rmdir needs `/s`, del/erase confirms with any target; no target and standalone `/?` queries do not hit; `/p` cannot replace single-use approval. POSIX/Git Bash empty-directory `rmdir` is out.
 - find is POSIX/Git Bash only: declared-arity predicates and output parameters are skipped; `-exec/-execdir/-ok/-okdir` payloads are skipped, not recursively matched; unknown arity stops analysis but keeps previously reliable `-delete` hits, without inferring whether the expression actually matches. BSD find's declared `-d`/`-x` are consumed as zero-arg leading options, so `find -d . -type f -delete` and `find -x . -type f -delete` hit.
@@ -36,7 +38,7 @@ Presentation only: the Guarded trigger uses the existing `icon-blue` light blue 
 ### staging merge compatibility (2026-09-18)
 
 - Plan stays an independent state: `guarded + planEnabled=true` is still limited by Plan; entering/exiting Plan keeps guarded permissions and does not restore the old mode=plan state switch.
-- Normal approvals keep staging's tool preview, session authorization, and Full access; for dangerous requests the `user-once` constraint wins — no project/session permanent authorization or Full access is offered or accepted, and `prepareApproval.proceed` cannot bypass it.
+- Normal approvals keep staging's tool preview, session authorization, and Full access; for dangerous requests the `user-once` constraint wins — no project/session permanent allow rule is offered. In the main task the user may explicitly switch to full access in the new approval dialog and pass the risk confirmation; subtasks and standalone workflows do not offer this switch. The tool answer for this call is still allow-once, and `prepareApproval.proceed` cannot bypass it.
 - New workflow tools' `alwaysAsk`, previews, and session authorization follow staging behavior; removed old CLI workflow commands stay removed. Ordinary subtasks keep passing through the same broker registration signal and innermost origin.
 - The mode menu keeps the independent Plan checkbox and draft semantics; the permission list replaces Edit with Guarded; historical edit still echoes, and Guarded keeps the blue color and Edit icon.
 
@@ -255,8 +257,8 @@ DCA-V1-13 accepted sub-scenario (menu replacement): the menu shows no Edit and o
 Reproduction (current formal paths):
 
 ```sh
-E2E_PROVIDER_REPLAY_FIXTURE_PATH=packages/desktop/test/e2e/fixtures/upstream/common.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-guarded.json pnpm --filter @zcode/desktop exec wdio run wdio.conf.ts --spec './test/e2e/conversation-session/conversation-session-guarded.test.ts'
-pnpm --filter @zcode/desktop e2e:fixture:check -- --spec './test/e2e/conversation-session/conversation-session-guarded.test.ts'
+E2E_PROVIDER_REPLAY_FIXTURE_PATH=packages/desktop/test/e2e/fixtures/upstream/common.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-guarded.json pnpm --filter @zcode/desktop exec wdio run wdio.conf.ts --spec './test/e2e/conversation-session/task-management/conversation-session-guarded.test.ts'
+pnpm --filter @zcode/desktop e2e:fixture:check -- --spec './test/e2e/conversation-session/task-management/conversation-session-guarded.test.ts'
 pnpm --filter @zcode/bootstrap exec vitest run --no-file-parallelism tests/guarded-interaction-lifecycle.test.ts tests/guarded-permission-options.test.ts tests/guarded-projection.test.ts tests/guarded-workflow.test.ts tests/automation-port.test.ts tests/v4-native-session-mgmt.test.ts tests/v4-native-model-config.test.ts tests/v4-native-interaction-background.test.ts tests/workflow-effective-selection.test.ts tests/session-selection-cold-resume.test.ts tests/v4-native-queue.test.ts
 pnpm typecheck
 pnpm --filter @zcode/desktop typecheck:e2e

@@ -4,9 +4,13 @@ export {
 } from "../task-deletion.js";
 import { requestVerificationReasons } from "../request-security-edition/verification-policy.js";
 import { zcodeProtocolTraceSchema } from "./trace.js";
+export * from "../app-control/contract.js";
+import { appControlProtocol, appControlCancelMethod } from "../app-control/contract.js";
 // Bot reverse-reply name resolution and clarification results use the same strict schema as App and CLI.
 export { channelReplyRequestSchema, channelReplyResultSchema } from "../channel-mention.js";
 export { zcodeProtocolTraceSchema, type ZCodeProtocolTrace } from "./trace.js";
+// Read-only plugin queries for extension process P2 (plugins/readUserOptions, plugins/mentionItems).
+export * from "./plugin-host-queries/contract.js";
 import {
   databaseMigrationFactsSchema,
   databaseStartupErrorCodeSchema,
@@ -54,6 +58,7 @@ import {
 } from "../usage-stats.js";
 import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import { errorAttributionSchema } from "../zcode-protocol-v4/snapshot.js";
+import { workflowLaunchMetaSchema } from "../zcode-protocol-v4/workflow-row-meta.js";
 // Shared compact read-only response schema for background details; it carries no command or timing metadata.
 export * from "../background-bash-output.js";
 export * from "../process-diagnostic.js";
@@ -144,6 +149,8 @@ export const ZCODE_PROTOCOL_VERSION = 1 as const;
 export const ZCODE_PROTOCOL_V4_WIRE_VERSION = 3 as const;
 export const zcodeRuntimeCapabilitiesSchema = z.object({
   durableFirstSubmission: z.boolean().optional(),
+  highspeedCardOwner: z.boolean().optional(),
+  pluginDiscoveryUi: z.boolean().optional(),
   sessionLifecycleWorkspace: z.boolean().optional(),
   sessionDirectorySource: z.boolean().optional(),
   sessionWorkspaceRouting: z.boolean().optional(),
@@ -158,6 +165,29 @@ export const zcodeRuntimeCapabilitiesSchema = z.object({
   providerRegistryRefresh: z.boolean().optional(),
   /** The CLI understands the residency parameter of rowsRange; an older CLI strips it and cold-resumes, so the Host refuses to forward it. */
   residentRowsRange: z.boolean().optional(),
+  /**
+   * CLI 支持"会话 cwd 与 workspace 不同"：createSession.cwd / worktreeCreation、
+   * forkAssistant.targetCwd、按 Host 请求的 workspace key 冷恢复（docs/git/worktree.md §9.3）。
+   * 旧 CLI 会静默丢弃这些字段，Host 据此决定是否开放 worktree 入口。
+   */
+  worktreeCwd: z.boolean().optional(),
+  /**
+   * CLI 认识 `{kind:"extension"}` 输入来源（sendText.source、createSession.firstInput.source）。
+   * 旧 CLI 对 sendText 整条拒绝、对 firstInput 静默剥掉来源，Host 据此决定能否代扩展发消息
+   * （apps/zcode-cli/docs/design/v2/conversation-input-source.md §7）。
+   */
+  extensionInputSource: z.boolean().optional(),
+  /**
+   * CLI 认识对话引用上的 comment / agent 字段（选区批注）。旧 CLI 的 quote schema 非 strict，
+   * 会静默剥掉这两个字段：用户看到批注而模型收不到，所以 App 据此决定是否提供“批注”入口。
+   */
+  conversationQuoteComment: z.boolean().optional(),
+  /**
+   * CLI 认识 plugins/overview 的 includeExtensionSummary 参数，并按它在商店信息里带 extensionSummary
+   * （docs/plugins/plugin-publishing.md §4.3）。参数与结果的 schema 都是 strict：旧 CLI 拒绝新参数，
+   * 旧 services 拒绝新字段，所以 services 只在看到这一位时才要这个字段。
+   */
+  pluginExtensionSummary: z.boolean().optional(),
 });
 export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
 export const zcodeRuntimeCapabilitiesParamsSchema = z
@@ -492,6 +522,7 @@ export const zcodeProtocolMessageSchema = z.union([
 export type ZCodeProtocolMessage = z.infer<typeof zcodeProtocolMessageSchema>;
 
 export const zcodeProtocolNotifications = {
+  pluginStartupDegraded: "startup/pluginsDegraded",
   storageStartup: "startup/storageState",
   providerRuntimeHeadersCancelled: "interaction/providerRuntimeHeadersCancelled",
   mcpTelemetry: "process/mcpTelemetry",
@@ -502,6 +533,8 @@ export const zcodeProtocolNotifications = {
   processNetworkRequests: "process/networkRequests",
   chatGptPlanUsageUpdated: "chatgpt-plan/usage-updated",
 } as const;
+
+export const zcodePluginStartupDegradedSchema = z.object({ reason: z.literal("timeout") }).strict();
 
 /** Startup control plane is independent of the task stream; database identity must not carry paths or credentials. */
 export const zcodeStorageStartupStateSchema = z
@@ -1600,6 +1633,10 @@ export const zcodeTurnStartedEventPayloadSchema = z
   .object({
     // CLI execution durations may be fractional; without this field, strict validation drops the whole start event, preventing the Bot from clearing its previous reply.
     executionStartedAt: z.number().nonnegative().optional(),
+    // Bugfix：CLI TurnStartedPayloadBase 新增的统计来源、工作流启动元数据与尾注下标漏声明时，
+    // strict 校验丢弃整条 turn.started，Bot 收不到 task_run_started，上一轮正文会串进下一轮投递。
+    workflowLaunch: workflowLaunchMetaSchema.optional(),
+    epilogueStart: z.number().int().nonnegative().optional(),
     turnNumber: z.number().int().nonnegative(),
     input: z.string(),
     inputId: nonEmptyString.optional(),
@@ -1610,6 +1647,8 @@ export const zcodeTurnStartedEventPayloadSchema = z
     offPeakTaskId: nonEmptyString.optional(),
     offPeakRunType: z.enum(["init", "resume"]).optional(),
     inputSource: zcodeTurnInputSourceSchema.optional(),
+    // CLI 已在开始事件中携带输入来源；漏声明会使严格校验拒绝会话事件，导致运行中摘要读取失败。
+    inputOrigin: z.enum(["desktop", "mobile"]).optional(),
     inputVisibility: zcodeMessageVisibilitySchema.optional(),
     executionKind: z.enum(["agent", "controlOnly"]).optional(),
     targetId: nonEmptyString.optional(),
@@ -1637,6 +1676,11 @@ export const zcodeTurnSteerQueuedEventPayloadSchema = z
     inputSize: z.number().int().nonnegative(),
     commandKind: zcodeTurnSteerCommandKindSchema.optional(),
     source: zcodeTurnSteerSourceSchema.optional(),
+    // Bugfix：CLI TurnSteerQueuedPayload 的字段漏声明会让 strict 校验丢弃整条排队事件。
+    // inputPresentation 的取值由 CLI contracts 定义且 v3 消费方不读取；这里不复制枚举，
+    // 避免 CLI 新增取值时再次整条丢弃。
+    inputPresentation: nonEmptyString.optional(),
+    automationId: nonEmptyString.optional(),
     toolDisallowlist: z.array(nonEmptyString).optional(),
     delivery: zcodeTurnSteerDeliverySchema.optional(),
     targetTurnId: nonEmptyString,
@@ -2120,6 +2164,8 @@ export const zcodeSessionMessagesParamsSchema = z
     sessionId: nonEmptyString,
     afterMessageId: nonEmptyString.optional(),
     limit: z.number().int().positive().optional(),
+    // 缺省保留最近历史窗口；forward 从 cursor 后最早消息开始分页。
+    direction: z.enum(["forward", "backward"]).optional(),
   })
   .strict();
 export type ZCodeSessionMessagesParams = z.infer<typeof zcodeSessionMessagesParamsSchema>;
@@ -2178,6 +2224,8 @@ export const zcodeSessionRuntimePreferencesResultSchema = z
     // Compat: unsynced Host/CLI builds do not emit toolSearchMode yet; upstream requires it (default "off").
     toolSearchMode: appToolSearchModeSchema.default("off"),
     subagentRuntimeConfigEnabled: z.boolean().optional(),
+    // 旧 Host 缺席即不注册 App 控制工具；只由 Host 装配能力声明。
+    appControlEnabled: z.boolean().optional(),
     memoryEnabled: z.boolean().default(false),
     memoryIndexAsContext: z.boolean().default(false),
     askUserQuestionAutoResolutionEnabled: z.boolean().default(true),
@@ -2211,6 +2259,7 @@ export const zcodeSessionSendParamsSchema = z
   .object({
     sessionId: nonEmptyString,
     modelSelection: modelSelectionSchema.optional(),
+    modelSelectionBasis: modelSelectionSchema.optional(),
     modelExecution: modelExecutionSchema.optional(),
     inputId: nonEmptyString.optional(),
     queryId: nonEmptyString.optional(),
@@ -2513,6 +2562,22 @@ export const zcodeSessionEraseTreeResultSchema = z
   })
   .strict();
 export type ZCodeSessionEraseTreeResult = z.infer<typeof zcodeSessionEraseTreeResultSchema>;
+/**
+ * 卸载 cwd 位于 directory 内的全部驻留会话；任一会话忙时全部不卸载（docs/git/worktree.md §8.3）。
+ * 随 worktreeCwd 能力提供。
+ */
+export const zcodeSessionReleaseUnderDirectoryParamsSchema = z
+  .object({ directory: nonEmptyString })
+  .strict();
+export type ZCodeSessionReleaseUnderDirectoryParams = z.infer<
+  typeof zcodeSessionReleaseUnderDirectoryParamsSchema
+>;
+export const zcodeSessionReleaseUnderDirectoryResultSchema = z
+  .object({ released: z.array(nonEmptyString), busy: z.array(nonEmptyString) })
+  .strict();
+export type ZCodeSessionReleaseUnderDirectoryResult = z.infer<
+  typeof zcodeSessionReleaseUnderDirectoryResultSchema
+>;
 export const zcodeWorkspaceReadPresentationParamsSchema = z
   .object({ workspace: zcodeWorkspaceRefSchema })
   .strict();
@@ -3190,6 +3255,9 @@ export const zcodePluginInfoSchema = z
     mcpServerNames: z.array(z.string()),
     hookDetails: z.array(zcodePluginHookDetailSchema).optional(),
     rootPath: z.string(),
+    // 插件的持久数据目录（CLI 的 PluginMetadata.dataPath，与 ${ZCODE_PLUGIN_DATA} 同值）。
+    // 扩展的 ctx.extension.dataPath 只取它，App 不自己拼路径；旧 CLI 不报告时缺省。
+    dataPath: z.string().optional(),
     userConfig: z.record(z.string(), zcodePluginUserConfigOptionSchema).optional(),
     configuredOptions: z.record(z.string(), zcodePluginOptionValueSchema).optional(),
     // Absent means the package is available; missing preserves a declared configuration row not yet materialized on the target Host.
@@ -3741,8 +3809,21 @@ export const zcodePluginsSetEnabledResultSchema = z
   .strict();
 export type ZCodePluginsSetEnabledResult = z.infer<typeof zcodePluginsSetEnabledResultSchema>;
 
+/**
+ * Extension summary of a catalog entry (docs/plugins/plugin-publishing.md §4.2–4.3): the plugin API version range the plugin requires and
+ * the permission tiers the extension requests. The CLI passes these through and keeps only these two keys; the App decides with isExtensionEngineCompatible.
+ * grants is an open string array: tiers added later must not make an old App fail to parse the whole page.
+ */
+export const zcodePluginExtensionSummarySchema = z
+  .object({
+    engines: z.object({ zcode: z.string().min(1) }).strict(),
+    grants: z.array(z.string()),
+  })
+  .strict();
+export type ZCodePluginExtensionSummary = z.infer<typeof zcodePluginExtensionSummarySchema>;
+
 // Store listing: display metadata carried by catalog entries (display name/icon/category/author/links/hero/
-// example prompts), all optional. The UI applies its fallback matrix when fields are missing (letter avatar/hidden section/omitted info row).
+// example prompts), all optional; the UI applies its fallback matrix when fields are missing (letter avatar / hidden section / omitted info row).
 // i18n uses `<field>I18n` maps, and locale resolution reuses the shared plugin-display-name helper.
 export const zcodePluginStoreListingSchema = z
   .object({
@@ -3766,6 +3847,11 @@ export const zcodePluginStoreListingSchema = z
      * it does not affect install gating or billing, and the name is not tied to a specific plan product.
      */
     requiresPaidPlan: z.boolean().optional(),
+    /**
+     * 带扩展的插件：只在 plugins/overview 带 includeExtensionSummary 时出现（§4.3 能力位）。
+     * 已装插件的 listing 来自目录最新版条目，所以这里是最新版的摘要。
+     */
+    extensionSummary: zcodePluginExtensionSummarySchema.optional(),
   })
   .strict();
 export type ZCodePluginStoreListing = z.infer<typeof zcodePluginStoreListingSchema>;
@@ -3859,6 +3945,8 @@ export const zcodePluginsOverviewParamsSchema = z
   .object({
     workspace: zcodeWorkspaceRefSchema,
     configScope: zcodePluginScopeSchema.optional(),
+    /** 要商店信息里的 extensionSummary。只发给声明了 pluginExtensionSummary 的 CLI（§4.3）。 */
+    includeExtensionSummary: z.boolean().optional(),
   })
   .strict();
 export const zcodePluginsOverviewResultSchema = z
@@ -4437,6 +4525,19 @@ export type SessionLifecycleFailure = z.infer<typeof sessionLifecycleFailureSche
 export type SessionLifecycleSnapshot = z.infer<typeof sessionLifecycleSnapshotSchema>;
 
 export const zcodeProtocolMethods = {
+  appControlListProjects: appControlProtocol.listProjects.method,
+  appControlListSessions: appControlProtocol.listSessions.method,
+  appControlReadSession: appControlProtocol.readSession.method,
+  appControlCreateSession: appControlProtocol.createSession.method,
+  appControlForkSession: appControlProtocol.forkSession.method,
+  appControlSendToSession: appControlProtocol.sendToSession.method,
+  appControlWaitSessions: appControlProtocol.waitSessions.method,
+  appControlInterruptSession: appControlProtocol.interruptSession.method,
+  appControlRenameSession: appControlProtocol.renameSession.method,
+  appControlOpenSession: appControlProtocol.openSession.method,
+  appControlSetSessionArchived: appControlProtocol.setSessionArchived.method,
+  appControlSetSessionPinned: appControlProtocol.setSessionPinned.method,
+  appControlCancel: appControlCancelMethod,
   sessionLifecycleChanged: "session/lifecycle/changed",
   sessionLifecycleGetState: "session/lifecycle/getState",
   sessionLifecycleEnsureReady: "session/lifecycle/ensureReady",
@@ -4474,6 +4575,7 @@ export const zcodeProtocolMethods = {
   // Read-only totals for the sessions an erase would remove, and the erase itself.
   sessionTreeCounts: "session/treeCounts",
   sessionEraseTree: "session/eraseTree",
+  sessionReleaseUnderDirectory: "session/releaseUnderDirectory",
   // setModel is still consumed by zcodeSessionService's legacy Desktop path; replayable
   // switchModelConfig resolves Selection directly through the target Environment Registry.
   sessionSetModel: "session/setModel",
@@ -4555,6 +4657,10 @@ export const zcodeProtocolMethods = {
   lspPreferencesGet: "lsp/preferences/get",
   lspPreferencesSet: "lsp/preferences/set",
   lspStatus: "lsp/status",
+  // Extension settings capability reads this plugin's effective user-layer values (including sensitive values); an older CLI returns method-not-found, which the App treats as unsupported.
+  pluginsReadUserOptions: "plugins/readUserOptions",
+  // MCP tool candidates for the input box `@` panel: plugin tools are invoked only on in-memory sessions; an older CLI returns method-not-found, and this group is not shown.
+  pluginsMentionItems: "plugins/mentionItems",
   automationCreate: "automation/create",
   topicResourceRead: "topic/resource/read",
   channelReply: "bot/channel/reply",
@@ -4580,6 +4686,7 @@ export const zcodeProtocolMethods = {
   interactionRequestUserInput: "interaction/requestUserInput",
   interactionRequestProviderRuntimeHeaders: "interaction/requestProviderRuntimeHeaders",
   interactionRequestOfficialMcpAuthHeaders: "interaction/requestOfficialMcpAuthHeaders",
+  interactionRequestCredentialCipher: "interaction/requestCredentialCipher",
   // Browser-use reverse requests are initiated by the Agent and forwarded by Host to the CDP executor in main.
   interactionBrowserList: "interaction/browserList",
   interactionBrowserExecute: "interaction/browserExecute",

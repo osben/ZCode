@@ -41,7 +41,7 @@ import {
 import { useConversationPanePresentation } from "@/side-pane-full-view/index.js";
 import { WorkbenchLeafPane, type WorkbenchShellBinding } from "@/v4/WorkbenchPane.js";
 import { WorkbenchSplitDivider } from "@/v4/WorkbenchSplitDivider.js";
-import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
+import { type RegisterConversationDropTarget } from "@/v4/composer/conversationDropTarget.js";
 import type {
   ChatSearchResultHighlightRequest,
   ChatViewSummaryPanelVariant,
@@ -74,7 +74,7 @@ export interface V4WorkspaceChatAreaProps {
   selectionSideChatSessionId?: string | null;
   provider?: ZCodeProvider;
   /** primary pane createSession/fork 后接入既有选择路径（handleSelectTask）。 */
-  onSessionCreated?: (sessionId: string) => void;
+  onSessionCreated?: (sessionId: string, origin?: "draft-promotion") => void;
   /** primary pane 会话删除后回 draft（shell 起新草稿）。 */
   onSessionDeleted?: () => void;
   /**
@@ -83,9 +83,7 @@ export interface V4WorkspaceChatAreaProps {
    */
   draftComposerHeader?: ReactNode;
   /** 桌面轻量草稿标题栏复用主草稿 composer 的 drop controller。 */
-  onPrimaryDraftDropTargetControllerChange?: (
-    controller: ConversationDropTargetController | null,
-  ) => void;
+  onPrimaryDraftDropTargetControllerChange?: RegisterConversationDropTarget;
   gitSummary?: GitRepositorySummary | null;
   gitDirtyFileCount?: number;
   gitWorktreeReviewSourceId?: GitChangeSourceId | null;
@@ -102,6 +100,7 @@ export interface V4WorkspaceChatAreaProps {
   onPaneActiveSessionChange?: (
     scope: PaneWorkspaceScope,
     sessionId: string,
+    origin?: "draft-promotion",
     capabilities?: {
       selectionSideChat?: boolean;
     },
@@ -427,7 +426,7 @@ export function V4WorkspaceChatArea({
       // readOnly subagent pane 只是 workbench 内观察视图，不是左侧
       // task 导航目标；反写 shell activeTaskId 会让左侧高亮/乐观 task 误切到 child。
       if (binding.selectionSideChat) {
-        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId, {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId, undefined, {
           selectionSideChat: true,
         });
       } else {

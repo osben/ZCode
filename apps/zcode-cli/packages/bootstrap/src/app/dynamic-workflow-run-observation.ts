@@ -180,6 +180,13 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>(
  * Omission means this read does not evaluate the default and omits `maxConcurrency` entirely; see
  * {@link runConcurrencyField}.
  */
+/** run 的引擎是否在本进程手里：`fillHole` 的放行判定与快照的 `liveInThisProcess` 共用这一条。 */
+export function isRunLiveInThisProcess(
+  entry: RunRegistryEntry | undefined,
+): entry is RunRegistryEntry & { control: NonNullable<RunRegistryEntry["control"]> } {
+  return entry !== undefined && entry.terminal === undefined && entry.control !== undefined;
+}
+
 export function snapshotOf(
   taskId: string,
   runs: Map<string, RunRegistryEntry>,
@@ -226,15 +233,21 @@ export function snapshotOf(
   // Ownership: AmendWorkflow's resolveInput reads the snapshot to determine whether the run belongs
   // to this session. See lineageFields for the lineage endpoint pointers.
   const parentSessionId = entry?.parentSessionId ?? record?.parentSessionId;
+  // run 自己的名字：行一旦落库 journal 就是权威，只在 submit → createRun 的间隙读注册表副本。
+  // 这里曾漏掉 name，GUI「配置」（dynamic-workflow-run-settings.ts）读快照取名永远是空，
+  // 设置轮文字、合成的 AmendWorkflow 与后继 run 的通知都退成了 run id（launch.md「The settings turn」）。
+  const name = record?.name ?? entry?.name;
 
   return {
     runId: taskId,
     taskId,
     startedAt: entry?.startedAt ?? new Date(0),
     status,
+    ...(name === undefined ? {} : { name }),
     ...(terminal ? { runStatus } : {}),
     ...(stopReason === undefined ? {} : { stopReason }),
     ...(parentSessionId === undefined ? {} : { parentSessionId }),
+    ...(terminal ? {} : { liveInThisProcess: isRunLiveInThisProcess(entry) }),
     ...lineageFields(entry?.resumedFrom ?? record?.resumedFrom, supersededByOf(entry, record)),
     // Prefer the in-memory copy to the journal, like every gap field above: the row does not exist
     // during the microtasks between submit and createRun, when AmendWorkflow's resolveInput may read this snapshot.

@@ -1,12 +1,10 @@
 import type { CompactTrigger, HookRunResult, Model, TraceContext, TurnState } from "./deps.js";
-import type { HookEventName } from "@zcode/contracts";
-import type { RuntimeMessageEntry } from "../agent/message-history.js";
 
 // Split out from internal-methods.ts to keep that file within the 400-line limit
 // enforced by the runtime-module-boundary test; hook methods form a cohesive group in their own file.
 export interface AgentRuntimeHookMethods {
   runSessionStartHooks(
-    source: "startup" | "resume" | "clear" | "compact",
+    source: "startup" | "resume" | "fork" | "clear" | "compact",
     traceContext: TraceContext,
     signal?: AbortSignal,
     model?: Pick<Model, "providerId" | "modelId">,
@@ -39,9 +37,5 @@ export interface AgentRuntimeHookMethods {
     signal?: AbortSignal,
   ): Promise<HookRunResult>;
   runSessionEndHooks(traceContext: TraceContext): Promise<HookRunResult>;
-  injectHookAdditionalContextIntoMessageHistory(
-    eventName: HookEventName,
-    additionalContexts: readonly string[],
-  ): RuntimeMessageEntry | undefined;
   shouldContinueAfterStopHooks(result: HookRunResult, continuationCount: number): boolean;
 }

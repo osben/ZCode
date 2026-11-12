@@ -1,0 +1,364 @@
+//! EnterPlanMode / ExitPlanMode（docs/specs/rust-cli/tools-more.md §2）。
+//!
+//! 两个工具都不持有执行状态：经 `SessionOps::set_plan` 请求会话 actor 打开或关掉 plan 开关（唯一 owner），
+//! 返回后同一回合里后续的调用按新状态判决（§2.3）。修复线 F20：plan 是独立开关，权限模式留在 actor 里，退出
+//! plan 后就是进入前的值（Node `exitPlanMode` 只设 `planEnabled: false`）。
+//!
+//! Node 3.17：计划是 ExitPlanMode 的 `plan` 参数（不再从计划文件读）。批准后把它写到计划文件，供压缩后的
+//! 续接与 `/plan` 使用（Node `persistApprovedPlanFileBeforeExitPlanMode`）。
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use rust_cli_kernel_api::clock::Ids;
+use rust_cli_kernel_api::env::{EnvPath, WritePrecondition};
+use rust_cli_kernel_api::env_files::PutFile;
+use rust_cli_kernel_api::hooks::{SteerSender, queued_command};
+use rust_cli_kernel_api::message::Message;
+use rust_cli_kernel_api::orchestration::{InteractionRequest, PlanApprovalAnswer};
+use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
+use rust_cli_kernel_api::plan::PlanFiles;
+use rust_cli_kernel_api::tool::{
+    PromptContext, Tool, ToolCallOutput, ToolError, ToolOutput, ToolProgress, ToolUseContext,
+    Validation,
+};
+use serde_json::Value;
+use tokio::sync::mpsc;
+
+use crate::ask_user_question::user_interaction;
+use crate::pipeline::{REJECT_MESSAGE, rejected};
+use crate::texts_more as texts;
+use rust_cli_kernel_api::tool::{failed, text};
+use rust_cli_kernel_api::tool_names;
+use rust_cli_prompts::Definition;
+
+pub const ENTER: &str = tool_names::ENTER_PLAN_MODE;
+pub const EXIT: &str = tool_names::EXIT_PLAN_MODE;
+
+/// 描述里探索工具的写法：Glob / Grep
+/// 不在工具清单里（由 `find` / `grep` 代替）时写 `find`/Glob。
+///
+/// 修 bug（修复线 F9）：原来按“这次请求的工具里有 Bash”判断，`/context` 的计数请求只带
+/// EnterPlanMode 一个工具时写错；改为与 Bash 提示同一条规则（tools-more.md §1）。
+fn explore_tools(context: &PromptContext) -> &'static str {
+    let search_tools = context
+        .tool_names
+        .iter()
+        .any(|name| name == crate::glob::NAME || name == crate::grep::NAME);
+    if search_tools {
+        "Glob, Grep, and Read"
+    } else {
+        "`find`/Glob, `grep`/Grep, and Read"
+    }
+}
+
+fn invalid(message: &str) -> Validation {
+    Validation::Invalid {
+        message: message.to_owned(),
+        error_code: Some(1),
+    }
+}
+
+async fn set_plan(context: &ToolUseContext, enabled: bool) -> Result<(), ToolError> {
+    context
+        .session_ops
+        .set_plan_from_tool(enabled, context.tool_use.as_str())
+        .await
+        .map_err(|error| failed(error.to_string()))
+}
+
+pub struct EnterPlanModeTool {
+    definition: Definition,
+    interactive: bool,
+}
+
+impl EnterPlanModeTool {
+    /// `interactive`：EnterPlanMode 跟随 ExitPlanMode 的可用性，非交互会话不提供。
+    pub fn new(interactive: bool) -> Self {
+        Self {
+            definition: rust_cli_prompts::definition(ENTER).clone(),
+            interactive,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for EnterPlanModeTool {
+    fn name(&self) -> &str {
+        ENTER
+    }
+
+    fn input_schema(&self) -> Value {
+        self.definition.schema.clone()
+    }
+
+    fn description(&self, context: &PromptContext) -> String {
+        self.definition
+            .description
+            .replace("{{explore_tools}}", explore_tools(context))
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.interactive
+    }
+
+    fn should_defer(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("switch to plan mode to design an approach before coding")
+    }
+
+    fn is_read_only(&self, _input: &Value) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self, _input: &Value) -> bool {
+        true
+    }
+
+    fn max_result_size_chars(&self) -> Option<usize> {
+        Some(rust_cli_kernel_api::tool::DEFAULT_MAX_RESULT_CHARS)
+    }
+
+    async fn validate_input(&self, _input: &Value, context: &ToolUseContext) -> Validation {
+        if context.agent.is_some() {
+            return invalid(texts::PLAN_MODE_MAIN_ONLY);
+        }
+        Validation::Ok
+    }
+
+    /// 没有专属的权限检查，默认放行。
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        _context: &ToolUseContext,
+    ) -> PermissionDecision {
+        PermissionDecision::Allow {
+            updated_input: None,
+        }
+    }
+
+    async fn call(
+        &self,
+        _input: Value,
+        context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        set_plan(&context, true).await?;
+        Ok(text(texts::ENTERED_PLAN_MODE.to_owned()))
+    }
+}
+
+/// Node's tool result for a plan declined with feedback (`turn-control.ts`): the feedback follows as a steer, so the
+/// result does not repeat it or promise it.
+pub(crate) const EXIT_PLAN_DENIED: &str = "The plan was not approved by the user.";
+
+pub struct ExitPlanModeTool {
+    definition: Definition,
+    interactive: bool,
+    /// The message id of the feedback steer.
+    ids: Arc<dyn Ids>,
+}
+
+impl ExitPlanModeTool {
+    pub fn new(interactive: bool, ids: Arc<dyn Ids>) -> Self {
+        Self {
+            definition: rust_cli_prompts::definition(EXIT).clone(),
+            interactive,
+            ids,
+        }
+    }
+}
+
+/// 计划文件的位置（§2.2）：kernel-api 的 `PlanFiles`，与计划模式 attachment、判决链同一来源。
+/// Node 的位置 `<工作区>/.zcode/plans/plan-<会话>.md`；会话 ID 净化后为空时报错。
+pub(crate) async fn plan_file(context: &ToolUseContext) -> Result<String, ToolError> {
+    let facts = context
+        .machine
+        .info()
+        .path_facts(&context.workspace)
+        .await
+        .map_err(|error| failed(error.to_string()))?;
+    let plans = PlanFiles::in_workspace(&facts, &context.workspace.root, &context.session)
+        .ok_or_else(|| {
+            failed("cannot locate the plan file: the session id cannot name a file".to_owned())
+        })?;
+    Ok(plans.path(context.agent.as_ref()).as_str().to_owned())
+}
+
+/// Node `ExitPlanModeInputSchema.plan`：必填，去掉首尾空白后非空，最多 20000 个字符。
+/// 长度按 UTF-16 码元数计（JS 字符串长度，Node 按它校验）。错误文本沿用 Node 的 zod 报错。
+const PLAN_MAX_UTF16_UNITS: usize = 20_000;
+
+fn validate_plan(input: &Value) -> Result<&str, String> {
+    let Some(plan) = input.get("plan").and_then(Value::as_str) else {
+        return Err("Invalid input: expected string, received undefined".to_owned());
+    };
+    if plan.encode_utf16().count() > PLAN_MAX_UTF16_UNITS {
+        return Err(format!(
+            "Too big: expected string to have <={PLAN_MAX_UTF16_UNITS} characters"
+        ));
+    }
+    if plan.trim().is_empty() {
+        return Err("String must contain at least 1 character(s)".to_owned());
+    }
+    Ok(plan)
+}
+
+/// 把批准的计划写到计划文件（Node `writeApprovedPlanFile`，写的是原始字符串，不去空白）。
+/// 写失败只记日志，批准照常生效（Node 同样只在取消时中断）。
+async fn persist_plan(context: &ToolUseContext, plan: &str) {
+    if let Some(message) = crate::common::missing_workspace(context).await {
+        tracing::warn!(%message, "approved plan file was not written");
+        return;
+    }
+    let path = match plan_file(context).await {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(%error, "approved plan file path unavailable");
+            return;
+        }
+    };
+    let request = PutFile {
+        path: EnvPath::new(path),
+        bytes: plan.as_bytes().to_vec(),
+        precondition: WritePrecondition::Any,
+        create_parents: true,
+    };
+    if let Err(error) = context
+        .machine
+        .files()
+        .put_file(&context.workspace, context.operation.clone(), request)
+        .await
+    {
+        tracing::warn!(%error, "approved plan file was not written");
+    }
+}
+
+#[async_trait]
+impl Tool for ExitPlanModeTool {
+    fn name(&self) -> &str {
+        EXIT
+    }
+
+    fn input_schema(&self) -> Value {
+        self.definition.schema.clone()
+    }
+
+    fn description(&self, _context: &PromptContext) -> String {
+        self.definition.description.clone()
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.interactive
+    }
+
+    fn should_defer(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("present plan for approval and start coding (plan mode only)")
+    }
+
+    fn is_concurrency_safe(&self, _input: &Value) -> bool {
+        true
+    }
+
+    fn max_result_size_chars(&self) -> Option<usize> {
+        Some(rust_cli_kernel_api::tool::DEFAULT_MAX_RESULT_CHARS)
+    }
+
+    async fn validate_input(&self, input: &Value, context: &ToolUseContext) -> Validation {
+        if let Err(message) = validate_plan(input) {
+            return invalid(&message);
+        }
+        if context.mode != PermissionMode::Plan {
+            return invalid(texts::NOT_IN_PLAN_MODE);
+        }
+        Validation::Ok
+    }
+
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        context: &ToolUseContext,
+    ) -> PermissionDecision {
+        user_interaction(context.mode, texts::EXIT_PLAN_MODE)
+    }
+
+    async fn call(
+        &self,
+        input: Value,
+        context: ToolUseContext,
+        progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        Ok(self
+            .call_with_messages(input, context, progress)
+            .await?
+            .output)
+    }
+
+    /// Node's `withPlanExitDeniedTurnStop`: a decline without feedback ends the turn after the result, so the model
+    /// does not rewrite the plan on its own. Feedback keeps the turn going: the result is Node's denial text and the
+    /// feedback follows it as a guided steer (`plan_approval_feedback`), a user row in the running turn.
+    async fn call_with_messages(
+        &self,
+        input: Value,
+        context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolCallOutput, ToolError> {
+        let done = |output: ToolOutput| ToolCallOutput {
+            output,
+            new_messages: Vec::new(),
+            stop_turn: false,
+        };
+        let plan = validate_plan(&input).map_err(failed)?.to_owned();
+        let request = InteractionRequest::PlanApproval {
+            origin: None,
+            tool_use: context.tool_use.clone(),
+            plan: plan.clone(),
+        };
+        let Ok(answer) = crate::asking::ask::<PlanApprovalAnswer>(&context, request).await else {
+            return Err(ToolError::Cancelled);
+        };
+        match answer {
+            // 修复线 F20：批准只关掉 plan，回答里的 `mode` 只作记录。
+            Some(PlanApprovalAnswer::Approve { .. }) => {}
+            Some(PlanApprovalAnswer::KeepPlanning {
+                feedback: Some(feedback),
+            }) if !feedback.trim().is_empty() => {
+                let steer = queued_command::steer_attachment(
+                    self.ids.message(),
+                    feedback.trim(),
+                    SteerSender::User,
+                    None,
+                    Some(queued_command::PLAN_APPROVAL_FEEDBACK),
+                );
+                return Ok(ToolCallOutput {
+                    new_messages: vec![Message::Attachment(steer)],
+                    ..done(rejected(EXIT_PLAN_DENIED.to_owned()))
+                });
+            }
+            Some(PlanApprovalAnswer::KeepPlanning { .. }) | None => {
+                return Ok(ToolCallOutput {
+                    stop_turn: true,
+                    ..done(rejected(REJECT_MESSAGE.to_owned()))
+                });
+            }
+        }
+        persist_plan(&context, &plan).await;
+        if context.agent.is_some() {
+            // 子代理的模式不归会话 actor 管：只回报批准。
+            return Ok(done(text(texts::AGENT_PLAN_APPROVED.to_owned())));
+        }
+        set_plan(&context, false).await?;
+        Ok(done(text(texts::plan_approved(&plan))))
+    }
+}
+
+#[cfg(test)]
+#[path = "plan_mode_tests.rs"]
+mod tests;

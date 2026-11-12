@@ -24,10 +24,14 @@ import {
   type SeedReplayProviderModel,
 } from "./model-provider-restart-config.js";
 import { getV4DraftThoughtState } from "./v4-conversation.js";
+import { skipOccupationOnboardingIfPresent } from "./occupation-onboarding.js";
 
 const paths = getE2EAppDataPaths();
 const SETTINGS_FILE = join(paths.appDataDir, "setting.json");
 const CREDENTIALS_FILE = paths.credentialsFile;
+// 设备级引导记录跟随 dataBaseDir，E2E 隔离 HOME 下即 appDataDir。
+const ONBOARDING_RECORD_FILE = join(paths.appDataDir, "onboarding-record.json");
+const BIGMODEL_E2E_USER_ID = "bigmodel-e2e-user";
 async function currentComposerRecentKey(): Promise<string> {
   return browser.execute((workspacePath) => {
     // The first draft may not be in the navigation cache yet; read the current draft owner directly — no stale workspace keys or guessed projects.
@@ -82,13 +86,46 @@ export async function seedBigModelOAuthCredential() {
     "oauth:bigmodel:access_token": "e2e-bigmodel-oauth-token",
     "oauth:bigmodel:user_info": JSON.stringify({
       displayName: "BigModel E2E",
-      id: "bigmodel-e2e-user",
+      id: BIGMODEL_E2E_USER_ID,
       username: "bigmodel-e2e-user",
     }),
   });
 }
 
-/** Seed the login JWT for E2E cases that need Highspeed gateway authentication. */
+/**
+ * After restarting with the seeded BigModel identity, waits until that identity's occupation-onboarding decision settles, and skips onboarding through the real UI when it is needed.
+ * Reason: when settings already have an occupation, the main UI renders before the decision. A new identity has no onboarding record and no local task, so the decision later returns "onboarding needed" and the onboarding page covers the whole main UI.
+ * On Windows the main UI is ready before the decision lands, and the model selector then cannot be clicked. The decision settles on only two facts: the onboarding page is shown, or the local onboarding record already contains this identity (answered, dismissed, or an existing user).
+ * Main-UI visibility is not treated as ready, and fixed waits are not used to guess timing.
+ */
+export async function settleBigModelIdentityOnboarding() {
+  await browser.waitUntil(
+    async () =>
+      (await $('[data-testid="onboarding-page"]').isExisting()) ||
+      (await hasOnboardingIdentityRecord(BIGMODEL_E2E_USER_ID)),
+    { timeout: 30_000, timeoutMsg: "BigModel 身份的职业引导判定没有落定" },
+  );
+  await skipOccupationOnboardingIfPresent();
+}
+
+async function hasOnboardingIdentityRecord(userId: string): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await readFile(ONBOARDING_RECORD_FILE, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  const record = JSON.parse(raw) as {
+    entries?: { userId?: string | null }[];
+    decisions?: { userId?: string | null }[];
+  };
+  return [...(record.entries ?? []), ...(record.decisions ?? [])].some(
+    (item) => item.userId === userId,
+  );
+}
+
+/** Seeds a login JWT for E2E cases that need Highspeed gateway authentication. */
 export async function seedHighspeedLoginCredential() {
   await writeJsonPatch(CREDENTIALS_FILE, {
     zcodejwttoken: "e2e-highspeed-zcode-jwt",
@@ -107,7 +144,7 @@ export async function seedBigModelStartPlanCredential() {
     "oauth:bigmodel:access_token": "e2e-bigmodel-oauth-token",
     "oauth:bigmodel:user_info": JSON.stringify({
       displayName: "BigModel E2E",
-      id: "bigmodel-e2e-user",
+      id: BIGMODEL_E2E_USER_ID,
       username: "bigmodel-e2e-user",
     }),
     zcodejwttoken: "e2e-bigmodel-start-plan-jwt",

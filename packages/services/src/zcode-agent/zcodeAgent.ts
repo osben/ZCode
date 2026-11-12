@@ -1,4 +1,20 @@
+import type {
+  V4SessionDeletionParams,
+  V4SessionDeletionExecuteParams,
+  V4SessionDeletionPreview,
+  V4SessionDeletionResult,
+} from "@zcode/shared/zcode-protocol-v4";
 import type { PluginUiToolResultNotification } from "@zcode/shared/mcp-apps";
+import type {
+  ContextComposition,
+  ContextCompositionChangedEvent,
+  ModelRequestMetricsFact,
+} from "@zcode/shared/zcode-protocol-v4";
+import type { ZCodeAgentContextCompositionParams } from "#src/zcode-agent/contextCompositionClient.js";
+import type {
+  ZCodeAgentPluginMentionItemsParams,
+  ZCodeAgentPluginMentionItemsResult,
+} from "#src/zcode-agent/pluginHostQueriesClient.js";
 import type {
   BackgroundBashOutputResult,
   SessionDebugSnapshot,
@@ -148,6 +164,11 @@ import { createServiceDescriptor } from "../descriptors.js";
 
 export * from "./zcodeAgentPluginParams.js";
 export * from "./zcodeAgentWorkflowParams.js";
+export type { ZCodeAgentContextCompositionParams } from "#src/zcode-agent/contextCompositionClient.js";
+export type {
+  ZCodeAgentPluginMentionItemsParams,
+  ZCodeAgentPluginMentionItemsResult,
+} from "#src/zcode-agent/pluginHostQueriesClient.js";
 import type {
   ZCodeAgentAddPluginMarketplaceParams,
   ZCodeAgentAutomationIdParams,
@@ -249,6 +270,20 @@ export interface ZCodeAgentRuntimeLifecycleEvent extends ZCodeAgentWorkspaceTarg
   state: "available" | "unavailable";
 }
 
+/**
+ * runtime 进程意外退出（晚于同一进程的 unavailable，退出码已知）。只用于向用户说明原因；
+ * 回合、子代理的收口由 CLI 投影在重连后给出，界面不据此改写会话状态。
+ */
+export interface ZCodeAgentRuntimeExitedEvent extends ZCodeAgentWorkspaceTarget {
+  workspaceKey: string;
+  runtimeIdentity: ZCodeAgentWorkspaceRuntimeIdentity;
+  exitCode: number | null;
+  signal: string | null;
+  /** `native_out_of_memory`：Windows 0xE0000008，系统可提交内存耗尽。 */
+  cause?: "native_out_of_memory";
+  exitedAt: number;
+}
+
 export type ZCodeAgentCuaPermissionObservation = CuaPermissionObservation &
   ZCodeAgentWorkspaceTarget;
 
@@ -307,11 +342,14 @@ export interface ZCodeAgentReadSessionParams extends ZCodeAgentSessionTarget {
 export interface ZCodeAgentReadSessionMessagesParams extends ZCodeAgentSessionTarget {
   afterMessageId?: string;
   limit?: number;
+  direction?: "forward" | "backward";
 }
 
 export interface ZCodeAgentReadSessionEventsParams extends ZCodeAgentSessionTarget {
   afterSeq?: number;
   limit?: number;
+  /** App 后台状态读取只观察现有 CLI，不因 runtime 消失重启。 */
+  runtimePolicy?: ZCodeAgentRuntimePolicy;
 }
 
 export type ZCodeAgentReadWorkspacePresentationParams = ZCodeAgentWorkspaceTarget;
@@ -323,6 +361,7 @@ export interface ZCodeAgentGrantWorkspaceHookTrustParams extends ZCodeAgentWorks
 
 export interface ZCodeAgentSendPromptParamsBase extends ZCodeAgentSessionTarget {
   modelSelection?: ModelSelection;
+  modelSelectionBasis?: ModelSelection;
   modelExecution?: import("@zcode/shared/zcode-protocol-v4").CommandPayloadMap["sendText"]["modelExecution"];
   inputId?: string;
   queryId?: string;
@@ -543,10 +582,18 @@ export interface ZCodeAgentConversationFileRewindPreviewParams extends ZCodeAgen
   baseLogEpoch: string;
 }
 
+/**
+ * Host 进程内的受管 worktree 服务发送命令时设置的标记。只有带此标记的命令可以携带
+ * createSession.cwd / worktreeCreation 与 forkAssistant.targetCwd；Symbol 键无法经 RPC 序列化伪造。
+ */
+export const HOST_WORKTREE_COMMAND: unique symbol = Symbol("zcode.hostWorktreeCommand");
+
 export interface ZCodeAgentConversationCommandParams extends ZCodeAgentWorkspaceTarget {
   /** Consumed by the Host only; explicit NULL means a global task — no project notion is sent to the CLI. */
   projectId?: string | null;
   envelope: CommandEnvelope;
+  /** Only the managed worktree service inside the Host process sets this (see HOST_WORKTREE_COMMAND). */
+  [HOST_WORKTREE_COMMAND]?: true;
   /** Host-internal only, for the Browser Use runtime boundary; not included in the V4 wire envelope. */
   clientMode?: ZCodeTaskClientMode;
 }
@@ -657,6 +704,7 @@ export type ZCodeAgentServiceEvent =
 export interface ZCodeAgentAppRuntimePreferences {
   askUserQuestionAutoResolutionEnabled: boolean;
   modelIoFullRetentionEnabled?: boolean;
+  pluginAutoRecommendationEnabled?: boolean;
 }
 
 export interface ZCodeAgentLocalRuntimeChildProcesses {
@@ -691,6 +739,7 @@ export interface IZCodeAgentService {
    * Signal that the user’s dynamic-workflow choice changed (docs/dynamic-workflow/launch.md “The user’s choice”): the Host recomputes the
    * effective mode and serially resends workspace/updateDynamicWorkflowPolicy. A Host with local settings authority uses its settings file;
    * a desktop-attached remote Host uses the incoming value (omitted = follow the server). Do not start an idle Agent for this.
+   * The Host records the choice and returns without waiting for the CLI reply; the availability snapshot re-read after returning already reflects the new mode.
    */
   syncDynamicWorkflowUserMode(params: { mode?: DynamicWorkflowMode }): Promise<void>;
   getWorkspaceRuntimeIdentity(
@@ -703,6 +752,8 @@ export interface IZCodeAgentService {
     params: ZCodeAgentListSessionSubagentsParams,
   ): Promise<ZCodeSessionSubagentsResult>;
   getAppUsageStats(params: ZCodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
+  previewSessionDeletion?(params: V4SessionDeletionParams): Promise<V4SessionDeletionPreview>;
+  executeSessionDeletion?(params: V4SessionDeletionExecuteParams): Promise<V4SessionDeletionResult>;
   /** Measurement before project data deletion: read-only, uses an existing local runtime or the management process; never spawns an Agent for a project. */
   measureSessionData?(params: V4SessionDataParams): Promise<V4SessionDataMeasureResult>;
   /**
@@ -713,6 +764,19 @@ export interface IZCodeAgentService {
   purgeSessionData?(
     params: V4SessionDataParams & { workspace: ZCodeAgentWorkspaceTarget },
   ): Promise<V4SessionDataPurgeResult>;
+  /** 该 workspace 的 CLI 是否在 runtime/capabilities 中声明 worktreeCwd（只供 Host 进程内调用）。 */
+  supportsWorktreeCwd?(target: ZCodeAgentWorkspaceTarget): Promise<boolean>;
+  /**
+   * 该 workspace 的 CLI 是否在 runtime/capabilities 中声明 extensionInputSource（只供 Host 进程内调用）。
+   * 代扩展发消息前必须确认；false 时调用方报 unavailable，不去掉来源后发送
+   * （apps/zcode-cli/docs/design/v2/conversation-input-source.md §7）。
+   */
+  supportsExtensionInputSource?(target: ZCodeAgentWorkspaceTarget): Promise<boolean>;
+  /**
+   * 该 workspace 的 CLI 是否在 runtime/capabilities 中声明 conversationQuoteComment。
+   * renderer 据此决定是否提供选区“批注”入口；未实现（旧 Host / 远端）按不支持处理。
+   */
+  supportsConversationQuoteComment?(target: ZCodeAgentWorkspaceTarget): Promise<boolean>;
   getTaskTokenUsage(params: ZCodeAgentTaskTokenUsageParams): Promise<ZCodeTaskTokenUsageResult>;
   readSession(params: ZCodeAgentReadSessionParams): Promise<ZCodeSessionStateSnapshot>;
   readSessionMessages(
@@ -901,6 +965,20 @@ export interface IZCodeAgentService {
   closeSession(
     params: ZCodeAgentSessionTarget & { expectedPersistence?: "deferred" | "immediate" },
   ): Promise<boolean>;
+  /**
+   * Unloads every resident session whose cwd is inside directory (session/releaseUnderDirectory, docs/git/worktree.md §8.3).
+   * The CLI decides session selection and busy/idle state; if any session is busy, none are unloaded. Only existing processes are used; with no process there are no resident sessions.
+   */
+  releaseSessionsUnderDirectory?(
+    params: ZCodeAgentWorkspaceTarget & { directory: string },
+  ): Promise<{ released: string[]; busy: string[] }>;
+  /**
+   * Queries the CLI's verdict for one command by commandId (commands/query); the Host uses it internally to confirm whether a failed session command actually ran
+   * (docs/git/worktree.md §3.5). Returns "unknown" when the CLI has no record.
+   */
+  queryCommandResult?(
+    params: ZCodeAgentWorkspaceTarget & { key: CommandKey },
+  ): Promise<CommandAck | "unknown">;
   /** Read-only totals for a permanent erase; resolves null when the connected CLI predates the method. */
   countSessionTrees?(
     params: ZCodeAgentSessionTreeParams,
@@ -948,6 +1026,8 @@ export interface IZCodeAgentService {
    * replayable state.
    */
   onDynamicProcessResourceSample(): Event<AgentLaneResourceSample>;
+  /** Plugin startup timeout workspace hint; on subscribe, the current process's degraded fact is replayed. */
+  onDynamicPluginStartupDegraded(params: ZCodeAgentWorkspaceTarget): Event<void>;
   /** MCP process lifecycle and low-frequency memory events, for reporting to ARMS by a trusted Host relay only. */
   /** Subscribed to by the trusted Host relay only; phone statistics do not depend on the renderer lifecycle. */
   onDynamicRemoteConversationTelemetry(): Event<RemoteConversationTelemetryEvent>;
@@ -1069,7 +1149,36 @@ export interface IZCodeAgentService {
   ): Event<ConversationTelemetryFact>;
   /** CUA permission observations for all local live tasks in the current window; history, remote tasks, and replayable events are excluded. */
   onDynamicCuaPermissionObservation(): Event<ZCodeAgentCuaPermissionObservation>;
+  /**
+   * Context composition (apps/zcode-cli/docs/design/v2/model/context-composition.md §3.6).
+   * Existing-only: returns null when the workspace has no running CLI, the session is not in memory, or the CLI is old (method-not-found); never starts a CLI.
+   */
+  getContextComposition?(
+    params: ZCodeAgentContextCompositionParams,
+  ): Promise<ContextComposition | null>;
+  // Note: readPluginUserOptions, which reads this plugin's user-layer settings (including sensitive values), is intentionally not on this interface.
+  // The whole ZCodeAgent channel is exposed over RPC (desktop Renderer; the mobile remote-control allowlist also includes it), so placing it here would let any client call it.
+  // The Window Host obtains it in-process via getPluginUserOptionsReader(services) in node.ts (see pluginHostQueriesClient.ts).
+  /**
+   * Candidate items for the `tool` target of the input `@` panel (docs/plugins/extension-host.md §16.6). Existing-only:
+   * with no running CLI it throws runtime-unavailable; if the session is not in CLI memory it throws -32004; other failures carry `data.code` = `plugin_mention_*`.
+   * Tool calls go through the session's MCP App authorization chain and may wait for user approval in the session on first use.
+   * Old CLI (method-not-found) → `{ supported: false }`. No cancellation is designed; callers adopt only the latest result.
+   */
+  getPluginMentionItems?(
+    params: ZCodeAgentPluginMentionItemsParams,
+  ): Promise<ZCodeAgentPluginMentionItemsResult>;
+  /** Context composition changed: carries only a revision number, live-only; on receipt, call getContextComposition as needed. */
+  onDynamicContextCompositionChanged?(
+    target: ZCodeAgentWorkspaceTarget,
+  ): Event<ContextCompositionChangedEvent>;
+  /**
+   * Model request metrics (docs/monitoring/conversation-telemetry-v4.md "Model request metrics"): one per completed request,
+   * with usage and time to first content; main turns and side paths are distinguished by querySource. Old CLIs do not send it.
+   */
+  onDynamicModelRequestMetrics?(target: ZCodeAgentWorkspaceTarget): Event<ModelRequestMetricsFact>;
   // Optional until the desktop consumer is synced (upstream marks these required).
+  /** Host consumes the resident CLI's off-peak lifecycle; not part of chat snapshot recovery. */
   onDynamicOffPeakLifecycle?(
     params: ZCodeAgentWorkspaceTarget,
   ): Event<import("@zcode/shared").OffPeakLifecycleNotification>;
@@ -1124,6 +1233,8 @@ export interface IZCodeAgentService {
   onAgentRuntimeLifecycle?: (
     listener: (event: ZCodeAgentRuntimeLifecycleEvent) => void,
   ) => IDisposable;
+  /** The current runtime process exited unexpectedly; the UI uses this to show the reason and offer reconnect. */
+  onAgentRuntimeExited?: (listener: (event: ZCodeAgentRuntimeExitedEvent) => void) => IDisposable;
   /** Whether a desktop-local CUA turn is still running, so Helper recovery does not reclaim the Agent mid-turn. */
   hasActiveCuaOperationTurn(): boolean;
   disposeWorkspace(

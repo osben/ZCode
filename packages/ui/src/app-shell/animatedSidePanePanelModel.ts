@@ -89,7 +89,7 @@ export function resolveAnimatedSidePanePanelLayout({ mobileOverlay }: { mobileOv
   return {
     collapsedSize: "0px",
     defaultSize: "0px",
-    maxSize: "65%",
+    maxSize: "100%",
     minSize: "240px",
     useResizablePanel: true,
   };

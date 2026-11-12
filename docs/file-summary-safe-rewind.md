@@ -22,7 +22,7 @@ The file-change button on a message summary rewinds this turn's file changes. Th
 ## Boundary with editUserQuery combined reset
 
 - Summary `applyFileRewind` stays workspace-only; it may show ignored shell files and rewind the remaining safe files.
-- Inline-edit `editUserQuery(workspaceMode=rewind)` requires a full rollback of the target turn: unsafe, ignored-shell, unsupported, or missing safe checkpoints all return a structured blocked result, writing no file, trimming no conversation, and sending no model request.
+- `editUserQuery(workspaceMode=rewind)` sent by the edit-mode "conversation + file reset" requires a full rollback of the target turn: unsafe, ignored-shell, unsupported, or missing safe checkpoints all return a structured blocked result, writing no file, trimming no conversation, and sending no model request.
 - The combined mode must re-run the precheck, write files, and commit the branch cut inside one Agent command; the UI must not chain two CAS commands.
 - Multi-file writes use a compensation journal; if branch/admission fails before the commit point, restore the pre-command file contents and old branch metadata.
 

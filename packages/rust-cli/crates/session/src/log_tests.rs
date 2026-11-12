@@ -1,0 +1,306 @@
+use futures_util::StreamExt;
+use rust_cli_kernel_api::session_api::KernelEvent;
+
+use super::*;
+
+fn title(value: &str) -> KernelEvent {
+    KernelEvent::TitleChanged {
+        title: value.to_owned(),
+        source: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn subscribers_get_the_replay_then_live_events_without_gaps() {
+    let log = EventLog::new();
+    assert_eq!(log.append(title("a")), 1);
+    assert_eq!(log.append(title("b")), 2);
+    let mut stream = log.subscribe(Some(1));
+    log.append(title("c"));
+    let seqs: Vec<u64> = (&mut stream).take(2).map(|event| event.seq).collect().await;
+    assert_eq!(seqs, vec![2, 3]);
+    assert_eq!(log.last_seq(), 3);
+}
+
+#[tokio::test]
+async fn subscribing_without_a_position_starts_at_the_next_event() {
+    let log = EventLog::new();
+    log.append(title("old"));
+    let mut stream = log.subscribe(None);
+    log.append(title("new"));
+    let next = stream.next().await.unwrap();
+    assert_eq!(next.seq, 2);
+}
+
+use futures_util::FutureExt;
+use rust_cli_kernel_api::ids::{ToolUseId, TurnId};
+use rust_cli_kernel_api::model::BlockDelta;
+use rust_cli_kernel_api::orchestration::QueryEvent;
+use rust_cli_kernel_api::tool::{ToolOutput, ToolProgress};
+use serde_json::json;
+
+fn delta(response: u32, index: usize, text: &str) -> KernelEvent {
+    KernelEvent::StreamDelta {
+        turn: TurnId::new("t1"),
+        response,
+        index,
+        delta: BlockDelta::Text(text.to_owned()),
+    }
+}
+
+fn tool(id: &str) -> ToolUseId {
+    ToolUseId::new(id)
+}
+
+fn output(id: &str, text: &str) -> KernelEvent {
+    KernelEvent::ToolProgress {
+        tool_use: tool(id),
+        progress: ToolProgress {
+            data: json!({"type": "bash_progress", "output": text, "totalBytes": text.len()}),
+        },
+    }
+}
+
+fn agent(id: &str, event: QueryEvent) -> KernelEvent {
+    KernelEvent::ToolProgress {
+        tool_use: tool(id),
+        progress: ToolProgress {
+            data: json!({"agentId": "agent_1", "event": event}),
+        },
+    }
+}
+
+fn child_delta(text: &str) -> QueryEvent {
+    QueryEvent::Delta {
+        message: 0,
+        index: 1,
+        delta: BlockDelta::Thinking(text.to_owned()),
+    }
+}
+
+/// 补发的事件（订阅时已经在日志里的部分）。
+fn replay(log: &EventLog, after: u64) -> Vec<SequencedEvent> {
+    let mut stream = log.subscribe(Some(after));
+    let mut events = Vec::new();
+    while let Some(Some(event)) = stream.next().now_or_never() {
+        events.push(event);
+    }
+    events
+}
+
+#[test]
+fn a_block_of_deltas_replays_as_one_delta_with_the_rest_of_the_text() {
+    let log = EventLog::new();
+    for piece in ["a", "b", "c"] {
+        log.append(delta(0, 0, piece));
+    }
+    log.append(title("t"));
+    let all = replay(&log, 0);
+    assert_eq!(all.len(), 2);
+    assert_eq!((all[0].seq, &all[0].event), (3, &delta(0, 0, "abc")));
+    assert_eq!(all[1].seq, 4);
+    let rest = replay(&log, 1);
+    assert_eq!((rest[0].seq, &rest[0].event), (3, &delta(0, 0, "bc")));
+    assert_eq!(replay(&log, 3).len(), 1);
+    // 不同的块、不同的响应各成一段，顺序不变。
+    log.append(delta(0, 1, "x"));
+    log.append(delta(1, 0, "y"));
+    log.append(delta(1, 0, "z"));
+    let tail: Vec<KernelEvent> = replay(&log, 4).into_iter().map(|e| e.event).collect();
+    assert_eq!(tail, vec![delta(0, 1, "x"), delta(1, 0, "yz")]);
+}
+
+#[test]
+fn only_the_latest_output_progress_of_a_tool_is_replayed() {
+    let log = EventLog::new();
+    log.append(output("bash_1", "one"));
+    log.append(output("bash_2", "other"));
+    log.append(output("bash_1", "one two"));
+    log.append(KernelEvent::ToolDone {
+        tool_use: tool("bash_1"),
+        output: ToolOutput {
+            content: Vec::new(),
+            is_error: false,
+            display: serde_json::Value::Null,
+        },
+    });
+    let seqs: Vec<u64> = replay(&log, 0).iter().map(|event| event.seq).collect();
+    assert_eq!(seqs, vec![2, 3, 4]);
+    assert_eq!(replay(&log, 2)[0].event, output("bash_1", "one two"));
+}
+
+#[tokio::test]
+async fn subagent_tool_progress_is_broadcast_but_not_kept() {
+    let log = EventLog::new();
+    let mut live = log.subscribe(None);
+    let progress = agent(
+        "agent_tool",
+        QueryEvent::ToolProgress {
+            tool_use: tool("child_bash"),
+            progress: ToolProgress {
+                data: json!({"type": "bash_progress", "output": "x"}),
+            },
+        },
+    );
+    log.append(progress.clone());
+    assert_eq!(live.next().await.unwrap().event, progress);
+    assert!(replay(&log, 0).is_empty());
+    assert_eq!(log.last_seq(), 1);
+}
+
+#[test]
+fn subagent_deltas_merge_like_stream_deltas() {
+    let log = EventLog::new();
+    log.append(agent("agent_tool", child_delta("think")));
+    log.append(agent("agent_tool", child_delta("ing")));
+    log.append(agent(
+        "agent_tool",
+        QueryEvent::Delta {
+            message: 0,
+            index: 2,
+            delta: BlockDelta::Text("x".to_owned()),
+        },
+    ));
+    let all = replay(&log, 0);
+    assert_eq!(all.len(), 2);
+    assert_eq!(
+        (all[0].seq, &all[0].event),
+        (2, &agent("agent_tool", child_delta("thinking")))
+    );
+    assert_eq!(
+        replay(&log, 1)[0].event,
+        agent("agent_tool", child_delta("ing"))
+    );
+}
+
+/// 修复（R1-4）：以前日志保存每个增量与每条进度，长会话里只增不减。
+#[test]
+fn the_log_does_not_grow_with_deltas_and_progress() {
+    let retained = |blocks: usize| {
+        let log = EventLog::new();
+        // 一个停在 0 的订阅流拿着下限，什么都不去掉：这里只看存的形状（保留范围另见 F120 的用例）。
+        let _held = log.subscribe(Some(0));
+        let tail = "o".repeat(2_000);
+        for block in 0..blocks {
+            for piece in 0..1_000 {
+                log.append(delta(0, block, "w"));
+                if piece % 5 == 0 {
+                    log.append(output("bash_1", &tail));
+                }
+            }
+            log.append(title("between blocks"));
+        }
+        log.retained()
+    };
+    let small = retained(10);
+    let large = retained(20);
+    // 12_010 个与 24_020 个事件：存的条目只跟块数与非瞬时事件走，流式文字每块一份。
+    assert_eq!(small.text_bytes, 10_000);
+    assert_eq!(large.text_bytes, 20_000);
+    assert!(small.entries <= 300, "{small:?}");
+    assert!(large.entries <= 300, "{large:?}");
+}
+
+/// 缺口 G1（app-protocol.md §6.4）：revision 只在可见状态变化时加一；流式增量不加，补发的合并增量带最后一片时的值。
+#[tokio::test]
+async fn the_revision_counts_state_changes_only() {
+    let log = EventLog::new();
+    let delta = |text: &str| KernelEvent::StreamDelta {
+        turn: TurnId::new("turn_1"),
+        response: 0,
+        index: 0,
+        delta: BlockDelta::Text(text.to_owned()),
+    };
+    assert_eq!(log.revision(), 0);
+    log.append(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    log.append(delta("a"));
+    log.append(delta("b"));
+    assert_eq!(log.revision(), 1);
+    log.append(title("t"));
+    log.append(KernelEvent::ContextUsage {
+        used_tokens: 1,
+        max_tokens: 2,
+        compact_at: None,
+        window_tokens: None,
+    });
+    assert_eq!(log.revision(), 2);
+    let replay: Vec<(u64, u64)> = log
+        .subscribe(Some(0))
+        .take(4)
+        .map(|event| (event.seq, event.revision))
+        .collect()
+        .await;
+    // TurnStarted、两片合成一段的增量、标题、用量。
+    assert_eq!(replay, vec![(1, 1), (3, 1), (4, 2), (5, 2)]);
+}
+
+/// 工作线 F120：没有订阅方落后时，条目封顶在 `RETAIN` 附近，最近的照常补发；以前会话开多久就留多久。
+#[test]
+fn the_log_keeps_a_bounded_window_when_nobody_lags() {
+    let log = EventLog::new();
+    for n in 0..20_000 {
+        log.append(title(&n.to_string()));
+    }
+    let kept = log.retained().entries as u64;
+    assert!(kept <= RETAIN + RETAIN / 4, "{kept}");
+    assert_eq!(replay(&log, log.last_seq() - 10).len(), 10);
+}
+
+/// 落后的订阅方拿着自己的位置：日志不去掉它还没读的；按读到的位置重新订阅（旧流先留着）时补发完整。它丢掉之后，下一次
+/// 整理照常收回。
+#[tokio::test]
+async fn a_lagging_subscriber_keeps_what_it_has_not_read() {
+    let log = EventLog::new();
+    let mut stream = log.subscribe(Some(0));
+    log.append(title("first"));
+    assert_eq!(stream.next().await.unwrap().seq, 1);
+    for n in 0..20_000 {
+        log.append(title(&n.to_string()));
+    }
+    // 广播缓冲满了：流结束，读到的位置仍是 1。
+    assert!(stream.next().await.is_none());
+    let mut again = log.subscribe(Some(1));
+    drop(stream);
+    let seqs: Vec<u64> = (&mut again)
+        .take(20_000)
+        .map(|event| event.seq)
+        .collect()
+        .await;
+    assert_eq!(seqs, (2..=20_001).collect::<Vec<_>>());
+    drop(again);
+    for n in 0..RETAIN * 2 {
+        log.append(title(&n.to_string()));
+    }
+    assert!(log.retained().entries as u64 <= RETAIN + RETAIN / 4);
+}
+
+/// 去掉旧条目之后，工具进度的位置照样对：同一个工具后来的进度只取代它自己的上一条，下限之后的别的事件一条不少。
+#[test]
+fn outputs_still_supersede_their_own_after_old_entries_are_dropped() {
+    let log = EventLog::new();
+    log.append(output("b1", "one"));
+    for n in 0..RETAIN * 2 {
+        log.append(title(&n.to_string()));
+    }
+    log.append(output("b1", "two"));
+    log.append(title("x"));
+    log.append(output("b1", "three"));
+    let floor = log.retained().floor;
+    assert!(floor > 1, "{floor}");
+    let replayed = replay(&log, floor);
+    let titles = replayed
+        .iter()
+        .filter(|event| matches!(event.event, KernelEvent::TitleChanged { .. }))
+        .count() as u64;
+    // 标题的 seq 是 2..=2·RETAIN+1，另有 x。
+    assert_eq!(titles, (2 * RETAIN + 1).saturating_sub(floor) + 1);
+    let outputs: Vec<&KernelEvent> = replayed
+        .iter()
+        .map(|event| &event.event)
+        .filter(|event| matches!(event, KernelEvent::ToolProgress { .. }))
+        .collect();
+    assert_eq!(outputs, vec![&output("b1", "three")]);
+}

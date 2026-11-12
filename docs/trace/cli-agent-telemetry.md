@@ -234,7 +234,7 @@ wrapper layer. Fields: [Model Span dictionary](./reference/schema-reference.md#1
 Out-of-Turn model work must first create a `detached_operation` so the inner `model_call` becomes its
 Child. `operation` is a controlled enum, currently: `goal_completion_verification`,
 `goal_title_generation`, `project_memory_extract`, `project_memory_dream`, `project_memory_recall`,
-`read_session_context_extract`, `read_session_context_synthesize`, `session_title_generation`,
+`session_title_generation`,
 `tool_internal_model_call`, `web_fetch_processing`, `web_search`, `workspace_git_commit_message`,
 `workspace_generate_text`. `agent_step` and `context_compaction` are carried by their own Spans and are
 not wrapped in `detached_operation`. A new LLM entry must first pick an existing operation; add an enum

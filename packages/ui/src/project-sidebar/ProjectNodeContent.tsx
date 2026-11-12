@@ -1,5 +1,5 @@
 import { SidebarNativeTooltip, ControlHintTooltip } from "@/ControlHintTooltip.js";
-import { RemoteIdentityHoverCard } from "@/project-sidebar/RemoteIdentityHoverCard.js";
+import { ProjectIdentityHoverCard } from "@/project-sidebar/ProjectIdentityHoverCard.js";
 import { remoteHostLabel } from "@/project-sidebar/RemoteHostSection.js";
 import { memo } from "react";
 import type { useSortable } from "@dnd-kit/sortable";
@@ -48,6 +48,7 @@ import { DeferredRowsSlot, useRowsReveal } from "@/project-sidebar/DeferredRows.
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveRemoteConnectionPresentation } from "@/lib/remoteConnectionPresentation.js";
 import { RemoteConnectionStateIcon } from "@/remote-connection/RemoteConnectionStateIcon.js";
+import { ManagedWorktreeCreatingRows } from "@/managed-worktrees/index.js";
 
 // 修复原因：memo 内容的内联默认对象/数组会在每次渲染时新建引用，触发引用稳定性门禁。
 const DEFAULT_AVAILABILITY: ProjectAvailability = { online: true };
@@ -229,9 +230,10 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
         ]
       : []),
   ];
+  // 单目录分支曾省略路径；统一展示完整 rootPath，让右键菜单始终明确文件目标。
   const files: ProjectRowAction[] = project.roots.map((root, index) => ({
     id: `files-${index}`,
-    label: project.roots.length > 1 ? `${showFiles} · ${root.rootPath}` : showFiles,
+    label: `${showFiles} · ${root.rootPath}`,
     icon: ListTree,
     run: () => onViewFiles?.(root.rootPath),
     group: "create",
@@ -257,10 +259,9 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
     <>
       <ContextMenu modal={false} onOpenChange={(open) => open && onMenuOpen?.()}>
         {/* 标题区域不含行尾按钮，作为锚点时浮层会遮住操作；以整行边界定位，保留更多/新建入口可点击。 */}
-        <RemoteIdentityHoverCard
+        <ProjectIdentityHoverCard
           host={remoteHost}
           title={project.name}
-          projectName={project.name}
           deviceName={deviceLabel}
           paths={project.roots.map((root) => root.rootPath)}
           connectionError={diagnostics?.error}
@@ -428,7 +429,10 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
                             </Button>
                           </DropdownMenuTrigger>
                         </ControlHintTooltip>
-                        <DropdownMenuContent align="end">
+                        <DropdownMenuContent
+                          align="end"
+                          className="max-w-(--radix-dropdown-menu-content-available-width)"
+                        >
                           <ProjectMenuItems actions={files} />
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -462,16 +466,19 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
               </div>
             </div>
           </ContextMenuTrigger>
-        </RemoteIdentityHoverCard>
+        </ProjectIdentityHoverCard>
         {/* 非模态菜单只负责导航，避免退出动画与编辑弹窗交错后残留指针锁。 */}
-        <ContextMenuContent>
+        {/* 完整路径可能比窄屏更宽；按浮层可用宽度收口，再由文件项换行，避免裁掉目标目录。 */}
+        <ContextMenuContent className="max-w-(--radix-context-menu-content-available-width)">
           <ProjectMenuItems actions={contextActions} context />
         </ContextMenuContent>
       </ContextMenu>
       {/* 直接条件卸载曾跳过收起动画；复用旧侧栏的受控高度/透明度生命周期。 */}
       <CollapsibleContent data-testid="virtual-project-tasks">
-        {/* 原因：旧任务文字的 34px 缩进外只需 8px 留白，空态与项目名称保持对齐。 */}
+        {/* Reason: beyond the 34px indent of the old task text only 8px of padding is needed, keeping the empty state aligned with the project name. */}
         <div className="pl-2 pt-1">
+          {/* A task starting in a new worktree is listed before the real tasks (docs/git/worktree.md §3.3). */}
+          <ManagedWorktreeCreatingRows projectId={project.id} />
           <DeferredRowsSlot rows={rows} tasks={tasks} onSelect={onSelect} refresh={refresh} />
         </div>
       </CollapsibleContent>

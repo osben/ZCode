@@ -126,12 +126,12 @@ Run both formal specs from the repository root (10 cases with BDO07; no global p
 ```bash
 ZCODE_E2E_COVERAGE=1 \
 pnpm --filter @zcode/desktop test:e2e -- \
-  --spec ./test/e2e/conversation-session/conversation-session-bash-direct-output.test.ts \
-  --spec ./test/e2e/conversation-session/conversation-session-terminal-expanded-details-and-status.test.ts
+  --spec ./test/e2e/conversation-session/tools/conversation-session-bash-direct-output.test.ts \
+  --spec ./test/e2e/conversation-session/tools/conversation-session-tool-groups-history-restore.test.ts
 ```
 
 For isolated replay, set `E2E_PROVIDER_REPLAY_FIXTURE_PATH` before the same command to
-`packages/desktop/test/e2e/fixtures/upstream/common.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-bash-direct-output.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-terminal-expanded-details-and-status.json`.
+`packages/desktop/test/e2e/fixtures/upstream/common.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-bash-direct-output.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-tool-groups-history-restore.json`.
 V4 background-work evidence takes only the single Bash cancel case; other scenarios in that file are not counted.
 
 The final run reused the same workspace's completed Desktop/CLI build under the same coverage config and ran `wdio run wdio.conf.ts` directly with `ZCODE_E2E_SKIP_BUILD=1 ZCODE_E2E_SKIP_AGENT_BUILD=1`; the first regression and the regression after the test-config fix went through full builds; no other checkout's artifacts were used. Windows/Linux Desktop E2E, mobile replayable and TUI were not run.
@@ -140,7 +140,7 @@ Rerun only the new case (keep the wrapper's HOME/artifact isolation; do not add 
 
 ```bash
 pnpm --filter @zcode/desktop test:e2e \
-  --spec ./test/e2e/conversation-session/conversation-session-bash-direct-output.test.ts \
+  --spec ./test/e2e/conversation-session/tools/conversation-session-bash-direct-output.test.ts \
   --mochaOpts.grep BDO07
 ```
 

@@ -68,9 +68,9 @@ const workflowCardOpenState = new Map<string, boolean>();
 /**
  * CreateWorkflow / AmendWorkflow tool card in the chat area.
  *
- * While writing, use a non-expandable ToolLayout with a persistent draft-stage line below it (stations are written as the script streams); awaiting confirmation uses a ToolLayout with an expandable script. A compile error is a compiler-feedback row
- * (“Workflow draft · version n · n fixes needed · not run”)—not a failure; nothing was run.
- * The row above a run already linked in v4 is handled by WorkflowToolSummary. This component retains the legacy host’s run-card rendering.
+ * 编写中使用不可展开的 ToolLayout，行下常驻草稿阶段线（站随脚本流式写出）；待确认使用可展开脚本的 ToolLayout；编不过是编译反馈行
+ * （「工作流草稿 · 第 n 稿 · n 处待修正 未运行」，状态两词以 gap 分隔）——不是失败，什么都没跑。
+ * v4 已关联 run 的上方行由 WorkflowToolSummary 承载。本组件保留旧宿主的运行卡渲染。
  *
  * AmendWorkflow uses the **same** renderer (the display kind is also `create_workflow`, so the graph, draft pen, and diagnostic card have one implementation),
  * changing only the revision terminology and adding an “Adjusted from run X” line in the card body—based on tool name, not family.

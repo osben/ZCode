@@ -182,7 +182,7 @@ export function WorkflowTimelineFills({
   inset: number;
   onOpenFill?: (fill: TimelineFill) => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const maskId = `wf-fill-legend-${useId().replace(/:/gu, "")}`;
   // The model sorts by `from` ascending, outer fill before inner on a shared start, so heads with the
   // same start line up in the same order.
@@ -202,8 +202,9 @@ export function WorkflowTimelineFills({
   const renderHead = (fill: TimelineFill) => {
     const isFresh = fresh.has(fill.holeId);
     const on = active === fill.holeId;
+    // 时间按界面语言格式化（不传 locale 会落到系统语言，例如中文系统 + 日语界面显示「下午3:00」）
     const time =
-      fill.filledAt === undefined ? undefined : new Date(fill.filledAt).toLocaleTimeString();
+      fill.filledAt === undefined ? undefined : new Date(fill.filledAt).toLocaleTimeString(locale);
     const title = intl.formatMessage(
       {
         id:

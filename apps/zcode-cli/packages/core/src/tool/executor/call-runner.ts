@@ -27,6 +27,7 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../types.js";
 import type { ToolEntry } from "../types.js";
 import type { BackgroundTaskTracker } from "./background-tasks.js";
 import {
+  annotateUnsettledCall,
   createErrorResult,
   createPermissionErrorResult,
   createToolHandlerFailureError,
@@ -515,6 +516,7 @@ async function executeToolCallImpl(
         toolCallId: canonicalToolCall.id,
         toolSearch: options?.toolSearch,
         telemetry,
+        logger: deps.logger,
         automationTurn: options?.automationTurn,
         automationId: options?.automationId,
         offPeakTurn: options?.offPeakTurn,
@@ -552,9 +554,12 @@ async function executeToolCallImpl(
         coordinatorResponsePort: deps.coordinatorResponsePort,
         workflowSubmitPort: deps.workflowSubmitPort,
         workflowEscalatePort: deps.workflowEscalatePort,
+        webSearchBudget: deps.webSearchBudget,
         artifactStore: deps.artifactStore,
+        sessionControl: deps.sessionControl,
         automationPort: deps.automationPort,
         offPeakPort: deps.offPeakPort,
+        pluginDiscoveryPort: options?.pluginDiscoveryUi ? deps.pluginDiscoveryPort : undefined,
         topicResourcePort: deps.topicResourcePort,
         sessionStore: deps.sessionStore,
         sessionModePort: deps.sessionModePort,
@@ -584,6 +589,7 @@ async function executeToolCallImpl(
         workingDirectory: guardedWorkingDirectory ?? deps.getWorkingDirectory(),
         workspaceRoot: deps.getWorkspaceRoot(),
         workspaceIdentity: deps.workspaceIdentity,
+        workspaceKey: deps.workspaceKey,
         remoteSessionId: deps.remoteSessionId,
         clientMode: deps.clientMode,
         deliveryKind: deps.deliveryKind,
@@ -764,30 +770,33 @@ async function executeToolCallImpl(
         traceContext,
         options?.signal,
       );
-      // Fix reason: Hook text used to be spliced onto the UI summary in a failed result, so the model saw a
-      // different error with and without Hooks. Now the tool result holds only the original text from
-      // createErrorResult, and the Hook text becomes separate attachments.
-      let result = withHookAdditionalContexts(
-        createErrorResult(
-          canonicalToolCall,
-          error instanceof Error ? error : new Error(String(error)),
-          durationMs,
-        ),
-        [
-          // Fix reason: when an error is thrown after the success path has formatted the contexts (for example
-          // official CUA frame validation fails, or writing the result event fails), formatting again would use the
-          // unfiltered contexts, send filtered credentials into attachments, and persist an oversized context to
-          // disk a second time.
-          ...(formattedSafePreContexts ?? (await formatPreToolHookContexts())),
-          ...(await formatToolHookAdditionalContexts(
-            deps,
-            HookEventName.PostToolUseFailure,
-            canonicalToolCall,
-            failureHookResult.additionalContexts,
-            traceContext,
-          )),
-        ],
+      // 修复原因：Hook 文本原来以 UI 摘要为底拼进失败结果，有 Hook 与没有 Hook 时模型看到的
+      // 错误不同。现在 tool result 只放 createErrorResult 的原文，Hook 文本另成附件。
+      // 规格 0.15：超时与执行中取消会在「请求可能已被受理」之后打断 handler，回执送不回来；
+      // 让工具把对账身份追加进同一条错误，否则模型只能另起新请求、重复执行。
+      const failure = annotateUnsettledCall(
+        error instanceof Error ? error : new Error(String(error)),
+        entry ?? {},
+        executionInput,
+        canonicalToolCall.id,
       );
+      // 修复原因：同步子代理失败时父模型只收到 provider 原文，拿不到续接用的 agentId。
+      // 工具补充的文本只接在模型可见原文之后；UI 摘要、错误事件和日志都不变。
+      const errorResult = createErrorResult(canonicalToolCall, failure, durationMs, {
+        modelNote: entry?.formatErrorModelContent?.(error),
+      });
+      let result = withHookAdditionalContexts(errorResult, [
+        // 修复原因：成功路径格式化之后再抛错（例如官方 CUA 帧校验失败、写结果事件失败）时，
+        // 重新格式化会用未过滤的上下文，把被过滤的凭据送进附件，超长上下文还会再落盘一次。
+        ...(formattedSafePreContexts ?? (await formatPreToolHookContexts())),
+        ...(await formatToolHookAdditionalContexts(
+          deps,
+          HookEventName.PostToolUseFailure,
+          canonicalToolCall,
+          failureHookResult.additionalContexts,
+          traceContext,
+        )),
+      ]);
       result = withAutomationCreateLimitTurnStop(result, {
         error,
         toolName: canonicalToolCall.name,

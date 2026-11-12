@@ -33,8 +33,7 @@ they saw.
 - If a recheck returns the same version as the current target, do not download again. If it is lower than the
   target or skipped, keep an existing ready package in the ready state; otherwise return to `idle`.
 - When the downloaded package version equals the current target, clicking "Restart to update" continues
-  installing that package. If the target is newer and the new package is not ready yet, neither quitting nor
-  "Restart to update" may install the old package.
+  installing that package. If the target is newer and the new package is not ready yet, "Restart to update" must not install the old package; an ordinary quit never triggers an install in any version state.
 - If the replacement download fails while the older ready package still exists, restore the menu to the older
   ready state so users do not lose their installable update.
 
@@ -46,8 +45,7 @@ they saw.
 - Compare versions using semver coercion (to support strings like `v3.1.4`); if parsing fails, treat differing
   strings as needing a download.
 - Start automatic polling from `idle`, `update-available` and `update-downloaded`; keep skipping `checking` and
-  real `download-progress` to avoid concurrent downloads. On macOS/Linux, keep automatic installation on quit
-  only when the ready package version equals the current target.
+  real `download-progress` to avoid concurrent downloads. On all platforms an ordinary quit never triggers an install; only the user's explicit "Restart to update" enters the install flow, and the ready package must equal the current target.
 - The only install state is held by main in `quitAndInstallPhase`, progressing `idle -> preparing -> installing`.
   A failure enters the terminal `recovering` state and restarts in a controlled way. Confirming installation
   locks the ready package immediately; background manifest requests take no part in install admission. Late
@@ -69,22 +67,32 @@ they saw.
   the mobile shared-host attachment, or the desktop continuous / web remote replayable message boundaries.
 
 ```text
-Download Promise settles successfully → ready → confirm install / lock package → preparing → installing → quit
+Download Promise settles successfully → ready → explicit confirm install / lock package → preparing → installing → quit
                                               background check does not take part in waiting  │          │
                                                                                                └─ failure ─┴→ recovering → restart and recover
 ```
 
 ## Regression verification
 
-- Unit tests cover quit being allowed through after macOS/Linux install calls return, idempotence of repeated
-  commands, and retry back to ready after synchronous or asynchronous failures.
-- Unit tests cover a pending check not blocking ready-state installation, ready publication after download
-  completion, target locking after preparation, native errors and duplicate events. The Electron smoke test
-  covers new-version events and duplicate IPC during preparation, confirming that after Host/Agent cleanup the
-  install is still handed off only once.
+- Expected behavior: an ordinary quit in the ready state on macOS/Linux/Windows runs no install preparation, calls no installer and schedules no relaunch. After an install failure, a new process that rediscovers the same pending package must still let an ordinary quit finish normally; this recovery path needs its own acceptance through the real startup recovery entry and cannot be replaced by the ready-state injection scenarios below.
+- The deb regression reuses the locked-dependency `DebUpdater` and checks install success, privilege-escalation failure and recovery through an isolated command-execution boundary; it does not run a real package manager on a dev machine. Real Ubuntu deb privilege UI, file replacement and version upgrade need separate real-machine acceptance.
+- The current Electron smoke covers a pending check not blocking ready-state installation, new-version events and duplicate IPC during preparation, and native error recovery. Install and Host/Agent cleanup each hand off only once; the historical App unit tests are retired and are not current coverage.
 - The Electron process-level smoke test uses the real `MacUpdater.quitAndInstall()`, renderer IPC and
   `app.before-quit`, and controls native staging callbacks so they arrive after the install call returns. It
   asserts the install is initiated once and the process exits normally. The native updater uses fixtures and
   does not replace the user's app or perform a real ShipIt install.
 - ShipIt file replacement and automatic restart for signed release packages still need pre-release
   verification; the smoke test does not substitute for it.
+
+### Quit-intent regression entry
+
+`node packages/desktop/scripts/auto-update-install-reentry-smoke.mjs` runs real Electron, the production updater module and the locked electron-updater in an isolated userData:
+
+- Default / `--pending-check` / `--preparing-download-failure`: Mac async install handoff, pending check and duplicate commands during preparation.
+- `--native-install-error`: a Mac staging failure recovers with one restart only.
+- `--ordinary-quit`: a downloaded Mac package does not block an ordinary quit.
+- `--linux-deb`: the real DebUpdater still calls pkexec when non-root with `isAdminRightsRequired=false`; only the command-execution boundary is replaced.
+- `--linux-deb --native-install-error`: simulated privilege-escalation failure; after service cleanup it recovers with one restart only.
+- `--linux-deb --ordinary-quit`: after the updater initializes, the ready state is injected through the `update-downloaded` event, then it verifies an ordinary quit neither installs nor relaunches. The fixture prepares no persisted pending data and does not pass through `hydratePendingPostUpdateReleaseNotes()`, so it does not cover a new process recovering state from a pending package.
+
+Running the Linux updater branch in macOS Electron does not verify the real Linux authorization dialog, package manager or installed version change.

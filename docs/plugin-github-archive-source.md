@@ -116,6 +116,8 @@ These sources keep system Git:
 
 Archive timeouts, connection failures, 5xx, rate limits, or security validation failures do not fall back to Git, so the same network/malicious-package error is not re-executed on an unpredictable path. Only the "needs Git semantics/auth" classification falls back.
 
+When a GET download of a GitHub Archive or an explicit ZIP hits a connection reset (`ECONNRESET`, or `UND_ERR_SOCKET` of native fetch), it waits a cancelable 250 ms and retries the current URL once. The proxy is recomputed on every redirect, keeping the rule of clearing custom headers across origins. Nothing is written to or activated in the plugin directory before the retry; after the final download succeeds the original digest, size and extraction checks still run. Certificate errors, cancellation, timeouts, HTTP errors and content validation failures are not retried automatically, and no proxy or certificate check is bypassed. A persistent connection break still returns the source diagnostic and the old cache is unchanged.
+
 When system Git is missing, the diagnostic code is `plugin_git_unavailable`; the message must state the source, why it needs Git, and recovery options (install Git on the current Agent Host, or switch to a public GitHub HTTPS / explicit ZIP source).
 
 ## Download and extraction safety
@@ -155,6 +157,7 @@ recovery: if authority carries the transactionId keep target, otherwise restore 
 - cleanup failure only logs/appends a diagnostic and never rolls back a successful new version;
 - while the owner is still alive, plain reads do not run recovery: before the authority records the transactionId they read the backup, after it the target — so overview/runtime discovery neither steals the writer's rollback resources nor sees cross-generation state;
 - after process exit, recovery reads use the same `cacheTransactionId` in `known_marketplaces.json` / `installed_plugins.json` as the commit criterion: present means keep the new target; absent means restore the old backup (for a first install, remove the uncommitted new target);
+- async runtime discovery that meets leftovers of a dead transaction runs the same recovery first and then hands the target path to the session. It must not return the backup directly: the session holds Skill/Hook/component paths for a long time, and a later detail read or install-triggered recovery would rename the backup to the target and invalidate the path in the session; the normal path with no leftovers does not enter recovery;
 - JSON state files use same-directory atomic replace where rename-over is supported; on Windows, when the target exists, the same deterministic backup + read-time recovery protocol applies;
 - every synchronized read entry for `known_marketplaces.json`, `installed_plugins.json`, the Marketplace manifest, and the installed cache parses the readable generation, so an active commit or a process-exit window is never interpreted as the source or plugin being deleted;
 - Marketplace refresh fully loads and validates the source before activating a snapshot; any download/parse error leaves the old snapshot untouched.

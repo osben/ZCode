@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 // ============================================================
 // Skill-root scanning rules (shared implementation)
 // ============================================================
@@ -27,7 +28,6 @@
 // to determine their targets. User-level skill roots keep following links by default (symlink
 // imports from ~/.zcode/skills are supported).
 
-import { lstatSync, readdirSync, statSync } from "node:fs";
 import { lstat, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { SKILL_FILE_NAME, shouldWalkSkillDirectoryEntry } from "@zcode/shared";
@@ -39,6 +39,10 @@ export interface ScanSkillFilesOptions {
    * outside the plugin root, and rejecting them prevents escape without realpath target checks.
    */
   followSymbolicLinks?: boolean;
+  /** 插件入口自身是技能时停止，不探测其附属目录。 */
+  stopAtSkill?: boolean;
+  readDirectory?: (path: string) => Promise<Dirent[]>;
+  observe?: (path: string) => Promise<"file" | "directory" | "other" | "missing">;
 }
 
 /**
@@ -54,18 +58,19 @@ export async function scanSkillFilesUnderRoot(
   // In plugin scans, return empty when the root itself is a link (including a junction).
   if (!followSymlinks && (await isSymbolicLink(rootPath))) return [];
 
-  const rootInfo = await stat(rootPath).catch((error) => {
-    throwIfUnexpectedScanError(error);
-    return null;
-  });
-  if (!rootInfo?.isDirectory()) return [];
+  if ((await pathKind(rootPath, options.observe)) !== "directory") return [];
 
   const files: string[] = [];
   const own = join(rootPath, SKILL_FILE_NAME);
-  // It is normal for the root itself to have no SKILL.md; continue into one level of subdirectories.
-  if (await isLoadableSkillFile(own, followSymlinks)) files.push(own);
+  // 根自身无 SKILL.md 是常态，继续扫一层子目录。
+  if (await isLoadableSkillFile(own, followSymlinks, options.observe)) {
+    files.push(own);
+    // 单技能的 scripts、agents 等附属目录不是隐式入口，避免额外发现和无效 IO。
+    if (options.stopAtSkill) return files;
+  }
 
-  const entries = await readdir(rootPath, { withFileTypes: true });
+  const entries = await (options.readDirectory?.(rootPath) ??
+    readdir(rootPath, { withFileTypes: true }));
   for (const entry of entries) {
     const walkable = entry.isDirectory() || (followSymlinks && entry.isSymbolicLink());
     if (!walkable) continue;
@@ -75,32 +80,8 @@ export async function scanSkillFilesUnderRoot(
     // parseSkill would silently skip it, but counts and component enumeration also consume this
     // result; without validation, they would include a nonexistent skill.
     const candidate = join(rootPath, entry.name, SKILL_FILE_NAME);
-    if (await isLoadableSkillFile(candidate, followSymlinks)) files.push(candidate);
-  }
-  return files;
-}
-
-/** Synchronous variant of scanSkillFilesUnderRoot with the same error contract. */
-export function scanSkillFilesUnderRootSync(
-  rootPath: string,
-  options: ScanSkillFilesOptions = {},
-): string[] {
-  const followSymlinks = options.followSymbolicLinks ?? true;
-  if (!followSymlinks && isSymbolicLinkSync(rootPath)) return [];
-
-  const rootInfo = statSyncOrNull(rootPath);
-  if (!rootInfo?.isDirectory()) return [];
-
-  const files: string[] = [];
-  const own = join(rootPath, SKILL_FILE_NAME);
-  if (isLoadableSkillFileSync(own, followSymlinks)) files.push(own);
-
-  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
-    const walkable = entry.isDirectory() || (followSymlinks && entry.isSymbolicLink());
-    if (!walkable) continue;
-    if (!shouldWalkSkillDirectoryEntry(entry.name)) continue;
-    const candidate = join(rootPath, entry.name, SKILL_FILE_NAME);
-    if (isLoadableSkillFileSync(candidate, followSymlinks)) files.push(candidate);
+    if (await isLoadableSkillFile(candidate, followSymlinks, options.observe))
+      files.push(candidate);
   }
   return files;
 }
@@ -110,18 +91,23 @@ export function scanSkillFilesUnderRootSync(
  * links, reject all symlink files (including junctions) as a defense against file-level escape
  * (SKILL.md -> any external file).
  */
-async function isLoadableSkillFile(path: string, followSymlinks: boolean): Promise<boolean> {
+async function isLoadableSkillFile(
+  path: string,
+  followSymlinks: boolean,
+  observe?: ScanSkillFilesOptions["observe"],
+): Promise<boolean> {
   if (!followSymlinks && (await isSymbolicLink(path))) return false;
+  return (await pathKind(path, observe)) === "file";
+}
+
+async function pathKind(path: string, observe: ScanSkillFilesOptions["observe"]) {
+  // material reader 已查到文件类型，复用该事实，避免每个技能再 stat 一遍。
+  if (observe) return observe(path);
   const info = await stat(path).catch((error) => {
     throwIfUnexpectedScanError(error);
     return null;
   });
-  return info?.isFile() ?? false;
-}
-
-function isLoadableSkillFileSync(path: string, followSymlinks: boolean): boolean {
-  if (!followSymlinks && isSymbolicLinkSync(path)) return false;
-  return statSyncOrNull(path)?.isFile() ?? false;
+  return info?.isFile() ? "file" : info?.isDirectory() ? "directory" : info ? "other" : "missing";
 }
 
 async function isSymbolicLink(path: string): Promise<boolean> {
@@ -132,24 +118,7 @@ async function isSymbolicLink(path: string): Promise<boolean> {
   }
 }
 
-function isSymbolicLinkSync(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function statSyncOrNull(path: string): { isFile(): boolean; isDirectory(): boolean } | null {
-  try {
-    return statSync(path);
-  } catch (error) {
-    throwIfUnexpectedScanError(error);
-    return null;
-  }
-}
-
-/** ENOENT (missing path) is normal during scanning and is swallowed; rethrow other errors (such as EACCES). */
+/** ENOENT（路径不存在）是扫描常态，吞掉；其余错误（EACCES 等）向上抛。 */
 function throwIfUnexpectedScanError(error: unknown): void {
   if (
     typeof error === "object" &&

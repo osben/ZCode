@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, isAbsolute, relative } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { pauseAutomationsForArchivedTask } from "#src/session/automationRepo.js";
 import {
   generateTraceId,
   isRemoteWorkspaceIdentity,
@@ -19,7 +20,11 @@ import type {
   SaveProjectInput,
   VirtualProject,
 } from "#src/project-storage/contract.js";
-import { ensureHost, OWNERSHIP_DECIDED } from "#src/project-storage/legacy-tasks.js";
+import {
+  ensureHost,
+  OWNERSHIP_DECIDED,
+  readInheritedWorktreePlacement,
+} from "#src/project-storage/legacy-tasks.js";
 import type { ProjectDataRepositoryContract } from "#src/project-storage/purge/contract.js";
 import {
   assertRemoteProjectRoots,
@@ -28,7 +33,6 @@ import {
 import { claimForkedTask } from "#src/project-storage/project-repository-fork.js";
 import {
   executionDirectoriesSchema,
-  insertReservationRow,
   readProjects,
   readTask,
   requireProject,
@@ -69,6 +73,26 @@ function tableExists(db: DatabaseSync, name: string): boolean {
   );
 }
 
+/**
+ * Placement of a worktree task: the workspace is the project, and the cwd lies inside the managed worktree (docs/git/worktree.md §6.6.1).
+ * Only local tasks with a project owner and a cwd inside the worktree root are allowed; any other combination is a caller assembly error and is rejected.
+ */
+function resolveWorktreePlacement(input: {
+  task: { workspaceIdentity?: string };
+  projectId: string | null;
+  cwd?: string;
+  worktreeRoot?: string;
+}): { cwd: string; worktreeRoot: string } | null {
+  if (input.cwd === undefined && input.worktreeRoot === undefined) return null;
+  if (!input.cwd || !input.worktreeRoot) throw new Error("project.worktree-placement-incomplete");
+  if (input.task.workspaceIdentity?.trim()) throw new Error("project.worktree-local-only");
+  if (!input.projectId) throw new Error("project.worktree-requires-project");
+  const relativeCwd = relative(input.worktreeRoot, input.cwd);
+  if (relativeCwd.startsWith("..") || isAbsolute(relativeCwd))
+    throw new Error("project.worktree-cwd-outside-root");
+  return { cwd: input.cwd, worktreeRoot: input.worktreeRoot };
+}
+
 function readTasks(db: DatabaseSync): ProjectTask[] {
   // Migrated legacy backend rows also carry CLI timestamps; keep the list's provider boundary so sessions the Controller cannot operate are not shown.
   return db
@@ -82,7 +106,13 @@ function readTasks(db: DatabaseSync): ProjectTask[] {
         ...meta,
         taskId: String(row.task_id),
         traceId: meta.traceId ?? generateTraceId(String(row.task_id)),
-        workspacePath: String(row.root_path),
+        // workspacePath is the task's owning workspace; a worktree task's cwd is given separately
+        // (docs/git/worktree.md §6.6.1). For ordinary tasks both columns are equal and behaviour is unchanged.
+        workspacePath: String(row.workspace_path),
+        ...(typeof row.worktree_root === "string" ? { worktreeRoot: row.worktree_root } : {}),
+        ...(row.root_path && row.root_path !== row.workspace_path
+          ? { cwd: String(row.root_path) }
+          : {}),
         workspaceIdentity:
           row.workspace_identity === row.workspace_key
             ? String(row.workspace_identity)
@@ -133,6 +163,7 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
         this.db
           .prepare("UPDATE tasks SET archived=1 WHERE workspace_key=? AND task_id=?")
           .run(row.workspace_key!, row.task_id!);
+        pauseAutomationsForArchivedTask(this.db, String(row.workspace_key), String(row.task_id));
         result.push({
           workspacePath: String(row.workspace_path),
           taskId: String(row.task_id),
@@ -398,6 +429,9 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
       if (!task) throw new Error("project.task-not-found");
       if (project.hostId !== (this.ownerHostId ?? "local") || task.host_id !== project.hostId)
         throw new Error("project.cross-host-move");
+      // The cwd of a worktree task sits under the managed root; moving it would turn the worktree path into another project's root (§7.1).
+      if (typeof task.worktree_root === "string")
+        throw new Error("project.worktree-task-immovable");
       assertRemoteTaskDirectories(this.ownerHostId, project, String(task.root_path));
       if (!project.roots.some((root) => root.rootPath === task.root_path)) {
         if (!input.addMissingRoot) throw new Error("project.root-confirmation-required");
@@ -435,6 +469,41 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
     return transaction(this.db, () => resolveDirectories(this.db, task, this.ownerHostId), false);
   }
 
+  findCreationReceipts(
+    input: Parameters<ProjectRepositoryContract["findCreationReceipts"]>[0],
+  ): Array<{ sessionId: string; directories: ProjectDirectories }> {
+    // Root cause: the original query was scoped by workspace_key, so an App-control retry looked up by the project's current main directory; once that changed, the first receipt was not found,
+    // the retry re-reserved under the new directory and was sent to the wrong owner. The commandId is already unique within the caller's namespace, so looking up by command is enough.
+    return transaction(
+      this.db,
+      () =>
+        this.db
+          .prepare(
+            `SELECT c.session_id, t.workspace_path, t.workspace_identity
+            FROM session_creation_commands c
+            LEFT JOIN tasks t ON t.workspace_key=c.workspace_key AND t.task_id=c.session_id
+            WHERE c.client_id=? AND c.command_id=?`,
+          )
+          .all(input.creationCommand.clientId, input.creationCommand.commandId)
+          .map((row) => {
+            if (typeof row.workspace_path !== "string")
+              throw new Error("project.creation-task-missing");
+            const task = {
+              workspacePath: row.workspace_path,
+              ...(typeof row.workspace_identity === "string"
+                ? { workspaceIdentity: row.workspace_identity }
+                : {}),
+              taskId: String(row.session_id),
+            };
+            return {
+              sessionId: task.taskId,
+              directories: resolveDirectories(this.db, task, this.ownerHostId),
+            };
+          }),
+      false,
+    );
+  }
+
   private reserveForkedTask(input: {
     task: ProjectTaskRef;
     parentTaskId: string;
@@ -452,6 +521,13 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
       const directories = resolveDirectories(this.db, parentRef, this.ownerHostId);
       if (directories.workspacePath !== input.task.workspacePath)
         throw new Error("project.cwd-not-in-roots");
+      // When the ACK arrives first, the parent row's inheritance rule from the first fact ingestion must still apply; otherwise the child loses its worktree marker,
+      // navigation would use the cwd as the workspace, and the delete occupancy check would miss this child.
+      const inherited = readInheritedWorktreePlacement(this.db, {
+        workspaceKey: resolveWorkspaceKey(input.task),
+        hostId: String(parent.host_id),
+        taskId: input.parentTaskId,
+      });
       const existing = readTask(this.db, input.task);
       if (
         existing &&
@@ -464,25 +540,30 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
         // The CLI commits the fork body first; the Host persists the parent's ownership before the ACK is visible to the UI, so an immediate open never sees empty ownership.
         this.db
           .prepare(`INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,created_at,updated_at,
-          host_id,root_path,project_id,handoff_pending,execution_directories,forked_from_task_id)
-          VALUES(?,?,?,?,0,0,?,?,?,?,?,?)`)
+          host_id,root_path,project_id,handoff_pending,execution_directories,forked_from_task_id,worktree_root)
+          VALUES(?,?,?,?,0,0,?,?,?,?,?,?,?)`)
           .run(
             resolveWorkspaceKey(input.task),
             input.task.workspacePath,
             input.task.workspaceIdentity ?? null,
             input.task.taskId,
             String(parent.host_id),
-            String(parent.root_path),
+            inherited?.rootPath ?? String(parent.root_path),
             directories.projectId,
             OWNERSHIP_DECIDED,
-            parent.execution_directories ?? null,
+            inherited?.executionDirectories ?? parent.execution_directories ?? null,
             input.parentTaskId,
+            inherited?.worktreeRoot ?? null,
           );
-      } else if (parent.host_id !== "local" && existing.project_id == null) {
+      } else if (
+        parent.host_id !== "local" &&
+        existing.project_id == null &&
+        (Number(existing.handoff_pending) & OWNERSHIP_DECIDED) === 0
+      ) {
         // The sessions-index row may arrive before the ACK; only fill a missing remote owner on the same parent chain, and replays must not overwrite a user move.
         this.db
           .prepare(`UPDATE tasks SET project_id=?,handoff_pending=handoff_pending | ?
-          WHERE workspace_key=? AND task_id=? AND project_id IS NULL`)
+          WHERE workspace_key=? AND task_id=? AND project_id IS NULL AND (handoff_pending & ${OWNERSHIP_DECIDED})=0`)
           .run(
             directories.projectId,
             OWNERSHIP_DECIDED,
@@ -532,6 +613,18 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
         if (readTask(this.db, { ...input.task, taskId: legacyId })) taskId = legacyId;
       }
       const task = { ...input.task, taskId: taskId ?? `sess_${randomUUID()}` };
+      const placement = resolveWorktreePlacement(input);
+      // Root cause: App-control fork used to write the child row here by workspace; when the CLI fact arrived later the row already had an owner,
+      // so the inheritance from the first report was skipped, the worktree fork's child cwd was recorded as the project main directory, and the delete gate let it through.
+      // Both first-write points share one inheritance function (§3.6).
+      const inherited =
+        !placement && input.forkedFromTaskId
+          ? readInheritedWorktreePlacement(this.db, {
+              workspaceKey: key,
+              hostId: host,
+              taskId: input.forkedFromTaskId,
+            })
+          : null;
       if (!readTask(this.db, task)) {
         assertRemoteTaskDirectories(
           this.ownerHostId,
@@ -551,16 +644,23 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
             throw new Error("project.cwd-not-in-roots");
         }
         // The creation owner must be recorded before the CLI's first dispatch. An empty-fact row is not a fake session; the list reads only rows that have CLI facts.
-        insertReservationRow(this.db, {
-          key,
-          task,
-          host,
-          projectId: input.projectId,
-          executionDirectories:
+        this.db
+          .prepare(`INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,created_at,updated_at,host_id,root_path,project_id,handoff_pending,execution_directories,worktree_root)
+          VALUES(?,?,?,?,0,0,?,?,?,?,?,?)`)
+          .run(
+            key,
+            task.workspacePath,
+            task.workspaceIdentity ?? null,
+            task.taskId,
+            host,
+            placement?.cwd ?? inherited?.rootPath ?? task.workspacePath,
+            input.projectId,
+            OWNERSHIP_DECIDED,
             input.additionalDirectories === undefined
-              ? null
+              ? (inherited?.executionDirectories ?? null)
               : JSON.stringify(executionDirectoriesSchema.parse(input.additionalDirectories)),
-        });
+            placement?.worktreeRoot ?? inherited?.worktreeRoot ?? null,
+          );
       }
       const directories = resolveDirectories(this.db, task, this.ownerHostId);
       // Legacy client retries happen before CLI deduplication; record the first allocation in the same transaction so a retry does not create an extra reservation.
@@ -589,6 +689,55 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
         .run(resolveWorkspaceKey(input.task), input.task.taskId, this.ownerHostId ?? "local");
       return Number(result.changes) > 0;
     });
+  }
+
+  readTaskCwd(task: ProjectTaskRef): string | null {
+    const row = readTask(this.db, task);
+    return row && row.host_id === (this.ownerHostId ?? "local") ? String(row.root_path) : null;
+  }
+
+  releaseReservedTask(
+    input: Parameters<ProjectRepositoryContract["releaseReservedTask"]>[0],
+  ): "released" | "absent" | "kept" {
+    // Fix: this used to return only whether a row was deleted, so a missing row (never reserved or already revoked) and a row with CLI facts both returned
+    // false, and callers misjudged the former as an existing session. The three outcomes are now distinct; only kept means a real task.
+    return transaction(this.db, () => {
+      const key = resolveWorkspaceKey(input.task);
+      const row = readTask(this.db, input.task);
+      if (row && (row.host_id !== (this.ownerHostId ?? "local") || row.cli_created_at != null))
+        return "kept";
+      if (row)
+        this.db
+          .prepare("DELETE FROM tasks WHERE workspace_key=? AND task_id=?")
+          .run(key, input.task.taskId);
+      // The creation receipt is revoked together with the reservation so it cannot point at a missing row and make the same command report creation-task-missing later.
+      this.db
+        .prepare("DELETE FROM session_creation_commands WHERE workspace_key=? AND session_id=?")
+        .run(key, input.task.taskId);
+      return row ? "released" : "absent";
+    });
+  }
+
+  listTasksByWorktree(
+    input: Parameters<ProjectRepositoryContract["listTasksByWorktree"]>[0],
+  ): ReturnType<ProjectRepositoryContract["listTasksByWorktree"]> {
+    // Exact match on worktree_root (partial index idx_tasks_host_worktree); includes reservation rows without CLI facts yet,
+    // because the delete check must also count a task still being created as in use.
+    return this.db
+      .prepare(
+        "SELECT task_id,workspace_path,workspace_identity,project_id,cli_title,title,archived FROM tasks WHERE host_id=? AND worktree_root=? AND deleted=0 AND coalesce(cli_deleted,0)=0 ORDER BY cli_updated_at DESC,task_id",
+      )
+      .all(this.ownerHostId ?? "local", input.worktreeRoot)
+      .map((row) => ({
+        taskId: String(row.task_id),
+        workspacePath: String(row.workspace_path),
+        ...(typeof row.workspace_identity === "string"
+          ? { workspaceIdentity: row.workspace_identity }
+          : {}),
+        projectId: typeof row.project_id === "string" ? row.project_id : null,
+        title: String(row.cli_title || row.title || ""),
+        archived: Number(row.archived) === 1,
+      }));
   }
 }
 

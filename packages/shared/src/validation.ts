@@ -8,6 +8,52 @@ import {
 } from "./sessionCreateTelemetry.js";
 /* eslint-disable max-lines -- Runtime schemas are currently centralized at the shared-package entry point; keep one export surface for now as external relay-payload validation is added. */
 import { z } from "zod";
+
+export const CREDENTIAL_PLAINTEXT_MAX_BYTES = 1_048_576;
+// UTF-8 明文经过 Base64 后会膨胀；保留 IV、tag、版本和指纹的固定开销。
+export const CREDENTIAL_CIPHERTEXT_MAX_CHARS =
+  Math.ceil(CREDENTIAL_PLAINTEXT_MAX_BYTES / 3) * 4 + 128;
+export const credentialPlaintextSchema = z
+  .string()
+  .max(CREDENTIAL_PLAINTEXT_MAX_BYTES)
+  .refine(
+    (value) => new TextEncoder().encode(value).byteLength <= CREDENTIAL_PLAINTEXT_MAX_BYTES,
+    "Credential plaintext exceeds the UTF-8 byte limit",
+  );
+export const credentialCiphertextSchema = z.string().max(CREDENTIAL_CIPHERTEXT_MAX_CHARS);
+export const credentialCipherRequestSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    operation: z.enum(["encrypt", "decrypt"]),
+    value: credentialCiphertextSchema,
+  })
+  .strict()
+  .superRefine((request, ctx) => {
+    if (
+      request.operation === "encrypt" &&
+      !credentialPlaintextSchema.safeParse(request.value).success
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["value"],
+        message: "Credential plaintext exceeds the UTF-8 byte limit",
+      });
+  });
+export const credentialCipherResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), value: credentialCiphertextSchema }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z.object({ code: z.string(), message: z.string() }).strict(),
+    })
+    .strict(),
+]);
+export const credentialCipherReplySchema = z
+  .object({ requestId: z.string().uuid(), result: credentialCipherResultSchema })
+  .strict();
+export type CredentialCipherRequest = z.infer<typeof credentialCipherRequestSchema>;
+export type CredentialCipherReply = z.infer<typeof credentialCipherReplySchema>;
+
 import { networkCaptureControlSchema, networkCaptureBatchSchema } from "./networkCapture.js";
 import { browserCommandSchema } from "./browser-use/commands.js";
 import { browserCommandResultSchema } from "./browser-use/result.js";
@@ -74,7 +120,11 @@ export type {
   SharedLocalePreference,
 } from "./forkAppSettings.js";
 export {
+  FORK_AGENT_RUNTIME_ENV,
+  FORK_AGENT_RUNTIMES,
+  FORK_RUST_AGENT_PATH_ENV,
   FORK_SETTING_KEYS,
+  forkAgentRuntimeSchema,
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
@@ -86,7 +136,12 @@ export {
   splitForkSettingsPatch,
   splitLocaleSettings,
 } from "./forkAppSettings.js";
-export type { ForkAppSettings, ForkAppSettingsStored, ForkSettingKey } from "./forkAppSettings.js";
+export type {
+  ForkAgentRuntime,
+  ForkAppSettings,
+  ForkAppSettingsStored,
+  ForkSettingKey,
+} from "./forkAppSettings.js";
 export { isValidWslUser, WSL_USER_MAX_LENGTH, wslUserSchema } from "./wslUserValidation.js";
 export { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
 
@@ -1072,6 +1127,18 @@ export const hostBrowserExecuteResultMessageSchema = z.object({
   result: browserCommandResultSchema,
 });
 
+export const hostCredentialCipherResultMessageSchema = credentialCipherReplySchema
+  .extend({
+    type: z.literal("credential-cipher-result"),
+  })
+  .strict();
+
+export const hostCredentialCipherRequestResponseSchema = credentialCipherRequestSchema
+  .safeExtend({
+    type: z.literal("credential-cipher-request"),
+  })
+  .strict();
+
 export const hostLocalMediaPreviewPathAuthorizeResultMessageSchema = z
   .object({
     type: z.literal("local-media-preview-path-authorize-result"),
@@ -1258,6 +1325,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostOffPeakRunMessageSchema,
   hostBrowserExecuteResultMessageSchema,
   hostLocalMediaPreviewPathAuthorizeResultMessageSchema,
+  hostCredentialCipherResultMessageSchema,
   hostPluginSandboxRegisterResultMessageSchema,
   hostCuaPipFocusChangedMessageSchema,
   hostApplicationLocaleChangedMessageSchema,
@@ -1580,6 +1648,22 @@ export const hostAgentRunningTaskCountChangedResponseSchema = z.object({
   runningTaskCount: z.number().int().nonnegative(),
 });
 
+/**
+ * 关闭窗口或退出应用会中断、且无法恢复的 Host 事项（docs/git/worktree.md §6.4）。
+ * 第一版只有"正在新 worktree 中启动的任务"；以后可加入其他会被关闭中断的 Host 任务。
+ */
+export const hostQuitBlockerSchema = z.object({
+  kind: z.enum(["worktree-creating"]),
+  count: z.number().int().positive(),
+});
+export type HostQuitBlocker = z.infer<typeof hostQuitBlockerSchema>;
+
+export const hostQuitBlockersChangedResponseSchema = z.object({
+  type: z.literal("quit-blockers-changed"),
+  /** 当前完整集合；空数组表示没有阻止退出的事项。 */
+  blockers: z.array(hostQuitBlockerSchema),
+});
+
 export const hostWorkspaceRunningTaskCountChangedResponseSchema = z.object({
   type: z.literal("workspace-running-task-count-changed"),
   workspacePath: nonEmptyStringSchema,
@@ -1784,8 +1868,9 @@ export const hostPluginSandboxRegisterRequestResponseSchema = z
     workspacePath: z.string().optional(),
     workspaceIdentity: z.string().optional(),
     ownerWebContentsId: z.number().int().nonnegative(),
-    sessionId: nonEmptyStringSchema,
-    contentKind: z.literal("gen-ui").optional(),
+    // 只有扩展视图不属于会话（docs/plugins/extension-host.md §8），见下方 refine。
+    sessionId: nonEmptyStringSchema.optional(),
+    contentKind: z.enum(["gen-ui", "extension"]).optional(),
     pluginId: nonEmptyStringSchema.optional(),
     // Runtime name of the MCP server owning the resource; the sandbox partition is derived from it.
     serverName: nonEmptyStringSchema.optional(),
@@ -1821,9 +1906,16 @@ export const hostPluginSandboxRegisterRequestResponseSchema = z
   .strict()
   .refine(
     (value) =>
-      value.contentKind === "gen-ui"
-        ? !value.pluginId && !value.serverName && !value.permissions?.length
-        : Boolean(value.pluginId && value.serverName),
+      value.contentKind === "extension"
+        ? // 扩展视图：按插件归属，没有会话与 MCP server 名，也不能带原生权限。
+          Boolean(value.pluginId) &&
+          !value.sessionId &&
+          !value.serverName &&
+          !value.permissions?.length
+        : Boolean(value.sessionId) &&
+          (value.contentKind === "gen-ui"
+            ? !value.pluginId && !value.serverName && !value.permissions?.length
+            : Boolean(value.pluginId && value.serverName)),
     "Invalid sandbox provenance",
   );
 
@@ -1883,7 +1975,7 @@ export const hostResourceUsageProcessSchema = z
   .object({
     pid: z.number().int().positive(),
     name: nonEmptyStringSchema,
-    category: z.enum(["base", "builtin-plugin", "community-plugin"]),
+    category: z.enum(["base", "task", "builtin-plugin", "community-plugin"]),
     groupKey: nonEmptyStringSchema,
     groupLabel: nonEmptyStringSchema,
     cpuPercent: z.number().finite().nonnegative(),
@@ -1932,6 +2024,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostRemoteConversationTelemetryResponseSchema,
   hostPluginTelemetryResponseSchema,
   hostAgentRunningTaskCountChangedResponseSchema,
+  hostQuitBlockersChangedResponseSchema,
   hostWorkspaceRunningTaskCountChangedResponseSchema,
   hostCuaOperationStateResponseSchema,
   hostBroadcastEnvelopeSchema,
@@ -1955,6 +2048,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostOpenWorkspaceInventoryRequestResponseSchema,
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
+  hostCredentialCipherRequestResponseSchema,
   hostPluginSandboxRegisterRequestResponseSchema,
   hostNetworkTelemetryBatchResponseSchema,
   hostProviderProvisioningSourceChangedResponseSchema,

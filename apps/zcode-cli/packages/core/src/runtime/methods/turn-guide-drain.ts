@@ -57,6 +57,8 @@ export async function drainInlineGuideForNextRequest(
     // The guide continues the current active turn in the user role; later requests are attributed to the last input's query.
     state.turnTraceContext = { ...state.turnTraceContext, queryId: nextQueryId };
   }
+  // 旧端的 guide 合入同一轮不能借用原附件能力；一批多个输入取交集。
+  state.pluginDiscoveryUi = state.pluginDiscoveryUi && drained.pluginDiscoveryUi === true;
   if ((drained.toolDisallowlist?.length ?? 0) > 0) {
     // An automation guide does not start a new turn, so merge its restrictions into the current loop state.
     state.toolDisallowlist = [

@@ -1,4 +1,10 @@
-/* oxlint-disable eslint(max-lines) -- The status panel owns collapsed summaries, expanded sections, menu behavior, and width adaptation so both forms share the same content priority. */
+import {
+  WorkflowAgentFace,
+  SubagentCollectionIcon,
+} from "@/components/workflow-timeline/WorkflowAgentFace.js";
+import { SUBAGENT_WORKFLOW_COLOR } from "@/lib/subagentColors.js";
+import { useToolPresentationCapabilities } from "@/ToolCallBlocks/presentationCapabilities.js";
+/* oxlint-disable eslint(max-lines) -- 状态面板同时维护收起态摘要、展开态分区、菜单策略和宽度自适应，同文件能保证两种形态共享同一内容优先级。 */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   forwardRef,
@@ -14,7 +20,6 @@ import {
 import {
   ActivityIcon,
   ArrowRightIcon,
-  BotIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -127,6 +132,8 @@ import {
 
 export interface ConversationStatusPanelProps {
   workspacePath: string;
+  /** Git 操作所在目录；worktree 任务是会话 cwd，缺省为 workspacePath（docs/git/worktree.md §3.7）。 */
+  gitCwd?: string;
   workspaceIdentity?: string;
   gitSummary?: GitRepositorySummary | null;
   gitDirtyFileCount?: number;
@@ -141,8 +148,14 @@ export interface ConversationStatusPanelProps {
   sessionPlans?: readonly ToolCallRow[];
   plan?: PlanState | null;
   backgroundWorks?: readonly BackgroundWorkSummary[];
-  runningSubagents?: readonly ZCodeSessionRunningSubagent[];
-  /** This conversation's `snapshot.workflowRuns.runs`, joined with backgroundWorks in the model by workId ≡ runId. */
+  runningSubagents?: readonly ConversationStatusPanelRunningSubagent[];
+  pendingSubagentStops?: ReadonlySet<string>;
+  /**
+   * runtime 不在线时为 true：终端、工作流、智能体三个分区的运行项都在 runtime 里执行，此时都没有
+   * 执行者，计时停在断开前（停止 / 取消入口由宿主不下发回调来隐藏）。
+   */
+  timersPaused?: boolean;
+  /** 本会话 `snapshot.workflowRuns.runs`；与 backgroundWorks 在模型层按 workId ≡ runId 联接。 */
   workflowRuns?: readonly WorkflowRunState[];
   /**
    * Number of ended workflow runs (journal-based, `countEndedWorkflowRuns`).
@@ -173,6 +186,7 @@ export interface ConversationStatusPanelProps {
   onOpenPlanDetail?: (request: OpenPlanDetailSideTabRequest) => void;
   onOpenBackgroundBash?: (work: BackgroundWorkSummary) => void;
   onCancelBackgroundWork?: (workId: string) => void;
+  onStopSubagent?: (control: { taskId: string; executionId: string }) => void;
   onOpenSubagentSession?: (request: OpenSubagentSideTabRequest) => void;
   onOpenSubagentDirectory?: (request: OpenSubagentDirectorySideTabRequest) => void;
   onOpenWorkflowRun?: (target: ConversationStatusPanelWorkflowRunTarget) => void;
@@ -190,7 +204,7 @@ export interface ConversationStatusPanelProps {
 
 // Do not create arrays inline in memoized component default props; a new reference on every render breaks stable-reference boundary tests.
 const EMPTY_BACKGROUND_WORKS: readonly BackgroundWorkSummary[] = [];
-const EMPTY_RUNNING_SUBAGENTS: readonly ZCodeSessionRunningSubagent[] = [];
+const EMPTY_RUNNING_SUBAGENTS: readonly ConversationStatusPanelRunningSubagent[] = [];
 const EMPTY_WORKFLOW_RUNS: readonly WorkflowRunState[] = [];
 
 function formatDurationUnits(
@@ -1208,6 +1222,7 @@ function BackgroundWorkStatusSection({
   open,
   separated,
   section,
+  timersPaused = false,
   title,
   works,
 }: {
@@ -1217,6 +1232,7 @@ function BackgroundWorkStatusSection({
   open?: boolean;
   separated: boolean;
   section: "terminal" | "agent";
+  timersPaused?: boolean;
   title: string;
   works: readonly BackgroundWorkSummary[];
 }) {
@@ -1228,14 +1244,14 @@ function BackgroundWorkStatusSection({
   );
 
   useEffect(() => {
-    if (works.length === 0) {
+    if (works.length === 0 || timersPaused) {
       return;
     }
     const timer = setInterval(() => {
       setNow(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, [works.length]);
+  }, [works.length, timersPaused]);
 
   if (works.length === 0) return null;
 
@@ -1533,6 +1549,7 @@ function WorkflowStatusSection({
   parentSessionId,
   runs,
   separated,
+  timersPaused = false,
   title,
 }: {
   endedRunCount: number;
@@ -1544,6 +1561,7 @@ function WorkflowStatusSection({
   parentSessionId?: string;
   runs: readonly ConversationStatusPanelWorkflowRun[];
   separated: boolean;
+  timersPaused?: boolean;
   title: string;
 }) {
   const { intl } = useZCodeIntl();
@@ -1551,10 +1569,10 @@ function WorkflowStatusSection({
   // Only rows with startedAt need per-second refreshes; do not rerender the panel every second when there are none.
   const tickingRunCount = runs.filter((run) => run.startedAt !== undefined).length;
   useEffect(() => {
-    if (tickingRunCount === 0) return;
+    if (tickingRunCount === 0 || timersPaused) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [tickingRunCount]);
+  }, [tickingRunCount, timersPaused]);
 
   // Collapse the section only when both active rows and the ended count are zero. The previous active-only
   // gate hid the directory after restart because no runs were running, even though reviewing interrupted runs
@@ -1620,7 +1638,9 @@ function WorkflowStatusSection({
 
 function SubagentStatusSection({
   endedSubagentCount,
-  onCancelBackgroundWork,
+  timersPaused = false,
+  onStopSubagent,
+  pendingSubagentStops,
   onOpenChange,
   onOpenSubagentDirectory,
   onOpenSubagentSession,
@@ -1634,7 +1654,9 @@ function SubagentStatusSection({
   workspacePath,
 }: {
   endedSubagentCount: number;
-  onCancelBackgroundWork?: (workId: string) => void;
+  timersPaused?: boolean;
+  onStopSubagent?: (control: { taskId: string; executionId: string }) => void;
+  pendingSubagentStops?: ReadonlySet<string>;
   onOpenChange?: (open: boolean) => void;
   onOpenSubagentDirectory?: (request: OpenSubagentDirectorySideTabRequest) => void;
   onOpenSubagentSession?: (request: OpenSubagentSideTabRequest) => void;
@@ -1649,15 +1671,16 @@ function SubagentStatusSection({
 }) {
   const { intl } = useZCodeIntl();
   const [now, setNow] = useState(() => Date.now());
+  const presentation = useToolPresentationCapabilities();
   const ordered = useMemo(
     () => [...subagents].sort((left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0)),
     [subagents],
   );
   useEffect(() => {
-    if (subagents.length === 0) return;
+    if (subagents.length === 0 || timersPaused) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [subagents.length]);
+  }, [subagents.length, timersPaused]);
   if (subagents.length === 0 && endedSubagentCount <= 0) return null;
   const longestElapsedMs = subagents.reduce(
     (longest, item) => Math.max(longest, Math.max(0, now - (item.startedAt ?? now))),
@@ -1693,23 +1716,27 @@ function SubagentStatusSection({
     >
       <ul className="space-y-0">
         {ordered.map((subagent) => {
+          const configuredColor = presentation.agentColor?.(subagent.subagentType);
           const request = buildRunningSubagentOpenRequest({
             parentSessionId,
             rootSessionId,
             subagent,
           });
           const canOpenSubagentSession = Boolean(request && onOpenSubagentSession);
+          const stopControl = subagent.stopControl;
+          const pendingStopKey = stopControl
+            ? JSON.stringify([stopControl.taskId, stopControl.executionId])
+            : null;
+          const stopPending = Boolean(pendingStopKey && pendingSubagentStops?.has(pendingStopKey));
+          const canStopSubagent = Boolean(stopControl && onStopSubagent);
           return (
             <li
               key={subagent.childSessionId}
-              data-testid={
-                subagent.controlWorkId
-                  ? testId(TID_V4_BACKGROUND_WORK_ITEM, subagent.controlWorkId)
-                  : undefined
-              }
+              data-testid="v4-running-subagent-item"
               data-background-task-kind="agent"
               data-child-session-id={subagent.childSessionId}
-              data-work-id={subagent.controlWorkId}
+              data-subagent-task-id={stopControl?.taskId}
+              data-subagent-execution-id={stopControl?.executionId}
               data-work-status="running"
               className={cn(
                 "group relative flex min-w-0 items-start gap-2 rounded-lg px-2 py-2 hover:bg-[var(--color-hover)]",
@@ -1731,7 +1758,16 @@ function SubagentStatusSection({
                   className="absolute inset-0 z-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
                 />
               ) : null}
-              <BotIcon className="pointer-events-none relative z-[1] mt-0.5 size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
+              {/* 与 Progress 共用 14px 图标列；覆盖头像最小尺寸，并按标题首行居中。 */}
+              <span className="pointer-events-none relative z-[1] flex h-5 w-3.5 shrink-0 items-center justify-center">
+                <WorkflowAgentFace
+                  avatarIndex={undefined}
+                  name={subagent.subagentType}
+                  status="running"
+                  color={configuredColor ? SUBAGENT_WORKFLOW_COLOR[configuredColor] : undefined}
+                  className="size-3.5 min-h-3.5! min-w-3.5!"
+                />
+              </span>
               <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 flex-col gap-1.5">
                 <span className="line-clamp-2 text-ui-base leading-5 text-[var(--color-foreground)]">
                   {subagent.title}
@@ -1748,11 +1784,28 @@ function SubagentStatusSection({
                     workspaceIdentity={workspaceIdentity}
                     workspacePath={workspacePath}
                   />
-                  {subagent.controlWorkId && subagent.cancellable !== false ? (
-                    <RunningWorkCancelButton
-                      workId={subagent.controlWorkId}
-                      onCancel={onCancelBackgroundWork}
-                    />
+                  {canStopSubagent && stopControl ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      data-testid="v4-running-subagent-stop"
+                      data-subagent-task-id={stopControl.taskId}
+                      data-subagent-execution-id={stopControl.executionId}
+                      aria-label={intl.formatMessage({
+                        id: "chat.summaryPanel.stopRunningSubagent",
+                      })}
+                      aria-busy={stopPending}
+                      disabled={stopPending}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onStopSubagent?.(stopControl);
+                      }}
+                      className="pointer-events-auto relative z-[2] ml-auto h-6 shrink-0 px-1.5 text-ui-base text-[var(--color-foreground)]"
+                    >
+                      <SquareIcon aria-hidden className="size-3 fill-current" />
+                      {intl.formatMessage({ id: "chat.statusPanel.runningStop" })}
+                    </Button>
                   ) : null}
                 </span>
               </div>
@@ -1955,10 +2008,9 @@ function StatusSummaryRow({
   const removed = gitWorktreeChangeSummary?.removed ?? 0;
   const hasGitMiniSummary = Boolean(model.git && added + removed > 0);
 
-  // Capsule summaries previously labeled every background task Activity, so pure Subagent did not reuse the
-  // Bot meaning from the Running details. There are now three categories: use a category's icon when **exactly
-  // one** is present, and use Activity for mixed categories (the two-category matrix became insufficient when
-  // workflows were added and would miss combinations such as workflow + agent).
+  // 胶囊摘要过去把所有后台任务都写死成 Activity，纯 Subagent 因而没有复用
+  // Running 明细的头像语义。**恰好一类**沿用该类图标，混合才是 Activity。在跑的工作流不进这条
+  // 兜底：它排在胶囊最前，自己一个分支（名字 · 灯 · phase），不再是一个计数。
   const hasRunningBash = model.runningBashWorks.length > 0;
   const hasRunningSubagent = model.runningSubagentWorks.length > 0;
   const runningCount = model.runningBashWorks.length + model.runningSubagentWorks.length;
@@ -1967,7 +2019,7 @@ function StatusSummaryRow({
       ? ActivityIcon
       : hasRunningBash
         ? SquareTerminalIcon
-        : BotIcon;
+        : SubagentCollectionIcon;
   const firstLiveRun = model.runningWorkflowRuns[0];
   // Put running workflows first in the capsule (docs/dynamic-workflow/presentation.md, “Other
   // places a run appears”): while a workflow is running, it is what the session is doing; the lead
@@ -2027,7 +2079,10 @@ function StatusSummaryRow({
     </StatusSummaryMetric>
   ) : runningCount > 0 ? (
     <StatusSummaryMetric
-      icon={<RunningSummaryIcon className="size-4 text-[var(--color-foreground)]" />}
+      // 头像默认最小尺寸为 20px，会撑出 16px 图标槽；此处按胶囊图标尺寸覆盖，避免偏心和挤占文字间距。
+      icon={
+        <RunningSummaryIcon className="size-4 min-h-4! min-w-4! text-[var(--color-foreground)]" />
+      }
     >
       {/* Product rule: live terminal/agent counts show only as a fallback when no primary status
           such as Goal, Todo, or Git is present. This prevents the pill from duplicating the live
@@ -2141,6 +2196,7 @@ function ContextStatusSection({
 
 function ConversationStatusPanelImpl({
   workspacePath,
+  gitCwd,
   workspaceIdentity,
   gitSummary,
   gitDirtyFileCount = 0,
@@ -2178,6 +2234,9 @@ function ConversationStatusPanelImpl({
   onOpenPlanDetail,
   onOpenBackgroundBash,
   onCancelBackgroundWork,
+  onStopSubagent,
+  pendingSubagentStops,
+  timersPaused = false,
   onOpenSubagentSession,
   onOpenSubagentDirectory,
   onOpenWorkflowRun,
@@ -2417,7 +2476,7 @@ function ConversationStatusPanelImpl({
                 model={model}
                 gitSummary={gitSummary}
                 gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
-                workspacePath={workspacePath}
+                workspacePath={gitCwd ?? workspacePath}
                 gitWorkspacePath={gitWorkspacePath}
                 workspaceIdentity={workspaceIdentity}
                 activeTaskChangeSummary={activeTaskChangeSummary}
@@ -2489,6 +2548,7 @@ function ConversationStatusPanelImpl({
                   canRenderPlan ||
                   canRenderDream
                 }
+                timersPaused={timersPaused}
                 onCancelBackgroundWork={onCancelBackgroundWork}
               />
             ) : null}
@@ -2508,6 +2568,7 @@ function ConversationStatusPanelImpl({
                   canRenderTerminals
                 }
                 parentSessionId={parentSessionId}
+                timersPaused={timersPaused}
                 onCancelBackgroundWork={onCancelBackgroundWork}
                 onOpenWorkflowRun={onOpenWorkflowRun}
                 onOpenDirectory={onOpenWorkflowRunDirectory}
@@ -2518,7 +2579,9 @@ function ConversationStatusPanelImpl({
                 title={intl.formatMessage({ id: "chat.statusPanel.agents" })}
                 subagents={model.runningSubagentWorks}
                 endedSubagentCount={canRenderEndedAgents ? endedSubagentCount : 0}
-                onCancelBackgroundWork={onCancelBackgroundWork}
+                timersPaused={timersPaused}
+                onStopSubagent={onStopSubagent}
+                pendingSubagentStops={pendingSubagentStops}
                 open={agentSectionOpen}
                 onOpenChange={onAgentSectionOpenChange}
                 separated={

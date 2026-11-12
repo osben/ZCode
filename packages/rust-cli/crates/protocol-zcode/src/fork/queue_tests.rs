@@ -1,0 +1,469 @@
+//! `editQueueItem` mapping tests (specs/fork-rust-agent-parity.md, A1 rule 15): what the kernel's `EditQueued` carries.
+
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use futures_util::stream::{self, BoxStream};
+use rust_cli_base::TaskScope;
+use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId};
+use rust_cli_kernel_api::message::ContentBlock;
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::session_api::{
+    Ack as KernelAck, CommandEnvelope, CommandResult, CreateSession, Kernel, KernelError,
+    QueuedInput, QueuedKind, SequencedEvent, SessionHandle, SessionView,
+};
+use rust_cli_kernel_api::store::{
+    SessionFilter, SessionKind, SessionMeta, SessionSummary, StoreQueries,
+};
+use rust_cli_kernel_api::testing::{FixedClock, HandleOverride, MemoryStore, selection};
+use rust_cli_protocol_core::connection::{self, Options};
+use serde_json::{Value, json};
+
+use super::*;
+use crate::context::Context;
+use crate::server::Defaults;
+
+/// The handle double: accepts every command and records it.
+struct TestHandle {
+    id: SessionId,
+    view: SessionView,
+    /// What `Dequeue` hands back (the kernel's queued input and content).
+    dequeued: Option<(QueuedInput, Vec<ContentBlock>)>,
+    /// Another promotion owns the foreground: `ReserveForeground { reserved: true }` is refused, and a `SubmitWith`
+    /// that does not name it is queued (`CommandResult::Queued`).
+    foreground_owned: bool,
+    sent: StdMutex<Vec<Command>>,
+}
+
+#[async_trait]
+impl HandleOverride for TestHandle {
+    fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
+        let refused = self.foreground_owned
+            && matches!(
+                envelope.command,
+                Command::ReserveForeground { reserved: true, .. }
+            );
+        let result = match (&envelope.command, &self.dequeued) {
+            (Command::SubmitWith { lease: None, .. }, _) if self.foreground_owned => {
+                CommandResult::Queued
+            }
+            (Command::Dequeue { .. }, Some((input, content))) => CommandResult::Dequeued {
+                input: Box::new(input.clone()),
+                content: content.clone(),
+            },
+            _ => CommandResult::Done,
+        };
+        self.sent.lock_unpoisoned().push(envelope.command);
+        if refused {
+            return KernelAck::Rejected {
+                reason: rust_cli_kernel_api::session_api::FOREGROUND_BUSY.to_owned(),
+            };
+        }
+        KernelAck::Accepted { result }
+    }
+
+    fn subscribe(&self, _after: Option<u64>) -> BoxStream<'static, SequencedEvent> {
+        stream::empty().boxed()
+    }
+
+    async fn view(&self) -> Result<SessionView, KernelError> {
+        Ok(self.view.clone())
+    }
+}
+
+struct OneKernel {
+    handle: Arc<TestHandle>,
+}
+
+#[async_trait]
+impl Kernel for OneKernel {
+    fn queries(&self) -> Arc<dyn StoreQueries> {
+        Arc::new(MemoryStore::default())
+    }
+
+    async fn create_session(&self, _request: CreateSession) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "create".to_owned(),
+        })
+    }
+
+    async fn open_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        Ok(self.handle.clone())
+    }
+
+    async fn list_sessions(
+        &self,
+        _filter: SessionFilter,
+    ) -> Result<Vec<SessionSummary>, KernelError> {
+        Ok(Vec::new())
+    }
+}
+
+async fn fixture() -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
+    fixture_with(Vec::new(), None, false).await
+}
+
+async fn fixture_with(
+    queue: Vec<QueuedInput>,
+    dequeued: Option<(QueuedInput, Vec<ContentBlock>)>,
+    foreground_owned: bool,
+) -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
+    let meta = SessionMeta {
+        id: SessionId::new("s1"),
+        kind: SessionKind::Interactive,
+        parent: None,
+        workspace: WorkspaceRef {
+            environment: EnvironmentId::new("local"),
+            root: EnvPath::new("/fixture/repo"),
+        },
+        title: String::new(),
+        trace: TraceId::new("trace"),
+        created_at_ms: 1000,
+        incognito: None,
+    };
+    let mut view = SessionView::new(meta, Vec::new(), selection(), PermissionMode::Default);
+    view.queue = queue;
+    let handle = Arc::new(TestHandle {
+        id: SessionId::new("s1"),
+        view,
+        dequeued,
+        foreground_owned,
+        sent: StdMutex::new(Vec::new()),
+    });
+    let scope = TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
+    let server = Arc::new(Server::new(
+        context,
+        Arc::new(OneKernel {
+            handle: handle.clone(),
+        }),
+        scope.spawner(),
+        Defaults {
+            selection: selection(),
+            mode: PermissionMode::Default,
+            environment: EnvironmentId::new("local"),
+        },
+    ));
+    (scope, server, handle)
+}
+
+fn envelope(payload: Value) -> Envelope {
+    serde_json::from_value(json!({
+        "commandId": "cmd-1",
+        "clientId": "app",
+        "sessionId": "s1",
+        "type": "editQueueItem",
+        "payload": payload,
+    }))
+    .expect("an envelope")
+}
+
+async fn edit(payload: Value) -> (Ack, Vec<Command>) {
+    let (_scope, server, handle) = fixture().await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = edit_queue_item(&server, &live, &envelope(payload), 3).await;
+    let sent = handle.sent.lock_unpoisoned().clone();
+    (ack, sent)
+}
+
+fn edited(sent: &[Command]) -> &QueuedEdit {
+    match sent {
+        [Command::EditQueued { edit, .. }] => edit,
+        other => panic!("expected one EditQueued, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_apps_selection_reaches_the_intent_as_sent() {
+    let raw = json!({"providerId": "p", "modelId": "m2", "options": {"reasoningLevel": "high"}});
+    let (ack, sent) = edit(json!({
+        "queueItemId": "queue_c1",
+        "newText": "x",
+        "modelSelection": raw,
+        "mode": "edit",
+    }))
+    .await;
+    assert_eq!(ack.status, Status::Accepted);
+    let edit = edited(&sent);
+    assert_eq!(edit.intent_model_selection, Some(raw));
+    assert_eq!(
+        edit.model_selection,
+        Some(ModelSelection {
+            reasoning: Some("high".to_owned()),
+            ..ModelSelection::new("p", "m2")
+        })
+    );
+    assert_eq!(edit.attachments, None, "no attachments sent: they stay");
+}
+
+#[tokio::test]
+async fn attachments_are_resolved_before_the_kernel_sees_the_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    rust_cli_fs::append(&path, b"remember this").await.unwrap();
+    let refs = json!([{
+        "ref": path.to_string_lossy(),
+        "fileName": "notes.txt",
+        "mime": "text/plain",
+        "bytes": 13,
+    }]);
+    let (ack, sent) = edit(json!({
+        "queueItemId": "queue_c1",
+        "newText": "x",
+        "attachments": refs,
+    }))
+    .await;
+    assert_eq!(ack.status, Status::Accepted);
+    let attachments = edited(&sent).attachments.clone().expect("attachments sent");
+    assert_eq!(attachments.refs, refs);
+    assert!(
+        matches!(attachments.content.as_slice(), [ContentBlock::File { file }] if file.name == "notes.txt"),
+        "the attached file only, without a typed text block: {:?}",
+        attachments.content
+    );
+    assert!(format!("{:?}", attachments.content).contains("remember this"));
+    let (_, sent) =
+        edit(json!({"queueItemId": "queue_c1", "newText": "x", "attachments": []})).await;
+    let cleared = edited(&sent).attachments.clone().expect("`[]` is sent");
+    assert_eq!(cleared.refs, json!([]));
+    assert!(cleared.content.is_empty());
+}
+
+#[tokio::test]
+async fn an_invalid_attachment_ref_refuses_the_edit_before_the_kernel() {
+    let (ack, sent) = edit(json!({
+        "queueItemId": "queue_c1",
+        "newText": "x",
+        "attachments": [{"ref": "/tmp/a.txt"}],
+    }))
+    .await;
+    assert_eq!(ack.status, Status::Rejected);
+    assert_eq!(ack.reason_code.as_deref(), Some("proto.invalidPayload"));
+    assert!(sent.is_empty(), "the kernel never saw the edit: {sent:?}");
+}
+
+/// Node `sendQueuedNow` passes the item's attachments into the promoted turn: the content the kernel's `Dequeue`
+/// hands back is what the promotion submits.
+#[tokio::test]
+async fn send_now_submits_the_queued_content() {
+    let content = vec![
+        ContentBlock::Text {
+            text: "look".to_owned(),
+        },
+        ContentBlock::Text {
+            text: "<file a.txt>".to_owned(),
+        },
+    ];
+    let item = QueuedInput {
+        edit_lock: None,
+        intent: None,
+        command: rust_cli_kernel_api::ids::CommandId::new("c1"),
+        text: "look".to_owned(),
+        delivery: Delivery::Queue,
+        kind: QueuedKind::Text,
+        execution: None,
+    };
+    let (_scope, server, handle) =
+        fixture_with(vec![item.clone()], Some((item, content.clone())), false).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let mut envelope = envelope(json!({"queueItemId": "queue_c1"}));
+    envelope.kind = "sendQueuedNow".to_owned();
+    let ack = send_queued_now(&live, &envelope, 3).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    let submitted = sent
+        .iter()
+        .find_map(|command| match command {
+            Command::SubmitWith { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .expect("the promotion submits");
+    assert_eq!(submitted, content);
+}
+
+fn queued_item(text: &str, refs: Value) -> QueuedInput {
+    let mut intent = rust_cli_kernel_api::input_intent::InputIntent::default();
+    intent.set(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS, refs);
+    QueuedInput {
+        edit_lock: None,
+        intent: Some(Box::new(intent)),
+        command: rust_cli_kernel_api::ids::CommandId::new("c1"),
+        text: text.to_owned(),
+        delivery: Delivery::Queue,
+        kind: QueuedKind::Text,
+        execution: None,
+    }
+}
+
+fn send_now_envelope() -> Envelope {
+    let mut envelope = envelope(json!({"queueItemId": "queue_c1"}));
+    envelope.kind = "sendQueuedNow".to_owned();
+    envelope
+}
+
+/// An `editQueueItem` that lands while the promotion waits for the running turn changes the queued item after the
+/// promotion read it: the promotion submits the input `Dequeue` handed back, so its text, intent (quotes, chips) and
+/// content come from one state of the queue (Node `handlers/queue.ts` takes the intent and attachments from one item).
+#[tokio::test]
+async fn send_now_submits_the_dequeued_input_not_the_one_it_read() {
+    let read = queued_item("old", json!([{"id": "old"}]));
+    let dequeued = queued_item("new", json!([{"id": "new"}]));
+    let content = vec![ContentBlock::Text {
+        text: "new".to_owned(),
+    }];
+    let (_scope, server, handle) =
+        fixture_with(vec![read], Some((dequeued, content.clone())), false).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = send_queued_now(&live, &send_now_envelope(), 3).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    let Some(Command::SubmitWith {
+        text,
+        intent,
+        content: submitted,
+        ..
+    }) = sent
+        .iter()
+        .find(|command| matches!(command, Command::SubmitWith { .. }))
+    else {
+        panic!("the promotion submits");
+    };
+    assert_eq!(text, "new");
+    assert_eq!(submitted, &content);
+    assert_eq!(
+        intent
+            .as_ref()
+            .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS))
+            .cloned(),
+        Some(json!([{"id": "new"}]))
+    );
+}
+
+/// B4 (specs/fork-rust-agent-parity.md): a promotion submits the queued input's own intent, so the extension source it
+/// was sent with stays on it (Node `inputIntentMetadataFromQueueItem` carries `item.source`).
+#[tokio::test]
+async fn send_now_keeps_the_queued_source() {
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let mut dequeued = queued_item("queued", json!([]));
+    if let Some(intent) = dequeued.intent.as_mut() {
+        intent.set(rust_cli_kernel_api::input_intent::SOURCE, source.clone());
+    }
+    let content = vec![ContentBlock::Text {
+        text: "queued".to_owned(),
+    }];
+    let (_scope, server, handle) = fixture_with(
+        vec![queued_item("queued", json!([]))],
+        Some((dequeued, content)),
+        false,
+    )
+    .await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = send_queued_now(&live, &send_now_envelope(), 3).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    let Some(Command::SubmitWith { intent, .. }) = sent
+        .iter()
+        .find(|command| matches!(command, Command::SubmitWith { .. }))
+    else {
+        panic!("the promotion submits");
+    };
+    assert_eq!(
+        intent
+            .as_ref()
+            .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::SOURCE))
+            .cloned(),
+        Some(source)
+    );
+}
+
+/// Node `acquireForegroundPromotionLease` answers `conflict` while another promotion owns the foreground, and
+/// `sendQueuedNow` fails with `guard.queuePromotionBusy`: the item stays queued and the other lease is not released.
+#[tokio::test]
+async fn send_now_is_refused_while_another_promotion_owns_the_foreground() {
+    let item = queued_item("look", json!([]));
+    let (_scope, server, handle) =
+        fixture_with(vec![item.clone()], Some((item, Vec::new())), true).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = send_queued_now(&live, &send_now_envelope(), 3).await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert_eq!(ack.reason_code.as_deref(), Some(PROMOTION_BUSY), "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    assert_eq!(
+        sent,
+        vec![Command::ReserveForeground {
+            reserved: true,
+            lease: "queue-promotion:cmd-1".to_owned(),
+        }]
+    );
+}
+
+/// Node `session-flow.ts` takes the foreground lease for every `requestedDelivery: "startNow"` `sendText`, whatever the
+/// phase: while another promotion owns it the input fails (`V4InputAdmissionRejectedError`, which the gateway answers
+/// with `status: "failed"`) and is not submitted, even when the projection already shows the session idle.
+#[tokio::test]
+async fn a_start_now_text_is_failed_while_a_promotion_owns_the_foreground_of_an_idle_session() {
+    let (_scope, server, handle) = fixture_with(Vec::new(), None, true).await;
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "cmd-1",
+        "clientId": "app",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {"text": "now", "requestedDelivery": "startNow"},
+    }))
+    .expect("an envelope");
+    let ack = crate::commands::decide(&server, &envelope).await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert_eq!(
+        ack.reason_code.as_deref(),
+        Some("fault.command.inputRejected"),
+        "{ack:?}"
+    );
+    let sent = handle.sent.lock_unpoisoned().clone();
+    assert!(
+        !sent
+            .iter()
+            .any(|command| matches!(command, Command::SubmitWith { .. })),
+        "{sent:?}"
+    );
+    assert!(sent.contains(&Command::ReserveForeground {
+        reserved: true,
+        lease: "send-now:cmd-1".to_owned(),
+    }));
+}
+
+/// Node `session-flow.ts` answers a `sendText` from Core's real admission (`started.admission.kind === "queued"` →
+/// `delivery: "queue"`). While another promotion owns the foreground the kernel queues an ordinary input even though
+/// the projection shows the session idle, so the ACK says `queue`, not the `startNow` the projection predicted.
+#[tokio::test]
+async fn a_text_the_kernel_queues_is_acked_as_queued() {
+    let (_scope, server, _handle) = fixture_with(Vec::new(), None, true).await;
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "cmd-1",
+        "clientId": "app",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {"text": "later"},
+    }))
+    .expect("an envelope");
+    let ack = crate::commands::decide(&server, &envelope).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(
+        ack.result.as_ref().map(|result| result["delivery"].clone()),
+        Some(json!("queue")),
+        "{ack:?}"
+    );
+}

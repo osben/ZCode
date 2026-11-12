@@ -1,6 +1,6 @@
 # Message Stream Display Settings
 
-Two switches in General settings independently control what the conversation detail message stream shows:
+Two switches in "Agent capabilities -> Behavior and tools" independently control what the conversation detail message stream shows:
 
 - `messageStreamShowReasoning`: when on, all reasoning / thought rows show; when off, each assistant turn
   still shows its first reasoning and later reasoning is hidden.

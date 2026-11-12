@@ -4,7 +4,7 @@ import {
   CircleCheckIcon,
   CircleHelpIcon,
   CircleXIcon,
-  LoaderCircleIcon,
+  LoaderCircle,
   TerminalIcon,
 } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
@@ -52,6 +52,7 @@ export function LaneGlyph({
         className={className}
         name={name}
         status={status}
+        showCompletionMark={status === "done"}
       />
     );
   }
@@ -80,10 +81,7 @@ export function PillStatusMark({ status }: { status: StepRunStatus | undefined }
       title={label}
     >
       {status === "running" ? (
-        <LoaderCircleIcon
-          aria-hidden
-          className="size-3.5 animate-spin motion-reduce:animate-none"
-        />
+        <LoaderCircle aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />
       ) : status === "done" ? (
         <CircleCheckIcon aria-hidden className="size-3.5" />
       ) : (
@@ -135,9 +133,11 @@ export function WorkflowAgentPill({
   /** `row` (24px, no background at rest, pill shape on hover) is for two-column sidebar lists; default is 32px. */
   size?: "md" | "row";
 }) {
+  const { intl } = useZCodeIntl();
   const tinted = laneClass === "agent";
-  // Delayed entrances need backwards fill to keep the start frame during the wait; otherwise the pill appears fully visible before briefly restarting its entrance.
-  // Do not use both: forwards would leave the transform on the element.
+  const completedAgent = tinted && status === "done";
+  // 有延迟的入场要 backwards 填充：等待期间保持起始帧，否则药丸先满显再闪一下重新进场。
+  // 不用 both：forwards 会把 transform 留在元素上。
   const style = {
     ...(tinted ? { "--wf-avatar": agentColor(avatarIndex, name) } : {}),
     ...(enterDelayMs === undefined || enterDelayMs <= 0
@@ -145,7 +145,7 @@ export function WorkflowAgentPill({
       : { animationDelay: `${enterDelayMs}ms`, animationFillMode: "backwards" as const }),
   } as CSSProperties;
   const settled = status !== undefined && status !== "pending";
-  const hasMark = settled;
+  const hasMark = settled && !completedAgent;
   const hasTail = hasMark || open !== undefined;
   const Root = open === undefined ? "span" : "button";
   const body = (
@@ -170,12 +170,18 @@ export function WorkflowAgentPill({
         {name}
       </span>
       {children}
+      {completedAgent ? (
+        <span className="sr-only">
+          {intl.formatMessage({ id: "chat.toolCall.workflow.graph.status.done" })}
+        </span>
+      ) : null}
       {hasTail ? (
         <span
           className="wf-pill-tail grid size-3.5 shrink-0 place-items-center [&>*]:col-start-1 [&>*]:row-start-1"
           data-testid="workflow-pill-tail"
         >
-          <PillStatusMark status={status} />
+          {/* 代理完成勾已移到头像角标，末尾仅保留详情入口。 */}
+          {hasMark ? <PillStatusMark status={status} /> : null}
           {open === undefined ? null : (
             <span
               aria-hidden

@@ -1,0 +1,383 @@
+//! ToolSearch 与延迟工具清单（docs/specs/rust-cli/tools-more.md §3）。
+//!
+//! [`ToolCatalog`] 是主线程注册表的弱引用：注册表在上下文之后才建好，由 runtime 绑定；ToolSearch 的
+//! 查找范围与 `deferred_tools_delta` 清单都从这里取，两处看到的延迟工具总是同一组。
+//!
+//! 目录也带 `ENABLE_TOOL_SEARCH` 的设置（工作线 F89，tools-more.md §3.2.1）：关时 ToolSearch 工具不启用，这一步的工具里就没有它，
+//! 延迟工具清单、WaitForMcpServers 的去留与主循环都随之是“没有 ToolSearch”。
+//!
+//! 先建后接是为了打破构造的环（注册表 → ToolSearch 工具 → 目录 → 注册表；注册表跨 tools、ext、agents 三个
+//! crate 组装，不能一次建好），保留最小形式：绑定一次。缺陷修复（审查 R1-13）：原来没绑定或注册表已释放时静默
+//! 当作没有工具（ToolSearch 什么都找不到、延迟清单为空），现在两处都返回错误。
+
+use std::sync::{Arc, OnceLock, Weak};
+
+use rust_cli_base::late::Late;
+
+use async_trait::async_trait;
+use regex::Regex;
+use rust_cli_kernel_api::listing::{ListingEntry, ListingSource, Listings};
+use rust_cli_kernel_api::mcp_state::{McpConnections, McpView};
+use rust_cli_kernel_api::message::ToolResultContent;
+use rust_cli_kernel_api::orchestration::{ContextRequest, OrchestrationError, ToolRegistry};
+use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
+use rust_cli_kernel_api::tool::{
+    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext,
+};
+use rust_cli_kernel_api::tool_names::TOOL_SEARCH;
+use rust_cli_kernel_api::tool_search::{compare_names, is_deferred};
+use rust_cli_prompts::models::ToolSearchSetting;
+use serde_json::Value;
+use tokio::sync::mpsc;
+
+use crate::texts_more as texts;
+use crate::tool_search_keywords::{self as keywords, Candidate};
+use crate::tool_search_mcp;
+use rust_cli_kernel_api::tool::text;
+use rust_cli_prompts::Definition;
+
+/// 没有给 `max_results` 时最多返回几个。
+const DEFAULT_MAX_RESULTS: usize = 5;
+
+/// 主线程注册表的弱引用（避免 注册表 → 工具 → 目录 → 注册表 的 `Arc` 环；组装的晚绑定，base 的 `late::Late`）与
+/// `ENABLE_TOOL_SEARCH` 的设置（缺省开）。
+#[derive(Default)]
+pub struct ToolCatalog {
+    registry: Late<Weak<dyn ToolRegistry>>,
+    setting: ToolSearchSetting,
+}
+
+impl ToolCatalog {
+    /// 带入口读到的 `ENABLE_TOOL_SEARCH` 设置（runtime 组装时给出）。
+    pub fn new(setting: ToolSearchSetting) -> Self {
+        Self {
+            registry: Late::new(),
+            setting,
+        }
+    }
+
+    /// Fork: what `session` sees at this moment, from the registry's session snapshot (the one the main loop sends):
+    /// the enabled tools sorted by name, and the MCP state. An incognito session's snapshot already lacks the tools
+    /// and servers its profile removes (specs/fork-rust-agent-parity.md, "Incognito sessions"), so ToolSearch can
+    /// neither find nor name them.
+    fn session_view(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<(Vec<Arc<dyn Tool>>, McpView), String> {
+        let snapshot = self.registry()?.snapshot(session);
+        let mut tools: Vec<_> = snapshot
+            .tools
+            .into_iter()
+            .filter(|tool| tool.is_enabled())
+            .collect();
+        tools.sort_by(|left, right| compare_names(left.name(), right.name()));
+        Ok((tools, snapshot.mcp.unwrap_or_default()))
+    }
+
+    /// 建好主线程注册表后绑定一次；再绑定是组装的缺陷，留着第一个、记 error 日志（工作线 F131：以前静默忽略）。
+    pub fn bind(&self, registry: &Arc<dyn ToolRegistry>) {
+        if self.registry.bind(Arc::downgrade(registry)).is_err() {
+            tracing::error!("the tool catalog was bound twice; keeping the first registry");
+        }
+    }
+
+    fn registry(&self) -> Result<Arc<dyn ToolRegistry>, String> {
+        let bound = self
+            .registry
+            .get()
+            .ok_or_else(|| "the tool catalog is not bound to the main tool registry".to_owned())?;
+        bound
+            .upgrade()
+            .ok_or_else(|| "the main tool registry has been released".to_owned())
+    }
+
+    /// 主线程注册表的 MCP 连接（连接中的服务器，tools-more.md §3.5.1）；没有时 None。
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        self.registry().ok()?.mcp()
+    }
+
+    /// 这些名字里延迟的工具名，按 UTF-16 码元序（`deferred_tools_delta` 的清单顺序）。
+    ///
+    /// Fork: each name is resolved by `session`'s own lookup (`find_for`). The global `find` can answer a server an
+    /// incognito profile hides that shares the tool's name, and that namesake's `alwaysLoad` would drop the session's
+    /// deferred tool from the listing (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    fn deferred_names(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+        names: &[String],
+    ) -> Result<Vec<String>, String> {
+        let registry = self.registry()?;
+        let mut deferred: Vec<String> = names
+            .iter()
+            .filter(|name| {
+                registry
+                    .find_for(session, name)
+                    .is_some_and(|tool| tool.is_enabled() && is_deferred(tool.as_ref()))
+            })
+            .cloned()
+            .collect();
+        // 缺陷修复（R4 F1）：原来按不分大小写的 `compare_names`（近似工具池的 `localeCompare`），
+        // MCP 工具夹在内置工具中间。清单按 JS 缺省排序（UTF-16 码元序）：大写开头的内置工具在小写开头的
+        // MCP 工具之前。工具名是 ASCII，按字节比较与码元序相同。agent 清单仍按 `localeCompare`（context `listings.rs`）。
+        deferred.sort();
+        deferred.dedup();
+        Ok(deferred)
+    }
+}
+
+/// `deferred_tools_delta` 的清单来源：这一步的工具里有 ToolSearch 时（乐观判断，tools-more.md §3.2.1），工具集里的延迟
+/// 工具，每行是工具名。修改（工作线 F89）：不再看模型；`auto` 而这一步没到门槛时照样宣布。
+#[async_trait]
+impl ListingSource for ToolCatalog {
+    async fn listings(&self, request: &ContextRequest) -> Result<Listings, OrchestrationError> {
+        if !request.tool_names.iter().any(|name| name == TOOL_SEARCH) {
+            return Ok(Listings::default());
+        }
+        let deferred_tools = self
+            .deferred_names(&request.session, &request.tool_names)
+            .map_err(|message| OrchestrationError::Failed { message })?
+            .into_iter()
+            .map(|name| ListingEntry {
+                line: name.clone(),
+                name,
+            })
+            .collect();
+        Ok(Listings {
+            deferred_tools,
+            ..Listings::default()
+        })
+    }
+}
+
+pub struct ToolSearchTool {
+    definition: Definition,
+    catalog: Arc<ToolCatalog>,
+}
+
+impl ToolSearchTool {
+    pub fn new(catalog: Arc<ToolCatalog>) -> Self {
+        Self {
+            definition: rust_cli_prompts::definition(TOOL_SEARCH).clone(),
+            catalog,
+        }
+    }
+
+    fn candidates(tools: &[Arc<dyn Tool>], all: &[Arc<dyn Tool>]) -> Vec<Candidate> {
+        let names: Vec<String> = all.iter().map(|tool| tool.name().to_owned()).collect();
+        let prompt = PromptContext {
+            tool_names: names,
+            mode: PermissionMode::Default,
+        };
+        tools
+            .iter()
+            .map(|tool| Candidate {
+                name: tool.name().to_owned(),
+                description: tool.description(&prompt),
+                hint: tool.search_hint().map(str::to_owned),
+                mcp: rust_cli_kernel_api::tool_search::is_mcp(tool.as_ref()),
+            })
+            .collect()
+    }
+
+    /// `select:A,B`：先在延迟工具里找，再在全部工具里找（已加载的工具，视为无害的空操作），再按 MCP
+    /// 工具名找。返回找到的工具名与找不到的名字（按出现的先后）。
+    fn select(
+        list: &str,
+        deferred: &[Arc<dyn Tool>],
+        all: &[Arc<dyn Tool>],
+    ) -> (Vec<String>, Vec<String>) {
+        let mut found: Vec<String> = Vec::new();
+        let mut missing: Vec<String> = Vec::new();
+        let by_name = |tools: &[Arc<dyn Tool>], name: &str| {
+            tools
+                .iter()
+                .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
+                .map(|tool| vec![tool.name().to_owned()])
+        };
+        for name in list
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let matched = by_name(deferred, name)
+                .or_else(|| by_name(all, name))
+                .unwrap_or_else(|| {
+                    all.iter()
+                        .filter(|tool| keywords::mcp_tool_name(tool.name()) == Some(name))
+                        .map(|tool| tool.name().to_owned())
+                        .collect()
+                });
+            if matched.is_empty() {
+                missing.push(name.to_owned());
+            }
+            for name in matched {
+                if !found.contains(&name) {
+                    found.push(name);
+                }
+            }
+        }
+        (found, missing)
+    }
+
+    /// 在这些工具里搜（`select:` 时只看 `list` 里的名字，否则按关键词）。
+    fn search(
+        query: &str,
+        select: Option<&str>,
+        max_results: usize,
+        all: &[Arc<dyn Tool>],
+    ) -> Vec<String> {
+        let deferred: Vec<Arc<dyn Tool>> = all
+            .iter()
+            .filter(|tool| is_deferred(tool.as_ref()))
+            .cloned()
+            .collect();
+        match select {
+            Some(list) => Self::select(list, &deferred, all).0,
+            None => keywords::search(
+                query,
+                &Self::candidates(&deferred, all),
+                &all.iter()
+                    .map(|tool| tool.name().to_owned())
+                    .collect::<Vec<_>>(),
+                max_results,
+            ),
+        }
+    }
+}
+
+fn select_query(query: &str) -> Option<&str> {
+    static SELECT: OnceLock<Option<Regex>> = OnceLock::new();
+    SELECT
+        .get_or_init(|| Regex::new(r"(?is)^select:(.+)$").ok())
+        .as_ref()?
+        .captures(query)
+        .and_then(|captures| captures.get(1))
+        .map(|list| list.as_str())
+}
+
+#[async_trait]
+impl Tool for ToolSearchTool {
+    fn name(&self) -> &str {
+        TOOL_SEARCH
+    }
+
+    fn input_schema(&self) -> Value {
+        self.definition.schema.clone()
+    }
+
+    fn description(&self, _context: &PromptContext) -> String {
+        self.definition.description.clone()
+    }
+
+    /// `ENABLE_TOOL_SEARCH` 为关时不启用（工作线 F89，tools-more.md §3.2.1）。
+    fn is_enabled(&self) -> bool {
+        self.catalog.setting.allows()
+    }
+
+    fn is_read_only(&self, _input: &Value) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self, _input: &Value) -> bool {
+        true
+    }
+
+    fn max_result_size_chars(&self) -> Option<usize> {
+        Some(rust_cli_kernel_api::tool::DEFAULT_MAX_RESULT_CHARS)
+    }
+
+    /// 没有专属的权限检查，默认放行。
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        _context: &ToolUseContext,
+    ) -> PermissionDecision {
+        PermissionDecision::Allow {
+            updated_input: None,
+        }
+    }
+
+    async fn call(
+        &self,
+        input: Value,
+        context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        let query = input
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let max_results = input
+            .get("max_results")
+            .and_then(Value::as_f64)
+            .filter(|max| max.is_finite() && *max >= 0.0)
+            .map_or(DEFAULT_MAX_RESULTS, |max| max as usize);
+        let (all, _) = self
+            .catalog
+            .session_view(&context.session)
+            .map_err(|message| ToolError::Failed { message })?;
+        let select = select_query(query);
+        // 先照常搜；`select:` 时记下找不到的名字。
+        let (mut matches, missing) = match select {
+            Some(list) => {
+                let deferred: Vec<Arc<dyn Tool>> = all
+                    .iter()
+                    .filter(|tool| is_deferred(tool.as_ref()))
+                    .cloned()
+                    .collect();
+                Self::select(list, &deferred, &all)
+            }
+            None => (Self::search(query, None, max_results, &all), Vec::new()),
+        };
+        // 搜不到时看连接中的 MCP 服务器：等它们、再搜一次（tools-more.md §3.5.1，修复线 F36）。
+        let mcp = self.catalog.mcp();
+        let retry = if select.is_some() {
+            !missing.is_empty()
+        } else {
+            matches.is_empty()
+        };
+        if retry && let Some(mcp) = &mcp {
+            // `select:` 只重找找不到的那些名字；点名的文本也是它们。
+            let missing_list = missing.join(",");
+            let (text_for, list) = match select {
+                Some(_) => (missing.join(" "), Some(missing_list.as_str())),
+                None => (query.to_owned(), None),
+            };
+            let current = || self.catalog.session_view(&context.session);
+            let search = |tools: &[Arc<dyn Tool>]| Self::search(query, list, max_results, tools);
+            let found =
+                tool_search_mcp::retry(mcp.as_ref(), &all, &text_for, current, search, &context)
+                    .await?;
+            for name in found {
+                if !matches.contains(&name) {
+                    matches.push(name);
+                }
+            }
+        }
+        if matches.is_empty() {
+            // The session's state at this moment (the retry may have waited), never the global one.
+            let note = if mcp.is_some() {
+                let (_, now) = self
+                    .catalog
+                    .session_view(&context.session)
+                    .map_err(|message| ToolError::Failed { message })?;
+                tool_search_mcp::pending_note(Some(&now))
+            } else {
+                tool_search_mcp::pending_note(None)
+            };
+            return Ok(text(format!("{}{note}", texts::NO_DEFERRED_MATCH)));
+        }
+        Ok(ToolOutput {
+            content: matches
+                .into_iter()
+                .map(|tool_name| ToolResultContent::ToolReference { tool_name })
+                .collect(),
+            is_error: false,
+            display: Value::Null,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "tool_search_tests.rs"]
+mod tests;

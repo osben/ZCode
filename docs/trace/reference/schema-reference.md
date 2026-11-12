@@ -278,21 +278,19 @@ failure_stage = schedule | execute | commit | unhandled
 
 ### 10.1 Operation catalog
 
-| Operation                         | Meaning                            | Entry class    |
-| --------------------------------- | ---------------------------------- | -------------- |
-| `goal_completion_verification`    | Goal completion verification       | system-sidecar |
-| `goal_title_generation`           | Goal title generation              | system-sidecar |
-| `project_memory_extract`          | Project Memory extraction          | system-sidecar |
-| `project_memory_dream`            | Project Memory Dream/consolidation | system-sidecar |
-| `project_memory_recall`           | Project Memory recall              | system-sidecar |
-| `read_session_context_extract`    | Session Context extract phase      | tool           |
-| `read_session_context_synthesize` | Session Context synthesize phase   | tool           |
-| `session_title_generation`        | Session title generation           | system-sidecar |
-| `tool_internal_model_call`        | In-Tool model work not listed      | tool/system    |
-| `web_fetch_processing`            | Web Fetch content processing       | tool           |
-| `web_search`                      | Web Search model request           | tool           |
-| `workspace_git_commit_message`    | Git Commit Message generation      | system-sidecar |
-| `workspace_generate_text`         | Workspace general text generation  | system-sidecar |
+| Operation                      | Meaning                            | Entry class    |
+| ------------------------------ | ---------------------------------- | -------------- |
+| `goal_completion_verification` | Goal completion verification       | system-sidecar |
+| `goal_title_generation`        | Goal title generation              | system-sidecar |
+| `project_memory_extract`       | Project Memory extraction          | system-sidecar |
+| `project_memory_dream`         | Project Memory Dream/consolidation | system-sidecar |
+| `project_memory_recall`        | Project Memory recall              | system-sidecar |
+| `session_title_generation`     | Session title generation           | system-sidecar |
+| `tool_internal_model_call`     | In-Tool model work not listed      | tool/system    |
+| `web_fetch_processing`         | Web Fetch content processing       | tool           |
+| `web_search`                   | Web Search model request           | tool           |
+| `workspace_git_commit_message` | Git Commit Message generation      | system-sidecar |
+| `workspace_generate_text`      | Workspace general text generation  | system-sidecar |
 
 `agent_step` and `context_compaction` also belong to `AgentTelemetryOperation` but have dedicated parent
 Spans and are not Detached Start operations. "Entry class" only helps understand the Operation; it is not

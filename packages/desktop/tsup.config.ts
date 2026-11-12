@@ -226,6 +226,7 @@ function createMainDefines() {
 const desktopNodeRuntimeExternals = [
   "electron",
   "node-pty",
+  "@napi-rs/keyring",
   "ssh2",
   "undici",
   "@larksuiteoapi/node-sdk",
@@ -239,10 +240,12 @@ const desktopNodeRuntimeExternals = [
   "transcribe-cpp",
 ];
 
-function createDevReadyMarkerHook(target: "main" | "host" | "preload"): string {
-  // In multi-config watch mode, CLI-level --onSuccess runs separately for each sub-build.
-  // Previously, preload could write the ready marker first, allowing Electron to start before main/host finished.
-  // Each config now writes its own marker on success so the dev launcher can wait for every build precisely.
+function createDevReadyMarkerHook(
+  target: "main" | "host" | "preload" | "scheduler" | "extension-host",
+): string {
+  // The CLI-level --onSuccess runs once per sub-build in multi-config watch mode.
+  // Previously preload could write the ready marker first, so Electron started before main/host had finished.
+  // Each config now writes its own marker on success so the dev launcher waits for every build precisely.
   return `node scripts/write-dev-ready-marker.mjs ${target}`;
 }
 
@@ -410,6 +413,27 @@ export default defineConfig([
       options.chunkNames = "scheduler/chunk-[hash]";
     },
     onSuccess: createDevReadyMarkerHook("scheduler"),
+    ...desktopTsupBundleSecurityOptions,
+  },
+  {
+    // 全 App 唯一的扩展进程（docs/plugins/extension-host.md §12.1）。扩展代码在运行时按插件路径
+    // 动态 import，不进入本 bundle；这里只打包宿主本身（rpc、shared）与扩展视图用的 MCP SDK
+    // （§8：进程内 MCP Client 与写法一的低层 Server）。SDK 内联进产物，安装包不依赖 node_modules 布局。
+    name: "extension-host",
+    entry: { "extension-host/index": "src/extension-host/index.ts" },
+    outDir: "out",
+    format: "esm",
+    platform: "node",
+    removeNodeProtocol: false,
+    target: "node22",
+    external: desktopNodeRuntimeExternals,
+    noExternal: ["@zcode/shared", "@zcode/rpc", /^@modelcontextprotocol\//],
+    define: createSharedDefines(),
+    esbuildOptions(options) {
+      applyDesktopTsupEsbuildSecurityOptions(options);
+      options.chunkNames = "extension-host/chunk-[hash]";
+    },
+    onSuccess: createDevReadyMarkerHook("extension-host"),
     ...desktopTsupBundleSecurityOptions,
   },
 ]);

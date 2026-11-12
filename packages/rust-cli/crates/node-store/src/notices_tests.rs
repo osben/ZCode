@@ -1,0 +1,326 @@
+//! 合成 user 消息：attachment、meta、用户中断（spec node-store.md §4.5）。
+use rust_cli_base::js::json::stringify;
+use rust_cli_kernel_api::ids::{MessageId, SessionId};
+use rust_cli_kernel_api::message::{
+    AttachmentMessage, ContentBlock, Message, UserMessage, UserOrigin,
+};
+use rust_cli_kernel_api::store::{Fact, SessionStore, StoreError};
+use serde_json::{Value, json};
+
+use crate::tests::{TestStore, assistant, batch, started, text, user};
+
+fn sid() -> SessionId {
+    SessionId::new("sess_1")
+}
+
+fn attachment(id: &str, source: &str, body: &str, data: Value) -> Fact {
+    Fact::MessageAppended {
+        message: Message::Attachment(AttachmentMessage {
+            id: MessageId::new(id),
+            source: source.into(),
+            text: format!("<system-reminder>\n{body}\n</system-reminder>"),
+            data,
+        }),
+    }
+}
+
+fn user_with(id: &str, content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
+    Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new(id),
+            content,
+            origin,
+        }),
+    }
+}
+
+fn messages(facts: &[Fact]) -> Vec<Message> {
+    facts
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::MessageAppended { message } => Some(message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 一条消息行与它的 part 行（`data` 列）。
+fn stored(t: &TestStore, id: &str) -> (String, Vec<String>) {
+    let text = |rows: Vec<Vec<Value>>| -> Vec<String> {
+        rows.into_iter()
+            .map(|row| row[0].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let message = text(t.rows(&format!("select data from message where id = '{id}'")));
+    let parts = text(t.rows(&format!(
+        "select data from part where message_id = '{id}' order by sequence"
+    )));
+    (message[0].clone(), parts)
+}
+
+/// attachment 写成 Node `persistRuntimeReminderMessage` 形状的 model-only 合成消息，`data` 存在
+/// part 的 `metadata.rustCli`；冷加载原样还原，user 角色与 system 角色的来源都一样。
+#[tokio::test]
+async fn attachments_are_synthetic_reminders_that_read_back_unchanged() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let facts = vec![
+        user("msg_ru_u1", "Hello"),
+        attachment(
+            "msg_rw_t1",
+            "date",
+            "Today's date is 2026-10-17.",
+            json!({"date": "2026-10-17"}),
+        ),
+        attachment("msg_rx_t2", "remote_session_change", "x", Value::Null),
+        // 只有数据、不渲染文本的 attachment（发给模型时为空）。
+        Fact::MessageAppended {
+            message: Message::Attachment(AttachmentMessage {
+                id: MessageId::new("msg_ry_t3"),
+                source: "max_turns_reached".into(),
+                text: String::new(),
+                data: json!({"maxTurns": 3, "turnCount": 3}),
+            }),
+        },
+        assistant("msg_s0_a1", vec![text("Hi")], None),
+    ];
+    for fact in &facts {
+        t.store
+            .commit(&sid(), batch(None, vec![fact.clone()]))
+            .await
+            .unwrap();
+    }
+    let loaded = t.store.load(&sid()).await.unwrap();
+    assert_eq!(loaded.messages, messages(&facts));
+
+    let (message, parts) = stored(&t, "msg_rw_t1");
+    let metadata = json!({"source": "date", "visibility": "model-only"});
+    assert_eq!(
+        message,
+        stringify(
+            &json!({"role": "user", "time": {"created": 1004}, "agent": "zcode-agent",
+            "metadata": metadata,
+            "modelSelection": {"providerId": "p", "modelId": "m"},
+            "anchor": {"turnId": "turn_00000000-0000-4000-8000-000000000001", "origin": "synthetic"},
+            "semantics": {"origin": "agent_runtime", "kind": "system_reminder", "source": "date",
+                "uiVisibility": "hidden", "providerVisibility": "visible",
+                "transcriptVisibility": "hidden"},
+            "synthetic": true, "tools": {}, "visibility": "model-only",
+            "model": {"providerID": "p", "modelID": "m"}})
+        )
+    );
+    assert_eq!(
+        parts,
+        vec![stringify(&json!({"type": "text",
+            "text": "<system-reminder>\nToday's date is 2026-10-17.\n</system-reminder>",
+            "synthetic": true, "time": {"start": 1004, "end": 1004},
+            "metadata": {"source": "date", "visibility": "model-only",
+                "rustCli": {"message": "attachment", "data": {"date": "2026-10-17"}}}}))]
+    );
+    // attachment 不是真实输入：assistant 的父消息仍是用户输入。
+    let parent =
+        t.rows("select json_extract(data, '$.parentID') from message where id = 'msg_s0_a1'");
+    assert_eq!(parent, vec![vec![Value::from("msg_ru_u1")]]);
+}
+
+/// meta 消息与中断消息：model-only 合成消息，冷加载还原原来的来源；中断不改标题、不开新轮。
+#[tokio::test]
+async fn meta_and_interrupt_messages_keep_their_origin() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let interrupt = "[Request interrupted by user]";
+    let facts = vec![
+        user("msg_ru_u1", "Hello"),
+        assistant("msg_rv_a1", vec![text("Hi")], None),
+        user_with("msg_rw_i1", vec![text(interrupt)], UserOrigin::Human),
+        user_with(
+            "msg_rx_m1",
+            vec![text("Output token limit hit."), text("Resume directly.")],
+            UserOrigin::Meta {
+                source: "max_output_tokens_recovery".into(),
+            },
+        ),
+        assistant("msg_ry_a2", vec![text("Again")], None),
+    ];
+    t.store
+        .commit(&sid(), batch(None, facts.clone()))
+        .await
+        .unwrap();
+    let loaded = t.store.load(&sid()).await.unwrap();
+    assert_eq!(loaded.messages, messages(&facts));
+    assert_eq!(loaded.meta.title, "Hello");
+
+    let rows = t.rows(
+        "select json_extract(data, '$.semantics.origin'), json_extract(data, '$.visibility'),
+           json_extract(data, '$.metadata.source') from message
+         where id in ('msg_rw_i1', 'msg_rx_m1') order by sequence",
+    );
+    let row = |source: &str| -> Vec<Value> {
+        vec!["agent_runtime".into(), "model-only".into(), source.into()]
+    };
+    assert_eq!(
+        rows,
+        vec![row("interrupt"), row("max_output_tokens_recovery")]
+    );
+    assert_eq!(stored(&t, "msg_rx_m1").1.len(), 2);
+    let parent =
+        t.rows("select json_extract(data, '$.parentID') from message where id = 'msg_ry_a2'");
+    assert_eq!(parent, vec![vec![Value::from("msg_ru_u1")]]);
+}
+
+/// Fork: a background task notification takes Node's `background_task` shape (source on the
+/// message, `originMeta` of the batch, `backgroundResult` anchor), so Node's cold read sees a
+/// background result turn; the cold load here still reads the kernel's notice origin.
+#[tokio::test]
+async fn a_notification_is_stored_like_a_node_background_task() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let notice = |id: &str, title: &str| {
+        format!(
+            "<system-reminder>\n<task-notification>\n<task-id>{id}</task-id>\n\
+             <status>completed</status>\n<summary>Agent \"{title}\" finished</summary>\n\
+             </task-notification>\n</system-reminder>"
+        )
+    };
+    let facts = vec![
+        user("msg_ru_u1", "Hello"),
+        assistant("msg_rv_a1", vec![text("Started")], None),
+        user_with(
+            "msg_rw_n1",
+            vec![
+                text(&notice("agent_1", "First")),
+                text(&notice("agent_2", "Second")),
+            ],
+            UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.into(),
+            },
+        ),
+        assistant("msg_rx_a2", vec![text("Done")], None),
+    ];
+    t.store
+        .commit(&sid(), batch(None, facts.clone()))
+        .await
+        .unwrap();
+    let loaded = t.store.load(&sid()).await.unwrap();
+    assert_eq!(loaded.messages, messages(&facts));
+
+    let (message, parts) = stored(&t, "msg_rw_n1");
+    let message: Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(message["source"], "background_task");
+    assert_eq!(message["metadata"]["source"], "background_task");
+    assert_eq!(
+        message["metadata"]["inputPresentation"],
+        "task_notification"
+    );
+    assert_eq!(
+        message["metadata"]["originMeta"],
+        json!({"backgroundSource": "subagent", "workId": "agent_1", "title": "First · Second"})
+    );
+    assert_eq!(message["semantics"]["kind"], "background_notification");
+    assert_eq!(message["semantics"]["source"], "background_task");
+    assert_eq!(message["anchor"]["origin"], "backgroundResult");
+    assert_eq!(parts.len(), 2);
+    let part: Value = serde_json::from_str(&parts[0]).unwrap();
+    assert_eq!(part["metadata"]["source"], "background_task");
+    assert_eq!(
+        part["metadata"]["runtimeMessage"],
+        json!({"source": "legacy_synthetic"})
+    );
+    assert_eq!(
+        part["metadata"]["originMeta"],
+        message["metadata"]["originMeta"]
+    );
+}
+
+#[tokio::test]
+async fn meta_messages_with_images_are_refused() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let image = ContentBlock::Image {
+        source: rust_cli_kernel_api::message::ImageSource::Base64 {
+            media_type: "image/png".into(),
+            data: "AA==".into(),
+        },
+        name: None,
+    };
+    let fact = user_with(
+        "msg_ru_m1",
+        vec![image],
+        UserOrigin::Meta {
+            source: "hook".into(),
+        },
+    );
+    let result = t.store.commit(&sid(), batch(None, vec![fact])).await;
+    assert!(
+        matches!(result, Err(StoreError::Unsupported { .. })),
+        "{result:?}"
+    );
+    assert!(t.rows("select id from message").is_empty());
+}
+
+/// The stored stall reminder carries `subagentStall.executionId` after `lastProgressAt`, as Node stores it; an ordinary
+/// notification and an ordinary user message carry no `stall_execution` key at all.
+#[tokio::test]
+async fn a_stall_reminder_stores_its_execution_and_other_messages_do_not() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let stall_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<background-agent-stall>\n  <task-id>agent_1</task-id>\n  <description>Silent job</description>\n  <no-progress-for-ms>900000</no-progress-for-ms>\n  <last-progress-at>2024-11-07T17:20:00.000Z</last-progress-at>\n</background-agent-stall>\n\nBackground agent \"Silent job\" (agent_1) has been running.";
+    let stall = Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: Some("3".to_owned()),
+            intent: None,
+            id: MessageId::new("msg_stall_1"),
+            content: vec![text(stall_text)],
+            origin: UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.into(),
+            },
+        }),
+    };
+    let facts = vec![user("msg_plain_u1", "Hello"), stall];
+    t.store.commit(&sid(), batch(None, facts)).await.unwrap();
+
+    let (message, _) = stored(&t, "msg_stall_1");
+    let raw_meta = {
+        let value: Value = serde_json::from_str(&message).unwrap();
+        serde_json::to_string(&value["metadata"]["originMeta"]).unwrap()
+    };
+    let value: Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(
+        value["metadata"]["originMeta"],
+        json!({
+            "backgroundSource": "subagent",
+            "title": "Silent job — no progress for 15 min",
+            "workId": "agent_1",
+            "subagentStall": {"noProgressForMs": 900_000, "lastProgressAt": 1_731_000_000_000u64, "executionId": "3"},
+        })
+    );
+    let positions: Vec<usize> = [
+        "\"noProgressForMs\":900000",
+        "\"lastProgressAt\":1731000000000",
+        "\"executionId\":\"3\"",
+    ]
+    .iter()
+    .map(|key| raw_meta.find(key).expect(key))
+    .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{raw_meta}"
+    );
+
+    // An ordinary message: no key for the execution anywhere in its stored form.
+    let (plain, _) = stored(&t, "msg_plain_u1");
+    assert!(!plain.contains("stall_execution"), "{plain}");
+    assert!(!plain.contains("executionId"), "{plain}");
+    let loaded = t.store.load(&sid()).await.unwrap();
+    let plain_message = messages(&[Fact::MessageAppended {
+        message: loaded.messages[0].clone(),
+    }]);
+    let serialized = serde_json::to_value(&plain_message[0]).unwrap();
+    assert!(serialized.get("stall_execution").is_none(), "{serialized}");
+}

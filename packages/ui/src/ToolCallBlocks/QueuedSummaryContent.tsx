@@ -42,20 +42,10 @@ export function shouldAnimateQueuedSummaryContent({
 
 interface SummaryContentSnapshot {
   key: string;
-  refreshVersion?: string;
+  refreshVersion?: unknown;
   primaryText: ReactNode;
   secondaryText?: ReactNode;
   trailingText?: ReactNode;
-}
-
-export function shouldRefreshQueuedSummaryContent(
-  current: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
-  next: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
-) {
-  return (
-    current.key === next.key &&
-    (current.trailingText !== next.trailingText || current.refreshVersion !== next.refreshVersion)
-  );
 }
 
 function usePrefersReducedMotion() {
@@ -98,7 +88,7 @@ export function QueuedSummaryContent({
   disableAnimation = false,
 }: {
   contentKey: string;
-  contentRefreshVersion?: string;
+  contentRefreshVersion?: unknown;
   primaryText: ReactNode;
   secondaryText?: ReactNode;
   trailingText?: ReactNode;
@@ -111,14 +101,34 @@ export function QueuedSummaryContent({
     disableAnimation,
     reducedMotion,
   });
-  const createSnapshot = (): SummaryContentSnapshot => ({
-    key: contentKey,
-    refreshVersion: contentRefreshVersion,
-    primaryText,
-    secondaryText,
-    trailingText,
-  });
-  const [displayedContent, setDisplayedContent] = useState(createSnapshot);
+  if (!shouldAnimate) {
+    return (
+      <>
+        {primaryText}
+        {secondaryText}
+        {trailingText}
+      </>
+    );
+  }
+
+  return (
+    <AnimatedQueuedSummaryContent
+      content={{
+        key: contentKey,
+        refreshVersion: contentRefreshVersion,
+        primaryText,
+        secondaryText,
+        trailingText,
+      }}
+    />
+  );
+}
+
+// Animation state lives here so the disabled path above never runs queue timers.
+// Same-key updates are read straight from the latest props (trailing counts, refresh version, body text),
+// so they do not need a state update or a replayed roll.
+function AnimatedQueuedSummaryContent({ content }: { content: SummaryContentSnapshot }) {
+  const [displayedContent, setDisplayedContent] = useState(content);
   const displayedContentRef = useRef(displayedContent);
   const queuedContentRef = useRef<SummaryContentSnapshot[]>([]);
   const animationTimerRef = useRef<number | null>(null);
@@ -179,24 +189,12 @@ export function QueuedSummaryContent({
         promote(nextQueued);
       }, SUMMARY_ROLL_TOTAL_MS);
     };
-    const nextContent = createSnapshot();
-
-    if (!shouldAnimate) {
-      clearAnimationTimer();
-      isAnimatingRef.current = false;
-      queuedContentRef.current = [];
-      displayedContentRef.current = nextContent;
-      setDisplayedContent(nextContent);
-      return;
-    }
+    const nextContent = content;
 
     if (displayedContentRef.current.key === nextContent.key) {
       // Do not replay the full summary for diffs in the same Changes child or updates to the same streaming Assistant message;
-      // the former updates trailing counts, and the latter refreshes body text in place using an explicit version.
-      if (shouldRefreshQueuedSummaryContent(displayedContentRef.current, nextContent)) {
-        displayedContentRef.current = nextContent;
-        setDisplayedContent(nextContent);
-      }
+      // the render below reads the latest props for the same key, so trailing counts and body text refresh in place.
+      displayedContentRef.current = nextContent;
       return;
     }
 
@@ -211,7 +209,7 @@ export function QueuedSummaryContent({
     }
 
     promote(nextContent);
-  }, [contentKey, contentRefreshVersion, shouldAnimate, trailingText]);
+  }, [content]);
 
   useEffect(() => {
     return () => {
@@ -221,34 +219,27 @@ export function QueuedSummaryContent({
     };
   }, []);
 
-  if (!shouldAnimate) {
-    return (
-      <>
-        {primaryText}
-        {secondaryText}
-        {trailingText}
-      </>
-    );
-  }
+  // Same key as the state: show the latest props; a new key still in the queue keeps showing the snapshot being rolled.
+  const shown = displayedContent.key === content.key ? content : displayedContentRef.current;
 
   return (
     <span className="relative inline-flex min-w-0 items-center gap-2 overflow-hidden align-middle">
       <AnimatePresence initial={false} mode="popLayout">
         <motion.span
-          key={displayedContent.key}
+          key={shown.key}
           className="inline-flex min-w-0 items-center gap-2"
           initial={{ y: "0.8em", opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: "-0.8em", opacity: 0 }}
           transition={SUMMARY_ROLL_TRANSITION}
         >
-          {displayedContent.primaryText}
-          {displayedContent.secondaryText}
+          {shown.primaryText}
+          {shown.secondaryText}
         </motion.span>
       </AnimatePresence>
       {/* Reason for the fix: The Changes diff count must come from the same queued snapshot as the file summary,
           but the number should keep animating independently with FlipMetricValue rather than scrolling vertically with the whole summary. */}
-      {displayedContent.trailingText}
+      {shown.trailingText}
     </span>
   );
 }

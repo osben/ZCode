@@ -35,13 +35,13 @@ export function useDynamicWorkflowAvailabilityLoader(
 }
 
 /**
- * Synchronize after the user's selection changes (docs/dynamic-workflow/launch.md, “The user's
- * choice”), registered once in Root. The settings file is the sole source of the selection. After
- * any window writes it, the shared settings broadcast lets every Root read the new value; each
- * notifies its Host (resend CLI policy and forward to the remote Host), then the Host rereads the snapshot.
- * - The first value is only a baseline: Host reads the settings file at startup, so no signal is needed.
- * - Serialize repeated changes: start the next “signal → reread” only after the previous one finishes, so a slow reread cannot overwrite a newer result.
- * - Reread even if Host synchronization fails: the snapshot reflects the result currently computed by Host.
+ * 用户选择变化后的同步（docs/dynamic-workflow/launch.md「The user's choice」），挂在 Root 里一次。
+ * 设置文件是选择的唯一来源；任何窗口写入后，共享设置广播让每个窗口的 Root 都读到新值，
+ * 各自通知本窗口的 Host（转发给远程 Host、排队重发 CLI 策略），Host 记下选择即返回，随后重读快照；
+ * 不等 CLI 应答，CLI 正忙时界面也不会停在旧模式。
+ *   - 首次读到的值只是基线：启动时 Host 自己会读设置文件，不需要信号；
+ *   - 多次变化串行：上一轮「信号 → 重读」完成后才开始下一轮，慢的重读不会盖掉新结果；
+ *   - Host 同步失败仍重读：快照以 Host 当前算出的结果为准。
  */
 export function useDynamicWorkflowUserModeSync(params: {
   settingsLoaded: boolean;

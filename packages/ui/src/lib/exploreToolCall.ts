@@ -110,67 +110,7 @@ function extractToolCommands(input: unknown): string[] {
   );
 }
 
-const EXECUTE_READ_COMMAND_RE =
-  /\b(rg|grep|find|ls|cat|head|tail|wc|stat|pwd|which|readlink|tree|sed\s+-n|get-childitem|gci|dir|get-content|gc|type|select-string|sls|get-location|test-path|resolve-path)\b|^git\s+(status|log|show|diff)\b/i;
-const EXECUTE_WRITE_COMMAND_RE =
-  /\b(sed\s+-i|perl\s+-pi|tee|mv|cp|rm|mkdir|rmdir|touch|truncate|chmod|chown|remove-item|del|erase|set-content|add-content|clear-content|out-file|new-item|move-item|copy-item|rename-item|set-item)\b|^git\s+(add|commit|rm|mv|checkout|switch|restore|reset|clean|revert|cherry-pick|merge|rebase)\b/i;
-const SHELL_REDIRECT_WRITE_RE = /(^|[^\d<])>>?\s*\S|&>\s*\S/i;
-const SHELL_LOOP_RE = /\b(for|while)\b/i;
-
 export function isShellToolCallAwaitingCommand({ kind, input }: { kind: string; input: unknown }) {
   const identity = resolveToolCallIdentity({ kind, input });
   return identity.family === "shell" && extractToolCommands(input).length === 0;
-}
-
-export function isExploreToolCall({ kind, input }: { kind: string; input: unknown }) {
-  const identity = resolveToolCallIdentity({ kind, input });
-
-  if (identity.family === "file-write") {
-    return false;
-  }
-
-  if (
-    identity.family === "file-read" ||
-    identity.family === "search" ||
-    identity.family === "web-fetch" ||
-    identity.family === "explore"
-  ) {
-    return true;
-  }
-
-  if (identity.family !== "shell") {
-    return false;
-  }
-
-  const commands = extractToolCommands(input);
-  if (commands.length === 0) {
-    return false;
-  }
-
-  if (commands.some((command) => EXECUTE_WRITE_COMMAND_RE.test(command))) {
-    return false;
-  }
-
-  if (commands.some((command) => SHELL_REDIRECT_WRITE_RE.test(command))) {
-    return false;
-  }
-
-  if (commands.some((command) => EXECUTE_READ_COMMAND_RE.test(command))) {
-    return true;
-  }
-
-  // Some read-only exploration is wrapped in for/while loops, such as reading multiple READMEs or recursively scanning directories,
-  // so the command may not begin with rg/ls but still counts as explore.
-  return commands.some(
-    (command) => SHELL_LOOP_RE.test(command) && EXECUTE_READ_COMMAND_RE.test(command),
-  );
-}
-
-export function isExecuteToolCall({ kind, input }: { kind: string; input: unknown }) {
-  const identity = resolveToolCallIdentity({ kind, input });
-  return (
-    identity.family === "shell" &&
-    !isShellToolCallAwaitingCommand({ kind, input }) &&
-    !isExploreToolCall({ kind, input })
-  );
 }

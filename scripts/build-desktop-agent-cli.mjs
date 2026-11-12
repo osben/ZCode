@@ -126,8 +126,8 @@ async function verifyRequiredDevPluginRuntimeArtifacts() {
  *
  * dev runs only the host platform, so platformKey comes straight from process; the packaging chain resolves its own cross-platform targets.
  */
-function stageDevAgentBundle() {
-  stageAgentBundle({
+async function stageDevAgentBundle() {
+  await stageAgentBundle({
     repoRoot,
     platformKey: `${process.platform}-${process.arch}`,
   });
@@ -186,7 +186,7 @@ function runBootstrapWithRemoteBuild() {
 if (useBootstrapWithRemoteBuild) {
   runBootstrapWithRemoteBuild();
   await stageProviderConfigForAgentBundle();
-  stageDevAgentBundle();
+  await stageDevAgentBundle();
   stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
 }
@@ -211,7 +211,7 @@ if (!useTurboBuild) {
     stdio: "inherit",
   });
   await stageProviderConfigForAgentBundle();
-  stageDevAgentBundle();
+  await stageDevAgentBundle();
   stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
 }
@@ -234,5 +234,5 @@ runCommand(
   },
 );
 await stageProviderConfigForAgentBundle();
-stageDevAgentBundle();
+await stageDevAgentBundle();
 stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });

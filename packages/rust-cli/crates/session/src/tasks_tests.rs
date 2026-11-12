@@ -1,0 +1,803 @@
+//! 后台任务的查看与停止（tui-display.md §3.1）：命令来自执行环境的账本（带输出末尾），子代理来自 agents；
+//! `StopTask` 交给 agents 的停止路径，回执带它的文字。修复线 F34：子代理列表与后台任务的同一份快照。
+
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+use futures_util::stream::{self, BoxStream, StreamExt};
+use rust_cli_kernel_api::agents::{AgentSignal, AgentSignals};
+use rust_cli_kernel_api::env::{
+    CommandEvent, EnvError, EnvPath, FileContent, OperationContext, ReadFile, StartCommand,
+    WorkspaceRef, WriteFile, WriteReceipt,
+};
+use rust_cli_kernel_api::env_files::{ReadText, TextRead, TextSlice};
+use rust_cli_kernel_api::env_shell::{
+    BackgroundInfo, BackgroundKind as BackgroundKind_, BackgroundStatus, BackgroundTask, ShellState,
+};
+use rust_cli_kernel_api::ids::{AgentId, OperationId, SessionId, ShellTaskId};
+use rust_cli_kernel_api::machine::{Background, Commands, Files, MachineEnv, Shell};
+use rust_cli_kernel_api::manage::{BackgroundEntry, BackgroundKind};
+use rust_cli_kernel_api::panels::{ShellOutput, SubagentEntry, TasksSnapshot};
+use rust_cli_kernel_api::session_api::{Ack, Command, SessionHandle};
+use rust_cli_kernel_api::testing::{ScriptedModel, unsupported_machine};
+
+use crate::test_support::{Setup, envelope};
+
+fn unused() -> EnvError {
+    EnvError::Unsupported {
+        what: "test".to_owned(),
+    }
+}
+
+/// 只有两条后台命令的执行环境：`b1` 在跑（有输出文件），`b2` 已结束。远端执行 R4：另一台机器用 [`Shells::REMOTE`]
+/// （任务 `r1`、`r2`，输出在 `/srv/tasks`）；不是自己前缀的任务不认识。
+struct Shells {
+    prefix: &'static str,
+    outputs: &'static str,
+    /// 远端执行 F96：为真时 `shell_state` 与 `close_session` 一直不回（连接断了、调用在等重连）。
+    hang: Option<&'static std::sync::atomic::AtomicBool>,
+    /// 远端执行 F98：`b1` 的输出是 `tick-1` … `tick-12`、以换行结尾（命令的输出一般都是），`total_lines` 照 env-local 的
+    /// 读法（`\n` 的个数加一）。
+    ticks: bool,
+    /// 修复线 F117：账本里另有 monitor（[`MONITORS`]）。
+    monitors: bool,
+}
+
+/// 修复线 F117 的账本：任务 → （命令，种类，启动时的说明）。`b4` 是 description 为空的 monitor（名称退回命令原文）。
+const MONITORS: [(&str, &str, BackgroundKind_, &str); 4] = [
+    ("b1", "npm test", BackgroundKind_::Bash, "Run the tests"),
+    (
+        "b2",
+        "tail -f build.log",
+        BackgroundKind_::Monitor,
+        "build log",
+    ),
+    ("b4", "tail -F app.log", BackgroundKind_::Monitor, ""),
+    (
+        "s3",
+        "wss://events.example.com/feed",
+        BackgroundKind_::Monitor,
+        "deploy feed",
+    ),
+];
+
+impl Shells {
+    const LOCAL: Self = Self {
+        prefix: "b",
+        outputs: "/tmp/tasks",
+        hang: None,
+        ticks: false,
+        monitors: false,
+    };
+    const REMOTE: Self = Self {
+        prefix: "r",
+        outputs: "/srv/tasks",
+        hang: None,
+        ticks: false,
+        monitors: false,
+    };
+
+    /// 只换上文件、命令、shell 与后台命令四个端口的机器（其余端口返回 `Unsupported`）。
+    fn machine(self) -> MachineEnv {
+        let shells = std::sync::Arc::new(self);
+        unsupported_machine()
+            .with_files(shells.clone())
+            .with_commands(shells.clone())
+            .with_shell(shells.clone())
+            .with_background(shells)
+    }
+
+    async fn wait_if_hanging(&self) {
+        if self
+            .hang
+            .is_some_and(|hang| hang.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+#[async_trait]
+impl Files for Shells {
+    async fn read_file(&self, _w: &WorkspaceRef, _r: ReadFile) -> Result<FileContent, EnvError> {
+        Err(unused())
+    }
+
+    async fn write_file(
+        &self,
+        _w: &WorkspaceRef,
+        _c: OperationContext,
+        _r: WriteFile,
+    ) -> Result<WriteReceipt, EnvError> {
+        Err(unused())
+    }
+
+    async fn read_text(&self, _w: &WorkspaceRef, request: ReadText) -> Result<TextRead, EnvError> {
+        let (outputs, prefix) = (self.outputs, self.prefix);
+        // b2 的输出太大，b3 还没有输出文件（tui-panels.md §3.3）。
+        let path = request.path.as_str();
+        if path == format!("{outputs}/{prefix}2.output") {
+            return Ok(TextRead::TooLarge { size: 2 << 20 });
+        }
+        if path == format!("{outputs}/{prefix}3.output") {
+            return Err(EnvError::NotFound {
+                path: path.to_owned(),
+            });
+        }
+        // Fork: `e1` ended and its notice was acknowledged; only its terminal record is left.
+        if path == format!("{outputs}/e1.output") {
+            return Ok(TextRead::Text(TextSlice {
+                content: "ended output".to_owned(),
+                line_count: 1,
+                total_lines: 1,
+                total_bytes: 0,
+                read_bytes: 0,
+                mtime_ms: 0,
+                version: rust_cli_kernel_api::env::FileVersion::new("v1"),
+            }));
+        }
+        assert_eq!(path, format!("{outputs}/{prefix}1.output"));
+        if self.ticks {
+            let content: String = (1..=12).map(|n| format!("tick-{n}\n")).collect();
+            let lines = content.matches('\n').count() as u64 + 1;
+            return Ok(TextRead::Text(TextSlice {
+                content,
+                line_count: lines,
+                total_lines: lines,
+                total_bytes: 0,
+                read_bytes: 0,
+                mtime_ms: 0,
+                version: rust_cli_kernel_api::env::FileVersion::new("v1"),
+            }));
+        }
+        let content = (1..=45)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(TextRead::Text(TextSlice {
+            content,
+            line_count: 45,
+            total_lines: 45,
+            total_bytes: 0,
+            read_bytes: 0,
+            mtime_ms: 0,
+            version: rust_cli_kernel_api::env::FileVersion::new("v1"),
+        }))
+    }
+}
+
+#[async_trait]
+impl Commands for Shells {
+    async fn start_command(
+        &self,
+        _w: &WorkspaceRef,
+        _c: OperationContext,
+        _r: StartCommand,
+    ) -> Result<BoxStream<'static, Result<CommandEvent, EnvError>>, EnvError> {
+        Err(unused())
+    }
+
+    fn watch_command(
+        &self,
+        _o: OperationId,
+        _cursor: u64,
+    ) -> BoxStream<'static, Result<CommandEvent, EnvError>> {
+        stream::iter([Err(unused())]).boxed()
+    }
+
+    async fn cancel(&self, _o: OperationId) -> Result<(), EnvError> {
+        Err(unused())
+    }
+
+    async fn close_session(&self, _s: &SessionId, _forget: bool) -> Result<(), EnvError> {
+        self.wait_if_hanging().await;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Shell for Shells {
+    async fn shell_state(&self, _w: &WorkspaceRef, _s: &SessionId) -> Result<ShellState, EnvError> {
+        self.wait_if_hanging().await;
+        let prefix = self.prefix;
+        let background = if self.monitors {
+            MONITORS
+                .iter()
+                .map(|(task, ..)| ShellTaskId::new(*task))
+                .collect()
+        } else {
+            vec![
+                ShellTaskId::new(format!("{prefix}1")),
+                ShellTaskId::new(format!("{prefix}2")),
+            ]
+        };
+        Ok(ShellState {
+            cwd: EnvPath::new("/Users/dev/project"),
+            outputs: Some(EnvPath::new(self.outputs)),
+            background,
+        })
+    }
+}
+
+#[async_trait]
+impl Background for Shells {
+    async fn background_command(
+        &self,
+        task: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        if self.monitors {
+            return Ok(MONITORS
+                .iter()
+                .find(|(id, ..)| *id == task.task.as_str())
+                .map(|(_, command, kind, description)| BackgroundInfo {
+                    command: (*command).to_owned(),
+                    status: BackgroundStatus::Running,
+                    kind: *kind,
+                    description: (*description).to_owned(),
+                    output: None,
+                }));
+        }
+        if !task.task.as_str().starts_with(self.prefix) {
+            return Ok(None);
+        }
+        let status = if task.task.as_str() == format!("{}1", self.prefix) {
+            BackgroundStatus::Running
+        } else {
+            BackgroundStatus::Completed
+        };
+        // Fork: the running command reports the file it writes; the others predate the field.
+        let output = (status == BackgroundStatus::Running).then(|| {
+            rust_cli_kernel_api::env::EnvPath::new(format!(
+                "/logs/s1/toolu_{}-stdout.log",
+                task.task
+            ))
+        });
+        Ok(Some(BackgroundInfo {
+            command: format!("run {}", task.task),
+            status,
+            output,
+            ..BackgroundInfo::default()
+        }))
+    }
+
+    /// Fork: `e1` ended and its notice was acknowledged: `background_command` no longer knows it, the terminal
+    /// record does.
+    async fn ended_background_command(
+        &self,
+        task: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        Ok((task.task.as_str() == "e1").then(|| BackgroundInfo {
+            command: "run e1".to_owned(),
+            status: BackgroundStatus::Failed,
+            output: Some(rust_cli_kernel_api::env::EnvPath::new(
+                "/logs/s1/toolu_e1-stdout.log",
+            )),
+            ..BackgroundInfo::default()
+        }))
+    }
+
+    async fn background_elapsed(&self, task: BackgroundTask) -> Result<Option<u64>, EnvError> {
+        Ok((task.task.as_str() == format!("{}1", self.prefix)).then_some(65_000))
+    }
+}
+
+/// 一个后台子代理；记下停止请求。
+#[derive(Default)]
+struct OneAgent {
+    stopped: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl AgentSignals for OneAgent {
+    fn signals(&self, _session: &SessionId) -> BoxStream<'static, AgentSignal> {
+        stream::pending().boxed()
+    }
+    async fn ack(&self, _session: &SessionId, _seq: u64) {}
+    async fn background(&self, _session: &SessionId) -> Vec<AgentId> {
+        Vec::new()
+    }
+    async fn background_entries(&self, _session: &SessionId) -> Vec<BackgroundEntry> {
+        vec![BackgroundEntry::new(
+            "agent_1".to_owned(),
+            BackgroundKind::Agent,
+            "Review".to_owned(),
+            BackgroundStatus::Running,
+        )]
+    }
+    async fn stop_task(
+        &self,
+        _session: &SessionId,
+        task: &str,
+        _operation: OperationContext,
+    ) -> Result<String, String> {
+        self.stopped.lock().unwrap().push(task.to_owned());
+        if task == "agent_1" {
+            Ok("Successfully stopped task: agent_1 (Review)".to_owned())
+        } else {
+            Err(format!("No task found with ID: {task}"))
+        }
+    }
+    async fn stop_subagent(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+        _operation: OperationContext,
+    ) -> Result<(), rust_cli_kernel_api::agents::SubagentStopRefusal> {
+        self.stopped
+            .lock()
+            .unwrap()
+            .push(format!("{session}/{agent}@{execution}"));
+        match (agent.as_str(), execution) {
+            ("agent_1", "0") => Ok(()),
+            ("agent_1", _) => Err(rust_cli_kernel_api::agents::SubagentStopRefusal::NotRunning),
+            _ => Err(rust_cli_kernel_api::agents::SubagentStopRefusal::NotFound),
+        }
+    }
+}
+
+#[tokio::test]
+async fn background_tasks_list_running_commands_and_agents() {
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    setup.agents = std::sync::Arc::new(OneAgent::default());
+    let built = setup.build().await;
+    let entries = built.session.background_tasks().await.unwrap();
+    assert_eq!(entries.len(), 2, "{entries:#?}");
+    assert_eq!(entries[0].id, "b1");
+    assert_eq!(entries[0].kind, BackgroundKind::Shell);
+    assert_eq!(entries[0].description, "run b1");
+    let output = entries[0].output.as_deref().unwrap();
+    // 只留末尾 40 行。
+    assert!(
+        output.starts_with("line 6\n") && output.ends_with("line 45"),
+        "{output}"
+    );
+    assert_eq!(entries[1].id, "agent_1");
+}
+
+/// agents 的那一半只经 `tasks_snapshot` 一次给出（修复线 F34）；两个旧方法给的不同，用来认出会话取的是哪一个。
+struct OneRead;
+
+#[async_trait]
+impl AgentSignals for OneRead {
+    fn signals(&self, _session: &SessionId) -> BoxStream<'static, AgentSignal> {
+        stream::pending().boxed()
+    }
+    async fn ack(&self, _session: &SessionId, _seq: u64) {}
+    async fn background(&self, _session: &SessionId) -> Vec<AgentId> {
+        Vec::new()
+    }
+    async fn tasks_snapshot(&self, session: &SessionId) -> TasksSnapshot {
+        let entry: SubagentEntry = serde_json::from_value(serde_json::json!({
+            "agent": "agent_1", "child": "sess_subagent_agent_1", "agent_type": "general-purpose",
+            "description": "Review", "status": "running", "background": true, "elapsed_ms": 1,
+            "version": 0
+        }))
+        .unwrap();
+        TasksSnapshot {
+            subagents: vec![entry],
+            background: OneAgent::default().background_entries(session).await,
+        }
+    }
+}
+
+/// 修复线 F34（tui-panels.md §0、§3.1）：一次查询给出子代理条目与后台任务；命令在前（不带输出末尾）、子代理在后。
+#[tokio::test]
+async fn the_tasks_snapshot_has_the_commands_and_the_agents_in_one_reply() {
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    setup.agents = std::sync::Arc::new(OneRead);
+    let built = setup.build().await;
+    let snapshot = built.session.tasks_snapshot().await.unwrap();
+    let rows: Vec<_> = snapshot
+        .subagents
+        .iter()
+        .map(|e| e.agent.as_str())
+        .collect();
+    assert_eq!(rows, ["agent_1"]);
+    let tasks: Vec<_> = snapshot
+        .background
+        .iter()
+        .map(|e| (e.id.as_str(), e.kind, e.output.as_deref()))
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            ("b1", BackgroundKind::Shell, None),
+            ("agent_1", BackgroundKind::Agent, None)
+        ]
+    );
+    // 旧的两个查询照旧（只加不改）：这个替身的旧方法没有条目。
+    assert!(built.session.subagents().await.unwrap().is_empty());
+}
+
+/// 修复线 F117（tui-display.md §2.3、tui-panels.md §3.2）：执行环境报的种类照抄进快照——Bash 是 `Shell`，Monitor（命令
+/// 来源与 WebSocket 来源）是 `Monitor`；monitor 的名称是启动时的 description（空时是命令原文），shell 的仍是命令原文。
+/// 修前全是 `Shell`、名称全是命令原文。
+#[tokio::test]
+async fn monitors_keep_their_kind_and_description_in_the_snapshot() {
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(
+        Shells {
+            monitors: true,
+            ..Shells::LOCAL
+        }
+        .machine(),
+    );
+    setup.agents = std::sync::Arc::new(OneRead);
+    let built = setup.build().await;
+    let snapshot = built.session.tasks_snapshot().await.unwrap();
+    let tasks: Vec<_> = snapshot
+        .background
+        .iter()
+        .map(|e| (e.id.as_str(), e.kind, e.description.as_str()))
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            ("b1", BackgroundKind::Shell, "npm test"),
+            ("b2", BackgroundKind::Monitor, "build log"),
+            ("b4", BackgroundKind::Monitor, "tail -F app.log"),
+            ("s3", BackgroundKind::Monitor, "deploy feed"),
+            ("agent_1", BackgroundKind::Agent, "Review"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn stop_task_goes_through_the_agents_stop_path() {
+    let agents = std::sync::Arc::new(OneAgent::default());
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.agents = agents.clone();
+    let built = setup.build().await;
+    let stop = |task: &str| Command::StopTask {
+        task: task.to_owned(),
+    };
+    let ack = built.session.send(envelope("c1", stop("agent_1"))).await;
+    assert_eq!(
+        ack,
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Stopped {
+                message: "Successfully stopped task: agent_1 (Review)".to_owned(),
+            }
+        }
+    );
+    let ack = built.session.send(envelope("c2", stop("nope"))).await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "No task found with ID: nope".to_owned()
+        }
+    );
+    assert_eq!(*agents.stopped.lock().unwrap(), ["agent_1", "nope"]);
+}
+
+#[tokio::test]
+async fn shell_details_show_the_last_ten_lines_and_the_runtime() {
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let detail = built.session.shell_detail("b1").await.unwrap().unwrap();
+    assert_eq!(detail.command, "run b1");
+    assert_eq!(detail.status, BackgroundStatus::Running);
+    assert_eq!(detail.elapsed_ms, Some(65_000));
+    let ShellOutput::Tail { lines, total } = &detail.output else {
+        panic!("{detail:?}");
+    };
+    assert_eq!(*total, 45);
+    assert_eq!(lines.len(), 10);
+    assert_eq!(
+        (lines[0].as_str(), lines[9].as_str()),
+        ("line 36", "line 45")
+    );
+    // 已结束：状态是终态，没有 Runtime；输出太大时不预览。
+    let ended = built.session.shell_detail("b2").await.unwrap().unwrap();
+    assert_eq!(ended.status, BackgroundStatus::Completed);
+    assert_eq!(ended.elapsed_ms, None);
+    assert_eq!(ended.output, ShellOutput::TooLarge { bytes: 2 << 20 });
+    // 还没有输出文件：空的输出。
+    let fresh = built.session.shell_detail("b3").await.unwrap().unwrap();
+    assert_eq!(
+        fresh.output,
+        ShellOutput::Tail {
+            lines: Vec::new(),
+            total: 0
+        }
+    );
+}
+
+/// 远端执行 F98（remote-exec.md §25.4.6，Docker 试用 L11）：输出文件以换行结尾时，总行数不把最后的换行算一行，与框里
+/// 的行对得上。旧代码按 `\n` 的个数加一，框里是 `tick-3 … tick-12`、下面写 13 行。
+#[tokio::test]
+async fn the_line_count_of_an_output_that_ends_with_a_newline_matches_the_lines() {
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(
+        Shells {
+            ticks: true,
+            ..Shells::LOCAL
+        }
+        .machine(),
+    );
+    let built = setup.build().await;
+    let detail = built.session.shell_detail("b1").await.unwrap().unwrap();
+    let ShellOutput::Tail { lines, total } = &detail.output else {
+        panic!("{detail:?}");
+    };
+    assert_eq!(
+        (
+            lines.first().map(String::as_str),
+            lines.last().map(String::as_str),
+            lines.len()
+        ),
+        (Some("tick-3"), Some("tick-12"), 10)
+    );
+    assert_eq!(*total, 12);
+}
+
+/// 远端执行 R4（remote-exec.md §21.6）：后台任务的快照也列连上的远端机器上在跑的命令（带 `machine`）；Shell 详情按
+/// 任务 ID 依次问本机与远端，在哪台找到就读那台的输出文件。
+#[tokio::test]
+async fn remote_background_commands_are_listed_with_their_machine() {
+    use rust_cli_kernel_api::testing::TestMachines;
+    let machines = TestMachines::with_primary(Shells::LOCAL.machine());
+    machines.connect_machine("dev-a", Shells::REMOTE.machine(), "/srv/proj");
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    setup.machines = Some(machines);
+    setup.agents = std::sync::Arc::new(OneAgent::default());
+    let built = setup.build().await;
+    let entries = built.session.background_tasks().await.unwrap();
+    let rows: Vec<_> = entries
+        .iter()
+        .map(|e| (e.id.as_str(), e.machine.remote()))
+        .collect();
+    assert_eq!(
+        rows,
+        [("b1", None), ("r1", Some("dev-a")), ("agent_1", None)]
+    );
+    // 远端的输出末尾读那台机器的文件。
+    assert!(entries[1].output.as_deref().unwrap().ends_with("line 45"));
+    let snapshot = built.session.tasks_snapshot().await.unwrap();
+    let rows: Vec<_> = snapshot
+        .background
+        .iter()
+        .map(|e| (e.id.as_str(), e.machine.remote(), e.output.is_none()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("b1", None, true),
+            ("r1", Some("dev-a"), true),
+            ("agent_1", None, true)
+        ]
+    );
+    let detail = built.session.shell_detail("r1").await.unwrap().unwrap();
+    assert_eq!(detail.command, "run r1");
+    assert_eq!(detail.status, BackgroundStatus::Running);
+    assert_eq!(detail.elapsed_ms, Some(65_000));
+    assert!(matches!(detail.output, ShellOutput::Tail { total: 45, .. }));
+    assert!(built.session.shell_detail("x9").await.unwrap().is_none());
+}
+
+/// 远端执行 F96（remote-exec.md §23.3）：重连中的机器不问（它的调用要等重连），快照马上回来，用那台机器上一份的条目
+/// 并标“重连中”；连回来之后照常问；机器离开注册表之后它的条目也没了。旧代码在第二份快照上一直等。
+#[tokio::test]
+async fn a_reconnecting_machine_shows_its_last_entries_without_waiting() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use rust_cli_kernel_api::testing::TestMachines;
+    static HANG: AtomicBool = AtomicBool::new(false);
+    let machines = TestMachines::with_primary(Shells::LOCAL.machine());
+    let remote = Shells {
+        hang: Some(&HANG),
+        ..Shells::REMOTE
+    };
+    machines.connect_machine("dev-a", remote.machine(), "/srv/proj");
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    setup.machines = Some(machines.clone());
+    setup.agents = std::sync::Arc::new(OneAgent::default());
+    let built = setup.build().await;
+    let rows = |snapshot: &TasksSnapshot| -> Vec<(String, Option<String>, bool)> {
+        snapshot
+            .background
+            .iter()
+            .map(|e| {
+                (
+                    e.id.clone(),
+                    e.machine.remote().map(str::to_owned),
+                    e.reconnecting,
+                )
+            })
+            .collect()
+    };
+    let row = |id: &str, machine: Option<&str>, reconnecting: bool| {
+        (id.to_owned(), machine.map(str::to_owned), reconnecting)
+    };
+    let fresh = built.session.tasks_snapshot().await.unwrap();
+    assert_eq!(
+        rows(&fresh),
+        [
+            row("b1", None, false),
+            row("r1", Some("dev-a"), false),
+            row("agent_1", None, false)
+        ]
+    );
+    // 连接断了：调用一直不回，注册表说它在重连。
+    HANG.store(true, Ordering::SeqCst);
+    machines.set_reconnecting("dev-a", true);
+    let stale = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        built.session.tasks_snapshot(),
+    )
+    .await
+    .expect("the snapshot does not wait for a reconnecting machine")
+    .unwrap();
+    assert_eq!(
+        rows(&stale),
+        [
+            row("b1", None, false),
+            row("r1", Some("dev-a"), true),
+            row("agent_1", None, false)
+        ]
+    );
+    // `/tasks` 的列表（带输出末尾）同样不等。
+    let listed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        built.session.background_tasks(),
+    )
+    .await
+    .expect("the list does not wait either")
+    .unwrap();
+    assert!(listed.iter().any(|e| e.id == "r1" && e.reconnecting));
+    // 连回来了：照常问。
+    HANG.store(false, Ordering::SeqCst);
+    machines.set_reconnecting("dev-a", false);
+    let back = built.session.tasks_snapshot().await.unwrap();
+    assert_eq!(rows(&back), rows(&fresh));
+    // 离开注册表：它的条目没了。
+    machines.disconnect("dev-a");
+    let gone = built.session.tasks_snapshot().await.unwrap();
+    assert_eq!(
+        rows(&gone),
+        [row("b1", None, false), row("agent_1", None, false)]
+    );
+}
+
+/// 远端执行 F96（remote-exec.md §23.3）：会话关闭不等重连中的机器（它的 `close_session` 放到后台发）。旧代码在关闭里一直等。
+#[tokio::test]
+async fn closing_does_not_wait_for_a_reconnecting_machine() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use rust_cli_kernel_api::testing::TestMachines;
+    static HANG: AtomicBool = AtomicBool::new(false);
+    let machines = TestMachines::with_primary(Shells::LOCAL.machine());
+    let remote = Shells {
+        hang: Some(&HANG),
+        ..Shells::REMOTE
+    };
+    machines.connect_machine("dev-a", remote.machine(), "/srv/proj");
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    setup.machines = Some(machines.clone());
+    let built = setup.build().await;
+    HANG.store(true, Ordering::SeqCst);
+    machines.set_reconnecting("dev-a", true);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        built
+            .session
+            .close(rust_cli_kernel_api::session_api::EndReason::Other),
+    )
+    .await
+    .expect("closing does not wait for a reconnecting machine");
+}
+
+/// Fork: the desktop background Bash detail reads the output file's tail with the ledger's status; a missing
+/// file is `ENOENT` (Node `readBackgroundBashOutput`).
+#[tokio::test]
+async fn the_bash_output_window_reads_the_output_file() {
+    use rust_cli_kernel_api::panels::BashOutputRead;
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let Some(BashOutputRead::Window {
+        status,
+        text,
+        truncated,
+        path,
+    }) = built.session.background_bash_output("b1").await.unwrap()
+    else {
+        panic!("expected a window");
+    };
+    assert_eq!(status, Some(BackgroundStatus::Running));
+    assert!(
+        text.starts_with("line 1\n") && text.ends_with("line 45"),
+        "{text}"
+    );
+    assert!(!truncated);
+    // Fork: the path shown is the file the command writes, read through the `.output` link.
+    assert_eq!(path.as_str(), "/logs/s1/toolu_b1-stdout.log");
+    assert_eq!(
+        built.session.background_bash_output("b3").await.unwrap(),
+        Some(BashOutputRead::ReadFailed {
+            code: Some("ENOENT".to_owned())
+        })
+    );
+}
+
+/// Fork: after the notice's ack the detail pane still reads the command's status and file from the ledger's terminal
+/// record, whichever subscriber acknowledged the notice (specs/fork-rust-agent-parity.md, "Subagent child sessions: one
+/// owner for background-command notices"). Before, a subagent child read `unavailable` here when the agents forwarder
+/// acknowledged first.
+#[tokio::test]
+async fn the_bash_output_window_reads_an_acknowledged_command() {
+    use rust_cli_kernel_api::panels::BashOutputRead;
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.set_machine(Shells::LOCAL.machine());
+    let built = setup.build().await;
+    let read = built.session.background_bash_output("e1").await.unwrap();
+    assert_eq!(
+        read,
+        Some(BashOutputRead::Window {
+            status: Some(BackgroundStatus::Failed),
+            text: "ended output".to_owned(),
+            truncated: false,
+            path: rust_cli_kernel_api::env::EnvPath::new("/logs/s1/toolu_e1-stdout.log"),
+        })
+    );
+}
+
+/// Fork (B2): `Command::StopSubagent` reaches the agents' guarded stop with this session, and a refusal's reason is
+/// its code.
+#[tokio::test]
+async fn stop_subagent_goes_through_the_guarded_stop() {
+    let agents = std::sync::Arc::new(OneAgent::default());
+    let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+    setup.agents = agents.clone();
+    let built = setup.build().await;
+    let session = built.session.id().clone();
+    let stop = |agent: &str, execution: &str| Command::StopSubagent {
+        agent: AgentId::new(agent),
+        execution: execution.to_owned(),
+    };
+    let ack = built
+        .session
+        .send(envelope("c1", stop("agent_1", "0")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Done
+        }
+    );
+    let ack = built
+        .session
+        .send(envelope("c2", stop("agent_1", "3")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "not_running".to_owned()
+        }
+    );
+    let ack = built
+        .session
+        .send(envelope("c3", stop("agent_9", "0")))
+        .await;
+    assert_eq!(
+        ack,
+        Ack::Rejected {
+            reason: "not_found".to_owned()
+        }
+    );
+    assert_eq!(
+        *agents.stopped.lock().unwrap(),
+        [
+            format!("{session}/agent_1@0"),
+            format!("{session}/agent_1@3"),
+            format!("{session}/agent_9@0"),
+        ]
+    );
+}

@@ -134,6 +134,8 @@ export interface OffPeakServerClientDeps {
   resolveCredentials: () => Promise<OffPeakCredentialSnapshot>;
   fetchImpl?: typeof fetch;
   logger: ServiceLogger;
+  /** 宿主的实时界面语言，用于 X-Client-Language；与 NodeApiClient 同源。 */
+  resolveClientLanguage?: () => string | undefined;
 }
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -158,7 +160,8 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
       // the test server could see only user_agent=node, and client logs could not be correlated with server requests returning 2007/bare 429.
       // Add only standard non-sensitive source headers and the trace ID here; JWT/API keys must still never enter logs.
       const headers = withRequestIdHeader({
-        ...buildZCodeSourceHeaders(),
+        // 以前无参调用，X-Client-Language 回落到进程 Intl 系统语言，与界面语言不一致。
+        ...buildZCodeSourceHeaders({ clientLanguage: deps.resolveClientLanguage?.() }),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
         authorization: `Bearer ${credentials.jwt}`,
         "x-coding-plan-api-key": credentials.codingPlanApiKey,

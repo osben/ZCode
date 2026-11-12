@@ -1,0 +1,210 @@
+//! Bash 结果的文本（shell-permissions.md §1.3）。后台通知的文本在
+//! `rust_cli_prompts::notification`。
+//!
+//! 逐字固定：成功、退出码、超时、超长输出、cwd 重置、空输出、后台。
+
+use rust_cli_kernel_api::ids::{OperationId, ShellTaskId};
+
+use crate::budget::{persisted_message, preview};
+
+/// 成功结果里内联的输出上限（`BASH_MAX_OUTPUT_LENGTH` 默认 30000，按字节读文件头）。
+pub const INLINE_LIMIT: usize = 30_000;
+
+/// 任务 ID：`b` 加 8 位 36 进制，从 operationId 派生，重放时不变（FNV-1a，base 的 `hash::short_id`）。
+pub fn task_id(operation: &OperationId) -> ShellTaskId {
+    ShellTaskId::new(format!(
+        "b{}",
+        rust_cli_base::hash::short_id(operation.as_str())
+    ))
+}
+
+/// Fork (node_desktop): the desktop task id is the model's tool-call id, because the Node adapter
+/// names the merged output file `<root>/<session>/<toolCallId>-stdout.log` and the desktop app
+/// resolves that path by session and tool call.
+pub fn desktop_task_id(tool_use: &str) -> ShellTaskId {
+    ShellTaskId::new(sanitize_segment(tool_use))
+}
+
+/// Node's path segment sanitizer (`sanitizePathSegment`): characters outside `[a-zA-Z0-9._-]`
+/// become `_`, the result is capped at 120 characters, and an empty result becomes `unknown`.
+pub(crate) fn sanitize_segment(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut trimmed = cleaned.as_str();
+    if trimmed.len() > 120 {
+        // The cap is in bytes of the sanitized ASCII-only string.
+        trimmed = &cleaned[..120];
+    }
+    if trimmed.is_empty() {
+        "unknown".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// Fork (node_desktop): the result text when the merged output file could not be read at
+/// settlement (Node's `BashFileOutput.result` catch branch).
+pub fn unavailable(path: &str, code: &str) -> String {
+    format!("<bash output unavailable: output file {path} could not be read ({code}).>")
+}
+
+/// 这几个命令的退出码 1 是“没找到 / 不相同 / 假”，从它起才是出错。
+const SEARCH_TROUBLE_EXIT: i32 = 2;
+
+/// 按最后一个子命令的命令名解释退出码。grep / rg / find / diff / test / `[`
+/// 的退出码 1 不算错误。
+pub fn is_error(last_command: &str, exit_code: i32) -> bool {
+    match last_command {
+        "grep" | "rg" | "find" | "diff" | "test" | "[" => exit_code >= SEARCH_TROUBLE_EXIT,
+        _ => exit_code != 0,
+    }
+}
+
+/// 去掉开头的空白行与结尾的空白（`stdout.replace(/^(\s*\n)+/, "").trimEnd()`）。
+pub fn strip_output(stdout: &str) -> &str {
+    let mut rest = stdout;
+    while let Some(newline) = rest.find('\n') {
+        if rest[..newline].chars().all(char::is_whitespace) {
+            rest = &rest[newline + 1..];
+        } else {
+            break;
+        }
+    }
+    rest.trim_end()
+}
+
+/// 失败结果的文本：`Exit code N` 加合流的输出。超长时由执行管线的
+/// 错误文本的格式化保留首尾。
+pub fn failure(exit_code: i32, output: &str) -> String {
+    [format!("Exit code {exit_code}"), output.to_owned()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 超时的输出：`Command timed out after <时长>` 放在输出前面。时长不带选项地格式化，
+/// 即 kernel-api 的 `metering::format_duration`。修复线 F58：以前这里另有一份只写非零单位的格式，
+/// 120000 ms 写成 `2m`（应为 `2m 0s`）。
+pub fn timed_out(timeout_ms: u64, output: &str) -> String {
+    let notice = format!(
+        "Command timed out after {}",
+        rust_cli_kernel_api::metering::format_duration(timeout_ms)
+    );
+    if output.is_empty() {
+        notice
+    } else {
+        format!("{notice}\n{output}")
+    }
+}
+
+/// Fork (node_desktop): Node's timed-out foreground command (`bash-model-content.ts`
+/// `formatStderrForModel`): the process was interrupted, so the abort line follows the output.
+pub fn aborted(output: &str) -> String {
+    const ABORTED: &str = "<error>Command was aborted before completion</error>";
+    // Node drops the leading blank lines (`/^(\s*\n)+/`) and the trailing whitespace.
+    let blank = output.len() - output.trim_start().len();
+    let output = output[..blank]
+        .rfind('\n')
+        .map_or(output, |at| &output[at + 1..])
+        .trim_end();
+    if output.is_empty() {
+        ABORTED.to_owned()
+    } else {
+        format!("{output}\n{ABORTED}")
+    }
+}
+
+/// 输出文件超过上限被结束的输出：说明放在输出前面（有输出时用换行连接）。
+pub fn killed_for_size(note: &str, output: &str) -> String {
+    if output.is_empty() {
+        note.to_owned()
+    } else {
+        format!("{note}\n{output}")
+    }
+}
+
+/// 成功结果的文本。`head` 是输出文件的前 [`INLINE_LIMIT`] 字节，`total` 是总字节数；超出时给
+/// `<persisted-output>` 预览，位置是执行环境里的输出文件。
+pub fn success(head: &str, total: u64, output_file: &str, cwd_reset: Option<&str>) -> String {
+    let stdout = strip_output(head);
+    let stdout = if total > INLINE_LIMIT as u64 {
+        let (shown, more) = preview(stdout);
+        let size = usize::try_from(total).unwrap_or(usize::MAX);
+        persisted_message(output_file, size, shown, more)
+    } else {
+        stdout.to_owned()
+    };
+    let reset = cwd_reset.map(|cwd| format!("Shell cwd was reset to {cwd}"));
+    [Some(stdout), reset]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 后台命令里有 cd 时启动说明后面的一行：后台命令不改会话的当前目录（shell-permissions.md §1.2，修复线 F68）。
+pub fn background_cwd_hint(cwd: &str) -> String {
+    format!(
+        "Session cwd remains {cwd}; directory changes made by the backgrounded command do not apply to subsequent commands."
+    )
+}
+
+/// 后台命令启动后立即返回的文本（非用户手动转后台的分支）。
+pub fn backgrounded(task: &ShellTaskId, output_file: &str) -> String {
+    format!(
+        "Command running in background with ID: {task}. Output is being written to: {output_file}. You will be notified when it completes. To check interim output, use Read on that file path."
+    )
+}
+
+/// 前台命令被要求转到后台时的结果（修复线 L-A，tui-input.md §11.1、§11.2；对照实现的
+/// 两种说法）：用户按键时只有一句；低延迟投递时说明为什么转、怎样看输出。
+pub fn backgrounded_by(
+    reason: rust_cli_kernel_api::env::BackgroundReason,
+    task: &ShellTaskId,
+    output_file: &str,
+) -> String {
+    match reason {
+        rust_cli_kernel_api::env::BackgroundReason::User => format!(
+            "Command was manually backgrounded by user with ID: {task}. Output is being written to: {output_file}."
+        ),
+        rust_cli_kernel_api::env::BackgroundReason::DeliverMessage => format!(
+            "Command was moved to the background (ID: {task}) so that a message that arrived while it was running can reach you; it was not interrupted. Output is being written to: {output_file}. You will be notified when it completes. To check interim output, use Read on that file path."
+        ),
+    }
+}
+
+/// 前台命令到了超时、转到后台时的结果（shell-permissions.md §1.2.1）。超时按秒四舍五入、至少 1 s；`deadline_ms` 是
+/// 转后台之后的期限，没有时（交互会话）没有期限一句。转后台之前的输出不放进结果（在输出文件里）。
+pub fn moved_to_background(
+    timeout_ms: u64,
+    task: &ShellTaskId,
+    output_file: &str,
+    deadline_ms: Option<u64>,
+) -> String {
+    let seconds = rust_cli_base::units::round_ms_to_seconds(timeout_ms).max(1);
+    let deadline = deadline_ms
+        .map(|ms| {
+            format!(
+                " If it is still running after {} in the background, it will be stopped and you will be notified.",
+                rust_cli_kernel_api::metering::format_duration_trimmed(ms)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "Command did not complete within its {seconds}s timeout and was moved to the background (ID: {task}). Output is being written to: {output_file}. You will be notified when it completes.{deadline} To check interim output, use Read on that file path."
+    )
+}
+
+#[cfg(test)]
+#[path = "bash_output_tests.rs"]
+mod tests;

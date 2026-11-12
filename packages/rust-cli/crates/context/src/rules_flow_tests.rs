@@ -1,0 +1,419 @@
+//! 规则文件、nested memory 与会话上下文经 [`PromptAssembler`] 的整体行为（context.md §11、§12）。
+
+use std::sync::Arc;
+
+use rust_cli_kernel_api::env::{EnvFacts, EnvPath, WorkspaceRef};
+use rust_cli_kernel_api::env_git::{GitSnapshot, GitStatus};
+use rust_cli_kernel_api::ids::{EnvironmentId, MessageId, SessionId, ToolUseId};
+use rust_cli_kernel_api::message::{
+    AssistantMessage, AttachmentRole, CompactBoundary, CompactTrigger, ContentBlock,
+    ToolResultContent, UserMessage, UserOrigin,
+};
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::testing::{FixedClock, MemoryEnvironment, SequentialIds};
+use serde_json::json;
+
+use super::*;
+
+fn facts() -> EnvFacts {
+    EnvFacts {
+        cwd: EnvPath::new("/Users/dev/w"),
+        platform: "linux".to_owned(),
+        os_version: "Linux 6.8.0".to_owned(),
+        shell: "bash".to_owned(),
+        is_git_repo: true,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    }
+}
+
+fn environment() -> MemoryEnvironment {
+    MemoryEnvironment::new(facts())
+        .with_file("/Users/dev/.zcode/AGENTS.md", "user rules")
+        .with_file("/Users/dev/w/AGENTS.md", "project rules @docs/style.md")
+        .with_file("/Users/dev/w/docs/style.md", "style guide")
+        .with_file("/Users/dev/w/src/AGENTS.md", "src rules")
+        .with_git(GitStatus::Repository(GitSnapshot {
+            branch: "main".to_owned(),
+            default_branch: "main".to_owned(),
+            status: String::new(),
+            recent_commits: "abc1234 first".to_owned(),
+            user_name: None,
+        }))
+}
+
+fn assembler(env: Arc<MemoryEnvironment>) -> PromptAssembler {
+    PromptAssembler::new(
+        ContextPorts {
+            info: env.clone(),
+            files: env.clone(),
+            shell: env.clone(),
+            git: env,
+            clock: Arc::new(FixedClock(1_792_224_000_000)),
+            ids: Arc::new(SequentialIds::default()),
+            listings: Arc::new(NoListings),
+        },
+        ContextConfig::new(Surface::Print),
+    )
+}
+
+fn request() -> ContextRequest {
+    ContextRequest {
+        tool_names: vec!["Read".to_owned()],
+        ..ContextRequest::new(
+            SessionId::new("s"),
+            WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/w"),
+            },
+            QuerySource::MainThread,
+            PermissionMode::Default,
+            ModelSelection::new("p".to_owned(), rust_cli_base::models::GLM_5_3.to_owned()),
+        )
+    }
+}
+
+fn human() -> Message {
+    Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
+        id: MessageId::new("prompt"),
+        content: vec![ContentBlock::Text {
+            text: "hi".to_owned(),
+        }],
+        origin: UserOrigin::Human,
+    })
+}
+
+fn sources(attachments: &[AttachmentMessage]) -> Vec<&str> {
+    attachments
+        .iter()
+        .map(|item| item.source.as_str())
+        .collect()
+}
+
+/// 跑一步：把产生的 attachment 追加进历史（query 落库后才继续）。
+async fn step(context: &PromptAssembler, history: &mut Vec<Message>) -> Vec<AttachmentMessage> {
+    let built = context.step(request(), history).await.unwrap();
+    history.extend(built.attachments.iter().cloned().map(Message::Attachment));
+    built.attachments
+}
+
+#[tokio::test]
+async fn the_first_step_announces_rules_before_the_git_status() {
+    let env = Arc::new(environment());
+    let context = assembler(env.clone());
+    let mut history = vec![human()];
+    let first = step(&context, &mut history).await;
+    assert_eq!(
+        sources(&first),
+        [
+            "environment",
+            "model",
+            "total_tokens_reminder",
+            "instructions",
+            "session_context",
+            "date",
+        ]
+    );
+    let instructions = &first[3];
+    assert_eq!(instructions.role(), AttachmentRole::User);
+    assert_eq!(first[4].role(), AttachmentRole::User);
+    let paths: Vec<&str> = instructions.data["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "/Users/dev/.zcode/AGENTS.md",
+            "/Users/dev/w/AGENTS.md",
+            "/Users/dev/w/docs/style.md"
+        ]
+    );
+    assert!(
+        instructions
+            .text
+            .starts_with("<system-reminder>\nCodebase and user instructions")
+    );
+    assert!(
+        first[4]
+            .text
+            .contains("# gitStatus\nThis is the git status")
+    );
+
+    // 下一步：缓存命中，不再读文件；已宣布的规则与会话上下文不重发。
+    let reads = env.reads();
+    let second = step(&context, &mut history).await;
+    assert_eq!(sources(&second), ["total_tokens_reminder"]);
+    assert_eq!(env.reads(), reads);
+
+    // 同一进程里改了文件：有缓存，不会注意到。
+    env.set_file("/Users/dev/w/AGENTS.md", "edited");
+    assert_eq!(
+        sources(&step(&context, &mut history).await),
+        ["total_tokens_reminder"]
+    );
+
+    // 新进程（resume）重读一次，只宣布差异。
+    let resumed = assembler(env.clone());
+    let delta = step(&resumed, &mut history).await;
+    assert_eq!(sources(&delta), ["total_tokens_reminder", "instructions"]);
+    assert_eq!(delta[1].data["changed"], true);
+    assert_eq!(delta[1].data["reason"], "session_start");
+    assert_eq!(
+        delta[1].data["files"],
+        json!([{"path": "/Users/dev/w/AGENTS.md", "type": "Project", "content": "edited"}])
+    );
+    // 原来由它 include 的文件不再出现，算作撤回。
+    assert_eq!(
+        delta[1].data["removed"],
+        json!(["/Users/dev/w/docs/style.md"])
+    );
+}
+
+#[tokio::test]
+async fn a_compaction_boundary_re_reads_and_announces_everything_again() {
+    let env = Arc::new(environment());
+    let context = assembler(env.clone());
+    let mut history = vec![human()];
+    step(&context, &mut history).await;
+    history.push(Message::System(SystemMessage::CompactBoundary(
+        CompactBoundary {
+            id: MessageId::new("boundary"),
+            trigger: CompactTrigger::Auto,
+            pre_tokens: 1,
+            summary: MessageId::new("summary"),
+            preserved: None,
+            discovered_tools: Vec::new(),
+        },
+    )));
+    let reads = env.reads();
+    let after = step(&context, &mut history).await;
+    assert!(env.reads() > reads);
+    let after: Vec<&str> = sources(&after);
+    assert!(after.contains(&"instructions"));
+    assert!(after.contains(&"session_context"));
+}
+
+#[tokio::test]
+async fn reading_a_file_in_a_subdirectory_brings_its_rules_once() {
+    let env = Arc::new(environment());
+    let context = assembler(env);
+    let mut history = vec![human()];
+    step(&context, &mut history).await;
+    history.push(Message::Assistant(AssistantMessage {
+        id: MessageId::new("a1"),
+        content: vec![ContentBlock::ToolUse {
+            id: ToolUseId::new("t1"),
+            name: "Read".to_owned(),
+            input: json!({"file_path": "/Users/dev/w/src/main.rs"}),
+        }],
+        model: "m".to_owned(),
+        stop_reason: None,
+        usage: None,
+    }));
+    history.push(Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
+        id: MessageId::new("r1"),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: ToolUseId::new("t1"),
+            content: vec![ToolResultContent::Text {
+                text: "fn main() {}".to_owned(),
+            }],
+            is_error: false,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new("a1"),
+        },
+    }));
+    let next = step(&context, &mut history).await;
+    assert_eq!(sources(&next), ["nested_memory", "total_tokens_reminder"]);
+    assert_eq!(next[0].role(), AttachmentRole::System);
+    assert_eq!(
+        next[0].text,
+        "<system-reminder>\nContents of /Users/dev/w/src/AGENTS.md:\n\nsrc rules\n</system-reminder>"
+    );
+    // 同一批触发再跑一步（例如重试），已发过的不再发。
+    assert_eq!(
+        sources(&step(&context, &mut history).await),
+        ["total_tokens_reminder"]
+    );
+}
+
+/// Bash `cd` 之后，环境段的主工作目录跟着 shell 的当前目录；规则文件仍按
+/// 项目根加载，不因此重新宣布。
+#[tokio::test]
+async fn a_shell_cd_announces_the_new_working_directory() {
+    let env = Arc::new(environment());
+    let context = assembler(env.clone());
+    let mut history = vec![human()];
+    step(&context, &mut history).await;
+    history.push(Message::Assistant(
+        rust_cli_kernel_api::message::AssistantMessage {
+            id: MessageId::new("a1"),
+            content: vec![ContentBlock::ToolUse {
+                id: rust_cli_kernel_api::ids::ToolUseId::new("t1"),
+                name: "Bash".to_owned(),
+                input: serde_json::json!({"command": "cd sub"}),
+            }],
+            model: "m".to_owned(),
+            stop_reason: None,
+            usage: None,
+        },
+    ));
+    history.push(Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
+        id: MessageId::new("r1"),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: rust_cli_kernel_api::ids::ToolUseId::new("t1"),
+            content: Vec::new(),
+            is_error: false,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new("a1"),
+        },
+    }));
+    env.set_shell_cwd("/Users/dev/w/sub");
+    let next = step(&context, &mut history).await;
+    assert_eq!(sources(&next), ["environment", "total_tokens_reminder"]);
+    assert!(
+        next[0]
+            .text
+            .contains("Primary working directory: /Users/dev/w/sub (was /Users/dev/w)"),
+        "{}",
+        next[0].text
+    );
+}
+
+/// Node `restorePostCompactFiles` `excludedPaths`: the plan file, the instruction files in the context
+/// prefix and the auto-memory `MEMORY.md` are not restored after a compact.
+#[tokio::test]
+async fn the_restore_exclusions_list_the_files_already_in_the_context() {
+    use rust_cli_kernel_api::compaction::PostCompactContext;
+    let env = Arc::new(environment());
+    let mut config = ContextConfig::new(Surface::Print);
+    config.memory_dir = Some("/Users/dev/.zcode/memory/".to_owned());
+    let context = PromptAssembler::new(
+        ContextPorts {
+            info: env.clone(),
+            files: env.clone(),
+            shell: env.clone(),
+            git: env,
+            clock: Arc::new(FixedClock(1_792_224_000_000)),
+            ids: Arc::new(SequentialIds::default()),
+            listings: Arc::new(NoListings),
+        },
+        config,
+    );
+    let mut history = vec![human()];
+    step(&context, &mut history).await;
+    assert_eq!(
+        context.restore_exclusions(&request()).await,
+        [
+            "/Users/dev/.zcode/AGENTS.md",
+            "/Users/dev/.zcode/memory/MEMORY.md",
+            "/Users/dev/w/.zcode/plans/plan-s.md",
+            "/Users/dev/w/AGENTS.md",
+            "/Users/dev/w/docs/style.md",
+        ]
+    );
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): an all-off profile drops the rule files, the
+/// environment and model announcements and the git context; each key brings back only its own sections.
+#[tokio::test]
+async fn an_incognito_profile_removes_only_the_sections_it_turns_off() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let run = |profile: IncognitoProfile| async move {
+        let profiles = IncognitoProfiles::default();
+        profiles.record(&SessionId::new("s"), Some(profile));
+        let context = assembler(Arc::new(environment())).with_incognito(profiles);
+        let mut history = vec![human()];
+        step(&context, &mut history)
+            .await
+            .iter()
+            .map(|item| item.source.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        run(IncognitoProfile::LOCKDOWN).await,
+        ["total_tokens_reminder", "date"]
+    );
+    assert_eq!(
+        run(IncognitoProfile {
+            project_instructions: true,
+            ..IncognitoProfile::LOCKDOWN
+        })
+        .await,
+        ["total_tokens_reminder", "instructions", "date"]
+    );
+    assert_eq!(
+        run(IncognitoProfile {
+            environment: true,
+            ..IncognitoProfile::LOCKDOWN
+        })
+        .await,
+        [
+            "environment",
+            "model",
+            "total_tokens_reminder",
+            "session_context",
+            "date"
+        ]
+    );
+}
+
+/// Fork: `/context` lists the same gated files as the prompt, so an incognito profile without `projectInstructions`
+/// and `memory` shows neither the rule files nor the auto-memory index.
+#[tokio::test]
+async fn context_usage_lists_only_the_files_an_incognito_profile_keeps() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    use rust_cli_memory::entrypoint::ENTRYPOINT;
+    let memory = format!("/Users/dev/mem/{ENTRYPOINT}");
+    let env = Arc::new(environment().with_file(&memory, "- remembered"));
+    let profiles = IncognitoProfiles::default();
+    profiles.record(&SessionId::new("locked"), Some(IncognitoProfile::LOCKDOWN));
+    let mut config = ContextConfig::new(Surface::Print);
+    config.memory_dir = Some("/Users/dev/mem".to_owned());
+    let context = PromptAssembler::new(
+        ContextPorts {
+            info: env.clone(),
+            files: env.clone(),
+            shell: env.clone(),
+            git: env,
+            clock: Arc::new(FixedClock(1_792_224_000_000)),
+            ids: Arc::new(SequentialIds::default()),
+            listings: Arc::new(NoListings),
+        },
+        config,
+    )
+    .with_incognito(profiles);
+    let paths = |request: ContextRequest| {
+        let context = &context;
+        async move {
+            context
+                .analysis(&request, &[])
+                .await
+                .unwrap()
+                .memory_files
+                .into_iter()
+                .map(|file| file.path)
+                .collect::<Vec<_>>()
+        }
+    };
+    let normal = paths(request()).await;
+    assert!(
+        normal.contains(&"/Users/dev/w/AGENTS.md".to_owned()),
+        "{normal:?}"
+    );
+    assert!(normal.contains(&memory), "{normal:?}");
+    let mut locked = request();
+    locked.session = SessionId::new("locked");
+    assert_eq!(paths(locked).await, Vec::<String>::new());
+}

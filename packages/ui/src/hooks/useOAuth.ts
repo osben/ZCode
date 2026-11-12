@@ -6,19 +6,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OAuthProviderId, OAuthProviderMeta } from "@zcode/shared";
-import {
-  BIGMODEL_PROVIDER_ID,
-  isCredentialDecryptError,
-  resolveSafeTelemetryHostname,
-  ZAI_PROVIDER_ID,
-} from "@zcode/shared";
+import { isBuiltinOAuthProvider, resolveSafeTelemetryHostname } from "@zcode/shared";
 import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { LoginEntryPurpose } from "@/store/index.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
-import { logger } from "../logger.js";
-import { usePlatform } from "./usePlatform.js";
-import { useServices } from "./useServices.js";
+import { logger } from "@/logger.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
+import { useServices } from "@/hooks/useServices.js";
 
 type OAuthStatus = "idle" | "waiting" | "error";
 
@@ -36,39 +31,45 @@ export function useOAuth() {
   // "Copy login link" when the browser did not open; every terminal transition clears it.
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const loginAttemptRef = useRef(0);
+  const providerRefreshRef = useRef(0);
   const setOAuthPollingActive = useZCodeStore((state) => state.setOAuthPollingActive);
 
   const refreshProviders = useCallback(async () => {
+    const refresh = ++providerRefreshRef.current;
+    const isCurrent = () => providerRefreshRef.current === refresh;
     try {
       setLoadingProviders(true);
       const providerList = await oauthService.getProviders();
+      if (!isCurrent()) return;
       setProviders(providerList);
 
       try {
         const active = await oauthService.getActiveProvider();
+        if (!isCurrent()) return;
         setActiveProvider(active);
       } catch (err) {
-        // Only failure to decrypt local OAuth credentials can recover to the logged-out state; RPC/storage-permission errors must use the outer error path.
-        if (!isCredentialDecryptError(err)) {
-          throw err;
-        }
-
-        // The active provider is only a pointer to login state, and the service clears OAuth credentials when decryption fails.
-        // The provider list is still available; do not show the user that no login providers exist.
-        logger.warn("[useOAuth] 加载 active provider 凭据失败，已按未登录处理:", err);
+        if (!isCurrent()) return;
+        // 账号读取失败不代表渠道不可用；保留已取得的元数据，只清空本地账号投影。
+        // 不在 UI 清理或重建凭据，避免把整库损坏、IO 故障当作可恢复的单条密文。
+        logger.warn("[useOAuth] 加载 active provider 失败，保留登录渠道:", err);
         setActiveProvider(null);
       }
     } catch (err) {
+      if (!isCurrent()) return;
       logger.error("[useOAuth] 加载 provider 列表失败:", err);
       setProviders([]);
       setActiveProvider(null);
     } finally {
-      setLoadingProviders(false);
+      if (isCurrent()) setLoadingProviders(false);
     }
   }, [oauthService]);
 
   useEffect(() => {
     void refreshProviders();
+    // 迟到的成功、失败和 finally 均不能覆盖新服务实例或已卸载界面的状态。
+    return () => {
+      providerRefreshRef.current += 1;
+    };
   }, [refreshProviders]);
 
   const startLogin = useCallback(
@@ -92,9 +93,7 @@ export function useOAuth() {
 
         setAuthorizeUrl(startedAuthorizeUrl);
         platform.registerOAuthState({ state, provider: startedProvider });
-        setOAuthPollingActive(
-          startedProvider === ZAI_PROVIDER_ID || startedProvider === BIGMODEL_PROVIDER_ID,
-        );
+        setOAuthPollingActive(isBuiltinOAuthProvider(startedProvider));
         platform.openExternal(startedAuthorizeUrl);
         void reportAppTelemetryEvent(
           platform,

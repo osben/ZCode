@@ -1,5 +1,6 @@
+import { SubagentCollectionIcon } from "@/components/workflow-timeline/WorkflowAgentFace.js";
 import { memo, useMemo } from "react";
-import { ActivityIcon, MoonIcon, BotIcon, SquareTerminalIcon, Workflow } from "lucide-react";
+import { ActivityIcon, MoonIcon, SquareTerminalIcon, Workflow } from "lucide-react";
 import { TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER } from "@zcode/shared/test-ids";
 import type { BackgroundWorkSummary } from "@zcode/shared/zcode-protocol-v4";
 import { getLatestDreamWork } from "@/v4/conversationStatusPanelModel.js";
@@ -149,7 +150,8 @@ function ConversationBackgroundWorkTriggerImpl({
           ) : null}
           {counts.subagentCount > 0 ? (
             <span className="inline-flex items-center gap-0.5">
-              <BotIcon className="size-3.5" />
+              {/* 覆盖头像默认 20px 最小尺寸，与紧凑标签保持一致。 */}
+              <SubagentCollectionIcon className="size-3.5 min-h-3.5! min-w-3.5!" />
               <span>{counts.subagentCount}</span>
             </span>
           ) : null}

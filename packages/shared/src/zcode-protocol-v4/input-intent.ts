@@ -12,9 +12,10 @@ import { submissionModeSchema } from "./submission.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
 
 /**
- * Structured origin of user input: attached when a plugin UI sends on the user's
- * behalf via `ui/message`; the stored card then shows "from plugin X". Absent means the user
- * entered the input directly.
+ * Structured origin of user input: attached when a plugin UI, interactive view, session, or extension sends on the user's behalf;
+ * the stored card then shows the source. Absent means the user typed the input directly. Session and extension origins are injected
+ * by the Host and never inferred from the body text; models and tools cannot set them.
+ * Contract: apps/zcode-cli/docs/design/v2/conversation-input-source.md.
  */
 const pluginUiInputSourceSchema = z
   .object({
@@ -23,8 +24,36 @@ const pluginUiInputSourceSchema = z
     toolCallId: z.string().min(1),
   })
   .strict();
+/**
+ * Sent by an extension through ctx.sessions.* (docs/plugins/extension-host.md §17.8). Injected only by
+ * the Window Host extension gateway. Older CLIs do not know it (sendText rejects the whole input,
+ * createSession.firstInput silently strips it), so the Host must check
+ * runtime/capabilities.extensionInputSource before sending. pluginId is self-reported by the extension
+ * process and is used only for display and attribution.
+ */
+const extensionInputSourceSchema = z
+  .object({
+    kind: z.literal("extension"),
+    pluginId: z.string().min(1),
+  })
+  .strict();
 export const conversationInputSourceSchema = z.discriminatedUnion("kind", [
   pluginUiInputSourceSchema,
+  z
+    .object({
+      kind: z.literal("session"),
+      sessionId: z.string().min(1),
+      /**
+       * 只读字段，仅服务改动前已持久化的数据（规格 0.13）。新数据不再写入它。
+       *
+       * 它曾是发送那一刻发起方的标题快照，而会话标题分三档（default / generated / custom）：
+       * 跨会话发送多半发生在发起方第一轮进行中，此时还是 default 档——「标题」就是首条提示词
+       * 原文。生成标题随后落定，快照却不回写，于是气泡永远显示一整段提示词。身份是 sessionId，
+       * 标题是会变的派生展示字段，不该进持久化载荷。
+       */
+      title: z.string().optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("genUi"),
@@ -32,6 +61,7 @@ export const conversationInputSourceSchema = z.discriminatedUnion("kind", [
       title: z.string().max(250).optional(),
     })
     .strict(),
+  extensionInputSourceSchema,
 ]);
 export type ConversationInputSource = z.infer<typeof conversationInputSourceSchema>;
 

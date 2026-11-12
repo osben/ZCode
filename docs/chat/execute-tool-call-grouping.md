@@ -1,5 +1,7 @@
 # Execute Tool Grouping
 
+> Retired: conversation tool grouping has been removed. Current behavior is in [Tool Display Rendering](../ui/tool-display-rendering.md). The text below is design history only.
+
 ## Release state
 
 The feature is on by default as a user setting. The Settings toggle "分组终端命令" (group terminal commands) persists as the app-level `toolGroupingTerminalEnabled`; when missing, `ENABLE_TERMINAL_TOOL_CALL_GROUPING=true` is the fallback. When off, non-read-only Shell calls keep their original standalone tool rows; classification, command, output/error, protocol and session persistence are unchanged.

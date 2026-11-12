@@ -3,7 +3,7 @@
 > Historical source: staging `35ba050592` (2026-09-07). This keeps the original author's acceptance facts of that time; it is not the current acceptance of the Todo103 integrated version and does not widen the scope of this round's fixes.
 > The bot re-connection and new evidence of this round are in section 20 of `../working-memory/provider-refactor/research/todo103-staging-integration-ledger.md`.
 
-Date: 2026-09-07. Environment: macOS arm64, ZCode Dev with local production-environment config, Ryan Bob Feishu direct chat, BigModel Coding Plan / GLM-5.3-Flash. Operated through Computer Use; no test message was sent to a group chat.
+Date: 2026-09-07. Environment: macOS arm64, ZCode Dev with local production-environment config, acceptance-bot Feishu direct chat, BigModel Coding Plan / GLM-5.3-Flash. Operated through Computer Use; no test message was sent to a group chat.
 
 ## Fix scope
 
@@ -23,9 +23,9 @@ Direct-chat sending keeps open_id and does not switch to chat_id on failure; gro
 | Latest build regression      | Old process exited normally, dev build containing 8e7fe75d0f rebuilt and started; CUAFIX1405 six-round computation fully done, desktop shows Worked for 1m 14s |
 | Protocol runtime             | CLI log confirms 6 scheduled events carrying assistantMessageId; the new process log has 0 invalid-session-event drop warnings                                 |
 | Follow-up message            | Feishu and desktop both show CUAFIXFOLLOWUPOK, Completed on Feishu                                                                                             |
-| Connection status            | Bots -> Ryan Bob shows Feishu WebSocket is running / Connected, no delivery error prompt                                                                       |
+| Connection status            | Bots -> acceptance bot shows Feishu WebSocket is running / Connected, no delivery error prompt                                                                 |
 
-Long-task session: `sess_59ef620c-a6c3-4503-a777-ab8395e780aa`. Post-fix regression session: `sess_f5109c02-ffb1-41df-bf0f-b208f9e1c9ef`.
+The long-task and post-fix regression session ids are kept in local acceptance evidence, not in public docs.
 
 Local screenshots were in `/tmp/zct-closure-evidence/` (long-task final state, post-fix desktop/Feishu results, bot connection status) and the post-fix log at `/tmp/zct-closure-runtime-final.log`. These were temporary local evidence, not portable repo test fixtures.
 

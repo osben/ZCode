@@ -112,6 +112,8 @@ const requiredRuntimeModules = [
   // The app uses node-forge to generate a self-signed CA. Its dynamic require("crypto") breaks when
   // inlined into the ESM main bundle, so keep it external and verify that app.asar contains it.
   "node-forge",
+  // Main statically depends on PKIjs; collect its full closure and verify the artifact so pnpm deduplication cannot drop it.
+  "pkijs",
   // Keep this aligned with tsup externals to preserve the ZIP extractor's CommonJS runtime boundary.
   "yauzl",
   // Bug fix: keep the Feishu SDK external to avoid Electron ESM dynamic-require crashes, and verify

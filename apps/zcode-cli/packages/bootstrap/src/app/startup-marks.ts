@@ -1,8 +1,9 @@
 import type { ConfigResult } from "@zcode/adapters/config";
-import { discoverNodePluginsSync } from "@zcode/adapters/plugins";
+import { discoverNodePlugins } from "@zcode/adapters/plugins";
 import type { AgentRuntimeConfig } from "@zcode/core";
 import type { Logger, McpServerConfig, PluginLoadOutcome } from "@zcode/contracts";
 import { incognitoExcludes, type IncognitoProfile } from "@zcode/shared";
+import { resolvePluginSecretsPath, withPluginSecrets } from "../plugin-secrets.js";
 import type { StartupTimer } from "../startup-logging.js";
 import { resolveOfficialPluginRoots } from "./bundled-plugins.js";
 import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "./official-plugin-definitions.js";
@@ -10,38 +11,71 @@ import { getPluginStorageRoot } from "./paths.js";
 import type { ZCodeAppOptions } from "./types.js";
 import { filterVisualizeSkillRoots } from "./visualize-skill-gate.js";
 
-export function resolveStartupPlugins(input: {
+export async function resolveStartupPlugins(input: {
   cliStorageRoot: string;
   configResult: ConfigResult;
   env?: NodeJS.ProcessEnv;
   /** Incognito profile; plugins off yields the same empty outcome as `plugins.enabled: false`. */
   incognito?: IncognitoProfile;
   logger?: Logger;
-  options: Pick<ZCodeAppOptions, "officialPluginRoots" | "pluginStorageRoot" | "includeVisualize">;
+  options: Pick<
+    ZCodeAppOptions,
+    | "officialPluginRoots"
+    | "pluginStorageRoot"
+    | "pluginPreparation"
+    | "pluginDiscovery"
+    | "runtimeConfig"
+    | "includeVisualize"
+  >;
   startupTimer: StartupTimer;
   workingDirectory: string;
-}): PluginLoadOutcome {
+}): Promise<PluginLoadOutcome> {
   const pluginStorageRoot =
     input.options.pluginStorageRoot ?? getPluginStorageRoot(input.cliStorageRoot);
-  const pluginOutcome = discoverNodePluginsSync({
-    config: incognitoExcludes(input.incognito, "plugins")
-      ? { ...input.configResult.config.plugins, enabled: false }
-      : input.configResult.config.plugins,
-    env: input.env ?? process.env,
-    officialPluginRoots: resolveOfficialPluginRoots({
-      extraRoots: input.options.officialPluginRoots,
-      logger: input.logger,
-      storageRoot: pluginStorageRoot,
-      suppressedBuiltins: new Set(input.configResult.config.plugins.suppressedBuiltins),
-    }),
-    // An official plugin with defaultEnabled (such as skill-creator) is actually enabled by default
-    // only when its name is passed to discoverNodePluginsSync here. Both the CLI subcommand path
-    // (resolveZCodePlugins) and app startup must pass it; otherwise `/skill skill-creator` reports
-    // "Skill not found: skill-creator" in a session while `zcode plugins list` says it is enabled.
-    officialPluginsEnabledByDefault: DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS,
-    storageRoot: pluginStorageRoot,
-    workingDirectory: input.workingDirectory,
-  });
+  const resolve = async (): Promise<PluginLoadOutcome> => {
+    // Session-runtime MCP expansion must also read the sensitive values kept in the private file (the same overlay as resolveZCodePlugins).
+    const secrets = await withPluginSecrets(
+      input.configResult,
+      resolvePluginSecretsPath(pluginStorageRoot),
+      input.logger,
+    );
+    const pluginsConfig = secrets.configResult.config.plugins;
+    const outcome = await (
+      input.options.pluginDiscovery
+        ? input.options.pluginDiscovery.discoverPlugins.bind(input.options.pluginDiscovery)
+        : discoverNodePlugins
+    )(
+      {
+        workspaceIdentity: input.options.runtimeConfig?.memory?.workspaceIdentity,
+        remoteSessionId: input.options.runtimeConfig?.remoteSessionId,
+        config: incognitoExcludes(input.incognito, "plugins")
+          ? { ...pluginsConfig, enabled: false }
+          : pluginsConfig,
+        env: input.env ?? process.env,
+        officialPluginRoots: await resolveOfficialPluginRoots({
+          preparation: input.options.pluginPreparation,
+          extraRoots: input.options.officialPluginRoots,
+          logger: input.logger,
+          storageRoot: pluginStorageRoot,
+          suppressedBuiltins: new Set(input.configResult.config.plugins.suppressedBuiltins),
+        }),
+        // An official plugin with defaultEnabled (such as skill-creator) is actually enabled by default
+        // only when its name is passed to discoverNodePlugins here. Both the CLI subcommand path
+        // (resolveZCodePlugins) and app startup must pass it; otherwise `/skill skill-creator` reports
+        // "Skill not found: skill-creator" in a session while `zcode plugins list` says it is enabled.
+        officialPluginsEnabledByDefault: DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS,
+        storageRoot: pluginStorageRoot,
+        workingDirectory: input.workingDirectory,
+      },
+      { signal: input.options.pluginPreparation?.signal },
+    );
+    return secrets.diagnostics.length > 0
+      ? { ...outcome, diagnostics: [...outcome.diagnostics, ...secrets.diagnostics] }
+      : outcome;
+  };
+  const pluginOutcome = await (input.options.pluginPreparation
+    ? input.options.pluginPreparation.resolvePlugins(resolve)
+    : resolve());
   pluginOutcome.skillRoots = filterVisualizeSkillRoots(
     pluginOutcome.skillRoots,
     input.options.includeVisualize,

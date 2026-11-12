@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- The Coding Plan usage panel coordinates data sources, quota cards, and usage charts. Keeping it together avoids scattering account-level source binding state. */
 import { Fragment, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { resolveHourDigits } from "@/v4/messageTimeLabel.js";
 import { Check, InfoIcon, RefreshCw } from "lucide-react";
 import type {
   CodingPlanModelData,
@@ -1043,7 +1044,8 @@ function formatCodingPlanRefreshTime(
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    hour: "2-digit",
+    // 12 小时制语言（ko/en）时不补零：「오후 5:00」而非「오후 05:00」。
+    hour: resolveHourDigits(locale),
     minute: "2-digit",
   }).format(new Date(value));
   return intl.formatMessage({ id: "settings.usage.lastRefreshTime" }, { time });

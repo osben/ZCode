@@ -130,6 +130,10 @@ Recent; later sends record default config by the ownership at submit time. First
 prefill and explicit project switching keep the existing explicit hand-off actions; ordinary navigation does
 not move one project's body to another project nor overwrite the target's existing draft.
 
+手机整页刷新会释放旧 attachment；只属于手机的未归类草稿目录因此可能不在 bootstrap 的 workspace 列表。恢复时先用当前设备命名空间下的导航作用域与 pending draft 核对保存的工作区、未归类归属与空 taskId，再通过既有项目草稿入口按 draftId 重开。Host 重新校验并复用目录，页面传入明确的未归类作用域；不能因列表缺席跳到第一个项目，也不能仅凭浏览器保存的路径打开任意目录。正式任务、其他设备与其他工作区不认领该草稿；恢复保留首页或聊天页位置。
+
+2026-11-09：VP13 在 macOS Electron + Chrome 手机视口完整通过（`packages/desktop/.e2e-artifacts/desktop-e2e-20261109-071533-036`）。首页和聊天页刷新均恢复同一未归类草稿及正文，后续发送成功且不增加桌面 tab/Host。实体手机、Windows/Linux 原生与线上 relay 未验证。
+
 ### 远端草稿的创建前置（2026-10-30）
 
 远端连接可用不代表草稿项目归属已就绪。冷恢复缺少导航作用域记录时，Composer 可以编辑文字，但在当前草稿获得明确 projectId 前，不启动预热、不提交首发；按钮和键盘发送遵守同一个条件。用户通过已有项目入口选择项目后，现有预热流程继续。已有正式会话不依赖草稿 projectId，本地未归类草稿仍允许 projectId 为空。

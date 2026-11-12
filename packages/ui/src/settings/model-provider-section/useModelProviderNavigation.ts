@@ -54,6 +54,8 @@ import {
   resolveCodingPlanEntitlementState,
 } from "@/settings/model-provider-section/providerFamilyConnectionVisibility.js";
 
+const NO_FAMILIES: readonly ProviderFamilyDomain[] = [];
+
 interface PresetProviderWithConfig extends PresetProviderSpec {
   provider: ProviderSettingsFormProvider | null;
 }
@@ -67,6 +69,7 @@ interface UseModelProviderNavigationOptions {
   displayOrder?: ProviderOrderView;
   codingPlanEntitlements?: Partial<Record<string, CodingPlanEntitlementState>>;
   providerFamilyDomain?: ProviderFamilyDomain | null;
+  availableFamilies?: readonly ProviderFamilyDomain[];
   connectionSelections?: ProviderFamilyConnectionSelectionSettings;
   pendingConnectionSelections?: ProviderFamilyConnectionSelectionSettings;
   familyConnectionSettingsLoading?: boolean;
@@ -90,6 +93,7 @@ export function useModelProviderNavigation({
   displayOrder,
   codingPlanEntitlements = {},
   providerFamilyDomain = null,
+  availableFamilies = NO_FAMILIES,
   connectionSelections = {},
   pendingConnectionSelections = {},
   familyConnectionSettingsLoading = false,
@@ -115,7 +119,11 @@ export function useModelProviderNavigation({
   const codingPlanItems = useMemo(
     () =>
       CODING_PLAN_PROVIDER_SPECS.filter((spec) =>
-        shouldShowCodingPlanForProviderFamilyDomain(spec.oauthProviderId, providerFamilyDomain),
+        shouldShowCodingPlanForProviderFamilyDomain(
+          spec.oauthProviderId,
+          providerFamilyDomain,
+          availableFamilies,
+        ),
       ).map((spec) => {
         const provider = modelProviders.find((item) => item.providerId === spec.id) ?? null;
         const accountEntitled = entitledAccountProviderIds.has(spec.id);
@@ -171,6 +179,7 @@ export function useModelProviderNavigation({
       modelProviders,
       modelProvidersLoading,
       providerFamilyDomain,
+      availableFamilies,
     ],
   );
   const connectionModeCodingPlanItems = useMemo(
@@ -421,11 +430,13 @@ export function useModelProviderNavigation({
 function shouldShowCodingPlanForProviderFamilyDomain(
   oauthProviderId: OAuthProviderId,
   providerFamilyDomain: ProviderFamilyDomain | null,
+  availableFamilies: readonly ProviderFamilyDomain[],
 ): boolean {
   if (!providerFamilyDomain) {
     return true;
   }
-  return resolveProviderFamilyDomainFromOAuthProvider(oauthProviderId) === providerFamilyDomain;
+  const family = resolveProviderFamilyDomainFromOAuthProvider(oauthProviderId);
+  return family === providerFamilyDomain || (family !== null && availableFamilies.includes(family));
 }
 
 function resolvePresetFamilyStatusProvider({

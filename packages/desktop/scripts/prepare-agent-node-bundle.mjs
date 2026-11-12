@@ -15,7 +15,7 @@
 // Remote environments (SSH/WSL/Docker) do not have Electron and still use the native binaries from
 // prepare:remote-assets; this change does not affect that path.
 
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -84,11 +84,10 @@ const arch = normalizeArch(process.env.ZCODE_TARGET_ARCH || "") || process.arch;
 const platformKey = `${platform}-${arch}`;
 
 const glmDir = resolve(desktopRoot, "bundled-agents", platformKey, "glm");
-// Skills bundled with the CLI (not plugins): bootstrap's resolveBundledSkillRoots searches the same
-// candidate directories as official plugins for packages/bundled-skills next to zcode.cjs and reads it
-// in place. If this is not staged, /workflow in the desktop package asks users to load the
-// dynamic-workflows skill first while the skill is missing—exactly the failure mode that moving it out
-// of the uninstallable zcode-guide plugin was meant to fix.
+// zcode.cjs and .node-bundle-meta.json are placed by stage-agent-bundle.mjs, which resolves their location itself.
+// Skills bundled with the CLI (not plugins): bootstrap's resolveBundledSkillRoots searches the same candidate directories as official plugins
+// for packages/bundled-skills next to zcode.cjs and reads it in place. If it is not staged, /workflow in the desktop package expands to
+// "load the dynamic-workflows skill first" while the skill is missing, which is exactly the failure that moving it out of the uninstallable zcode-guide plugin was meant to fix.
 const bundledSkillPack = {
   relativePath: "apps/zcode-cli/packages/bundled-skills",
   requiredPaths: [
@@ -168,27 +167,20 @@ function buildOfficialPluginRuntimes() {
 
 function buildOfficialPluginRuntimeForBootstrap(plugin) {
   const pluginRoot = resolve(repoRoot, plugin.relativePath);
-  const hasCompleteRuntime = plugin.requiredRuntimePaths.every((relativePath) =>
-    existsSync(resolve(pluginRoot, ...relativePath.split("/"))),
-  );
-  if (plugin.packageName !== BROWSER_USE_PLUGIN_PACKAGE_NAME && hasCompleteRuntime) {
-    console.log(
-      `[prepare:agent-bundle] reuse existing official plugin runtime: ${plugin.packageName}`,
-    );
-    return;
-  }
-
   // bootstrap:with-remote builds remote assets and the desktop agent bundle in sequence.
-  // When plugin builds run through pnpm/filter, the tsc shim is prone to SIGKILL in low-memory local
-  // environments. Only under the bootstrap flag, run the equivalent tsc + build-mcp steps directly
-  // with the current Node process; the plugin's own build script remains unchanged.
-  // browser-use's server and browser-client are a release pair. Always rebuild the server even if an
-  // older server.js exists, or the desktop installer may stage an outdated server with the current
-  // client (or without a client).
-  runCommand(process.execPath, ["../../node_modules/typescript/bin/tsc"], {
-    cwd: pluginRoot,
-    env: process.env,
-  });
+  // Running the plugin build through pnpm/filter can be SIGKILLed by the tsc shim on low-memory local machines,
+  // so under this flag the equivalent tsc + build-mcp steps run directly with the current Node process.
+  // Bug cause: reusing a complete dist kept the previous generation of plugin runtime after source changes,
+  // so every code-based official plugin must be rebuilt in each bootstrap run.
+  rmSync(resolve(pluginRoot, "dist"), { recursive: true, force: true });
+  // Document plugins have no tsconfig of their own (their source lives in office-runtime), so tsc is only run
+  // for plugins that have one.
+  if (existsSync(resolve(pluginRoot, "tsconfig.json"))) {
+    runCommand(process.execPath, ["../../node_modules/typescript/bin/tsc"], {
+      cwd: pluginRoot,
+      env: process.env,
+    });
+  }
   runCommand(process.execPath, [plugin.runtimeBuildScript], {
     cwd: pluginRoot,
     env: process.env,
@@ -205,11 +197,10 @@ function assertOfficialPluginRuntime(plugin) {
   }
 }
 
-function stageBundle() {
-  // The implementation lives in stage-agent-bundle.mjs. The dev path
-  // (scripts/build-desktop-agent-cli.mjs) must use the same implementation or it may keep running a
-  // stale agent left by the previous package build.
-  stageAgentBundle({ repoRoot, platformKey });
+async function stageBundle() {
+  // The implementation lives in stage-agent-bundle.mjs; the dev chain (scripts/build-desktop-agent-cli.mjs)
+  // must use the same one, otherwise dev keeps running the stale agent left by the previous package build.
+  await stageAgentBundle({ repoRoot, platformKey });
 }
 
 function stageOfficialPlugins() {
@@ -336,7 +327,7 @@ function stageKoffiForCuaPlugin() {
 // developer machines previously hid this ordering issue.
 buildCliBundle();
 buildOfficialPluginRuntimes();
-stageBundle();
+await stageBundle();
 stageOfficialPlugins();
 stageBundledSkillPack();
 await stageBundledNpmRuntime();

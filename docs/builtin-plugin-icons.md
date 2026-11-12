@@ -14,6 +14,10 @@ name; the icon path must not be derived from the plugin id as the unpublished
 `computer-use/icon.png` (it returns 404). Icon path and plugin id are maintained
 independently.
 
+Exception: some official plugin icons ship with the client and do not use the CDN. `OFFICIAL_PLUGIN_ICON_BY_ID` in `packages/ui/src/lib/pluginIconSource.ts` matches the full stable ID to `packages/ui/src/assets/plugin-icons/<name>.png` (currently plugin creator, PDF, documents, presentations, spreadsheets, image search, design, Visualize). The built-in "design" plugin (`design@zcode-plugins-official`) has no `listing.icon` and no `design/icon.png` on the CDN, so it relies only on this local asset (2026-11-06).
+
+Visualize (`visualize@zcode-plugins-official`) uses the local `visualize.png`: a blue-cyan rounded bar chart with a rising curve; the image carries its own opaque light-blue background, and the outer rounded corners are still clipped by the shared container. Store list, detail and other shared icon entries use the same asset by full official identity; a same-named plugin from a personal source does not match. Existing icon size and container are kept, and light/dark themes keep the original image colors without inversion. Acceptance checks image loading, the detail icon and small-size recognizability at 390px / 1200px in Zai Light / Zai Dark.
+
 Assets come from `assets/<plugin-name>/icon.png` in the `zcode-plugins` repository;
 its `main` branch publish pipeline syncs the assets directory to the CDN. Icons use
 HTTPS URLs to satisfy the client's trusted-image-address validation. PNGs must use a
@@ -34,6 +38,7 @@ match icon order:
 4. `restore-legacy-sessions` → `Frame` (arrow-up archive box)
 5. `skill-creator` → `Frame` (cube)
 6. `zcode-guide` → ZCode logo
+7. `design` → not in that Figma node (exception): the graphic is a separate color-chip image from the design team, shipped with the client at `packages/ui/src/assets/plugin-icons/design.png`, see the "ships with the client" exception above
 
 When sorting the Installed Strip, built-in/inline plugins always come before
 marketplace-installed plugins and sort stably by display name in the current
@@ -42,4 +47,4 @@ the runtime `source`; never infer built-in identity indirectly from a missing
 `installedAt`.
 
 Current built-in plugins: `android-emulator`, `document-skills`, `ios-simulator`,
-`restore-legacy-sessions`, `skill-creator`, `zcode-guide`.
+`restore-legacy-sessions`, `skill-creator`, `zcode-guide`, `design` (its icon is a local client asset, see the exception above).

@@ -1,0 +1,420 @@
+//! 权限：模式、规则语法、判决链、Bash 只读判定（docs/specs/rust-cli/shell-permissions.md §4）。
+//!
+//! 判决顺序（[`chain`]）：deny 规则 → 工具自身的检查 → ask 规则 → 模式
+//! （bypassPermissions 也遵守 deny、ask 规则与安全路径）→ allow 规则 → 询问；外层再按 dontAsk /
+//! auto / plan 改写询问。工具没有自己的检查时，按工具声明的判决主体（kernel-api `PermissionSubject`：shell 命令、文件路径、
+//! 网址、skill）用这里的内置检查。
+//!
+//! 规则只来自配置快照（[`PermissionRules`]，由入口层组装后交进来，“总是允许”落库后从 [`LocalRulesSource`] 读回、
+//! 换上新的 LocalSettings 层；进程里所有会话共用一份权限上下文）。这里不做 IO：cwd、home 与命令
+//! 输出目录都从执行环境的端口取。Bash 解析与只读判定复制自 `apps/zcode-cli-rust/crates/{bash-parse,bash}`。
+
+mod bash;
+mod bash_cd;
+mod bash_inline;
+mod bash_paths;
+mod bash_suggest;
+mod chain;
+mod check;
+mod classifier;
+mod consts;
+mod files;
+mod guarded;
+mod local_rules;
+mod paths;
+mod removal;
+mod rules;
+mod shell;
+mod shell_rules;
+mod skill;
+mod suggest;
+mod suggest_seed;
+mod suggest_spec;
+pub mod texts;
+pub mod web_preapproved;
+
+#[cfg(test)]
+mod test_support;
+
+use rust_cli_base::sync::{LockUnpoisoned, RwLockUnpoisoned};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
+
+use async_trait::async_trait;
+use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::env_files::PathStyle;
+use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::orchestration::{PermissionGate, RuleSnapshots, ScopedGate};
+use rust_cli_kernel_api::permission::{
+    PermissionDecision, PermissionMode, PermissionRule, PermissionRules, PermissionSubject,
+};
+use rust_cli_kernel_api::plan::PlanFiles;
+use rust_cli_kernel_api::tool::{Tool, ToolUseContext};
+use serde_json::Value;
+
+// 对外只有判决链与几个纯函数（F125 的 T6）：tools 用 shell 分析（解析、只读判定、去包装）与询问的种子（F133）；询问文字
+// 与预批准域名是公开的模块（`texts`、`web_preapproved`）。
+pub use local_rules::LocalRulesSource;
+pub use shell::parse::{Analysis, Invocation, analyze};
+pub use shell::readonly::is_read_only;
+pub use shell::strip::strip_safe_wrappers;
+pub use suggest_seed::ask_rule_seed;
+
+use crate::chain::{Call, Outer};
+use crate::check::Inputs;
+use crate::classifier::{AutoClassifier, Unavailable};
+use crate::paths::PathContext;
+use crate::rules::Rules;
+
+/// 判决链的开关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PolicyOptions {
+    /// plan 模式按自动模式的语义走分类器（缺省开启）。
+    pub(crate) auto_in_plan: bool,
+    /// Fork: Node's plan mode ([`chain::Outer::node_plan`]).
+    pub(crate) node_plan: bool,
+}
+
+impl Default for PolicyOptions {
+    fn default() -> Self {
+        Self {
+            auto_in_plan: true,
+            node_plan: false,
+        }
+    }
+}
+
+/// 通用权限判决链。
+///
+/// 修复（R1-2）：以前“总是允许”在这里另存一份按会话的规则（`session_rules`），库里还有一份，LocalSettings 层不刷新：
+/// 子代理与 `/clear` 之后的新会话（别的会话 ID）又问一次，`/permissions` 也要去重补偿。现在规则只有快照一个来源，
+/// 回答落库后判决链按 `/permissions` 的路径从 [`LocalRulesSource`] 读回库值换上新快照。
+pub struct PolicyGate {
+    rules: RwLock<Arc<PermissionRules>>,
+    /// Node 群协作会话（`permission.scope = session`）自己的规则集：判决时代替快照里的本机项目规则集
+    /// （LocalSettings）。会话 actor 打开这种会话时由 runtime 放进来（修复线 F2）。
+    scoped: Mutex<HashMap<SessionId, Vec<rust_cli_kernel_api::permission::SourcedRule>>>,
+    classifier: Arc<dyn AutoClassifier>,
+    options: PolicyOptions,
+    /// 本机项目规则集的来源（“总是允许”落库后读回，[`local_rules`]）；没有接上时不读回。
+    local: Option<Arc<dyn LocalRulesSource>>,
+}
+
+impl Default for PolicyGate {
+    fn default() -> Self {
+        Self::new(PermissionRules::default())
+    }
+}
+
+impl PolicyGate {
+    pub fn new(rules: PermissionRules) -> Self {
+        Self {
+            rules: RwLock::new(Arc::new(rules)),
+            scoped: Mutex::default(),
+            classifier: Arc::new(Unavailable),
+            options: PolicyOptions::default(),
+            local: None,
+        }
+    }
+
+    /// 换上分类器（自动模式，shell-permissions.md §4.7）。产品里还没有实现，缺省是 [`Unavailable`]；现在只有测试用。
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_classifier(mut self, classifier: Arc<dyn AutoClassifier>) -> Self {
+        self.classifier = classifier;
+        self
+    }
+
+    /// 换上判决链的开关（plan 不走分类器的写法，shell-permissions.md §4.6）。产品里用缺省值；现在只有测试用。
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_options(mut self, options: PolicyOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Fork: plan mode denies what would ask, with Node's reason (the desktop app-server).
+    #[must_use]
+    pub fn with_node_plan_mode(mut self, enabled: bool) -> Self {
+        self.options.node_plan = enabled;
+        self
+    }
+
+    /// 配置重载后换上新的规则快照；进行中的判决用的仍是旧快照。
+    pub fn replace_rules(&self, rules: PermissionRules) {
+        *self.rules.write_unpoisoned() = Arc::new(rules);
+    }
+
+    fn snapshot(&self) -> Arc<PermissionRules> {
+        self.rules.read_unpoisoned().clone()
+    }
+
+    /// 当前的规则快照（`/permissions` 的列表与修改，docs/specs/rust-cli/tui-manage.md §1.1）。
+    pub fn rules(&self) -> Arc<PermissionRules> {
+        self.snapshot()
+    }
+
+    /// Node 群协作会话的规则集（Node `loadProjectPermissionRuleset`：`scope = session` 时只用会话行的规则）：这个
+    /// 会话的判决不用本机项目规则集，改用它。修复线 F2：以前续写这种会话时用的是项目规则。
+    pub fn scope(
+        &self,
+        session: &SessionId,
+        rules: &rust_cli_kernel_api::permission::ProjectRules,
+    ) {
+        self.scoped
+            .lock_unpoisoned()
+            .insert(session.clone(), rules.sourced());
+    }
+
+    /// 会话关闭时清掉它的群协作规则集（session-lifecycle.md §3.3 的关闭路径；再打开时 runtime 从会话行重放）。
+    pub fn release(&self, session: &SessionId) {
+        self.scoped.lock_unpoisoned().remove(session);
+    }
+
+    /// 这个会话判决用的快照：群协作会话把 LocalSettings 换成它自己的规则集，其余会话就是当前快照。
+    fn snapshot_for(&self, session: &SessionId) -> Arc<PermissionRules> {
+        let base = self.snapshot();
+        let scoped = self.scoped.lock_unpoisoned().get(session).cloned();
+        let Some(scoped) = scoped else {
+            return base;
+        };
+        let mut rules = (*base).clone();
+        rules.rules.retain(|rule| {
+            rule.source != rust_cli_kernel_api::permission::RuleSource::LocalSettings
+        });
+        rules.rules.extend(scoped);
+        Arc::new(rules)
+    }
+
+    /// 从执行环境取路径事实：cwd 取会话的 shell cwd（会话的当前目录，取不到时用工作区根；与文件工具的
+    /// `env_shell::current_dir` 同一来源，tools-files.md §3.3），命令输出目录取同一份 shell 状态。一次判决取一次；
+    /// “只批准这一次”随判决给出（`PermissionDecision::Ask.once`，工作线 F137），不再为它另取路径风格。
+    async fn path_context(&self, base: &PermissionRules, context: &ToolUseContext) -> PathContext {
+        let workspace = &context.workspace;
+        let shell = context
+            .machine
+            .shell()
+            .shell_state(workspace, &context.session)
+            .await
+            .ok();
+        let facts = context.machine.info().path_facts(workspace).await.ok();
+        // 计划文件与 ExitPlanMode、计划模式 attachment 同一来源（kernel-api `PlanFiles`）：
+        // `<工作区>/.zcode/plans/plan-<会话>.md`（tools-more.md §2.2）。
+        let plans = facts
+            .as_ref()
+            .and_then(|facts| PlanFiles::in_workspace(facts, &workspace.root, &context.session));
+        let mut roots = vec![workspace.root.as_str().to_owned()];
+        // 远端机器的允许范围只有它的工作目录：本机的附加目录不带过去（R3，暂定，remote-exec.md §20.8）。
+        if context.machine.is_primary() {
+            roots.extend(
+                base.additional_directories
+                    .iter()
+                    .map(|dir| dir.as_str().to_owned()),
+            );
+        }
+        PathContext {
+            cwd: shell.as_ref().map_or_else(
+                || workspace.root.as_str().to_owned(),
+                |shell| shell.cwd.as_str().to_owned(),
+            ),
+            roots,
+            home: facts
+                .as_ref()
+                .and_then(|facts| facts.home.as_ref())
+                .map(|home| home.as_str().to_owned()),
+            style: facts.map_or(PathStyle::Posix, |facts| facts.style),
+            internal: shell
+                .and_then(|shell| shell.outputs)
+                .map(|outputs| vec![outputs.as_str().to_owned()])
+                .unwrap_or_default(),
+            plans,
+        }
+    }
+}
+
+#[async_trait]
+impl ScopedGate for PolicyGate {
+    /// 与 [`PermissionGate::decide`] 相同，另把 `allowed` 当作这一次判决的 allow 规则（skill 的
+    /// `allowed-tools`，docs/specs/rust-cli/ext.md §2.5）。
+    /// deny、ask 规则仍然优先。
+    async fn decide_with_allowed(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        context: &ToolUseContext,
+        allowed: &[PermissionRule],
+    ) -> PermissionDecision {
+        let base = self.snapshot_for(&context.session);
+        let rules = Rules {
+            base: &base,
+            session: allowed,
+        };
+        let paths = self.path_context(&base, context).await;
+        let root = context.workspace.root.as_str();
+        let own = tool.check_permissions(input, context).await;
+        let subject = tool.permission_subject(input);
+        let name = tool.name();
+        let guarded = guarded_command(subject.as_ref());
+        let evaluate_with = |mode: PermissionMode, full_access: bool| {
+            let inputs = Inputs {
+                mode,
+                rules: &rules,
+                paths: &paths,
+                root,
+                dangerous: guarded::applies(mode, guarded, paths.style),
+                full_access,
+            };
+            let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
+            chain::inner(name, check, updated, &inputs)
+        };
+        let evaluate =
+            |mode: PermissionMode| evaluate_with(mode, mode == PermissionMode::BypassPermissions);
+        let node_plan = context.mode == PermissionMode::Plan && self.options.node_plan;
+        let plan_mcp = (node_plan && tool.mcp_info().is_some()).then(|| chain::PlanMcp {
+            read_only: tool.is_read_only(input),
+            destructive: tool.is_destructive(input),
+        });
+        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and any
+        // read-only, non-destructive tool (WebFetch, WebSearch), and the base mode decides it. Plan skips Node's early
+        // yolo allow, so deny and ask rules still apply: the base mode runs without full access.
+        let passes_gate = plan_mcp.is_some()
+            || (node_plan && tool.is_read_only(input) && !tool.is_destructive(input));
+        let base_bypass = passes_gate
+            && matches!(
+                context.base_mode,
+                PermissionMode::BypassPermissions | PermissionMode::Guarded
+            );
+        let mut result = if base_bypass {
+            evaluate_with(context.base_mode, false)
+        } else {
+            evaluate(context.mode)
+        };
+        // Over any other base Node's gate passes a read-only, non-destructive built-in tool too, and `checkBuildMode`
+        // decides it in the base mode. Rust's plan chain already allows what needs no approval; a call it would ask
+        // about (and the plan gate would then deny) is decided in the base mode instead, and its ask goes to the user.
+        // A view without a separate base (a subagent, the fallback view) has `base_mode == Plan`: the gate still denies.
+        let base_decides = !base_bypass
+            && passes_gate
+            && context.base_mode != PermissionMode::Plan
+            && plan_mcp.is_none()
+            && matches!(result, chain::Inner::Ask { .. });
+        if base_decides {
+            result = evaluate(context.base_mode);
+        }
+        if let Some(mcp) = plan_mcp {
+            result = chain::plan_mcp(name, mcp, base_bypass, result);
+        }
+        let call = Call {
+            tool: name,
+            input,
+            session: &context.session,
+            mode: context.mode,
+        };
+        let options = Outer {
+            auto_in_plan: self.options.auto_in_plan,
+            avoid_prompts: base.avoid_prompts,
+            node_plan: self.options.node_plan,
+            plan_ask: plan_mcp.is_some() || base_bypass || base_decides,
+        };
+        chain::outer(
+            &call,
+            result,
+            || evaluate(PermissionMode::AcceptEdits),
+            self.classifier.as_ref(),
+            options,
+        )
+        .await
+    }
+}
+
+impl RuleSnapshots for PolicyGate {
+    fn current_rules(&self) -> Arc<PermissionRules> {
+        self.snapshot()
+    }
+}
+
+#[async_trait]
+impl PermissionGate for PolicyGate {
+    async fn decide(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        context: &ToolUseContext,
+    ) -> PermissionDecision {
+        self.decide_with_allowed(tool, input, context, &[]).await
+    }
+
+    async fn local_rules_committed(&self, workspace: &WorkspaceRef) {
+        self.reload_local(workspace).await;
+    }
+
+    /// hook 放行或询问时仍然生效的检查（不可绕过的权限关卡，
+    /// docs/specs/rust-cli/hooks.md §6）：按 bypassPermissions 跑内层判决链，仍然拒绝或询问的就是
+    /// deny / ask 规则、工具检查的拒绝与规则 / 安全检查的询问（敏感文件也算）。
+    async fn check_rules(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        context: &ToolUseContext,
+    ) -> Option<PermissionDecision> {
+        let base = self.snapshot_for(&context.session);
+        let rules = Rules {
+            base: &base,
+            session: &[],
+        };
+        let paths = self.path_context(&base, context).await;
+        // guarded 按 guarded 跑：hook 放行时危险命令仍然询问（Node user-once 不让 hook 替用户批准，修复线 F20）。
+        let mode = match context.mode {
+            PermissionMode::Guarded => PermissionMode::Guarded,
+            _ => PermissionMode::BypassPermissions,
+        };
+        let subject = tool.permission_subject(input);
+        let inputs = Inputs {
+            mode,
+            rules: &rules,
+            paths: &paths,
+            root: context.workspace.root.as_str(),
+            dangerous: guarded::applies(mode, guarded_command(subject.as_ref()), paths.style),
+            // 会话本身是 yolo 时 hook 放行后也不再询问（工作线 F76）；别的模式这里按 bypass 跑，但不算完全访问。
+            full_access: context.mode == PermissionMode::BypassPermissions,
+        };
+        let own = tool.check_permissions(input, context).await;
+        let (check, updated) = chain::own(subject.as_ref(), own, &inputs);
+        match chain::inner(tool.name(), check, updated, &inputs) {
+            chain::Inner::Allow { .. } => None,
+            chain::Inner::Deny { message } => Some(PermissionDecision::Deny { message }),
+            chain::Inner::Ask {
+                message,
+                suggestions,
+                once,
+                independent,
+                kind: _,
+            } => Some(PermissionDecision::Ask {
+                message,
+                suggestions,
+                once,
+                independent,
+            }),
+        }
+    }
+}
+
+/// guarded 的危险命令询问看的命令：判决主体是 shell 命令的工具（Bash、带 `command` 的 Monitor），不看工具名
+/// （shell-permissions.md §4.6.1）。
+/// 缺陷（F132 的 P1）：以前条件是“工具是 Bash”，guarded 下 `rm -rf build` 经 Monitor 启动时直接执行。Monitor 同样在
+/// 执行环境里跑 shell 命令，按用户决定（guarded 有危险命令一律询问）改为按主体认。
+fn guarded_command(subject: Option<&PermissionSubject>) -> Option<&str> {
+    match subject {
+        Some(PermissionSubject::Shell { command }) => Some(command),
+        Some(
+            PermissionSubject::Path { .. }
+            | PermissionSubject::Url { .. }
+            | PermissionSubject::Skill { .. },
+        )
+        | None => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "lib_tests.rs"]
+mod tests;
