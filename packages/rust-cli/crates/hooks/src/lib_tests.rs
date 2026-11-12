@@ -280,28 +280,38 @@ async fn a_permission_request_hook_that_stops_denies_the_ask() {
     assert_eq!(outcome.updated_input, None);
 }
 
-/// Node `createExitCodeBlockOutput`: a PermissionRequest hook that exits 2 denies with the blocking text.
+/// Node `createExitCodeBlockOutput`: a PermissionRequest hook that exits 2 denies with
+/// `trimForPreview(stderr) ?? trimForPreview(stdout) ?? "Hook blocked execution"` (trimmed, cut at 4000 UTF-16 units
+/// with `...`), before any JSON on stdout is read.
 #[tokio::test]
 async fn a_permission_request_hook_that_exits_two_denies_the_ask() {
-    let env = Arc::new(ScriptedEnv::with(&[(
-        "no.sh",
-        script("", "not allowed", 2),
-    )]));
-    let engine = engine(
-        env.clone(),
-        &command_settings("PermissionRequest", "Bash", "no.sh"),
-    );
-    let ask = event(
-        HookEventName::PermissionRequest,
-        json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
-    );
-    let outcome = engine.run(ask, CancellationToken::new()).await;
-    assert_eq!(
-        outcome.decision,
-        Some(PermissionDecision::Deny {
-            message: "[no.sh]: not allowed".to_owned()
-        })
-    );
+    let long = "é".repeat(4001);
+    let cases = [
+        (script("", "  not allowed\n", 2), "not allowed".to_owned()),
+        (script(" from stdout ", " \n ", 2), "from stdout".to_owned()),
+        (
+            script(r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#, "", 2),
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#.to_owned(),
+        ),
+        (script("", "", 2), "Hook blocked execution".to_owned()),
+        (script("", &long, 2), format!("{}...", "é".repeat(4000))),
+    ];
+    for (hook, expected) in cases {
+        let env = Arc::new(ScriptedEnv::with(&[("no.sh", hook)]));
+        let engine = engine(env, &command_settings("PermissionRequest", "Bash", "no.sh"));
+        let ask = event(
+            HookEventName::PermissionRequest,
+            json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+        );
+        let outcome = engine.run(ask, CancellationToken::new()).await;
+        assert_eq!(
+            outcome.decision,
+            Some(PermissionDecision::Deny {
+                message: expected.clone()
+            }),
+            "{expected}"
+        );
+    }
 }
 
 /// #423 review P1-1: Node runs PermissionRequest hooks one by one in config order and the last decision wins

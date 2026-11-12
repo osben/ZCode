@@ -289,6 +289,18 @@ impl ScopedGate for PolicyGate {
         } else {
             evaluate(context.mode)
         };
+        // Over any other base Node's gate passes a read-only, non-destructive built-in tool too, and `checkBuildMode`
+        // decides it in the base mode. Rust's plan chain already allows what needs no approval; a call it would ask
+        // about (and the plan gate would then deny) is decided in the base mode instead, and its ask goes to the user.
+        // A view without a separate base (a subagent, the fallback view) has `base_mode == Plan`: the gate still denies.
+        let base_decides = !base_bypass
+            && passes_gate
+            && context.base_mode != PermissionMode::Plan
+            && plan_mcp.is_none()
+            && matches!(result, chain::Inner::Ask { .. });
+        if base_decides {
+            result = evaluate(context.base_mode);
+        }
         if let Some(mcp) = plan_mcp {
             result = chain::plan_mcp(name, mcp, base_bypass, result);
         }
@@ -302,7 +314,7 @@ impl ScopedGate for PolicyGate {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
             node_plan: self.options.node_plan,
-            plan_ask: plan_mcp.is_some() || base_bypass,
+            plan_ask: plan_mcp.is_some() || base_bypass || base_decides,
         };
         chain::outer(
             &call,

@@ -256,7 +256,9 @@ fn strict<'a>(
 
 /// `z.coerce.date()`: `new Date(value)` is not an Invalid Date. Booleans and null are 0 or 1 ms, a number is valid within
 /// ±8.64e15 ms, objects and arrays are invalid. A string must be in the ECMAScript date-time format (what
-/// `toISOString` writes, and its shorter forms); V8's legacy fallback (`"Nov 12 2026"`) is not accepted.
+/// `toISOString` writes, and its shorter forms). V8 also accepts many other strings through its fallback parser (a
+/// space for `T`, lowercase `t` and `z`, `+0530`, `12 Nov 2026`, RFC 1123): this check rejects them on purpose
+/// (fail-closed), since Node and Rust write only `toISOString`.
 fn js_date(value: &Value) -> bool {
     const MAX_TIME_MS: f64 = 8.64e15;
     match value {
