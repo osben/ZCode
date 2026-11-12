@@ -332,7 +332,7 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             ack
         }
         "stop" => stop(handle, &live.sink, envelope, phase, revision).await,
-        "resolveInteraction" => resolve(handle, &live.sink, envelope, revision).await,
+        "resolveInteraction" => resolve(server, handle, &live.sink, envelope, revision).await,
         "setFollowupMode" => set_followup(server, handle, &live, envelope).await,
         // Fork: command kinds ported for desktop parity (specs/fork-rust-agent-parity.md).
         _ => match crate::fork::commands::decide(server, &live, envelope, phase, revision).await {
@@ -1661,6 +1661,7 @@ async fn send_text(
 }
 
 async fn resolve(
+    server: &Server,
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
     envelope: &Envelope,
@@ -1674,7 +1675,16 @@ async fn resolve(
     let option = resolved.answer.option_id.as_deref();
     // Fork (B3): a mode switch is one kernel step that checks the ask itself (Node `permissionGrantMode`).
     if let Some(mode) = option.and_then(grant_mode) {
-        return grant(handle, envelope, revision, interaction, mode).await;
+        let others = || {
+            server
+                .bridge
+                .sessions()
+                .into_iter()
+                .map(|bridged| bridged.handle.clone())
+                .filter(|other| other.id() != handle.id())
+                .collect()
+        };
+        return grant(handle, others, envelope, revision, interaction, mode).await;
     }
     let pending = handle.view().await.ok().and_then(|view| {
         view.pending
@@ -1742,6 +1752,9 @@ async fn resolve(
     )
 }
 
+/// Node `interaction-registry.ts` `resolvePermissionMode`: the grant's refusal for an ask it cannot grant.
+const NOT_SUPPORTED: &str = "Full access is not supported for this interaction";
+
 /// Fork (B3): the permission mode an answer's option grants (Node `permissionGrantMode`): `fullAccess` is yolo
 /// (`BypassPermissions`), `allowAndSwitchGuarded` is guarded.
 fn grant_mode(option: &str) -> Option<PermissionMode> {
@@ -1754,10 +1767,13 @@ fn grant_mode(option: &str) -> Option<PermissionMode> {
 
 /// Fork (B3): answers a permission ask with a mode switch (Node `resolveInteraction` with `resolvePermissionMode`).
 /// The session actor checks the ask, grants the mode and allows the call once in one step. A real grant answers
-/// `resolvedBy` (the App writes its recent permission preference only from it); an ask no longer pending is a late
-/// answer; a refusal leaves the ask pending and fails the command with the reason.
+/// `resolvedBy` (the App writes its recent permission preference only from it). An ask pending in another session fails
+/// like Node's registry (`Full access is not supported for this interaction`); an ask pending nowhere is a late answer,
+/// accepted without a result (Node `interaction-background.ts`: a miss is an idempotent success). A refusal leaves the
+/// ask pending and fails the command with the reason.
 async fn grant(
     handle: &dyn SessionHandle,
+    others: impl FnOnce() -> Vec<std::sync::Arc<dyn SessionHandle>>,
     envelope: &Envelope,
     revision: u64,
     interaction: &str,
@@ -1776,13 +1792,34 @@ async fn grant(
     match send(handle, &envelope.command_id, command).await {
         KernelAck::Accepted {
             result: CommandResult::NotPending,
-        } => Ack::refused(
-            &envelope.command_id,
-            Status::Noop,
-            "proto.alreadyResolved",
-            "the interaction is no longer pending",
-            revision,
-        ),
+        } => {
+            for other in others() {
+                let pending = other.view().await.is_ok_and(|view| {
+                    view.pending
+                        .iter()
+                        .any(|(id, _)| id.as_str() == interaction)
+                });
+                if pending {
+                    tracing::warn!(
+                        event = "protocol.permission_grant.refused",
+                        mode = mode.node_name(),
+                        "permission mode grant for another session's ask"
+                    );
+                    return Ack::refused(
+                        &envelope.command_id,
+                        Status::Failed,
+                        "fault.command.executionFailed",
+                        NOT_SUPPORTED,
+                        revision,
+                    );
+                }
+            }
+            tracing::info!(
+                event = "zcode_protocol.v4.interaction_already_resolved",
+                "permission mode grant for an ask no longer pending (idempotent)"
+            );
+            Ack::accepted(&envelope.command_id, revision, None)
+        }
         KernelAck::Accepted { .. } => granted,
         KernelAck::Duplicate => inbox::duplicate(&granted),
         KernelAck::Rejected { reason } => {

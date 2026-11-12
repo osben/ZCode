@@ -638,6 +638,8 @@ struct GrantHandle {
     id: rust_cli_kernel_api::ids::SessionId,
     ack: rust_cli_kernel_api::session_api::Ack,
     sent: std::sync::Mutex<Vec<rust_cli_kernel_api::session_api::Command>>,
+    /// The asks pending in this session (its view).
+    pending: Vec<&'static str>,
 }
 
 #[async_trait::async_trait]
@@ -668,14 +670,55 @@ impl rust_cli_kernel_api::testing::HandleOverride for GrantHandle {
         rust_cli_kernel_api::session_api::SessionView,
         rust_cli_kernel_api::session_api::KernelError,
     > {
-        unreachable!("the grant never reads the view")
+        use rust_cli_kernel_api::ids::{InteractionId, ToolUseId};
+        let meta = rust_cli_kernel_api::store::SessionMeta {
+            id: self.id.clone(),
+            kind: rust_cli_kernel_api::store::SessionKind::Interactive,
+            parent: None,
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+                root: rust_cli_kernel_api::env::EnvPath::new("/w"),
+            },
+            title: String::new(),
+            trace: rust_cli_kernel_api::ids::TraceId::new("trace"),
+            created_at_ms: 0,
+            incognito: None,
+        };
+        let mut view = rust_cli_kernel_api::session_api::SessionView::new(
+            meta,
+            Vec::new(),
+            rust_cli_kernel_api::testing::selection(),
+            PermissionMode::Default,
+        );
+        view.pending = self
+            .pending
+            .iter()
+            .map(|id| {
+                let request = rust_cli_kernel_api::orchestration::InteractionRequest::Permission {
+                    origin: None,
+                    tool_use: ToolUseId::new("toolu_1"),
+                    tool: "Bash".into(),
+                    input: json!({}),
+                    message: "ask".into(),
+                    suggestions: Vec::new(),
+                    rule_seed: None,
+                    asked_by: None,
+                    machine: Default::default(),
+                    once: false,
+                    independent: false,
+                };
+                (InteractionId::new(*id), request)
+            })
+            .collect();
+        Ok(view)
     }
 }
 
 /// B3 (Node `resolvePermissionMode` through the gateway): the mode switch options send one
-/// `GrantPermissionMode`; a real grant answers `resolvedBy` (the App's recent permission preference reads it), a late
-/// answer is a noop `proto.alreadyResolved`, a refusal is `failed` with `fault.command.executionFailed` and the
-/// broker's reason.
+/// `GrantPermissionMode`; a real grant answers `resolvedBy` (the App's recent permission preference reads it); an ask
+/// pending nowhere is a late answer, accepted without a result (Node's idempotent miss); an ask pending in another
+/// session fails like Node's registry; a refusal is `failed` with `fault.command.executionFailed` and the broker's
+/// reason.
 #[tokio::test]
 async fn a_mode_switch_answer_grants_through_one_command() {
     use rust_cli_kernel_api::session_api::{
@@ -695,15 +738,28 @@ async fn a_mode_switch_answer_grants_through_one_command() {
         Some(PermissionMode::BypassPermissions)
     );
     assert_eq!(grant_mode("allowOnce"), None);
-    let run = |ack: KernelAck| {
+    let stub = |id: &str, ack: KernelAck, pending: Vec<&'static str>| GrantHandle {
+        id: rust_cli_kernel_api::ids::SessionId::new(id),
+        ack,
+        sent: Default::default(),
+        pending,
+    };
+    let run_with = |ack: KernelAck, elsewhere: Vec<&'static str>| {
         let envelope = envelope.clone();
         async move {
-            let handle = GrantHandle {
-                id: rust_cli_kernel_api::ids::SessionId::new("s1"),
-                ack,
-                sent: Default::default(),
-            };
-            let reply = grant(&handle, &envelope, 7, "int_1", PermissionMode::Guarded).await;
+            let handle = stub("s1", ack.clone(), Vec::new());
+            let other: std::sync::Arc<dyn SessionHandle> =
+                std::sync::Arc::new(stub("s2", ack, elsewhere));
+            let others = move || vec![other];
+            let reply = grant(
+                &handle,
+                others,
+                &envelope,
+                7,
+                "int_1",
+                PermissionMode::Guarded,
+            )
+            .await;
             let sent = handle.sent.into_inner().unwrap();
             assert!(
                 matches!(
@@ -716,6 +772,7 @@ async fn a_mode_switch_answer_grants_through_one_command() {
             reply
         }
     };
+    let run = |ack: KernelAck| run_with(ack, Vec::new());
     let granted = run(KernelAck::Accepted {
         result: CommandResult::Done,
     })
@@ -732,7 +789,26 @@ async fn a_mode_switch_answer_grants_through_one_command() {
     .await;
     assert_eq!(
         (late.status, late.reason_code.as_deref(), late.result),
-        (Status::Noop, Some("proto.alreadyResolved"), None)
+        (Status::Accepted, None, None)
+    );
+    let foreign = run_with(
+        KernelAck::Accepted {
+            result: CommandResult::NotPending,
+        },
+        vec!["int_1"],
+    )
+    .await;
+    assert_eq!(
+        (
+            foreign.status,
+            foreign.reason_code.as_deref(),
+            foreign.message.as_deref()
+        ),
+        (
+            Status::Failed,
+            Some("fault.command.executionFailed"),
+            Some("Full access is not supported for this interaction")
+        )
     );
     let refused = run(KernelAck::Rejected {
         reason: "Already in autonomous mode".to_owned(),
