@@ -403,6 +403,15 @@ impl RunSink for ChildSink {
         }
     }
 
+    async fn tool_scheduled(
+        &self,
+        tool_use: &rust_cli_kernel_api::ids::ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        self.live.tool_scheduled(&self.agent, tool_use, name, input);
+    }
+
     async fn emit(&self, event: QueryEvent) -> bool {
         // `ToolFinished` 先于工具结果的提交到达（同一个任务里按顺序调用）：记下 checkpoint 与子代理关联。
         if let QueryEvent::ToolFinished { tool_use, output } = &event {

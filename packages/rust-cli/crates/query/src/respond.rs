@@ -380,6 +380,9 @@ async fn stream(
                             defaults::apply(scope.parts.tools.as_ref(), &scope.session, &mut block);
                             if let ContentBlock::ToolUse { id, name, input } = block {
                                 batch.add(id, name, input, assistant_id.clone());
+                                if let Some((tool_use, name, input)) = batch.scheduled() {
+                                    scope.sink.tool_scheduled(&tool_use, &name, &input).await;
+                                }
                                 // 找不到的工具加入时就有结果。
                                 hand_out(scope, &mut batch, &mut handed);
                             }

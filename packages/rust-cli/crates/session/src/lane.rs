@@ -7,7 +7,7 @@
 //! 修正（L18）：以前通知只在回合结束后各开一个回合（按缺省优先级 `later`
 //! 理解），排在全部排队输入之后；通知应是 `next`，在下一个工具边界并入。
 
-use rust_cli_kernel_api::agents::AgentNotice;
+use rust_cli_kernel_api::agents::{AgentNotice, AgentStall};
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::machine_notices::MachineNotice;
@@ -34,7 +34,7 @@ pub(crate) enum Waiting {
     Shell(MachineNotice),
     Agent(AgentNotice),
     /// 无进展提醒（Node `task-notification` 命令的 stall 形式）：全文原样，不 ack，不计入后台工作。
-    Stall(String),
+    Stall(AgentStall),
     Peer(PeerItem),
     /// Monitor 的事件或说明（工作线 F83，tools-more.md §19.6）：actor 自己产生，全文已包装；不 ack，也不按文字去重
     /// （同样的一行可以出现多次）。
@@ -52,7 +52,7 @@ impl Waiting {
         match self {
             Self::Shell(notice) => task_notification(&notice.notice),
             Self::Agent(notice) => notice.text.clone(),
-            Self::Stall(text) => text.clone(),
+            Self::Stall(stall) => stall.text.clone(),
             Self::Peer(item) => item.text(),
             Self::MonitorEvent(text) | Self::MonitorEnd { text, .. } => text.clone(),
         }

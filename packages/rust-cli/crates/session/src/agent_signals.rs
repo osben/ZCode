@@ -4,11 +4,12 @@
 //! 所以输入、后台命令通知与子代理通知只有一个 owner。两种通知进同一条 next 通道（[`crate::lane`]），
 //! 按到达顺序在工具边界并入或开回合；提交之后才 ack（至少一次，重复的按对话里同文本的消息去掉）。
 
-use rust_cli_kernel_api::agents::{AgentNotice, AgentSignal};
+use rust_cli_kernel_api::agents::{AgentNotice, AgentSignal, AgentStall};
 use rust_cli_kernel_api::ids::ShellTaskId;
 use rust_cli_kernel_api::session_api::KernelEvent;
 
 use crate::actor::Actor;
+use crate::inbox::LaneItem;
 use crate::lane::Waiting;
 
 /// 子代理的信号流（流结束后不再等它）。
@@ -21,19 +22,41 @@ impl Actor {
                 self.log.append(KernelEvent::TasksChanged { tasks });
             }
             AgentSignal::Notice(notice) => self.on_agent_notice(notice).await,
-            AgentSignal::Stall(stall) => self.on_agent_stall(stall.text).await,
+            AgentSignal::Stall(stall) => self.on_agent_stall(stall).await,
         }
     }
 
     /// 无进展提醒（stall.rs）：进通道、空闲时开一轮，不记 `BackgroundWork`（Node 的 stall 命令不是终态通知），
     /// 也不 ack（`Hub` 已经在交出时取走）。
-    async fn on_agent_stall(&mut self, text: String) {
+    async fn on_agent_stall(&mut self, stall: AgentStall) {
         if self.closing.is_some() {
             return;
         }
-        self.inbox.push_notice(Waiting::Stall(text));
+        self.inbox.push_notice(Waiting::Stall(stall));
         if self.running.is_none() {
             self.start_next().await;
+        }
+    }
+
+    /// Node `shouldSuppressTaskNotificationRuntimeCommand` (stall branch): a queued reminder is dropped when it is about
+    /// to drain and the run has moved on (finished, waiting, another run, or progress since). Called before the lane
+    /// drains: at a turn start and at a steering claim.
+    pub(crate) async fn prune_stalls(&mut self) {
+        let stalls: Vec<AgentStall> = self
+            .inbox
+            .lane()
+            .filter_map(|item| match item {
+                LaneItem::Notice(notice) => match &notice.waiting {
+                    Waiting::Stall(stall) => Some(stall.clone()),
+                    _ => None,
+                },
+                LaneItem::Input(_) => None,
+            })
+            .collect();
+        for stall in stalls {
+            if !self.deps.agents.stall_current(&self.meta.id, &stall).await {
+                self.inbox.drop_stall(&stall);
+            }
         }
     }
 

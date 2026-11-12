@@ -20,6 +20,7 @@ fn reminder(
         agent: AgentId::new("agent_abc"),
         root: SessionId::new("sess_root"),
         description: description.to_owned(),
+        started_ms: 0,
         running_for_ms,
         no_progress_for_ms,
         last_progress_ms,
@@ -441,9 +442,53 @@ async fn a_silent_background_agent_is_reported_to_its_parent_after_the_first_int
     );
     assert_eq!(stall.agent, AgentId::new("agent_1"));
     // The reminder is never acknowledged; the completion notice is the only ack-able one.
+    // Still the same run and no progress: a queued copy of the reminder would drain.
+    assert!(signals.stall_current(&parent, &stall).await);
     gate.notify_one();
     let Some(AgentSignal::Notice(notice)) = stream.next().await else {
         panic!("expected the completion notice after the reminder");
     };
+    // Once the run has finished, the reminder is stale and is dropped instead of drained.
+    assert!(!signals.stall_current(&parent, &stall).await);
     assert_eq!(notice.agent, AgentId::new("agent_1"));
+}
+
+/// Node `ToolCallScheduled`: a call queued behind a running one is listed too, from when it was scheduled. Queueing is
+/// not progress, so the first call's start is still the last progress.
+#[test]
+fn a_queued_call_is_listed_from_when_it_was_scheduled() {
+    let mut clock = clock();
+    let mut agent = candidate("a", 0);
+    agent
+        .activity
+        .tool_scheduled("t1", "Bash", Some("sleep 3600".to_owned()), 0);
+    agent
+        .activity
+        .tool_started("t1", "Bash", Some("sleep 3600".to_owned()), 0);
+    agent
+        .activity
+        .tool_scheduled("t2", "Write", Some("out.txt".to_owned()), MIN);
+    assert_eq!(
+        agent.activity.progress_ms,
+        Some(0),
+        "queueing does not count as progress"
+    );
+    let due = clock.tick(15 * MIN, &[agent]);
+    assert_eq!(due.len(), 1);
+    let names: Vec<&str> = due[0]
+        .running_tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect();
+    assert_eq!(names, ["Bash", "Write"]);
+    assert!(format(&due[0]).contains("<running-tool name=\"Write\""));
+}
+
+#[test]
+fn a_queued_call_that_starts_restarts_its_clock_and_is_progress() {
+    let mut activity = Activity::default();
+    activity.tool_scheduled("t2", "Write", None, MIN);
+    activity.tool_started("t2", "Write", None, 20 * MIN);
+    assert_eq!(activity.tools[0].started_ms, 20 * MIN);
+    assert_eq!(activity.progress_ms, Some(20 * MIN));
 }

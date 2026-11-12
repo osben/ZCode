@@ -109,6 +109,23 @@ impl Activity {
         self.progress(now);
     }
 
+    /// A call joined the batch (Node `ToolCallScheduled`): listed from now, but queueing is not progress.
+    pub(crate) fn tool_scheduled(
+        &mut self,
+        tool_use: &str,
+        name: &str,
+        summary: Option<String>,
+        now: u64,
+    ) {
+        self.tools.retain(|tool| tool.tool_use != tool_use);
+        self.tools.push(RunningTool {
+            tool_use: tool_use.to_owned(),
+            name: name.to_owned(),
+            summary,
+            started_ms: now,
+        });
+    }
+
     pub(crate) fn tool_finished(&mut self, tool_use: &str, now: u64) {
         self.tools.retain(|tool| tool.tool_use != tool_use);
         self.progress(now);
@@ -128,7 +145,7 @@ pub(crate) struct Candidate {
 }
 
 impl Candidate {
-    fn progress_time(&self) -> u64 {
+    pub(crate) fn progress_time(&self) -> u64 {
         self.activity.progress_ms.unwrap_or(self.started_ms)
     }
 }
@@ -139,6 +156,7 @@ pub(crate) struct Reminder {
     pub(crate) agent: AgentId,
     pub(crate) root: SessionId,
     pub(crate) description: String,
+    pub(crate) started_ms: u64,
     pub(crate) running_for_ms: u64,
     pub(crate) no_progress_for_ms: u64,
     pub(crate) last_progress_ms: u64,
@@ -255,6 +273,7 @@ impl StallClock {
             agent: candidate.agent.clone(),
             root: candidate.root.clone(),
             description: candidate.description.clone(),
+            started_ms: candidate.started_ms,
             running_for_ms: now.saturating_sub(candidate.started_ms),
             no_progress_for_ms: now.saturating_sub(last_progress_ms),
             last_progress_ms,
@@ -447,6 +466,8 @@ pub(crate) fn notice(reminder: &Reminder) -> AgentStall {
     AgentStall {
         agent: reminder.agent.clone(),
         text: format(reminder),
+        started_ms: reminder.started_ms,
+        progress_ms: reminder.last_progress_ms,
     }
 }
 

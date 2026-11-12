@@ -93,6 +93,10 @@ pub struct AgentStall {
     pub agent: AgentId,
     /// 提醒全文（`[SYSTEM NOTIFICATION …]` 开头，Node 的 `formatBackgroundSubagentStallNotification` 原样）。
     pub text: String,
+    /// 提醒所依据的运行的开始时刻（Node 的 execution 身份；#418 之后换成 executionId）。
+    pub started_ms: u64,
+    /// 提醒所依据的最后一次进展（Node `lastProgressAt`）。出队时进展前进了，提醒就过时。
+    pub progress_ms: u64,
 }
 
 /// 发给某个会话的信号。
@@ -115,6 +119,12 @@ pub trait AgentSignals: Send + Sync {
 
     /// `seq` 这条通知已作为消息提交（幂等）。没有 ack 的通知在重新订阅时再次送达。
     async fn ack(&self, session: &SessionId, seq: u64);
+
+    /// 无进展提醒是否仍然成立（Node `isBackgroundSubagentStallReminderCurrent`）：子代理还在跑、没在等审批、仍是提醒
+    /// 依据的那次运行、进展没有前进。默认成立（没有子代理能力的实现没有提醒）。
+    async fn stall_current(&self, _session: &SessionId, _stall: &AgentStall) -> bool {
+        true
+    }
 
     /// 还在跑、或已结束但通知还没有 ack 的后台子代理（`-p` 等它们都处理完才收尾）。
     async fn background(&self, session: &SessionId) -> Vec<AgentId>;

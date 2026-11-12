@@ -248,6 +248,31 @@ impl Live {
         });
     }
 
+    /// 工具调用加入批次（子循环的 `ToolScheduled`）：列出它，但排队不算进展。
+    pub(crate) fn tool_scheduled(
+        &self,
+        agent: &AgentId,
+        tool_use: &ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        let summary = crate::stall::input_summary(input);
+        self.activity(agent, |activity, now| {
+            activity.tool_scheduled(tool_use.as_str(), name, summary, now);
+        });
+    }
+
+    /// Node `isBackgroundSubagentStallReminderCurrent` for a queued reminder: the same run, still a running top-level
+    /// background agent, not waiting for an answer, and no progress since the reminder was built.
+    pub(crate) fn stall_current(&self, stall: &rust_cli_kernel_api::agents::AgentStall) -> bool {
+        self.stall_candidates().iter().any(|candidate| {
+            candidate.agent == stall.agent
+                && !candidate.waiting
+                && candidate.started_ms == stall.started_ms
+                && candidate.progress_time() == stall.progress_ms
+        })
+    }
+
     /// 工具调用结束（子循环的 `ToolFinished`）。
     pub(crate) fn tool_finished(&self, agent: &AgentId, tool_use: &ToolUseId) {
         self.activity(agent, |activity, now| {

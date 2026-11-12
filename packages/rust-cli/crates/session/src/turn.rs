@@ -227,6 +227,7 @@ impl Actor {
                 prompts_only,
                 reply,
             } => {
+                self.prune_stalls().await;
                 let _ = reply.send(self.claim_steering(prompts_only));
             }
             SinkRequest::SettleSteering {
@@ -479,6 +480,7 @@ impl Actor {
         }
         // 这次工作期间到达的本地命令记录先进对话，再开下一个回合（修复线 L-A，tui-manage.md §11.3）。
         self.flush_held_records().await;
+        self.prune_stalls().await;
         let (input, execution) = if let Some(next) = self.next_turn_input() {
             next
         } else if let Some(fire) = self.next_cron().await {

@@ -634,6 +634,13 @@ impl Inbox {
     }
 
     /// 通道里有没有同一条通知（重复送达）。
+    /// Removes a queued reminder that is no longer current (it must not drain).
+    pub(crate) fn drop_stall(&mut self, stall: &rust_cli_kernel_api::agents::AgentStall) {
+        self.items.retain(|item| {
+            !matches!(item, Item::Notice(notice) if matches!(&notice.waiting, Waiting::Stall(queued) if queued == stall))
+        });
+    }
+
     pub(crate) fn has_notice(&self, notice: &Waiting) -> bool {
         self.items
             .iter()

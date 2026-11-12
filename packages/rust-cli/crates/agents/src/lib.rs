@@ -355,6 +355,14 @@ impl AgentSignals for Signals {
         shell_notices::adopt(&self.0, meta);
     }
 
+    async fn stall_current(
+        &self,
+        _session: &SessionId,
+        stall: &rust_cli_kernel_api::agents::AgentStall,
+    ) -> bool {
+        self.0.live.stall_current(stall)
+    }
+
     fn session_closing(&self, session: &SessionId) {
         shell_notices::closing(&self.0, session);
     }
