@@ -26,6 +26,9 @@ pub const MODE: &str = "mode";
 pub const PLAN_ENABLED: &str = "planEnabled";
 /// The App's attachment refs, as sent.
 pub const ATTACHMENT_REFS: &str = "attachmentRefs";
+/// The structured origin of the input (`conversationInputSourceSchema`), as the Host sent it; the agent never
+/// produces one (Node `inputIntentMetadata`).
+pub const SOURCE: &str = "source";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -79,6 +82,11 @@ impl InputIntent {
     pub fn quotes(&self) -> Option<Vec<Quote>> {
         let quotes = self.get(QUOTES)?;
         Some(serde_json::from_value(quotes.clone()).unwrap_or_default())
+    }
+
+    /// The input's structured source, as stored; absent when the user typed it.
+    pub fn source(&self) -> Option<&Value> {
+        self.get(SOURCE)
     }
 
     /// Node's rows show `intent.text` instead of the message text when the intent has quotes or a bot source

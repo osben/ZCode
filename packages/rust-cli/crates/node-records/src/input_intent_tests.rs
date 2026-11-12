@@ -58,6 +58,40 @@ fn a_stored_intent_reads_back() {
     assert_eq!(read.get("admissionSeq"), Some(&json!(2)));
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): an extension source is stored last, on the full intent and on the legacy seed,
+/// and reads back. Without a source the key is absent (Node `buildPersistedConversationInputIntent`).
+#[test]
+fn an_extension_source_is_stored_and_read_back() {
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let mut sourced = intent();
+    sourced.set("source", source.clone());
+    let stored = persisted(&sourced, "hi", "queued");
+    assert_eq!(stored["source"], source);
+    assert_eq!(
+        stored
+            .as_object()
+            .and_then(|map| map.keys().next_back())
+            .map(String::as_str),
+        Some("source")
+    );
+    assert!(persisted(&intent(), "hi", "queued").get("source").is_none());
+
+    let info = json!({"metadata": message_metadata(&sourced, "hi")});
+    assert_eq!(info["metadata"]["inputIntent"]["source"], source);
+    assert_eq!(
+        info["metadata"]["conversationInputIntent"]["source"],
+        source
+    );
+    assert_eq!(of_message(&info).unwrap().get("source"), Some(&source));
+
+    // The legacy seed alone keeps its source as well.
+    let legacy = json!({"sourceCommandId": "cmd-1", "queueItemId": "queue_c1", "clientId": "client",
+        "kind": "sendText", "admissionSeq": 1, "admittedAt": 1500, "requestedDelivery": "startNow",
+        "admittedDelivery": "startNow", "source": source});
+    let info = json!({"metadata": {"inputIntent": legacy}});
+    assert_eq!(of_message(&info).unwrap().get("source"), Some(&source));
+}
+
 /// A legacy `inputIntent` alone counts when it has the fields Node checks; an invalid full intent falls back to it.
 #[test]
 fn a_legacy_intent_counts_only_when_complete() {

@@ -70,6 +70,9 @@ struct Input {
     /// Fork: selections quoted from the conversation, as sent (absent, `[]` or quotes); they travel in the input
     /// intent ([`input_intent`]).
     conversation_quotes: Option<Vec<rust_cli_kernel_api::conversation_quote::Quote>>,
+    /// B4: the input's structured source (`conversationInputSourceSchema`, e.g. `{kind: "extension", pluginId}`). The
+    /// inbound schema checks its shape before this is read; it is copied onto the intent as it is ([`input_intent`]).
+    source: Option<Value>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -1230,6 +1233,13 @@ fn input_intent(
     fields.insert("admittedDelivery".into(), json!(admitted));
     if !input.attachments.is_empty() {
         fields.insert("attachmentRefs".into(), json!(input.attachments));
+    }
+    // B4: Node `inputIntentMetadata` puts `source` last and only when the command carries one.
+    if let Some(source) = input.source.as_ref().filter(|source| !source.is_null()) {
+        fields.insert(
+            rust_cli_kernel_api::input_intent::SOURCE.into(),
+            source.clone(),
+        );
     }
     rust_cli_kernel_api::input_intent::InputIntent::from_fields(fields)
 }

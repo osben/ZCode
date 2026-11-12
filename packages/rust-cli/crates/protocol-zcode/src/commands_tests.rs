@@ -467,6 +467,67 @@ fn an_app_input_is_admitted_with_nodes_intent() {
     assert_eq!(plain.conversation_quotes, None);
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): `sendText` and `createSession.firstInput` carry an extension source onto the
+/// intent as Node's last key; an input without a source has no key.
+#[test]
+fn an_extension_source_is_copied_onto_the_intent() {
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "c1",
+        "clientId": "plugin-host",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {},
+    }))
+    .unwrap();
+    let input: Input = serde_json::from_value(json!({"text": "hi", "source": source})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("queue", "queue"),
+        (3, 1500),
+    );
+    assert_eq!(
+        serde_json::to_string(&intent).unwrap(),
+        serde_json::to_string(&json!({
+            "sourceCommandId": "c1",
+            "queueItemId": "queue_c1",
+            "clientId": "plugin-host",
+            "kind": "sendText",
+            "text": "hi",
+            "admissionSeq": 3,
+            "admittedAt": 1500,
+            "requestedDelivery": "queue",
+            "admittedDelivery": "queue",
+            "source": source,
+        }))
+        .unwrap()
+    );
+
+    let create: CreateSessionPayload = serde_json::from_value(json!({
+        "workspaceId": "/w",
+        "firstInput": {"text": "hi", "source": source},
+    }))
+    .unwrap();
+    assert_eq!(
+        create.first_input.and_then(|first| first.source),
+        Some(source)
+    );
+
+    let plain: Input = serde_json::from_value(json!({"text": "hi"})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &plain,
+        QueuedKind::Text,
+        None,
+        ("queue", "queue"),
+        (3, 1500),
+    );
+    assert!(intent.get("source").is_none());
+}
+
 /// Node `session-flow.ts` answers a `sendText` from Core's admission in both directions: a started input is
 /// `startNow`, a queued one `queue`. The projection's prediction loses in both races: a turn that ended between the
 /// snapshot and the submit (predicted `queue` or `guide`, the kernel started it) and a lease or turn that appeared

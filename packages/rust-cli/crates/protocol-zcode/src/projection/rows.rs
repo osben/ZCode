@@ -96,6 +96,10 @@ impl Projection {
                 if let Some(quotes) = intent.and_then(InputIntent::quotes) {
                     row.insert("conversationQuotes".into(), json!(quotes));
                 }
+                // B4: the structured source comes from the intent only; body text never sets it.
+                if let Some(source) = intent.and_then(InputIntent::source) {
+                    row.insert("source".into(), source.clone());
+                }
                 // Fork: rows stored before attachments were file parts kept the reminders in the model text.
                 let shown = rust_cli_kernel_api::prompt_attachment::display(&text).unwrap_or(text);
                 // Fork: a slash command row shows what the user typed (`/goal <objective>`), like Node.
@@ -281,6 +285,9 @@ impl Projection {
                 row.insert("text".into(), json!(text));
                 if let Some(quotes) = intent.as_ref().and_then(InputIntent::quotes) {
                     row.insert("conversationQuotes".into(), json!(quotes));
+                }
+                if let Some(source) = intent.as_ref().and_then(InputIntent::source) {
+                    row.insert("source".into(), source.clone());
                 }
                 row.insert("origin".into(), json!("realUser"));
                 row.insert("guided".into(), json!(true));

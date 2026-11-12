@@ -489,6 +489,9 @@ pub(crate) fn capabilities() -> Value {
         "incognitoPromptToggles": true,
         // Fork: a quote's `comment` / `agent` reach the model with Node's guidance (kernel_api::conversation_quote).
         "conversationQuoteComment": true,
+        // Fork: the App's extension input source (`{kind: "extension"}`) is accepted on sendText and createSession
+        // firstInput and kept on the intent, the row and the queue item (specs/fork-rust-agent-parity.md, B4).
+        "extensionInputSource": true,
     })
 }
 

@@ -353,6 +353,43 @@ async fn send_now_submits_the_dequeued_input_not_the_one_it_read() {
     );
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): a promotion submits the queued input's own intent, so the extension source it
+/// was sent with stays on it (Node `inputIntentMetadataFromQueueItem` carries `item.source`).
+#[tokio::test]
+async fn send_now_keeps_the_queued_source() {
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let mut dequeued = queued_item("queued", json!([]));
+    if let Some(intent) = dequeued.intent.as_mut() {
+        intent.set(rust_cli_kernel_api::input_intent::SOURCE, source.clone());
+    }
+    let content = vec![ContentBlock::Text {
+        text: "queued".to_owned(),
+    }];
+    let (_scope, server, handle) = fixture_with(
+        vec![queued_item("queued", json!([]))],
+        Some((dequeued, content)),
+        false,
+    )
+    .await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = send_queued_now(&live, &send_now_envelope(), 3).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    let Some(Command::SubmitWith { intent, .. }) = sent
+        .iter()
+        .find(|command| matches!(command, Command::SubmitWith { .. }))
+    else {
+        panic!("the promotion submits");
+    };
+    assert_eq!(
+        intent
+            .as_ref()
+            .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::SOURCE))
+            .cloned(),
+        Some(source)
+    );
+}
+
 /// Node `acquireForegroundPromotionLease` answers `conflict` while another promotion owns the foreground, and
 /// `sendQueuedNow` fails with `guard.queuePromotionBusy`: the item stays queued and the other lease is not released.
 #[tokio::test]
