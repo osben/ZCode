@@ -27,6 +27,16 @@ use crate::turn::TurnInput;
 /// 取回时输入已经不在队列里（`Command::Dequeue` 的 `Rejected.reason`，给用户看）。
 pub(crate) const ALREADY_SENT: &str = "the message already went out";
 
+/// Node `orderTaskNotificationsForParsing`: in a batch, the terminal notifications come first (stable order), so the
+/// batch's representative (its title and source) is the first of them. A stall reminder is never terminal.
+pub(crate) fn order_for_parsing(notices: &mut [Waiting]) {
+    notices.sort_by_key(|notice| matches!(notice, Waiting::Stall(_)));
+}
+
+#[cfg(test)]
+#[path = "lane_order_tests.rs"]
+mod order_tests;
+
 /// 一条等候中的后台通知，或跨会话的消息与回执（同伴消息同样是优先级 `next`，cross-session.md §1.7）。
 #[derive(Debug, Clone)]
 pub(crate) enum Waiting {

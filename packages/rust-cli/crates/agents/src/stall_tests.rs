@@ -548,3 +548,16 @@ async fn a_reminder_from_an_earlier_run_is_not_delivered_after_a_restart() {
         "the reminder of run 1 is stale in run 2"
     );
 }
+
+/// A retry request that starts at 10 minutes is progress (Node sets `lastProgressAt` on `ModelRequest`): the reminder is
+/// due 15 minutes after it, at 25 minutes, not at 15.
+#[test]
+fn a_retry_request_starting_late_moves_the_reminder_after_it() {
+    let mut clock = clock();
+    let mut agent = candidate("a", 0);
+    agent.activity.progress(10 * MIN);
+    assert!(clock.tick(15 * MIN, &[agent.clone()]).is_empty());
+    let due = clock.tick(25 * MIN, &[agent]);
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].last_progress_ms, 10 * MIN);
+}

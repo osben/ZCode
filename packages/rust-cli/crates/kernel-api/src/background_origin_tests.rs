@@ -111,3 +111,21 @@ fn no_execution_or_no_stall_leaves_the_meta_unchanged() {
         origin_meta(plain)
     );
 }
+
+/// Node `orderTaskNotificationsForParsing` before `resolveBackgroundTaskNotificationOriginMeta`: a batch's title and
+/// source come from its first terminal notice, even when a stall reminder arrived first.
+#[test]
+fn a_batch_takes_its_representative_from_the_terminal_notice_not_the_stall() {
+    let stall_meta = origin_meta(&reminder("Silent job", 900_000, "2024-11-07T17:20:00.000Z"));
+    let terminal = origin_meta(
+        "<task-notification>\n<task-id>bash_1</task-id>\n<summary>Background command \"Build\" completed</summary>\n</task-notification>",
+    );
+    let batch = super::batch_meta(&[stall_meta, terminal]).unwrap();
+    assert_eq!(batch["backgroundSource"], "bash");
+    assert_eq!(batch["workId"], "bash_1");
+    assert_eq!(
+        batch["title"],
+        "Build · Silent job — no progress for 15 min"
+    );
+    assert!(batch.get("subagentStall").is_none());
+}

@@ -218,11 +218,11 @@ async fn every_change_wakes_the_subscribers_and_versions_count_commits() {
     let mut changes = changes(&live);
     live.insert(running("agent_a", "sess_root"));
     changes.next().await.unwrap();
-    live.waiting(&AgentId::new("agent_a"), true);
+    live.waiting(&AgentId::new("agent_a"), 0, true);
     changes.next().await.unwrap();
     let root = SessionId::new("sess_root");
     assert!(entries(&live, &root)[0].waiting);
-    live.waiting(&AgentId::new("agent_a"), false);
+    live.waiting(&AgentId::new("agent_a"), 0, false);
     live.committed(&AgentId::new("agent_a"), None);
     live.committed(&AgentId::new("agent_a"), None);
     // 多次改动合并成一次通知；查询看到的是最后的状态。
@@ -571,4 +571,70 @@ async fn the_view_carries_the_subagents_context_and_speed() {
     let view = signals.subagent_view(&parent, &agent).await.unwrap();
     assert_eq!(view.output_speed, Some(speed));
     gate.notify_one();
+}
+
+/// A stopped run's late events do not move the restarted run's clock (Node `belongs()` checks the executionId): the
+/// earlier run's reply and its tool start are ignored, the new run's are not.
+#[test]
+fn events_of_an_earlier_run_do_not_move_the_clock_of_the_run_after_it() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    let clock = Arc::new(ManualClock::default());
+    clock.set(1_000);
+    let live = Live::new(clock.clone());
+    live.insert(running("agent_1", "sess_root"));
+    let agent = AgentId::new("agent_1");
+    // The agent was stopped and restarted: run 1 is the current one.
+    live.with(|agents| agents.get_mut(&agent).unwrap().shown.execution = 1);
+    clock.set(2_000);
+    live.progress(&agent, 0);
+    live.tool_started(
+        &agent,
+        0,
+        &ToolUseId::new("toolu_old"),
+        "Bash",
+        &serde_json::json!({"command": "sleep 900"}),
+    );
+    let shown = live.get(&agent).unwrap().shown;
+    assert_eq!(
+        shown.activity.progress_ms, None,
+        "the earlier run's reply is not progress"
+    );
+    assert!(
+        shown.activity.tools.is_empty(),
+        "the earlier run's tool does not show"
+    );
+    live.progress(&agent, 1);
+    assert_eq!(
+        live.get(&agent).unwrap().shown.activity.progress_ms,
+        Some(2_000)
+    );
+}
+
+/// The start of a model request is progress for its run (Node `ModelRequest`), so a retry that starts late moves the
+/// clock even though no reply has come yet.
+#[tokio::test]
+async fn a_model_request_starting_is_progress_for_its_run() {
+    use rust_cli_kernel_api::orchestration::RunSink;
+    use rust_cli_kernel_api::testing::{MemoryStore, SequentialIds};
+    let clock = Arc::new(ManualClock::default());
+    clock.set(10_000);
+    let live = Arc::new(Live::new(clock.clone()));
+    live.insert(running("agent_1", "sess_root"));
+    let agent = AgentId::new("agent_1");
+    let sink = crate::child::ChildSink::new(
+        Arc::new(MemoryStore::default()),
+        Arc::new(SequentialIds::default()),
+        live.clone(),
+        agent.clone(),
+        SessionId::new("sess_subagent_agent_1"),
+        rust_cli_kernel_api::ids::MessageId::new("prompt_1"),
+        None,
+    )
+    .with_execution(0);
+    clock.set(20_000);
+    sink.request_started().await;
+    assert_eq!(
+        live.get(&agent).unwrap().shown.activity.progress_ms,
+        Some(20_000)
+    );
 }

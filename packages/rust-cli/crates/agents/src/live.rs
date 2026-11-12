@@ -257,29 +257,38 @@ impl Live {
     }
 
     /// 改动一个子代理的活动（进展、工具）。只唤醒钟：列表不因此重取。
-    fn activity(&self, agent: &AgentId, work: impl FnOnce(&mut Activity, u64)) {
+    fn activity(&self, agent: &AgentId, execution: u64, work: impl FnOnce(&mut Activity, u64)) {
         let now = self.clock.now_ms();
-        if let Some(entry) = self.agents().get_mut(agent) {
-            work(&mut entry.shown.activity, now);
+        let current = match self.agents().get_mut(agent) {
+            // An event of an earlier run (a late reply or tool result of a stopped run) changes nothing: the run
+            // it belongs to is no longer the agent's (Node `belongs()` checks the executionId).
+            Some(entry) if entry.shown.execution == execution => {
+                work(&mut entry.shown.activity, now);
+                true
+            }
+            _ => false,
+        };
+        if current {
+            self.wake_clock();
         }
-        self.wake_clock();
     }
 
     /// 模型请求完成、或子代理有了进展（stall.rs 的进展）。
-    pub(crate) fn progress(&self, agent: &AgentId) {
-        self.activity(agent, Activity::progress);
+    pub(crate) fn progress(&self, agent: &AgentId, execution: u64) {
+        self.activity(agent, execution, Activity::progress);
     }
 
     /// 工具调用开始（子循环的 `ToolStarted`）。
     pub(crate) fn tool_started(
         &self,
         agent: &AgentId,
+        execution: u64,
         tool_use: &ToolUseId,
         name: &str,
         input: &serde_json::Value,
     ) {
         let summary = crate::stall::input_summary(input);
-        self.activity(agent, |activity, now| {
+        self.activity(agent, execution, |activity, now| {
             activity.tool_started(tool_use.as_str(), name, summary, now);
         });
     }
@@ -288,12 +297,13 @@ impl Live {
     pub(crate) fn tool_scheduled(
         &self,
         agent: &AgentId,
+        execution: u64,
         tool_use: &ToolUseId,
         name: &str,
         input: &serde_json::Value,
     ) {
         let summary = crate::stall::input_summary(input);
-        self.activity(agent, |activity, now| {
+        self.activity(agent, execution, |activity, now| {
             activity.tool_scheduled(tool_use.as_str(), name, summary, now);
         });
     }
@@ -310,8 +320,8 @@ impl Live {
     }
 
     /// 工具调用结束（子循环的 `ToolFinished`）。
-    pub(crate) fn tool_finished(&self, agent: &AgentId, tool_use: &ToolUseId) {
-        self.activity(agent, |activity, now| {
+    pub(crate) fn tool_finished(&self, agent: &AgentId, execution: u64, tool_use: &ToolUseId) {
+        self.activity(agent, execution, |activity, now| {
             activity.tool_finished(tool_use.as_str(), now)
         });
     }
@@ -405,9 +415,11 @@ impl Live {
     }
 
     /// 子代理经父会话询问时记一次等待（`waiting` 为假时结束一次）。
-    pub(crate) fn waiting(&self, agent: &AgentId, waiting: bool) {
+    pub(crate) fn waiting(&self, agent: &AgentId, execution: u64, waiting: bool) {
         self.change(|agents| {
-            if let Some(entry) = agents.get_mut(agent) {
+            if let Some(entry) = agents.get_mut(agent)
+                && entry.shown.execution == execution
+            {
                 entry.shown.waiting = if waiting {
                     entry.shown.waiting + 1
                 } else {
@@ -417,7 +429,7 @@ impl Live {
         });
         // 答复了审批：等人的时间不算无进展，从这一刻重新计时（Node `PermissionResolved` 的 lastProgressAt）。
         if !waiting {
-            self.progress(agent);
+            self.progress(agent, execution);
         }
     }
 

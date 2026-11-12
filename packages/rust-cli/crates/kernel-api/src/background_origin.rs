@@ -254,7 +254,16 @@ pub fn batch_meta(metas: &[Option<Value>]) -> Option<Value> {
     if let [single] = metas {
         return single.clone();
     }
-    let metas: Vec<&Value> = metas.iter().map(Option::as_ref).collect::<Option<_>>()?;
+    // Node `orderTaskNotificationsForParsing`: terminal notifications first, a stall reminder (`subagentStall`) last.
+    let mut ordered = metas.to_vec();
+    ordered.sort_by_key(|meta| {
+        meta.as_ref()
+            .is_some_and(|meta| meta.get("subagentStall").is_some())
+    });
+    let metas: Vec<&Value> = ordered
+        .iter()
+        .map(|meta| meta.as_ref())
+        .collect::<Option<_>>()?;
     let first = metas.first()?;
     let mut titles: Vec<String> = metas
         .iter()

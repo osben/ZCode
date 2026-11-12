@@ -314,6 +314,8 @@ async fn stream(
         first_content: None,
         retries: 0,
     };
+    // 请求开始是进展（Node `ModelRequest`）：子代理的无进展提醒的钟在这里重新计时（stall.rs）。
+    scope.sink.request_started().await;
     // 运行日志（logging.md §4）：请求的开始与结束、失败。计时与重试数和用量行同一份（`Timing`，usage.md §1），
     // 不另外计时。
     tracing::info!(

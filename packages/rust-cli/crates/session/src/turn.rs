@@ -132,7 +132,9 @@ impl Actor {
                 let prompt = self.resolve_loop_prompt(fire.prompt).await;
                 (vec![(prompt, meta(crate::cron::CRON_SOURCE))], Vec::new())
             }
-            TurnInput::Notices(notices) => {
+            TurnInput::Notices(mut notices) => {
+                // Node `orderTaskNotificationsForParsing`: the batch's terminal notices come first.
+                crate::lane::order_for_parsing(&mut notices);
                 // 同伴消息开回合时用空闲的写法与自己的来源（cross-session.md §1.7）。
                 let texts = notices
                     .iter()
