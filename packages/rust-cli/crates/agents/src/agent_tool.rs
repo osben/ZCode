@@ -313,7 +313,8 @@ impl Tool for AgentTool {
             // 还有在跑的后台子代理（交互模式）：转成后台、停放，父调用回“已启动”（`async_launched`）。
             return Ok(launched_output(&entry));
         }
-        match (finished.ending, finished.error) {
+        // Fork: `settled.ending`, not the query's: a stop accepted before the run settled ends it as stopped.
+        match (settled.ending, finished.error) {
             (Ending::Killed, _) => Err(ToolError::Cancelled),
             (_, Some(error)) => Err(ToolError::Failed {
                 message: error.to_string(),

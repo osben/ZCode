@@ -460,7 +460,7 @@ impl AgentSignals for Signals {
             live::GuardedStop::Aborted => Ok(()),
             live::GuardedStop::NotFound => Err(SubagentStopRefusal::NotFound),
             live::GuardedStop::NotRunning => Err(SubagentStopRefusal::NotRunning),
-            live::GuardedStop::Parked => {
+            live::GuardedStop::Parked(execution) => {
                 let tool = task_stop::TaskStopTool {
                     core: self.0.clone(),
                 };
@@ -472,7 +472,7 @@ impl AgentSignals for Signals {
                     operation: &operation,
                     by_user: true,
                 };
-                tool.stop_parked(agent, &caller)
+                tool.stop_parked(agent, execution, &caller)
                     .await
                     .then_some(())
                     .ok_or(SubagentStopRefusal::NotRunning)

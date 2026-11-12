@@ -266,9 +266,15 @@ impl TaskStopTool {
         sessions
     }
 
-    /// Fork: ends `agent` if it is still parked, as [`Self::stop`] does for a parked agent; false when it no longer is.
-    pub(crate) async fn stop_parked(&self, agent: &AgentId, context: &Caller<'_>) -> bool {
-        let Some(wakes) = routing::stop_parked(&self.core, agent) else {
+    /// Fork: ends `agent` if it is still parked in `execution`, as [`Self::stop`] does for a parked agent; false when
+    /// it no longer is (it woke, and may be parked again in a later execution).
+    pub(crate) async fn stop_parked(
+        &self,
+        agent: &AgentId,
+        execution: u64,
+        context: &Caller<'_>,
+    ) -> bool {
+        let Some(wakes) = routing::stop_parked(&self.core, agent, Some(execution)) else {
             return false;
         };
         self.stop_commands_of(agent, context).await;
@@ -291,7 +297,7 @@ impl TaskStopTool {
                     if self.core.node_desktop && !context.by_user {
                         self.core.live.left_running(&agent).await;
                     }
-                } else if let Some(wakes) = routing::stop_parked(&self.core, &agent) {
+                } else if let Some(wakes) = routing::stop_parked(&self.core, &agent, None) {
                     self.stop_commands_of(&agent, context).await;
                     routing::wake(&self.core, wakes).await;
                 }

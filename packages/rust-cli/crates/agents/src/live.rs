@@ -112,7 +112,8 @@ pub(crate) struct Shown {
     /// 最近一个完成的子代理请求的输出速度（修复线 F112，tui-panels.md §1.7：查看它时 footer 的 TPS）：只在内存里，
     /// 与主会话的速度同一个口径（tui-display.md §2.6）。续跑与结束都不清掉。
     pub(crate) speed: Option<rust_cli_kernel_api::metering::OutputSpeed>,
-    /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every return to running.
+    /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every new run
+    /// ([`LiveAgent::begin_run`]).
     pub(crate) execution: u64,
 }
 
@@ -124,6 +125,17 @@ impl LiveAgent {
             AgentState::Parked { .. } => BackgroundStatus::Completed,
             AgentState::Finished(ending) => ending.status(),
         }
+    }
+
+    /// Fork: starts a new run (Node gives every resumed lifecycle a new execution id, core `runner.ts`). Every return
+    /// to running goes through here, also the ones that replace a run ending in the same lock section (a stranded
+    /// message or a leftover notice in `routing::settle`), which `settle_times` alone would not see as a new run.
+    pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>) {
+        self.state = AgentState::Running { abort, mailbox };
+        self.shown.execution += 1;
+        // The previous run ended in this section when none was recorded: `settle_times` restarts the clock.
+        self.shown.ended_ms.get_or_insert(0);
+        self.shown.doing = None;
     }
 
     /// 还在跑或停放。
@@ -373,10 +385,7 @@ impl Live {
             entry.background = true;
             entry.tool_use = tool_use;
             entry.stopped_by_user = false;
-            entry.state = AgentState::Running {
-                abort,
-                mailbox: Vec::new(),
-            };
+            entry.begin_run(abort, Vec::new());
             Some(routes.claim(&entry.child, &entry.root))
         })
     }
@@ -440,7 +449,7 @@ impl Live {
     /// `by_user`: the user stopped it (desktop), not the model's TaskStop.
     /// Fork (desktop `stopSubagent`): the check and the abort of [`Self::stop`] in one lock section, so a run that
     /// ended or restarted after the check is never aborted. A parked agent is left to `routing::stop_parked`
-    /// ([`GuardedStop::Parked`]), which ends it only while it is still parked.
+    /// ([`GuardedStop::Parked`]), which ends it only while it is still parked in the same execution.
     pub(crate) fn stop_execution(
         &self,
         session: &SessionId,
@@ -463,7 +472,7 @@ impl Live {
                 entry.stopped_by_user = true;
                 GuardedStop::Aborted
             }
-            AgentState::Parked { .. } => GuardedStop::Parked,
+            AgentState::Parked { .. } => GuardedStop::Parked(entry.shown.execution),
             AgentState::Finished(_) => GuardedStop::NotRunning,
         }
     }
@@ -492,7 +501,6 @@ fn settle_times(agents: &mut Agents, now: u64) {
             (true, Some(_)) => {
                 agent.shown.started_ms = now;
                 agent.shown.ended_ms = None;
-                agent.shown.execution += 1;
             }
             (false, None) => {
                 agent.shown.ended_ms = Some(now);
@@ -507,7 +515,8 @@ fn settle_times(agents: &mut Agents, now: u64) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuardedStop {
     Aborted,
-    Parked,
+    /// Parked in this execution: `routing::stop_parked` ends it only while it is still parked in it.
+    Parked(u64),
     NotFound,
     NotRunning,
 }

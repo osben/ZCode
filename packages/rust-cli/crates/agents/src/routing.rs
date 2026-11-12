@@ -39,6 +39,8 @@ pub(crate) struct Settle {
     /// 没有结束：停放，或带着遗留的通知立即续跑（前台调用都回“已启动”）。
     pub(crate) parked: bool,
     pub(crate) wakes: Vec<Wake>,
+    /// Fork: how the run ended: `Killed` once a stop was accepted, whatever the query returned.
+    pub(crate) ending: Ending,
 }
 
 /// 还有 owner 是 `owner`、在跑或停放的后台子代理（`agent:<id>` keepalive）。
@@ -97,10 +99,7 @@ pub(crate) fn deliver(
             // 修正（2026-11-05）：被通知唤醒的续跑不属于派生它的那次 Agent 调用，之后的完成通知不带 `<tool-use-id>`
             // （agents.md §5）；以前这里留着它，第二次通知多一行。同 SendMessage 留下的消息续跑（`settle` 清掉它）。
             entry.tool_use = None;
-            entry.state = AgentState::Running {
-                abort: Abort::new(),
-                mailbox: Vec::new(),
-            };
+            entry.begin_run(Abort::new(), Vec::new());
             Some(Wake {
                 agent: entry.clone(),
                 resume: Resume::Notices(vec![notice.envelope]),
@@ -153,6 +152,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             return Settle {
                 parked: false,
                 wakes: Vec::new(),
+                ending: finished.ending,
             };
         };
         let (aborted, leftover, mut stranded) = match &entry.state {
@@ -169,20 +169,21 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             }
             AgentState::Parked { .. } | AgentState::Finished(_) => (false, Vec::new(), Vec::new()),
         };
+        // Fork: an accepted stop claims the ending. Node takes `killed` before it aborts and the completion keeps it
+        // (core `runner.ts`), so a run whose query had already returned when the stop came still ends as stopped.
+        let (ending, error) = if aborted {
+            (Ending::Killed, None)
+        } else {
+            (finished.ending, error.clone())
+        };
         // Fork: an erased agent's run ends here (it slipped past the erase guard, see `end_erased`): no parking, no
         // resume, and its leftover notices and stranded messages are dropped with its session; only a live owner hears
         // of it.
         if entry.erased {
             if let Some(slot) = agents.get_mut(id) {
-                slot.state = AgentState::Finished(finished.ending);
+                slot.state = AgentState::Finished(ending);
             }
-            let notice = notice_of(
-                &entry,
-                finished.ending,
-                &finished.report,
-                error.as_deref(),
-                false,
-            );
+            let notice = notice_of(&entry, ending, &finished.report, error.as_deref(), false);
             // A foreground run's owner hears of it from its own Agent call, as on the normal path.
             let wakes = if entry.background {
                 to_live_owner(agents, &core.hub, &entry, notice)
@@ -194,9 +195,10 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             return Settle {
                 parked: false,
                 wakes,
+                ending,
             };
         }
-        let stopped = aborted || finished.ending == Ending::Killed;
+        let stopped = ending == Ending::Killed;
         // 被中止时 SendMessage 留下的消息丢弃（停止时清掉发给它的排队命令）。
         if stopped {
             stranded.clear();
@@ -224,7 +226,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
                     if !deferred {
                         notice = Some(notice_of(
                             &entry,
-                            finished.ending,
+                            ending,
                             &finished.report,
                             error.as_deref(),
                             true,
@@ -235,10 +237,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
                     // 取快照：续跑用快照里的 Abort，TaskStop 中止的是条目里的同一个。
                     // 续跑不属于派生它的那次 Agent 调用，之后的通知不带 `<tool-use-id>`（同 `deliver`）。
                     slot.tool_use = None;
-                    slot.state = AgentState::Running {
-                        abort: Abort::new(),
-                        mailbox: Vec::new(),
-                    };
+                    slot.begin_run(Abort::new(), Vec::new());
                     wakes.push(Wake {
                         agent: slot.clone(),
                         resume: Resume::Notices(
@@ -259,6 +258,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             return Settle {
                 parked: true,
                 wakes,
+                ending,
             };
         }
         // 结束：没来得及并入的通知送顶层会话，再送出自己的通知。
@@ -266,17 +266,11 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             to_root(&core.hub, &entry.root, notice);
         }
         if let Some(slot) = agents.get_mut(id) {
-            slot.state = AgentState::Finished(finished.ending);
+            slot.state = AgentState::Finished(ending);
         }
         let mut wakes = Vec::new();
         if entry.background {
-            let notice = notice_of(
-                &entry,
-                finished.ending,
-                &finished.report,
-                error.as_deref(),
-                false,
-            );
+            let notice = notice_of(&entry, ending, &finished.report, error.as_deref(), false);
             wakes.extend(deliver(
                 agents,
                 &core.hub,
@@ -294,10 +288,10 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             let first = stranded.remove(0);
             slot.background = true;
             slot.tool_use = None;
-            slot.state = AgentState::Running {
-                abort: Abort::new(),
-                mailbox: stranded.into_iter().map(Mail::Message).collect(),
-            };
+            slot.begin_run(
+                Abort::new(),
+                stranded.into_iter().map(Mail::Message).collect(),
+            );
             wakes.push(Wake {
                 agent: slot.clone(),
                 resume: Resume::Message(first),
@@ -306,6 +300,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
         Settle {
             parked: false,
             wakes,
+            ending,
         }
     })
 }
@@ -351,8 +346,17 @@ pub(crate) async fn release(core: &Core, id: &AgentId) -> Vec<Wake> {
 
 /// TaskStop 停放的子代理（§5.1 第 7 条）：结束，通知带最后的报告与用量（`killedBy` 缺省
 /// `user`）。不是停放状态时返回 None。
-pub(crate) fn stop_parked(core: &Core, id: &AgentId) -> Option<Vec<Wake>> {
+/// Fork: `execution` (the desktop's guarded stop) ends it only while it is still parked in that execution, checked in
+/// the same lock section as the transition (Node rechecks the execution and claims the task synchronously).
+pub(crate) fn stop_parked(core: &Core, id: &AgentId, execution: Option<u64>) -> Option<Vec<Wake>> {
     core.live.with(|agents| {
+        if execution.is_some_and(|execution| {
+            agents
+                .get(id)
+                .is_none_or(|entry| entry.shown.execution != execution)
+        }) {
+            return None;
+        }
         let (entry, notice) = end_parked(agents, id)?;
         Some(
             deliver(agents, &core.hub, entry.owner.as_ref(), &entry.root, notice)

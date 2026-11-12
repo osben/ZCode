@@ -179,3 +179,170 @@ async fn a_resume_is_a_new_run() {
         Ok(())
     );
 }
+
+/// A background agent of `sess_parent` that no query drives: the tests settle and park it by hand, so the transitions
+/// they check are not raced by a real run.
+fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
+    use rust_cli_kernel_api::abort::Abort;
+    let entry = crate::live::LiveAgent {
+        machine: Default::default(),
+        agent: AgentId::new(agent),
+        child: SessionId::new(format!("sess_subagent_{agent}")),
+        parent: SessionId::new("sess_parent"),
+        root: SessionId::new("sess_parent"),
+        owner: None,
+        depth: 1,
+        tool_use: None,
+        description: "Undriven".to_owned(),
+        definition: Arc::new(
+            crate::definitions::builtins()
+                .into_iter()
+                .find(|definition| definition.agent_type == "Explore")
+                .unwrap(),
+        ),
+        workspace: crate::test_support::workspace(),
+        execution_worktree: false,
+        selection: rust_cli_kernel_api::testing::selection(),
+        mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+        background: true,
+        asks: None,
+        state: crate::live::AgentState::Running {
+            abort: Abort::new(),
+            mailbox: Vec::new(),
+        },
+        shown: crate::live::Shown::default(),
+        delivered: Vec::new(),
+        fork_prefix: None,
+        stopped_by_user: false,
+        erased: false,
+    };
+    harness.agents.core.live.insert(entry);
+    AgentId::new(agent)
+}
+
+fn completed() -> crate::spawn::Finished {
+    crate::spawn::Finished {
+        ending: crate::report::Ending::Completed,
+        report: crate::report::Report::default(),
+        error: None,
+    }
+}
+
+fn execution(harness: &crate::test_support::Harness, agent: &AgentId) -> u64 {
+    harness.agents.core.live.get(agent).unwrap().shown.execution
+}
+
+/// Codex review of #418 (1): a run that ends with a stranded SendMessage message is replaced by a new run in the same
+/// lock section. That new run gets a new execution, so a late stop of the ended run cannot end it.
+#[tokio::test]
+async fn a_run_replaced_in_the_settling_section_is_a_new_execution() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let agent = undriven(&harness, "agent_u");
+    assert!(
+        harness
+            .agents
+            .core
+            .live
+            .enqueue(&agent, "Go on.".to_owned())
+    );
+    let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
+    assert!(!settled.parked);
+    assert_eq!(settled.ending, crate::report::Ending::Completed);
+    assert!(matches!(
+        harness.agents.core.live.get(&agent).unwrap().state,
+        crate::live::AgentState::Running { .. }
+    ));
+    assert_eq!(execution(&harness, &agent), 1);
+    assert_eq!(
+        signals
+            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .await,
+        Err(SubagentStopRefusal::NotRunning)
+    );
+    assert_eq!(
+        signals
+            .stop_subagent(&parent, &agent, "1", operation(&parent))
+            .await,
+        Ok(())
+    );
+}
+
+/// Codex review of #418 (2): a stop accepted after the query returned `Completed`, before the run settled, claims the
+/// ending: the run ends as killed and its notice is a stop, never `finished`.
+#[tokio::test]
+async fn an_accepted_stop_claims_the_ending_of_a_completed_query() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&parent);
+    let agent = undriven(&harness, "agent_u");
+    assert_eq!(
+        signals
+            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .await,
+        Ok(())
+    );
+    let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
+    assert_eq!(settled.ending, crate::report::Ending::Killed);
+    assert!(matches!(
+        harness.agents.core.live.get(&agent).unwrap().state,
+        crate::live::AgentState::Finished(crate::report::Ending::Killed)
+    ));
+    let Some(AgentSignal::Notice(notice)) = stream.next().await else {
+        panic!("expected a notice");
+    };
+    assert_eq!(notice.status, BackgroundStatus::Killed);
+    assert!(
+        notice.text.contains("was stopped by user"),
+        "{}",
+        notice.text
+    );
+    assert!(!notice.text.contains("finished"), "{}", notice.text);
+}
+
+/// Codex review of #418 (3): a parked agent's stop names the execution it checked. When another notice woke the agent
+/// and it parked again in a later execution, the stale stop leaves it parked.
+#[tokio::test]
+async fn a_stale_stop_leaves_an_agent_parked_again_in_a_later_execution() {
+    use crate::live::AgentState;
+    use rust_cli_kernel_api::abort::Abort;
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let agent = undriven(&harness, "agent_u");
+    let live = &harness.agents.core.live;
+    let park = || {
+        live.with(|agents| {
+            agents.get_mut(&agent).unwrap().state = AgentState::Parked {
+                report: crate::report::Report::default(),
+                notified: true,
+            };
+        });
+    };
+    park();
+    let checked = match live.stop_execution(&parent, &agent, "0") {
+        crate::live::GuardedStop::Parked(execution) => execution,
+        other => panic!("expected parked, got {other:?}"),
+    };
+    assert_eq!(checked, 0);
+    // Between the check and the transition a notice wakes it (execution 1) and it parks again.
+    live.with(|agents| {
+        agents
+            .get_mut(&agent)
+            .unwrap()
+            .begin_run(Abort::new(), Vec::new());
+    });
+    park();
+    assert_eq!(execution(&harness, &agent), 1);
+    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, Some(checked)).is_none());
+    assert!(matches!(
+        live.get(&agent).unwrap().state,
+        AgentState::Parked { .. }
+    ));
+    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, Some(1)).is_some());
+    assert!(matches!(
+        live.get(&agent).unwrap().state,
+        AgentState::Finished(crate::report::Ending::KilledParked)
+    ));
+}

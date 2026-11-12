@@ -92,17 +92,15 @@ pub(super) async fn stop_subagent(live: &Bridged<Live>, envelope: &Envelope, rev
     ack_of(
         kernel,
         Ack::accepted(&envelope.command_id, revision, None),
-        |reason| {
-            let (code, message) = subagent_stop_rejected(&body.task_id, &reason);
-            Ack::refused(
-                &envelope.command_id,
-                Status::Rejected,
-                &code,
-                message,
-                revision,
-            )
-        },
+        |reason| subagent_stop_refused(&envelope.command_id, &body.task_id, &reason, revision),
     )
+}
+
+/// The ack of a refused stop. Node throws `V4SubagentStopRejectedError`; the gateway turns a thrown domain error into a
+/// `failed` ack that keeps its reason code (`v4-gateway.ts`), and that final ack is what the command fact stores.
+fn subagent_stop_refused(command: &str, task: &str, reason: &str, revision: u64) -> Ack {
+    let (code, message) = subagent_stop_rejected(task, reason);
+    Ack::refused(command, Status::Failed, &code, message, revision)
 }
 
 /// Node's status names: a stopped command is `cancelled`.
