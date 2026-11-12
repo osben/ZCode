@@ -34,7 +34,8 @@ struct TestHandle {
     view: SessionView,
     /// What `Dequeue` hands back (the kernel's queued input and content).
     dequeued: Option<(QueuedInput, Vec<ContentBlock>)>,
-    /// Another promotion owns the foreground: `ReserveForeground { reserved: true }` is refused.
+    /// Another promotion owns the foreground: `ReserveForeground { reserved: true }` is refused, and a `SubmitWith`
+    /// that does not name it is queued (`CommandResult::Queued`).
     foreground_owned: bool,
     sent: StdMutex<Vec<Command>>,
 }
@@ -52,6 +53,9 @@ impl HandleOverride for TestHandle {
                 Command::ReserveForeground { reserved: true, .. }
             );
         let result = match (&envelope.command, &self.dequeued) {
+            (Command::SubmitWith { lease: None, .. }, _) if self.foreground_owned => {
+                CommandResult::Queued
+            }
             (Command::Dequeue { .. }, Some((input, content))) => CommandResult::Dequeued {
                 input: Box::new(input.clone()),
                 content: content.clone(),
@@ -402,4 +406,27 @@ async fn a_start_now_text_is_failed_while_a_promotion_owns_the_foreground_of_an_
         reserved: true,
         lease: "send-now:cmd-1".to_owned(),
     }));
+}
+
+/// Node `session-flow.ts` answers a `sendText` from Core's real admission (`started.admission.kind === "queued"` →
+/// `delivery: "queue"`). While another promotion owns the foreground the kernel queues an ordinary input even though
+/// the projection shows the session idle, so the ACK says `queue`, not the `startNow` the projection predicted.
+#[tokio::test]
+async fn a_text_the_kernel_queues_is_acked_as_queued() {
+    let (_scope, server, _handle) = fixture_with(Vec::new(), None, true).await;
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "cmd-1",
+        "clientId": "app",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {"text": "later"},
+    }))
+    .expect("an envelope");
+    let ack = crate::commands::decide(&server, &envelope).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(
+        ack.result.as_ref().map(|result| result["delivery"].clone()),
+        Some(json!("queue")),
+        "{ack:?}"
+    );
 }

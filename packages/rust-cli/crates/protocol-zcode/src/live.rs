@@ -553,6 +553,19 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork: see [`crate::projection::Projection::admitted_to_queue`]; publishes the queue when it changed.
+    pub async fn admitted_to_queue(&self, command: &str) {
+        let outgoing = {
+            let mut state = self.state();
+            let Some(delta) = state.projection.admitted_to_queue(command) else {
+                return;
+            };
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
     /// Fork: see [`crate::projection::Projection::auto_drain`].
     pub fn auto_drain(&self) -> bool {
         self.state().projection.auto_drain()

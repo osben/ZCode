@@ -574,6 +574,55 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
     assert!(marker.iter().all(|delta| delta.get("row").is_none()));
 }
 
+/// Fork: an input remembered as `startNow` that the kernel queued (its `SubmitWith` answered `Queued`, e.g. while
+/// another promotion owns the foreground) is a queue item after all: it is shown, with `admitted: "queue"`, whether
+/// the kernel's `QueueChanged` arrived before the correction or after it.
+#[test]
+fn an_input_the_kernel_queued_after_a_start_now_admission_is_shown_as_queued() {
+    let meta = || InputMeta {
+        client: "k".into(),
+        origin: None,
+        text: "hi".into(),
+        admitted_at: 0,
+        requested: "startNow",
+        admitted: "startNow",
+        attachments: Vec::new(),
+    };
+    let queued = || KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            edit_lock: None,
+            intent: None,
+            command: CommandId::new("c1"),
+            text: "hi".into(),
+            delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+            kind: Default::default(),
+            execution: None,
+        }],
+    };
+    // The event first: the item is hidden, and the correction publishes it.
+    let mut feed = Feed::new();
+    feed.projection.remember_input("c1", meta());
+    feed.apply(queued());
+    let delta = feed
+        .projection
+        .admitted_to_queue("c1")
+        .expect("the correction publishes the queue");
+    assert_eq!(
+        delta["patch"]["queue"]["items"][0]["delivery"]["admitted"],
+        "queue"
+    );
+    // The correction first: the event shows the item.
+    let mut feed = Feed::new();
+    feed.projection.remember_input("c1", meta());
+    assert!(feed.projection.admitted_to_queue("c1").is_none());
+    let deltas = feed.apply(queued());
+    assert!(
+        deltas
+            .iter()
+            .any(|delta| delta["patch"]["queue"]["items"][0]["delivery"]["admitted"] == "queue")
+    );
+}
+
 /// Fork: a cold `userInput` row shows the stored attachments as chips (after a restart too), and `attachmentRead`
 /// authorizes their refs; the bubble is only the typed text.
 #[test]

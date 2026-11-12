@@ -1575,9 +1575,21 @@ async fn send_text(
         // The start-now input is the promotion's own: it starts while its lease holds the foreground.
         lease: promotion.map(str::to_owned),
     };
+    let kernel = send(handle, command, submit).await;
+    // Node answers from Core's real admission (`started.admission.kind === "queued"` → `queue`): the kernel queues an
+    // input the projection saw as idle when it is busy after all or another promotion owns the foreground.
+    let admitted = match &kernel {
+        rust_cli_kernel_api::session_api::Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Queued,
+        } if admitted == "startNow" => {
+            live.admitted_to_queue(command).await;
+            "queue"
+        }
+        _ => admitted,
+    };
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(
-        send(handle, command, submit).await,
+        kernel,
         Ack::accepted(command, revision, Some(result)),
         |reason| {
             Ack::refused(

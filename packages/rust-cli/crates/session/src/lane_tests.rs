@@ -416,18 +416,22 @@ async fn only_the_owners_submit_starts_while_the_foreground_is_held() {
         session.send(foreground("c1", "a", true)).await,
         Ack::Accepted { .. }
     ));
-    assert!(matches!(
+    assert_eq!(
         session.send(submit_as("c2", "intruder", None)).await,
-        Ack::Accepted { .. }
-    ));
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Queued
+        }
+    );
     let view = session.view().await.unwrap();
     assert!(!view.running);
     assert_eq!(view.queue.len(), 1);
     assert!(model.requests().is_empty());
-    assert!(matches!(
+    assert_eq!(
         session.send(submit_as("c3", "promoted", Some("a"))).await,
-        Ack::Accepted { .. }
-    ));
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Done
+        }
+    );
     until_finished(&mut events, 1).await;
     session.send(foreground("c4", "a", false)).await;
     until_finished(&mut events, 1).await;

@@ -478,6 +478,27 @@ impl Projection {
         }})
     }
 
+    /// Fork: the kernel queued an input remembered as `startNow` (its `SubmitWith` answered `Queued`, e.g. while
+    /// another promotion owns the foreground): it is a queue item after all, admitted `queue` (Node answers from Core's
+    /// admission). Returns the `state.updated` for the queue when the item was already in the kernel's queue and so
+    /// hidden; `None` when nothing shown changes (the coming `QueueChanged` then shows it).
+    pub fn admitted_to_queue(&mut self, command: &str) -> Option<Value> {
+        if self.inputs.get(command)?.admitted != "startNow" {
+            return None;
+        }
+        let before = self.queue_state();
+        if let Some(meta) = self.inputs.get_mut(command) {
+            meta.admitted = "queue";
+        }
+        let after = self.queue_state();
+        (after != before).then(|| {
+            json!({"op": "state.updated", "patch": {
+                "queue": after,
+                "inputRouting": self.input_routing(),
+            }})
+        })
+    }
+
     /// Fork: whether the queue drains on its own (`queue.autoDrain`).
     pub fn auto_drain(&self) -> bool {
         self.auto_drain

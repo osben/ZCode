@@ -457,7 +457,10 @@ impl Actor {
                 input_kind,
             );
             self.emit_queue();
-            return accepted();
+            // The admission's real outcome (Node `started.admission.kind === "queued"`): the App's ACK says `queue`.
+            return Ack::Accepted {
+                result: CommandResult::Queued,
+            };
         }
         if let Some(execution) = execution
             && let Err(reason) = self.submitted_execution(execution).await
