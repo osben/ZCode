@@ -284,7 +284,15 @@ async fn an_accepted_stop_claims_the_ending_of_a_completed_query() {
             .await,
         Ok(())
     );
-    let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
+    // The query already returned its report (#418 review @9fef2a4d3): the stopped run still reports nothing.
+    let mut finished = completed();
+    finished.report = crate::report::Report {
+        text: "Report of the stopped run.".to_owned(),
+        tokens: 42,
+        tool_uses: 3,
+        duration_ms: 1_000,
+    };
+    let settled = crate::routing::settle(&harness.agents.core, &agent, &finished).await;
     assert_eq!(settled.ending, crate::report::Ending::Killed);
     assert!(matches!(
         harness.agents.core.live.get(&agent).unwrap().state,
@@ -300,6 +308,13 @@ async fn an_accepted_stop_claims_the_ending_of_a_completed_query() {
         notice.text
     );
     assert!(!notice.text.contains("finished"), "{}", notice.text);
+    assert!(
+        !notice.text.contains("Report of the stopped run."),
+        "{}",
+        notice.text
+    );
+    assert!(!notice.text.contains("<result>"), "{}", notice.text);
+    assert!(!notice.text.contains("<usage>"), "{}", notice.text);
 }
 
 /// Codex review of #418 (3): a parked agent's stop names the execution it checked. When another notice woke the agent

@@ -123,6 +123,15 @@ fn notice_of(
         Ending::Killed if agent.stopped_by_user => Ending::KilledByUser,
         other => other,
     };
+    // A stopped run reports nothing: Node builds the killed notification without the run's result (core `runner.ts`)
+    // and leaves out its usage (`completion-notification.ts`). This covers a query that already returned its report
+    // when a stop claimed the ending before the run settled. Upstream's `KilledParked` (TUI) keeps the parked report.
+    let stopped = Report::default();
+    let report = if matches!(ending, Ending::Killed | Ending::KilledByUser) {
+        &stopped
+    } else {
+        report
+    };
     Notice {
         from: agent.agent.clone(),
         status: ending.status(),
@@ -378,15 +387,7 @@ fn end_parked(agents: &mut Agents, id: &AgentId, ending: Ending) -> Option<(Live
     let AgentState::Parked { report, .. } = &entry.state else {
         return None;
     };
-    // Fork (node_desktop): Node's killed notification has no `<result>` (runner.ts) and no `<usage>`
-    // (completion-notification.ts); only upstream's `KilledParked` forwards the parked report.
-    let kept;
-    let report = if ending == Ending::KilledParked {
-        report
-    } else {
-        kept = Report::default();
-        &kept
-    };
+    // `notice_of` drops the parked report for the desktop's `Killed` / `KilledByUser`.
     let notice = notice_of(&entry, ending, report, None, false);
     if let Some(slot) = agents.get_mut(id) {
         slot.state = AgentState::Finished(ending);
