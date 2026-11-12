@@ -41,6 +41,7 @@ impl Actor {
             agent: None,
             workspace: self.meta.workspace.clone(),
             mode: self.mode(),
+            base_mode: self.execution.mode,
             cancel: abort.token().clone(),
             machine: self.deps.machines.primary_machine(),
             controller: self.deps.machines.controller(),

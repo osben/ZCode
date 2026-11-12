@@ -246,7 +246,9 @@ pub struct PlanMcp {
 /// mode"). Deny rules, the tool's own denial and whole-tool ask rules come first, as in Node. Then a destructive tool is
 /// denied and a tool that is not read-only asks once, even with an allow rule (Node asks before allow rules, and a rule
 /// remembered in plan mode would not apply). A read-only tool keeps the inner result.
-pub fn plan_mcp(tool: &str, mcp: PlanMcp, result: Inner) -> Inner {
+/// With `base_bypass` (plan over a guarded or bypass base, `result` decided in that base mode) the gate passes any
+/// tool that is not destructive (Node `if (context.mode === "yolo" || context.mode === "guarded") return undefined`).
+pub fn plan_mcp(tool: &str, mcp: PlanMcp, base_bypass: bool, result: Inner) -> Inner {
     match result {
         Inner::Deny { .. }
         | Inner::Ask {
@@ -256,6 +258,7 @@ pub fn plan_mcp(tool: &str, mcp: PlanMcp, result: Inner) -> Inner {
         _ if mcp.destructive => Inner::Deny {
             message: texts::PLAN_MODE_READ_ONLY.to_owned(),
         },
+        _ if base_bypass => result,
         _ if !mcp.read_only => Inner::Ask {
             message: texts::request_message(tool, None),
             kind: AskKind::Other,

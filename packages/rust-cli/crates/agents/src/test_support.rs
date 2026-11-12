@@ -226,6 +226,7 @@ pub(crate) fn tool_context(session: &SessionId, run: &RunId) -> ToolUseContext {
         run: run.clone(),
         workspace: workspace(),
         mode: PermissionMode::DontAsk,
+        base_mode: PermissionMode::DontAsk,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(RecordingSink::default()),

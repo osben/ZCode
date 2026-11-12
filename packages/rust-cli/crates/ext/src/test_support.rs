@@ -278,6 +278,7 @@ pub(crate) fn tool_context<E: rust_cli_kernel_api::testing::AllPorts + 'static>(
         run: run.clone(),
         workspace: workspace(),
         mode,
+        base_mode: mode,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(RecordingSink::default()),

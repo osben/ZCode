@@ -175,3 +175,72 @@ async fn other_tools_keep_the_node_plan_denial_and_other_modes_are_unchanged() {
         .await;
     assert_eq!(asked(&decision), (false, false, 0));
 }
+
+/// Plan over the given base mode (Node `context.mode` with `planEnabled`).
+async fn plan_over(gate: &PolicyGate, tool: &Mcp, base: PermissionMode) -> PermissionDecision {
+    let context = ToolUseContext {
+        base_mode: base,
+        ..context(PermissionMode::Plan)
+    };
+    gate.decide(tool, &json!({}), &context).await
+}
+
+const BYPASS_BASES: [PermissionMode; 2] =
+    [PermissionMode::BypassPermissions, PermissionMode::Guarded];
+
+/// Node `checkPlanMode`: over a yolo or guarded base, a non-destructive MCP tool passes the gate and `mode.yolo`
+/// allows it, read-only or not.
+#[tokio::test]
+async fn plan_over_a_bypass_base_allows_a_non_destructive_tool() {
+    for base in BYPASS_BASES {
+        for read_only in [false, true] {
+            assert_eq!(
+                plan_over(&node_plan(None), &mcp(read_only, false), base).await,
+                allow(),
+                "{base:?} read_only={read_only}"
+            );
+        }
+    }
+}
+
+/// Deny and ask rules come before the gate, and a destructive tool is still denied, over any base.
+#[tokio::test]
+async fn plan_over_a_bypass_base_keeps_rules_and_the_destructive_denial() {
+    for base in BYPASS_BASES {
+        assert_eq!(
+            plan_over(
+                &node_plan(Some(RuleBehavior::Deny)),
+                &mcp(false, false),
+                base
+            )
+            .await,
+            deny(texts::tool_denied(LOOKUP))
+        );
+        let (once, independent, _) = asked(
+            &plan_over(
+                &node_plan(Some(RuleBehavior::Ask)),
+                &mcp(false, false),
+                base,
+            )
+            .await,
+        );
+        assert!(!once && !independent, "{base:?}");
+        for gate in [node_plan(None), node_plan(Some(RuleBehavior::Allow))] {
+            assert_eq!(
+                plan_over(&gate, &mcp(false, true), base).await,
+                deny(texts::PLAN_MODE_READ_ONLY)
+            );
+        }
+    }
+}
+
+/// Plan over a default or accept-edits base keeps the plan gate's independent ask.
+#[tokio::test]
+async fn plan_over_another_base_still_asks() {
+    for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
+        assert_eq!(
+            asked(&plan_over(&node_plan(None), &mcp(false, false), base).await),
+            (false, true, 0)
+        );
+    }
+}

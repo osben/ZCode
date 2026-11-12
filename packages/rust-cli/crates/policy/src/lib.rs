@@ -255,18 +255,20 @@ impl ScopedGate for PolicyGate {
         let subject = tool.permission_subject(input);
         let name = tool.name();
         let guarded = guarded_command(subject.as_ref());
-        let evaluate = |mode: PermissionMode| {
+        let evaluate_with = |mode: PermissionMode, full_access: bool| {
             let inputs = Inputs {
                 mode,
                 rules: &rules,
                 paths: &paths,
                 root,
                 dangerous: guarded::applies(mode, guarded, paths.style),
-                full_access: mode == PermissionMode::BypassPermissions,
+                full_access,
             };
             let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
             chain::inner(name, check, updated, &inputs)
         };
+        let evaluate =
+            |mode: PermissionMode| evaluate_with(mode, mode == PermissionMode::BypassPermissions);
         let plan_mcp = (context.mode == PermissionMode::Plan
             && self.options.node_plan
             && tool.mcp_info().is_some())
@@ -274,9 +276,21 @@ impl ScopedGate for PolicyGate {
             read_only: tool.is_read_only(input),
             destructive: tool.is_destructive(input),
         });
-        let mut result = evaluate(context.mode);
+        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and the base
+        // mode decides it. Plan skips Node's early yolo allow, so deny and ask rules still apply: the base mode runs
+        // without full access.
+        let base_bypass = plan_mcp.is_some()
+            && matches!(
+                context.base_mode,
+                PermissionMode::BypassPermissions | PermissionMode::Guarded
+            );
+        let mut result = if base_bypass {
+            evaluate_with(context.base_mode, false)
+        } else {
+            evaluate(context.mode)
+        };
         if let Some(mcp) = plan_mcp {
-            result = chain::plan_mcp(name, mcp, result);
+            result = chain::plan_mcp(name, mcp, base_bypass, result);
         }
         let call = Call {
             tool: name,

@@ -121,6 +121,7 @@ impl Restore<'_> {
             agent: request.agent.clone(),
             workspace: request.workspace.clone(),
             mode: request.mode.unwrap_or(PermissionMode::Default),
+            base_mode: request.mode.unwrap_or(PermissionMode::Default),
             cancel: cancel.clone(),
             machine: self.machine.clone(),
             controller: self.controller.clone(),

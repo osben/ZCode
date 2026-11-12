@@ -110,6 +110,7 @@ fn context(asked: Arc<ScriptedInteractions>) -> ToolUseContext {
             root: EnvPath::new("/work"),
         },
         mode: PermissionMode::AcceptEdits,
+        base_mode: PermissionMode::AcceptEdits,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: asked,

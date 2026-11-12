@@ -123,6 +123,7 @@ fn context(harness: &Harness, index: usize) -> ToolUseContext {
         tool_use: ToolUseId::new(format!("toolu_{index}")),
         workspace: workspace(&harness.root),
         mode: PermissionMode::DontAsk,
+        base_mode: PermissionMode::DontAsk,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),

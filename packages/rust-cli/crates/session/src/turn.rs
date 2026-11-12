@@ -300,6 +300,7 @@ impl Actor {
     /// 目标，同一时刻的值。
     fn run_view(&self) -> RunView {
         RunView {
+            base_mode: self.execution.mode,
             plan_flags: self.plan_flags,
             selection: Some(self.selection.clone()),
             // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
