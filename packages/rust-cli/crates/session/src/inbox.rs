@@ -19,7 +19,11 @@ use rust_cli_kernel_api::hooks::HookOutcome;
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
 use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::session_api::{Delivery, QueuedInput, QueuedKind};
+use rust_cli_kernel_api::permission::{ExecutionState, resolve_execution};
+use rust_cli_kernel_api::session_api::{
+    Delivery, InputExecution, QUEUE_EDIT_LOCK_LOST, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING,
+    QUEUE_ITEM_NOT_EDITABLE, QueueEditLock, QueuedEdit, QueuedInput, QueuedKind,
+};
 use rust_cli_kernel_api::store::{AdmittedInput, InputDelivery};
 
 use crate::lane::Waiting;
@@ -56,6 +60,9 @@ pub(crate) struct Queued {
     lane: bool,
     /// Fork: the input has a `session_input` ledger row (a submitted input; not the SessionStart hook's first input).
     ledger: bool,
+    /// Fork: the composer edit lock (Node `pendingInputEditLocks`). A locked input stops the drain and batching
+    /// before it; it lives and dies with the input, so clearing the queue drops the lock too.
+    edit_lock: Option<QueueEditLock>,
 }
 
 impl Queued {
@@ -64,6 +71,7 @@ impl Queued {
         matches!(self.kind, InputKind::Text)
             && !is_slash(&self.input.text)
             && !self.input.text.contains('@')
+            && self.edit_lock.is_none()
     }
 
     /// 并入点筛查留下的结果（回合结束后开它时用，不再跑 hook）。
@@ -179,6 +187,7 @@ impl Inbox {
             screening: Screening::Unscreened,
             lane,
             ledger: true,
+            edit_lock: None,
         };
         self.journal.push(LedgerChange::Admitted(admitted(&queued)));
         self.items.push_back(Item::Input(queued));
@@ -209,6 +218,7 @@ impl Inbox {
             screening: Screening::Unscreened,
             lane: true,
             ledger: false,
+            edit_lock: None,
         }));
     }
 
@@ -224,7 +234,69 @@ impl Inbox {
 
     /// 排队的输入，按到达顺序（`QueueChanged` 与视图的唯一来源）。
     pub(crate) fn queued(&self) -> Vec<QueuedInput> {
-        self.inputs().map(|queued| queued.input.clone()).collect()
+        self.inputs()
+            .map(|queued| {
+                let mut input = queued.input.clone();
+                input.edit_lock = queued.edit_lock.clone();
+                input
+            })
+            .collect()
+    }
+
+    /// Fork: whether the next thing to start is a queued input that is locked for editing. Notices in front of it
+    /// still run; a locked input stops the drain (Node `shouldAutoDrainV4QueueHead` with `editLocked`).
+    pub(crate) fn head_locked(&self) -> bool {
+        match self.lane_front() {
+            Some(LaneItem::Input(queued)) => queued.edit_lock.is_some(),
+            Some(LaneItem::Notice(_)) => false,
+            None => self
+                .inputs()
+                .next()
+                .is_some_and(|queued| queued.edit_lock.is_some()),
+        }
+    }
+
+    /// Fork: the composer edit lock of a queued input, `None` when it is not locked or not queued.
+    pub(crate) fn edit_lock_of(&self, command: &CommandId) -> Option<&QueueEditLock> {
+        self.inputs()
+            .find(|queued| queued.input.command == *command)
+            .and_then(|queued| queued.edit_lock.as_ref())
+    }
+
+    /// Fork: lock a queued input for `lock.editor_id`. `Ok(true)` when the lock is new, `Ok(false)` when the same
+    /// editor already holds it (idempotent; the original client and origin are kept).
+    pub(crate) fn lock(
+        &mut self,
+        command: &CommandId,
+        lock: QueueEditLock,
+    ) -> Result<bool, &'static str> {
+        let Some(queued) = self.input_mut(command) else {
+            return Err(QUEUE_ITEM_MISSING);
+        };
+        if matches!(queued.kind, InputKind::Compact) {
+            return Err(QUEUE_ITEM_NOT_EDITABLE);
+        }
+        match &queued.edit_lock {
+            Some(held) if held.editor_id == lock.editor_id => Ok(false),
+            Some(_) => Err(QUEUE_ITEM_EDIT_LOCKED),
+            None => {
+                queued.edit_lock = Some(lock);
+                Ok(true)
+            }
+        }
+    }
+
+    /// Fork: drop the lock of a queued input; `false` when there is none.
+    pub(crate) fn release(&mut self, command: &CommandId) -> bool {
+        self.input_mut(command)
+            .is_some_and(|queued| queued.edit_lock.take().is_some())
+    }
+
+    fn input_mut(&mut self, command: &CommandId) -> Option<&mut Queued> {
+        self.items.iter_mut().find_map(|item| match item {
+            Item::Input(queued) if queued.input.command == *command => Some(queued),
+            _ => None,
+        })
     }
 
     fn inputs(&self) -> impl Iterator<Item = &Queued> {
@@ -275,30 +347,75 @@ impl Inbox {
         }
     }
 
-    /// Fork: replace the text of a still-queued input in place (Node `editQueueItem`, kernel
-    /// `EditQueued`) — the input keeps its position, delivery and screening. `false` when it is no
-    /// longer queued (already started or merged into a turn), the same miss as `remove_input`.
-    /// For bash-mode and content-block inputs this rewrites the display text only; their turn input
-    /// comes from the kind, and the App's queue panel only edits typed text inputs.
-    pub(crate) fn edit_input(&mut self, command: &CommandId, text: String) -> bool {
-        for item in &mut self.items {
-            if let Item::Input(queued) = item
-                && queued.input.command == *command
-                // A queued compaction has no text to edit (Node `queueEdit` refuses maintenance items).
-                && !matches!(queued.kind, InputKind::Compact)
-            {
-                // Node `editPendingInputById`: the intent's text follows; its quotes stay.
-                if let Some(intent) = &mut queued.input.intent {
-                    intent.set_text(&text);
-                }
-                queued.input.text = text;
-                if queued.ledger {
-                    self.journal.push(LedgerChange::Admitted(admitted(queued)));
-                }
-                return true;
+    /// Fork: edit a still-queued input in place (Node `editQueueItem`, kernel `EditQueued`): the input keeps its
+    /// position, delivery and screening. The verdicts follow Node `editLockVerdict`: a compaction is not editable;
+    /// with an editor the lock must be held by that editor (`QUEUE_EDIT_LOCK_LOST`, also when the input is gone);
+    /// without one a locked input is refused; a missing input is `QUEUE_ITEM_MISSING`. Returns whether the edit
+    /// released the editor's lock. Fields the edit does not name keep their values; the execution state resolves
+    /// against the input's own state, or `current` when it has none (Node `resolveExecutionState`).
+    pub(crate) fn edit(
+        &mut self,
+        command: &CommandId,
+        editor: Option<&str>,
+        edit: &QueuedEdit,
+        current: ExecutionState,
+    ) -> Result<bool, &'static str> {
+        let Some(at) = self.items.iter().position(
+            |item| matches!(item, Item::Input(queued) if queued.input.command == *command),
+        ) else {
+            return Err(if editor.is_some() {
+                QUEUE_EDIT_LOCK_LOST
+            } else {
+                QUEUE_ITEM_MISSING
+            });
+        };
+        let Item::Input(queued) = &mut self.items[at] else {
+            return Err(QUEUE_ITEM_MISSING);
+        };
+        if matches!(queued.kind, InputKind::Compact) {
+            return Err(QUEUE_ITEM_NOT_EDITABLE);
+        }
+        match (editor, &queued.edit_lock) {
+            (Some(id), Some(lock)) if lock.editor_id == id => {}
+            (Some(_), _) => return Err(QUEUE_EDIT_LOCK_LOST),
+            (None, Some(_)) => return Err(QUEUE_ITEM_EDIT_LOCKED),
+            (None, None) => {}
+        }
+        if let Some(text) = &edit.text {
+            // Node `editPendingInputById`: the intent's text follows; its quotes stay unless the edit sends new ones.
+            if let Some(intent) = &mut queued.input.intent {
+                intent.set_text(text);
+            }
+            queued.input.text.clone_from(text);
+            if queued.ledger {
+                self.journal.push(LedgerChange::Admitted(admitted(queued)));
             }
         }
-        false
+        if let (Some(quotes), Some(intent)) = (&edit.conversation_quotes, &mut queued.input.intent)
+        {
+            intent.set_quotes(quotes.clone());
+        }
+        if edit.model_selection.is_some() || edit.mode.is_some() || edit.plan_enabled.is_some() {
+            let previous = queued.input.execution.clone();
+            let base = previous.as_ref().map_or(current, |frozen| frozen.state);
+            let previous_selection = previous.and_then(|frozen| frozen.selection);
+            let state =
+                resolve_execution(edit.mode.as_deref(), edit.plan_enabled, base).unwrap_or(base);
+            let selection = edit.model_selection.clone().or(previous_selection.clone());
+            // Node `dropHighspeed`: the frozen Highspeed card belongs to the model it was chosen for.
+            if edit.model_selection.is_some()
+                && edit.model_selection != previous_selection
+                && let Some(intent) = &mut queued.input.intent
+            {
+                intent.drop_highspeed();
+            }
+            queued.input.execution = Some(InputExecution { state, selection });
+        }
+        let released = editor.is_some();
+        if released {
+            queued.edit_lock = None;
+        }
+        Ok(released)
     }
 
     /// Fork: a compaction is already queued (Node `compactOperationLock`).

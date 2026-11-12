@@ -533,6 +533,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            edit_lock: None,
             intent: None,
             command: CommandId::new("c1"),
             text: "hi".into(),
@@ -1106,6 +1107,7 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            edit_lock: None,
             intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
@@ -1195,6 +1197,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
     use rust_cli_kernel_api::message::CompactTrigger;
     let queued = || KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            edit_lock: None,
             intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
@@ -1263,6 +1266,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
     use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
     let mut feed = Feed::new();
     let item = |id: &str, text: &str, kind, execution| QueuedInput {
+        edit_lock: None,
         intent: None,
         command: CommandId::new(id),
         text: text.into(),
@@ -1767,6 +1771,7 @@ fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
     let mut feed = Feed::new();
     let deltas = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            edit_lock: None,
             intent: Some(Box::new(quoted_intent)),
             command: CommandId::new("c1"),
             text: "explain this".into(),
@@ -1846,5 +1851,73 @@ fn a_live_rename_is_custom_and_an_automatic_title_does_not_replace_it() {
     assert_eq!(
         projection.snapshot(4, "e")["meta"],
         json!({"title": "Mine again", "titleSource": "custom"})
+    );
+}
+
+/// Fork: the queue item shows its composer edit lock while the kernel holds it (App `queueItemEditLockSchema`), and
+/// an edit's attachment refs replace the chips the App shows for the item (the protocol's input metadata).
+#[test]
+fn a_queue_item_shows_its_edit_lock_and_its_attachment_chips() {
+    use rust_cli_kernel_api::session_api::{Delivery, QueueEditLock, QueuedKind};
+    let mut feed = Feed::new();
+    let lock = QueueEditLock {
+        editor_id: "ed1".into(),
+        client_id: "client-desk".into(),
+        input_origin: Some("desktop".into()),
+    };
+    let queued = |edit_lock: Option<QueueEditLock>| QueuedInput {
+        intent: None,
+        command: CommandId::new("c1"),
+        text: "alpha".into(),
+        delivery: Delivery::Queue,
+        kind: QueuedKind::Text,
+        execution: None,
+        edit_lock,
+    };
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![queued(Some(lock))],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert_eq!(
+        queue["items"][0]["editLock"],
+        json!({"editorId": "ed1", "clientId": "client-desk", "inputOrigin": "desktop"})
+    );
+    // Released: the item carries no lock field at all.
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![queued(None)],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert!(queue["items"][0].get("editLock").is_none());
+
+    feed.projection.remember_input(
+        "c1",
+        InputMeta {
+            client: "client-desk".into(),
+            origin: None,
+            text: "alpha".into(),
+            admitted_at: 0,
+            requested: "queue",
+            admitted: "queue",
+            attachments: vec![json!({"ref": "old"})],
+        },
+    );
+    let patch = feed
+        .projection
+        .set_queued_attachments("c1", vec![json!({"ref": "new"})])
+        .expect("the input has metadata");
+    assert_eq!(
+        patch["patch"]["queue"]["items"][0]["attachments"],
+        json!([{"ref": "new"}])
+    );
+    assert!(
+        feed.projection
+            .set_queued_attachments("missing", Vec::new())
+            .is_none()
     );
 }

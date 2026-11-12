@@ -8,7 +8,6 @@ use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::permission::ExecutionState;
-use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
     Ack as KernelAck, Command, CommandEnvelope, CreateSession, Delivery, InputExecution,
     QueuedKind, SessionHandle,
@@ -49,33 +48,7 @@ pub(crate) fn selection(value: Option<&Value>) -> Option<ModelSelection> {
     })
 }
 
-/// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`). A known mode (build,
-/// edit, yolo, guarded, auto) replaces the current one; the legacy `plan` is no mode and keeps it. `planEnabled` wins;
-/// without it the legacy `plan` turns plan on, a known mode turns it off, anything else keeps the current switch.
-/// `None` when the input names neither a known mode, the legacy `plan` nor `planEnabled` (nothing to change).
-pub(crate) fn resolve_execution(
-    name: Option<&str>,
-    plan: Option<bool>,
-    current: ExecutionState,
-) -> Option<ExecutionState> {
-    let legacy_plan = name == Some("plan");
-    let known = name
-        .filter(|_| !legacy_plan)
-        .and_then(PermissionMode::from_node_name);
-    if known.is_none() && !legacy_plan && plan.is_none() {
-        return None;
-    }
-    Some(ExecutionState {
-        mode: known.unwrap_or(current.mode),
-        plan: plan.unwrap_or(if legacy_plan {
-            true
-        } else if known.is_some() {
-            false
-        } else {
-            current.plan
-        }),
-    })
-}
+pub(crate) use rust_cli_kernel_api::permission::resolve_execution;
 
 /// 一次输入（sendText 的 payload、createSession 的 firstInput；只取用到的字段）。
 #[derive(Default, Deserialize)]
@@ -1320,7 +1293,7 @@ async fn held_queue_choice(
             send(
                 handle,
                 &format!("{command}:clear:{}", item.command.as_str()),
-                Command::Dequeue {
+                Command::ClearQueued {
                     command: item.command.clone(),
                 },
             )

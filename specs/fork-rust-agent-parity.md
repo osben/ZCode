@@ -867,6 +867,64 @@ Gap map from 2026-11-12, upstream `a9fe401e` (3.17.2) to `b95ebaffe` (3.18.0). R
 | A2  | `applyQueueItemsConfig`                                                                                                     | `command.ts`; UI `composer-edit-mode/queueConfigApply.ts`                              | unsupported                                                                                                                                                            | Applies model and mode to queued items like Node. Depends on A1                                                               |
 | A3  | `session/releaseUnderDirectory`                                                                                             | Host `zcodeAgentService.ts`, `managed-worktree-tasks/removal.ts`                       | `-32601`, so removing a managed worktree fails with `session-close-failed` and the worktree stays                                                                      | Releases the Rust sessions whose cwd is under the directory, then answers like Node                                           |
 
+### A1 and A2: product rules and acceptance cases
+
+Scope: the Rust kernel's queue (`session/src/inbox.rs`, `lane.rs`, `actor.rs`) owns the lock and the edits; `protocol-zcode/src/fork/queue.rs` maps the App commands to kernel commands. Node reference: `bootstrap/.../handlers/queue.ts` and `core/.../methods/steering.ts` (`editLockVerdict`, `lockPendingInputEdit`, `releasePendingInputEdit`, `editPendingInputById`, `clearAllPendingInputs`). The shared schema says the lock is "not persisted; discarded when the CLI process exits", so this agent keeps it in memory with no timeout and writes no session event for it (decision: nothing replays it; a restarted agent has no locks, and the App sees only the snapshot of the running process).
+
+**Owner.** The lock is a field of the queued item in the session actor's inbox. It is projected through `QueueChanged` (`QueuedInput.edit_lock`) and nowhere else. The protocol keeps only the reservation (`Live::reserve_promotion`) that already serializes `sendQueuedNow`; lock and promotion take that same reservation guard for the one command that needs mutual exclusion, so a lock and a promotion of one item never overlap.
+
+**Rules: lock (`lockQueueItemEdit {queueItemId, editorId}`).**
+
+1. A compact item is refused (`guard.queueItemNotEditable`).
+2. The item is reserved or promoting (protocol reservation held): `guard.queueItemReserved`.
+3. No such queued item: noop `queue.itemMissing`.
+4. Locked by another editor: `guard.queueItemEditLocked`.
+5. Locked by the same editor: accepted, no change (idempotent). The original lock keeps its `clientId` and `inputOrigin`.
+6. Otherwise the item gets `editLock {editorId, clientId, inputOrigin?}` where `clientId` is the envelope's and `inputOrigin` the trusted envelope field. One `QueueChanged`.
+
+**Rules: while locked.**
+
+7. Auto-drain stops at the item: when the next thing to start is a locked queued input, no turn starts and the queue is not paused or failed. The notices in front of it still run.
+8. Batching stops before a locked input (the same stop as 7).
+9. `deleteQueueItem` (Dequeue), `reorderQueueItem` (of the locked item) and `sendQueuedNow` are refused with `guard.queueItemEditLocked`. (`sendQueuedNow` reads the lock from the queue view before reserving, and the actor's Dequeue refuses it if a lock raced in.)
+10. Clear-all (`clearQueueAndSend`) removes locked items with their lock (`ClearQueued`, not guarded).
+11. Running-turn guides (lane inputs absorbed at a tool boundary) are not held by the lock. Node does the same (`drainPendingInputUnlocked` checks reservations only). Recorded as a parity point, not a bug.
+
+**Rules: edit (`editQueueItem`).**
+
+12. Compact: `guard.queueItemNotEditable`. Checked before the lock, as in Node.
+13. Lock verdict: with `editorId`, the lock must be held by that editor, else `guard.queueEditLockLost` (also when the item is gone). Without `editorId`, a locked item is refused with `guard.queueItemEditLocked`.
+14. No such queued item (and no editorId): noop `queue.itemMissing`.
+15. The edit keeps the input's place, delivery, and screening. `newText` replaces the text (and the intent text). Omitted fields keep the original value. `conversationQuotes` replaces the quotes (the intent keeps its other fields). `attachments` is set to the given refs; `[]` clears them. `modelSelection`, `mode` and `planEnabled` resolve against the item's own execution state (or the session's state when the item had none), as the send path does (`resolve_execution`). A model change different from the item's previous selection removes the `highspeed` key from the intent (Node `dropHighspeed`).
+16. With `editorId`, a successful edit releases the lock. Then, if the agent is idle, the drain is re-evaluated (rule 19).
+
+**Rules: release (`releaseQueueItemEdit {queueItemId}`).**
+
+17. No lock on the item: noop `queue.editLockMissing`.
+18. Otherwise the lock is removed, one `QueueChanged`.
+19. After a release, when the agent is idle, the drain is re-evaluated: an idle session whose head is the released item starts it. A busy session only clears the lock; the turn end drains.
+
+**Rules: applyQueueItemsConfig (A2).**
+
+20. For each id: skip if missing, compact, not queued (reserved or promoting) or locked. Otherwise apply `modelSelection` and/or `mode` in place, keeping text, quotes, attachments and plan, under rule 15's resolution and highspeed drop.
+21. None applied: noop `queue.itemMissing`. At least one applied: accepted, one `QueueChanged`.
+
+**Projection.** The queue item snapshot carries `editLock` while locked (strict shape). Attachments of a queued input are held by the protocol's input metadata (`InputMeta.attachments`), as before; an `editQueueItem` with `attachments` updates that after the kernel accepted the edit.
+
+**Known deviations from Node (kept on purpose).**
+
+- Attachments: queued refs are not resolved into turn attachments, because the Rust queue never carried them into a turn (`sendQueuedNow` already restarts a promoted item without attachments). The App's chips follow the edit; the model does not get them.
+- Highspeed credentials: Node stages them in memory and drops them on edit. Rust has no staged credentials, so only the `highspeed` intent key is removed.
+- Editing a missing item now answers noop `queue.itemMissing` (Node 3.18 `editQueueItem` throws the noop). The earlier Rust answer was accepted.
+
+**Acceptance cases (Rust tests).**
+
+- Kernel, `session/src/queue_edit_tests.rs`: lock accepted, idempotent for the same editor, refused for another editor, missing item is noop; the lock appears in the queue view with editor, client and origin; a locked head stops the drain after a turn end and a release starts it; delete and reorder refused while locked; clear-all removes a locked item; edit without the lock refused, with the wrong editor `lockLost`, with the holder releases the lock; release without a lock is `queue.editLockMissing`.
+- Kernel, `session/src/inbox_tests.rs`: compact refused for lock and edit; batching stops before a locked input; a full payload edit (quotes, model, mode, plan) resolves against the item's state; a model change removes `highspeed`; apply skips locked, compact and missing items and reports none applied.
+- Protocol, `projection/projection_tests.rs`: `editLock` is projected while locked and gone after release; an attachment update changes the item's chips only.
+
+### A3: product rules and acceptance cases
+
 **A3 rules (`session/releaseUnderDirectory`).** Node: `releaseSessionsUnderDirectory` (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts`, `releaseSessionsUnderDirectory`), params `zcodeSessionReleaseUnderDirectoryParamsSchema` (`packages/shared/src/zcode-protocol/index.ts`, strict `{directory}`), result `{released, busy}`. The Host calls it on every agent of the workspace before a managed worktree is removed (`packages/services/src/managed-worktree-tasks/removal.ts` `releaseCliSessionsUnder`, `packages/services/src/zcode-agent/zcodeAgentService.ts` `releaseSessionsUnderDirectory`), with no `worktreeCwd` capability gate, so the method must answer on Rust while `worktreeCwd` stays `false` (B1). A `-32601` makes the Host fail with `session-close-failed` and keep the worktree.
 
 - Params: `directory` is a non-empty string and the only field. A missing or empty `directory`, or any other field, is invalid params.

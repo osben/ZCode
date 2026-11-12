@@ -14,6 +14,8 @@ use crate::conversation_quote::{self, Quote};
 pub const TEXT: &str = "text";
 /// The quotes as sent: absent, `[]` or quotes.
 pub const QUOTES: &str = "conversationQuotes";
+/// The Highspeed card frozen on a queued input; dropped when the model changes (Node `dropHighspeed`).
+pub const HIGHSPEED: &str = "highspeed";
 /// A bot-group input's source; kept as stored, never produced here.
 pub const BOT_GROUP_SOURCE: &str = "botGroupSource";
 
@@ -47,6 +49,16 @@ impl InputIntent {
     pub fn set_text(&mut self, text: &str) {
         self.0
             .insert(TEXT.to_owned(), Value::String(text.to_owned()));
+    }
+
+    /// Node `editedIntent`: the edited quotes as given (`[]` clears them, the key stays).
+    pub fn set_quotes(&mut self, quotes: Value) {
+        self.0.insert(QUOTES.to_owned(), quotes);
+    }
+
+    /// Node `editedIntent` with `dropHighspeed`: a model change drops the frozen Highspeed card.
+    pub fn drop_highspeed(&mut self) {
+        self.0.remove(HIGHSPEED);
     }
 
     /// The quotes, `Some([])` when the input sent an empty list (Node keeps it: `[]` is truthy).

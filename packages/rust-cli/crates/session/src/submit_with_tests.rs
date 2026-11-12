@@ -166,7 +166,10 @@ async fn a_second_compaction_is_locked_while_one_is_queued() {
             id: CommandId::new("c4"),
             command: Command::EditQueued {
                 command: CommandId::new("c2"),
-                text: "other".to_owned(),
+                edit: rust_cli_kernel_api::session_api::QueuedEdit {
+                    text: Some("other".to_owned()),
+                    ..Default::default()
+                },
             },
         })
         .await;

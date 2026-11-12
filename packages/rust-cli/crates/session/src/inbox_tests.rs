@@ -5,9 +5,18 @@ use rust_cli_kernel_api::session_api::{Delivery, QueuedInput};
 
 use super::*;
 use crate::peers::PeerItem;
+use rust_cli_kernel_api::input_intent::InputIntent;
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
+use rust_cli_kernel_api::session_api::{
+    InputExecution, QUEUE_EDIT_LOCK_LOST, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING,
+    QUEUE_ITEM_NOT_EDITABLE, QueueEditLock, QueuedEdit,
+};
+use serde_json::json;
 
 fn input(command: &str, text: &str, delivery: Delivery) -> QueuedInput {
     QueuedInput {
+        edit_lock: None,
         intent: None,
         command: CommandId::new(command),
         text: text.to_owned(),
@@ -181,4 +190,157 @@ fn an_absorbed_notice_is_taken_by_its_attachment_id() {
         })
         .collect();
     assert_eq!(left, [keys[0]]);
+}
+
+fn lock_of(editor: &str) -> QueueEditLock {
+    QueueEditLock {
+        editor_id: editor.to_owned(),
+        client_id: "client".to_owned(),
+        input_origin: None,
+    }
+}
+
+#[test]
+fn a_locked_input_stops_the_batch_before_it() {
+    let mut inbox = Inbox::default();
+    inbox.push_input(input("c1", "first", Delivery::Queue), InputKind::Text);
+    inbox.push_input(input("c2", "second", Delivery::Queue), InputKind::Text);
+    inbox.push_input(input("c3", "third", Delivery::Queue), InputKind::Text);
+    assert_eq!(inbox.lock(&CommandId::new("c2"), lock_of("ed")), Ok(true));
+    // The head is not locked, so it starts; the batch stops before the locked second input.
+    assert!(!inbox.head_locked());
+    let head = inbox.pop_later().unwrap();
+    assert_eq!(head.input.text, "first");
+    assert!(inbox.take_batched().is_none());
+    // Now the locked input is the next thing to start: the drain must stop before it.
+    assert!(inbox.head_locked());
+    assert_eq!(
+        commands(&inbox),
+        ["c2", "c3"],
+        "the locked input and the one behind it stay queued"
+    );
+    // Releasing it puts the batch back.
+    assert!(inbox.release(&CommandId::new("c2")));
+    assert!(!inbox.head_locked());
+    assert_eq!(inbox.take_batched().unwrap().input.text, "second");
+}
+
+#[test]
+fn a_lock_is_idempotent_for_its_editor_and_refused_for_another() {
+    let mut inbox = Inbox::default();
+    inbox.push_input(input("c1", "first", Delivery::Queue), InputKind::Text);
+    let command = CommandId::new("c1");
+    assert_eq!(inbox.lock(&command, lock_of("ed1")), Ok(true));
+    assert_eq!(inbox.lock(&command, lock_of("ed1")), Ok(false));
+    assert_eq!(
+        inbox.lock(&command, lock_of("ed2")),
+        Err(QUEUE_ITEM_EDIT_LOCKED)
+    );
+    assert_eq!(
+        inbox.lock(&CommandId::new("gone"), lock_of("ed1")),
+        Err(QUEUE_ITEM_MISSING)
+    );
+}
+
+#[test]
+fn a_compaction_is_neither_lockable_nor_editable() {
+    let mut inbox = Inbox::default();
+    inbox.push_input(input("c1", "/compact", Delivery::Queue), InputKind::Compact);
+    let command = CommandId::new("c1");
+    assert_eq!(
+        inbox.lock(&command, lock_of("ed1")),
+        Err(QUEUE_ITEM_NOT_EDITABLE)
+    );
+    let edit = QueuedEdit {
+        text: Some("changed".to_owned()),
+        ..QueuedEdit::default()
+    };
+    assert_eq!(
+        inbox.edit(&command, None, &edit, ExecutionState::default()),
+        Err(QUEUE_ITEM_NOT_EDITABLE)
+    );
+}
+
+#[test]
+fn a_full_payload_edit_resolves_against_the_items_own_state() {
+    let mut inbox = Inbox::default();
+    let mut queued = input("c1", "plan this", Delivery::Queue);
+    queued.intent = Some(Box::new(InputIntent::from_fields(
+        json!({"text": "plan this", "highspeed": {"cardId": "card"}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )));
+    inbox.push_input(queued, InputKind::Text);
+    let command = CommandId::new("c1");
+    let current = ExecutionState {
+        mode: PermissionMode::Default,
+        plan: false,
+    };
+    // A text-only edit keeps the frozen Highspeed card: the model did not change.
+    let text_only = QueuedEdit {
+        text: Some("changed".to_owned()),
+        ..QueuedEdit::default()
+    };
+    assert_eq!(inbox.edit(&command, None, &text_only, current), Ok(false));
+    let after_text = inbox.queued().remove(0);
+    assert_eq!(after_text.text, "changed");
+    assert!(after_text.intent.unwrap().get("highspeed").is_some());
+    assert_eq!(
+        after_text.execution, None,
+        "no mode or model named: no frozen state"
+    );
+    // A model change drops it, and mode and plan resolve against the session's state (Node resolveExecutionState).
+    let full = QueuedEdit {
+        conversation_quotes: Some(json!([])),
+        model_selection: Some(ModelSelection::new(
+            "provider".to_owned(),
+            "model-2".to_owned(),
+        )),
+        mode: Some("edit".to_owned()),
+        plan_enabled: Some(true),
+        ..QueuedEdit::default()
+    };
+    assert_eq!(inbox.edit(&command, None, &full, current), Ok(false));
+    let edited = inbox.queued().remove(0);
+    assert_eq!(
+        edited.execution,
+        Some(InputExecution {
+            state: ExecutionState {
+                mode: PermissionMode::AcceptEdits,
+                plan: true,
+            },
+            selection: Some(ModelSelection::new(
+                "provider".to_owned(),
+                "model-2".to_owned()
+            )),
+        })
+    );
+    let intent = edited.intent.unwrap();
+    assert!(intent.get("highspeed").is_none());
+    assert_eq!(intent.get("conversationQuotes"), Some(&json!([])));
+    assert_eq!(intent.text(), Some("changed"));
+}
+
+#[test]
+fn an_edit_with_an_editor_releases_its_lock_and_a_lost_lock_is_refused() {
+    let mut inbox = Inbox::default();
+    inbox.push_input(input("c1", "first", Delivery::Queue), InputKind::Text);
+    let command = CommandId::new("c1");
+    let edit = QueuedEdit {
+        text: Some("changed".to_owned()),
+        ..QueuedEdit::default()
+    };
+    let current = ExecutionState::default();
+    assert_eq!(inbox.lock(&command, lock_of("ed1")), Ok(true));
+    assert_eq!(
+        inbox.edit(&command, Some("ed2"), &edit, current),
+        Err(QUEUE_EDIT_LOCK_LOST)
+    );
+    assert_eq!(inbox.edit(&command, Some("ed1"), &edit, current), Ok(true));
+    assert!(inbox.edit_lock_of(&command).is_none());
+    assert_eq!(
+        inbox.edit(&command, Some("ed1"), &edit, current),
+        Err(QUEUE_EDIT_LOCK_LOST)
+    );
 }

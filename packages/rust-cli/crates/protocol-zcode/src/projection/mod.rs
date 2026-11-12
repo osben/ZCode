@@ -452,6 +452,18 @@ impl Projection {
         (chip["ref"] == reference || chip["previewRef"] == reference).then_some(chip)
     }
 
+    /// Fork: the attachment refs of a queued input changed (`editQueueItem.attachments`): returns the queue patch,
+    /// or `None` when the input has no recorded metadata.
+    pub fn set_queued_attachments(
+        &mut self,
+        command: &str,
+        attachments: Vec<Value>,
+    ) -> Option<Value> {
+        let meta = self.inputs.get_mut(command)?;
+        meta.attachments = attachments;
+        Some(self.queue_patch())
+    }
+
     /// 记下 sendText 的事实（行与队列项要用）。
     pub fn remember_input(&mut self, command: &str, meta: InputMeta) {
         self.inputs.insert(command.to_owned(), meta);
@@ -1359,6 +1371,15 @@ impl Projection {
                 });
                 if let Some(origin) = meta.and_then(|meta| meta.origin.as_ref()) {
                     value["inputOrigin"] = json!(origin);
+                }
+                // Fork: the composer edit lock while it is held (App `queueItemEditLockSchema`, strict).
+                if let Some(lock) = &item.edit_lock {
+                    let mut edit_lock =
+                        json!({"editorId": lock.editor_id, "clientId": lock.client_id});
+                    if let Some(origin) = &lock.input_origin {
+                        edit_lock["inputOrigin"] = json!(origin);
+                    }
+                    value["editLock"] = edit_lock;
                 }
                 if let Some(quotes) = &quotes {
                     value["conversationQuotes"] = json!(quotes);

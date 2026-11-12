@@ -6,6 +6,7 @@ use super::{InFlight, input_of};
 
 fn item(id: &str, text: &str) -> QueuedInput {
     QueuedInput {
+        edit_lock: None,
         intent: None,
         command: CommandId::new(id),
         text: text.to_owned(),

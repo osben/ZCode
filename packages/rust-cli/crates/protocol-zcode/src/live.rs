@@ -602,6 +602,22 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork: a queued input's attachment refs changed; publishes the queue (see
+    /// [`crate::projection::Projection::set_queued_attachments`]).
+    pub async fn set_queued_attachments(&self, command: &str, attachments: Vec<serde_json::Value>) {
+        let outgoing = {
+            let mut state = self.state();
+            if let Some(delta) = state
+                .projection
+                .set_queued_attachments(command, attachments)
+            {
+                state.log.record(vec![delta]);
+            }
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
     /// Fork: the kernel's subagent table changed: settle ended children and publish the `subagents` manifest
     /// (projection/subagent_rows.rs). In the session's pump task, so it is ordered with the session's events.
     pub async fn subagents_changed(&self) {

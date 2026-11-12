@@ -80,6 +80,34 @@ impl PermissionMode {
     }
 }
 
+/// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`). A known mode (build,
+/// edit, yolo, guarded, auto) replaces the current one; the legacy `plan` is no mode and keeps it. `planEnabled` wins;
+/// without it the legacy `plan` turns plan on, a known mode turns it off, anything else keeps the current switch.
+/// `None` when the input names neither a known mode, the legacy `plan` nor `planEnabled` (nothing to change).
+pub fn resolve_execution(
+    name: Option<&str>,
+    plan: Option<bool>,
+    current: ExecutionState,
+) -> Option<ExecutionState> {
+    let legacy_plan = name == Some("plan");
+    let known = name
+        .filter(|_| !legacy_plan)
+        .and_then(PermissionMode::from_node_name);
+    if known.is_none() && !legacy_plan && plan.is_none() {
+        return None;
+    }
+    Some(ExecutionState {
+        mode: known.unwrap_or(current.mode),
+        plan: plan.unwrap_or(if legacy_plan {
+            true
+        } else if known.is_some() {
+            false
+        } else {
+            current.plan
+        }),
+    })
+}
+
 /// 会话的执行状态：权限模式与 plan 开关（Node `ExecutionState{mode, planEnabled}`，修复线 F20，
 /// docs/specs/rust-cli/shell-permissions.md §4.6）。两个值互相独立：改权限模式不动 plan，开关 plan 不动权限模式。
 /// 会话 actor 是唯一 owner。

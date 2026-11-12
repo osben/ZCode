@@ -1,4 +1,5 @@
 use super::*;
+use rust_cli_kernel_api::permission::PermissionMode;
 
 #[test]
 fn a_guide_steers_only_into_a_running_turn() {

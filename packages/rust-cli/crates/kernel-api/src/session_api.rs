@@ -314,12 +314,36 @@ pub enum Command {
     Dequeue {
         command: CommandId,
     },
-    /// Replace the text of an input that is still queued, keeping its place and delivery (Node `editQueueItem`).
-    /// Rejected with the same reason as [`Command::Dequeue`] when the input already started a turn or was
-    /// merged into one.
+    /// Fork: edit a queued input in place (Node `editQueueItem`): the text and the other fields of [`QueuedEdit`],
+    /// keeping its place and delivery. With `editor_id` the lock must be held by that editor (and is released by the
+    /// edit); without it a locked input is refused. Rejected with [`QUEUE_ITEM_MISSING`] when the input is no
+    /// longer queued, with the lock verdict reasons otherwise.
     EditQueued {
         command: CommandId,
-        text: String,
+        edit: QueuedEdit,
+    },
+    /// Fork: take the composer edit lock of a queued input (Node `lockQueueItemEdit`). Accepted for the same editor
+    /// again (idempotent); rejected with [`QUEUE_ITEM_EDIT_LOCKED`], [`QUEUE_ITEM_MISSING`] or
+    /// [`QUEUE_ITEM_NOT_EDITABLE`] otherwise. Reservation (`guard.queueItemReserved`) is the protocol's check.
+    LockQueuedEdit {
+        command: CommandId,
+        lock: QueueEditLock,
+    },
+    /// Fork: release the composer edit lock of a queued input (Node `releaseQueueItemEdit`); rejected with
+    /// [`QUEUE_EDIT_LOCK_MISSING`] when nothing holds it. An idle session re-evaluates the drain.
+    ReleaseQueuedEdit {
+        command: CommandId,
+    },
+    /// Fork: apply a model and/or mode to several queued inputs (Node `applyQueueItemsConfig`). Missing, compact,
+    /// locked and not-queued inputs are skipped; none applied is rejected with [`QUEUE_ITEM_MISSING`].
+    ApplyQueuedConfig {
+        commands: Vec<CommandId>,
+        edit: QueuedEdit,
+    },
+    /// Fork: remove a queued input whatever its lock (Node `clearAllPendingInputs`, the "clear queue and send"
+    /// disposition). Otherwise as [`Command::Dequeue`].
+    ClearQueued {
+        command: CommandId,
     },
     /// Move a queued input before another queued input, or to the end of the queue when `before` is `None`
     /// (Node `reorderQueueItem`). Rejected with the same reason as [`Command::Dequeue`] when either input is
@@ -451,6 +475,38 @@ pub struct SessionView {
 /// it is no evidence that a client's first input was admitted (fork prepared-worktree activation).
 pub const SESSION_START_INPUT: &str = "session-start-";
 
+/// Fork: the queued input is not there any more (Node `queue.itemMissing`, a noop).
+pub const QUEUE_ITEM_MISSING: &str = "queue.itemMissing";
+/// Fork: the queued input is locked by another editor (Node `guard.queueItemEditLocked`).
+pub const QUEUE_ITEM_EDIT_LOCKED: &str = "guard.queueItemEditLocked";
+/// Fork: the edit names an editor that no longer holds the lock (Node `guard.queueEditLockLost`).
+pub const QUEUE_EDIT_LOCK_LOST: &str = "guard.queueEditLockLost";
+/// Fork: a release with no lock on the input (Node `queue.editLockMissing`, a noop).
+pub const QUEUE_EDIT_LOCK_MISSING: &str = "queue.editLockMissing";
+/// Fork: a compaction is not editable (Node `guard.queueItemNotEditable`).
+pub const QUEUE_ITEM_NOT_EDITABLE: &str = "guard.queueItemNotEditable";
+
+/// Fork: the fields of an in-place queue edit (Node `editQueueItem` / `applyQueueItemsConfig` payload). `None` keeps
+/// the item's value. `mode` is Node's mode name (`build`, `edit`, `yolo`, `guarded`, `auto`, or the legacy `plan`),
+/// resolved against the item's own execution state with [`crate::permission::resolve_execution`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedEdit {
+    /// The editor whose lock the edit needs (Node `editorId`); `None` for an edit that needs no lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The quotes as sent (Node `conversationQuotes`), stored on the intent as given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_quotes: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_selection: Option<ModelSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_enabled: Option<bool>,
+}
+
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
 /// Fork: `Command::ResumeGoal` with plan on (Node `guard.planGoalMutuallyExclusive`).
@@ -479,8 +535,8 @@ pub struct TurnFileCount {
 #[path = "session_api_events.rs"]
 mod events;
 pub use events::{
-    FileChange, InputExecution, KernelEvent, NoticeLevel, QueuedInput, QueuedKind, SequencedEvent,
-    TurnOutcome,
+    FileChange, InputExecution, KernelEvent, NoticeLevel, QueueEditLock, QueuedInput, QueuedKind,
+    SequencedEvent, TurnOutcome,
 };
 
 // 命令的结果放在分出的文件里（800 行上限，工作线 F134）。
