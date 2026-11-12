@@ -53,6 +53,7 @@ fn skills_already_in_the_kept_tail_are_skipped() {
         .is_none()
     );
     let body = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("b"),
         content: vec![ContentBlock::Text {
             text: "Deploy it.".to_owned(),

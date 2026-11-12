@@ -38,10 +38,12 @@ pub async fn seed(store: &MemoryStore, seeds: &[Seed]) {
                 title: seed.title.to_owned(),
                 trace: TraceId::new(seed.id),
                 created_at_ms: seed.created,
+                incognito: None,
             })
             .await
             .unwrap();
         let user = Message::User(UserMessage {
+            intent: None,
             id: MessageId::new(format!("msg_u_{}", seed.id)),
             content: vec![ContentBlock::Text {
                 text: seed.prompt.to_owned(),

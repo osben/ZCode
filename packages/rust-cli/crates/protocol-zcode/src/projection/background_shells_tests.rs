@@ -167,6 +167,7 @@ fn an_absorbed_notification_records_status_and_output_without_settling_rows() {
             }],
         ),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("toolu_bash"),

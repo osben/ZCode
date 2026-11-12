@@ -55,7 +55,7 @@ use crate::assemble::SurfaceTraits;
 
 pub use ext::{ExtConfig, Extensions};
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
-pub use rust_cli_context::{Attribution, ContextConfig, OutputStyle, Surface};
+pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
 // hooks 快照（`LocalKernel::replace_hooks` 的参数）：前端的测试组装它不必依赖 hooks crate（修复线 F37 的 TUI 测试）。
 pub use rust_cli_hooks::{HookSource, HooksConfig, HooksSettings};
 pub use rust_cli_query::{RequestLimits, ThinkingTokens};
@@ -138,6 +138,9 @@ pub struct LocalKernel {
     sessions: OpenSessions,
     /// 关闭时标成关闭中、释放按会话的表（[`Closer`]）。
     closer: Arc<Closer>,
+    /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"): filled at create
+    /// and open, read by every incognito gate.
+    incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
     /// 本机跨会话通信（cross-session.md §2.4）：每个会话 actor 共用这一份端口。
     peers: rust_cli_session::PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）：每个会话 actor 共用这一份。
@@ -216,7 +219,9 @@ impl LocalKernel {
         let operations = Operations::new(ports.ids.generation(), ports.ids.clone());
         // 各能力拿会话主 env 的端口：规则文件、记忆、插件、skills 与 git 都跟着主 env（deployment.md §8、§10）。
         let machine = ports.environments.primary_machine();
-        let hooks = assemble::hooks(&ports, &operations);
+        // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
+        let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+        let hooks = assemble::hooks(&ports, &operations, &incognito);
         let traits = SurfaceTraits::new(
             matches!(context.surface, Surface::Print),
             extensions.streaming_input,
@@ -229,24 +234,17 @@ impl LocalKernel {
             (&gate, scope.spawner()),
             base.registry.clone(),
             (extensions.config.clone(), traits),
+            &incognito,
         );
         // agent 清单（context）与 Agent 工具共用一个目录：插件 agent 设置一次，两处同时看到（L12）。
         let agent_catalog = Arc::new(AgentCatalog::new(
             machine.info().clone(),
             machine.files().clone(),
         ));
-        let assembler = assemble::context(&ports, context, (&agent_catalog, &base, &ext));
+        agent_catalog.set_incognito(incognito.clone());
+        let assembler =
+            assemble::context(&ports, context, (&agent_catalog, &base, &ext), &incognito);
         let sessions = OpenSessions::default();
-        let closer = Arc::new(Closer {
-            sessions: Arc::downgrade(&sessions),
-            scoped: table::SessionScoped {
-                context: assembler.clone(),
-                read_files: base.read_files.clone(),
-                worktrees: base.worktrees.clone(),
-                gate: gate.clone(),
-                mcp: ext.mcp().clone(),
-            },
-        });
         let parts = assemble::query_parts(
             &ports,
             (&assembler, &ext, &gate, &hooks),
@@ -258,7 +256,20 @@ impl LocalKernel {
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
+            &incognito,
         );
+        // Fork: built after the agents so a release also reaches them (their notice forwarders).
+        let closer = Arc::new(Closer {
+            sessions: Arc::downgrade(&sessions),
+            scoped: table::SessionScoped {
+                context: assembler.clone(),
+                read_files: base.read_files.clone(),
+                worktrees: base.worktrees.clone(),
+                gate: gate.clone(),
+                mcp: ext.mcp().clone(),
+                agents: agents.signals(),
+            },
+        });
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
         base.catalog.bind(&tools);
@@ -310,6 +321,7 @@ impl LocalKernel {
             scope,
             sessions,
             closer,
+            incognito,
             peers: extensions.peers,
             detached,
             one_input_per_turn: extensions.node_desktop,
@@ -355,3 +367,7 @@ mod metering_tests;
 #[cfg(test)]
 #[path = "closing_tests.rs"]
 mod closing_tests;
+
+#[cfg(test)]
+#[path = "adopt_tests.rs"]
+mod adopt_tests;

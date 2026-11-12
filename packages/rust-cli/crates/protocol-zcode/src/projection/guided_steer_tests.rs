@@ -22,6 +22,7 @@ fn history(steer: AttachmentMessage) -> Vec<Message> {
             }],
         ),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("toolu_exit"),
@@ -92,13 +93,17 @@ fn guided_fields(projection: &Projection) -> Value {
     };
     assert_eq!(prompt["turnId"], steer["turnId"], "one turn");
     assert!(prompt.get("guided").is_none());
-    json!({
+    let mut fields = json!({
         "text": steer["text"],
         "origin": steer["origin"],
         "guided": steer["guided"],
         "sourceCommandId": steer["sourceCommandId"],
         "rootSourceCommandId": steer["rootSourceCommandId"],
-    })
+    });
+    if let Some(quotes) = steer.get("conversationQuotes") {
+        fields["conversationQuotes"] = quotes.clone();
+    }
+    fields
 }
 
 #[test]
@@ -130,6 +135,31 @@ fn a_typed_steer_row_carries_its_command() {
         assert_eq!(fields["text"], "also b");
         assert_eq!(fields["sourceCommandId"], "c2");
         assert_eq!(fields["rootSourceCommandId"], "c2");
+    }
+}
+
+/// Fork: a quoted steer shows its typed text and quotes from the intent it carries; its prompt is the composed text.
+#[test]
+fn a_quoted_steer_row_reads_its_intent() {
+    let intent: rust_cli_kernel_api::input_intent::InputIntent = serde_json::from_value(
+        serde_json::json!({"text": "also b", "conversationQuotes": [{"text": "q"}]}),
+    )
+    .unwrap();
+    let mut steer = queued_command::steer_attachment(
+        MessageId::new("msg_s4"),
+        &intent.compose("also b"),
+        SteerSender::User,
+        Some("c2"),
+        None,
+    );
+    steer.data[queued_command::INTENT_KEY] = serde_json::to_value(&intent).unwrap();
+    for projection in [live(history(steer.clone())), cold(history(steer))] {
+        let fields = guided_fields(&projection);
+        assert_eq!(fields["text"], "also b");
+        assert_eq!(
+            fields["conversationQuotes"],
+            serde_json::json!([{"text": "q"}])
+        );
     }
 }
 

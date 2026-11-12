@@ -5,6 +5,7 @@ use crate::message::{ContentBlock, UserMessage, UserOrigin};
 fn user(id: &str, text: &str, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text {
                 text: text.to_owned(),

@@ -149,6 +149,7 @@ fn referenced_names_come_from_tool_results() {
     };
     let history = vec![
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("m1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),
@@ -160,6 +161,7 @@ fn referenced_names_come_from_tool_results() {
             },
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("m2"),
             content: vec![ContentBlock::Text {
                 text: "tool_reference WebSearch".to_owned(),
@@ -214,6 +216,7 @@ fn loaded_names_include_the_tools_a_boundary_carries() {
     let history = vec![
         boundary(&["mcp__fixture__lookup", "WebFetch"]),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("m1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),

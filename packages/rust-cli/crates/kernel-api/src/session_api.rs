@@ -174,6 +174,9 @@ pub enum Command {
         execution: Option<InputExecution>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         behind_held: bool,
+        /// Fork: the App input's intent; `text` is the typed text and the quotes join it after slash expansion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent: Option<Box<crate::input_intent::InputIntent>>,
     },
     /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
     /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are
@@ -205,6 +208,14 @@ pub enum Command {
     Fork {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<MessageId>,
+    },
+    /// Fork: the store wrote `title` as the session's `first_input` title at an input's admission
+    /// ([`crate::store::Admission::title`]). The actor takes it in memory and emits
+    /// [`crate::session_api_events::KernelEvent::TitleChanged`] without a commit of its own, so the live views show
+    /// the stored title before the input's `UserPromptSubmit` hooks (Node emits `SessionTitleUpdated` at the
+    /// persistence). Ignored once the title is `custom`. Always `Accepted`.
+    AdoptTitle {
+        title: String,
     },
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
@@ -262,6 +273,20 @@ pub enum Command {
     /// 发 [`KernelEvent::WorkspaceChanged`]，给模型的说明（固定的说明文字加新目录的规则文件）由 actor 组成并提交。
     ChangeDirectory {
         root: crate::env::EnvPath,
+    },
+    /// Fork: the session runs in the execution worktree `root` from now on (desktop prepared-worktree activation,
+    /// specs/fork-rust-agent-parity.md "Execution worktree"). Like [`Command::ChangeDirectory`] the actor sets the
+    /// shell cwd and the workspace and emits [`KernelEvent::WorkspaceChanged`], but it commits no note: Node starts
+    /// the runtime in the worktree, so the model sees no move. `Rejected` while a turn or compaction runs.
+    SetExecutionRoot {
+        root: crate::env::EnvPath,
+    },
+    /// Fork: the incognito profile a prepared execution worktree's activation freezes (specs/fork-rust-agent-parity.md,
+    /// "Incognito sessions"). The actor's meta takes it while it has none, so a fork of the session keeps it; the same
+    /// profile again is `Accepted`, another one `Rejected`. Sent after [`Kernel::freeze_incognito`] and before
+    /// [`Command::SetExecutionRoot`] releases the held SessionStart.
+    SetIncognito {
+        profile: crate::incognito::IncognitoProfile,
     },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
@@ -351,12 +376,20 @@ pub struct CreateSession {
     /// plan 开关（修复线 F20；serde 缺省 false）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan: bool,
+    /// Fork: the incognito profile, frozen into the new row (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 会话的当前视图（前端重连或首次打开时用）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionView {
     pub meta: SessionMeta,
+    /// Fork: where `meta.title` came from (the stored `title_source`, then each `TitleChanged`), so a projection
+    /// opened on a renamed session reports `custom`. `None` when the producer does not know it (derived from the
+    /// title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,
@@ -413,6 +446,10 @@ pub struct SessionView {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
 }
+
+/// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so
+/// it is no evidence that a client's first input was admitted (fork prepared-worktree activation).
+pub const SESSION_START_INPUT: &str = "session-start-";
 
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
@@ -570,6 +607,59 @@ pub trait Kernel: Send + Sync {
         _source: StartSource,
     ) -> Result<SessionId, KernelError> {
         self.create_session(request).await
+    }
+
+    /// Fork: a new session that runs in an execution worktree from its first moment (specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). `request.workspace` is the stored workspace the session is listed under; the worktree
+    /// is stored before the session starts, so SessionStart and every turn run in it. A kernel without it refuses.
+    async fn create_session_in_worktree(
+        &self,
+        _request: CreateSession,
+        _worktree: crate::env::EnvPath,
+        _branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "execution worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: a new session reserved for a prepared execution worktree (specs/fork-rust-agent-parity.md "Execution
+    /// worktree"). It is listed under `request.workspace`; SessionStart waits for `Command::SetExecutionRoot`, so
+    /// the hook runs in the worktree at activation, as Node starts the runtime there. A kernel without it refuses.
+    async fn create_prepared_session(
+        &self,
+        _request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: freezes the incognito profile of a prepared execution worktree at its activation
+    /// (specs/fork-rust-agent-parity.md, "Incognito sessions"): the row's `fork_incognito` once, then the in-memory
+    /// profile every gate reads, before the activation releases SessionStart or admits the first input. A row that
+    /// holds another profile, or a store that cannot hold one, fails it. A kernel without it refuses.
+    async fn freeze_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: crate::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        Err(KernelError::Unsupported {
+            what: "incognito profiles".to_owned(),
+        })
+    }
+
+    /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
+    /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
+    /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it
+    /// refuses.
+    async fn open_prepared_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
     }
 
     /// 同 [`Kernel::open_session`]，另给 SessionStart 的来源（刚 fork 出的会话是 `Fork`）。
@@ -755,6 +845,17 @@ pub trait Kernel: Send + Sync {
         Err(KernelError::Unsupported {
             what: "deleting sessions".to_owned(),
         })
+    }
+
+    /// Fork: the store erased these sessions (`session/eraseTree`, after their runtimes closed). The kernel stops what it
+    /// still runs for them: the agents' notice forwarders, and on every machine their background commands and pending
+    /// notices (`close_session` with `forget`), as Node's runtime close cancels them.
+    async fn sessions_erased(&self, _sessions: Vec<SessionId>) {}
+
+    /// Fork: the sessions among `sessions` that a running subagent runs in (`AgentSignals::running_agent_sessions`).
+    /// `session/eraseTree` counts them as running and refuses the erase.
+    fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
     }
 
     /// 会话的只读快照（F29，`/resume` 页的预览与全屏对话）：打开着的问它的 actor，否则从存储冷加载；不打开会话、

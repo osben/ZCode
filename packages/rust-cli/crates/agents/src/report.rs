@@ -2,6 +2,7 @@
 //! 文本都在 `prompts/agents/`，这里只拼接。
 
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::message::{AssistantMessage, ContentBlock, Usage};
 use rust_cli_kernel_api::model::{CacheControl, SystemBlock};
 use rust_cli_prompts::agents as texts;
@@ -26,20 +27,28 @@ fn ephemeral(text: String) -> SystemBlock {
 
 /// 子代理的 system prompt（`system[1..]`）：身份句；agent 提示词、来自父 agent
 /// 的消息说明、Notes 与 `<total_tokens>`，空行连接。
-pub(crate) fn system(prompt: &str) -> Vec<SystemBlock> {
+///
+/// Fork: an incognito child (Node `buildSubagentContextSections`) sends no identity block without `identity`, and
+/// without `harness` replaces the Notes with the confirm-first paragraph, which stays as the safety floor.
+pub(crate) fn system(prompt: &str, incognito: Option<&IncognitoProfile>) -> Vec<SystemBlock> {
     let tokens = render(
         context_texts::total_tokens(),
         &[("tokens", TOTAL_TOKENS_BUDGET)],
     );
-    let body = [prompt, texts::authority(), texts::notes(), &tokens]
+    let notes = if incognito.is_none_or(|profile| profile.harness) {
+        texts::notes()
+    } else {
+        context_texts::action_caution()
+    };
+    let body = [prompt, texts::authority(), notes, &tokens]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    vec![
-        ephemeral(context_texts::identity().to_owned()),
-        ephemeral(body),
-    ]
+    let identity = incognito
+        .is_none_or(|profile| profile.identity)
+        .then(|| ephemeral(context_texts::identity().to_owned()));
+    identity.into_iter().chain([ephemeral(body)]).collect()
 }
 
 /// 子代理最后一条 assistant 消息的文本块（空行连接）。

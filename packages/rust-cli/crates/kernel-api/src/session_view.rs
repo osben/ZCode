@@ -16,6 +16,7 @@ impl SessionView {
     ) -> Self {
         Self {
             meta,
+            title_source: None,
             messages,
             selection,
             mode,

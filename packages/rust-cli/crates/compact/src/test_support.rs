@@ -184,6 +184,7 @@ pub(crate) fn request(messages: Vec<Message>, trigger: CompactTrigger) -> Compac
 
 pub(crate) fn human(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -221,6 +222,7 @@ pub(crate) fn tool_round(index: usize, tool: &str, path: &str) -> [Message; 2] {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new(format!("r_tool_{index}")),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: id,

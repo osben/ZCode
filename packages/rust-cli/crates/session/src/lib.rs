@@ -192,6 +192,13 @@ pub struct SessionState {
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     /// SessionStart hook 的来源（session-lifecycle.md §3.2）。
     pub start: StartSource,
+    /// Fork: SessionStart waits for `Command::SetExecutionRoot` (a prepared execution worktree, created or reopened
+    /// before its activation), so the hook runs in the worktree, as Node starts the runtime there
+    /// (specs/fork-rust-agent-parity.md "Execution worktree").
+    pub start_held: bool,
+    /// Fork: the root is the session's execution worktree (created there, reopened there, or moved there by
+    /// `Command::SetExecutionRoot`): a root that is gone refuses the workspace tools ([`RunView::execution_worktree`]).
+    pub execution_worktree: bool,
     /// 当前轮（冷加载的 `LoadedSession.turn`；新建的会话没有）。
     pub turn: Option<rust_cli_kernel_api::store::TurnAnchor>,
     /// 当前轮以错误结束（冷加载的 `LoadedSession.last_turn_failed`）：续写时不补 assistant（session-lifecycle.md
@@ -207,6 +214,9 @@ pub struct SessionState {
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
     /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
     pub title_pending: bool,
+    /// Fork: where the title came from (cold load: `LoadedSession.title_source`; a new session: `None`, derived from
+    /// the title).
+    pub title_source: Option<rust_cli_kernel_api::title::Source>,
     /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
@@ -232,11 +242,14 @@ impl SessionState {
             mode,
             checkpoints: Vec::new(),
             start,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             commands: Default::default(),
             child_live: None,
             title_pending: true,
+            title_source: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -266,10 +279,13 @@ impl SessionState {
             ),
             checkpoints: loaded.checkpoints,
             start,
+            start_held: false,
+            execution_worktree: loaded.execution_worktree,
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
             title_pending: loaded.title_pending,
+            title_source: loaded.title_source,
             goal_target: loaded.goal_target,
             goal_verifications: loaded.goal_verifications,
             message_models: loaded.message_models,

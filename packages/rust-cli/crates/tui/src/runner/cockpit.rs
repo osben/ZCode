@@ -207,7 +207,7 @@ impl Loop<'_> {
             KernelEvent::TurnFinished { outcome, .. } => {
                 self.cockpit.now = None;
                 let failed = match outcome {
-                    TurnOutcome::Failed { message } => Some(message.clone()),
+                    TurnOutcome::Failed { message, .. } => Some(message.clone()),
                     _ => None,
                 };
                 self.turn_note(wall, failed);

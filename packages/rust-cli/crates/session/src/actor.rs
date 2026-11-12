@@ -41,6 +41,11 @@ pub(crate) enum Request {
     Meta {
         reply: oneshot::Sender<SessionMeta>,
     },
+    /// Fork: the meta for SessionEnd, `None` while SessionStart is still held (a prepared execution worktree that
+    /// was never activated: Node has no runtime for it, so nothing ends).
+    EndMeta {
+        reply: oneshot::Sender<Option<SessionMeta>>,
+    },
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
     },
@@ -178,6 +183,8 @@ pub(crate) struct Actor {
     pub(crate) deps: SessionDeps,
     pub(crate) log: Arc<EventLog>,
     pub(crate) meta: SessionMeta,
+    /// Fork: where `meta.title` came from; changed only with it ([`Actor::set_title`]).
+    pub(crate) title_source: rust_cli_kernel_api::title::Source,
     pub(crate) messages: Vec<Message>,
     /// 冷读取时只供显示的、最后一个压缩点之前的消息（工作线 F102，compact.md §5.1）：打开后不变，只进 `view()`。
     /// 模型侧的一切（主循环、压缩、token、标题、rewind、fork、goal 与任务的恢复）只看 `messages`。另一个只读的读者：
@@ -258,6 +265,11 @@ pub(crate) struct Actor {
     pub(crate) wait_started: Option<u64>,
     /// 自己的请求通道（弱引用）：交给回合的输出端，给出会话级的询问入口；不让 actor 因此不退出。
     asks: mpsc::WeakSender<Request>,
+    /// Fork: SessionStart held for a prepared execution worktree (`SessionState::start_held`) until
+    /// `Command::SetExecutionRoot` moves the session (workspace.rs).
+    pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
+    /// Fork: `SessionState::execution_worktree`; set by a successful `Command::SetExecutionRoot` (workspace.rs).
+    pub(crate) execution_worktree: bool,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -299,7 +311,8 @@ impl Actor {
         let agent_stream = AgentStream::new(deps.agents.signals(&state.meta.id));
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
-        let start = state.start;
+        let (start, defer_start, execution_worktree) =
+            (state.start, state.start_held, state.execution_worktree);
         let child_live = state.child_live;
         let goal = crate::goal::Goals::restore(
             &state.messages,
@@ -311,6 +324,9 @@ impl Actor {
         let mut actor = Self {
             deps,
             log,
+            title_source: state
+                .title_source
+                .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&state.meta.title)),
             meta: state.meta,
             messages: state.messages,
             earlier: state.earlier,
@@ -351,8 +367,14 @@ impl Actor {
             output_speed: None,
             wait_started: None,
             asks,
+            deferred_start: None,
+            execution_worktree,
         };
-        actor.start_session(start);
+        if defer_start {
+            actor.deferred_start = Some(start);
+        } else {
+            actor.start_session(start);
+        }
         actor
     }
 
@@ -396,7 +418,7 @@ impl Actor {
         &mut self,
         id: CommandId,
         kind: rust_cli_kernel_api::session_api::QueuedKind,
-        text: String,
+        (text, intent): crate::steering::Typed,
         content: Vec<rust_cli_kernel_api::message::ContentBlock>,
         delivery: rust_cli_kernel_api::session_api::Delivery,
         execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
@@ -424,6 +446,7 @@ impl Actor {
             };
             self.inbox.push_input(
                 QueuedInput {
+                    intent,
                     command: id,
                     text,
                     delivery,
@@ -452,11 +475,13 @@ impl Actor {
                 text,
                 screened: None,
                 more: Vec::new(),
+                intent,
             }
         } else {
             TurnInput::Content {
                 command: id,
                 content,
+                intent,
             }
         };
         match self.start_turn(input).await {
@@ -550,6 +575,9 @@ impl Actor {
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());
             }
+            Request::EndMeta { reply } => {
+                let _ = reply.send(self.deferred_start.is_none().then(|| self.meta.clone()));
+            }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());
             }
@@ -611,6 +639,7 @@ impl Actor {
                     // 插话（Steer）进 next 通道，由主循环在下一个工具边界领取（steering.rs），其余等回合结束。
                     self.inbox.push_input(
                         QueuedInput {
+                            intent: None,
                             command: id,
                             text,
                             delivery,
@@ -628,6 +657,7 @@ impl Actor {
                         text,
                         screened: None,
                         more: Vec::new(),
+                        intent: None,
                     })
                     .await
                 {
@@ -647,6 +677,7 @@ impl Actor {
                 Err(reason) => rejected(reason),
             },
             Command::SubmitWith {
+                intent,
                 kind,
                 text,
                 content,
@@ -655,8 +686,16 @@ impl Actor {
                 behind_held,
             } => {
                 let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
-                self.submit_with(id, kind, text, content, delivery, execution, queue)
-                    .await
+                self.submit_with(
+                    id,
+                    kind,
+                    (text, intent),
+                    content,
+                    delivery,
+                    execution,
+                    queue,
+                )
+                .await
             }
             Command::PauseGoal => self.pause_goal().await,
             Command::ResumeGoal => self.resume_goal().await,
@@ -681,6 +720,10 @@ impl Actor {
             Command::Fork { at } => self.fork(id, at).await,
             Command::ForkFromInput { input } => self.fork_from_input(input).await,
             Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
+            Command::AdoptTitle { title } => {
+                self.adopt_title(title);
+                accepted()
+            }
             Command::Rename { title } => self.rename(id, title, None).await,
             Command::RenameRecorded { title, record } => self.rename(id, title, Some(record)).await,
             Command::StopTask { task } => self.stop_task(task).await,
@@ -691,6 +734,8 @@ impl Actor {
                 }
             }
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
+            Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
+            Command::SetIncognito { profile } => self.set_incognito(profile),
             Command::ChangeDirectoryRecorded { root, record } => {
                 self.change_directory(id, root, Some(record)).await
             }
@@ -785,6 +830,7 @@ impl Actor {
                 .map(|(prompt, summary)| (prompt.clone(), summary.facts()))
                 .collect(),
             goal: self.goal_state(),
+            title_source: Some(self.title_source),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

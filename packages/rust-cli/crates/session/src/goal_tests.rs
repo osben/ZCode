@@ -65,6 +65,7 @@ impl HookRunner for Evaluator {
 
 fn feedback() -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_feedback"),
         content: vec![ContentBlock::Text {
             text: "Stop hook feedback:\n[tests pass]: red".to_owned(),
@@ -629,7 +630,7 @@ async fn a_later_desktop_goal_asks_for_its_summary_only() {
         .await;
     until(
         &mut events,
-        |event| matches!(event, KernelEvent::TitleChanged { title } if title == "Seed chat"),
+        |event| matches!(event, KernelEvent::TitleChanged { title, .. } if title == "Seed chat"),
     )
     .await;
     built

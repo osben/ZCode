@@ -27,6 +27,10 @@ pub enum TurnOutcome {
     StopHookPrevented,
     Failed {
         message: String,
+        /// Fork: Node's error code for the failure ([`crate::model::ModelError::code`]), which the App localizes
+        /// (`lastError.code`); `None` is the generic turn fault.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
 }
 
@@ -54,6 +58,9 @@ pub struct QueuedInput {
     /// `None` keeps the session's state (TUI inputs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<InputExecution>,
+    /// Fork: the App input's intent ([`crate::input_intent`]); `text` stays the typed text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
 }
 
 impl QueuedInput {
@@ -65,6 +72,7 @@ impl QueuedInput {
             delivery,
             kind: QueuedKind::Text,
             execution: None,
+            intent: None,
         }
     }
 }
@@ -114,6 +122,10 @@ pub enum KernelEvent {
     },
     TitleChanged {
         title: String,
+        /// Fork: where the title came from (Node `SessionTitleUpdated.source`); an event without it reads as
+        /// `generated`.
+        #[serde(default)]
+        source: crate::title::Source,
     },
     ModelChanged {
         selection: ModelSelection,

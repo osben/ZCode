@@ -108,6 +108,8 @@ pub struct Projection {
     error: Option<LastError>,
     executions: u64,
     title: String,
+    /// Fork: where `title` came from (the view's, then each `TitleChanged`), for the meta and the summary.
+    title_source: rust_cli_kernel_api::title::Source,
     selection: ModelSelection,
     mode: PermissionMode,
     plan: bool,
@@ -163,6 +165,18 @@ pub struct Projection {
     /// Fork: the tool call each streaming `tool_use` block opened (turn, response, block index), so its `InputJson`
     /// deltas append to that row's `inputText` (Node `tool_input_delta`, projection/rows.rs).
     streaming_tools: HashMap<(String, u32, usize), rows::StreamingTool>,
+    /// Fork: per user message id, what each of its attachments reads from (the stored `file` parts), for
+    /// `v4/conversation/attachmentRead` / `attachmentStat` (attachments.rs).
+    attachment_sources: HashMap<String, Vec<AttachmentSource>>,
+}
+
+/// Fork: one attachment of a `userInput` row as its stored `file` part has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentSource {
+    /// The part's MIME ([`rust_cli_kernel_api::prompt_attachment::part_mime`]).
+    pub mime: String,
+    /// The artifact or path a read opens ([`rust_cli_kernel_api::prompt_attachment::part_source`]).
+    pub source: Option<String>,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -172,6 +186,7 @@ pub(crate) fn text_of(content: &[ContentBlock]) -> String {
         .filter_map(|block| match block {
             ContentBlock::Text { text } => Some(text.as_str()),
             ContentBlock::Image { .. }
+            | ContentBlock::Video { .. }
             | ContentBlock::Thinking { .. }
             | ContentBlock::RedactedThinking { .. }
             | ContentBlock::ToolUse { .. }
@@ -263,6 +278,9 @@ impl Projection {
             error: None,
             executions: 0,
             title: view.meta.title.clone(),
+            title_source: view
+                .title_source
+                .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&view.meta.title)),
             selection: view.selection.clone(),
             mode: view.mode,
             plan: view.plan,
@@ -300,6 +318,7 @@ impl Projection {
             turn_file_changes: HashMap::new(),
             subagents: subagent_rows::Subagents::default(),
             shells: background_shells::Shells::default(),
+            attachment_sources: HashMap::new(),
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -326,6 +345,10 @@ impl Projection {
         &self.title
     }
 
+    pub fn title_source(&self) -> rust_cli_kernel_api::title::Source {
+        self.title_source
+    }
+
     /// 最后一条 assistant 正文（会话列表的预览）。
     pub fn last_reply(&self) -> Option<String> {
         self.rows.iter().rev().find_map(|row| {
@@ -344,17 +367,89 @@ impl Projection {
         self.denied.insert(tool_use.to_owned());
     }
 
-    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these).
-    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these),
+    /// and whether that chip marks text material (a `sourceKind`, which only a live row carries).
+    pub fn attachment_mime(&self, reference: &str) -> Option<(String, bool)> {
         self.rows.iter().find_map(|row| {
             row.get("attachments")?
                 .as_array()?
                 .iter()
                 .find_map(|attachment| {
-                    (attachment["ref"] == reference || attachment["previewRef"] == reference)
-                        .then(|| attachment["mime"].as_str().unwrap_or_default().to_owned())
+                    (attachment["ref"] == reference || attachment["previewRef"] == reference).then(
+                        || {
+                            (
+                                attachment["mime"].as_str().unwrap_or_default().to_owned(),
+                                attachment.get("sourceKind").is_some(),
+                            )
+                        },
+                    )
                 })
         })
+    }
+
+    /// Fork: the first attachment of a `userInput` row whose `ref` or `previewRef` is `reference` (Node
+    /// `resolveReadableMediaAttachment` without a row target): its chip MIME and its stored source.
+    pub fn attachment_source(&self, reference: &str) -> Option<AttachmentSource> {
+        self.rows.iter().find_map(|row| {
+            if RowKind::of(row) != Some(RowKind::UserInput) {
+                return None;
+            }
+            let index = row
+                .get("attachments")?
+                .as_array()?
+                .iter()
+                .position(|chip| chip["ref"] == reference || chip["previewRef"] == reference)?;
+            self.attachment_sources
+                .get(row["entityId"].as_str()?)?
+                .get(index)
+                .cloned()
+        })
+    }
+
+    /// Fork: the attachment at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its
+    /// `ref` or `previewRef` (Node `conversationAttachmentRead` / `conversationAttachmentStat` authorisation): its chip
+    /// MIME and its stored source.
+    pub fn row_attachment(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<AttachmentSource> {
+        self.row_chip(row_id, entity, index, reference)?;
+        self.attachment_sources
+            .get(entity)
+            .and_then(|sources| sources.get(index))
+            .cloned()
+    }
+
+    /// Fork: the chip at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its `ref` or
+    /// `previewRef` (Node `resolveReadableMediaAttachment` with a row target): its MIME and whether it marks text
+    /// material, as [`Self::attachment_mime`].
+    pub fn row_chip_mime(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<(String, bool)> {
+        let chip = self.row_chip(row_id, entity, index, reference)?;
+        Some((
+            chip["mime"].as_str().unwrap_or_default().to_owned(),
+            chip.get("sourceKind").is_some(),
+        ))
+    }
+
+    fn row_chip(&self, row_id: u64, entity: &str, index: usize, reference: &str) -> Option<&Value> {
+        let row = self
+            .rows
+            .iter()
+            .find(|row| row["rowId"].as_u64() == Some(row_id) && row["entityId"] == entity)?;
+        if RowKind::of(row) != Some(RowKind::UserInput) {
+            return None;
+        }
+        let chip = row.get("attachments")?.as_array()?.get(index)?;
+        (chip["ref"] == reference || chip["previewRef"] == reference).then_some(chip)
     }
 
     /// 记下 sendText 的事实（行与队列项要用）。
@@ -787,9 +882,14 @@ impl Projection {
                 });
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
             }
-            KernelEvent::TitleChanged { title } => {
-                self.title.clone_from(title);
-                patch.insert("meta".into(), state::meta(&self.title, true));
+            KernelEvent::TitleChanged { title, source } => {
+                // Node `onSessionTitleUpdated`: once custom, an automatic title does not replace it.
+                let custom = rust_cli_kernel_api::title::Source::Custom;
+                if self.title_source != custom || source.shown() != "generated" {
+                    self.title.clone_from(title);
+                    self.title_source = *source;
+                    patch.insert("meta".into(), state::meta(&self.title, self.title_source));
+                }
             }
             KernelEvent::ModelChanged { selection } => {
                 self.selection = selection.clone();
@@ -998,9 +1098,10 @@ impl Projection {
                 "interrupted",
                 Phase::CompletedInterrupted,
             ),
-            TurnOutcome::Failed { message } => {
+            TurnOutcome::Failed { message, code } => {
                 self.error = Some(LastError {
                     message: message.clone(),
+                    code: code.clone(),
                     at: now,
                 });
                 ("failed", "failed", Phase::Error)
@@ -1216,6 +1317,8 @@ impl Projection {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
                 let goal_text = queued_goal_text(&item.text);
+                // Fork: a queued input's quotes come from its intent, like Node's queue item.
+                let quotes = item.intent.as_ref().and_then(|intent| intent.quotes());
                 // Fork: kind and the frozen execution state come from the kernel's item (one owner).
                 let (kind, text) = match item.kind {
                     QueuedKind::Text => ("sendText", item.text.as_str()),
@@ -1242,6 +1345,9 @@ impl Projection {
                 });
                 if let Some(origin) = meta.and_then(|meta| meta.origin.as_ref()) {
                     value["inputOrigin"] = json!(origin);
+                }
+                if let Some(quotes) = &quotes {
+                    value["conversationQuotes"] = json!(quotes);
                 }
                 if let Some(execution) = &item.execution {
                     if let Some(selection) = &execution.selection {
@@ -1272,7 +1378,7 @@ impl Projection {
             "control": self.control(),
             "availability": self.availability(),
             "inputRouting": self.input_routing(),
-            "meta": state::meta(&self.title, true),
+            "meta": state::meta(&self.title, self.title_source),
             "config": self.config(),
             "modelTransition": null,
             "usage": state::usage(self.context, &self.total),

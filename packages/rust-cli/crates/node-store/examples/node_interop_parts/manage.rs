@@ -27,6 +27,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
                 title: String::new(),
                 trace: TraceId::new(id.as_str()),
                 created_at_ms: now_ms(),
+                incognito: None,
             })
             .await?;
         store

@@ -121,3 +121,61 @@ async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
         .unwrap();
     assert_eq!(row(&test)[..2], ["real question", "first_input"]);
 }
+
+/// Fork: quotes are an input intent's (quote_intent_tests.rs); a text that merely ends with a quote block, without an
+/// intent, is plain text: the title and the part keep it whole.
+#[tokio::test]
+async fn a_quote_block_without_an_intent_is_plain_text() {
+    use rust_cli_kernel_api::conversation_quote::{Quote, compose};
+    let test = TestStore::new();
+    let session = SessionId::new("sess_quoted");
+    test.store
+        .create(meta("sess_quoted", "/w", ""))
+        .await
+        .unwrap();
+    let quoted = compose(
+        "explain this",
+        &[Quote {
+            text: "E2E selection".to_owned(),
+            path: None,
+            sender_name: None,
+            sender_id: None,
+            message_id: None,
+            sent_at: None,
+        }],
+    );
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", &quoted)]))
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&test)[0],
+        json!(rust_cli_node_records::records::title_from_input(&quoted))
+    );
+    let parts = test.rows("select data from part");
+    let text: serde_json::Value = serde_json::from_str(parts[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(text["text"], quoted);
+    assert!(text.get("metadata").is_none());
+}
+
+/// Fork: a cold load carries the stored `title_source`, so the reopened session's actor and projection report a
+/// rename as `custom` (Node `normalizeStoredTitleSource`).
+#[tokio::test]
+async fn a_load_reports_the_stored_title_source() {
+    use rust_cli_kernel_api::title::Source;
+    let test = TestStore::new();
+    let session = SessionId::new("sess_source");
+    test.store
+        .create(meta("sess_source", "/w", ""))
+        .await
+        .unwrap();
+    let source = async || test.store.load(&session).await.unwrap().title_source;
+    assert_eq!(source().await, Some(Source::Default));
+    test.store
+        .commit(&session, batch(None, vec![user("msg_1", "hello there")]))
+        .await
+        .unwrap();
+    assert_eq!(source().await, Some(Source::FirstInput));
+    test.store.rename(&session, "Renamed").await.unwrap();
+    assert_eq!(source().await, Some(Source::Custom));
+}

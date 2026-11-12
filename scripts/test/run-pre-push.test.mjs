@@ -95,6 +95,7 @@ const allStages = [
   "test-copy:check",
   "instruction-commands:check",
   "db:migrations:check",
+  "rust-agent:inbound-schema:check",
   "test:engineering:affected",
   "test:node",
 ];

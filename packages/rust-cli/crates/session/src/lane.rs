@@ -183,9 +183,11 @@ impl Actor {
         let mut more = Vec::new();
         while let Some(queued) = self.inbox.take_batched() {
             let text = queued.input.text.clone();
+            let intent = queued.input.intent.clone();
             more.push(crate::turn::MorePrompt {
                 screened: queued.screened(),
                 text,
+                intent,
             });
         }
         if !more.is_empty() {
@@ -318,7 +320,11 @@ impl Actor {
                 let execution = next.input.execution.clone();
                 let input = match next.kind {
                     InputKind::Bash(line) => TurnInput::Bash { command, line },
-                    InputKind::Content(content) => TurnInput::Content { command, content },
+                    InputKind::Content(content) => TurnInput::Content {
+                        command,
+                        content,
+                        intent: next.input.intent.clone(),
+                    },
                     InputKind::Compact => TurnInput::Compact { command },
                     InputKind::Text => self.human_turn(next),
                 };
@@ -341,6 +347,7 @@ impl Actor {
     fn human_turn(&mut self, queued: Queued) -> TurnInput {
         let command = queued.input.command.clone();
         let text = queued.input.text.clone();
+        let intent = queued.input.intent.clone();
         let screened = queued.screened();
         let more = self.take_batch(&command, &text);
         TurnInput::Human {
@@ -348,6 +355,7 @@ impl Actor {
             command,
             text,
             more,
+            intent,
         }
     }
 }

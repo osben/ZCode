@@ -176,6 +176,7 @@ impl Engine<'_> {
     ) -> Attempt {
         let meta = |text: &str, source: &str| {
             Message::User(UserMessage {
+                intent: None,
                 id: self.ports.ids.message(),
                 content: vec![ContentBlock::Text {
                     text: text.to_owned(),
@@ -194,6 +195,7 @@ impl Engine<'_> {
         messages.extend(split.summarize.iter().map(|m| (*m).clone()));
         // 摘要提示是一条普通 user 消息。
         messages.push(Message::User(UserMessage {
+            intent: None,
             id: self.ports.ids.message(),
             content: vec![ContentBlock::Text {
                 text: summary::prompt(instructions),
@@ -331,10 +333,13 @@ impl Engine<'_> {
     /// 给 context 的请求：主线程的工具与模式；子代理的压缩带子代理 ID（只用于重读文件的排除）。
     fn context_request(&self, request: &CompactRequest) -> ContextRequest {
         ContextRequest {
+            // Fork: the session's snapshot, not the global list, so an incognito session's removed tools (MCP
+            // servers, automation tools) never reach the post-compact `deferred_tools_delta` (main loop: query::step).
             tool_names: self
                 .ports
                 .tools
-                .tools()
+                .snapshot(&request.session)
+                .tools
                 .into_iter()
                 .filter(|tool| tool.is_enabled())
                 .map(|tool| tool.name().to_owned())
@@ -385,6 +390,7 @@ impl Engine<'_> {
             kept_tail: !split.keep.is_empty(),
         };
         let summary = UserMessage {
+            intent: None,
             id: summary_id.clone(),
             content: vec![ContentBlock::Text {
                 text: summary::message_text(&raw, shape),

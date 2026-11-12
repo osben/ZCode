@@ -19,6 +19,7 @@ async fn pasted_images_round_trip_as_node_file_parts() {
         name: None,
     };
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![
             ContentBlock::Text {
@@ -71,6 +72,7 @@ async fn attachment_blocks_round_trip_as_parts_after_the_text() {
         text: "<system-reminder>\n<cell id=\"p\">show()</cell id=\"p\">\n</system-reminder>".into(),
     };
     let human = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![ContentBlock::Text {
             text: "look at @plot.ipynb".into(),
@@ -134,10 +136,14 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
             reference: Some(format!("/work/{name}")),
             preview_reference: None,
             stored: None,
+            material: None,
+            image: None,
+            unnamed: false,
             body,
         },
     };
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![
             ContentBlock::Text {
@@ -148,6 +154,7 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
                 "text/plain",
                 AttachedBody::Text {
                     text: "line one\nline two".into(),
+                    read: None,
                 },
             ),
             file(
@@ -201,7 +208,7 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
 }
 
 /// Fork: an App image stored in a session artifact (Node's shape) is read back from the artifact on load; one whose
-/// artifact is missing or belongs to another session stays the metadata reminder.
+/// artifact is missing stays the metadata reminder.
 #[tokio::test]
 async fn stored_app_images_are_read_back_from_their_artifacts() {
     use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
@@ -231,13 +238,17 @@ async fn stored_app_images_are_read_back_from_their_artifacts() {
             bytes: 8,
             reference: Some(format!("/work/{name}")),
             preview_reference: None,
-            stored: Some(stored),
+            stored: Some(stored.into()),
+            material: None,
+            image: None,
+            unnamed: false,
             body: AttachedBody::Image {
                 source: image.clone(),
             },
         },
     };
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![
             ContentBlock::Text { text: "see".into() },
@@ -293,5 +304,251 @@ async fn stored_app_images_are_read_back_from_their_artifacts() {
             &AttachedBody::Omitted,
             &AttachedBody::Omitted
         ]
+    );
+}
+
+/// Fork: an App video is stored like an image (Node `persistAttachmentDataUrl`) and read back from its artifact as a
+/// video block on load, so a cold resume sends the model what the first turn did.
+#[tokio::test]
+async fn stored_app_videos_are_read_back_from_their_artifacts() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactStore};
+
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let session = SessionId::new("sess_1");
+    let artifact = t
+        .store
+        .put(
+            &session,
+            ArtifactPurpose::Attachment,
+            "text/plain".into(),
+            b"data:video/mp4;base64,AAAA".to_vec(),
+        )
+        .await
+        .unwrap();
+    let video = ImageSource::Base64 {
+        media_type: "video/mp4".into(),
+        data: "AAAA".into(),
+    };
+    let message = Message::User(UserMessage {
+        intent: None,
+        id: MessageId::new("msg_ru_v1"),
+        content: vec![
+            ContentBlock::Text {
+                text: "watch".into(),
+            },
+            ContentBlock::File {
+                file: AttachedFile {
+                    name: "clip.mp4".into(),
+                    mime: "video/mp4".into(),
+                    bytes: 3,
+                    reference: Some("/work/clip.mp4".into()),
+                    preview_reference: None,
+                    stored: Some(rust_cli_node_records::artifacts::uri(&artifact).into()),
+                    material: None,
+                    image: None,
+                    unnamed: false,
+                    body: AttachedBody::Video {
+                        source: video.clone(),
+                    },
+                },
+            },
+        ],
+        origin: UserOrigin::Human,
+    });
+    t.store
+        .commit(
+            &session,
+            batch(
+                Some("cmd"),
+                vec![Fact::MessageAppended {
+                    message: message.clone(),
+                }],
+            ),
+        )
+        .await
+        .unwrap();
+    let loaded = t.store.load(&session).await.unwrap();
+    assert_eq!(loaded.messages, vec![message]);
+}
+
+/// Fork: a forked session's parts keep the parent's artifact URIs (Node `clonePartForFork`); a cold load reads them
+/// like Node's `filePartDataUrl`, so the fork's model still gets the video and the image.
+#[tokio::test]
+async fn a_fork_reads_media_stored_by_its_parent() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactStore};
+
+    let t = TestStore::new();
+    started(&t, "sess_parent").await;
+    started(&t, "sess_child").await;
+    let parent = SessionId::new("sess_parent");
+    let child = SessionId::new("sess_child");
+    let put = |content: &'static [u8]| {
+        let store = &t.store;
+        let parent = parent.clone();
+        async move {
+            store
+                .put(
+                    &parent,
+                    ArtifactPurpose::Attachment,
+                    "text/plain".into(),
+                    content.to_vec(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let video = put(b"data:video/mp4;base64,AAAA").await;
+    let image = put(b"data:image/png;base64,iVBORw0KGgo=").await;
+    let video_body = AttachedBody::Video {
+        source: ImageSource::Base64 {
+            media_type: "video/mp4".into(),
+            data: "AAAA".into(),
+        },
+    };
+    let image_body = AttachedBody::Image {
+        source: ImageSource::Base64 {
+            media_type: "image/png".into(),
+            data: "iVBORw0KGgo=".into(),
+        },
+    };
+    let file = |name: &str, mime: &str, stored: String, body: &AttachedBody| ContentBlock::File {
+        file: AttachedFile {
+            name: name.into(),
+            mime: mime.into(),
+            bytes: 3,
+            reference: Some(format!("/work/{name}")),
+            preview_reference: None,
+            stored: Some(stored.into()),
+            material: None,
+            image: None,
+            unnamed: false,
+            body: body.clone(),
+        },
+    };
+    let message = Message::User(UserMessage {
+        intent: None,
+        id: MessageId::new("msg_ru_f1"),
+        content: vec![
+            ContentBlock::Text { text: "see".into() },
+            file(
+                "clip.mp4",
+                "video/mp4",
+                rust_cli_node_records::artifacts::uri(&video),
+                &video_body,
+            ),
+            file(
+                "a.png",
+                "image/png",
+                rust_cli_node_records::artifacts::uri(&image),
+                &image_body,
+            ),
+        ],
+        origin: UserOrigin::Human,
+    });
+    t.store
+        .commit(
+            &child,
+            batch(Some("cmd"), vec![Fact::MessageAppended { message }]),
+        )
+        .await
+        .unwrap();
+    let loaded = t.store.load(&child).await.unwrap();
+    let Message::User(user) = &loaded.messages[0] else {
+        panic!("expected the user message");
+    };
+    let bodies: Vec<&AttachedBody> = user
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::File { file } => Some(&file.body),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bodies, [&video_body, &image_body]);
+}
+
+/// Fork: a web-remote upload keeps its original artifact (Node `existingArtifactUri`), which can be over the model's
+/// image budget. A cold load prepares it again (the ladder the first turn used) instead of dropping it to metadata.
+#[tokio::test]
+async fn a_stored_image_over_the_budget_is_prepared_again_on_load() {
+    use base64::Engine as _;
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
+    use rust_cli_kernel_api::store::{ArtifactPurpose, ArtifactStore};
+
+    // Noise does not compress, so the PNG is over 5 MiB of base64.
+    let mut state = 0x2545_f491_u32;
+    let pixels = image::RgbImage::from_fn(1400, 1400, |_, _| {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        let [r, g, b, _] = state.to_le_bytes();
+        image::Rgb([r, g, b])
+    });
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgb8(pixels)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let engine = &base64::engine::general_purpose::STANDARD;
+    let original = engine.encode(&png);
+    assert!(original.len() as u64 > rust_cli_image::MAX_BASE64_BYTES);
+
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let session = SessionId::new("sess_1");
+    let artifact = t
+        .store
+        .put(
+            &session,
+            ArtifactPurpose::Attachment,
+            "text/plain".into(),
+            format!("data:image/png;base64,{original}").into_bytes(),
+        )
+        .await
+        .unwrap();
+    let message = Message::User(UserMessage {
+        intent: None,
+        id: MessageId::new("msg_ru_big"),
+        content: vec![ContentBlock::File {
+            file: AttachedFile {
+                name: "big.png".into(),
+                mime: "image/png".into(),
+                bytes: png.len() as u64,
+                reference: Some(rust_cli_node_records::artifacts::uri(&artifact)),
+                preview_reference: None,
+                stored: Some(rust_cli_node_records::artifacts::uri(&artifact).into()),
+                material: None,
+                image: None,
+                unnamed: false,
+                body: AttachedBody::Omitted,
+            },
+        }],
+        origin: UserOrigin::Human,
+    });
+    t.store
+        .commit(
+            &session,
+            batch(Some("cmd"), vec![Fact::MessageAppended { message }]),
+        )
+        .await
+        .unwrap();
+    let loaded = t.store.load(&session).await.unwrap();
+    let Message::User(user) = &loaded.messages[0] else {
+        panic!("expected the user message");
+    };
+    let ContentBlock::File { file } = &user.content[0] else {
+        panic!("expected the file");
+    };
+    let expected = rust_cli_image::prepare(png, "image/png", &rust_cli_image::MODEL).unwrap();
+    assert_eq!(
+        file.body,
+        AttachedBody::Image {
+            source: ImageSource::Base64 {
+                media_type: expected.media_type.into(),
+                data: engine.encode(&expected.data),
+            }
+        }
     );
 }

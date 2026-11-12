@@ -123,7 +123,8 @@ impl ToolBatch {
     }
 
     pub(crate) fn add(&mut self, id: ToolUseId, name: String, input: Value, assistant: MessageId) {
-        let tool = self.scope.parts.tools.find(&name);
+        // Fork: the session's tool for this name (an incognito profile may hide a namesake).
+        let tool = self.scope.parts.tools.find_for(&self.scope.session, &name);
         // 找不到、它的服务器在首次连接时排成不可并发的调用，执行时再等。
         let waits_for_mcp = tool.is_none() && mcp_wait::connecting(&self.scope, &name);
         let (safe, status) = match &tool {
@@ -370,6 +371,7 @@ impl ToolBatch {
 
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
         Message::User(UserMessage {
+            intent: None,
             id: self.scope.parts.ids.message(),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: id.clone(),

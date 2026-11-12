@@ -93,6 +93,7 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             })
             .collect();
         return Some(Message::User(UserMessage {
+            intent: None,
             id,
             content,
             origin: UserOrigin::Meta {
@@ -111,6 +112,7 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             ),
         }),
         META => Message::User(UserMessage {
+            intent: None,
             id,
             content: content(),
             origin: UserOrigin::Meta {
@@ -122,6 +124,7 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             },
         }),
         INTERRUPT | BASH_OUTPUT => Message::User(UserMessage {
+            intent: None,
             id,
             content: content(),
             origin: UserOrigin::Human,

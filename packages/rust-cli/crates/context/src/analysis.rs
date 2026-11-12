@@ -1,6 +1,7 @@
 //! `/context` 的上下文分析（docs/specs/rust-cli/context-usage.md §2、§3）：system prompt 的段落、规则文件、
 //! skill 清单行与 MCP instructions。用与 `build` 相同的事实与清单；只读，不进规则缓存。
 
+use rust_cli_kernel_api::incognito::IncognitoKey;
 use rust_cli_kernel_api::listing::ListingEntry;
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::orchestration::{ContextRequest, OrchestrationError};
@@ -51,16 +52,19 @@ impl PromptAssembler {
     ) -> Result<Analysis, OrchestrationError> {
         let window = since_boundary(history);
         let listings = self.ports.listings.listings_for(request, window).await?;
+        let desktop = self.desktop_section(request).await?;
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(request),
             tool_names: &request.tool_names,
             has_skills: !listings.skills.is_empty(),
-            memory_dir: self.config.memory_dir.as_deref(),
-            output_style: self.config.output_style.as_ref(),
-            custom: self.config.custom_system_prompt.as_deref(),
-            append: self.config.append_system_prompt.as_deref(),
+            memory_dir: self.memory_dir(request),
+            output_style: self.output_style(request),
+            custom: self.prompt_overrides(request).0,
+            append: self.prompt_overrides(request).1,
             token_budget: self.config.token_budget,
+            incognito: self.incognito.get(&request.session),
+            desktop: desktop.as_deref(),
         };
         let mut analysis = Analysis {
             sections: sections(&facts),
@@ -73,8 +77,9 @@ impl PromptAssembler {
             return Ok(analysis);
         };
         let git = self.ports.git.as_ref();
-        // `--system-prompt` 时没有 git 状态（与 `build` 相同，cli-args.md §4.2）。
-        if self.config.custom_system_prompt.is_none()
+        // `--system-prompt` 时没有 git 状态（与 `build` 相同，cli-args.md §4.2）。Fork: nor without `environment`.
+        if self.prompt_overrides(request).0.is_none()
+            && !self.excludes(request, IncognitoKey::Environment)
             && let Some(git) =
                 session_context::git_section(git, &request.workspace, &env_facts, window).await
         {
@@ -82,14 +87,10 @@ impl PromptAssembler {
                 .sections
                 .push(PromptSection::new("Git status", git));
         }
-        let scope = self.scope(request, &env_facts);
-        let mut loaded = scope.startup(&env_facts.platform).await;
-        if let Some(dir) = &self.config.memory_dir
-            && let Some(memory) = scope.auto_memory(dir).await
-        {
-            loaded.push(memory);
-        }
-        analysis.memory_files = loaded
+        // Fork: the same gated read as `build`, so `/context` never lists files an incognito profile excludes.
+        analysis.memory_files = self
+            .load_rule_files(request, &env_facts)
+            .await
             .into_iter()
             .filter(|file| file.globs.is_none())
             .map(|file| MemoryFile {

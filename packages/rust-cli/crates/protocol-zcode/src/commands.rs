@@ -2,7 +2,9 @@
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
+use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::permission::ExecutionState;
@@ -47,13 +49,32 @@ pub(crate) fn selection(value: Option<&Value>) -> Option<ModelSelection> {
     })
 }
 
-/// App 的模式与 plan 开关 → 内核的权限模式与 plan（README §5 的映射；`plan` 是旧写法，读成 plan 开、build）。
-fn mode(name: Option<&str>, plan: Option<bool>) -> Option<(PermissionMode, bool)> {
-    let name = name?;
-    if name == "plan" {
-        return Some((PermissionMode::Default, true));
+/// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`). A known mode (build,
+/// edit, yolo, guarded, auto) replaces the current one; the legacy `plan` is no mode and keeps it. `planEnabled` wins;
+/// without it the legacy `plan` turns plan on, a known mode turns it off, anything else keeps the current switch.
+/// `None` when the input names neither a known mode, the legacy `plan` nor `planEnabled` (nothing to change).
+pub(crate) fn resolve_execution(
+    name: Option<&str>,
+    plan: Option<bool>,
+    current: ExecutionState,
+) -> Option<ExecutionState> {
+    let legacy_plan = name == Some("plan");
+    let known = name
+        .filter(|_| !legacy_plan)
+        .and_then(PermissionMode::from_node_name);
+    if known.is_none() && !legacy_plan && plan.is_none() {
+        return None;
     }
-    Some((PermissionMode::from_node_name(name)?, plan.unwrap_or(false)))
+    Some(ExecutionState {
+        mode: known.unwrap_or(current.mode),
+        plan: plan.unwrap_or(if legacy_plan {
+            true
+        } else if known.is_some() {
+            false
+        } else {
+            current.plan
+        }),
+    })
 }
 
 /// 一次输入（sendText 的 payload、createSession 的 firstInput；只取用到的字段）。
@@ -73,6 +94,9 @@ struct Input {
     held_queue_disposition: Option<HeldDisposition>,
     /// Fork: the queue the client confirmed, as `queueItemId`s; a changed queue makes the confirmation stale.
     expected_held_queue_item_ids: Option<Vec<String>>,
+    /// Fork: selections quoted from the conversation, as sent (absent, `[]` or quotes); they travel in the input
+    /// intent ([`input_intent`]).
+    conversation_quotes: Option<Vec<rust_cli_kernel_api::conversation_quote::Quote>>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -116,6 +140,49 @@ struct CreateSessionPayload {
     expected_first_input_command_id: Option<String>,
     #[serde(default)]
     config: SessionConfig,
+    /// Fork: the incognito profile (strict; parsed by [`incognito_of`]). An explicit `null` is kept as present, so it
+    /// is refused like Node's `incognitoProfileSchema.optional()` instead of creating a normal session.
+    #[serde(default, deserialize_with = "present")]
+    incognito: Option<Value>,
+    /// Fork: execution worktree (crate::worktree). An incognito profile cannot ride on its preparation.
+    worktree_preparation: Option<crate::worktree::Request>,
+    expected_attempt_id: Option<String>,
+    execution_worktree: Option<crate::worktree::Requested>,
+}
+
+/// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
+/// Fork: the requested incognito profile. An invalid profile refuses the command before any row exists, so it never
+/// runs as a normal session (specs/fork-rust-agent-parity.md, "Incognito sessions").
+fn incognito_of(
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+) -> Result<Option<IncognitoProfile>, Box<Ack>> {
+    let invalid = |message: String| {
+        Box::new(Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            message,
+            0,
+        ))
+    };
+    let Some(value) = &payload.incognito else {
+        return Ok(None);
+    };
+    // Node: the reserved worktree row has no profile, so the profile must ride on the activation instead.
+    if payload.worktree_preparation.is_some() {
+        return Err(invalid(
+            "worktree preparation cannot include an incognito profile; send it on the activation createSession"
+                .to_owned(),
+        ));
+    }
+    IncognitoProfile::from_wire(value)
+        .map(Some)
+        .map_err(invalid)
 }
 
 #[derive(Deserialize)]
@@ -252,6 +319,9 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             0,
         );
     };
+    if let Some(ack) = crate::worktree::refuse_before_activation(server, envelope, session).await {
+        return ack;
+    }
     let live = match server.live(&SessionId::new(session)).await {
         Ok(live) => live,
         Err(error) => {
@@ -300,19 +370,86 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     }
 }
 
-async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
+pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     let payload: CreateSessionPayload = match payload(envelope) {
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    let incognito = match incognito_of(envelope, &payload) {
+        Ok(incognito) => incognito,
+        Err(ack) => return *ack,
+    };
     if let Some(preparation) = &payload.submission_preparation {
-        return reserve_submission(server, envelope, &payload, &preparation.submission_id).await;
+        return reserve_submission(
+            server,
+            envelope,
+            (&payload, incognito),
+            &preparation.submission_id,
+        )
+        .await;
+    }
+    if let Some(request) = &payload.worktree_preparation {
+        return prepare_worktree(server, envelope, &payload, request).await;
     }
     if let (Some(prepared), Some(expected)) = (
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
     ) {
-        return activate_submission(server, envelope, &payload, prepared, expected).await;
+        return activate_submission(server, envelope, (&payload, incognito), prepared, expected)
+            .await;
+    }
+    if let Some(prepared) = payload.prepared_session_id.as_deref() {
+        let config = &payload.config;
+        let empty = Input::default();
+        let first = payload.first_input.as_ref().unwrap_or(&empty);
+        // Refused before anything moves, so a malformed attachment leaves the prepared session as it was.
+        let refs = match crate::attachments::parse_refs(&first.attachments) {
+            Ok(refs) => refs,
+            Err(error) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    error.message,
+                    0,
+                );
+            }
+        };
+        // Resolved before the session moves: text material that cannot be written refuses the command first.
+        let content =
+            match first_content(server, envelope, &SessionId::new(prepared), first, refs).await {
+                Ok(content) => content,
+                Err(ack) => return *ack,
+            };
+        // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
+        // input follows the move into the worktree.
+        let request = crate::worktree::ActivationRequest {
+            prepared,
+            expected_attempt: payload.expected_attempt_id.as_deref(),
+            workspace: payload.workspace_id.as_deref(),
+            requested: payload.execution_worktree.as_ref(),
+            incognito,
+        };
+        return crate::worktree::activate(
+            server,
+            envelope,
+            request,
+            async |live| apply_draft_config(server, live, envelope, config, first).await,
+            async |live| {
+                // The reservation persisted the prepared session, so its admission has no draft to persist.
+                submit_first(server, live, envelope, first, content)
+                    .await
+                    .ok()
+                    .flatten()
+            },
+        )
+        .await;
+    }
+    // Fork: the direct route refuses a dead worktree before the session exists.
+    if let Some(requested) = &payload.execution_worktree
+        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested).await
+    {
+        return *ack;
     }
     let config = &payload.config;
     let first = payload.first_input.unwrap_or_default();
@@ -332,12 +469,99 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     let chosen = selection(config.model_selection.as_ref())
         .or_else(|| selection(first.model_selection.as_ref()))
         .unwrap_or_else(|| server.defaults.selection.clone());
-    let (permission, plan) =
-        mode(config.mode.as_deref(), config.plan_enabled).unwrap_or((server.defaults.mode, false));
+    let defaults = ExecutionState {
+        mode: server.defaults.mode,
+        plan: false,
+    };
+    let ExecutionState {
+        mode: permission,
+        plan,
+    } = resolve_execution(config.mode.as_deref(), config.plan_enabled, defaults)
+        .unwrap_or(defaults);
     let id = payload
         .session_id
         .as_deref()
         .map_or_else(inbox::new_session_id, SessionId::new);
+    // The first input's attachments are resolved before the session exists: text material that cannot be written
+    // refuses the command and leaves no session behind.
+    let content = match first_content(server, envelope, &id, &first, refs).await {
+        Ok(content) => content,
+        Err(ack) => return *ack,
+    };
+    // Fork: the existence check and the create run under the reservation gate, so a concurrent reservation or create
+    // of the same id cannot slip between them.
+    let gate = match server.reservations.acquire().await {
+        Ok(permit) => permit,
+        Err(reason) => {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.createSessionFailed",
+                reason.to_owned(),
+                0,
+            );
+        }
+    };
+    let failed = |reason: &str| {
+        Ack::refused(
+            &envelope.command_id,
+            Status::Failed,
+            "fault.command.createSessionFailed",
+            reason.to_owned(),
+            0,
+        )
+    };
+    let existing =
+        match crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await) {
+            Ok(view) => view,
+            // No error text: a storage error can name the storage path.
+            Err(_) => return failed("reading the session failed"),
+        };
+    // Fork: a soft-deleted id is not free (Node refuses it before any write).
+    if existing.is_none() {
+        match crate::preparation::deleted(server, &id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    "sessionId already exists".to_owned(),
+                    0,
+                );
+            }
+            Err(reason) => return failed(reason),
+        }
+    }
+    if let Some(view) = &existing {
+        let marker = match crate::preparation::load(server, &id).await {
+            Ok(marker) => marker,
+            Err(reason) => return failed(reason),
+        };
+        let workspace_matches = payload
+            .workspace_id
+            .as_deref()
+            .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
+        if crate::preparation::recreate_existing(
+            marker.as_ref(),
+            workspace_matches,
+            crate::preparation::has_conversation(view),
+            crate::preparation::ReserveIncognito {
+                stored: view.meta.incognito,
+                requested: incognito,
+            },
+        )
+        .is_err()
+        {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                "sessionId already exists".to_owned(),
+                0,
+            );
+        }
+    }
     if let Some(followup) = config.followup_mode {
         server
             .followups
@@ -345,16 +569,30 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
             .insert(id.clone(), followup);
     }
     let workspace = payload.workspace_id.as_deref().unwrap_or_default();
-    let created = server
-        .kernel
-        .create_session(CreateSession {
-            id: Some(id.clone()),
-            workspace: server.workspace(workspace),
-            selection: chosen,
-            mode: permission,
-            plan,
-        })
-        .await;
+    let request = CreateSession {
+        id: Some(id.clone()),
+        workspace: server.workspace(workspace),
+        selection: chosen,
+        mode: permission,
+        plan,
+        incognito,
+    };
+    // Fork: the direct route starts the session in its worktree (SessionStart included); the row keeps the
+    // parent workspace, and opening it below picks up the stored worktree facts.
+    let created = match &payload.execution_worktree {
+        Some(requested) => {
+            server
+                .kernel
+                .create_session_in_worktree(
+                    request,
+                    rust_cli_kernel_api::env::EnvPath::new(&requested.path),
+                    requested.branch_name.clone(),
+                )
+                .await
+        }
+        None => server.kernel.create_session(request).await,
+    };
+    drop(gate);
     let refused = |message: String| {
         Ack::refused(
             &envelope.command_id,
@@ -374,30 +612,144 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
     };
     crate::subscribe::announce(&live);
     let mut result = json!({"type": "createSession", "sessionId": id.as_str()});
-    if let Some(text) = first.text.clone() {
-        live.sink.remember_input(
-            &envelope.command_id,
-            input_meta(envelope, &first, "startNow", "startNow"),
-        );
-        let submit = if refs.is_empty() {
-            Command::Submit {
-                text,
-                attachments: Vec::new(),
-                delivery: Delivery::Queue,
-            }
-        } else {
-            Command::SubmitContent {
-                content: crate::attachments::content(server, &id, &text, refs).await,
-                delivery: Delivery::Queue,
-            }
-        };
-        if let KernelAck::Accepted { .. } =
-            send(live.handle.as_ref(), &envelope.command_id, submit).await
-        {
-            result["input"] = json!({"delivery": "startNow", "inputId": envelope.command_id});
-        }
+    match submit_first(server, &live, envelope, &first, content).await {
+        Ok(Some(input)) => result["input"] = input,
+        Ok(None) => {}
+        Err(ack) => return *ack,
     }
     Ack::accepted(&envelope.command_id, 0, Some(result))
+}
+
+/// The content of a first input with attachments, resolved before any side effect of the command (the session's
+/// creation or activation): text material that cannot be written refuses the command. `None` without text or refs.
+async fn first_content(
+    server: &Server,
+    envelope: &Envelope,
+    id: &SessionId,
+    first: &Input,
+    refs: Vec<crate::attachments::AttachmentRef>,
+) -> Result<Option<Vec<ContentBlock>>, Box<Ack>> {
+    match first.text.as_deref() {
+        Some(text) if !refs.is_empty() => crate::attachments::content(server, id, text, refs)
+            .await
+            .map(Some)
+            .map_err(|error| {
+                Box::new(Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    0,
+                ))
+            }),
+        _ => Ok(None),
+    }
+}
+
+/// The first input of a new or activated session (createSession `firstInput`), queued behind SessionStart under the
+/// createSession command id, with its attachments already resolved ([`first_content`]). The `input` field of the
+/// result; `None` without text or when the session refused it; `Err` when the draft could not be persisted for it
+/// ([`admit_input`]).
+async fn submit_first(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    first: &Input,
+    content: Option<Vec<ContentBlock>>,
+) -> Result<Option<Value>, Box<Ack>> {
+    let Some(text) = first.text.clone() else {
+        return Ok(None);
+    };
+    admit_input(server, live.handle.as_ref(), &text, &envelope.command_id, 0).await?;
+    live.sink.remember_input(
+        &envelope.command_id,
+        input_meta(envelope, first, "startNow", "startNow"),
+    );
+    // The input's own mode, plan switch and model (Node `resolveSubmittedExecutionState`) apply when its turn starts,
+    // as for `sendText`; missing parts are the session's current state.
+    let view = live.handle.view().await.ok();
+    let execution = input_execution(first, view.as_ref());
+    let content = content.unwrap_or_default();
+    // `firstInput` has no quotes.
+    let intent = input_intent(
+        envelope,
+        first,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        live.sink.admit(),
+    );
+    let submit = Command::SubmitWith {
+        intent: Some(Box::new(intent)),
+        kind: QueuedKind::Text,
+        text,
+        content,
+        delivery: Delivery::Queue,
+        execution,
+        behind_held: false,
+    };
+    Ok(
+        match send(live.handle.as_ref(), &envelope.command_id, submit).await {
+            KernelAck::Accepted { .. } => {
+                Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
+            }
+            _ => None,
+        },
+    )
+}
+
+/// Fork: Node `admitInputCommand` persists a deferred session with the input's title before it accepts an input, so
+/// the accepted input can no longer be dropped with its draft and a hook that blocks it does not leave "New session".
+/// A deferred close that dropped the draft first refuses the input; any other failure fails the command like Node's
+/// admission error (`fault.command.executionFailed`), before the input is remembered or sent. The text names no
+/// storage detail. The title the admission wrote reaches the session actor before the input does, so the live views
+/// show the stored title even when a `UserPromptSubmit` hook blocks the input (Node emits `SessionTitleUpdated` at the
+/// persistence).
+async fn admit_input(
+    server: &Server,
+    handle: &dyn SessionHandle,
+    text: &str,
+    command: &str,
+    revision: u64,
+) -> Result<(), Box<Ack>> {
+    let session = handle.id();
+    match server
+        .kernel
+        .queries()
+        .persist_for_input(session, text)
+        .await
+    {
+        Ok(admission) => {
+            if let Some(title) = admission.title {
+                send(
+                    handle,
+                    &format!("{command}#title"),
+                    Command::AdoptTitle { title },
+                )
+                .await;
+            }
+            Ok(())
+        }
+        Err(error @ rust_cli_kernel_api::store::StoreError::NotFound { .. }) => {
+            Err(Box::new(Ack::refused(
+                command,
+                Status::Rejected,
+                "proto.sessionNotFound",
+                error.to_string(),
+                revision,
+            )))
+        }
+        Err(error) => {
+            tracing::warn!(event = "protocol.draft.persist_failed", session = %session.as_str(), error = %error, "persisting the draft for its input failed");
+            Err(Box::new(Ack::refused(
+                command,
+                Status::Failed,
+                "fault.command.executionFailed",
+                "persisting the session for its input failed".to_owned(),
+                revision,
+            )))
+        }
+    }
 }
 
 /// Fork: reservation. Creates the session with the draft's selection and stores a preparing marker; a repeat with
@@ -405,7 +757,7 @@ async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
 async fn reserve_submission(
     server: &Server,
     envelope: &Envelope,
-    payload: &CreateSessionPayload,
+    (payload, incognito): (&CreateSessionPayload, Option<IncognitoProfile>),
     submission: &str,
 ) -> Ack {
     let refused = |code: &str, message: String| {
@@ -447,6 +799,27 @@ async fn reserve_submission(
                 );
             }
         };
+    // Fork: a soft-deleted id is not free (Node refuses it before any write).
+    if existing.is_none() {
+        match crate::preparation::deleted(server, &id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return refused(
+                    "proto.invalidPayload",
+                    format!("session {} cannot be reserved: it was deleted", id.as_str()),
+                );
+            }
+            Err(reason) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.createSessionFailed",
+                    reason.to_owned(),
+                    0,
+                );
+            }
+        }
+    }
     if let Some(view) = &existing {
         let marker = match crate::preparation::load(server, &id).await {
             Ok(marker) => marker,
@@ -464,12 +837,15 @@ async fn reserve_submission(
             .workspace_id
             .as_deref()
             .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
-        let conversation = !view.messages.is_empty() || !view.queue.is_empty() || view.running;
         match crate::preparation::reserve_existing(
             marker.as_ref(),
             submission,
             workspace_matches,
-            conversation,
+            crate::preparation::has_conversation(view),
+            crate::preparation::ReserveIncognito {
+                stored: view.meta.incognito,
+                requested: incognito,
+            },
         ) {
             crate::preparation::Reserve::Repeat => return accepted(&id),
             crate::preparation::Reserve::Adopt => {}
@@ -494,6 +870,7 @@ async fn reserve_submission(
                     .unwrap_or_else(|| server.defaults.selection.clone()),
                 mode: server.defaults.mode,
                 plan: false,
+                incognito,
             })
             .await
     };
@@ -541,11 +918,33 @@ async fn reserve_submission(
 async fn activate_submission(
     server: &Server,
     envelope: &Envelope,
-    payload: &CreateSessionPayload,
+    (payload, incognito): (&CreateSessionPayload, Option<IncognitoProfile>),
     prepared: &str,
     expected: &str,
 ) -> Ack {
+    // Node `v4-bridge.ts`: a submission activation names no worktree; a worktree is never silently dropped.
+    if payload.execution_worktree.is_some() || payload.expected_attempt_id.is_some() {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the requested workspace or submission",
+            0,
+        );
+    }
     let id = SessionId::new(prepared);
+    // Node compares the reservation's workspace with `workspaceId`: an activation from another workspace is refused.
+    let listed = crate::worktree::listed_key(server, &id).await;
+    let workspace_matches = payload.workspace_id.is_some() && payload.workspace_id == listed;
+    if !workspace_matches {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the requested workspace or submission",
+            0,
+        );
+    }
     let marker = match crate::preparation::load(server, &id).await {
         Ok(Some(marker)) if marker.submission_id == expected => marker,
         _ => {
@@ -570,6 +969,17 @@ async fn activate_submission(
             );
         }
     };
+    // Fork: the reservation froze the profile on the row; the activation must ask for the same one (absent is not
+    // equal to present), as Node's bridge checks `incognitoProfilesEqual`.
+    if live.sink.incognito() != incognito {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Prepared submission does not match the frozen incognito profile".to_owned(),
+            0,
+        );
+    }
     let admitted = match payload.expected_first_input_command_id.as_deref() {
         Some(first) => server
             .kernel
@@ -587,30 +997,17 @@ async fn activate_submission(
         "already-active"
     } else {
         // The draft's choices: the first sendText carries them too, this keeps a config-only activation right.
-        let handle = live.handle.as_ref();
-        if let Some(chosen) = selection(payload.config.model_selection.as_ref()) {
-            send(
-                handle,
-                &format!("{}:model", envelope.command_id),
-                Command::SetModel { selection: chosen },
-            )
-            .await;
-        }
-        if let Some((permission, plan)) =
-            mode(payload.config.mode.as_deref(), payload.config.plan_enabled)
+        // A refused guarded mode fails the activation (Node rethrows it); the reservation stays for a retry.
+        if let Err(message) =
+            apply_draft_config(server, &live, envelope, &payload.config, &Input::default()).await
         {
-            send(
-                handle,
-                &format!("{}:mode", envelope.command_id),
-                Command::SetMode { mode: permission },
-            )
-            .await;
-            send(
-                handle,
-                &format!("{}:plan", envelope.command_id),
-                Command::SetPlan { enabled: plan },
-            )
-            .await;
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                "fault.command.executionFailed",
+                message,
+                0,
+            );
         }
         "input-pending"
     };
@@ -621,6 +1018,133 @@ async fn activate_submission(
             json!({"type": "createSession", "sessionId": id.as_str(), "preparedActivation": outcome}),
         ),
     )
+}
+
+/// Fork: a prepared session takes the draft's model, mode, plan switch and follow-up mode (Node
+/// `applyRequestedSessionConfig`). Without a model in the config the first input's model is the session's, as an
+/// ordinary createSession chooses it, so SessionStart and later turns run on it (in Node the first turn's model
+/// becomes the session's when it starts, and SessionStart runs in that turn).
+///
+/// A refused step is logged and the session keeps its settings, except when the config or the first input asks for
+/// `guarded`: Node rethrows that failure (`session-mgmt.ts` `runActivation`), since running with the previous, possibly
+/// broader, permission mode is not an option. The `Err` carries the refusal.
+async fn apply_draft_config(
+    server: &Server,
+    live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
+    envelope: &Envelope,
+    config: &SessionConfig,
+    first: &Input,
+) -> Result<(), String> {
+    let handle = live.handle.as_ref();
+    let mut refusals = Vec::new();
+    if let Some(chosen) = selection(config.model_selection.as_ref())
+        .or_else(|| selection(first.model_selection.as_ref()))
+    {
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:model", envelope.command_id),
+                Command::SetModel { selection: chosen },
+            )
+            .await,
+        );
+    }
+    let current = handle
+        .view()
+        .await
+        .ok()
+        .map_or_else(ExecutionState::default, |view| ExecutionState {
+            mode: view.mode,
+            plan: view.plan,
+        });
+    if let Some(ExecutionState {
+        mode: permission,
+        plan,
+    }) = resolve_execution(config.mode.as_deref(), config.plan_enabled, current)
+    {
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:mode", envelope.command_id),
+                Command::SetMode { mode: permission },
+            )
+            .await,
+        );
+        refusals.push(
+            send(
+                handle,
+                &format!("{}:plan", envelope.command_id),
+                Command::SetPlan { enabled: plan },
+            )
+            .await,
+        );
+    }
+    let refused = refusals.into_iter().find_map(|ack| match ack {
+        KernelAck::Rejected { reason } => Some(reason),
+        KernelAck::Accepted { .. } | KernelAck::Duplicate => None,
+    });
+    if let Some(reason) = refused {
+        let guarded = [config.mode.as_deref(), first.mode.as_deref()].contains(&Some("guarded"));
+        if guarded {
+            return Err(reason);
+        }
+        tracing::warn!(
+            event = "protocol.create.config_failed",
+            "the draft config was refused; the session keeps its settings"
+        );
+    }
+    // Node writes only a non-default follow-up mode; the open session's projection and a later cold open both take it.
+    if let Some(followup) = config.followup_mode.filter(|mode| *mode != Followup::Queue) {
+        server
+            .followups
+            .lock_unpoisoned()
+            .insert(handle.id().clone(), followup);
+        let sink = live.sink.clone();
+        live.run(Box::pin(async move { sink.set_followup(followup).await }));
+    }
+    Ok(())
+}
+
+/// Fork: worktree preparation (Node `createSession` with `worktreePreparation`): only the workspace and the
+/// worktree request; runtime settings and input belong to the activation.
+async fn prepare_worktree(
+    server: &Server,
+    envelope: &Envelope,
+    payload: &CreateSessionPayload,
+    request: &crate::worktree::Request,
+) -> Ack {
+    let refused = |message: &str| {
+        Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            message,
+            0,
+        )
+    };
+    let raw = &envelope.payload;
+    if payload.prepared_session_id.is_some()
+        || payload.first_input.is_some()
+        || payload.execution_worktree.is_some()
+        || !raw["config"].is_null()
+        || !raw["permissionScope"].is_null()
+    {
+        return refused("worktree preparation cannot include runtime or input settings");
+    }
+    if !raw["incognito"].is_null() {
+        return refused(
+            "worktree preparation cannot include an incognito profile; send it on the activation createSession",
+        );
+    }
+    let workspace = payload.workspace_id.as_deref().unwrap_or_default();
+    crate::worktree::prepare(
+        server,
+        envelope,
+        workspace,
+        request,
+        server.defaults.selection.clone(),
+    )
+    .await
 }
 
 /// Fork: the first input of a reserved session was admitted: persist the marker as active, then drop
@@ -678,6 +1202,66 @@ fn input_meta(
         admitted,
         attachments: input.attachments.clone(),
     }
+}
+
+/// Fork: Node `inputIntentMetadata` (`bootstrap/src/zcode-protocol-v4/commands/input-intent.ts`): the admitted
+/// facts of one App input, in Node's key order (specs/fork-agent-runtime-selection.md, Conversation quotes in Rust
+/// mode). `admission` is the input's `admissionSeq` and `admittedAt`.
+fn input_intent(
+    envelope: &Envelope,
+    input: &Input,
+    kind: QueuedKind,
+    quotes: Option<&[rust_cli_kernel_api::conversation_quote::Quote]>,
+    (requested, admitted): (&str, &str),
+    (seq, at): (u64, u64),
+) -> rust_cli_kernel_api::input_intent::InputIntent {
+    let mut fields = serde_json::Map::new();
+    let origin = envelope
+        .input_origin
+        .as_deref()
+        .or(input.input_origin.as_deref())
+        .filter(|origin| matches!(*origin, "desktop" | "mobile"));
+    if let Some(origin) = origin {
+        fields.insert("inputOrigin".into(), json!(origin));
+    }
+    if let Some(quotes) = quotes {
+        fields.insert(
+            rust_cli_kernel_api::input_intent::QUOTES.into(),
+            json!(quotes),
+        );
+    }
+    let command = envelope.command_id.as_str();
+    fields.insert("sourceCommandId".into(), json!(command));
+    fields.insert("queueItemId".into(), json!(format!("queue_{command}")));
+    let client = Some(envelope.client_id.as_str()).filter(|client| !client.is_empty());
+    fields.insert("clientId".into(), json!(client.unwrap_or("cli")));
+    let kind = if kind == QueuedKind::Goal {
+        "sendGoalCommand"
+    } else {
+        "sendText"
+    };
+    fields.insert("kind".into(), json!(kind));
+    fields.insert(
+        rust_cli_kernel_api::input_intent::TEXT.into(),
+        json!(input.text.as_deref().unwrap_or_default()),
+    );
+    if let Some(selection) = input.model_selection.as_ref().filter(|v| !v.is_null()) {
+        fields.insert("modelSelection".into(), selection.clone());
+    }
+    if let Some(mode) = input.mode.as_deref().filter(|mode| !mode.is_empty()) {
+        fields.insert("mode".into(), json!(mode));
+    }
+    if let Some(plan) = input.plan_enabled {
+        fields.insert("planEnabled".into(), json!(plan));
+    }
+    fields.insert("admissionSeq".into(), json!(seq));
+    fields.insert("admittedAt".into(), json!(at));
+    fields.insert("requestedDelivery".into(), json!(requested));
+    fields.insert("admittedDelivery".into(), json!(admitted));
+    if !input.attachments.is_empty() {
+        fields.insert("attachmentRefs".into(), json!(input.attachments));
+    }
+    rust_cli_kernel_api::input_intent::InputIntent::from_fields(fields)
 }
 
 /// Fork: Node's `applyHeldQueueDisposition`. After a finished turn a paused queue (`autoDrain` off, items
@@ -763,17 +1347,19 @@ fn input_execution(
     view: Option<&rust_cli_kernel_api::session_api::SessionView>,
 ) -> Option<InputExecution> {
     let chosen = selection(input.model_selection.as_ref());
-    let state = mode(input.mode.as_deref(), input.plan_enabled)
-        .map(|(mode, plan)| ExecutionState { mode, plan });
-    if chosen.is_none() && state.is_none() {
-        return None;
-    }
     let current = view.map_or_else(ExecutionState::default, |view| ExecutionState {
         mode: view.mode,
         plan: view.plan,
     });
+    // Each field overrides the session's own (Node `resolveExecutionState(payload, current)`): a plan switch without a
+    // mode keeps the session's mode, and the legacy `mode: "plan"` keeps it too.
+    let resolved = resolve_execution(input.mode.as_deref(), input.plan_enabled, current);
+    if chosen.is_none() && resolved.is_none() {
+        return None;
+    }
+    let state = resolved.unwrap_or(current);
     Some(InputExecution {
-        state: state.unwrap_or(current),
+        state,
         selection: chosen,
     })
 }
@@ -889,6 +1475,20 @@ async fn send_text(
             revision,
         );
     }
+    if let Err(reason) = rust_cli_kernel_api::conversation_quote::validate(
+        input.conversation_quotes.as_deref().unwrap_or_default(),
+    ) {
+        return Ack::refused(
+            command,
+            Status::Rejected,
+            "proto.invalidPayload",
+            reason,
+            revision,
+        );
+    }
+    // Attachments, slash expansion and the prompt hook see the typed text; the session adds the quote block from the
+    // input intent (Node composes `expandedInput`).
+    let typed = input.text.clone().unwrap_or_default();
     // Checked before any side effect (model or mode change), so a refused input changes nothing.
     let refs = match crate::attachments::parse_refs(&input.attachments) {
         Ok(refs) => refs,
@@ -900,6 +1500,24 @@ async fn send_text(
                 error.message,
                 revision,
             );
+        }
+    };
+    // Resolved before any side effect (held queue, remembered input): text material that cannot be written refuses the
+    // input and changes nothing.
+    let content = if refs.is_empty() {
+        Vec::new()
+    } else {
+        match crate::attachments::content(server, handle.id(), &typed, refs).await {
+            Ok(content) => content,
+            Err(error) => {
+                return Ack::refused(
+                    command,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    revision,
+                );
+            }
         }
     };
     let view = handle.view().await.ok();
@@ -930,23 +1548,30 @@ async fn send_text(
         live.followup(),
         admission_phase,
         view.as_ref().is_none_or(|view| view.running),
-        !refs.is_empty(),
+        !content.is_empty(),
     );
+    let text = input.text.clone().unwrap_or_default();
+    if let Err(ack) = admit_input(server, handle, &text, command, revision).await {
+        return *ack;
+    }
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
-    let text = input.text.unwrap_or_default();
-    let content = if !refs.is_empty() {
-        crate::attachments::content(server, handle.id(), &text, refs).await
-    } else {
-        Vec::new()
-    };
+    let intent = input_intent(
+        envelope,
+        &input,
+        kind,
+        input.conversation_quotes.as_deref(),
+        (requested, admitted),
+        live.admit(),
+    );
     // A goal is the kernel's `/goal <objective>` input (the snapshot shows the objective).
     let text = if kind == QueuedKind::Goal {
-        format!("/goal {}", text.trim())
+        format!("/goal {}", input.text.as_deref().unwrap_or_default().trim())
     } else {
-        text
+        typed
     };
     let submit = Command::SubmitWith {
+        intent: Some(Box::new(intent)),
         kind,
         text,
         content,

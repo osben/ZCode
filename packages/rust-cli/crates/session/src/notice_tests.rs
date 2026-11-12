@@ -148,10 +148,13 @@ async fn session_as(
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            title_source: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -245,6 +248,7 @@ async fn a_notice_that_is_already_in_the_conversation_is_only_acked() {
     let env = Arc::new(NoticeEnvironment::default());
     let model = Arc::new(ScriptedModel::new(Vec::new()));
     let delivered = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_notice"),
         content: vec![ContentBlock::Text {
             text: task_notification(&shell_notice(1, "b1")),

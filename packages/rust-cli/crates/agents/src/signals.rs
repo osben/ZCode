@@ -180,6 +180,13 @@ impl Hub {
         }
     }
 
+    /// Fork: drops the channel of an erased session; returns how many notices it still held.
+    pub(crate) fn forget(&self, session: &SessionId) -> usize {
+        self.channels()
+            .remove(session)
+            .map_or(0, |channel| channel.pending.len())
+    }
+
     /// 通知还没有 ack 的子代理。
     pub(crate) fn pending(&self, session: &SessionId) -> Vec<AgentId> {
         self.channels()

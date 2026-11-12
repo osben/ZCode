@@ -31,7 +31,9 @@ fn reason_of_error(error: &ModelError) -> (&'static str, u16, bool) {
         ModelError::Overloaded { .. } => ("provider_overloaded", 529, true),
         ModelError::PromptTooLong { .. } => ("context_exceeded", 0, false),
         ModelError::Authentication { .. } => ("auth_failed", 401, false),
-        ModelError::InvalidRequest { .. } => ("invalid_request", 400, false),
+        ModelError::InvalidRequest { .. } | ModelError::CurrentAttachmentsTooLarge => {
+            ("invalid_request", 400, false)
+        }
         ModelError::Network { .. } => ("network_failed", 0, true),
         ModelError::Server { status, .. } => ("server_error", *status, true),
         ModelError::StreamIdle { .. } => ("stream_idle_timeout", 0, true),

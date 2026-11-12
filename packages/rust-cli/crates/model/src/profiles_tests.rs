@@ -33,6 +33,7 @@ fn text(text: &str, cache_control: Option<CacheControl>) -> ApiContent {
             text: text.to_owned(),
         },
         cache_control,
+        meta: false,
     }
 }
 
@@ -417,6 +418,7 @@ fn a_gateway_sends_the_betas_node_sends() {
                 is_error: false,
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: None,
     });

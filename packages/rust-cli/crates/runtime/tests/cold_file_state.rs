@@ -156,6 +156,7 @@ mod cold_file_state {
                 selection: selection(),
                 mode: PermissionMode::Default,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();

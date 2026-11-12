@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED,
   FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED,
   forkAgentRuntimeCommandGateError,
   forkAgentRuntimeHelloOverrides,
@@ -15,11 +14,8 @@ describe("forkAgentRuntimeHelloOverrides", () => {
     expect(forkAgentRuntimeHelloOverrides({})).toEqual({});
   });
 
-  it("stops claiming capabilities zcode-rs lacks", () => {
-    expect(forkAgentRuntimeHelloOverrides(rust)).toEqual({
-      incognitoSession: false,
-      incognitoPromptToggles: false,
-    });
+  it("keeps the incognito capabilities now that zcode-rs implements them", () => {
+    expect(forkAgentRuntimeHelloOverrides(rust)).toEqual({});
   });
 });
 
@@ -33,15 +29,13 @@ describe("forkAgentRuntimeCommandGateError", () => {
     ).toBeUndefined();
   });
 
-  it("refuses execution worktree commands for the rust runtime", () => {
+  it("admits execution worktree commands for the rust runtime", () => {
     for (const envelope of [
       { type: "createSession", payload: { worktreePreparation: { branchName: "b" } } },
       { type: "createSession", payload: { executionWorktree: { path: "/wt" } } },
       { type: "updateWorktreePreparation", payload: {} },
     ]) {
-      expect(forkAgentRuntimeCommandGateError(envelope, rust)).toBe(
-        FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED,
-      );
+      expect(forkAgentRuntimeCommandGateError(envelope, rust)).toBeUndefined();
     }
   });
 

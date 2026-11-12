@@ -14,6 +14,7 @@ mod auto_mode;
 mod auxiliary;
 mod changed;
 mod config;
+mod desktop;
 mod directory;
 mod environment;
 mod input_reminders;
@@ -46,6 +47,7 @@ use rust_cli_kernel_api::env::EnvFacts;
 use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::ids::MessageId;
+use rust_cli_kernel_api::incognito::{IncognitoKey, IncognitoProfiles};
 use rust_cli_kernel_api::listing::{ListingEntry, ListingSource, Listings};
 use rust_cli_kernel_api::machine::Git;
 use rust_cli_kernel_api::machine::{EnvInfo, Files, Shell};
@@ -59,7 +61,7 @@ use rust_cli_prompts::{models, reminder};
 use serde_json::Value;
 
 pub use analysis::{Analysis, MemoryFile, PromptSection};
-pub use config::{Attribution, ContextConfig, OutputStyle, Surface};
+pub use config::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
 
 use crate::instructions::{Lookup, Memo};
 use crate::render::since_boundary;
@@ -107,6 +109,11 @@ pub struct PromptAssembler {
     tasks: Late<Arc<dyn TaskReader>>,
     /// 连上的远端机器（R3，remote-exec.md §20.5.3）：机器清单提醒读它的快照；没有时不提醒。
     machines: Option<Arc<dyn EnvironmentRegistry>>,
+    /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"); the prompt and
+    /// announcement gates read the request's session.
+    incognito: IncognitoProfiles,
+    /// Fork: Gen UI output directories already created (Node creates its one once, at context initialization).
+    gen_ui_dirs: desktop::Directories,
 }
 
 /// 当步 attachment 属于哪个循环（docs/specs/rust-cli/agents.md §4.3）。
@@ -158,7 +165,37 @@ impl PromptAssembler {
             changed: None,
             tasks: Late::new(),
             machines: None,
+            incognito: IncognitoProfiles::default(),
+            gen_ui_dirs: desktop::Directories::default(),
         }
+    }
+
+    /// Fork: Node's desktop section for this request's session ([`ContextConfig::desktop`]), rendered. A Gen UI
+    /// directory is named only after it exists: like Node (`ensureGenUiOutputDirectory`), a failure to create it fails
+    /// the request instead of sending the model elsewhere.
+    async fn desktop_section(
+        &self,
+        request: &ContextRequest,
+    ) -> Result<Option<String>, OrchestrationError> {
+        // Node children do not inherit the presentation surface or the Gen UI root: no request of a child session
+        // (its own steps, and its auto-compaction, which keeps the agent id but runs as `QuerySource::Compact` through
+        // this assembler) names or creates a directory. The node_desktop app-server has no fork subagent.
+        if request.agent.is_some() || matches!(request.source, QuerySource::Subagent(_)) {
+            return Ok(None);
+        }
+        let Some(desktop) = self.config.desktop.as_ref() else {
+            return Ok(None);
+        };
+        let directory = self
+            .gen_ui_dirs
+            .for_session(
+                desktop,
+                self.ports.files.as_ref(),
+                &request.workspace,
+                request.session.as_str(),
+            )
+            .await?;
+        Ok(Some(desktop::section(directory.as_deref())))
     }
 
     /// 接上执行环境的注册表：连上、断开远端机器时发机器清单提醒（remote-exec.md §20.5.3）。
@@ -182,6 +219,48 @@ impl PromptAssembler {
         self
     }
 
+    /// Fork: the incognito profiles the gates read (the runtime's one owner).
+    pub fn with_incognito(mut self, incognito: IncognitoProfiles) -> Self {
+        self.incognito = incognito;
+        self
+    }
+
+    /// Fork: the request's session is incognito and does not keep `key`.
+    pub(crate) fn excludes(&self, request: &ContextRequest, key: IncognitoKey) -> bool {
+        self.incognito.excludes(&request.session, key)
+    }
+
+    /// Fork: the memory directory, unless the session is incognito without `memory`.
+    fn memory_dir(&self, request: &ContextRequest) -> Option<&str> {
+        self.config
+            .memory_dir
+            .as_deref()
+            .filter(|_| !self.excludes(request, IncognitoKey::Memory))
+    }
+
+    /// Fork: the configured output style, unless the session is incognito without `outputStyle`.
+    pub(crate) fn output_style(&self, request: &ContextRequest) -> Option<&config::OutputStyle> {
+        self.config
+            .output_style
+            .as_ref()
+            .filter(|_| !self.excludes(request, IncognitoKey::OutputStyle))
+    }
+
+    /// Fork: `--system-prompt` and `--append-system-prompt`, unless the session is incognito without
+    /// `systemPromptOverrides`.
+    pub(crate) fn prompt_overrides(
+        &self,
+        request: &ContextRequest,
+    ) -> (Option<&str>, Option<&str>) {
+        if self.excludes(request, IncognitoKey::SystemPromptOverrides) {
+            return (None, None);
+        }
+        (
+            self.config.custom_system_prompt.as_deref(),
+            self.config.append_system_prompt.as_deref(),
+        )
+    }
+
     fn scope<'a>(&'a self, request: &'a ContextRequest, facts: &EnvFacts) -> Scope<'a> {
         Scope {
             files: self.ports.files.as_ref(),
@@ -195,8 +274,13 @@ impl PromptAssembler {
     /// 读一次规则文件（启动时的层级加自动记忆），不经缓存。
     async fn load_rule_files(&self, request: &ContextRequest, facts: &EnvFacts) -> Vec<RuleFile> {
         let scope = self.scope(request, facts);
-        let mut loaded = scope.startup(&facts.platform).await;
-        if let Some(dir) = &self.config.memory_dir
+        // Fork: incognito without `projectInstructions` reads no rule files; the auto-memory index follows `memory`.
+        let mut loaded = if self.excludes(request, IncognitoKey::ProjectInstructions) {
+            Vec::new()
+        } else {
+            scope.startup(&facts.platform).await
+        };
+        if let Some(dir) = self.memory_dir(request)
             && let Some(memory) = scope.auto_memory(dir).await
         {
             loaded.push(memory);
@@ -294,6 +378,7 @@ impl PromptAssembler {
         if let Some(typed) = input.as_ref().and_then(input_reminders::typed)
             && self.config.surface == Surface::Interactive
             && has_tool(SKILL_TOOL)
+            && !self.excludes(request, IncognitoKey::Skills)
         {
             let names = self
                 .ports
@@ -310,7 +395,9 @@ impl PromptAssembler {
         // 主工作目录是这个会话的当前目录：子代理的子会话在派生时取父会话当时的目录（F19，tools-files.md §3.3），
         // 与运行开始那一组（`subagent_start`）同一来源。
         let shown = self.shown_facts(request, facts.as_ref()).await;
-        if let Some(found) = shown.as_ref().and_then(|shown| {
+        // Fork: incognito without `environment` announces neither the environment nor the model (Node env block).
+        let environment = !self.excludes(request, IncognitoKey::Environment);
+        if let Some(found) = shown.as_ref().filter(|_| environment).and_then(|shown| {
             environment::announce(history, shown, &self.config.additional_directories)
         }) {
             out.push(self.attachment(environment::SOURCE, found));
@@ -324,6 +411,7 @@ impl PromptAssembler {
         }
         out.extend(
             announce::model(history, &request.selection)
+                .filter(|_| environment)
                 .map(|found| self.attachment(announce::MODEL, found)),
         );
         // `ultrathink`（工作线 F82）：生产者顺序在模型身份之后、延迟工具清单之前。
@@ -361,7 +449,10 @@ impl PromptAssembler {
                 out.push(self.attachment(changed::SOURCE, changed::render(&change)));
             }
         }
-        if let Some(facts) = facts.as_ref().filter(|_| !thread.omits_context()) {
+        // Fork: nested rules are project instructions too.
+        let nested =
+            !thread.omits_context() && !self.excludes(request, IncognitoKey::ProjectInstructions);
+        if let Some(facts) = facts.as_ref().filter(|_| nested) {
             let (files, _) = self.rule_files(request, facts, boundary).await;
             let scope = self.scope(request, facts);
             let seen = (
@@ -436,8 +527,10 @@ impl PromptAssembler {
                 instructions::announce(history, &files, reason)
                     .map(|found| self.attachment(instructions::SOURCE, found)),
             );
-            // `--system-prompt` 时 systemContext 为空：不发 git 状态（cli-args.md §4.2）。
-            if self.config.custom_system_prompt.is_none() {
+            // `--system-prompt` 时 systemContext 为空：不发 git 状态（cli-args.md §4.2）。Fork: nor without `environment`.
+            if self.prompt_overrides(request).0.is_none()
+                && !self.excludes(request, IncognitoKey::Environment)
+            {
                 let git = self.ports.git.as_ref();
                 out.extend(
                     session_context::announce(git, &request.workspace, facts, history)
@@ -471,16 +564,19 @@ impl ContextBuilder for PromptAssembler {
             .listings
             .listings_for(&request, since_boundary(history))
             .await?;
+        let desktop = self.desktop_section(&request).await?;
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(&request),
             tool_names: &request.tool_names,
             has_skills: !listings.skills.is_empty(),
-            memory_dir: self.config.memory_dir.as_deref(),
-            output_style: self.config.output_style.as_ref(),
-            custom: self.config.custom_system_prompt.as_deref(),
-            append: self.config.append_system_prompt.as_deref(),
+            memory_dir: self.memory_dir(&request),
+            output_style: self.output_style(&request),
+            custom: self.prompt_overrides(&request).0,
+            append: self.prompt_overrides(&request).1,
             token_budget: self.config.token_budget,
+            incognito: self.incognito.get(&request.session),
+            desktop: desktop.as_deref(),
         };
         let system = system_blocks(&facts);
         // 当步的 attachment 在 `start_attachments` / `turn_attachments`（query.md §1.1；子代理同样，F16）；摘要请求见

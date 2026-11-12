@@ -121,6 +121,7 @@ fn view(running: bool, running_turn: bool) -> SessionView {
     let mut view = SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default);
     if running_turn {
         view.messages = vec![Message::User(UserMessage {
+            intent: None,
             id: rust_cli_kernel_api::ids::MessageId::new("m1"),
             content: vec![ContentBlock::Text {
                 text: "hello".into(),
@@ -144,6 +145,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace"),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 

@@ -75,7 +75,11 @@ impl AgentTool {
         if self.core.fork && wanted == crate::fork::FORK {
             return Ok(crate::fork::definition());
         }
-        let definitions = self.core.catalog.definitions(&context.workspace).await;
+        let definitions = self
+            .core
+            .catalog
+            .definitions_in(&context.workspace, Some(&context.session))
+            .await;
         if let Some(found) = definitions.iter().find(|agent| agent.agent_type == wanted) {
             return Ok(found.clone());
         }
@@ -221,6 +225,12 @@ impl Tool for AgentTool {
             .and_then(|owner| core.live.get(owner))
             .map_or(1, |owner| owner.depth + 1);
         let (agent, child) = spawn::ids(core);
+        // Fork: the child runs in the same workspace, so a deleted execution worktree refuses its tools too.
+        let execution_worktree = context
+            .session_ops
+            .view()
+            .await
+            .is_some_and(|view| view.execution_worktree);
         let entry = LiveAgent {
             agent,
             child,
@@ -230,6 +240,7 @@ impl Tool for AgentTool {
             depth,
             tool_use: Some(context.tool_use.clone()),
             stopped_by_user: false,
+            erased: false,
             description: input.description.clone(),
             // fork 总用父运行的模型与档位（`effort` 参数忽略）。
             selection: if fork {
@@ -244,6 +255,7 @@ impl Tool for AgentTool {
             mode: spawn::mode(parent.mode, definition.permission_mode),
             definition: Arc::new(definition),
             workspace: context.workspace.clone(),
+            execution_worktree,
             // 执行管线已按 Agent 的 `machine` 换好了机器（R3）：远端时记下它，子代理的工具缺省在那里跑。
             machine: context.machine.name().clone(),
             background,
@@ -270,7 +282,7 @@ impl Tool for AgentTool {
                     message: error.to_string(),
                 })?;
         // 子会话里后台命令的通知送给这个子代理（agents.md §5.2）。
-        crate::shell_notices::watch(core, &entry);
+        crate::shell_notices::watch(core, &entry.child, &entry.root);
         if background {
             let output = launched_output(&entry);
             spawn::background(core, entry, opening);

@@ -8,6 +8,7 @@ use crate::peers::PeerItem;
 
 fn input(command: &str, text: &str, delivery: Delivery) -> QueuedInput {
     QueuedInput {
+        intent: None,
         command: CommandId::new(command),
         text: text.to_owned(),
         delivery,

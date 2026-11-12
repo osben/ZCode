@@ -69,3 +69,14 @@ fn documents_are_input_files_with_the_ai_sdk_name() {
         "{body}"
     );
 }
+
+/// `@ai-sdk/openai` Responses has no video input part: Node throws `UnsupportedFunctionalityError` for it.
+#[test]
+fn videos_are_refused_like_the_ai_sdk() {
+    let request = request(crate::openai::lower::tests::video_turn());
+    let error = body(models::GPT_5_6, request, &[]).unwrap_err();
+    assert!(
+        error.to_string().contains("file part media type video/mp4"),
+        "{error}"
+    );
+}

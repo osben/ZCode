@@ -225,7 +225,7 @@ impl Transcript {
             KernelEvent::PlanChanged { enabled } => {
                 self.execution = self.execution.with_plan(enabled)
             }
-            KernelEvent::TitleChanged { title } => self.title = title,
+            KernelEvent::TitleChanged { title, .. } => self.title = title,
             KernelEvent::ContextNotice { notice } => self.context = notice,
             // footer 的 ctx（F27）：F14 到 F27 之间内核不发这个事件。
             KernelEvent::ContextUsage {
@@ -520,7 +520,7 @@ impl Transcript {
                 (TurnState::Success, None)
             }
             TurnOutcome::Interrupted => (TurnState::Interrupted, None),
-            TurnOutcome::Failed { message } => (TurnState::Failed, Some(message)),
+            TurnOutcome::Failed { message, .. } => (TurnState::Failed, Some(message)),
         };
         if let Some(at) = self
             .rows

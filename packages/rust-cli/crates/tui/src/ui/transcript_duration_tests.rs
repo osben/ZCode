@@ -63,6 +63,7 @@ fn typed(app: &mut App, seq: &mut u64, id: &str) {
         seq,
         vec![KernelEvent::MessageDone {
             message: Message::User(UserMessage {
+                intent: None,
                 id: MessageId::new(id),
                 content: vec![ContentBlock::Text { text: id.into() }],
                 origin: UserOrigin::Human,

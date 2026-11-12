@@ -105,6 +105,7 @@ impl Compactor for FakeCompactor {
                 discovered_tools: Vec::new(),
             },
             summary: UserMessage {
+                intent: None,
                 id: MessageId::new("msg_s"),
                 content: vec![ContentBlock::Text {
                     text: "S".to_owned(),
@@ -128,6 +129,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -156,6 +158,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
         limits: rust_cli_query::RequestLimits::default(),
     }));
     let history = vec![Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_u"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -206,10 +209,13 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            title_source: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -354,7 +360,8 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
                 other => panic!("{other:?}"),
             },
             outcome: TurnOutcome::Failed {
-                message: "Not enough messages to compact.".to_owned()
+                message: "Not enough messages to compact.".to_owned(),
+                code: None,
             },
             usage: None,
         })

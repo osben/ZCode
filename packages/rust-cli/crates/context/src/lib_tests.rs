@@ -45,6 +45,7 @@ fn assembler_with(config: ContextConfig) -> PromptAssembler {
 /// 回合从一条人类输入开始。
 fn prompt() -> Vec<Message> {
     vec![Message::User(rust_cli_kernel_api::message::UserMessage {
+        intent: None,
         id: rust_cli_kernel_api::ids::MessageId::new("msg_u"),
         content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
             text: "hi".to_owned(),
@@ -173,6 +174,7 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
                 }),
             }),
             Message::User(UserMessage {
+                intent: None,
                 id: MessageId::new(format!("r{index}")),
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: ToolUseId::new(format!("t{index}")),
@@ -198,6 +200,7 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
         },
     )));
     history.push(Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("s"),
         content: vec![ContentBlock::Text {
             text: "summary".to_owned(),
@@ -242,5 +245,92 @@ async fn without_the_token_budget_nothing_mentions_total_tokens() {
             .attachments
             .iter()
             .all(|item| item.source != "total_tokens_reminder")
+    );
+}
+
+/// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): `outputStyle` and `systemPromptOverrides` drop the
+/// configured output style and the `--append-system-prompt` text; a normal session keeps them.
+#[tokio::test]
+async fn an_incognito_profile_drops_the_output_style_and_prompt_overrides() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let profiles = IncognitoProfiles::default();
+    profiles.record(&SessionId::new("locked"), Some(IncognitoProfile::LOCKDOWN));
+    let styled = {
+        let mut config = ContextConfig::new(Surface::Print);
+        config.append_system_prompt = Some("APPENDED-TEXT".to_owned());
+        config.output_style = Some(OutputStyle {
+            name: "Explanatory".to_owned(),
+            keep_coding_instructions: true,
+        });
+        assembler_with(config).with_incognito(profiles.clone())
+    };
+    let plain = assembler().with_incognito(profiles);
+    async fn system(assembler: &PromptAssembler, session: &str) -> Vec<String> {
+        let mut request = request(QuerySource::MainThread);
+        request.session = SessionId::new(session);
+        assembler
+            .build(request, &[])
+            .await
+            .unwrap()
+            .system
+            .iter()
+            .map(|block| block.text.clone())
+            .collect()
+    }
+    let normal = system(&styled, "s").await;
+    assert!(normal.iter().any(|text| text.contains("APPENDED-TEXT")));
+    assert_ne!(normal, system(&plain, "s").await);
+    assert_eq!(
+        system(&styled, "locked").await,
+        system(&plain, "locked").await
+    );
+}
+
+/// Fork (ZCode Desktop Context): a child session (its steps and its auto-compaction) neither names nor creates a Gen UI
+/// directory (Node children do not inherit the surface or the root); the main thread creates it before the request, so a failure there fails the build.
+/// `UnusedEnvironment` refuses `ensure_dir`, which makes any creation attempt visible.
+#[tokio::test]
+async fn only_the_main_thread_creates_the_gen_ui_directory() {
+    let mut config = ContextConfig::new(Surface::Interactive);
+    config.desktop = Some(DesktopContext {
+        gen_ui_root: Some("/root/visualizations".to_owned()),
+    });
+    let built = assembler_with(config.clone())
+        .build(
+            request(QuerySource::Subagent("Explore".to_owned())),
+            &prompt(),
+        )
+        .await
+        .unwrap();
+    let system: String = built
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect();
+    assert!(!system.contains("ZCode Desktop Context"));
+    // A child's auto-compaction keeps the agent id but runs as `Compact` on this assembler.
+    let child_compact = ContextRequest {
+        agent: Some(rust_cli_kernel_api::ids::AgentId::new("agent_1")),
+        ..request(QuerySource::Compact)
+    };
+    let built = assembler_with(config.clone())
+        .build(child_compact, &prompt())
+        .await
+        .unwrap();
+    let system: String = built
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect();
+    assert!(!system.contains("ZCode Desktop Context"));
+    let error = assembler_with(config)
+        .build(request(QuerySource::MainThread), &prompt())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Gen UI output directory unavailable"),
+        "{error}"
     );
 }

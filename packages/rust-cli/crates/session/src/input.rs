@@ -26,6 +26,7 @@ impl Actor {
         content: Vec<ContentBlock>,
         screened: Option<Box<HookOutcome>>,
         more: Vec<crate::turn::MorePrompt>,
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     ) {
         let prompt = self.deps.ids.message();
         let text = content
@@ -37,6 +38,7 @@ impl Actor {
             .collect::<Vec<_>>()
             .join("\n");
         let user = Message::User(UserMessage {
+            intent: None,
             id: prompt.clone(),
             content,
             origin: UserOrigin::Human,
@@ -63,12 +65,18 @@ impl Actor {
         let mention_context = self.command_context(&request.run, &opening.abort, sink.clone());
         let user_inputs = self.deps.inputs.clone();
         let signal = opening.abort.clone();
+        let input_id = prompt.clone();
         let task = self.deps.spawner.spawn("query-run", async move {
             // 斜杠命令先展开（UPS 在展开之后，ext.md §2.7）；不是命令时就是这条输入本身。
             let mut inputs = match goal {
                 Some(inputs) => inputs,
                 None => crate::slash::expand(commands.as_ref(), ids.as_ref(), user, context).await,
             };
+            // Fork: the quotes join the input after slash expansion (Node composes `expandedInput`, `turn.ts`), so the
+            // command, its arguments, the mentions and the UserPromptSubmit hook read the typed text only.
+            if let Some(intent) = intent {
+                attach_intent(&mut inputs.messages, &input_id, intent);
+            }
             // 普通输入的 `@` 提及（在 UPS 之前）：attachment 排在输入之后提交
             // （docs/specs/rust-cli/tui-input.md §1.1）。
             if inputs.plain && inputs.query {
@@ -116,9 +124,14 @@ impl Actor {
             }
             let mut hook_messages = outcome.messages.clone();
             for extra in more {
+                let text = match &extra.intent {
+                    Some(intent) => intent.compose(&extra.text),
+                    None => extra.text,
+                };
                 let message = Message::User(UserMessage {
+                    intent: extra.intent,
                     id: ids.message(),
-                    content: vec![ContentBlock::Text { text: extra.text }],
+                    content: vec![ContentBlock::Text { text }],
                     origin: UserOrigin::Human,
                 });
                 sink.commit_message(message.clone()).await?;
@@ -154,4 +167,32 @@ impl Actor {
             .filter(|running| running.prompt.as_ref() == Some(message))
             .and_then(|running| running.command.clone())
     }
+}
+
+/// Fork: the typed input (the message that kept the prompt's id) gets the quote block after its first text block
+/// (Node `withConversationQuotes`; quotes alone become its text) and carries the intent to the store and the rows.
+fn attach_intent(
+    messages: &mut [Message],
+    prompt: &MessageId,
+    intent: Box<rust_cli_kernel_api::input_intent::InputIntent>,
+) {
+    let Some(user) = messages.iter_mut().find_map(|message| match message {
+        Message::User(user) if user.id == *prompt && user.origin == UserOrigin::Human => Some(user),
+        _ => None,
+    }) else {
+        return;
+    };
+    match user.content.iter_mut().find_map(|block| match block {
+        ContentBlock::Text { text } => Some(text),
+        _ => None,
+    }) {
+        Some(text) => *text = intent.compose(text),
+        None => {
+            let text = intent.compose("");
+            if !text.is_empty() {
+                user.content.insert(0, ContentBlock::Text { text });
+            }
+        }
+    }
+    user.intent = Some(intent);
 }

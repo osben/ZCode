@@ -32,6 +32,7 @@ fn empty_view() -> SessionView {
             title: String::new(),
             trace: TraceId::new("trace"),
             created_at_ms: 1000,
+            incognito: None,
         },
         Vec::new(),
         selection(),
@@ -85,6 +86,7 @@ fn change(path: &str, additions: u64, deletions: u64) -> FileChange {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -237,6 +239,7 @@ fn a_notification_turn_header_is_targeted_through_its_turn_input() {
     });
     feed.apply(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("msg_notice"),
             content: vec![ContentBlock::Text {
                 text: "<task-notification>done</task-notification>".into(),

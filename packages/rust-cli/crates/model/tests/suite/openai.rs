@@ -244,6 +244,7 @@ async fn text_only_models_get_image_placeholders() {
             name: None,
         },
         cache_control: None,
+        meta: false,
     });
     for supports_image in [false, true] {
         let endpoint = ModelEndpoint {

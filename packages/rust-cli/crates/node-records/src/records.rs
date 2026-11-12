@@ -166,6 +166,8 @@ pub struct UserPrompt<'a> {
     pub selection: Option<Value>,
     pub turn: &'a str,
     pub command: Option<&'a str>,
+    /// Fork: the App input's stored intent ([`crate::input_intent::message_metadata`]).
+    pub metadata: Option<Value>,
 }
 
 /// Node `persistUserPrompt` 的消息。`agent` 是 `zcode-agent`；没有工具目录时 `tools` 为 `{}`。
@@ -180,6 +182,9 @@ pub fn user_message(p: &UserPrompt) -> Value {
         out["anchor"] = anchor;
     }
     out["tools"] = json!({});
+    if let Some(metadata) = &p.metadata {
+        out["metadata"] = metadata.clone();
+    }
     out
 }
 

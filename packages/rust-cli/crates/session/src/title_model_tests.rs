@@ -212,7 +212,8 @@ async fn usage_with_the_input_in_the_message_start_is_unchanged() {
     assert_eq!(title_usage(started, reported).await, Some(reported));
 }
 
-/// Fork: the app-server sends Node's title prompt, with the normalized input as the whole user message.
+/// Fork: the app-server sends Node's title prompt, with the seeded, normalized input as the whole user message (Node
+/// `buildTitleMessages`: `normalizeTitleInput(sanitizeTitleSeed(input))`).
 #[tokio::test]
 async fn the_node_prompt_sends_the_input_as_the_user_message() {
     let model = Arc::new(ScriptedModel::new(vec![text_response(&[
@@ -227,7 +228,7 @@ async fn the_node_prompt_sends_the_input_as_the_user_message() {
         .generate(
             &selection(),
             (&SessionId::new("sess_title"), None),
-            "  trust   the project hooks ",
+            "  trust   the [hooks.json](./.zcode/hooks.json) project hooks ",
             (&FixedClock(0), MessageId::new("msg_title")),
             CancellationToken::new(),
             super::SOURCE,
@@ -243,7 +244,14 @@ async fn the_node_prompt_sends_the_input_as_the_user_message() {
     assert_eq!(
         request.messages[0].content[0].block,
         ContentBlock::Text {
-            text: "trust the project hooks".to_owned()
+            text: "trust the hooks.json project hooks".to_owned()
         }
     );
+}
+
+/// Node checks the length on the seeded input: a lone file mention is as short as its label.
+#[test]
+fn the_length_guard_reads_the_seeded_input() {
+    let long_path = format!("[a.ts](./{}/a.ts)", "deep/".repeat(20));
+    assert!(!super::long_enough(&long_path));
 }

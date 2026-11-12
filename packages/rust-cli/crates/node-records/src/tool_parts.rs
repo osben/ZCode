@@ -211,6 +211,7 @@ pub fn results(assistant: &MessageId, tools: &[&Value]) -> Vec<(Option<String>, 
             _ => out.push((
                 after,
                 UserMessage {
+                    intent: None,
                     id: MessageId::new(id),
                     content: vec![block],
                     origin: UserOrigin::ToolResult {

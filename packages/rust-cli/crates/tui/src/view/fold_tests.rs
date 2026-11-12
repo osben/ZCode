@@ -54,6 +54,7 @@ impl Feed {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -80,6 +81,7 @@ fn tool_use(id: &str, name: &str) -> ContentBlock {
 
 fn tool_result(id: &str, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(format!("r_{id}")),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(id),
@@ -243,6 +245,7 @@ fn a_failed_turn_shows_its_reason() {
     let mut feed = Feed::new();
     feed.push(started()).push(finished(TurnOutcome::Failed {
         message: "busy".into(),
+        code: None,
     }));
     let bodies = bodies(&feed.view);
     assert_eq!(bodies[0], Body::Turn(TurnState::Failed));
@@ -254,6 +257,7 @@ fn a_failed_turn_shows_its_reason() {
     let mut feed = Feed::new();
     feed.push(started()).push(finished(TurnOutcome::Failed {
         message: "Prompt is too long".into(),
+        code: None,
     }));
     let Body::Failure(failure) = &bodies_of(&feed)[1] else {
         panic!("失败块");
@@ -363,6 +367,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
 fn steered_input_leaves_the_queue_and_shows_as_a_user_row() {
     let mut feed = Feed::new();
     let queued = QueuedInput {
+        intent: None,
         command: CommandId::new("c2"),
         text: "also this".into(),
         delivery: Delivery::Steer,

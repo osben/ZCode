@@ -26,6 +26,7 @@ fn read(path: &str) -> Vec<Message> {
             usage: None,
         }),
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("u1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("t1"),
@@ -70,12 +71,12 @@ async fn the_listing_hides_model_disabled_and_inactive_conditional_skills() {
         lines
     };
     assert_eq!(
-        lines(catalog.listing(&workspace(), &[], "").await),
+        lines(catalog.listing(&workspace(), None, &[], "").await),
         ["- always: Always"]
     );
     let history = read(&format!("{CWD}/src/main.ts"));
     assert_eq!(
-        lines(catalog.listing(&workspace(), &history, "").await),
+        lines(catalog.listing(&workspace(), None, &history, "").await),
         ["- always: Always", "- ts: TS"]
     );
 }

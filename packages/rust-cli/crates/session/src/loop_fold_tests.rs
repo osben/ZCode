@@ -15,6 +15,7 @@ fn prompt(id: &str) -> Message {
 
 fn meta(id: &str, source: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: "x".to_owned(),
@@ -41,6 +42,7 @@ fn wakeup(id: &str, tool: &str, noop: bool) -> Message {
 
 fn result(id: &str, tool: &str, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(tool),
@@ -108,6 +110,7 @@ fn work_or_foreign_input_vetoes_the_fold() {
     assert_eq!(state.analyze(&tick(false)), None, "the model reported work");
     let vetoes: Vec<Message> = vec![
         Message::User(UserMessage {
+            intent: None,
             id: MessageId::new("h"),
             content: vec![ContentBlock::Text {
                 text: "hi".to_owned(),

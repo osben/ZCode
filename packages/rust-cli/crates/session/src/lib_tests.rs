@@ -33,6 +33,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -287,10 +288,13 @@ async fn asking_session_with(
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            title_source: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -374,6 +378,9 @@ mod submit_with;
 
 #[path = "queue_edit_tests.rs"]
 mod queue_edit;
+
+#[path = "quote_intent_tests.rs"]
+mod quote_intent;
 
 #[path = "notice_tests.rs"]
 mod notice;

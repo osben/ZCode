@@ -14,6 +14,7 @@ pub mod branch;
 pub mod codecs;
 pub mod compaction;
 pub mod hydrate;
+pub mod input_intent;
 pub mod keys;
 pub mod mode;
 pub mod notices;

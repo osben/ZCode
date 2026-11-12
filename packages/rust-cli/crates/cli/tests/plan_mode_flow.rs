@@ -126,6 +126,7 @@ async fn run(dir: &Path) -> (Arc<ScriptedModel>, String) {
             selection: selection(),
             mode: PermissionMode::Guarded,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

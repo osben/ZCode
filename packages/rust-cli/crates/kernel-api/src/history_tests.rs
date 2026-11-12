@@ -8,6 +8,7 @@ use super::active;
 
 fn user(id: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: id.to_owned(),

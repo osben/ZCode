@@ -44,6 +44,9 @@ pub struct Pipeline {
     hooks: Arc<dyn HookRunner>,
     /// 按调用的 `machine` 选机器（R3，remote-exec.md §20.6）；没有时不路由。
     machines: Machines,
+    /// Fork: the incognito tool gate; a tool the session's profile removes is not called even when the model names
+    /// it (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    incognito: Option<Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>>,
 }
 
 /// 子代理里的询问被拒时的结果文字（主线程是 [`REJECT_MESSAGE`]，docs/specs/rust-cli/agents.md §4.1.1）。
@@ -121,7 +124,18 @@ impl Pipeline {
             gate,
             hooks,
             machines: Machines::default(),
+            incognito: None,
         }
+    }
+
+    /// Fork: check every call against the session's incognito profile.
+    #[must_use]
+    pub fn with_incognito(
+        mut self,
+        gate: Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>,
+    ) -> Self {
+        self.incognito = Some(gate);
+        self
     }
 
     /// 接上执行环境的注册表：带 `machine` 参数的工具按调用选机器（remote-exec.md §20.6）。
@@ -311,6 +325,14 @@ impl Pipeline {
             .route(tool, &mut input, context, &plan)
             .map_err(|message| Rejection::Other(wrapped(&message)))?;
         let context = &call.context;
+        // Fork: a tool that runs in the workspace is refused while the session's execution worktree is gone, like
+        // Node's `getMissingExecutionWorktreeToolError`; nothing runs in or recreates it. An ordinary session is not
+        // guarded (`missing_workspace`).
+        if tool.machine_param() == rust_cli_kernel_api::machine_param::MachineParam::RunsThere
+            && let Some(message) = crate::common::missing_workspace(context).await
+        {
+            return Err(Rejection::Other(wrapped(&message)));
+        }
         if let Validation::Invalid { message, .. } = tool.validate_input(&input, context).await {
             return Err(Rejection::Other(wrapped(&message)));
         }
@@ -454,6 +476,17 @@ impl ToolExecutor for Pipeline {
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
     ) -> ToolExecution {
+        if self
+            .incognito
+            .as_ref()
+            .is_some_and(|gate| gate.hides(&context.session, tool.as_ref()))
+        {
+            // Same answer as a tool that is not registered: the session never had it.
+            return ToolExecution::output(error(format!(
+                "<tool_use_error>Error: No such tool available: {}</tool_use_error>",
+                tool.name()
+            )));
+        }
         let mut messages = HookMessages::default();
         let (input, call) = match self
             .admit(tool.as_ref(), input, context, &mut messages)

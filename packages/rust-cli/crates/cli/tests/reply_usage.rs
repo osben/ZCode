@@ -160,6 +160,7 @@ impl Sandbox {
                 selection,
                 mode: PermissionMode::BypassPermissions,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();

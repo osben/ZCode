@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, MessageId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::model::{ModelConnection, ModelSelection};
 use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::store::{
@@ -62,6 +63,10 @@ pub fn load(
             row.title_source.as_deref().unwrap_or("first_input"),
             "default" | "first_input"
         ),
+        title_source: row
+            .title_source
+            .as_deref()
+            .map(rust_cli_kernel_api::title::Source::stored),
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。
@@ -72,6 +77,8 @@ pub fn load(
             }
             None => false,
         },
+        // Fork: set by `fork_execution_worktree::run_in_worktree` after the load.
+        execution_worktree: false,
     };
     Ok((loaded, crate::rewind::active_checkpoints(conn, session)?))
 }
@@ -140,6 +147,8 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
             created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
             last_outcome: row.last_outcome,
             parent: row.parent_id.map(SessionId::new),
+            title_source: row.title_source,
+            incognito: row.incognito.is_some(),
         })
         .collect())
 }
@@ -165,6 +174,8 @@ fn meta(row: &SessionRow) -> SessionMeta {
         // Node 会话都写 traceID；缺失时（极旧的会话）链路 ID 取会话 ID。
         trace: TraceId::new(row.trace_id.as_deref().unwrap_or(&row.id)),
         created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
+        // Fork: a present column never reads as a normal session (unparseable values read as lockdown).
+        incognito: row.incognito.as_deref().map(IncognitoProfile::from_stored),
     }
 }
 

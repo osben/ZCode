@@ -39,6 +39,7 @@ import {
   prepareProtocolStartupStorage,
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
+import { seedOfficialPluginsForForkRustAgent } from "./fork-agent-runtime/contract.js";
 import { resolveMcpNodeFallbackProvider } from "./app/mcp-node-fallback.js";
 import { getCliStorageRoot, getPluginStorageRoot, getProjectMemoryRoot } from "./app/paths.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
@@ -111,6 +112,13 @@ export async function runZCodeProtocolAgent(
       dbPath: getSessionDbPath(config, options.cwd),
       input: options.input ?? process.stdin,
       output: options.output ?? process.stdout,
+    });
+    // Fork patch: lay out the official plugin cache for the Rust agent, after the database so the
+    // Host's first-frame timer never waits on it (specs/fork-agent-runtime-selection.md, rule 3).
+    await seedOfficialPluginsForForkRustAgent({
+      cwd: options.cwd ?? process.cwd(),
+      env: options.env,
+      logger: createNodeLoggerFactory({ env: options.env }).createLogger("zcode"),
     });
     return;
   }

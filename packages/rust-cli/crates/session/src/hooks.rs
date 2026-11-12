@@ -11,9 +11,7 @@ use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::interaction::NOTIFY_AFTER as PERMISSION_NOTIFY_DELAY;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
-use rust_cli_kernel_api::session_api::{
-    Delivery, EndReason, KernelEvent, QueuedInput, StartSource,
-};
+use rust_cli_kernel_api::session_api::{Delivery, EndReason, QueuedInput, StartSource};
 use rust_cli_kernel_api::store::{Fact, SessionMeta};
 use serde_json::{Map, Value, json};
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -101,7 +99,7 @@ pub(crate) async fn session_end(
 }
 
 /// SessionStart 给的首条输入的命令 ID 前缀。
-pub(crate) const SESSION_START_INPUT: &str = "session-start-";
+pub(crate) const SESSION_START_INPUT: &str = rust_cli_kernel_api::session_api::SESSION_START_INPUT;
 
 impl Actor {
     /// actor 启动时：有 SessionStart hook 才进入"启动"后台工作（没有时不改变行为，无竞态）。
@@ -143,6 +141,7 @@ impl Actor {
             ));
             // 排在最前（通道与队列的头部），回合结束后先开它。
             self.inbox.push_first(QueuedInput {
+                intent: None,
                 command,
                 text,
                 delivery: Delivery::Queue,
@@ -165,8 +164,7 @@ impl Actor {
         }
         // hook 给的标题按 Node 记为 custom：之后不再自动生成（titles.md §4）。
         self.titles.mark_custom();
-        self.meta.title.clone_from(&title);
-        self.log.append(KernelEvent::TitleChanged { title });
+        self.set_title(title, rust_cli_kernel_api::title::Source::Custom);
     }
 
     /// UserPromptSubmit 的事件：`{prompt, session_title?}`，带当前模式（hooks.md §7）。

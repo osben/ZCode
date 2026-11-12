@@ -49,6 +49,7 @@ fn view(messages: Vec<Message>) -> SessionView {
             title: String::new(),
             trace: TraceId::new("trace"),
             created_at_ms: 1000,
+            incognito: None,
         },
         messages,
         selection(),
@@ -58,6 +59,7 @@ fn view(messages: Vec<Message>) -> SessionView {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -457,7 +459,14 @@ fn the_revision_comes_from_the_events_only() {
         revision,
     };
     let deltas = projection.apply(
-        &event(1, 4, KernelEvent::TitleChanged { title: "t".into() }),
+        &event(
+            1,
+            4,
+            KernelEvent::TitleChanged {
+                title: "t".into(),
+                source: Default::default(),
+            },
+        ),
         0,
     );
     assert_eq!(deltas[0]["patch"]["revision"], 4);
@@ -524,6 +533,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c1"),
             text: "hi".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -570,6 +580,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
 
     let message = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
             ContentBlock::Text { text: "see".into() },
@@ -581,6 +592,9 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
                     reference: Some("zcode-artifact://session_1/a".into()),
                     preview_reference: Some("zcode-artifact://session_1/b".into()),
                     stored: None,
+                    material: None,
+                    image: None,
+                    unnamed: false,
                     body: AttachedBody::Omitted,
                 },
             },
@@ -611,12 +625,130 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     );
     assert_eq!(
         projection.attachment_mime("zcode-artifact://session_1/b"),
-        Some("image/png".into())
+        Some(("image/png".into(), false))
     );
     assert_eq!(
         projection.attachment_mime("zcode-artifact://session_1/c"),
         None
     );
+}
+
+/// Fork: Share reads (`v4/conversation/attachmentRead` / `attachmentStat`) are authorised by the row, the index and the
+/// ref, and open the stored part's artifact before the App's local path (Node `resolvePromptAttachment`).
+#[test]
+fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
+    use rust_cli_kernel_api::message::{AttachedBody, AttachedFile, ImageSource};
+
+    let file = |name: &str, reference: &str, stored: Option<&str>, body: AttachedBody| {
+        ContentBlock::File {
+            file: AttachedFile {
+                name: name.into(),
+                mime: "text/markdown".into(),
+                bytes: 4,
+                reference: Some(reference.into()),
+                preview_reference: None,
+                stored: stored.map(Box::from),
+                material: None,
+                image: None,
+                unnamed: false,
+                body,
+            },
+        }
+    };
+    let message = Message::User(UserMessage {
+        intent: None,
+        id: MessageId::new("msg_u1"),
+        content: vec![
+            ContentBlock::Text { text: "see".into() },
+            file(
+                "p.png",
+                "/tmp/p.png",
+                Some("zcode-artifact://session_1/img"),
+                AttachedBody::Image {
+                    source: ImageSource::Base64 {
+                        media_type: "image/png".into(),
+                        data: "iVBORw==".into(),
+                    },
+                },
+            ),
+            file(
+                "n.md",
+                "/tmp/n.md",
+                None,
+                AttachedBody::Text {
+                    text: "hi".into(),
+                    read: None,
+                },
+            ),
+        ],
+        origin: UserOrigin::Human,
+    });
+    let projection = Projection::from_view(
+        &view(vec![
+            message,
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let row = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "userInput")
+        .unwrap()
+        .clone();
+    let row_id = row["rowId"].as_u64().unwrap();
+    assert_eq!(
+        projection.row_attachment(row_id, "msg_u1", 0, "/tmp/p.png"),
+        Some(AttachmentSource {
+            mime: "image/png".into(),
+            source: Some("zcode-artifact://session_1/img".into()),
+        })
+    );
+    assert_eq!(
+        projection.row_attachment(row_id, "msg_u1", 1, "/tmp/n.md"),
+        Some(AttachmentSource {
+            mime: "text/plain".into(),
+            source: Some("/tmp/n.md".into()),
+        })
+    );
+    // Another index, another row or a ref the row does not carry is refused.
+    assert_eq!(
+        projection.row_attachment(row_id, "msg_u1", 1, "/tmp/p.png"),
+        None
+    );
+    assert_eq!(
+        projection.row_attachment(row_id, "msg_a1", 0, "/tmp/p.png"),
+        None
+    );
+    assert_eq!(
+        projection.row_attachment(row_id + 1, "msg_u1", 0, "/tmp/p.png"),
+        None
+    );
+    // `v4/attachment/read` with a row target: the chip's MIME authorises it, the stored part is what it reads.
+    let chip_mime = row["attachments"][0]["mime"].as_str().unwrap().to_owned();
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_u1", 0, "/tmp/p.png"),
+        Some((chip_mime, false))
+    );
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_u1", 1, "/tmp/p.png"),
+        None
+    );
+    assert_eq!(
+        projection.row_chip_mime(row_id, "msg_a1", 0, "/tmp/p.png"),
+        None
+    );
+    // Without a row target the ref alone finds its chip (Node's previewSource).
+    assert_eq!(
+        projection
+            .attachment_source("/tmp/n.md")
+            .and_then(|source| source.source),
+        Some("/tmp/n.md".into())
+    );
+    assert_eq!(projection.attachment_source("/tmp/other.png"), None);
 }
 
 /// Fork: one finished turn `n` (typed input `msg_u<n>`, reply `msg_a<n>`).
@@ -974,6 +1106,7 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -1005,6 +1138,56 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
     assert_eq!(resumed["patch"]["inputRouting"]["mode"], "startNow");
 }
 
+/// Fork: a failed turn's `lastError.code` is the failure's Node error code when it has one (the media budget's
+/// `MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE`, which the App localizes), else `fault.turn.failed`.
+#[test]
+fn a_failed_turn_carries_its_node_error_code() {
+    fn last_error(deltas: &[Value]) -> Value {
+        fn find(value: &Value) -> Option<Value> {
+            match value {
+                Value::Object(map) => map
+                    .get("lastError")
+                    .filter(|error| !error.is_null())
+                    .cloned()
+                    .or_else(|| map.values().find_map(find)),
+                Value::Array(items) => items.iter().find_map(find),
+                _ => None,
+            }
+        }
+        deltas.iter().find_map(find).expect("a lastError patch")
+    }
+    let error = rust_cli_kernel_api::model::ModelError::CurrentAttachmentsTooLarge;
+    for (n, (message, code, expected)) in [
+        (
+            error.to_string(),
+            error.code().map(str::to_owned),
+            "MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE",
+        ),
+        ("upstream 500".to_owned(), None, "fault.turn.failed"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut feed = Feed::new();
+        let turn = TurnId::new(format!("turn_{n}"));
+        feed.apply(KernelEvent::TurnStarted {
+            turn: turn.clone(),
+            command: None,
+        });
+        let deltas = feed.apply(KernelEvent::TurnFinished {
+            turn,
+            outcome: TurnOutcome::Failed {
+                message: message.clone(),
+                code,
+            },
+            usage: None,
+        });
+        let error = last_error(&deltas);
+        assert_eq!(error["code"], expected);
+        assert_eq!(error["message"], message.as_str());
+    }
+}
+
 /// Fork: a failed turn with waiting inputs pauses the queue with `pauseReason: "error"` (Node `onTurnError`); a failed
 /// manual `/compact` turn and a failed turn with an empty queue do not.
 #[test]
@@ -1012,6 +1195,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
     use rust_cli_kernel_api::message::CompactTrigger;
     let queued = || KernelEvent::QueueChanged {
         items: vec![QueuedInput {
+            intent: None,
             command: CommandId::new("c2"),
             text: "later".into(),
             delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
@@ -1023,6 +1207,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
         turn: TurnId::new(turn),
         outcome: TurnOutcome::Failed {
             message: "upstream 500".into(),
+            code: None,
         },
         usage: None,
     };
@@ -1078,6 +1263,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
     use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
     let mut feed = Feed::new();
     let item = |id: &str, text: &str, kind, execution| QueuedInput {
+        intent: None,
         command: CommandId::new(id),
         text: text.into(),
         delivery: Delivery::Queue,
@@ -1370,6 +1556,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
     assert!(row.get("output").is_none(), "{row}");
 
     let result = Message::User(UserMessage {
+        intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: tool,
@@ -1401,6 +1588,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
 /// A background task notification: a meta user message, no typed input (Node `task-notification` origin).
 fn notification(id: &str) -> Message {
     Message::User(UserMessage {
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: "<task-notification>done</task-notification>".into(),
@@ -1522,5 +1710,141 @@ fn a_notification_turn_offers_no_fork_while_running_or_interrupted() {
         row_of(&feed.projection, "assistantText", "msg_n1")
             .get("actions")
             .is_none()
+    );
+}
+
+/// Fork: a quoted input shows its typed text and its quotes from its input intent (Node `intent.text` and
+/// `conversationQuotes`), cold and queued alike; the stored text keeps the block the model read. A text that merely
+/// ends with a quote block has no chips, and an intent's `[]` is kept.
+#[test]
+fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
+    use rust_cli_kernel_api::input_intent::InputIntent;
+    use rust_cli_kernel_api::session_api::{Delivery, QueuedKind};
+    let expected = json!([{"text": "E2E selection", "path": "/w/a.ts"}]);
+    let intent = |text: &str, quotes: Value| -> InputIntent {
+        serde_json::from_value(json!({"text": text, "conversationQuotes": quotes})).unwrap()
+    };
+    let quoted_intent = intent("explain this", expected.clone());
+    let quoted = quoted_intent.compose("explain this");
+    let with_intent = |id: &str, text: &str, intent: InputIntent| {
+        let Message::User(mut message) = user(id, text) else {
+            unreachable!()
+        };
+        message.intent = Some(Box::new(intent));
+        Message::User(message)
+    };
+    let projection = Projection::from_view(
+        &view(vec![
+            with_intent("msg_u1", &quoted, quoted_intent.clone()),
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+            user("msg_u2", "plain"),
+            assistant("msg_a2", vec![ContentBlock::Text { text: "ok".into() }]),
+            // A literal block without an intent is plain text.
+            user("msg_u3", &quoted),
+            assistant("msg_a3", vec![ContentBlock::Text { text: "ok".into() }]),
+            with_intent("msg_u4", "typed", intent("typed", json!([]))),
+            assistant("msg_a4", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs[0]["text"], "explain this");
+    assert_eq!(inputs[0]["conversationQuotes"], expected);
+    assert_eq!(inputs[1]["text"], "plain");
+    assert!(inputs[1].get("conversationQuotes").is_none());
+    assert_eq!(inputs[2]["text"], json!(quoted));
+    assert!(inputs[2].get("conversationQuotes").is_none());
+    assert_eq!(inputs[3]["text"], "typed");
+    assert_eq!(inputs[3]["conversationQuotes"], json!([]));
+
+    let mut feed = Feed::new();
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            intent: Some(Box::new(quoted_intent)),
+            command: CommandId::new("c1"),
+            text: "explain this".into(),
+            delivery: Delivery::Queue,
+            kind: QueuedKind::Text,
+            execution: None,
+        }],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert_eq!(queue["items"][0]["text"], "explain this");
+    assert_eq!(queue["items"][0]["conversationQuotes"], expected);
+}
+
+fn sequenced(seq: u64, event: KernelEvent) -> SequencedEvent {
+    SequencedEvent {
+        seq,
+        event,
+        revision: seq,
+    }
+}
+
+/// Fork: a session renamed while closed is opened with its stored source; a live update that is not a title keeps
+/// `custom` in the meta (it used to derive `generated` from any title).
+#[test]
+fn a_stored_custom_title_stays_custom_after_a_live_update() {
+    use rust_cli_kernel_api::title::Source;
+    let mut opened = view(Vec::new());
+    opened.meta.title = "Renamed".into();
+    opened.title_source = Some(Source::Custom);
+    let mut projection = Projection::from_view(&opened, Followup::Queue, Vec::new());
+    assert_eq!(projection.title_source(), Source::Custom);
+    let update = KernelEvent::ContextUsage {
+        used_tokens: 5,
+        max_tokens: 10,
+        compact_at: None,
+        window_tokens: None,
+    };
+    projection.apply(&sequenced(1, update), 0);
+    assert_eq!(
+        projection.snapshot(1, "e")["meta"],
+        json!({"title": "Renamed", "titleSource": "custom"})
+    );
+}
+
+/// Fork: Node `onSessionTitleUpdated`: the event's source reaches the meta (`first_input` shows as `generated`), and
+/// once the title is custom an automatic one does not replace it.
+#[test]
+fn a_live_rename_is_custom_and_an_automatic_title_does_not_replace_it() {
+    use rust_cli_kernel_api::title::Source;
+    let mut projection = Projection::from_view(&view(Vec::new()), Followup::Queue, Vec::new());
+    let titled = |seq, title: &str, source| {
+        sequenced(
+            seq,
+            KernelEvent::TitleChanged {
+                title: title.into(),
+                source,
+            },
+        )
+    };
+    let deltas = projection.apply(&titled(1, "fix the bug", Source::FirstInput), 0);
+    assert_eq!(
+        deltas[0]["patch"]["meta"],
+        json!({"title": "fix the bug", "titleSource": "generated"})
+    );
+    let deltas = projection.apply(&titled(2, "Mine", Source::Custom), 0);
+    assert_eq!(
+        deltas[0]["patch"]["meta"],
+        json!({"title": "Mine", "titleSource": "custom"})
+    );
+    projection.apply(&titled(3, "Generated", Source::Generated), 0);
+    assert_eq!(projection.title(), "Mine");
+    assert_eq!(projection.title_source(), Source::Custom);
+    projection.apply(&titled(4, "Mine again", Source::Custom), 0);
+    assert_eq!(
+        projection.snapshot(4, "e")["meta"],
+        json!({"title": "Mine again", "titleSource": "custom"})
     );
 }

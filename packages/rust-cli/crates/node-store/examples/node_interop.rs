@@ -14,7 +14,8 @@
 //!   F77、F79，`node_interop_parts/sentinel.rs`）；
 //! - `tool-order-write`：结果之间夹着附加上下文、补了中断结果的会话（工作线 F81，`node_interop_parts/tool_order.rs`）；
 //! - `records-write`：本地命令的记录夹在两轮问答之间的会话（修复线 L-A，`node_interop_parts/records.rs`）；
-//! - `fork-agent-write`：带 fork 子代理调用的父会话与 fork 的子会话（修复线 L-A，`node_interop_parts/fork_agent.rs`）。
+//! - `fork-agent-write`：带 fork 子代理调用的父会话与 fork 的子会话（修复线 L-A，`node_interop_parts/fork_agent.rs`）；
+//! - `worktree-write`、`worktree-read`: Fork: an execution-worktree session (`node_interop_parts/worktree.rs`).
 //!
 //! 会话库是 `<storage-dir>/cli/db/db.sqlite`，artifacts 在 `<storage-dir>/cli/artifacts`。
 use std::path::Path;
@@ -67,6 +68,8 @@ mod settings;
 mod tool_order;
 #[path = "node_interop_parts/usage.rs"]
 mod usage;
+#[path = "node_interop_parts/worktree.rs"]
+mod worktree;
 
 fn store(dir: &str) -> Result<NodeStore> {
     let root = Path::new(dir);
@@ -121,6 +124,7 @@ fn anchored(current: &mut Option<TurnAnchor>, facts: Vec<Fact>) -> FactBatch {
 fn user(id: &MessageId, text: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            intent: None,
             id: id.clone(),
             content: vec![ContentBlock::Text { text: text.into() }],
             origin: UserOrigin::Human,
@@ -163,6 +167,7 @@ async fn create(store: &NodeStore) -> Result<SessionId> {
             title: String::new(),
             trace: TraceId::new(id.as_str()),
             created_at_ms: now_ms(),
+            incognito: None,
         })
         .await?;
     let selection = ModelSelection {
@@ -263,6 +268,7 @@ fn attachment(source: &str, text: &str, data: Value) -> Fact {
 fn user_with(content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            intent: None,
             id: message_id(),
             content,
             origin,
@@ -460,6 +466,8 @@ async fn run(args: &[String]) -> Result<()> {
         [command, dir] if command == "records-write" => records::write(dir).await,
         [command, dir] if command == "fork-agent-write" => fork_agent::write(dir).await,
         [command, dir] if command == "machines-write" => machines::write(dir).await,
+        [command, dir, path] if command == "worktree-write" => worktree::write(dir, path).await,
+        [command, dir, session] if command == "worktree-read" => worktree::read(dir, session).await,
         [command, dir, session, title] if command == "rename" => {
             manage::rename(dir, session, title).await
         }

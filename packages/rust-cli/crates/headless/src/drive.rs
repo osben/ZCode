@@ -383,7 +383,7 @@ impl<W: AsyncWrite + Unpin> Driver<'_, '_, W> {
                 ResultKind::Interrupted,
                 (!stopping).then(|| "the turn was interrupted".to_owned()),
             ),
-            TurnOutcome::Failed { message } => match turn.max_turns {
+            TurnOutcome::Failed { message, .. } => match turn.max_turns {
                 Some((_, max)) => (ResultKind::MaxTurns { max }, Some(message.clone())),
                 // 阻塞线的错误文字只由发请求前的拦截产生（服务端的上下文超限带着服务端的原文）。
                 None if is_blocking_limit(message) => (

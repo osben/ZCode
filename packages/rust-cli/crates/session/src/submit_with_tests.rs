@@ -12,6 +12,7 @@ fn submit_with(id: &str, text: &str, mode: PermissionMode, plan: bool) -> Comman
     CommandEnvelope {
         id: CommandId::new(id),
         command: Command::SubmitWith {
+            intent: None,
             kind: QueuedKind::Text,
             text: text.to_owned(),
             content: Vec::new(),
@@ -29,6 +30,7 @@ fn compact(id: &str) -> CommandEnvelope {
     CommandEnvelope {
         id: CommandId::new(id),
         command: Command::SubmitWith {
+            intent: None,
             kind: QueuedKind::Compact,
             text: "/compact".to_owned(),
             content: Vec::new(),
@@ -243,4 +245,31 @@ async fn an_absorbed_guide_applies_its_mode_and_plan_to_the_running_turn() {
     let view = session.view().await.unwrap();
     assert!(view.queue.is_empty());
     assert_eq!((view.mode, view.plan), (PermissionMode::Guarded, true));
+}
+
+/// Fork: an input's own model becomes the session's when its turn starts and stays for the turns after it, as Node
+/// `acceptSubmissionModelSelection` makes it the session's selection (a prepared session's `firstInput` included).
+#[tokio::test]
+async fn a_submitted_model_becomes_the_session_model_when_its_turn_starts() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session
+        .send(submit_with("c1", "ask me", PermissionMode::Default, false))
+        .await;
+    let interaction = asked(&mut events).await;
+    let chosen = rust_cli_kernel_api::model::ModelSelection::new("other", "m2");
+    let mut later = submit_with("c2", "on m2", PermissionMode::Default, false);
+    if let Command::SubmitWith {
+        execution: Some(execution),
+        ..
+    } = &mut later.command
+    {
+        execution.selection = Some(chosen.clone());
+    }
+    session.send(later).await;
+    assert_ne!(session.view().await.unwrap().selection, chosen);
+    session.send(answer("c3", interaction)).await;
+    until_finished(&mut events, 2).await;
+    assert_eq!(session.view().await.unwrap().selection, chosen);
 }

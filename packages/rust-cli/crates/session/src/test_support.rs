@@ -44,6 +44,7 @@ pub(crate) fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -129,6 +130,8 @@ pub(crate) struct Setup {
     pub earlier: Vec<Message>,
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     pub opened: Opened,
+    /// Fork: `SessionState::start_held` (a prepared execution worktree).
+    pub start_held: bool,
     pub start: StartSource,
     /// 为 false 时存储里没有这个会话，所有提交都失败。
     pub stored: bool,
@@ -197,6 +200,7 @@ impl Setup {
             earlier: Vec::new(),
             checkpoints: Vec::new(),
             opened: Opened::Created,
+            start_held: false,
             start: StartSource::Startup,
             stored: true,
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
@@ -323,10 +327,13 @@ impl Setup {
                 mode: PermissionMode::Default.into(),
                 checkpoints: self.checkpoints,
                 start: self.start,
+                start_held: self.start_held,
+                execution_worktree: false,
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,
                 title_pending: self.title_pending,
+                title_source: None,
                 goal_target: self.goal_target,
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),

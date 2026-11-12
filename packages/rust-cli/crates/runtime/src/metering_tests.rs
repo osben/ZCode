@@ -63,6 +63,7 @@ async fn api_duration_comes_from_the_stored_calls() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -133,6 +134,7 @@ async fn request_stats_come_from_the_stored_calls() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -205,6 +207,7 @@ async fn a_child_session_counts_its_subagent_requests() {
             title: "Find callers".to_owned(),
             trace: TraceId::new("trace"),
             created_at_ms: 1,
+            incognito: None,
         })
         .await
         .unwrap();
