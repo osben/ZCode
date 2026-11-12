@@ -107,7 +107,7 @@ pub fn compose(text: &str, quotes: &[Quote]) -> String {
         quote
             .comment
             .as_deref()
-            .is_some_and(|c| !c.trim().is_empty())
+            .is_some_and(|c| !rust_cli_base::js::string::trim(c).is_empty())
     }) {
         block = format!("{block}{SEPARATOR}{COMMENT_GUIDANCE}");
     }

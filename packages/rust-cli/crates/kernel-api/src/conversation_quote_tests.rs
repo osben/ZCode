@@ -135,3 +135,16 @@ fn the_guidance_is_nodes_sentence() {
         "Each conversation_quote item with a `comment` field is a user annotation on that exact quoted text: treat the comment as the user's question or instruction about that passage. An `agent` field names the subagent that produced the quoted text."
     );
 }
+
+/// Node's `quote.comment?.trim()` is JS `trim`: U+FEFF is whitespace (no guidance), U+0085 is not (guidance), the
+/// reverse of Rust's `str::trim`.
+#[test]
+fn a_blank_comment_is_blank_by_js_trim() {
+    let with_comment = |comment: &str| {
+        let mut q = quote("passage");
+        q.comment = Some(comment.to_owned());
+        compose("hi", &[q])
+    };
+    assert!(!with_comment("\u{feff}").contains(COMMENT_GUIDANCE));
+    assert!(with_comment("\u{85}").contains(COMMENT_GUIDANCE));
+}
