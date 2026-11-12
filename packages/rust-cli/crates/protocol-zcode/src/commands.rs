@@ -70,6 +70,9 @@ struct Input {
     /// Fork: selections quoted from the conversation, as sent (absent, `[]` or quotes); they travel in the input
     /// intent ([`input_intent`]).
     conversation_quotes: Option<Vec<rust_cli_kernel_api::conversation_quote::Quote>>,
+    /// B4: the input's structured source (`conversationInputSourceSchema`, e.g. `{kind: "extension", pluginId}`). The
+    /// inbound schema checks its shape before this is read; it is copied onto the intent as it is ([`input_intent`]).
+    source: Option<Value>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -1231,7 +1234,34 @@ fn input_intent(
     if !input.attachments.is_empty() {
         fields.insert("attachmentRefs".into(), json!(input.attachments));
     }
+    // B4: Node `inputIntentMetadata` puts `source` last and only when the command carries one; zod rebuilds it in
+    // the schema's key order, so the stored object does too.
+    if let Some(source) = input.source.as_ref().filter(|source| !source.is_null()) {
+        fields.insert(
+            rust_cli_kernel_api::input_intent::SOURCE.into(),
+            source_in_schema_order(source),
+        );
+    }
     rust_cli_kernel_api::input_intent::InputIntent::from_fields(fields)
+}
+
+/// B4: the source's keys in `conversationInputSourceSchema` order (`input-intent.ts`). The inbound schema has already
+/// refused unknown keys, so only the schema's own fields are copied, in its order. An unknown kind is returned as is.
+fn source_in_schema_order(source: &Value) -> Value {
+    let fields: &[&str] = match source.get("kind").and_then(Value::as_str) {
+        Some("pluginUi") => &["kind", "pluginId", "toolCallId"],
+        Some("session") => &["kind", "sessionId", "title"],
+        Some("genUi") => &["kind", "path", "title"],
+        Some("extension") => &["kind", "pluginId"],
+        _ => return source.clone(),
+    };
+    let mut ordered = serde_json::Map::new();
+    for key in fields {
+        if let Some(value) = source.get(*key) {
+            ordered.insert((*key).to_owned(), value.clone());
+        }
+    }
+    Value::Object(ordered)
 }
 
 /// Fork: Node's `applyHeldQueueDisposition`. After a finished turn a paused queue (`autoDrain` off, items
@@ -1454,6 +1484,15 @@ async fn send_text_now(
     ack
 }
 
+/// B4: Node's `sendGoalCommand` schema has no `source` (zod strips it); only `sendText` and `firstInput` carry one.
+/// The goal's intent therefore never has a source, and its card shows no extension origin.
+fn without_goal_source(kind: QueuedKind, mut input: Input) -> Input {
+    if kind == QueuedKind::Goal {
+        input.source = None;
+    }
+    input
+}
+
 /// `sendText` and (fork) `sendGoalCommand`: one admission path; the kernel decides between starting
 /// now and queueing, and applies the input's execution state only when its turn starts
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
@@ -1473,7 +1512,7 @@ async fn send_text(
     let handle = bridged.handle.as_ref();
     let live = bridged.sink.as_ref();
     let input: Input = match payload(envelope) {
-        Ok(input) => input,
+        Ok(input) => without_goal_source(kind, input),
         Err(ack) => return *ack,
     };
     let command = envelope.command_id.as_str();

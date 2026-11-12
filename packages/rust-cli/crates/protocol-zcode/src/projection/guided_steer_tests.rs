@@ -103,6 +103,9 @@ fn guided_fields(projection: &Projection) -> Value {
     if let Some(quotes) = steer.get("conversationQuotes") {
         fields["conversationQuotes"] = quotes.clone();
     }
+    if let Some(source) = steer.get("source") {
+        fields["source"] = source.clone();
+    }
     fields
 }
 
@@ -160,6 +163,26 @@ fn a_quoted_steer_row_reads_its_intent() {
             fields["conversationQuotes"],
             serde_json::json!([{"text": "q"}])
         );
+    }
+}
+
+/// B4 (specs/fork-rust-agent-parity.md): a steer row carries the extension source of the intent it was sent with, live
+/// and cold.
+#[test]
+fn a_guided_steer_row_carries_its_source() {
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let intent: rust_cli_kernel_api::input_intent::InputIntent =
+        serde_json::from_value(json!({"text": "also b", "source": source})).unwrap();
+    let mut steer = queued_command::steer_attachment(
+        MessageId::new("msg_s5"),
+        "also b",
+        SteerSender::User,
+        Some("c2"),
+        None,
+    );
+    steer.data[queued_command::INTENT_KEY] = serde_json::to_value(&intent).unwrap();
+    for projection in [live(history(steer.clone())), cold(history(steer))] {
+        assert_eq!(guided_fields(&projection)["source"], source);
     }
 }
 

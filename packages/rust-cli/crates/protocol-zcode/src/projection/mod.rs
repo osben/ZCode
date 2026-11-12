@@ -1392,6 +1392,10 @@ impl Projection {
                 if let Some(quotes) = &quotes {
                     value["conversationQuotes"] = json!(quotes);
                 }
+                // B4: a queued input shows the source it was sent with (Node queue item `source`).
+                if let Some(source) = item.intent.as_ref().and_then(|intent| intent.source()) {
+                    value["source"] = source.clone();
+                }
                 if let Some(execution) = &item.execution {
                     if let Some(selection) = &execution.selection {
                         value["modelSelection"] = state::selection(selection);

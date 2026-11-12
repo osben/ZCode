@@ -467,6 +467,151 @@ fn an_app_input_is_admitted_with_nodes_intent() {
     assert_eq!(plain.conversation_quotes, None);
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): `sendText` and `createSession.firstInput` carry an extension source onto the
+/// intent as Node's last key; an input without a source has no key.
+/// B4: the stored source uses the schema's key order whatever order the Host sent (zod rebuilds the object).
+#[test]
+fn a_source_is_stored_in_the_schema_key_order() {
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "c2",
+        "clientId": "plugin-host",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {},
+    }))
+    .unwrap();
+    let reversed = json!({"pluginId": "p", "kind": "extension"});
+    let input: Input = serde_json::from_value(json!({"text": "hi", "source": reversed})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(
+        serde_json::to_string(intent.get("source").unwrap()).unwrap(),
+        r#"{"kind":"extension","pluginId":"p"}"#
+    );
+    let session = json!({"title": "t", "sessionId": "s", "kind": "session"});
+    let input: Input = serde_json::from_value(json!({"text": "hi", "source": session})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(
+        serde_json::to_string(intent.get("source").unwrap()).unwrap(),
+        r#"{"kind":"session","sessionId":"s","title":"t"}"#
+    );
+}
+
+#[test]
+fn an_extension_source_is_copied_onto_the_intent() {
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "c1",
+        "clientId": "plugin-host",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {},
+    }))
+    .unwrap();
+    let input: Input = serde_json::from_value(json!({"text": "hi", "source": source})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("queue", "queue"),
+        (3, 1500),
+    );
+    assert_eq!(
+        serde_json::to_string(&intent).unwrap(),
+        serde_json::to_string(&json!({
+            "sourceCommandId": "c1",
+            "queueItemId": "queue_c1",
+            "clientId": "plugin-host",
+            "kind": "sendText",
+            "text": "hi",
+            "admissionSeq": 3,
+            "admittedAt": 1500,
+            "requestedDelivery": "queue",
+            "admittedDelivery": "queue",
+            "source": source,
+        }))
+        .unwrap()
+    );
+
+    let create: CreateSessionPayload = serde_json::from_value(json!({
+        "workspaceId": "/w",
+        "firstInput": {"text": "hi", "source": source},
+    }))
+    .unwrap();
+    assert_eq!(
+        create.first_input.and_then(|first| first.source),
+        Some(source)
+    );
+
+    let plain: Input = serde_json::from_value(json!({"text": "hi"})).unwrap();
+    let intent = input_intent(
+        &envelope,
+        &plain,
+        QueuedKind::Text,
+        None,
+        ("queue", "queue"),
+        (3, 1500),
+    );
+    assert!(intent.get("source").is_none());
+}
+
+/// B4 (specs/fork-rust-agent-parity.md): `sendGoalCommand` drops the source, valid or not, because Node's goal schema
+/// has no `source` (zod strips it). A goal's intent and card carry no extension origin; `sendText` keeps it.
+#[test]
+fn a_goal_command_never_carries_a_source() {
+    let valid = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let invalid = json!({"kind": "extension"});
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "g1",
+        "clientId": "plugin-host",
+        "sessionId": "s1",
+        "type": "sendGoalCommand",
+        "payload": {},
+    }))
+    .unwrap();
+    for source in [valid.clone(), invalid] {
+        let input: Input =
+            serde_json::from_value(json!({"text": "objective", "source": source})).unwrap();
+        let goal = without_goal_source(QueuedKind::Goal, input);
+        let intent = input_intent(
+            &envelope,
+            &goal,
+            QueuedKind::Goal,
+            None,
+            ("startNow", "startNow"),
+            (1, 1),
+        );
+        assert_eq!(intent.str("kind"), Some("sendGoalCommand"));
+        assert!(intent.get("source").is_none(), "{intent:?}");
+        assert!(intent.fields().get("source").is_none());
+    }
+    let text: Input = serde_json::from_value(json!({"text": "hi", "source": valid})).unwrap();
+    let text = without_goal_source(QueuedKind::Text, text);
+    let intent = input_intent(
+        &envelope,
+        &text,
+        QueuedKind::Text,
+        None,
+        ("startNow", "startNow"),
+        (1, 1),
+    );
+    assert_eq!(intent.get("source"), Some(&valid));
+}
+
 /// Node `session-flow.ts` answers a `sendText` from Core's admission in both directions: a started input is
 /// `startNow`, a queued one `queue`. The projection's prediction loses in both races: a turn that ended between the
 /// snapshot and the submit (predicted `queue` or `guide`, the kernel started it) and a lease or turn that appeared

@@ -1848,6 +1848,60 @@ fn a_quoted_input_shows_the_typed_text_and_its_quotes() {
     assert_eq!(queue["items"][0]["conversationQuotes"], expected);
 }
 
+/// B4 (specs/fork-rust-agent-parity.md): an extension source shows on the userInput row and on the queue item of the
+/// input it was sent with. A body that imitates a source gets none: the source comes only from the intent.
+#[test]
+fn an_extension_source_shows_on_the_row_and_the_queue_item() {
+    use rust_cli_kernel_api::input_intent::InputIntent;
+    use rust_cli_kernel_api::session_api::{Delivery, QueuedKind};
+    let source = json!({"kind": "extension", "pluginId": "gitlab@zcode-plugins-example"});
+    let sourced: InputIntent =
+        serde_json::from_value(json!({"text": "from plugin", "source": source})).unwrap();
+    let Message::User(mut sent) = user("msg_u1", "from plugin") else {
+        unreachable!()
+    };
+    sent.intent = Some(Box::new(sourced.clone()));
+    let imitation = r#"{"kind":"extension","pluginId":"gitlab@zcode-plugins-example"}"#;
+    let projection = Projection::from_view(
+        &view(vec![
+            Message::User(sent),
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+            user("msg_u2", imitation),
+            assistant("msg_a2", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs[0]["source"], source);
+    assert_eq!(inputs[1]["text"], imitation);
+    assert!(inputs[1].get("source").is_none());
+
+    let mut feed = Feed::new();
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            edit_lock: None,
+            intent: Some(Box::new(sourced)),
+            command: CommandId::new("c1"),
+            text: "from plugin".into(),
+            delivery: Delivery::Queue,
+            kind: QueuedKind::Text,
+            execution: None,
+        }],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert_eq!(queue["items"][0]["source"], source);
+}
+
 fn sequenced(seq: u64, event: KernelEvent) -> SequencedEvent {
     SequencedEvent {
         seq,
