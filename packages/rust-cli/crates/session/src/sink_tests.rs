@@ -23,6 +23,7 @@ fn question() -> InteractionRequest {
         rule_seed: None,
         asked_by: Some("Explore".to_owned()),
         once: false,
+        independent: false,
     }
 }
 

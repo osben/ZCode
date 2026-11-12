@@ -208,12 +208,23 @@ pub(crate) fn post_tool_use_failure(fold: &Fold<'_>, results: &[HookResult]) -> 
     outcome
 }
 
-/// 第一个给出决定的 hook 生效。
+/// A `continue: false` hook denies first; otherwise the first hook that decides wins.
 pub(crate) fn permission_request(results: &[HookResult]) -> HookOutcome {
     let mut outcome = HookOutcome {
         notices: notices(results),
         ..HookOutcome::default()
     };
+    // Node `hook-flow.ts` checks `preventContinuation` (`continue: false`) before the decision; the last stopping
+    // hook's `stopReason` replaces earlier ones (`mergeHookRunResult`).
+    if let Some(stop) = results.iter().rev().find(|result| result.prevent) {
+        outcome.decision = Some(PermissionDecision::Deny {
+            message: stop
+                .stop_reason
+                .clone()
+                .unwrap_or_else(|| texts::DENIED_BY_PERMISSION_REQUEST_HOOK.to_owned()),
+        });
+        return outcome;
+    }
     if let Some(decision) = results
         .iter()
         .find_map(|result| result.permission_request.clone())

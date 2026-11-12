@@ -10,13 +10,15 @@
 //! 计划模式的两个会话标志也在这里（docs/specs/rust-cli/context.md §13.4）：改状态成功后按判决用的（旧, 新）
 //! 模式更新，提交 `plan_mode_reentry` / `plan_mode_exit` 后清掉对应的标志。
 
-use rust_cli_kernel_api::ids::CommandId;
+use rust_cli_kernel_api::ids::{CommandId, InteractionId};
+use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::message::Message;
+use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
-use rust_cli_kernel_api::session_api::{InputExecution, KernelEvent};
+use rust_cli_kernel_api::session_api::{Ack, CommandResult, InputExecution, KernelEvent};
 use rust_cli_kernel_api::store::{Fact, StoreError};
 
-use crate::actor::Actor;
+use crate::actor::{Actor, rejected};
 
 impl Actor {
     /// 判决、工具、上下文与 hook 看的模式：plan 开时是 plan，否则是权限模式。
@@ -96,19 +98,69 @@ impl Actor {
         self.apply(None, next, save).await
     }
 
-    /// Fork: the permission dialog's full access (`Command::GrantFullAccess`, Node `fullAccess`): the
-    /// session's permission mode becomes bypass (plan kept, saved like a user `SetMode`) and so does every
-    /// queued input's frozen mode (their plan switches kept).
-    pub(crate) async fn grant_full_access(
+    /// Fork (B3): the permission dialog's mode switch (`Command::GrantPermissionMode`, Node
+    /// `resolvePermissionMode`). One actor step, the owner of the pending asks: check the ask, grant the mode, then
+    /// answer the ask allow once. Every refusal comes before the commit, so a refused grant leaves the mode and the
+    /// ask as they were (the user can retry or deny); after the commit the answer cannot fail.
+    pub(crate) async fn grant_permission_mode(
+        &mut self,
+        command: CommandId,
+        interaction: InteractionId,
+        mode: PermissionMode,
+    ) -> Ack {
+        let Some(pending) = self
+            .pending
+            .iter()
+            .find(|pending| pending.id == interaction)
+        else {
+            return Ack::Accepted {
+                result: CommandResult::NotPending,
+            };
+        };
+        if let Err(reason) = grantable(&pending.request, mode) {
+            return rejected(reason);
+        }
+        // Node refuses while an input is reserved or drained outside the queue: it would keep its old mode.
+        if self.inbox.foreground_reserved() || self.inbox.releasing() {
+            return rejected(QUEUE_BUSY);
+        }
+        if let Err(error) = self
+            .grant_mode(command.clone(), interaction.as_str().to_owned(), mode)
+            .await
+        {
+            return rejected(error);
+        }
+        let allow = PermissionAnswer::Allow {
+            remember: Vec::new(),
+        };
+        self.resolve(command, interaction, allow.into()).await
+    }
+
+    /// The session's permission mode becomes `mode` (plan kept, saved like a user `SetMode`) and so does every queued
+    /// input's frozen mode (their plan switches kept); then `PermissionGranted`. The same mode as now is still a grant
+    /// (Node does not short-circuit it): the execution state and the grant's receipt are committed in one batch either
+    /// way (Node `commitPermissionFullAccess`), before anything changes in memory.
+    async fn grant_mode(
         &mut self,
         command: CommandId,
         interaction: String,
+        mode: PermissionMode,
     ) -> Result<(), StoreError> {
-        let mode = PermissionMode::BypassPermissions;
-        if self.execution.mode != mode {
-            self.apply(Some(command), self.execution.with_mode(mode), true)
-                .await?;
-        }
+        let receipt = Fact::PermissionGranted {
+            interaction: interaction.clone(),
+            previous: self.execution,
+            next: self.execution.with_mode(mode),
+            queue_items: self.inbox.ledger_queue_ids(),
+        };
+        self.apply_with_facts(
+            Some(command),
+            self.execution.with_mode(mode),
+            true,
+            true,
+            vec![receipt],
+        )
+        .await?;
+        self.permission_grant = Some(interaction.clone());
         if self.inbox.set_queued_mode(mode) {
             self.emit_queue();
         }
@@ -135,10 +187,24 @@ impl Actor {
         save: bool,
         start_peers: bool,
     ) -> Result<(), StoreError> {
+        self.apply_with_facts(command, next, save, start_peers, Vec::new())
+            .await
+    }
+
+    /// [`Self::apply_with`] with `extra` facts committed in the same batch (a grant's receipt).
+    async fn apply_with_facts(
+        &mut self,
+        command: Option<CommandId>,
+        next: ExecutionState,
+        save: bool,
+        start_peers: bool,
+        extra: Vec<Fact>,
+    ) -> Result<(), StoreError> {
         let mut facts = vec![Fact::ExecutionChanged { state: next }];
         if save {
             facts.push(Fact::ProjectModeSet { mode: next.mode });
         }
+        facts.extend(extra);
         self.commit(command, facts).await?;
         let previous = self.execution;
         self.plan_flags = self
@@ -164,6 +230,39 @@ impl Actor {
             self.plan_flags = self.plan_flags.after_commit(&attachment.source);
         }
     }
+}
+
+/// Node `interaction-registry.ts`: the ask is no permission ask of the session itself, or an independent confirmation.
+const NOT_SUPPORTED: &str = "Full access is not supported for this interaction";
+/// Node `interaction-broker.ts`: a once-ask (guarded already) takes only full access.
+const ALREADY_GUARDED: &str = "Already in autonomous mode";
+/// Node `permission-full-access.ts`.
+const QUEUE_BUSY: &str = "Queue mutation is busy; retry approval";
+
+/// Fork (B3): whether `request` may grant `mode` (Node's broker registers the grant hook only for an ask without
+/// `origin` and `optionsPolicy`; a user-once ask takes only `yolo`).
+fn grantable(request: &InteractionRequest, mode: PermissionMode) -> Result<(), &'static str> {
+    let InteractionRequest::Permission {
+        once,
+        independent,
+        origin: None,
+        ..
+    } = request
+    else {
+        return Err(NOT_SUPPORTED);
+    };
+    if *independent
+        || !matches!(
+            mode,
+            PermissionMode::BypassPermissions | PermissionMode::Guarded
+        )
+    {
+        return Err(NOT_SUPPORTED);
+    }
+    if *once && mode != PermissionMode::BypassPermissions {
+        return Err(ALREADY_GUARDED);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

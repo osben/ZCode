@@ -75,6 +75,10 @@ pub(crate) struct ChildSink {
     asks: Option<Asks>,
     /// 写进询问的子代理名字（agent 类型）。
     name: String,
+    /// Fork: the subagent behind this sink, fixed when the run starts (Node's subagent ask always carries
+    /// `payload.origin`). It is not looked up in `live` at ask time: an agent already gone from `live` would leave the
+    /// ask without origin, and the App would offer it a permission mode switch.
+    origin: Option<rust_cli_kernel_api::orchestration::AskOrigin>,
     record: Mutex<Record>,
     /// 子代理里的 Monitor 交给 agents（agents.md §5.3，工作线 F83）；没有时（测试）不支持。
     core: Option<Arc<crate::Core>>,
@@ -100,6 +104,7 @@ impl ChildSink {
             parent,
             asks: None,
             name: String::new(),
+            origin: None,
             record: Mutex::default(),
             core: None,
         }
@@ -171,17 +176,19 @@ impl ChildSink {
 }
 
 impl ChildSink {
-    /// Fork: the subagent behind this sink, as an ask's origin.
-    fn origin(&self) -> Option<rust_cli_kernel_api::orchestration::AskOrigin> {
-        let agent = self.live.get(&self.agent)?;
-        Some(rust_cli_kernel_api::orchestration::AskOrigin {
-            agent: agent.agent.clone(),
-            agent_type: agent.definition.agent_type.clone(),
-            child_session: agent.child.clone(),
-            parent_session: agent.parent.clone(),
-            description: agent.description.clone(),
-            parent_tool_use: agent.tool_use.clone(),
-        })
+    /// Fork: fixes the subagent behind this sink as its asks' origin (`spawn::drive`, from the run's agent).
+    pub(crate) fn with_origin(self, agent: &crate::live::LiveAgent) -> Self {
+        Self {
+            origin: Some(rust_cli_kernel_api::orchestration::AskOrigin {
+                agent: agent.agent.clone(),
+                agent_type: agent.definition.agent_type.clone(),
+                child_session: agent.child.clone(),
+                parent_session: agent.parent.clone(),
+                description: agent.description.clone(),
+                parent_tool_use: agent.tool_use.clone(),
+            }),
+            ..self
+        }
     }
 }
 
@@ -231,6 +238,7 @@ impl Interactions for ChildSink {
                 asked_by: None,
                 machine,
                 once,
+                independent,
                 origin,
             } => InteractionRequest::Permission {
                 machine,
@@ -242,12 +250,13 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: Some(self.name.clone()),
                 once,
+                independent,
                 origin,
             },
             other => other,
         };
         // Fork: the App shows a delegated ask with the subagent it came from (Node `payload.origin`).
-        let request = match self.origin() {
+        let request = match self.origin.clone() {
             Some(origin) => request.asked_from(origin),
             None => request,
         };

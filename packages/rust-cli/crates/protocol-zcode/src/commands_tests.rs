@@ -632,3 +632,262 @@ fn the_ack_follows_the_kernels_admission_both_ways() {
     assert_eq!(acked_delivery("queue", &queued), "queue");
     assert_eq!(acked_delivery("guide", &queued), "guide");
 }
+
+/// A session stub that answers every command with one kernel ACK and records the commands it got.
+struct GrantHandle {
+    id: rust_cli_kernel_api::ids::SessionId,
+    ack: rust_cli_kernel_api::session_api::Ack,
+    sent: std::sync::Mutex<Vec<rust_cli_kernel_api::session_api::Command>>,
+    /// The asks pending in this session (its view).
+    pending: Vec<&'static str>,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::testing::HandleOverride for GrantHandle {
+    fn id(&self) -> &rust_cli_kernel_api::ids::SessionId {
+        &self.id
+    }
+
+    async fn send(
+        &self,
+        command: rust_cli_kernel_api::session_api::CommandEnvelope,
+    ) -> rust_cli_kernel_api::session_api::Ack {
+        self.sent.lock().unwrap().push(command.command);
+        self.ack.clone()
+    }
+
+    fn subscribe(
+        &self,
+        _after: Option<u64>,
+    ) -> futures_util::stream::BoxStream<'static, rust_cli_kernel_api::session_api::SequencedEvent>
+    {
+        Box::pin(futures_util::stream::empty())
+    }
+
+    async fn view(
+        &self,
+    ) -> Result<
+        rust_cli_kernel_api::session_api::SessionView,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        use rust_cli_kernel_api::ids::{InteractionId, ToolUseId};
+        let meta = rust_cli_kernel_api::store::SessionMeta {
+            id: self.id.clone(),
+            kind: rust_cli_kernel_api::store::SessionKind::Interactive,
+            parent: None,
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+                root: rust_cli_kernel_api::env::EnvPath::new("/w"),
+            },
+            title: String::new(),
+            trace: rust_cli_kernel_api::ids::TraceId::new("trace"),
+            created_at_ms: 0,
+            incognito: None,
+        };
+        let mut view = rust_cli_kernel_api::session_api::SessionView::new(
+            meta,
+            Vec::new(),
+            rust_cli_kernel_api::testing::selection(),
+            PermissionMode::Default,
+        );
+        view.pending = self
+            .pending
+            .iter()
+            .map(|id| {
+                let request = rust_cli_kernel_api::orchestration::InteractionRequest::Permission {
+                    origin: None,
+                    tool_use: ToolUseId::new("toolu_1"),
+                    tool: "Bash".into(),
+                    input: json!({}),
+                    message: "ask".into(),
+                    suggestions: Vec::new(),
+                    rule_seed: None,
+                    asked_by: None,
+                    machine: Default::default(),
+                    once: false,
+                    independent: false,
+                };
+                (InteractionId::new(*id), request)
+            })
+            .collect();
+        Ok(view)
+    }
+}
+
+/// B3 (Node `resolvePermissionMode` through the gateway): the mode switch options send one
+/// `GrantPermissionMode`; a real grant answers `resolvedBy` (the App's recent permission preference reads it); an ask
+/// pending nowhere is a late answer, accepted without a result (Node's idempotent miss); an ask pending in another
+/// session fails like Node's registry; a refusal is `failed` with `fault.command.executionFailed` and the broker's
+/// reason.
+#[tokio::test]
+async fn a_mode_switch_answer_grants_through_one_command() {
+    use rust_cli_kernel_api::session_api::{
+        Ack as KernelAck, Command as KernelCommand, CommandResult,
+    };
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "cmd_1", "clientId": "client_a", "sessionId": "s1", "type": "resolveInteraction",
+        "payload": {"interactionId": "int_1", "answer": {"optionId": "allowAndSwitchGuarded"}},
+    }))
+    .unwrap();
+    assert_eq!(
+        grant_mode("allowAndSwitchGuarded"),
+        Some(PermissionMode::Guarded)
+    );
+    assert_eq!(
+        grant_mode("fullAccess"),
+        Some(PermissionMode::BypassPermissions)
+    );
+    assert_eq!(grant_mode("allowOnce"), None);
+    let stub = |id: &str, ack: KernelAck, pending: Vec<&'static str>| GrantHandle {
+        id: rust_cli_kernel_api::ids::SessionId::new(id),
+        ack,
+        sent: Default::default(),
+        pending,
+    };
+    let run_with = |ack: KernelAck, elsewhere: Vec<&'static str>| {
+        let envelope = envelope.clone();
+        async move {
+            let handle = stub("s1", ack.clone(), Vec::new());
+            let other: std::sync::Arc<dyn SessionHandle> =
+                std::sync::Arc::new(stub("s2", ack, elsewhere));
+            let others = move || vec![other];
+            let reply = grant(
+                &handle,
+                others,
+                &envelope,
+                7,
+                "int_1",
+                PermissionMode::Guarded,
+            )
+            .await;
+            let sent = handle.sent.into_inner().unwrap();
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [KernelCommand::GrantPermissionMode { interaction, mode: PermissionMode::Guarded }]
+                        if interaction == "int_1"
+                ),
+                "{sent:?}"
+            );
+            reply
+        }
+    };
+    let run = |ack: KernelAck| run_with(ack, Vec::new());
+    let granted = run(KernelAck::Accepted {
+        result: CommandResult::Done,
+    })
+    .await;
+    assert_eq!(granted.status, Status::Accepted);
+    assert_eq!(
+        granted.result,
+        Some(json!({"type": "resolveInteraction",
+            "resolvedBy": {"clientId": "client_a", "optionId": "allowAndSwitchGuarded"}}))
+    );
+    let late = run(KernelAck::Accepted {
+        result: CommandResult::NotPending,
+    })
+    .await;
+    assert_eq!(
+        (late.status, late.reason_code.as_deref(), late.result),
+        (Status::Accepted, None, None)
+    );
+    let foreign = run_with(
+        KernelAck::Accepted {
+            result: CommandResult::NotPending,
+        },
+        vec!["int_1"],
+    )
+    .await;
+    assert_eq!(
+        (
+            foreign.status,
+            foreign.reason_code.as_deref(),
+            foreign.message.as_deref()
+        ),
+        (
+            Status::Failed,
+            Some("fault.command.executionFailed"),
+            Some("Full access is not supported for this interaction")
+        )
+    );
+    let refused = run(KernelAck::Rejected {
+        reason: "Already in autonomous mode".to_owned(),
+    })
+    .await;
+    assert_eq!(
+        (
+            refused.status,
+            refused.reason_code.as_deref(),
+            refused.message.as_deref()
+        ),
+        (
+            Status::Failed,
+            Some("fault.command.executionFailed"),
+            Some("Already in autonomous mode")
+        )
+    );
+    assert_eq!(run(KernelAck::Duplicate).await.status, Status::Duplicate);
+}
+
+/// #422 review P2-1: `allowAlways` on an ask that offers no always-allow option (a `once` or
+/// an independent ask) denies, like Node's broker for an option it did not offer; on a normal ask it remembers the
+/// suggestions.
+#[test]
+fn allow_always_denies_an_ask_that_does_not_offer_it() {
+    use rust_cli_kernel_api::interaction::PermissionAnswer;
+    use rust_cli_kernel_api::permission::PermissionRule;
+    let rule = PermissionRule {
+        tool: "Bash".to_owned(),
+        content: Some("ls:*".to_owned()),
+    };
+    let offered = |always: bool| Offered {
+        suggestions: vec![rule.clone()],
+        always,
+    };
+    assert_eq!(
+        permission_answer(Some("allowAlways"), offered(true), None),
+        PermissionAnswer::Allow {
+            remember: vec![rule.clone()]
+        }
+    );
+    assert_eq!(
+        permission_answer(Some("allowAlways"), offered(false), Some(" no ")),
+        PermissionAnswer::Deny {
+            feedback: Some("no".to_owned())
+        }
+    );
+    assert_eq!(
+        permission_answer(Some("allowOnce"), offered(false), None),
+        PermissionAnswer::Allow {
+            remember: Vec::new()
+        }
+    );
+}
+
+/// #422 review P2-1: only an ask that is neither `once` nor independent offers always-allow.
+#[test]
+fn only_a_normal_ask_offers_always_allow() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::InteractionRequest;
+    let ask = |once: bool, independent: bool| InteractionRequest::Permission {
+        origin: None,
+        tool_use: ToolUseId::new("toolu_1"),
+        tool: "Bash".into(),
+        input: json!({}),
+        message: "ask".into(),
+        suggestions: Vec::new(),
+        rule_seed: None,
+        asked_by: None,
+        machine: Default::default(),
+        once,
+        independent,
+    };
+    let always = |request: InteractionRequest| {
+        let (offered, tool) = Offered::of(&request).unwrap();
+        assert_eq!(tool.as_str(), "toolu_1");
+        offered.always
+    };
+    assert!(always(ask(false, false)));
+    assert!(!always(ask(true, false)));
+    assert!(!always(ask(false, true)));
+}

@@ -259,6 +259,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
             asked_by: None,
             machine: Default::default(),
             once: false,
+            independent: false,
         },
     });
     assert_eq!(asked[0]["row"]["status"], "pendingApproval");
@@ -272,6 +273,8 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
         "fullAccess"
     );
     assert_eq!(pending["payload"]["options"].as_array().unwrap().len(), 3);
+    // B3: the session's own ask offers guarded or full access (Node `modeSwitch: "choose"`).
+    assert_eq!(pending["payload"]["modeSwitch"], "choose");
     assert_eq!(feed.projection.pending_permissions(), 1);
     let resolved = feed.apply(KernelEvent::InteractionResolved {
         interaction: InteractionId::new("int_1"),
@@ -323,6 +326,7 @@ fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
             asked_by: None,
             machine: Default::default(),
             once: true,
+            independent: false,
         },
     });
     let payload = &asked[1]["patch"]["pendingInteractions"][0]["payload"];
@@ -334,6 +338,91 @@ fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
         .collect();
     assert_eq!(kinds, ["allowOnce", "deny"]);
     assert!(payload.get("fullAccessOption").is_none());
+    // B3: guarded already, the ask can only switch to full access (Node `modeSwitch: "fullAccessOnly"`).
+    assert_eq!(payload["modeSwitch"], "fullAccessOnly");
+}
+
+/// B3 (Node `product-projection.ts`, `!payload.origin && !payload.optionsPolicy`): a subagent's ask and an independent
+/// confirmation (Plan mode's MCP ask) offer no permission mode switch: no `modeSwitch` and no `fullAccessOption`.
+#[test]
+fn a_subagent_ask_and_an_independent_ask_offer_no_mode_switch() {
+    use rust_cli_kernel_api::ids::AgentId;
+    use rust_cli_kernel_api::orchestration::AskOrigin;
+    let origin = AskOrigin {
+        agent: AgentId::new("agent_1"),
+        agent_type: "general-purpose".into(),
+        child_session: SessionId::new("sess_child"),
+        parent_session: SessionId::new("sess_parent"),
+        description: "child".into(),
+        parent_tool_use: None,
+    };
+    for (origin, once, independent) in [(Some(origin), false, false), (None, false, true)] {
+        let mut feed = Feed::new();
+        feed.apply(KernelEvent::TurnStarted {
+            turn: TurnId::new("turn_1"),
+            command: None,
+        });
+        let asked = feed.apply(KernelEvent::InteractionAsked {
+            interaction: InteractionId::new("int_1"),
+            request: InteractionRequest::Permission {
+                origin: origin.map(Box::new),
+                tool_use: ToolUseId::new("toolu_1"),
+                tool: "mcp__srv__write".into(),
+                input: json!({}),
+                message: "ask".into(),
+                suggestions: Vec::new(),
+                rule_seed: None,
+                asked_by: None,
+                machine: Default::default(),
+                once,
+                independent,
+            },
+        });
+        let payload = asked
+            .iter()
+            .find_map(|delta| delta["patch"]["pendingInteractions"].get(0))
+            .map(|pending| &pending["payload"])
+            .unwrap();
+        assert!(payload.get("modeSwitch").is_none(), "{payload}");
+        assert!(payload.get("fullAccessOption").is_none(), "{payload}");
+    }
+}
+
+/// Plan mode's MCP ask is independent but not `once` (its PermissionRequest hooks run); it still offers allow once and
+/// deny only (Node `optionsPolicy: "no-always-allow"`).
+#[test]
+fn an_independent_ask_offers_allow_once_and_deny_only() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let asked = feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_1"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: ToolUseId::new("toolu_1"),
+            tool: "mcp__srv__write".into(),
+            input: json!({}),
+            message: "ask".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: true,
+        },
+    });
+    let payload = asked
+        .iter()
+        .find_map(|delta| delta["patch"]["pendingInteractions"].get(0))
+        .map(|pending| &pending["payload"])
+        .unwrap();
+    assert_eq!(
+        payload["options"],
+        crate::projection::state::single_use_permission_options()
+    );
+    assert!(payload.get("modeSwitch").is_none(), "{payload}");
 }
 
 #[test]
@@ -1389,6 +1478,31 @@ fn full_access_grants_and_plan_tool_transitions_are_in_the_config() {
     assert_eq!(config["permissionGrant"]["interactionId"], "ask-1");
     let snapshot = feed.projection.snapshot(1, "e");
     assert_eq!(snapshot["config"]["planTransition"]["toolCallId"], "call-1");
+}
+
+/// B3 review: a cold read keeps the last grant (the session view's, from the stored receipt, Node
+/// `restorePermissionGrantMarker`), so the composer does not adopt it again; a rebuilt projection keeps the view's.
+#[test]
+fn a_cold_projection_keeps_the_stored_permission_grant() {
+    let mut granted = view(Vec::new());
+    granted.permission_grant = Some("ask-1".into());
+    let projection = Projection::from_view(&granted, Followup::Queue, vec!["high".into()]);
+    let snapshot = projection.snapshot(1, "e");
+    assert_eq!(
+        snapshot["config"]["permissionGrant"],
+        json!({"interactionId": "ask-1"})
+    );
+    let rebuilt = projection.rebuilt(&granted).snapshot(2, "e");
+    assert_eq!(
+        rebuilt["config"]["permissionGrant"]["interactionId"],
+        "ask-1"
+    );
+    let fresh = Projection::from_view(&view(Vec::new()), Followup::Queue, Vec::new());
+    assert!(
+        fresh.snapshot(1, "e")["config"]
+            .get("permissionGrant")
+            .is_none()
+    );
 }
 
 /// Fork: the desktop goal is the snapshot `goal` (Node `goalStateSchema`) and drives the

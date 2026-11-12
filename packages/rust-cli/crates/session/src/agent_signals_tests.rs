@@ -126,6 +126,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             child_live: None,
             title_pending: true,
             title_source: None,
+            permission_grant: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),

@@ -479,6 +479,8 @@ impl Projection {
                 input,
                 message,
                 once,
+                independent,
+                origin,
                 ..
             } => {
                 let mut payload = json!({
@@ -488,14 +490,23 @@ impl Projection {
                     "summary": message,
                     "detail": input,
                     "freeText": true,
-                    "fullAccessOption": state::full_access_option(),
-                    "options": state::permission_options(),
+                    "options": if *once || *independent {
+                        // Node `approvalMode: "user-once"` and `optionsPolicy: "no-always-allow"`: only allow once /
+                        // deny.
+                        state::single_use_permission_options()
+                    } else {
+                        state::permission_options()
+                    },
                 });
-                // Node `approvalMode: "user-once"`: only allow once / deny, and no full access.
-                if *once {
-                    payload["options"] = state::single_use_permission_options();
-                    if let Some(payload) = payload.as_object_mut() {
-                        payload.remove("fullAccessOption");
+                // Fork (B3, Node `product-projection.ts`): only the session's own ask that is no independent
+                // confirmation offers a permission mode switch. A once-ask (guarded already) can only switch to full
+                // access; any other offers guarded or full access, with the full access option for older clients.
+                if origin.is_none() && !*independent {
+                    if *once {
+                        payload["modeSwitch"] = json!("fullAccessOnly");
+                    } else {
+                        payload["modeSwitch"] = json!("choose");
+                        payload["fullAccessOption"] = state::full_access_option();
                     }
                 }
                 json!({

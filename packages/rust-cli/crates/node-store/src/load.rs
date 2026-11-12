@@ -67,6 +67,7 @@ pub fn load(
             .title_source
             .as_deref()
             .map(rust_cli_kernel_api::title::Source::stored),
+        permission_grant: permission_grant(conn, session)?,
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。
@@ -81,6 +82,29 @@ pub fn load(
         execution_worktree: false,
     };
     Ok((loaded, crate::rewind::active_checkpoints(conn, session)?))
+}
+
+/// Fork (B3): Node `restorePermissionGrantMarker`: the last stored grant receipt names the composer's adoption key; an
+/// invalid one or another session's is ignored (logged, the cold read goes on).
+fn permission_grant(conn: &Connection, session: &SessionId) -> Result<Option<String>, StoreError> {
+    let stored = crate::repo::entries::list(
+        conn,
+        session.as_str(),
+        Some(crate::records::PERMISSION_FULL_ACCESS_ENTRY),
+    )
+    .storage()?;
+    let Some(last) = stored.last() else {
+        return Ok(None);
+    };
+    let grant = crate::records::permission_grant_of(session.as_str(), &last.data);
+    if grant.is_none() {
+        tracing::warn!(
+            event = "session.resume.permission_grant_invalid",
+            session = %session,
+            "ignoring an invalid permission grant receipt"
+        );
+    }
+    Ok(grant)
 }
 
 /// Fork: the `anchor.sourceCommandId` of each user message (Node `buildProjectionAnchor` writes it for typed input), so

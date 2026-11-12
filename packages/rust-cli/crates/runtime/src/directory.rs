@@ -213,7 +213,10 @@ pub(crate) async fn change(
             | CommandResult::Stopped { .. }
             | CommandResult::Backgrounded { .. }
             | CommandResult::Dequeued { .. }
-            | CommandResult::Queued) => Err(failed(format!("unexpected /cd receipt: {other:?}"))),
+            | CommandResult::Queued
+            | CommandResult::NotPending) => {
+                Err(failed(format!("unexpected /cd receipt: {other:?}")))
+            }
         },
         // 运行中或会话已关闭：actor 给的就是给用户看的文字。
         Ack::Rejected { reason } => Err(failed(reason)),
