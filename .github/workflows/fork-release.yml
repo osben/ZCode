@@ -161,7 +161,10 @@ jobs:
   build-windows-x64:
     name: Build Windows x64 (nsis)
     needs: resolve-version
-    runs-on: windows-latest
+    # windows-latest is the windows-2025-vs2026 image, which has no Visual Studio 2022; the
+    # upstream runtime host build (scripts/build-windows-runtime-host.mjs) hard-codes the
+    # "Visual Studio 17 2022" CMake generator (specs/fork-release-versioning.md).
+    runs-on: windows-2025
     timeout-minutes: 120
     env:
       ZCODE_SKIP_REMOTE_ASSETS: "1"
