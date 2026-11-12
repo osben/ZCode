@@ -106,7 +106,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { Spinner } from "@/components/ui/spinner.js";
-import { useComposerVoiceInput, VoiceInputButton } from "@/voice-input/index.js";
+import { useComposerVoiceInput } from "@/voice-input/index.js";
 import { ImagePreviewDialog } from "@/components/ai-elements/image-preview-dialog.js";
 import {
   ChatMediaAttachmentPreviewDialog,
@@ -1060,13 +1060,13 @@ function ConversationComposerImpl({
     api.insertTextAtSelection(text);
     api.focus();
   }, []);
-  // Upstream voice input is desktop-local only (docs/chat/composer-voice-input.md) and is hidden on
-  // mobile remote control. Fork voice dictation owns the composer mic wherever it is enabled, so the
-  // upstream input stays off there (no second recorder racing the editor).
+  // Fork: the composer has one mic, fork voice dictation (owner decision 5 of the upstream 3.18.0
+  // sync, specs/upstream-sync-3.18.0.md). Upstream voice input (ASR through zcode-server, needs a
+  // ZCode account) stays in the codebase but is never enabled here; its hook still provides settle().
   const voiceInput = useComposerVoiceInput({
     inputApiRef,
     sessionId,
-    enabled: !isWebRemoteControl && !voiceDictationEnabled,
+    enabled: false,
   });
   const settleVoiceInput = voiceInput.settle;
   const composerMountedRef = useRef(true);
@@ -4518,15 +4518,6 @@ function ConversationComposerImpl({
             webRemote={isWebRemoteControl}
           />
         ) : null}
-        {/* Fork voice dictation owns the toolbar mic; upstream voice input renders only where dictation is off. */}
-        {!voiceDictationEnabled && voiceInput.available && remoteAvailable ? (
-          <VoiceInputButton
-            state={voiceInput.state}
-            onToggle={voiceInput.toggle}
-            subscribeLevel={voiceInput.subscribeLevel}
-            permissionGuide={voiceInput.permissionGuide}
-          />
-        ) : null}
         {showStopControl ? (
           <ControlHintTooltip title={stopTooltipTitle} shortcut="Esc">
             <Button
@@ -4574,10 +4565,6 @@ function ConversationComposerImpl({
       worktreeQueued,
       activeConfigPicker,
       composerPhase,
-      voiceInput.available,
-      voiceInput.state,
-      voiceInput.toggle,
-      voiceInput.subscribeLevel,
       voiceDictationEnabled,
       composerUsage,
       disabled,

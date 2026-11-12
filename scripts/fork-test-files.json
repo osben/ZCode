@@ -395,6 +395,7 @@
   "packages/ui/test/v4ComposerIncognitoControl.test.ts",
   "packages/ui/test/v4ConversationComposerBlockedSlashMenu.test.ts",
   "packages/ui/test/v4ConversationComposerDraftScopeLeak.test.ts",
+  "packages/ui/test/v4ConversationComposerSingleMic.test.ts",
   "packages/ui/test/v4ConversationComposerWorktreeLateAck.test.ts",
   "packages/ui/test/v4ConversationComposerWorktreeLateAckDispatch.test.ts",
   "packages/ui/test/v4ConversationDraftEmptyStateLogo.test.ts",
