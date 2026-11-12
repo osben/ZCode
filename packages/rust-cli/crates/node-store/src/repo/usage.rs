@@ -1,15 +1,10 @@
 //! Node 用量表的原文 SQL（`apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts`：
-//! `recordModelUsage`、`upsertTurnUsage`、`upsertToolUsage`、`pruneUsage`，docs/specs/rust-cli/usage.md §2）。
+//! `recordModelUsage`、`upsertTurnUsage`、`upsertToolUsage`，docs/specs/rust-cli/usage.md §2）。
 //!
 //! 只有 SQL 与参数绑定；取值规则在 `crate::usage`。所有函数都在存储事务里调用。用量写入的 savepoint 也在这里（F138；
 //! 写失败时回不回退、记不记日志是 `crate::usage::observe` 的规则）。
 use anyhow::Result;
 use rusqlite::{Connection, params};
-
-/// Node `USAGE_RETENTION_MS` (upstream up to 3.17): raw usage rows older than this are pruned.
-/// Upstream 3.18 keeps raw usage forever; its sync sets this to `None`, the only switch for the
-/// raw prune (specs/fork-agent-runtime-selection.md "Usage rollup in Rust mode").
-pub const RETENTION_MS: Option<i64> = Some(30 * 24 * 60 * 60 * 1000);
 
 /// 一个用量事实写入之前：开 savepoint（usage.md §2.5，工作线 F77）。
 pub fn savepoint(conn: &Connection) -> Result<()> {
@@ -457,19 +452,6 @@ pub fn upsert_turn(conn: &Connection, row: &TurnRow) -> Result<()> {
         None::<String>,
         None::<String>,
     ])?;
-    Ok(())
-}
-
-/// Node `pruneUsage` 的三条 delete（Node 自己再开一个 `begin immediate`；这里已在提交的事务里）。
-pub fn prune(conn: &Connection, before: i64) -> Result<()> {
-    conn.prepare_cached("delete from model_usage where started_at < ?")?
-        .execute([before])?;
-    conn.prepare_cached("delete from turn_usage where started_at < ?")?
-        .execute([before])?;
-    // Fork: a running tool row is still upserted by id (Node `upsertToolUsage` until its result);
-    // pruned, it would lose its protected snapshot and be counted again when the upsert re-creates it.
-    conn.prepare_cached("delete from tool_usage where started_at < ? and status != 'running'")?
-        .execute([before])?;
     Ok(())
 }
 

@@ -72,7 +72,6 @@ describe("AgentRuntime background Memory extraction", () => {
       },
       upsertTurnUsage: async () => {},
       upsertToolUsage: async () => {},
-      pruneUsage: async () => {},
     });
     const runtime = createExtractionRuntime({
       async generateText(request) {

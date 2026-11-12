@@ -452,3 +452,6 @@ packages/ui/src/v4/ConversationShareConfirmationDock.tsx
 packages/ui/src/v4/ConversationShareReadonlyTimeline.tsx
 packages/web/src/share-manage/ConversationShareManagePage.tsx
 third-party/copied-components.json
+
+# Upstream file (24.8 KB upstream too); splitting it would conflict with every upstream sync.
+apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts

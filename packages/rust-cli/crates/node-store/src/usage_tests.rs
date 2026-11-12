@@ -469,8 +469,10 @@ async fn a_failed_batch_rolls_back_its_usage_rows() {
     assert!(t.rows("select * from model_usage").is_empty());
 }
 
+/// Upstream 3.18.0 keeps usage facts forever: a usage write never deletes raw rows, even rows a
+/// recompute already rolled up and far older than the 30 days builds up to 3.17 kept.
 #[tokio::test]
-async fn usage_writes_prune_rows_older_than_thirty_days() {
+async fn usage_writes_keep_raw_rows_of_any_age() {
     let t = TestStore::new();
     started(&t, "sess_1").await;
     commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
@@ -483,15 +485,14 @@ async fn usage_writes_prune_rows_older_than_thirty_days() {
     )
     .await;
     let day = 86_400_000_u64;
-    // Fork: a raw row is pruned only once a recompute covered it (an App Usage read here).
-    t.source.at(2_000 + 30 * day + 1);
+    t.source.at(2_000 + 400 * day);
     all_time(&t).await;
     let mut fresh = call("msg_a2", CallStatus::Completed);
-    fresh.started_at_ms = 30 * day;
+    fresh.started_at_ms = 400 * day;
     commit(&t, &sid(), vec![Fact::ModelCalled { call: fresh }]).await;
     assert_eq!(
-        t.rows("select logical_request_id from model_usage"),
-        vec![vec![json!("msg_a2")]]
+        t.rows("select logical_request_id from model_usage order by started_at"),
+        vec![vec![json!("msg_a1")], vec![json!("msg_a2")]]
     );
 }
 
@@ -521,10 +522,10 @@ fn model_call_at(message: &str, at: u64) -> Fact {
     Fact::ModelCalled { call: model }
 }
 
-/// Fork (specs/fork-agent-runtime-selection.md "Usage rollup in Rust mode"): without a recompute
-/// no raw row is pruned, so a row App Usage never saw is still counted by the first read.
+/// Fork (specs/fork-agent-runtime-selection.md "Usage rollup in Rust mode"): a raw row written
+/// before any recompute, older than a month, is still counted by the first App Usage read.
 #[tokio::test]
-async fn without_a_watermark_no_raw_row_is_pruned() {
+async fn a_row_app_usage_never_saw_is_counted_by_the_first_read() {
     let t = TestStore::new();
     started(&t, "sess_1").await;
     commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
@@ -541,38 +542,6 @@ async fn without_a_watermark_no_raw_row_is_pruned() {
         vec![vec![json!("msg_a1")], vec![json!("msg_a2")]]
     );
     assert_eq!(all_time(&t).await.totals.total_tokens, 40);
-}
-
-/// A raw row written after the last recompute stays until a recompute covers it; the prune after
-/// that removes it and the rollup still counts it.
-#[tokio::test]
-async fn a_raw_row_is_pruned_only_after_a_recompute_covered_it() {
-    let t = TestStore::new();
-    started(&t, "sess_1").await;
-    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
-    let base = 40 * DAY;
-    t.source.at(base);
-    assert_eq!(all_time(&t).await.totals.total_tokens, 0);
-    // Written after the read: the rollup has not seen it.
-    t.source.at(base + 60_000);
-    commit(&t, &sid(), vec![model_call_at("msg_a1", base + 30_000)]).await;
-    // A month later another usage batch: the row is past 30 days but not covered.
-    let later = base + 31 * DAY;
-    t.source.at(later);
-    commit(&t, &sid(), vec![model_call_at("msg_a2", later - 10_000)]).await;
-    assert_eq!(
-        t.rows("select count(*) from model_usage"),
-        vec![vec![json!(2)]]
-    );
-    // A read covers it; the next usage batch prunes it and both are still counted.
-    assert_eq!(all_time(&t).await.totals.total_tokens, 40);
-    t.source.at(later + 60_000);
-    commit(&t, &sid(), vec![model_call_at("msg_a3", later + 30_000)]).await;
-    assert_eq!(
-        t.rows("select logical_request_id from model_usage order by started_at"),
-        vec![vec![json!("msg_a2")], vec![json!("msg_a3")]]
-    );
-    assert_eq!(all_time(&t).await.totals.total_tokens, 60);
 }
 
 /// A turn longer than the 7-day replace window: its `turn_usage` row arrives with the turn's old
@@ -602,137 +571,4 @@ async fn a_turn_longer_than_the_replace_window_is_still_rolled_up() {
     .await;
     t.source.at(end + 120_000);
     assert_eq!(all_time(&t).await.turn_totals.total_turns, 1);
-}
-
-/// Another process (the Node agent) updated a live raw row in a bucket that also holds an erased
-/// session's protected baseline. The prune reconciles before it deletes, however fresh the
-/// watermark, so the update is kept.
-#[tokio::test]
-async fn the_prune_keeps_another_process_update_in_a_protected_bucket() {
-    let t = TestStore::new();
-    let erased = SessionId::new("sess_erased");
-    started(&t, "sess_erased").await;
-    started(&t, "sess_1").await;
-    commit(&t, &erased, vec![user("msg_e1", "hi")]).await;
-    commit(&t, &erased, vec![model_call_at("msg_e2", 2_000)]).await;
-    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
-    commit(&t, &sid(), vec![model_call_at("msg_a1", 2_500)]).await;
-    t.source.at(10_000);
-    assert_eq!(all_time(&t).await.totals.total_tokens, 40);
-    // A month later the erase recomputes (fresh watermark) and protects the shared bucket.
-    let later = 31 * DAY;
-    t.source.at(later);
-    StoreQueries::erase_session_tree(&t.store, vec!["sess_erased".to_owned()])
-        .await
-        .unwrap();
-    // Node upserts the live row (5 more output tokens) and has not reconciled yet.
-    t.connection()
-        .execute_batch(
-            "update model_usage set output_tokens = output_tokens + 5,
-               computed_total_tokens = computed_total_tokens + 5
-             where logical_request_id = 'msg_a1'",
-        )
-        .unwrap();
-    // A Rust usage batch prunes the live row.
-    t.source.at(later + 60_000);
-    commit(&t, &sid(), vec![model_call_at("msg_a2", later + 30_000)]).await;
-    assert_eq!(
-        t.rows("select logical_request_id from model_usage"),
-        vec![vec![json!("msg_a2")]]
-    );
-    // 20 (erased) + 25 (updated live row) + 20 (new row).
-    assert_eq!(all_time(&t).await.totals.total_tokens, 65);
-}
-
-/// A `tool_usage` row Node still upserts (`running` until its result) is not pruned: a pruned row
-/// loses its protected snapshot at the next reconcile, and Node's completing upsert would then
-/// re-create it and count it again (3 calls instead of 2).
-#[tokio::test]
-async fn a_running_tool_row_is_not_pruned_until_it_completes() {
-    let t = TestStore::new();
-    let erased = SessionId::new("sess_erased");
-    started(&t, "sess_erased").await;
-    started(&t, "sess_1").await;
-    commit(&t, &erased, vec![user("msg_e1", "hi")]).await;
-    commit(
-        &t,
-        &erased,
-        vec![Fact::ToolCalled {
-            call: tool("toolu_e", CallStatus::Completed),
-        }],
-    )
-    .await;
-    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
-    commit(
-        &t,
-        &sid(),
-        vec![Fact::ToolCalled {
-            call: tool("toolu_l", CallStatus::Completed),
-        }],
-    )
-    .await;
-    // Node's row of a call still running: `upsertToolUsage` with `status: "running"`.
-    t.connection()
-        .execute_batch(
-            "update tool_usage set status = 'running', completed_at = null, duration_ms = null
-             where tool_call_id = 'toolu_l'",
-        )
-        .unwrap();
-    t.source.at(10_000);
-    assert_eq!(all_time(&t).await.tool_totals.tool_call_count, 2);
-    // A month later the erase protects the shared bucket.
-    let later = 31 * DAY;
-    t.source.at(later);
-    StoreQueries::erase_session_tree(&t.store, vec!["sess_erased".to_owned()])
-        .await
-        .unwrap();
-    // Two Rust usage batches: a prune, then a reconcile that drops snapshots of missing rows.
-    t.source.at(later + 60_000);
-    commit(&t, &sid(), vec![model_call_at("msg_a1", later + 30_000)]).await;
-    t.source.at(later + 120_000);
-    commit(&t, &sid(), vec![model_call_at("msg_a2", later + 90_000)]).await;
-    assert_eq!(
-        t.rows("select status from tool_usage where tool_call_id = 'toolu_l'"),
-        vec![vec![json!("running")]]
-    );
-    // Node completes the call (the same id upserted), then App Usage reads.
-    t.source.at(later + 180_000);
-    commit(
-        &t,
-        &sid(),
-        vec![Fact::ToolCalled {
-            call: tool("toolu_l", CallStatus::Completed),
-        }],
-    )
-    .await;
-    t.source.at(later + 240_000);
-    assert_eq!(all_time(&t).await.tool_totals.tool_call_count, 2);
-}
-
-/// A failed reconcile keeps the raw rows: that batch does not prune.
-#[tokio::test]
-async fn a_failed_reconcile_skips_the_raw_prune() {
-    let t = TestStore::new();
-    started(&t, "sess_1").await;
-    commit(&t, &sid(), vec![user("msg_u1", "hi")]).await;
-    commit(&t, &sid(), vec![model_call_at("msg_a1", 2_000)]).await;
-    t.source.at(2_000 + 31 * DAY);
-    all_time(&t).await;
-    // Break the reconcile: a view in place of a protected snapshot table makes its delete fail.
-    t.connection()
-        .execute_batch(
-            "drop table fork_usage_protected_tool_raw;
-             create view fork_usage_protected_tool_raw as select 1 as raw_id;",
-        )
-        .unwrap();
-    commit(
-        &t,
-        &sid(),
-        vec![model_call_at("msg_a2", 2_000 + 31 * DAY - 1_000)],
-    )
-    .await;
-    assert_eq!(
-        t.rows("select logical_request_id from model_usage order by started_at"),
-        vec![vec![json!("msg_a1")], vec![json!("msg_a2")]]
-    );
 }
