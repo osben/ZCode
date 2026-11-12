@@ -277,10 +277,18 @@ impl QueryRunner for ParentRunner {
                 is_error: true,
                 display: Value::Null,
             },
-            Validation::Ok => tool
-                .call(self.input.clone(), context, progress)
-                .await
-                .unwrap(),
+            // A stopped call settles as the executor settles it (`tools::Pipeline`): an error with its own message that
+            // keeps its display.
+            Validation::Ok => match tool.call(self.input.clone(), context, progress).await {
+                Err(rust_cli_kernel_api::tool::ToolError::Stopped { message, display }) => {
+                    ToolOutput {
+                        content: vec![ToolResultContent::Text { text: message }],
+                        is_error: true,
+                        display,
+                    }
+                }
+                other => other.unwrap(),
+            },
         };
         *self.output.lock_unpoisoned() = Some(output);
         while let Ok(update) = updates.try_recv() {

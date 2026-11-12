@@ -749,6 +749,9 @@ impl Actor {
             Command::Rename { title } => self.rename(id, title, None).await,
             Command::RenameRecorded { title, record } => self.rename(id, title, Some(record)).await,
             Command::StopTask { task } => self.stop_task(task).await,
+            Command::StopSubagent { agent, execution } => {
+                self.stop_subagent(agent, execution).await
+            }
             Command::ResolvePeerMessage { message, approve } => {
                 match self.resolve_peer(&message, approve).await {
                     Ok(()) => accepted(),

@@ -76,6 +76,22 @@ pub(super) struct Subagents {
     /// `onBackgroundTaskLifecycle` / `resumedSubagentBackgroundWorkDelta` for `kind: "subagent"`). An ended
     /// child leaves the list; the UI reads only running works.
     pub(super) works: Vec<Value>,
+    /// Fork (B2, Node `liveSubagentStopControlByChildId`): child session → `{taskId, executionId}` of the run the
+    /// desktop's Stop ends. Rebuilt from each live table, never from rows, so a cold open has none and a new run
+    /// replaces the old one.
+    stop_controls: HashMap<String, Value>,
+    /// Fork (B2): the projection was rebuilt (rewind, edit, retry), and its next table read is the recovery baseline.
+    /// Node clears the stop controls when it hydrates ("cold recovery must not re-grant stop capability") and grants
+    /// one only on a live `SubagentSpawned`.
+    pub(super) recovering: bool,
+    /// Fork (B2): the runs (agent, execution) that were already going at the recovery baseline. They never get a stop
+    /// control; a later execution of the same agent (a resume) is a new spawn and does.
+    recovered: HashSet<(String, u64)>,
+    /// Fork (B2): the execution each agent had in the last table read. The change stream coalesces, so one read can
+    /// show a later run of an agent whose earlier run this projection never saw end (a stop, its settle and a resume
+    /// in between): that earlier run is closed with how it ended (`SubagentEntry::previous`) before the new one opens,
+    /// as Node projects the stop and the spawn as separate facts.
+    executions: HashMap<String, u64>,
 }
 
 impl Projection {
@@ -255,6 +271,16 @@ impl Projection {
     pub fn subagent_table(&mut self, entries: &[SubagentEntry], now: u64) -> Vec<Value> {
         let mut out = Vec::new();
         for entry in entries {
+            let agent = entry.agent.as_str();
+            let seen = self
+                .subagents
+                .executions
+                .insert(agent.to_owned(), entry.execution);
+            if seen.is_some_and(|seen| entry.execution > seen) {
+                self.close_missed_run(entry, now, &mut out);
+            }
+        }
+        for entry in entries {
             if entry.status == SubagentStatus::Running && entry.background {
                 self.reopen_subagent(entry, now, &mut out);
             }
@@ -290,6 +316,27 @@ impl Projection {
                 &mut out,
             );
         }
+        let live = |entry: &&SubagentEntry| entry.status == SubagentStatus::Running || entry.parked;
+        let run = |entry: &SubagentEntry| (entry.agent.as_str().to_owned(), entry.execution);
+        if std::mem::take(&mut self.subagents.recovering) {
+            self.subagents.recovered = entries.iter().filter(live).map(run).collect();
+        } else {
+            let going: HashSet<_> = entries.iter().filter(live).map(run).collect();
+            self.subagents.recovered.retain(|run| going.contains(run));
+        }
+        // A child this session spawned itself (no owning subagent) that runs or is parked, in a run spawned live.
+        let recovered = &self.subagents.recovered;
+        self.subagents.stop_controls = entries
+            .iter()
+            .filter(live)
+            .filter(|entry| entry.owner.is_none() && !recovered.contains(&run(entry)))
+            .map(|entry| {
+                (
+                    entry.child.as_str().to_owned(),
+                    json!({"taskId": entry.agent.as_str(), "executionId": entry.execution.to_string()}),
+                )
+            })
+            .collect();
         let mut patch = Map::new();
         if let Some(manifest) = self.materialize_subagents() {
             patch.insert("subagents".into(), manifest);
@@ -301,6 +348,36 @@ impl Projection {
             out.push(json!({"op": "state.updated", "patch": patch}));
         }
         out
+    }
+
+    /// Fork (B2): `entry` is a later run than the one this projection last saw. A row still running belongs to that
+    /// earlier run: it ends as the earlier run ended, and the new run reopens it (a resumed run is a background one).
+    fn close_missed_run(&mut self, entry: &SubagentEntry, now: u64, out: &mut Vec<Value>) {
+        let agent = entry.agent.as_str();
+        if !self.subagents.known.contains(agent) {
+            return;
+        }
+        let status = match entry.previous {
+            Some(SubagentStatus::Failed) => "failed",
+            Some(SubagentStatus::Killed) => "cancelled",
+            Some(SubagentStatus::Completed) => "success",
+            Some(SubagentStatus::Running) | None => return,
+        };
+        let mut closed = false;
+        self.upsert(
+            &subagent_key(agent),
+            |row| {
+                if field(row, "status") == "running" {
+                    row.insert("status".into(), json!(status));
+                    row.insert("endedAt".into(), json!(now));
+                    closed = true;
+                }
+            },
+            out,
+        );
+        if closed && entry.background {
+            self.reopen_subagent(entry, now, out);
+        }
     }
 
     /// A finished child that runs again in the background (SendMessage resume, a parked agent's wake): its
@@ -414,6 +491,9 @@ impl Projection {
                 "title": title,
                 "status": status,
             });
+            if let Some(control) = self.subagents.stop_controls.get(child) {
+                item["stopControl"] = control.clone();
+            }
             if let Some(call) = field(row, "parentToolCallId").as_str() {
                 item["toolCallId"] = json!(call);
             }

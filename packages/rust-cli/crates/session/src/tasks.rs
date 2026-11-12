@@ -455,6 +455,33 @@ impl Actor {
             Err(reason) => Ack::Rejected { reason },
         }
     }
+
+    /// Fork: `Command::StopSubagent`, the desktop's guarded stop (specs/fork-rust-agent-parity.md B2).
+    pub(crate) async fn stop_subagent(
+        &self,
+        agent: rust_cli_kernel_api::ids::AgentId,
+        execution: String,
+    ) -> Ack {
+        let operation = self.deps.operations.next(
+            self.meta.workspace.environment.clone(),
+            Origin::User {
+                session: Some(self.meta.id.clone()),
+            },
+        );
+        match self
+            .deps
+            .agents
+            .stop_subagent(&self.meta.id, &agent, &execution, operation)
+            .await
+        {
+            Ok(()) => Ack::Accepted {
+                result: CommandResult::Done,
+            },
+            Err(refusal) => Ack::Rejected {
+                reason: refusal.as_str().to_owned(),
+            },
+        }
+    }
 }
 
 #[cfg(test)]

@@ -400,3 +400,72 @@ async fn ask_once_questions_skip_permission_request_hooks() {
         "{names:?}"
     );
 }
+
+/// A tool whose call alone was stopped (`ToolError::Stopped`, a foreground subagent stopped by the user).
+struct StoppedTool;
+
+#[async_trait]
+impl Tool for StoppedTool {
+    fn name(&self) -> &str {
+        "Agent"
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn description(&self, _context: &PromptContext) -> String {
+        String::new()
+    }
+    async fn call(
+        &self,
+        _input: Value,
+        _context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(ToolError::Stopped {
+            message: "Subagent was stopped by user".to_owned(),
+            display: json!({"agent": {"agentId": "agent_1", "status": "killed"}}),
+        })
+    }
+}
+
+/// Codex review of #418 @dc4b08512 (1): a stopped call runs the failure hooks as an interrupt (Node `isInterrupt`), never
+/// PostToolUse (whose `updatedToolOutput` could rewrite it), reaches the model as its own message and keeps its display.
+#[tokio::test]
+async fn a_stopped_call_is_an_interrupted_failure_that_keeps_its_display() {
+    let hooks = Arc::new(Hooks::default());
+    let pipeline = Pipeline::new(
+        Gate::new(
+            PermissionDecision::Allow {
+                updated_input: None,
+            },
+            None,
+        ),
+        hooks.clone(),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(StoppedTool),
+            json!({}),
+            context(Arc::new(ScriptedInteractions::allowing())),
+            progress,
+        )
+        .await;
+    let output = &execution.output;
+    assert!(output.is_error);
+    assert_eq!(text(output), "Subagent was stopped by user");
+    assert_eq!(output.display["agent"]["status"], "killed");
+    let events = hooks.seen.lock().unwrap().clone();
+    assert!(
+        events
+            .iter()
+            .all(|event| event.name != HookEventName::PostToolUse),
+        "{events:?}"
+    );
+    let failure = events
+        .iter()
+        .find(|event| event.name == HookEventName::PostToolUseFailure)
+        .expect("the failure hook ran");
+    assert_eq!(failure.payload["is_interrupt"], true);
+    assert_eq!(failure.payload["error"], "Subagent was stopped by user");
+}

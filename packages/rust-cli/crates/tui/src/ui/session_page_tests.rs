@@ -327,6 +327,8 @@ fn while_viewing_a_subagent_the_tab_shows_the_subagent() {
     titled(&mut app);
     app.snapshots.agents = AgentList {
         entries: vec![SubagentEntry {
+            execution: 0,
+            previous: None,
             agent: AgentId::new("agent_a"),
             child: SessionId::new("sess_child"),
             agent_type: "Explore".into(),

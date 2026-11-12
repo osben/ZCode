@@ -2,6 +2,7 @@
 //! （docs/specs/rust-cli/cross-session.md，F28；段落与同伴寻址在 `peer_send`）。描述与 schema 在 `prompts/tools/`
 //! （ListAgents、SendMessage），删掉了不实的产品句（cross-session.md §2.7）。TaskStop 在 `task_stop`。
 
+use crate::live::Enqueued;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -96,11 +97,28 @@ impl Messaging {
             .await;
             return Ok(rust_cli_kernel_api::tool::text(text));
         };
-        if self.core.live.enqueue(&id, input.message.clone()) {
-            return Ok(rust_cli_kernel_api::tool::text(steered_text(
-                &self.core.ports.ids.command(),
-                input.to.trim(),
-            )));
+        match self
+            .core
+            .live
+            .enqueue(&id, input.message.clone(), &context.tool_use)
+        {
+            // Fork: a later message after the stop waits for the run the first one resumes: Node queues it to that
+            // running agent (core `runner.ts`).
+            Enqueued::Steered | Enqueued::AfterStop { first: false } => {
+                return Ok(rust_cli_kernel_api::tool::text(steered_text(
+                    &self.core.ports.ids.command(),
+                    input.to.trim(),
+                )));
+            }
+            // Fork: a stop claimed the run; it resumes with this message once it settles (`routing::settle`).
+            Enqueued::AfterStop { first: true } => {
+                return Ok(rust_cli_kernel_api::tool::text(resumed_text(
+                    self.core.node_desktop,
+                    &input.to,
+                    "killed",
+                )));
+            }
+            Enqueued::NotRunning => {}
         }
         // 已结束：在后台续跑子会话。
         let status = agent.status().as_str();
@@ -113,11 +131,19 @@ impl Messaging {
         };
         let Some(claimed) = self.core.live.restart(&id, Abort::new(), tool_use) else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
-            self.core.live.enqueue(&id, input.message.clone());
-            return Ok(rust_cli_kernel_api::tool::text(steered_text(
-                &self.core.ports.ids.command(),
-                input.to.trim(),
-            )));
+            let text = match self
+                .core
+                .live
+                .enqueue(&id, input.message.clone(), &context.tool_use)
+            {
+                Enqueued::AfterStop { first: true } => {
+                    resumed_text(self.core.node_desktop, &input.to, "killed")
+                }
+                Enqueued::Steered | Enqueued::AfterStop { first: false } | Enqueued::NotRunning => {
+                    steered_text(&self.core.ports.ids.command(), input.to.trim())
+                }
+            };
+            return Ok(rust_cli_kernel_api::tool::text(text));
         };
         // Fork: the forwarder claimed by the restart starts before the resumed run, so a command of that run has a
         // consumer from its first turn.
@@ -140,20 +166,25 @@ impl Messaging {
             });
         };
         spawn::background(&self.core, running, opening);
-        // Fork: the desktop reads Node's wording (core subagent/runner.ts resume text); zcode-rs has
-        // no per-agent output file, so Node's trailing `Output:` path is absent.
-        let text = if self.core.node_desktop {
-            format!(
-                "Agent \"{}\" was stopped ({status}); resumed it in the background with your message. You'll be notified when it finishes.",
-                input.to
-            )
-        } else {
-            format!(
-                "Agent \"{}\" was stopped ({status}); it was resumed in the background with your message. You'll be notified when it finishes.",
-                input.to
-            )
-        };
-        Ok(rust_cli_kernel_api::tool::text(text))
+        Ok(rust_cli_kernel_api::tool::text(resumed_text(
+            self.core.node_desktop,
+            &input.to,
+            status,
+        )))
+    }
+}
+
+/// The reply to a message that resumes a stopped agent. Fork: the desktop reads Node's wording (core subagent/runner.ts
+/// resume text); zcode-rs has no per-agent output file, so Node's trailing `Output:` path is absent.
+fn resumed_text(node_desktop: bool, to: &str, status: &str) -> String {
+    if node_desktop {
+        format!(
+            "Agent \"{to}\" was stopped ({status}); resumed it in the background with your message. You'll be notified when it finishes."
+        )
+    } else {
+        format!(
+            "Agent \"{to}\" was stopped ({status}); it was resumed in the background with your message. You'll be notified when it finishes."
+        )
     }
 }
 

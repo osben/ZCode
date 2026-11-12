@@ -57,6 +57,52 @@ pub(super) async fn cancel(live: &Bridged<Live>, envelope: &Envelope, revision: 
     )
 }
 
+/// Node `V4SubagentStopRejectedError`'s code prefix.
+const SUBAGENT_STOP_REJECTED: &str = "fault.command.subagentStopRejected.";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StopSubagentPayload {
+    task_id: String,
+    execution_id: String,
+}
+
+/// Node `V4SubagentStopRejectedError`: the code and the message for the kernel's refusal (`not_found` /
+/// `not_running`).
+fn subagent_stop_rejected(task: &str, reason: &str) -> (String, String) {
+    (
+        format!("{SUBAGENT_STOP_REJECTED}{reason}"),
+        format!("subagent {task} was not stopped: background_task_{reason}"),
+    )
+}
+
+/// Fork: v4 `stopSubagent` (Node `interaction-background.ts`, specs/fork-rust-agent-parity.md B2): the guarded stop
+/// of the run `runningSubagentSummary.stopControl` named. The manifest settles from the subagent table, not from
+/// this ack.
+pub(super) async fn stop_subagent(live: &Bridged<Live>, envelope: &Envelope, revision: u64) -> Ack {
+    let body: StopSubagentPayload = match payload(envelope) {
+        Ok(body) => body,
+        Err(ack) => return *ack,
+    };
+    let command = Command::StopSubagent {
+        agent: rust_cli_kernel_api::ids::AgentId::new(&body.task_id),
+        execution: body.execution_id,
+    };
+    let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
+    ack_of(
+        kernel,
+        Ack::accepted(&envelope.command_id, revision, None),
+        |reason| subagent_stop_refused(&envelope.command_id, &body.task_id, &reason, revision),
+    )
+}
+
+/// The ack of a refused stop. Node throws `V4SubagentStopRejectedError`; the gateway turns a thrown domain error into a
+/// `failed` ack that keeps its reason code (`v4-gateway.ts`), and that final ack is what the command fact stores.
+fn subagent_stop_refused(command: &str, task: &str, reason: &str, revision: u64) -> Ack {
+    let (code, message) = subagent_stop_rejected(task, reason);
+    Ack::refused(command, Status::Failed, &code, message, revision)
+}
+
 /// Node's status names: a stopped command is `cancelled`.
 fn node_status(status: &str) -> &str {
     match status {
@@ -149,3 +195,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "background_work_tests.rs"]
+mod stop_subagent_tests;

@@ -93,8 +93,8 @@ pub struct AgentStall {
     pub agent: AgentId,
     /// 提醒全文（`[SYSTEM NOTIFICATION …]` 开头，Node 的 `formatBackgroundSubagentStallNotification` 原样）。
     pub text: String,
-    /// 提醒所依据的运行的开始时刻（Node 的 execution 身份；#418 之后换成 executionId）。
-    pub started_ms: u64,
+    /// 提醒所依据的运行（Node `executionId`）：#418 的 execution 计数，与 stopControl 用的是同一个值。
+    pub execution: u64,
     /// 提醒所依据的最后一次进展（Node `lastProgressAt`）。出队时进展前进了，提醒就过时。
     pub progress_ms: u64,
 }
@@ -152,6 +152,18 @@ pub trait AgentSignals: Send + Sync {
         _operation: crate::env::OperationContext,
     ) -> Result<String, String> {
         Err("stopping background tasks is not supported".to_owned())
+    }
+
+    /// Fork (desktop `stopSubagent`, Node `stopBackgroundTask` with `expectedExecutionId`): the user stops one run of
+    /// a subagent that `session` spawned itself. One `Live` lock section checks the agent and its run, then ends it.
+    async fn stop_subagent(
+        &self,
+        _session: &SessionId,
+        _agent: &AgentId,
+        _execution: &str,
+        _operation: crate::env::OperationContext,
+    ) -> Result<(), SubagentStopRefusal> {
+        Err(SubagentStopRefusal::NotFound)
     }
 
     /// 顶层会话 `session` 里本进程启动过的子代理（含嵌套的），按启动顺序（tui-panels.md §1.1，L30）。
@@ -306,3 +318,22 @@ pub trait TaskReader: Send + Sync {
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+/// Fork: why a guarded subagent stop was refused (Node `RuntimeBackgroundStopResult.reason` without its
+/// `background_task_` prefix, the suffix of `fault.command.subagentStopRejected.<reason>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentStopRefusal {
+    /// No such agent, or one that another session or a subagent spawned.
+    NotFound,
+    /// The agent ended, or the named run is not its current one.
+    NotRunning,
+}
+
+impl SubagentStopRefusal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::NotRunning => "not_running",
+        }
+    }
+}

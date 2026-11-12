@@ -20,7 +20,7 @@ fn reminder(
         agent: AgentId::new("agent_abc"),
         root: SessionId::new("sess_root"),
         description: description.to_owned(),
-        started_ms: 0,
+        execution: 0,
         running_for_ms,
         no_progress_for_ms,
         last_progress_ms,
@@ -231,6 +231,7 @@ fn candidate(agent: &str, started: u64) -> Candidate {
         root: SessionId::new("sess_root"),
         description: "task".to_owned(),
         started_ms: started,
+        execution: 0,
         activity: Activity::default(),
         waiting: false,
     }
@@ -491,4 +492,59 @@ fn a_queued_call_that_starts_restarts_its_clock_and_is_progress() {
     activity.tool_started("t2", "Write", None, 20 * MIN);
     assert_eq!(activity.tools[0].started_ms, 20 * MIN);
     assert_eq!(activity.progress_ms, Some(20 * MIN));
+}
+
+/// Node `isBackgroundSubagentStallReminderCurrent` checks `executionId`: a reminder built for run N is not delivered
+/// once the agent has restarted into run N+1 (SendMessage resumes it as a new run).
+#[tokio::test(start_paused = true)]
+async fn a_reminder_from_an_earlier_run_is_not_delivered_after_a_restart() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::agents::AgentSignal;
+    let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+    let clock = std::sync::Arc::new(TokioClock {
+        base_ms: 1_700_000_000_000,
+        start: tokio::time::Instant::now(),
+    });
+    let harness = crate::test_support::desktop_harness_clocked(gate.clone(), clock);
+    let parent = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&parent);
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            serde_json::json!({"description": "Silent job", "prompt": "Wait.", "run_in_background": true}),
+        )
+        .await;
+    harness.started(1).await;
+    let Some(AgentSignal::Stall(stall)) = stream.next().await else {
+        panic!("expected the stall reminder of run 1");
+    };
+    assert!(
+        signals.stall_current(&parent, &stall).await,
+        "run 1 is still running"
+    );
+    harness
+        .call(
+            "sess_parent",
+            "TaskStop",
+            serde_json::json!({"task_id": "agent_1"}),
+        )
+        .await;
+    let Some(AgentSignal::Notice(_)) = stream.next().await else {
+        panic!("expected the TaskStop notice");
+    };
+    harness
+        .call_as(
+            "sess_parent",
+            "SendMessage",
+            serde_json::json!({"to": "agent_1", "message": "Go on."}),
+            Some("toolu_send"),
+        )
+        .await;
+    harness.started(2).await;
+    assert!(
+        !signals.stall_current(&parent, &stall).await,
+        "the reminder of run 1 is stale in run 2"
+    );
 }

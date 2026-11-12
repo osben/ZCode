@@ -5,6 +5,8 @@ use crate::ids::SessionId;
 #[test]
 fn subagent_entries_round_trip() {
     let entry = SubagentEntry {
+        execution: 0,
+        previous: None,
         agent: AgentId::new("agent_1"),
         child: SessionId::new("sess_subagent_agent_1"),
         agent_type: "Explore".to_owned(),
@@ -32,6 +34,8 @@ fn subagent_entries_round_trip() {
     );
     // 远端执行 R4（remote-exec.md §21.7）：缺省机器在远端的子代理写出 `machine`。
     let remote = SubagentEntry {
+        execution: 0,
+        previous: None,
         machine: crate::ids::MachineName::new("dev-a"),
         ..entry.clone()
     };
@@ -43,6 +47,8 @@ fn subagent_entries_round_trip() {
     );
     // 修复线 F30：停放的条目写出 `parked`；旧的快照没有它，读成 false（下面的 activity 一项同）。
     let parked = SubagentEntry {
+        execution: 0,
+        previous: None,
         status: SubagentStatus::Completed,
         parked: true,
         ..entry
@@ -93,6 +99,8 @@ fn subagent_activities_round_trip() {
 fn tasks_snapshots_round_trip() {
     let snapshot = TasksSnapshot {
         subagents: vec![SubagentEntry {
+            execution: 0,
+            previous: None,
             agent: AgentId::new("agent_1"),
             child: SessionId::new("sess_subagent_agent_1"),
             agent_type: "general-purpose".to_owned(),

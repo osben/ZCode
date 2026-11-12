@@ -273,6 +273,13 @@ pub enum Command {
     StopTask {
         task: String,
     },
+    /// Fork (desktop `stopSubagent`): the user's guarded stop of one run of a subagent this session spawned
+    /// ([`crate::agents::AgentSignals::stop_subagent`]). `Accepted` with [`CommandResult::Done`]; a refusal is
+    /// `Rejected` whose reason is [`crate::agents::SubagentStopRefusal::as_str`].
+    StopSubagent {
+        agent: crate::ids::AgentId,
+        execution: String,
+    },
     /// `/cd` 由会话 actor 判定（docs/specs/rust-cli/tui-manage.md §7.1，F1）：运行中 `Rejected`（固定的文字）；
     /// 否则回执是 [`CommandResult::Directory`]。移动时 actor 设 shell cwd、改工作区、
     /// 发 [`KernelEvent::WorkspaceChanged`]，给模型的说明（固定的说明文字加新目录的规则文件）由 actor 组成并提交。

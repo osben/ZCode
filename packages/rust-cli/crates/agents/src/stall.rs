@@ -139,6 +139,8 @@ pub(crate) struct Candidate {
     pub(crate) root: SessionId,
     pub(crate) description: String,
     pub(crate) started_ms: u64,
+    /// The run this is (Node `executionId`): a restart starts a new one.
+    pub(crate) execution: u64,
     pub(crate) activity: Activity,
     /// 在等权限答复（Node `waitingForPermission`）。
     pub(crate) waiting: bool,
@@ -156,7 +158,7 @@ pub(crate) struct Reminder {
     pub(crate) agent: AgentId,
     pub(crate) root: SessionId,
     pub(crate) description: String,
-    pub(crate) started_ms: u64,
+    pub(crate) execution: u64,
     pub(crate) running_for_ms: u64,
     pub(crate) no_progress_for_ms: u64,
     pub(crate) last_progress_ms: u64,
@@ -273,7 +275,7 @@ impl StallClock {
             agent: candidate.agent.clone(),
             root: candidate.root.clone(),
             description: candidate.description.clone(),
-            started_ms: candidate.started_ms,
+            execution: candidate.execution,
             running_for_ms: now.saturating_sub(candidate.started_ms),
             no_progress_for_ms: now.saturating_sub(last_progress_ms),
             last_progress_ms,
@@ -466,7 +468,7 @@ pub(crate) fn notice(reminder: &Reminder) -> AgentStall {
     AgentStall {
         agent: reminder.agent.clone(),
         text: format(reminder),
-        started_ms: reminder.started_ms,
+        execution: reminder.execution,
         progress_ms: reminder.last_progress_ms,
     }
 }

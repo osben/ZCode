@@ -174,3 +174,30 @@ fn reverse_request_replies_follow_the_app_schema() {
             .is_ok()
     );
 }
+
+/// B2 (Node `command.ts` `stopSubagent`: zod `.strict()`, both ids `min(1)`): an empty id or an extra key is refused as
+/// `proto.invalidPayload` before the kernel, never answered as `not_found` / `not_running`.
+#[test]
+fn a_stop_subagent_payload_is_strict() {
+    let inbound = Inbound::get();
+    let envelope = |payload: Value| {
+        json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": "stopSubagent",
+            "payload": payload, "issuedAt": 1})
+    };
+    assert!(
+        inbound
+            .command(&envelope(json!({"taskId": "agent_1", "executionId": "0"})))
+            .is_ok()
+    );
+    for payload in [
+        json!({"taskId": "", "executionId": "0"}),
+        json!({"taskId": "agent_1", "executionId": ""}),
+        json!({"taskId": "agent_1"}),
+        json!({"taskId": "agent_1", "executionId": "0", "extra": true}),
+    ] {
+        assert!(
+            inbound.command(&envelope(payload.clone())).is_err(),
+            "{payload}"
+        );
+    }
+}

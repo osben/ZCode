@@ -49,6 +49,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
         fork_prefix: None,
         stopped_by_user: false,
         erased: false,
+        late_messages: Vec::new(),
     }
 }
 
