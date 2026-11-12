@@ -449,6 +449,7 @@ async fn a_quoted_input_is_titled_by_its_typed_text() {
                 delivery: Delivery::Queue,
                 execution: None,
                 behind_held: false,
+                lease: None,
                 intent: Some(Box::new(intent)),
             },
         })

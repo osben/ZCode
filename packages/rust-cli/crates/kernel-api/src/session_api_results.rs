@@ -39,6 +39,17 @@ pub enum CommandResult {
     Directory(DirectoryOutcome),
     /// `BackgroundForeground`：转到后台的前台命令数。
     Backgrounded { count: usize },
+    /// Fork: `SubmitWith` queued the input instead of starting it (busy, behind a held queue, or while another
+    /// promotion owns the foreground): the admission's real outcome, so the App's ACK says `delivery: "queue"` (Node
+    /// `session-flow.ts` answers from `started.admission.kind`). A started input answers [`CommandResult::Done`].
+    Queued,
+    /// Fork: `Dequeue` hands back the removed input and its content (for an input with attachments the typed text
+    /// block first, then the attachments; empty otherwise), taken from one state of the queue, so a promotion submits
+    /// exactly what the queue held when it was removed (Node takes the intent and the attachments from one item).
+    Dequeued {
+        input: Box<crate::session_api::QueuedInput>,
+        content: Vec<crate::message::ContentBlock>,
+    },
 }
 
 impl CommandResult {

@@ -478,6 +478,28 @@ impl Projection {
         }})
     }
 
+    /// Fork: the kernel's real admission of a remembered input (its `SubmitWith` answered `Queued` or started it), which
+    /// the protocol predicted otherwise: the remembered admission follows the kernel (Node answers from Core's
+    /// admission). An input remembered as `startNow` that the kernel queued is a queue item after all (inputs admitted
+    /// `startNow` are not shown as queue items). Returns the `state.updated` for the queue when what it shows changed
+    /// (the kernel's `QueueChanged` came first); `None` otherwise (a coming `QueueChanged` shows the corrected item).
+    pub fn readmit(&mut self, command: &str, admitted: &'static str) -> Option<Value> {
+        if self.inputs.get(command)?.admitted == admitted {
+            return None;
+        }
+        let before = self.queue_state();
+        if let Some(meta) = self.inputs.get_mut(command) {
+            meta.admitted = admitted;
+        }
+        let after = self.queue_state();
+        (after != before).then(|| {
+            json!({"op": "state.updated", "patch": {
+                "queue": after,
+                "inputRouting": self.input_routing(),
+            }})
+        })
+    }
+
     /// Fork: whether the queue drains on its own (`queue.autoDrain`).
     pub fn auto_drain(&self) -> bool {
         self.auto_drain
@@ -495,20 +517,6 @@ impl Projection {
         self.queue_state()["items"]
             .as_array()
             .is_some_and(|items| !items.is_empty())
-    }
-
-    /// Fork: a turn or a compaction runs, input waits in the queue, an interaction is pending, or a background command or
-    /// subagent still runs (Node `hasResidencyBlockingWork`, `hasPendingInteractions`, `hasQueuedCommands`).
-    pub fn residency_blocking(&self) -> bool {
-        self.phase == Phase::Running
-            || self.active.is_some()
-            || self.compacting
-            || self.has_queue()
-            || !self.pending.is_empty()
-            || self
-                .background_works_value()
-                .as_array()
-                .is_some_and(|works| !works.is_empty())
     }
 
     /// Fork: a user stop cancelled the turn and held the queue (Node's cancelled `TurnComplete` without the preserve

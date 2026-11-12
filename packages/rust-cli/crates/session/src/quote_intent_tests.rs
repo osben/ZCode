@@ -37,6 +37,7 @@ fn quoted(id: &str, text: &str) -> CommandEnvelope {
             delivery: Delivery::Queue,
             execution: None,
             behind_held: false,
+            lease: None,
             intent: Some(intent(text)),
         },
     }

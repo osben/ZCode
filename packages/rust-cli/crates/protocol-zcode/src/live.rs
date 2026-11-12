@@ -553,6 +553,20 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork: see [`crate::projection::Projection::readmit`]; publishes the queue when it changed. In the session's pump
+    /// task ([`rust_cli_protocol_core::sessions::Bridged::run`]), like every other frame of the session.
+    pub async fn readmit(&self, command: &str, admitted: &'static str) {
+        let outgoing = {
+            let mut state = self.state();
+            let Some(delta) = state.projection.readmit(command, admitted) else {
+                return;
+            };
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
     /// Fork: see [`crate::projection::Projection::auto_drain`].
     pub fn auto_drain(&self) -> bool {
         self.state().projection.auto_drain()
@@ -568,11 +582,10 @@ impl Live {
         )
     }
 
-    /// Fork: whether the session is busy for a release (Node `readSessionBusyState`): the projection's busy facts, or a
-    /// first submission still preparing (accepted input that has not started).
-    pub fn residency_blocking(&self) -> bool {
-        let state = self.state();
-        state.preparation.is_some() || state.projection.residency_blocking()
+    /// Fork: a first submission is still preparing (accepted input that has not started; Node's lifecycle not ready),
+    /// one of the busy facts of `session/releaseUnderDirectory`.
+    pub fn preparing(&self) -> bool {
+        self.state().preparation.is_some()
     }
 
     /// Fork: see [`crate::projection::Projection::has_queue`].

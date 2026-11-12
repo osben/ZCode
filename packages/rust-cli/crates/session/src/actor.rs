@@ -457,7 +457,10 @@ impl Actor {
                 input_kind,
             );
             self.emit_queue();
-            return accepted();
+            // The admission's real outcome (Node `started.admission.kind === "queued"`): the App's ACK says `queue`.
+            return Ack::Accepted {
+                result: CommandResult::Queued,
+            };
         }
         if let Some(execution) = execution
             && let Err(reason) = self.submitted_execution(execution).await
@@ -610,6 +613,15 @@ impl Actor {
                     let _ = reply.send(Ack::Duplicate);
                     return;
                 }
+                // Fork: the release lease is held (`Command::ReserveRelease`): the session is about to close.
+                if self.inbox.releasing()
+                    && !matches!(envelope.command, Command::ReserveRelease { .. })
+                {
+                    let _ = reply.send(rejected(
+                        rust_cli_kernel_api::session_api::SESSION_RELEASING,
+                    ));
+                    return;
+                }
                 if self.mirror.running() && crate::child_live::starts_turn(&envelope.command) {
                     let _ =
                         reply.send(rejected(rust_cli_kernel_api::session_api::GOAL_ACTIVE_TURN));
@@ -686,8 +698,16 @@ impl Actor {
                 delivery,
                 execution,
                 behind_held,
+                lease,
             } => {
-                let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
+                // Fork: while a promotion owns the foreground only its own input starts; any other is queued like
+                // busy (Node's admission sees `hasActiveOrQueuedTurnWork` while a promotion lease exists).
+                let foreign = self
+                    .inbox
+                    .foreground_owner()
+                    .is_some_and(|owner| lease.as_deref() != Some(owner));
+                let queue =
+                    foreign || (behind_held && self.inbox.held() && self.inbox.has_inputs());
                 self.submit_with(
                     id,
                     kind,
@@ -757,7 +777,12 @@ impl Actor {
                 self.reorder_queued(&command, before.as_ref())
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
-            Command::ReserveForeground { reserved } => self.reserve_foreground(reserved).await,
+            Command::ReserveForeground { reserved, lease } => {
+                self.reserve_foreground(reserved, lease).await
+            }
+            Command::ReserveRelease { reserved, lease } => {
+                self.reserve_release(reserved, lease).await
+            }
             // 在 `handle` 里处理（回执要等事务结束或名字）。
             Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")

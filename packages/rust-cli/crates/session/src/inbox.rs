@@ -17,6 +17,7 @@ use std::collections::VecDeque;
 
 use rust_cli_kernel_api::hooks::HookOutcome;
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
+use rust_cli_kernel_api::input_intent;
 use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::permission::{ExecutionState, resolve_execution};
@@ -25,6 +26,7 @@ use rust_cli_kernel_api::session_api::{
     QUEUE_ITEM_NOT_EDITABLE, QueueEditLock, QueuedEdit, QueuedInput, QueuedKind,
 };
 use rust_cli_kernel_api::store::{AdmittedInput, InputDelivery};
+use serde_json::Value;
 
 use crate::lane::Waiting;
 
@@ -162,6 +164,30 @@ fn admitted(queued: &Queued) -> AdmittedInput {
     }
 }
 
+/// The typed text block of a content input follows a text edit: `attachments::content` puts the typed text first
+/// when it is not empty.
+fn retype(content: &mut Vec<ContentBlock>, old: &str, new: &str) {
+    let typed = !old.is_empty()
+        && matches!(content.first(), Some(ContentBlock::Text { text }) if text == old);
+    match (typed, new.is_empty()) {
+        (true, true) => {
+            content.remove(0);
+        }
+        (true, false) => {
+            content[0] = ContentBlock::Text {
+                text: new.to_owned(),
+            }
+        }
+        (false, true) => {}
+        (false, false) => content.insert(
+            0,
+            ContentBlock::Text {
+                text: new.to_owned(),
+            },
+        ),
+    }
+}
+
 /// 会话 actor 的输入调度：只在 actor 里经 `&mut` 访问。
 #[derive(Debug, Default)]
 pub(crate) struct Inbox {
@@ -173,8 +199,12 @@ pub(crate) struct Inbox {
     /// Fork: the drain is paused (`Command::HoldQueue`, Node `setAutoDrain` with `autoDrain: false`):
     /// turn ends do not start queued inputs until it is released.
     held: bool,
-    /// Fork: the foreground promotion lease (`Command::ReserveForeground`): no turn starts on its own.
-    reserved: bool,
+    /// Fork: the foreground promotion lease's owner (`Command::ReserveForeground`): while held no turn starts on its
+    /// own.
+    reserved: Option<String>,
+    /// Fork: the release lease's owner (`Command::ReserveRelease`): while held no turn starts on its own and the actor
+    /// takes no command.
+    releasing: Option<String>,
 }
 
 impl Inbox {
@@ -386,6 +416,10 @@ impl Inbox {
             if let Some(intent) = &mut queued.input.intent {
                 intent.set_text(text);
             }
+            // The typed text is the first block of an input with attachments (`attachments::content`).
+            if let InputKind::Content(content) = &mut queued.kind {
+                retype(content, &queued.input.text, text);
+            }
             queued.input.text.clone_from(text);
             if queued.ledger {
                 self.journal.push(LedgerChange::Admitted(admitted(queued)));
@@ -395,20 +429,73 @@ impl Inbox {
         {
             intent.set_quotes(quotes.clone());
         }
+        if let Some(attachments) = &edit.attachments {
+            if let Some(intent) = &mut queued.input.intent {
+                intent.set(input_intent::ATTACHMENT_REFS, attachments.refs.clone());
+            }
+            // A running-turn guide stays text: Rust never steers content into a running turn (spec A1 rule 15).
+            if !queued.lane && matches!(queued.kind, InputKind::Text | InputKind::Content(_)) {
+                queued.kind = if attachments.content.is_empty() {
+                    InputKind::Text
+                } else {
+                    let typed = (!queued.input.text.is_empty()).then(|| ContentBlock::Text {
+                        text: queued.input.text.clone(),
+                    });
+                    InputKind::Content(
+                        typed
+                            .into_iter()
+                            .chain(attachments.content.iter().cloned())
+                            .collect(),
+                    )
+                };
+            }
+        }
         if edit.model_selection.is_some() || edit.mode.is_some() || edit.plan_enabled.is_some() {
             let previous = queued.input.execution.clone();
             let base = previous.as_ref().map_or(current, |frozen| frozen.state);
             let previous_selection = previous.and_then(|frozen| frozen.selection);
-            let state =
-                resolve_execution(edit.mode.as_deref(), edit.plan_enabled, base).unwrap_or(base);
-            let selection = edit.model_selection.clone().or(previous_selection.clone());
-            // Node `dropHighspeed`: the frozen Highspeed card belongs to the model it was chosen for.
-            if edit.model_selection.is_some()
-                && edit.model_selection != previous_selection
-                && let Some(intent) = &mut queued.input.intent
-            {
-                intent.drop_highspeed();
+            // Node `dropHighspeed`: the frozen Highspeed card belongs to the model it was chosen for. Node compares the
+            // payload with the item's own selection, which is the intent's when it has one.
+            let stored = queued
+                .input
+                .intent
+                .as_ref()
+                .and_then(|intent| intent.get(input_intent::MODEL_SELECTION).cloned());
+            let model_changed = match (&edit.intent_model_selection, &stored) {
+                (Some(sent), Some(stored)) => sent != stored,
+                _ => edit.model_selection.is_some() && edit.model_selection != previous_selection,
+            };
+            let mut mode = edit.mode.clone().filter(|mode| !mode.is_empty());
+            let mut plan = edit.plan_enabled;
+            if let Some(intent) = &mut queued.input.intent {
+                if model_changed {
+                    intent.drop_highspeed();
+                }
+                // Node `editedIntent`: an edited field replaces the intent's, the omitted ones stay.
+                if let Some(selection) = &edit.intent_model_selection {
+                    intent.set(input_intent::MODEL_SELECTION, selection.clone());
+                }
+                if let Some(mode) = &mode {
+                    intent.set(input_intent::MODE, Value::String(mode.clone()));
+                }
+                if let Some(plan) = plan {
+                    intent.set(input_intent::PLAN_ENABLED, Value::Bool(plan));
+                }
+                // Node resolves the edited intent when the item starts (`applyRuntimeExecutionState`): a mode-only
+                // edit keeps the intent's earlier `planEnabled`.
+                mode = mode.or_else(|| intent.str(input_intent::MODE).map(str::to_owned));
+                plan = plan.or_else(|| {
+                    intent
+                        .get(input_intent::PLAN_ENABLED)
+                        .and_then(Value::as_bool)
+                });
             }
+            let state = if edit.mode.is_some() || edit.plan_enabled.is_some() {
+                resolve_execution(mode.as_deref(), plan, base).unwrap_or(base)
+            } else {
+                base
+            };
+            let selection = edit.model_selection.clone().or(previous_selection);
             queued.input.execution = Some(InputExecution { state, selection });
         }
         let released = editor.is_some();
@@ -435,6 +522,13 @@ impl Inbox {
                 && execution.state.mode != mode
             {
                 execution.state = execution.state.with_mode(mode);
+                // Node's grant rewrites the queued intent's mode too (`{...item.intent, mode}`).
+                if let Some(intent) = &mut queued.input.intent {
+                    intent.set(
+                        input_intent::MODE,
+                        Value::String(mode.node_name().to_owned()),
+                    );
+                }
                 changed = true;
             }
         }
@@ -489,12 +583,37 @@ impl Inbox {
 
     /// Fork: the foreground is reserved for a promoted input (`Command::ReserveForeground`).
     pub(crate) fn reserved(&self) -> bool {
-        self.reserved
+        self.reserved.is_some() || self.releasing.is_some()
     }
 
-    /// Fork: set the reservation; returns the previous value.
-    pub(crate) fn set_reserved(&mut self, reserved: bool) -> bool {
-        std::mem::replace(&mut self.reserved, reserved)
+    /// Fork: a promotion holds the foreground (`Command::ReserveForeground`), without the release lease.
+    pub(crate) fn foreground_reserved(&self) -> bool {
+        self.reserved.is_some()
+    }
+
+    /// Fork: the owner of the foreground promotion lease, if one holds it.
+    pub(crate) fn foreground_owner(&self) -> Option<&str> {
+        self.reserved.as_deref()
+    }
+
+    /// Fork: the release lease is held (`Command::ReserveRelease`).
+    pub(crate) fn releasing(&self) -> bool {
+        self.releasing.is_some()
+    }
+
+    /// Fork: the owner of the release lease, if one holds it.
+    pub(crate) fn release_owner(&self) -> Option<&str> {
+        self.releasing.as_deref()
+    }
+
+    /// Fork: take (`Some(owner)`) or end (`None`) the release lease.
+    pub(crate) fn set_release_owner(&mut self, owner: Option<String>) {
+        self.releasing = owner;
+    }
+
+    /// Fork: take (`Some(owner)`) or end (`None`) the foreground promotion lease.
+    pub(crate) fn set_foreground_owner(&mut self, owner: Option<String>) {
+        self.reserved = owner;
     }
 
     /// Fork: set the hold; returns whether it changed (the actor emits `QueueChanged` on a change).

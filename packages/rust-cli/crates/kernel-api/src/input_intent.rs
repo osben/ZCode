@@ -18,6 +18,14 @@ pub const QUOTES: &str = "conversationQuotes";
 pub const HIGHSPEED: &str = "highspeed";
 /// A bot-group input's source; kept as stored, never produced here.
 pub const BOT_GROUP_SOURCE: &str = "botGroupSource";
+/// The App's model selection, as sent.
+pub const MODEL_SELECTION: &str = "modelSelection";
+/// Node's mode name.
+pub const MODE: &str = "mode";
+/// The plan switch.
+pub const PLAN_ENABLED: &str = "planEnabled";
+/// The App's attachment refs, as sent.
+pub const ATTACHMENT_REFS: &str = "attachmentRefs";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -54,6 +62,12 @@ impl InputIntent {
     /// Node `editedIntent`: the edited quotes as given (`[]` clears them, the key stays).
     pub fn set_quotes(&mut self, quotes: Value) {
         self.0.insert(QUOTES.to_owned(), quotes);
+    }
+
+    /// Node `editedIntent`: an edited field replaces the stored one (`modelSelection`, `mode`, `planEnabled`,
+    /// `attachmentRefs`); the other fields stay.
+    pub fn set(&mut self, key: &str, value: Value) {
+        self.0.insert(key.to_owned(), value);
     }
 
     /// Node `editedIntent` with `dropHighspeed`: a model change drops the frozen Highspeed card.

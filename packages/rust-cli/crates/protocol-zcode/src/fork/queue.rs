@@ -8,9 +8,9 @@ use futures_util::StreamExt;
 use rust_cli_kernel_api::goal::{GoalPhase, VerificationStatus};
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, Delivery, KernelEvent, QUEUE_EDIT_LOCK_LOST,
+    Ack as KernelAck, Command, CommandResult, Delivery, KernelEvent, QUEUE_EDIT_LOCK_LOST,
     QUEUE_EDIT_LOCK_MISSING, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING, QUEUE_ITEM_NOT_EDITABLE,
-    QueueEditLock, QueuedEdit,
+    QueueEditLock, QueuedAttachments, QueuedEdit,
 };
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -20,6 +20,7 @@ use crate::commands::{ack_of, payload, send};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::projection::InputMeta;
+use crate::server::Server;
 
 /// Node `V4QueueItemTextUnavailableError` carries no domain reason code, so the gateway settles it as
 /// the generic execution failure.
@@ -150,10 +151,12 @@ pub(super) async fn delete_queue_item(
 }
 
 /// `editQueueItem` → kernel `EditQueued`: the item is edited in place, its position kept. The body's fields the App
-/// did not send keep their values (Node: `newText` is the text; `attachments` is the chips, `[]` clears them and
-/// is applied here, the protocol's input metadata). Node's `guard.queueItemNotEditable` is the kernel's refusal of a
-/// compaction.
+/// did not send keep their values (Node: `newText` is the text; `attachments` replaces the refs, `[]` clears them).
+/// The refs are resolved into content blocks before the kernel sees the edit (Node maps them before the write-back), so
+/// a ref that cannot be resolved refuses the edit and changes nothing; the chips (the protocol's input metadata) follow
+/// once the kernel accepted it. Node's `guard.queueItemNotEditable` is the kernel's refusal of a compaction.
 pub(super) async fn edit_queue_item(
+    server: &Server,
     live: &Bridged<Live>,
     envelope: &Envelope,
     revision: u64,
@@ -163,6 +166,13 @@ pub(super) async fn edit_queue_item(
         Err(ack) => return *ack,
     };
     let source = source_of(&body.queue_item_id);
+    let attachments = match &body.attachments {
+        None => None,
+        Some(refs) => match queued_attachments(server, live, envelope, refs, revision).await {
+            Ok(attachments) => Some(attachments),
+            Err(ack) => return *ack,
+        },
+    };
     let command = Command::EditQueued {
         command: CommandId::new(source),
         edit: QueuedEdit {
@@ -170,8 +180,13 @@ pub(super) async fn edit_queue_item(
             text: body.new_text.clone(),
             conversation_quotes: body.conversation_quotes.clone(),
             model_selection: crate::commands::selection(body.model_selection.as_ref()),
+            intent_model_selection: body
+                .model_selection
+                .clone()
+                .filter(|value| !value.is_null()),
             mode: body.mode.clone(),
             plan_enabled: body.plan_enabled,
+            attachments,
         },
     };
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
@@ -187,6 +202,46 @@ pub(super) async fn edit_queue_item(
         }
         KernelAck::Rejected { reason } => queue_refusal(envelope, revision, &reason),
     }
+}
+
+/// The edit's attachments as the kernel queues them: the refs as sent, and their content blocks without the typed text
+/// (the queue owns the text). The refusals are `sendText`'s: a ref that does not match the schema is invalid, material
+/// that cannot be written fails.
+async fn queued_attachments(
+    server: &Server,
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    refs: &[Value],
+    revision: u64,
+) -> Result<QueuedAttachments, Box<Ack>> {
+    let parsed = crate::attachments::parse_refs(refs).map_err(|error| {
+        Box::new(Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            error.message,
+            revision,
+        ))
+    })?;
+    let content = if parsed.is_empty() {
+        Vec::new()
+    } else {
+        crate::attachments::content(server, live.handle.id(), "", parsed)
+            .await
+            .map_err(|error| {
+                Box::new(Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    &error.message,
+                    error.message.clone(),
+                    revision,
+                ))
+            })?
+    };
+    Ok(QueuedAttachments {
+        refs: Value::Array(refs.to_vec()),
+        content,
+    })
 }
 
 /// `lockQueueItemEdit` → kernel `LockQueuedEdit` (Node `lockQueueItemEdit`). The protocol holds the item's promotion
@@ -278,6 +333,7 @@ pub(super) async fn apply_queue_items_config(
         commands,
         edit: QueuedEdit {
             model_selection: crate::commands::selection(body.model_selection.as_ref()),
+            intent_model_selection: body.model_selection.filter(|value| !value.is_null()),
             mode: body.mode,
             ..QueuedEdit::default()
         },
@@ -416,8 +472,8 @@ pub(crate) async fn settle_running_turn(
 /// The promoted item keeps its kernel kind and frozen execution state (the body's
 /// `modelSelection` overrides the frozen selection) and restarts under a fresh command id.
 ///
-/// Not ported: Node's reservation (`guard.queueItemReserved`) — the kernel has a single queue owner
-/// and no competing promotions; queued attachments — a promoted item restarts without them.
+/// The promoted item keeps its attachments: the kernel's `Dequeue` hands back the queued content (Node passes the
+/// item's attachments into the promoted turn), and the chips follow the intent's `attachmentRefs`.
 pub(super) async fn send_queued_now(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -476,20 +532,38 @@ pub(super) async fn send_queued_now(
         );
     }
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
-    let release = || Command::ReserveForeground { reserved: false };
+    // Node `queue-promotion:<commandId>`: the lease's owner, so only this promotion's release ends it.
+    let lease = format!("queue-promotion:{}", envelope.command_id);
+    let release = || Command::ReserveForeground {
+        reserved: false,
+        lease: lease.clone(),
+    };
     // The promotion lease: while the window is open neither another queued item nor a background notice can start
     // (Node `dequeueNextRunnableBatch` returns only the promoted command). The user's own hold stays as it is.
-    send(
+    // Node `acquireForegroundPromotionLease`: another promotion owns the foreground (`conflict`) → refused, the item
+    // stays queued and the other lease is left alone.
+    if let KernelAck::Rejected { reason } = send(
         handle,
         &part("reserve"),
-        Command::ReserveForeground { reserved: true },
+        Command::ReserveForeground {
+            reserved: true,
+            lease: lease.clone(),
+        },
     )
-    .await;
+    .await
+    {
+        return failed(
+            PROMOTION_BUSY,
+            format!("v4 queue promotion is owned by another lease: {reason}"),
+        );
+    }
     if let Err(reason) = settle_running_turn(live, envelope).await {
         send(handle, &part("resume"), release()).await;
         return failed(ITEM_UNAVAILABLE, reason);
     }
-    // Removed only when the promotion is about to start, like Node's promotion commit.
+    // Removed only when the promotion is about to start, like Node's promotion commit. The kernel hands back the input
+    // as the queue held it then: an `editQueueItem` that landed while the running turn settled is in it, so the text,
+    // the intent (quotes, chips) and the content submitted below come from one state (Node takes them from one item).
     let taken = send(
         handle,
         &part("take"),
@@ -498,13 +572,35 @@ pub(super) async fn send_queued_now(
         },
     )
     .await;
-    if let KernelAck::Rejected { reason } = taken {
-        send(handle, &part("resume"), release()).await;
-        return failed(PROMOTION_COMMIT_FAILED, reason);
-    }
+    let (input, content) = match taken {
+        KernelAck::Accepted {
+            result: CommandResult::Dequeued { input, content },
+        } => (*input, content),
+        KernelAck::Rejected { reason } => {
+            send(handle, &part("resume"), release()).await;
+            return failed(PROMOTION_COMMIT_FAILED, reason);
+        }
+        KernelAck::Accepted { .. } | KernelAck::Duplicate => {
+            send(handle, &part("resume"), release()).await;
+            return failed(
+                PROMOTION_COMMIT_FAILED,
+                format!(
+                    "v4 sendQueuedNow queue item not handed back: {}",
+                    body.queue_item_id
+                ),
+            );
+        }
+    };
+    let chips = input
+        .intent
+        .as_ref()
+        .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     // The item starts with its own frozen execution state; a selection the client re-sent with the
     // promotion overrides the item's model, like the row commands' resubmit.
-    let mut execution = item.execution.clone();
+    let mut execution = input.execution.clone();
     if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref()) {
         let state = execution.as_ref().map_or_else(
             || {
@@ -523,11 +619,11 @@ pub(super) async fn send_queued_now(
         InputMeta {
             client: envelope.client_id.clone(),
             origin: envelope.input_origin.clone(),
-            text: item.text.clone(),
+            text: input.text.clone(),
             admitted_at: 0,
             requested: "queue",
             admitted: "startNow",
-            attachments: Vec::new(),
+            attachments: chips,
         },
     );
     let submitted = send(
@@ -535,13 +631,15 @@ pub(super) async fn send_queued_now(
         &part("send"),
         Command::SubmitWith {
             // Node `inputIntentMetadataFromQueueItem`: the item's intent unchanged.
-            intent: item.intent,
-            kind: item.kind,
-            text: item.text,
-            content: Vec::new(),
+            intent: input.intent,
+            kind: input.kind,
+            text: input.text,
+            content,
             delivery: Delivery::Queue,
             execution,
             behind_held: false,
+            // The promoted input is the lease owner's: it starts while the lease holds the foreground.
+            lease: Some(lease.clone()),
         },
     )
     .await;
@@ -556,3 +654,7 @@ pub(super) async fn send_queued_now(
     send(handle, &part("resume"), release()).await;
     ack
 }
+
+#[cfg(test)]
+#[path = "queue_tests.rs"]
+mod tests;

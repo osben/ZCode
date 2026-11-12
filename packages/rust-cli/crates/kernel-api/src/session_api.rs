@@ -177,6 +177,11 @@ pub enum Command {
         /// Fork: the App input's intent; `text` is the typed text and the quotes join it after slash expansion.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         intent: Option<Box<crate::input_intent::InputIntent>>,
+        /// Fork: the foreground lease ([`Command::ReserveForeground`]) this submit is the promoted input of. While a
+        /// lease is held, a submit that does not name its owner is queued as if busy (Node's admission sees
+        /// `hasActiveOrQueuedTurnWork` while a promotion lease exists), so it cannot start ahead of the promotion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease: Option<String>,
     },
     /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
     /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are
@@ -361,10 +366,25 @@ pub enum Command {
     /// Fork: the foreground promotion lease (Node `acquireForegroundPromotionLease`, `send-now:`/`sendQueuedNow`). While
     /// reserved, nothing starts a turn on its own (queued inputs, background notices, cron): the caller interrupts the
     /// running turn and submits the promoted input to the idle session. Releasing while idle resumes the drain as a turn
-    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. Always
-    /// `Accepted`.
+    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. The lease
+    /// has one owner (`lease`, Node's `leaseId`): another lease is refused with [`FOREGROUND_BUSY`], the owner taking it
+    /// again is accepted, and only the owner's release ends it (another lease's release is accepted and changes
+    /// nothing), as Node `acquireForegroundPromotionLease` / `releaseForegroundPromotionLease`.
     ReserveForeground {
         reserved: bool,
+        lease: String,
+    },
+    /// Fork: the release lease of `session/releaseUnderDirectory` (specs/fork-rust-agent-parity.md, A3). Taking it
+    /// (`reserved: true`) is refused with [`SESSION_BUSY`] while a turn, compaction or job runs, an input is queued or
+    /// in the lane, or an interaction is pending. While held, every other command is refused with
+    /// [`SESSION_RELEASING`] and no turn starts on its own; the lease ends when the session closes or when it is
+    /// returned (`reserved: false`, always `Accepted`), which resumes the drain as a turn end would. The lease has one
+    /// owner (`lease`, one per release): another lease is refused with [`SESSION_BUSY`], the owner taking it again is
+    /// accepted, and only the owner's return ends it. It is refused too while a promotion holds the foreground
+    /// ([`Command::ReserveForeground`]), whose dequeued item must still be submitted.
+    ReserveRelease {
+        reserved: bool,
+        lease: String,
     },
 }
 
@@ -505,7 +525,31 @@ pub struct QueuedEdit {
     pub mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_enabled: Option<bool>,
+    /// The App's `modelSelection` as sent, stored on the intent unchanged (Node `editedIntent` keeps the payload's
+    /// shape); `model_selection` is the same choice parsed for the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_model_selection: Option<serde_json::Value>,
+    /// The new attachments: `[]` clears them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<QueuedAttachments>,
 }
+
+/// Fork: the attachments of a queue edit, resolved by the protocol before the edit is sent (Node maps the refs before
+/// the write-back).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedAttachments {
+    /// The App's refs as sent (the intent's `attachmentRefs`).
+    pub refs: serde_json::Value,
+    /// The refs' content blocks, without the typed text block (the queue owns the text).
+    pub content: Vec<crate::message::ContentBlock>,
+}
+
+/// Fork: `Command::ReserveRelease` while the session has work (`session/releaseUnderDirectory` busy).
+pub const SESSION_BUSY: &str = "session.busy";
+/// Fork: a command reached a session whose release lease is held (`Command::ReserveRelease`).
+pub const SESSION_RELEASING: &str = "session.releasing";
+/// Fork: `Command::ReserveForeground` refused because another promotion owns the foreground (Node's lease `conflict`).
+pub const FOREGROUND_BUSY: &str = "session.foregroundBusy";
 
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";

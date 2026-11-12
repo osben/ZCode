@@ -279,7 +279,7 @@ pub async fn command(server: &Server, params: Value) -> Result<Value, RpcError> 
     Ok(ack.to_value())
 }
 
-async fn decide(server: &Server, envelope: &Envelope) -> Ack {
+pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     if envelope.kind == "createSession" {
         return create_session(server, envelope).await;
     }
@@ -316,16 +316,12 @@ async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             } else {
                 QueuedKind::Text
             };
-            let ack = if phase == Phase::Running
-                && kind == QueuedKind::Text
-                && requests_start_now(envelope)
-            {
-                send_text_now(server, &live, envelope, revision).await
+            // Node `forceStartNow`: every explicit `startNow` text takes the foreground lease, whatever the projected
+            // phase (an idle projection may lag behind a promotion that holds the lease).
+            let ack = if kind == QueuedKind::Text && requests_start_now(envelope) {
+                send_text_now(server, &live, envelope, phase, revision).await
             } else {
-                send_text(
-                    server, handle, &live.sink, envelope, kind, phase, revision, false,
-                )
-                .await
+                send_text(server, &live, envelope, kind, phase, revision, None).await
             };
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
@@ -660,6 +656,7 @@ async fn submit_first(
         delivery: Delivery::Queue,
         execution,
         behind_held: false,
+        lease: None,
     };
     Ok(
         match send(live.handle.as_ref(), &envelope.command_id, submit).await {
@@ -1358,6 +1355,27 @@ fn admission(
     }
 }
 
+/// Fork: the `sendText` ACK's `delivery` from the kernel's real admission (Node `session-flow.ts` answers from
+/// `started.admission.kind`): a started input is `startNow`, a queued one `queue`, a queued guide stays `guide` (it
+/// steers into the running turn). The projection's prediction loses in both races (a turn that ended before the
+/// submit, a turn or lease that appeared). A refusal or duplicate keeps the prediction.
+fn acked_delivery(
+    predicted: &'static str,
+    kernel: &rust_cli_kernel_api::session_api::Ack,
+) -> &'static str {
+    use rust_cli_kernel_api::session_api::{Ack as KernelAck, CommandResult};
+    match kernel {
+        KernelAck::Accepted {
+            result: CommandResult::Queued,
+        } if predicted == "startNow" => "queue",
+        KernelAck::Accepted {
+            result: CommandResult::Queued,
+        } => predicted,
+        KernelAck::Accepted { .. } => "startNow",
+        KernelAck::Rejected { .. } | KernelAck::Duplicate => predicted,
+    }
+}
+
 /// Fork: `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode).
 fn requests_start_now(envelope: &Envelope) -> bool {
     envelope
@@ -1375,33 +1393,50 @@ async fn send_text_now(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
+    phase: Phase,
     revision: u64,
 ) -> Ack {
     let handle = live.handle.as_ref();
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
-    send(
+    // Node `send-now:<commandId>`: the lease's owner. Another promotion owning the foreground refuses the input as
+    // Node does (`send now foreground promotion is busy`), and that lease is left alone. Node throws
+    // `V4InputAdmissionRejectedError` and the gateway answers a thrown command error with `status: "failed"`.
+    let lease = format!("send-now:{}", envelope.command_id);
+    if let rust_cli_kernel_api::session_api::Ack::Rejected { .. } = send(
         handle,
         &part("reserve"),
-        Command::ReserveForeground { reserved: true },
+        Command::ReserveForeground {
+            reserved: true,
+            lease: lease.clone(),
+        },
     )
-    .await;
+    .await
+    {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Failed,
+            "fault.command.inputRejected",
+            "send now foreground promotion is busy",
+            revision,
+        );
+    }
     let ack = match crate::fork::settle_running_turn(live, envelope).await {
         Ok(()) => {
             send_text(
                 server,
-                handle,
-                &live.sink,
+                live,
                 envelope,
                 QueuedKind::Text,
-                Phase::Running,
+                phase,
                 revision,
-                true,
+                Some(&lease),
             )
             .await
         }
+        // A failed preemption is a thrown error in Node too (`preemptActiveTurnAndWait`): `failed`.
         Err(reason) => Ack::refused(
             &envelope.command_id,
-            Status::Rejected,
+            Status::Failed,
             "fault.command.inputRejected",
             reason,
             revision,
@@ -1410,7 +1445,10 @@ async fn send_text_now(
     send(
         handle,
         &part("release"),
-        Command::ReserveForeground { reserved: false },
+        Command::ReserveForeground {
+            reserved: false,
+            lease: format!("send-now:{}", envelope.command_id),
+        },
     )
     .await;
     ack
@@ -1421,18 +1459,19 @@ async fn send_text_now(
 /// (`Command::SubmitWith`), so a queued input never changes the running turn's mode or model.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the sendText admission inputs plus the preempted flag"
+    reason = "the sendText admission inputs plus the promotion lease"
 )]
 async fn send_text(
     server: &Server,
-    handle: &dyn SessionHandle,
-    live: &crate::live::Live,
+    bridged: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
     kind: QueuedKind,
     phase: Phase,
     revision: u64,
-    preempted: bool,
+    promotion: Option<&str>,
 ) -> Ack {
+    let handle = bridged.handle.as_ref();
+    let live = bridged.sink.as_ref();
     let input: Input = match payload(envelope) {
         Ok(input) => input,
         Err(ack) => return *ack,
@@ -1511,7 +1550,7 @@ async fn send_text(
     let execution = input_execution(&input, view.as_ref());
     let requested = input.requested_delivery;
     // A preempted turn has settled: the input starts now even though the snapshot still said running.
-    let admission_phase = if preempted {
+    let admission_phase = if promotion.is_some() {
         Phase::CompletedInterrupted
     } else {
         phase
@@ -1551,10 +1590,24 @@ async fn send_text(
         delivery,
         execution,
         behind_held: false,
+        // The start-now input is the promotion's own: it starts while its lease holds the foreground.
+        lease: promotion.map(str::to_owned),
     };
+    let kernel = send(handle, command, submit).await;
+    let predicted = admitted;
+    let admitted = acked_delivery(predicted, &kernel);
+    if admitted != predicted {
+        // The remembered admission follows the kernel's. Corrected and published in the session's pump, after the
+        // events already received, so its frame cannot overtake or be overtaken by the pump's frames.
+        let sink = bridged.sink.clone();
+        let command = command.to_owned();
+        bridged.run(Box::pin(
+            async move { sink.readmit(&command, admitted).await },
+        ));
+    }
     let result = json!({"type": "inputAccepted", "delivery": admitted, "inputId": command});
     ack_of(
-        send(handle, command, submit).await,
+        kernel,
         Ack::accepted(command, revision, Some(result)),
         |reason| {
             Ack::refused(
