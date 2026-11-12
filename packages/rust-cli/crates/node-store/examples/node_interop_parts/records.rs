@@ -42,6 +42,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
             ids.push(id.as_str().to_owned());
             Fact::MessageAppended {
                 message: Message::User(UserMessage {
+                    stall_execution: None,
                     intent: None,
                     id,
                     content: vec![text(&body)],

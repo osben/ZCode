@@ -47,6 +47,7 @@ fn call(at: u64, n: u32, tool: &str, input: Value) -> Message {
 
 fn result(at: u64, n: u32, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: message_id(at + 1, n + 100),
         content: vec![ContentBlock::ToolResult {
@@ -198,6 +199,7 @@ async fn ids_without_a_time_keep_recurring_tasks_only() {
             usage: None,
         }),
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("u1"),
             content: vec![

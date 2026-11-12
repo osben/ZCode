@@ -327,6 +327,7 @@ fn while_viewing_a_subagent_the_tab_shows_the_subagent() {
     titled(&mut app);
     app.snapshots.agents = AgentList {
         entries: vec![SubagentEntry {
+            execution_id: String::new(),
             execution: 0,
             previous: None,
             agent: AgentId::new("agent_a"),

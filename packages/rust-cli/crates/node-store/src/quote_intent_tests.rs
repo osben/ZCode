@@ -32,6 +32,7 @@ fn intent(text: &str) -> InputIntent {
 fn input(id: &str, text: &str, intent: InputIntent) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],
             origin: UserOrigin::Human,

@@ -505,6 +505,23 @@ pub(crate) fn desktop_harness_gated(gate: Option<Arc<Notify>>) -> Harness {
     )
 }
 
+/// [`desktop_harness_gated`] with the clock `clock` (the stall reminder's timer and the agents' start times follow it).
+pub(crate) fn desktop_harness_clocked(
+    gate: Arc<Notify>,
+    clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+) -> Harness {
+    built_full(
+        Some(Gate::Shared(gate)),
+        true,
+        machine(Arc::new(UnusedEnvironment)),
+        no_peers(),
+        &[],
+        clock,
+        None,
+        true,
+    )
+}
+
 fn no_peers() -> Arc<dyn rust_cli_kernel_api::peers::PeerMessaging> {
     Arc::new(rust_cli_kernel_api::peers::NoPeers)
 }
@@ -707,6 +724,8 @@ fn built_full(
             fork: false,
             // Fork (node_desktop): only the desktop harness registers TaskOutput.
             node_desktop,
+            // 无进展提醒：测试用的时钟与驱动分开测（stall_tests.rs），这里取缺省。
+            stall: crate::StallConfig::default(),
         },
     );
     Harness {

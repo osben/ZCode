@@ -46,7 +46,12 @@ async fn a_stop_naming_the_current_run_ends_it() {
     let agent = AgentId::new("agent_1");
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .stop_subagent(
+                &parent,
+                &agent,
+                &execution_id(&harness, &agent),
+                operation(&parent)
+            )
             .await,
         Ok(())
     );
@@ -60,7 +65,12 @@ async fn a_stop_naming_the_current_run_ends_it() {
     );
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .stop_subagent(
+                &parent,
+                &agent,
+                &execution_id(&harness, &agent),
+                operation(&parent)
+            )
             .await,
         Err(SubagentStopRefusal::NotRunning)
     );
@@ -81,7 +91,7 @@ async fn a_stop_naming_another_run_is_refused() {
         .await;
     harness.started(1).await;
     let agent = AgentId::new("agent_1");
-    for stale in ["1", "x"] {
+    for stale in ["exec_stale", "x"] {
         assert_eq!(
             signals
                 .stop_subagent(&parent, &agent, stale, operation(&parent))
@@ -112,13 +122,23 @@ async fn another_session_or_an_unknown_agent_is_not_found() {
     harness.started(1).await;
     assert_eq!(
         signals
-            .stop_subagent(&other, &AgentId::new("agent_1"), "0", operation(&other))
+            .stop_subagent(
+                &other,
+                &AgentId::new("agent_1"),
+                &execution_id(&harness, &AgentId::new("agent_1")),
+                operation(&other)
+            )
             .await,
         Err(SubagentStopRefusal::NotFound)
     );
     assert_eq!(
         signals
-            .stop_subagent(&parent, &AgentId::new("agent_9"), "0", operation(&parent))
+            .stop_subagent(
+                &parent,
+                &AgentId::new("agent_9"),
+                "exec_none",
+                operation(&parent)
+            )
             .await,
         Err(SubagentStopRefusal::NotFound)
     );
@@ -145,8 +165,9 @@ async fn a_resume_is_a_new_run() {
         .await;
     harness.started(1).await;
     let agent = AgentId::new("agent_1");
+    let first_run = execution_id(&harness, &agent);
     signals
-        .stop_subagent(&parent, &agent, "0", operation(&parent))
+        .stop_subagent(&parent, &agent, &first_run, operation(&parent))
         .await
         .unwrap();
     let Some(AgentSignal::Notice(_)) = stream.next().await else {
@@ -168,17 +189,25 @@ async fn a_resume_is_a_new_run() {
     assert_eq!(entries[0].execution, 1);
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .stop_subagent(&parent, &agent, &first_run, operation(&parent))
             .await,
         Err(SubagentStopRefusal::NotRunning)
     );
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "1", operation(&parent))
+            .stop_subagent(
+                &parent,
+                &agent,
+                &execution_id(&harness, &agent),
+                operation(&parent)
+            )
             .await,
         Ok(())
     );
 }
+
+/// The execution id of the first run of an [`undriven`] agent.
+const UNDRIVEN_RUN: &str = "exec_u0";
 
 /// A background agent of `sess_parent` that no query drives: the tests settle and park it by hand, so the transitions
 /// they check are not raced by a real run.
@@ -210,7 +239,10 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
             abort: Abort::new(),
             mailbox: Vec::new(),
         },
-        shown: crate::live::Shown::default(),
+        shown: crate::live::Shown {
+            execution_id: UNDRIVEN_RUN.to_owned(),
+            ..Default::default()
+        },
         delivered: Vec::new(),
         fork_prefix: None,
         stopped_by_user: false,
@@ -231,6 +263,18 @@ fn completed() -> crate::spawn::Finished {
 
 fn execution(harness: &crate::test_support::Harness, agent: &AgentId) -> u64 {
     harness.agents.core.live.get(agent).unwrap().shown.execution
+}
+
+/// The execution id of the agent's current run: the value stopControl names on the wire.
+fn execution_id(harness: &crate::test_support::Harness, agent: &AgentId) -> String {
+    harness
+        .agents
+        .core
+        .live
+        .get(agent)
+        .unwrap()
+        .shown
+        .execution_id
 }
 
 /// Codex review of #418 (1): a run that ends with a stranded SendMessage message is replaced by a new run in the same
@@ -259,13 +303,18 @@ async fn a_run_replaced_in_the_settling_section_is_a_new_execution() {
     assert_eq!(execution(&harness, &agent), 1);
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .stop_subagent(&parent, &agent, UNDRIVEN_RUN, operation(&parent))
             .await,
         Err(SubagentStopRefusal::NotRunning)
     );
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "1", operation(&parent))
+            .stop_subagent(
+                &parent,
+                &agent,
+                &execution_id(&harness, &agent),
+                operation(&parent)
+            )
             .await,
         Ok(())
     );
@@ -282,7 +331,7 @@ async fn an_accepted_stop_claims_the_ending_of_a_completed_query() {
     let agent = undriven(&harness, "agent_u");
     assert_eq!(
         signals
-            .stop_subagent(&parent, &agent, "0", operation(&parent))
+            .stop_subagent(&parent, &agent, UNDRIVEN_RUN, operation(&parent))
             .await,
         Ok(())
     );
@@ -338,7 +387,7 @@ async fn a_stale_stop_leaves_an_agent_parked_again_in_a_later_execution() {
         });
     };
     park();
-    let checked = match live.stop_execution(&parent, &agent, "0") {
+    let checked = match live.stop_execution(&parent, &agent, UNDRIVEN_RUN) {
         crate::live::GuardedStop::Parked(execution) => execution,
         other => panic!("expected parked, got {other:?}"),
     };
@@ -348,7 +397,7 @@ async fn a_stale_stop_leaves_an_agent_parked_again_in_a_later_execution() {
         agents
             .get_mut(&agent)
             .unwrap()
-            .begin_run(Abort::new(), Vec::new());
+            .begin_run(Abort::new(), Vec::new(), "exec_test".to_owned());
     });
     park();
     assert_eq!(execution(&harness, &agent), 1);
@@ -405,10 +454,11 @@ impl rust_cli_kernel_api::machine::Shell for ReadWatcher {
         self.parked_at_read.lock().unwrap().push(parked);
         if self.wake_on_read {
             self.live.with(|agents| {
-                agents
-                    .get_mut(&self.agent)
-                    .unwrap()
-                    .begin_run(rust_cli_kernel_api::abort::Abort::new(), Vec::new());
+                agents.get_mut(&self.agent).unwrap().begin_run(
+                    rust_cli_kernel_api::abort::Abort::new(),
+                    Vec::new(),
+                    "exec_test".to_owned(),
+                );
             });
         }
         Ok(rust_cli_kernel_api::env_shell::ShellState {
@@ -505,7 +555,12 @@ async fn a_stopped_foreground_child_is_a_cancelled_call_that_keeps_its_link() {
     let stop = async {
         harness.started(1).await;
         signals
-            .stop_subagent(&parent, &AgentId::new("agent_1"), "0", operation(&parent))
+            .stop_subagent(
+                &parent,
+                &AgentId::new("agent_1"),
+                &execution_id(&harness, &AgentId::new("agent_1")),
+                operation(&parent),
+            )
             .await
     };
     let (output, stopped) = tokio::join!(call, stop);
@@ -637,7 +692,7 @@ async fn a_second_stop_before_the_run_settles_is_not_running() {
     let agent = undriven(&harness, "agent_u");
     let live = harness.agents.core.live.clone();
     assert_eq!(
-        live.stop_execution(&parent, &agent, "0"),
+        live.stop_execution(&parent, &agent, UNDRIVEN_RUN),
         crate::live::GuardedStop::Aborted
     );
     assert!(matches!(
@@ -645,7 +700,7 @@ async fn a_second_stop_before_the_run_settles_is_not_running() {
         crate::live::AgentState::Running { .. }
     ));
     assert_eq!(
-        live.stop_execution(&parent, &agent, "0"),
+        live.stop_execution(&parent, &agent, UNDRIVEN_RUN),
         crate::live::GuardedStop::NotRunning
     );
 }
@@ -667,7 +722,7 @@ async fn a_message_after_a_claimed_stop_resumes_the_agent_after_it_settles() {
         Enqueued::Steered
     );
     assert_eq!(
-        live.stop_execution(&parent, &agent, "0"),
+        live.stop_execution(&parent, &agent, UNDRIVEN_RUN),
         crate::live::GuardedStop::Aborted
     );
     assert_eq!(
@@ -705,7 +760,7 @@ async fn a_claimed_stop_leaves_the_running_list_at_once() {
     let mut changes = live.subscribe();
     changes.mark_unchanged();
     assert_eq!(
-        live.stop_execution(&parent, &agent, "0"),
+        live.stop_execution(&parent, &agent, UNDRIVEN_RUN),
         crate::live::GuardedStop::Aborted
     );
     assert!(changes.has_changed().unwrap());
@@ -724,7 +779,7 @@ async fn a_task_stop_after_a_claimed_user_stop_is_refused_and_keeps_the_user() {
     let agent = undriven(&harness, "agent_u");
     let live = harness.agents.core.live.clone();
     assert_eq!(
-        live.stop_execution(&parent, &agent, "0"),
+        live.stop_execution(&parent, &agent, UNDRIVEN_RUN),
         crate::live::GuardedStop::Aborted
     );
     let machine = rust_cli_kernel_api::testing::unsupported_machine();

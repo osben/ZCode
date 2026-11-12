@@ -59,6 +59,7 @@ fn view(messages: Vec<Message>) -> SessionView {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
@@ -730,6 +731,7 @@ fn cold_rows_carry_the_chips_of_stored_attachments() {
     use rust_cli_kernel_api::message::{AttachedBody, AttachedFile};
 
     let message = Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
@@ -806,6 +808,7 @@ fn share_reads_resolve_a_row_attachment_to_its_stored_source() {
         }
     };
     let message = Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_u1"),
         content: vec![
@@ -1734,6 +1737,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
     assert!(row.get("output").is_none(), "{row}");
 
     let result = Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
@@ -1766,6 +1770,7 @@ fn a_plan_mode_denial_settles_the_tool_row_cancelled_live_and_cold() {
 /// A background task notification: a meta user message, no typed input (Node `task-notification` origin).
 fn notification(id: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {

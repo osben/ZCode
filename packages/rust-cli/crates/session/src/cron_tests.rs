@@ -243,6 +243,7 @@ async fn a_loaded_session_hands_its_history_to_the_task_table_first() {
 
     let user = |id: &str| {
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text {

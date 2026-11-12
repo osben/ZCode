@@ -115,6 +115,8 @@ pub mod env {
     pub const BASH_DEFAULT_TIMEOUT_MS: &str = "BASH_DEFAULT_TIMEOUT_MS";
     pub const BASH_MAX_TIMEOUT_MS: &str = "BASH_MAX_TIMEOUT_MS";
     pub const ZCODE_FORK_SUBAGENT: &str = "ZCODE_FORK_SUBAGENT";
+    /// 后台子代理无进展提醒的首次阈值（开发与验收用，Node `ZCODE_SUBAGENT_STALL_NOTIFY_MS`）。
+    pub const ZCODE_SUBAGENT_STALL_NOTIFY_MS: &str = "ZCODE_SUBAGENT_STALL_NOTIFY_MS";
     pub const IS_SANDBOX: &str = "IS_SANDBOX";
     pub const ZCODE_ENABLE_TASKS: &str = "ZCODE_ENABLE_TASKS";
     pub const ZCODE_ENABLE_TODO_TOOLS: &str = "ZCODE_ENABLE_TODO_TOOLS";

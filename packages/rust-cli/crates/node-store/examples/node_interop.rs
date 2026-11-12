@@ -124,6 +124,7 @@ fn anchored(current: &mut Option<TurnAnchor>, facts: Vec<Fact>) -> FactBatch {
 fn user(id: &MessageId, text: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: id.clone(),
             content: vec![ContentBlock::Text { text: text.into() }],
@@ -268,6 +269,7 @@ fn attachment(source: &str, text: &str, data: Value) -> Fact {
 fn user_with(content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: message_id(),
             content,

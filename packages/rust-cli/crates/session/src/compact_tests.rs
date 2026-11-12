@@ -105,6 +105,7 @@ impl Compactor for FakeCompactor {
                 discovered_tools: Vec::new(),
             },
             summary: UserMessage {
+                stall_execution: None,
                 intent: None,
                 id: MessageId::new("msg_s"),
                 content: vec![ContentBlock::Text {
@@ -158,6 +159,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
         limits: rust_cli_query::RequestLimits::default(),
     }));
     let history = vec![Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_u"),
         content: vec![ContentBlock::Text {

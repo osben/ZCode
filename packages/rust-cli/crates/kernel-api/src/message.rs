@@ -290,6 +290,10 @@ pub struct UserMessage {
     /// TUI and CLI inputs and every message that is not a typed input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<Box<crate::input_intent::InputIntent>>,
+    /// The run (`executionId`) a no-progress reminder was built for: only on a message that is exactly one such reminder
+    /// (Node's `subagentStall.executionId`, written by the store and the projection). `None` for every other message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall_execution: Option<String>,
 }
 
 /// 模型停止的原因（Anthropic `stop_reason`）。

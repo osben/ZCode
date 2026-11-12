@@ -67,6 +67,7 @@ fn request(source: QuerySource) -> ContextRequest {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {

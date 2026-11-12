@@ -5,6 +5,7 @@ use crate::message::{ContentBlock, UserMessage, UserOrigin};
 fn user(id: &str, text: &str, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text {

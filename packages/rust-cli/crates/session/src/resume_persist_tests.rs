@@ -15,6 +15,7 @@ use crate::test_support::{Setup, envelope, finished, meta, submit, until};
 
 fn human(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {

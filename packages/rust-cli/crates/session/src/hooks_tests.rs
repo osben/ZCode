@@ -12,6 +12,7 @@ use crate::test_support::{ScriptedHooks, Setup, envelope, finished, submit, unti
 
 fn meta_message(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: rust_cli_kernel_api::ids::MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],

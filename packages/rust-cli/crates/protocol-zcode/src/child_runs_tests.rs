@@ -67,6 +67,7 @@ fn finished() -> ChildLive {
 
 fn entry(agent: &str, status: SubagentStatus, owner: Option<&str>) -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
         execution: 0,
         previous: None,
         agent: AgentId::new(agent),

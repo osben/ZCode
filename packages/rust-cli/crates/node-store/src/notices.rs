@@ -6,7 +6,7 @@
 //! Node 读取时只看来源与文本：文本已带 `<system-reminder>` 包装、或来源不在它的提醒表里时，
 //! 原文作为 user 文本发给模型。attachment 的内容块（`data.blocks`，图片等）写成 text part 之后的
 //! text / file part（docs/specs/rust-cli/node-store.md §4.5）。
-use rust_cli_kernel_api::background_origin::{batch_meta, origin_meta};
+use rust_cli_kernel_api::background_origin::{batch_meta, origin_meta_with_execution};
 use rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION;
 use rust_cli_kernel_api::message::{
     ATTACHMENT_BLOCKS, AttachmentMessage, ContentBlock, UserMessage,
@@ -71,7 +71,7 @@ pub fn append_meta(ctx: &Commit<'_>, user: &UserMessage, source: &str) -> Result
     let texts = texts(user, META)?;
     let marker = json!({"message": META});
     if source == TASK_NOTIFICATION {
-        let notice = background_notice(&texts);
+        let notice = background_notice(&texts, user.stall_execution.as_deref());
         return save(
             ctx,
             user.id.as_str(),
@@ -87,11 +87,13 @@ pub fn append_meta(ctx: &Commit<'_>, user: &UserMessage, source: &str) -> Result
 /// Fork: the metadata Node writes on a background task notification message
 /// (`persistBackgroundTaskNotificationBatch`): the input presentation and, when the UI titles the
 /// notifications, the `originMeta` of the batch (one text block per notification).
-fn background_notice(blocks: &[ContentBlock]) -> Value {
+fn background_notice(blocks: &[ContentBlock], execution: Option<&str>) -> Value {
+    // The execution belongs to a message that is exactly one stall reminder; a batch keeps base fields only.
+    let execution = if blocks.len() == 1 { execution } else { None };
     let metas: Vec<Option<Value>> = blocks
         .iter()
         .map(|block| match block {
-            ContentBlock::Text { text } => origin_meta(text),
+            ContentBlock::Text { text } => origin_meta_with_execution(text, execution),
             _ => None,
         })
         .collect();

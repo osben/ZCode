@@ -91,6 +91,10 @@ impl Ids for NodeIds {
         OperationId::new(format!("op_{}", self.uuid()))
     }
 
+    fn execution(&self) -> String {
+        self.uuid()
+    }
+
     fn interaction(&self) -> InteractionId {
         InteractionId::new(format!("interaction_{}", self.uuid()))
     }

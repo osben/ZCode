@@ -35,6 +35,7 @@ fn configured(context_window: u64) -> Option<ModelCapabilities> {
 fn history(input: u64, output: u64) -> Vec<Message> {
     let user = |id: &str, text: &str| {
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text {

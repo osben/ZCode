@@ -129,7 +129,11 @@ impl Messaging {
         } else {
             agent.tool_use.clone()
         };
-        let Some(claimed) = self.core.live.restart(&id, Abort::new(), tool_use) else {
+        let Some(claimed) =
+            self.core
+                .live
+                .restart(&id, Abort::new(), tool_use, self.core.ports.ids.execution())
+        else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
             let text = match self
                 .core

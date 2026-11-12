@@ -105,6 +105,7 @@ impl rust_cli_kernel_api::testing::SinkOverride for GoalSink {
 
 fn feedback(text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(format!("msg_feedback_{text}")),
         content: vec![ContentBlock::Text {

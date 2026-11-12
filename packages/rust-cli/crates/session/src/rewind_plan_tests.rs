@@ -63,6 +63,7 @@ mod anchor {
 
     fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],

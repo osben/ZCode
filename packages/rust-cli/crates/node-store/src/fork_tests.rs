@@ -276,6 +276,7 @@ async fn a_fork_through_the_last_answer_of_a_tool_turn_keeps_its_tool_results() 
     };
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_3_r1"),
             content: vec![ContentBlock::ToolResult {

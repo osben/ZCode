@@ -152,7 +152,7 @@ pub(crate) fn closing(core: &Core, session: &SessionId) {
 pub(crate) fn erased(core: &Arc<Core>, sessions: &[SessionId]) {
     let (dropped, wakes) = core.live.with_routes(|agents, routes| {
         routes.erased(sessions);
-        let wakes = routing::end_erased(agents, &core.hub, sessions);
+        let wakes = routing::end_erased(agents, &core.hub, core.ports.ids.as_ref(), sessions);
         let dropped: usize = sessions
             .iter()
             .map(|session| core.hub.forget(session))
@@ -213,9 +213,16 @@ fn forward(
             entry.delivered.push(notice.from.clone());
         }
         Some(
-            routing::deliver(agents, &core.hub, owner.as_ref(), root, notice)
-                .into_iter()
-                .collect(),
+            routing::deliver(
+                agents,
+                &core.hub,
+                core.ports.ids.as_ref(),
+                owner.as_ref(),
+                root,
+                notice,
+            )
+            .into_iter()
+            .collect(),
         )
     })
 }

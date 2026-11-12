@@ -11,6 +11,17 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     Some(&text[start..end])
 }
 
+/// `origin_meta` of one notification block, with the run a no-progress reminder was built for. Node writes
+/// `subagentStall.executionId` after `lastProgressAt` (subagent-stall-reminder.ts), only when the reminder has one.
+/// `execution` is given only for a message that is exactly this one block (a batch keeps base fields, as Node).
+pub fn origin_meta_with_execution(text: &str, execution: Option<&str>) -> Option<Value> {
+    let mut meta = origin_meta(text)?;
+    if let (Some(execution), Some(stall)) = (execution, meta.get_mut("subagentStall")) {
+        stall["executionId"] = json!(execution);
+    }
+    Some(meta)
+}
+
 /// The quoted description in a notification summary: `Agent "<title>" completed`, `Background
 /// command "<title>" failed with exit code 1`. The closing quote is the one before the ending words,
 /// so a quote inside the title or the error text does not cut it short.
@@ -48,8 +59,12 @@ pub fn notified_outputs(text: &str) -> Vec<(String, String)> {
 }
 
 /// `originMeta` of the first `<task-notification>` in a notification message; `None` for a
-/// notification the UI does not title (a Monitor, a workflow).
+/// notification the UI does not title (a Monitor, a workflow). A no-progress reminder
+/// (`<background-agent-stall>`) has its own meta (Node `subagent-stall-reminder.ts`).
 pub fn origin_meta(text: &str) -> Option<Value> {
+    if let Some(stall) = stall_origin_meta(text) {
+        return Some(stall);
+    }
     let work = between(text, "<task-id>", "</task-id>")?.trim();
     let summary = between(text, "<summary>", "</summary>")?.trim();
     let (source, title) = if let Some(title) = quoted_title(summary, "Agent \"") {
@@ -68,6 +83,70 @@ pub fn origin_meta(text: &str) -> Option<Value> {
         meta["subagentResult"] = result;
     }
     Some(meta)
+}
+
+/// Node `subagent-stall-reminder.ts`'s `originMeta`, read back from the reminder block. The title and the stall
+/// fields come from the block's own tags, which the formatter wrote from the same numbers. Node's `executionId`
+/// is not in the text, so it is not here (Rust has no execution id).
+fn stall_origin_meta(text: &str) -> Option<Value> {
+    let block = between(
+        text,
+        "<background-agent-stall>",
+        "</background-agent-stall>",
+    )?;
+    let work = tag(block, "task-id")?;
+    let description = tag(block, "description")?;
+    let no_progress: u64 = tag(block, "no-progress-for-ms")?.parse().ok()?;
+    let last_progress = parse_iso_ms(&tag(block, "last-progress-at")?)?;
+    // Node: `Math.max(1, Math.round(noProgressForMs / 60_000))`, half up.
+    let minutes = (no_progress + 30_000).div_euclid(60_000).max(1);
+    Some(json!({
+        "backgroundSource": "subagent",
+        "title": format!("{description} — no progress for {minutes} min"),
+        "workId": work,
+        "subagentStall": {"noProgressForMs": no_progress, "lastProgressAt": last_progress},
+    }))
+}
+
+/// The inverse of JS `toISOString` (`YYYY-MM-DDTHH:MM:SS.mmmZ`, base `iso_timestamp`).
+fn parse_iso_ms(text: &str) -> Option<u64> {
+    let bytes = text.as_bytes();
+    let separators_ok = bytes.len() == 24
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'.'
+        && bytes[23] == b'Z';
+    if !separators_ok {
+        return None;
+    }
+    let digits = |range: std::ops::Range<usize>| -> Option<i64> {
+        let part = text.get(range)?;
+        part.bytes()
+            .all(|byte| byte.is_ascii_digit())
+            .then(|| part.parse::<i64>().ok())
+            .flatten()
+    };
+    let (year, month, day) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
+    let (hour, minute, second, millis) = (
+        digits(11..13)?,
+        digits(14..16)?,
+        digits(17..19)?,
+        digits(20..23)?,
+    );
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    let days = rust_cli_base::civil::days_from_civil(year, month as u32, day as u32);
+    let total = days * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1_000 + millis;
+    u64::try_from(total).ok()
 }
 
 /// Node `SUBAGENT_RESULT_ERROR_MAX_CHARS`: the structured error is bounded, the summary is not.
@@ -175,7 +254,16 @@ pub fn batch_meta(metas: &[Option<Value>]) -> Option<Value> {
     if let [single] = metas {
         return single.clone();
     }
-    let metas: Vec<&Value> = metas.iter().map(Option::as_ref).collect::<Option<_>>()?;
+    // Node `orderTaskNotificationsForParsing`: terminal notifications first, a stall reminder (`subagentStall`) last.
+    let mut ordered = metas.to_vec();
+    ordered.sort_by_key(|meta| {
+        meta.as_ref()
+            .is_some_and(|meta| meta.get("subagentStall").is_some())
+    });
+    let metas: Vec<&Value> = ordered
+        .iter()
+        .map(|meta| meta.as_ref())
+        .collect::<Option<_>>()?;
     let first = metas.first()?;
     let mut titles: Vec<String> = metas
         .iter()
@@ -192,3 +280,7 @@ pub fn batch_meta(metas: &[Option<Value>]) -> Option<Value> {
         "title": titles.join(" · "),
     }))
 }
+
+#[cfg(test)]
+#[path = "background_origin_tests.rs"]
+mod tests;

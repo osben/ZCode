@@ -16,6 +16,7 @@ fn call(id: &str, tool: &str) -> Message {
 
 fn result(id: &str, tool: &str, reply: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
