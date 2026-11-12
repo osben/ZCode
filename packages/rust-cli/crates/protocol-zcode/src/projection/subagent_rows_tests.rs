@@ -52,6 +52,7 @@ fn manifest(deltas: &[Value]) -> Option<&Value> {
 
 fn entry(n: u32, status: SubagentStatus, waiting: bool) -> SubagentEntry {
     SubagentEntry {
+        execution: 0,
         agent: AgentId::new(format!("agent_{n}")),
         child: SessionId::new(format!("sess_subagent_agent_{n}")),
         agent_type: "general-purpose".into(),
@@ -306,4 +307,58 @@ fn a_foreground_child_is_no_background_work() {
         feed.projection.snapshot(feed.seq, "e")["backgroundWorks"],
         json!([])
     );
+}
+
+fn control(feed: &Feed, child: &str) -> Option<Value> {
+    feed.projection.snapshot(feed.seq, "epoch")["subagents"]["running"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["childSessionId"] == child)
+        .and_then(|item| item.get("stopControl").cloned())
+}
+
+/// B2 (Node `liveSubagentStopControlByChildId`): the running summary names the live run the Stop button ends. It
+/// comes from the kernel's live table only: none before the table lists the child (a cold open), none for a child a
+/// subagent spawned, a new run replaces it, and an ended child has none.
+#[test]
+fn the_stop_control_comes_from_the_live_table() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let first = agent_call(&mut feed, 1);
+    progress(&mut feed, &first, 1);
+    let nested = agent_call(&mut feed, 2);
+    progress(&mut feed, &nested, 2);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+
+    let mut own = entry(1, SubagentStatus::Running, false);
+    own.background = false;
+    let mut inner = entry(2, SubagentStatus::Running, false);
+    inner.background = false;
+    inner.owner = Some(AgentId::new("agent_1"));
+    let deltas = feed
+        .projection
+        .subagent_table(&[own.clone(), inner.clone()], 10);
+    assert_eq!(
+        manifest(&deltas).unwrap()["running"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["childSessionId"] == "sess_subagent_agent_1")
+            .unwrap()["stopControl"],
+        json!({"taskId": "agent_1", "executionId": "0"})
+    );
+    assert_eq!(control(&feed, "sess_subagent_agent_2"), None);
+
+    own.execution = 1;
+    feed.projection
+        .subagent_table(&[own.clone(), inner.clone()], 20);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+    );
+
+    own.status = SubagentStatus::Killed;
+    feed.projection.subagent_table(&[own, inner], 30);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
 }

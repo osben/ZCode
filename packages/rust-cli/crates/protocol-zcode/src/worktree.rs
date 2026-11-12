@@ -449,6 +449,7 @@ const REQUIRES_RECORD: &[&str] = &[
     "revokeWorkspaceHookTrust",
     "requestWorkspaceHookReview",
     "cancelBackgroundWork",
+    "stopSubagent",
     "resumeWorkflowRun",
     "startSavedWorkflow",
     "amendWorkflowRunSettings",

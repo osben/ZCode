@@ -154,6 +154,7 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
 
 fn entry() -> SubagentEntry {
     SubagentEntry {
+        execution: 0,
         agent: AgentId::new("agent_a"),
         child: SessionId::new("sess_subagent_agent_a"),
         agent_type: "Explore".into(),

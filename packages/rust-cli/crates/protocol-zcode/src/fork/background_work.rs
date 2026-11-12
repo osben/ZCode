@@ -57,6 +57,54 @@ pub(super) async fn cancel(live: &Bridged<Live>, envelope: &Envelope, revision: 
     )
 }
 
+/// Node `V4SubagentStopRejectedError`'s code prefix.
+const SUBAGENT_STOP_REJECTED: &str = "fault.command.subagentStopRejected.";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StopSubagentPayload {
+    task_id: String,
+    execution_id: String,
+}
+
+/// Node `V4SubagentStopRejectedError`: the code and the message for the kernel's refusal (`not_found` /
+/// `not_running`).
+fn subagent_stop_rejected(task: &str, reason: &str) -> (String, String) {
+    (
+        format!("{SUBAGENT_STOP_REJECTED}{reason}"),
+        format!("subagent {task} was not stopped: background_task_{reason}"),
+    )
+}
+
+/// Fork: v4 `stopSubagent` (Node `interaction-background.ts`, specs/fork-rust-agent-parity.md B2): the guarded stop
+/// of the run `runningSubagentSummary.stopControl` named. The manifest settles from the subagent table, not from
+/// this ack.
+pub(super) async fn stop_subagent(live: &Bridged<Live>, envelope: &Envelope, revision: u64) -> Ack {
+    let body: StopSubagentPayload = match payload(envelope) {
+        Ok(body) => body,
+        Err(ack) => return *ack,
+    };
+    let command = Command::StopSubagent {
+        agent: rust_cli_kernel_api::ids::AgentId::new(&body.task_id),
+        execution: body.execution_id,
+    };
+    let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
+    ack_of(
+        kernel,
+        Ack::accepted(&envelope.command_id, revision, None),
+        |reason| {
+            let (code, message) = subagent_stop_rejected(&body.task_id, &reason);
+            Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                &code,
+                message,
+                revision,
+            )
+        },
+    )
+}
+
 /// Node's status names: a stopped command is `cancelled`.
 fn node_status(status: &str) -> &str {
     match status {
@@ -149,3 +197,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "background_work_tests.rs"]
+mod stop_subagent_tests;

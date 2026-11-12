@@ -67,6 +67,7 @@ fn finished() -> ChildLive {
 
 fn entry(agent: &str, status: SubagentStatus, owner: Option<&str>) -> SubagentEntry {
     SubagentEntry {
+        execution: 0,
         agent: AgentId::new(agent),
         child: SessionId::new(format!("sess_subagent_{agent}")),
         agent_type: "general-purpose".to_owned(),

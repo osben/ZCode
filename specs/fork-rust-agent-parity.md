@@ -960,7 +960,22 @@ Upstream adds session-store migration `0025_session_permanent_deletion` (`sessio
 ### (b) Hidden because Rust reports the capability false
 
 - **B1 `worktreeCwd`**: `createSession.cwd` and `worktreeCreation`, `forkAssistant.targetCwd`, `workspace` on cold-restore entries, and `subscribe.worktreeSessionIds`. L, and it needs a design first. Until then Rust rejects a received `cwd` or `targetCwd` explicitly instead of creating the session in the workspace directory.
-- **B2 `stopSubagent` and `runningSubagentSummary.stopControl`**: the status-panel Stop button for running subagents is hidden on Rust.
+- **B2 `stopSubagent` and `runningSubagentSummary.stopControl`**: done (Node `interaction-background.ts` `stopSubagent`, `stopBackgroundTask` with `expectedExecutionId`, `product-projection.ts` `liveSubagentStopControlByChildId`).
+  - **Owner: `agents::Live`.** Each entry carries an execution number: 0 at spawn, plus one on every return to running (a SendMessage resume, a parked agent's wake). It is bumped in `settle_times`, which every `Live` change runs, so no path that restarts a run can skip it. `SubagentEntry.execution` reports it. It lives in memory only, like Node's control, which a cold seed strips.
+  - **Projection.** `runningSubagentSummary.stopControl = {taskId: agentId, executionId: "<execution>"}` comes only from the live table, for a child the session itself spawned (`owner` absent: Node's `parentSessionId === sessionId`) that is running or parked. It is never derived from rows, so a cold open or a restart shows no control. The map is rebuilt on each table change, so a late end of an old run cannot remove the control of a new run of the same child.
+  - **Command.** `stopSubagent {taskId, executionId}` becomes `Command::StopSubagent`, then `Agents::stop_subagent`. One `Live` lock section checks the entry and aborts the run. The stop is the user's (`was stopped by user` notification).
+    - An unknown agent, or one spawned by another session or by a subagent, is refused with `not_found`.
+    - A different execution, or an ended agent, is refused with `not_running`.
+    - Refusals answer `Rejected` with `fault.command.subagentStopRejected.<reason>`. `stopSubagent` requires a record, like Node's `requireRecord`, so a prepared session refuses it.
+  - **Rust-only: a parked agent.** A parked agent still shows as running, so its Stop is accepted when the execution matches. It ends the same way as a `/tasks` stop of a parked agent: `KilledParked`, and the background commands in its child session are stopped.
+  - Event order:
+    1. `Live` mints the execution.
+    2. `subagent_changes` fires and `Projection::subagent_table` rebuilds the control map.
+    3. The `subagents` manifest carries `stopControl`.
+    4. The App sends `stopSubagent`.
+    5. The actor runs `Agents::stop_subagent`, which checks and aborts under one lock.
+    6. The run settles and the `Live` change fires.
+    7. The table no longer lists the child as running, so the control leaves the manifest.
 - **B3 Permission `modeSwitch` (`choose` / `fullAccessOnly`) and the `allowAndSwitchGuarded` grant**: Rust once-asks offer no full-access switch.
 - **B4 `extensionInputSource`**: the Host refuses extension-originated input for Rust.
 - **B5 `conversationQuoteComment`**: the selection-comment entry is hidden. It is cheap if Rust's `conversation_quote` already keeps `comment` and `agent`.

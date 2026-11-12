@@ -49,6 +49,7 @@ fn entry(
     ended_ago_ms: Option<u64>,
 ) -> SubagentEntry {
     SubagentEntry {
+        execution: 0,
         agent: AgentId::new("agent_x"),
         child: SessionId::new(child),
         agent_type: "Explore".to_owned(),

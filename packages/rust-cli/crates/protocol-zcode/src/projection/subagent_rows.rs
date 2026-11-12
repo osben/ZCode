@@ -76,6 +76,10 @@ pub(super) struct Subagents {
     /// `onBackgroundTaskLifecycle` / `resumedSubagentBackgroundWorkDelta` for `kind: "subagent"`). An ended
     /// child leaves the list; the UI reads only running works.
     pub(super) works: Vec<Value>,
+    /// Fork (B2, Node `liveSubagentStopControlByChildId`): child session → `{taskId, executionId}` of the run the
+    /// desktop's Stop ends. Rebuilt from each live table, never from rows, so a cold open has none and a new run
+    /// replaces the old one.
+    stop_controls: HashMap<String, Value>,
 }
 
 impl Projection {
@@ -290,6 +294,19 @@ impl Projection {
                 &mut out,
             );
         }
+        // A child this session spawned itself (no owning subagent) that runs or is parked.
+        self.subagents.stop_controls = entries
+            .iter()
+            .filter(|entry| {
+                entry.owner.is_none() && (entry.status == SubagentStatus::Running || entry.parked)
+            })
+            .map(|entry| {
+                (
+                    entry.child.as_str().to_owned(),
+                    json!({"taskId": entry.agent.as_str(), "executionId": entry.execution.to_string()}),
+                )
+            })
+            .collect();
         let mut patch = Map::new();
         if let Some(manifest) = self.materialize_subagents() {
             patch.insert("subagents".into(), manifest);
@@ -414,6 +431,9 @@ impl Projection {
                 "title": title,
                 "status": status,
             });
+            if let Some(control) = self.subagents.stop_controls.get(child) {
+                item["stopControl"] = control.clone();
+            }
             if let Some(call) = field(row, "parentToolCallId").as_str() {
                 item["toolCallId"] = json!(call);
             }

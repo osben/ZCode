@@ -54,6 +54,7 @@ fn entry(agent: &LiveAgent, now: u64) -> SubagentEntry {
         parked: matches!(agent.state, AgentState::Parked { .. }),
         // 子代理的缺省机器（远端执行 R4，remote-exec.md §21.6）。
         machine: agent.machine.clone(),
+        execution: shown.execution,
     }
 }
 

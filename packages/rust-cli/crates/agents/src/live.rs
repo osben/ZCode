@@ -112,6 +112,8 @@ pub(crate) struct Shown {
     /// 最近一个完成的子代理请求的输出速度（修复线 F112，tui-panels.md §1.7：查看它时 footer 的 TPS）：只在内存里，
     /// 与主会话的速度同一个口径（tui-display.md §2.6）。续跑与结束都不清掉。
     pub(crate) speed: Option<rust_cli_kernel_api::metering::OutputSpeed>,
+    /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every return to running.
+    pub(crate) execution: u64,
 }
 
 impl LiveAgent {
@@ -436,6 +438,36 @@ impl Live {
 
     /// 中止正在跑的子代理；不在跑时返回 false（停放的由 `routing::stop_parked` 处理）。
     /// `by_user`: the user stopped it (desktop), not the model's TaskStop.
+    /// Fork (desktop `stopSubagent`): the check and the abort of [`Self::stop`] in one lock section, so a run that
+    /// ended or restarted after the check is never aborted. A parked agent is left to `routing::stop_parked`
+    /// ([`GuardedStop::Parked`]), which ends it only while it is still parked.
+    pub(crate) fn stop_execution(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+    ) -> GuardedStop {
+        let mut state = self.agents();
+        let Some(entry) = state
+            .get_mut(agent)
+            .filter(|entry| entry.parent == *session && entry.owner.is_none())
+        else {
+            return GuardedStop::NotFound;
+        };
+        if entry.shown.execution.to_string() != execution {
+            return GuardedStop::NotRunning;
+        }
+        match &entry.state {
+            AgentState::Running { abort, .. } => {
+                abort.abort(AbortReason::User);
+                entry.stopped_by_user = true;
+                GuardedStop::Aborted
+            }
+            AgentState::Parked { .. } => GuardedStop::Parked,
+            AgentState::Finished(_) => GuardedStop::NotRunning,
+        }
+    }
+
     pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> bool {
         match self.agents().get_mut(agent) {
             Some(entry) => match &entry.state {
@@ -460,6 +492,7 @@ fn settle_times(agents: &mut Agents, now: u64) {
             (true, Some(_)) => {
                 agent.shown.started_ms = now;
                 agent.shown.ended_ms = None;
+                agent.shown.execution += 1;
             }
             (false, None) => {
                 agent.shown.ended_ms = Some(now);
@@ -468,4 +501,13 @@ fn settle_times(agents: &mut Agents, now: u64) {
             _ => {}
         }
     }
+}
+
+/// Fork: the outcome of [`Live::stop_execution`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuardedStop {
+    Aborted,
+    Parked,
+    NotFound,
+    NotRunning,
 }

@@ -132,6 +132,18 @@ pub trait AgentSignals: Send + Sync {
         Err("stopping background tasks is not supported".to_owned())
     }
 
+    /// Fork (desktop `stopSubagent`, Node `stopBackgroundTask` with `expectedExecutionId`): the user stops one run of
+    /// a subagent that `session` spawned itself. One `Live` lock section checks the agent and its run, then ends it.
+    async fn stop_subagent(
+        &self,
+        _session: &SessionId,
+        _agent: &AgentId,
+        _execution: &str,
+        _operation: crate::env::OperationContext,
+    ) -> Result<(), SubagentStopRefusal> {
+        Err(SubagentStopRefusal::NotFound)
+    }
+
     /// 顶层会话 `session` 里本进程启动过的子代理（含嵌套的），按启动顺序（tui-panels.md §1.1，L30）。
     async fn subagents(&self, _session: &SessionId) -> Vec<crate::panels::SubagentEntry> {
         Vec::new()
@@ -284,3 +296,22 @@ pub trait TaskReader: Send + Sync {
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+/// Fork: why a guarded subagent stop was refused (Node `RuntimeBackgroundStopResult.reason` without its
+/// `background_task_` prefix, the suffix of `fault.command.subagentStopRejected.<reason>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentStopRefusal {
+    /// No such agent, or one that another session or a subagent spawned.
+    NotFound,
+    /// The agent ended, or the named run is not its current one.
+    NotRunning,
+}
+
+impl SubagentStopRefusal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::NotRunning => "not_running",
+        }
+    }
+}

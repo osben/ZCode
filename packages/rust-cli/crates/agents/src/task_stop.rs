@@ -266,6 +266,16 @@ impl TaskStopTool {
         sessions
     }
 
+    /// Fork: ends `agent` if it is still parked, as [`Self::stop`] does for a parked agent; false when it no longer is.
+    pub(crate) async fn stop_parked(&self, agent: &AgentId, context: &Caller<'_>) -> bool {
+        let Some(wakes) = routing::stop_parked(&self.core, agent) else {
+            return false;
+        };
+        self.stop_commands_of(agent, context).await;
+        routing::wake(&self.core, wakes).await;
+        true
+    }
+
     /// 停止一个任务（TaskStop 的 `call` 与用户的 `/tasks` 共用）。校验之后状态可能变了（命令刚好自己结束）：
     /// 按执行时的结果报错（StopTaskError）。
     pub(crate) async fn stop(

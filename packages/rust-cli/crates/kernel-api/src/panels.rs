@@ -53,6 +53,11 @@ pub struct SubagentEntry {
     /// R4，§21.6）。
     #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
     pub machine: crate::ids::MachineName,
+    /// Fork: which run of the agent this is: 0 at spawn, plus one on every return to running (a SendMessage resume,
+    /// a parked agent's wake). In memory only; the desktop's guarded Stop (`stopSubagent`) names it, so a late stop
+    /// never ends a later run (specs/fork-rust-agent-parity.md, B2).
+    #[serde(default)]
+    pub execution: u64,
 }
 
 /// 子代理的当前活动：子循环事件的投影（stall-visibility.md §4.3）。
