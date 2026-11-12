@@ -323,11 +323,11 @@ impl TaskStopTool {
     ) -> Result<StoppedTask, ToolError> {
         match self.find(id, context).await {
             Ok(Target::Agent(agent, description)) => {
-                if self.core.live.stop(&agent, context.by_user) {
+                if let Some(execution) = self.core.live.stop(&agent, context.by_user) {
                     // Fork (node_desktop): Node's TaskStop returns after the agent has stopped, so its
                     // `was stopped by ZCode` notification joins the same model request as this tool result.
                     if self.core.node_desktop && !context.by_user {
-                        self.core.live.left_running(&agent).await;
+                        self.core.live.left_running(&agent, execution).await;
                     }
                 } else {
                     let execution = self

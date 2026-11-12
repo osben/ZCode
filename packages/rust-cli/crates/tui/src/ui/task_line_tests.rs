@@ -34,6 +34,7 @@ pub(crate) fn app(lang: Lang) -> App {
 pub(crate) fn entry(id: &str, background: bool, status: SubagentStatus) -> SubagentEntry {
     SubagentEntry {
         execution: 0,
+        previous: None,
         agent: AgentId::new(id),
         child: SessionId::new(format!("sess_subagent_{id}")),
         agent_type: "Explore".into(),

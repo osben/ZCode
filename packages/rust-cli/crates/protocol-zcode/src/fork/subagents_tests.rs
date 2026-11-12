@@ -50,6 +50,7 @@ fn entry(
 ) -> SubagentEntry {
     SubagentEntry {
         execution: 0,
+        previous: None,
         agent: AgentId::new("agent_x"),
         child: SessionId::new(child),
         agent_type: "Explore".to_owned(),

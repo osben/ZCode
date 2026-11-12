@@ -15,7 +15,7 @@ use crate::Core;
 use crate::live::{AgentState, Live, LiveAgent};
 use crate::report::Ending;
 
-fn status(agent: &LiveAgent) -> SubagentStatus {
+pub(crate) fn status(agent: &LiveAgent) -> SubagentStatus {
     match &agent.state {
         AgentState::Running { .. } if agent.stop_claimed() => SubagentStatus::Killed,
         AgentState::Running { .. } => SubagentStatus::Running,
@@ -56,6 +56,7 @@ fn entry(agent: &LiveAgent, now: u64) -> SubagentEntry {
         // 子代理的缺省机器（远端执行 R4，remote-exec.md §21.6）。
         machine: agent.machine.clone(),
         execution: shown.execution,
+        previous: shown.previous,
     }
 }
 

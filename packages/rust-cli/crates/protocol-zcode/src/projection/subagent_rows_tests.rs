@@ -53,6 +53,7 @@ fn manifest(deltas: &[Value]) -> Option<&Value> {
 fn entry(n: u32, status: SubagentStatus, waiting: bool) -> SubagentEntry {
     SubagentEntry {
         execution: 0,
+        previous: None,
         agent: AgentId::new(format!("agent_{n}")),
         child: SessionId::new(format!("sess_subagent_agent_{n}")),
         agent_type: "general-purpose".into(),
@@ -436,6 +437,39 @@ fn a_rebuilt_projection_grants_no_stop_to_a_run_already_going() {
 
     running.execution = 1;
     feed.projection.subagent_table(&[running], 40);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+    );
+}
+
+/// B2: the change stream coalesces, so one table read can show a later run of a child whose stop, settle and resume
+/// all landed after the last read. The stopped run's row is closed as cancelled before the new run reopens it, and the
+/// Stop button moves to the new run, as Node projects the stop and the spawn as separate facts.
+#[test]
+fn a_run_missed_between_reads_is_closed_before_the_next_one_opens() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let tool = agent_call(&mut feed, 1);
+    progress(&mut feed, &tool, 1);
+    done(&mut feed, &tool, 1, "async_launched");
+    feed.projection
+        .subagent_table(&[entry(1, SubagentStatus::Running, false)], 10);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "0"}))
+    );
+
+    let mut resumed = entry(1, SubagentStatus::Running, false);
+    resumed.execution = 1;
+    resumed.previous = Some(SubagentStatus::Killed);
+    let deltas = feed.projection.subagent_table(&[resumed], 20);
+    let statuses: Vec<&Value> = deltas
+        .iter()
+        .filter(|delta| delta["op"] == "row.upserted" && delta["row"]["kind"] == "subagent")
+        .map(|delta| &delta["row"]["status"])
+        .collect();
+    assert_eq!(statuses, [&json!("cancelled"), &json!("running")]);
     assert_eq!(
         control(&feed, "sess_subagent_agent_1"),
         Some(json!({"taskId": "agent_1", "executionId": "1"}))

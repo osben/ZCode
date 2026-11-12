@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 use rust_cli_kernel_api::agents::{AgentSignal, SubagentStopRefusal};
 use rust_cli_kernel_api::env::OperationContext;
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
-use rust_cli_kernel_api::ids::{AgentId, OperationId, SessionId};
+use rust_cli_kernel_api::ids::{AgentId, OperationId, SessionId, ToolUseId};
 use rust_cli_kernel_api::panels::SubagentStatus;
 use serde_json::json;
 use tokio::sync::Notify;
@@ -242,11 +242,11 @@ async fn a_run_replaced_in_the_settling_section_is_a_new_execution() {
     let signals = harness.agents.signals();
     let agent = undriven(&harness, "agent_u");
     assert_eq!(
-        harness
-            .agents
-            .core
-            .live
-            .enqueue(&agent, "Go on.".to_owned()),
+        harness.agents.core.live.enqueue(
+            &agent,
+            "Go on.".to_owned(),
+            &ToolUseId::new("toolu_send")
+        ),
         crate::live::Enqueued::Steered
     );
     let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
@@ -663,7 +663,7 @@ async fn a_message_after_a_claimed_stop_resumes_the_agent_after_it_settles() {
     let agent = undriven(&harness, "agent_u");
     let live = harness.agents.core.live.clone();
     assert_eq!(
-        live.enqueue(&agent, "Before.".to_owned()),
+        live.enqueue(&agent, "Before.".to_owned(), &ToolUseId::new("toolu_send")),
         Enqueued::Steered
     );
     assert_eq!(
@@ -671,8 +671,8 @@ async fn a_message_after_a_claimed_stop_resumes_the_agent_after_it_settles() {
         crate::live::GuardedStop::Aborted
     );
     assert_eq!(
-        live.enqueue(&agent, "After.".to_owned()),
-        Enqueued::AfterStop
+        live.enqueue(&agent, "After.".to_owned(), &ToolUseId::new("toolu_send")),
+        Enqueued::AfterStop { first: true }
     );
     let settled = crate::routing::settle(&harness.agents.core, &agent, &completed()).await;
     assert_eq!(settled.ending, crate::report::Ending::Killed);
@@ -756,4 +756,57 @@ async fn a_task_stop_after_a_claimed_user_stop_is_refused_and_keeps_the_user() {
         "{}",
         notice.text
     );
+}
+
+/// #418 review @bf215309f: a model TaskStop on the desktop waits for the run it stopped, not for the agent. A message
+/// accepted after the stop resumes the agent in the same settle (a new execution, running again), and the wait still
+/// ends there (Node `waitForStop` waits for that execution). The first late message resumes the agent and the resumed
+/// run belongs to its SendMessage call (`<tool-use-id>`); a later one is queued to the resumed run (Node queues a
+/// message to a running agent).
+#[tokio::test]
+async fn a_task_stop_returns_when_its_run_ends_though_a_late_message_resumes_the_agent() {
+    use crate::live::{AgentState, Enqueued, Mail};
+    let harness = desktop_harness();
+    let parent = SessionId::new("sess_parent");
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    let machine = rust_cli_kernel_api::testing::unsupported_machine();
+    let tool = crate::task_stop::TaskStopTool {
+        core: harness.agents.core.clone(),
+    };
+    let operation = operation(&parent);
+    let caller = crate::task_stop::Caller {
+        session: &parent,
+        agent: None,
+        machine: &machine,
+        operation: &operation,
+        by_user: false,
+    };
+    let resume = async {
+        // The stop claims the run before this runs (`join` polls the stop first, and it claims synchronously).
+        assert_eq!(
+            live.enqueue(&agent, "First.".to_owned(), &ToolUseId::new("toolu_first")),
+            Enqueued::AfterStop { first: true }
+        );
+        assert_eq!(
+            live.enqueue(
+                &agent,
+                "Second.".to_owned(),
+                &ToolUseId::new("toolu_second")
+            ),
+            Enqueued::AfterStop { first: false }
+        );
+        crate::routing::settle(&harness.agents.core, &agent, &completed()).await
+    };
+    let (stopped, settled) = tokio::join!(tool.stop("agent_u", &caller), resume);
+    assert!(stopped.is_ok());
+    assert_eq!(settled.ending, crate::report::Ending::Killed);
+    assert_eq!(settled.wakes.len(), 1);
+    let entry = live.get(&agent).unwrap();
+    assert_eq!(execution(&harness, &agent), 1);
+    assert_eq!(entry.tool_use, Some(ToolUseId::new("toolu_first")));
+    let AgentState::Running { mailbox, .. } = &entry.state else {
+        panic!("the late message did not resume the agent");
+    };
+    assert!(matches!(mailbox.as_slice(), [Mail::Message(text)] if text == "Second."));
 }

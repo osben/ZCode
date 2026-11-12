@@ -97,15 +97,21 @@ impl Messaging {
             .await;
             return Ok(rust_cli_kernel_api::tool::text(text));
         };
-        match self.core.live.enqueue(&id, input.message.clone()) {
-            Enqueued::Steered => {
+        match self
+            .core
+            .live
+            .enqueue(&id, input.message.clone(), &context.tool_use)
+        {
+            // Fork: a later message after the stop waits for the run the first one resumes: Node queues it to that
+            // running agent (core `runner.ts`).
+            Enqueued::Steered | Enqueued::AfterStop { first: false } => {
                 return Ok(rust_cli_kernel_api::tool::text(steered_text(
                     &self.core.ports.ids.command(),
                     input.to.trim(),
                 )));
             }
             // Fork: a stop claimed the run; it resumes with this message once it settles (`routing::settle`).
-            Enqueued::AfterStop => {
+            Enqueued::AfterStop { first: true } => {
                 return Ok(rust_cli_kernel_api::tool::text(resumed_text(
                     self.core.node_desktop,
                     &input.to,
@@ -125,9 +131,15 @@ impl Messaging {
         };
         let Some(claimed) = self.core.live.restart(&id, Abort::new(), tool_use) else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
-            let text = match self.core.live.enqueue(&id, input.message.clone()) {
-                Enqueued::AfterStop => resumed_text(self.core.node_desktop, &input.to, "killed"),
-                Enqueued::Steered | Enqueued::NotRunning => {
+            let text = match self
+                .core
+                .live
+                .enqueue(&id, input.message.clone(), &context.tool_use)
+            {
+                Enqueued::AfterStop { first: true } => {
+                    resumed_text(self.core.node_desktop, &input.to, "killed")
+                }
+                Enqueued::Steered | Enqueued::AfterStop { first: false } | Enqueued::NotRunning => {
                     steered_text(&self.core.ports.ids.command(), input.to.trim())
                 }
             };

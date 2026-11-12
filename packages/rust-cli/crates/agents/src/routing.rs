@@ -211,8 +211,21 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
         // 被中止时 SendMessage 留下的消息丢弃（停止时清掉发给它的排队命令）。
         // Fork: the messages that arrived after the stop claimed the run resume it below, after its killed notice, as
         // Node resumes a killed agent a message reaches (core `runner.ts`).
+        let mut resumer = None;
         if stopped {
-            stranded = entry.late_messages.clone();
+            stranded = entry
+                .late_messages
+                .iter()
+                .map(|(message, _)| message.clone())
+                .collect();
+            // On the desktop the resumed run belongs to the SendMessage call that resumed it (Node's resume carries
+            // that call's `<tool-use-id>`, core `runner.ts`); the TUI's resumes belong to no call.
+            if core.node_desktop {
+                resumer = entry
+                    .late_messages
+                    .first()
+                    .map(|(_, sender)| sender.clone());
+            }
         }
         // 后台子代理与 monitor 的保活推迟自己的通知（只在交互模式）。
         let deferred = deferred(core, agents, id);
@@ -298,7 +311,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
         {
             let first = stranded.remove(0);
             slot.background = true;
-            slot.tool_use = None;
+            slot.tool_use = resumer;
             // The resumed run is a new run: the stop's attribution was its predecessor's.
             slot.stopped_by_user = false;
             slot.begin_run(

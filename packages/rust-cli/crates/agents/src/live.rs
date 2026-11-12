@@ -99,8 +99,10 @@ pub(crate) struct LiveAgent {
     pub(crate) erased: bool,
     /// Fork: SendMessage messages that arrived after a stop claimed this run (Node: a message to a killed agent resumes
     /// it, core `runner.ts`). The run's own mailbox messages are dropped with the stop, as upstream does; these resume
-    /// it once the stopped run has settled (`routing::settle`). Cleared by each new run.
-    pub(crate) late_messages: Vec<String>,
+    /// it once the stopped run has settled (`routing::settle`), each with the SendMessage call that sent it: on the
+    /// desktop the resumed run belongs to the first one (Node's notification carries its `<tool-use-id>`). Cleared by
+    /// each new run.
+    pub(crate) late_messages: Vec<(String, ToolUseId)>,
 }
 
 /// 列表显示用的记录：启动顺序、这次运行的开始与结束时刻、等待中的交互、子会话的提交次数、当前活动。
@@ -119,6 +121,8 @@ pub(crate) struct Shown {
     /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every new run
     /// ([`LiveAgent::begin_run`]).
     pub(crate) execution: u64,
+    /// Fork: how the previous run ended (`SubagentEntry::previous`), set by [`LiveAgent::begin_run`].
+    pub(crate) previous: Option<rust_cli_kernel_api::panels::SubagentStatus>,
 }
 
 impl LiveAgent {
@@ -137,6 +141,7 @@ impl LiveAgent {
     /// to running goes through here, also the ones that replace a run ending in the same lock section (a stranded
     /// message or a leftover notice in `routing::settle`), which `settle_times` alone would not see as a new run.
     pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>) {
+        self.shown.previous = Some(crate::views::status(self));
         self.state = AgentState::Running { abort, mailbox };
         self.late_messages.clear();
         self.shown.execution += 1;
@@ -232,16 +237,17 @@ impl Live {
         self.changes.subscribe()
     }
 
-    /// Fork (node_desktop): resolves once `agent` is no longer running (finished, parked or gone). Its run settles
-    /// and routes its own notification under the same lock that leaves the running state, so after this the
-    /// notification is already in the owner's inbox.
-    pub(crate) async fn left_running(&self, agent: &AgentId) {
+    /// Fork (node_desktop): resolves once run `execution` of `agent` has ended (finished, parked, gone, or a later run
+    /// started: a message accepted after the stop resumes the agent in the same settle, Node runner `waitForStop`
+    /// waits for this execution only). The run settles and routes its own notification under the same lock that ends
+    /// it, so after this the notification is already in the owner's inbox.
+    pub(crate) async fn left_running(&self, agent: &AgentId, execution: u64) {
         let mut changes = self.subscribe();
         loop {
-            let running = self
-                .agents()
-                .get(agent)
-                .is_some_and(|entry| matches!(entry.state, AgentState::Running { .. }));
+            let running = self.agents().get(agent).is_some_and(|entry| {
+                entry.shown.execution == execution
+                    && matches!(entry.state, AgentState::Running { .. })
+            });
             if !running || changes.changed().await.is_err() {
                 return;
             }
@@ -415,14 +421,15 @@ impl Live {
 
     /// 排进正在跑的子代理的邮箱；不在跑时返回 [`Enqueued::NotRunning`]。
     /// Fork: a run whose stop is claimed keeps the message for the resume after it settles ([`Enqueued::AfterStop`]).
-    pub(crate) fn enqueue(&self, agent: &AgentId, message: String) -> Enqueued {
+    pub(crate) fn enqueue(&self, agent: &AgentId, message: String, sender: &ToolUseId) -> Enqueued {
         let mut state = self.agents();
         let Some(entry) = state.get_mut(agent) else {
             return Enqueued::NotRunning;
         };
         if entry.stop_claimed() {
-            entry.late_messages.push(message);
-            return Enqueued::AfterStop;
+            let first = entry.late_messages.is_empty();
+            entry.late_messages.push((message, sender.clone()));
+            return Enqueued::AfterStop { first };
         }
         match &mut entry.state {
             AgentState::Running { mailbox, .. } => {
@@ -509,24 +516,22 @@ impl Live {
         })
     }
 
-    /// Claims the stop of a running agent; false when it is not running or its stop is already claimed (the first
+    /// Claims the stop of a running agent and returns the claimed execution; None when it is not running or its stop is already claimed (the first
     /// stop keeps its attribution, Node `completion-notification.ts`).
-    pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> bool {
+    pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> Option<u64> {
         self.change(|agents| {
-            let Some(entry) = agents.get_mut(agent) else {
-                return false;
-            };
+            let entry = agents.get_mut(agent)?;
             if entry.stop_claimed() {
-                return false;
+                return None;
             }
             match &entry.state {
                 AgentState::Running { abort, .. } => {
                     abort.abort(AbortReason::User);
                     entry.stopped_by_user = by_user;
                     drop_mailbox_messages(entry);
-                    true
+                    Some(entry.shown.execution)
                 }
-                _ => false,
+                _ => None,
             }
         })
     }
@@ -545,8 +550,11 @@ fn drop_mailbox_messages(entry: &mut LiveAgent) {
 pub(crate) enum Enqueued {
     /// Into the running agent's mailbox (its next tool boundary).
     Steered,
-    /// The run's stop is claimed: it resumes with the message after it settles.
-    AfterStop,
+    /// The run's stop is claimed: it resumes after it settles. `first`: this message resumes it; later ones wait in
+    /// the resumed run's mailbox (Node: once the resume started, a message is queued to the running agent).
+    AfterStop {
+        first: bool,
+    },
     NotRunning,
 }
 
