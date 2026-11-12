@@ -5,7 +5,7 @@ the user confirmed and authorized implementation on 2026-09-12).
 
 Later decision (2026-09-17): on Air, OpenCode Go Luna rejected 1 token and requires at least 16; the user
 confirmed unifying the connectivity-test budget to 512. See [Todo159](todo-159-connectivity-512-token-budget.md).
-The 1-token behavior below is the history; 512 supersedes it once implemented.
+The 1-token behavior below is the history; 512 was implemented on 2026-11-02, capped by the model's output limit; real Air / OpenCode Go acceptance is still to follow.
 
 ## Decisions and boundaries
 

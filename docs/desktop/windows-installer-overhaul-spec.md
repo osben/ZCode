@@ -51,7 +51,7 @@ launch NSIS
       |
       +----(manifest)----> ownership cleanup (skip `.zcode` scan)
                                   |
-                                  +----(lock/ACL/space)----> typed failure + cleanup log
+                                  +----(lock/ACL/space)----> restore deleted files + cleanup log
       |
       v
 extract new files -> repair existing shortcuts -> write AUMID/notify Shell
@@ -64,7 +64,7 @@ installer-completed (log available; finish page launches `$INSTDIR\\ZCode.exe` d
 
 ### New versions
 
-Packaging generates an installer-readable ownership manifest listing application files relative to `$INSTDIR` (directories are not listed separately). The manifest is installed with the package for the next update. No filesystem transaction or rollback is promised. `customRemoveFiles` handles only manifest entries; unknown entries are not deleted.
+Packaging generates an installer-readable ownership manifest listing application files relative to `$INSTDIR` (directories are not listed separately). The manifest is installed with the package for the next update. For the recovery boundary of a failed cleanup see "Windows Updates: Preserve Files in the Installation Directory"; no full filesystem transaction is promised for the extract stage or power loss. `customRemoveFiles` handles only manifest entries; unknown entries are not deleted.
 
 ### Upgrading from an old version (later incremental design)
 
@@ -72,8 +72,8 @@ When the old version has no manifest, the target design is to move entries that 
 
 ### Failure and rollback
 
-- A Delete failure in manifest cleanup records the cleanup stage, failure reason and uninstaller PID and returns a nonzero exit code. Files not yet handled stay as they are.
-- For updates between managed versions, a nonzero return from the old uninstaller (SHELL_CONTEXT and HKCU paths) is reported by the outer installer as a cleanup failure. electron-builder's interactive retry order is current known behavior; the template is not rewritten here.
+- A Delete failure in manifest cleanup records the cleanup stage, failure reason and uninstaller PID and returns a nonzero exit code. Files not yet handled stay as they are; before calling the old uninstaller the new installer backs up the managed files and, on failure, puts the deleted files back.
+- For updates between managed versions, a nonzero return from the old uninstaller (SHELL_CONTEXT and HKCU paths) is reported by the outer installer as a cleanup failure. electron-builder's five retries are kept, but when they are exhausted a cleanup-failure and retry/cancel prompt is shown; after cancel the deleted files are restored and "application cannot be closed" is no longer shown.
 - A historical uninstaller without a manifest is not required to return a classifiable error and is not required to back up, restore or roll back.
 - Fine-grained Win32 error chains for extract, copy and directory protection are follow-ups. Do not describe them as implemented guarantees.
 
@@ -83,7 +83,7 @@ When the old version has no manifest, the target design is to move entries that 
 - The previous version's uninstaller is a separate process. The outer details first show cleanup start/complete, then replay the uninstaller log after the process returns. The current uninstaller writes each relative path from the manifest it actually tried to delete to `%TEMP%\\ZCode-uninstaller.log`.
 - A silent update shows no UI but writes `%TEMP%\\ZCode-installer.log`. The UAC-elevated inner process tries to write `%WINDIR%\\Logs\\ZCode-installer.log` directly. There is no implementation that copies the outer temporary log to Windir by permission. An unwritable log must not block installation.
 - Log markers use numeric PIDs and a stage enum, never `$CMDLINE`. Implemented stages: `install-started`, `cleanup-started/completed`, `extract-started/completed`, `shortcuts-started/completed`, `install-finalization-started`, `install-completed`. Failure classification for managed cleanup is limited to `permission-or-disk-space` and old-uninstaller-nonzero. `reparse-point` and Win32 error codes for `extract` are follow-ups.
-- In an interactive update, when the old uninstaller returns nonzero, electron-builder's built-in retry (up to 5 times) and the `appCannotBeClosed` prompt may appear first; only after cancel does this project's precise cleanup error appear. The silent path relies on the exit code and log.
+- An interactive managed update keeps up to 5 old-uninstaller retries; once they are exhausted this project's cleanup-failure and exit-code prompt is used, and after the user cancels the deleted files are restored. The real application-process check keeps the original "application cannot be closed" prompt; the silent path relies on the exit code and log.
 - The cleanup-failure message box carries `/SD IDOK`. Interactive mode shows the prompt; silent mode auto-confirms and returns exit code `2`. It must not block an unattended update.
 
 ## Shortcuts and AUMID
@@ -95,16 +95,19 @@ When the old version has no manifest, the target design is to move entries that 
 
 ## Acceptance Cases
 
-| Case                      | Scenario                                                   | Must observe                                                                                                               |
-| ------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| WIN-INSTALL-OWNERSHIP-001 | `notes.txt` or a custom directory exists before the update | The files remain after the update; application files are replaced                                                          |
-| WIN-INSTALL-OWNERSHIP-002 | Old version has no manifest                                | Not guaranteed; the old uninstaller may keep native behavior; migration support is added later only with clear benefit     |
-| WIN-INSTALL-DIAG-001      | Managed cleanup hits a lock/permission/disk error          | The cleanup log has stage, classification and numeric PID; the outer installer returns nonzero and shows a cleanup failure |
-| WIN-INSTALL-DIAG-003      | Old version has no manifest, or the extract stage fails    | No fine-grained diagnostics guarantee; the native installer result is kept; converge on real problems later                |
-| WIN-INSTALL-DIAG-002      | Silent `/S` update                                         | No UI but stage logs exist; the log PID is numeric and there is no raw command line                                        |
-| WIN-INSTALL-SHORTCUT-001  | Correct / stale / deleted shortcuts                        | The correct one keeps its arguments, the stale one is repaired, the deleted one is not recreated                           |
-| WIN-INSTALL-AUMID-001     | Production and Preview packaged runs                       | The main-process AUMID equals the NSIS `appId` and the Shell can index/pin it correctly                                    |
+| Case                      | Scenario                                                                        | Must observe                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| WIN-INSTALL-OWNERSHIP-001 | `notes.txt` or a custom directory exists before the update                      | The files remain after the update; application files are replaced                                                          |
+| WIN-INSTALL-OWNERSHIP-002 | Old version has no manifest                                                     | Not guaranteed; the old uninstaller may keep native behavior; migration support is added later only with clear benefit     |
+| WIN-INSTALL-DIAG-001      | Managed cleanup hits a lock/permission/disk error                               | The cleanup log has stage, classification and numeric PID; the outer installer returns nonzero and shows a cleanup failure |
+| WIN-INSTALL-RECOVERY-001  | The old uninstaller deletes the main program first, then fails on a file in use | The main program is restored byte for byte, the locked file and unrelated files are kept, the exit code is nonzero         |
+| WIN-INSTALL-RECOVERY-002  | A backup source file is opened exclusively                                      | The old uninstaller does not run and the original install directory is unchanged                                           |
+| WIN-INSTALL-RECOVERY-003  | A same-named directory appears where the main program was deleted               | Restore must not be declared successful; keep the backup and report its path                                               |
+| WIN-INSTALL-DIAG-003      | Old version has no manifest, or the extract stage fails                         | No fine-grained diagnostics guarantee; the native installer result is kept; converge on real problems later                |
+| WIN-INSTALL-DIAG-002      | Silent `/S` update                                                              | No UI but stage logs exist; the log PID is numeric and there is no raw command line                                        |
+| WIN-INSTALL-SHORTCUT-001  | Correct / stale / deleted shortcuts                                             | The correct one keeps its arguments, the stale one is repaired, the deleted one is not recreated                           |
+| WIN-INSTALL-AUMID-001     | Production and Preview packaged runs                                            | The main-process AUMID equals the NSIS `appId` and the Shell can index/pin it correctly                                    |
 
 ## Implementation Boundary
 
-Guaranteed now: ownership cleanup, stage and extracted-file lists in install details, per-file cleanup records in the uninstaller log, shortcut/AUMID consistency, all covered by real NSIS smoke. Follow-ups, not current guarantees: returning the full old-uninstaller result, replacing electron-builder's outer retry template, reparse-safe directory scanning, extract Win32 error codes, copying the log to Windir, and cross-version manifest migration.
+Guaranteed now: ownership cleanup, stage and extracted-file lists in install details, per-file cleanup records in the uninstaller log, shortcut/AUMID consistency, all covered by real NSIS smoke. Follow-ups, not current guarantees: a full install transaction, reparse-safe directory scanning, extract Win32 error codes, copying the log to Windir, and cross-version manifest migration.

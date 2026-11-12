@@ -12,6 +12,13 @@ The headings for the Git, Goal, Progress, and Run sections in the Status panel m
 - In the expanded Status panel, provide an absolutely positioned collapse button in the upper-right corner to switch to the mini state.
 - When the upper-right collapse button is present, reserve space on the right side of section header rows so titles, chevrons, and status content do not overlap it.
 - When the mini pill displays running background tasks, show only the task-type icon and the number of running tasks; do not show elapsed time or a timer. The expanded Run section and task details continue to show elapsed time.
+- Task-type icons in the mini pill, including subagent avatars, are 16x16px and centered in the icon slot. The avatar's default 20px minimum size must not overflow the slot. Avatars elsewhere keep their size.
+
+## Size regression acceptance
+
+- Show a subagent-only mini pill at desktop and phone widths in Zai Light and Zai Dark, with one and several counts, in Chinese and English.
+- Avatar and icon slot are both 16x16px with coinciding centers, keep the existing gap to the text, and do not jump when hover switches to the expand icon.
+- Ordinary 20px avatars keep their size.
 
 ## Compatibility
 

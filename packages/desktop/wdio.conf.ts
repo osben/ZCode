@@ -1,3 +1,4 @@
+import { seedSidebarRichContentFixture } from "./test/e2e/helpers/sidebar-rich-content-fixture.js";
 import { createConversationShareMockRoute } from "./test/e2e/helpers/conversation-share-mock-route.js";
 import { prepareTtftOtlpFixture } from "./test/e2e/helpers/ttft-otlp-fixture.js";
 import {
@@ -23,13 +24,13 @@ import {
 /* eslint-disable max-lines -- WDIO config centralizes Electron, Xvfb, proxy and container demo parameters; splitting it would make the test entry harder to trace. */
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import {
   resolveE2EChromedriverExecutable,
   startE2EChromedriverServer,
@@ -71,7 +72,10 @@ import {
   PROJECT_UPGRADE_ORDER_SPEC,
   seedProjectUpgradeOrderFixture,
 } from "./test/e2e/helpers/project-upgrade-order-fixture.js";
-import { resolveAskUserQuestionClockScaleForWorker } from "./test/e2e/helpers/e2e-worker-environment.js";
+import {
+  resolveAskUserQuestionClockScaleForWorker,
+  resolveE2ECredentialSecret,
+} from "./test/e2e/helpers/e2e-worker-environment.js";
 import {
   CODING_PLAN_TEAM_MOCK_BASE_URL_ENV,
   CODING_PLAN_UPGRADE_MOCK_BASE_URL_ENV,
@@ -111,9 +115,14 @@ import {
 } from "./test/e2e/helpers/e2e-worker-isolation.js";
 import { createE2EStartupCredentialSeed } from "./test/e2e/helpers/e2e-startup-credentials.js";
 import { seedRemoteOnboardingFixture } from "./test/e2e/helpers/remote-startup-profile.js";
+import {
+  installOfficialPluginCacheTemplate,
+  prepareOfficialPluginCacheTemplate,
+} from "./test/e2e/helpers/official-plugin-cache-prewarm.js";
 import { getE2EProviderEndpointEnv } from "#e2e/helpers/e2e-provider-endpoint";
 import { prepareOAuthCompletionRaceFixture } from "./test/e2e/helpers/oauth-completion-race-fixture.js";
 import { prepareAccessToken401Fixture } from "./test/e2e/helpers/access-token-401-fixture.js";
+import { prepareVoiceInputFixture } from "./test/e2e/helpers/asr-mock-server.js";
 import { prepareOfficialMcpAuthRoutingFixture } from "#e2e/helpers/mcp-official-auth-routing-fixture";
 import { prepareMcpFailureGuidanceFixture } from "#e2e/helpers/mcp-failure-guidance-fixture";
 import { createE2EReplayFixtureVariables } from "./test/e2e/helpers/e2e-runtime-paths.js";
@@ -313,7 +322,7 @@ const ELECTRON_APP_BINARY_PATH =
     installTimeoutMs: E2E_ELECTRON_INSTALL_TIMEOUT_MS,
     repoRoot: REPO_ROOT,
   });
-const UPSTREAM_PROVIDER_SPEC = "./test/e2e/upstream-provider.test.ts";
+const UPSTREAM_PROVIDER_SPEC = "./test/e2e/infrastructure/smoke/upstream-provider.test.ts";
 const PLUGIN_NO_GIT_GITHUB_ARCHIVE_SPEC = "plugin-no-git-github-archive.test.ts";
 const GIT_COMMIT_DIALOG_UI_FLOW_SPEC = "git-commit-dialog-ui-flow.test.ts";
 const OAUTH_CREDENTIAL_RECOVERY_SPEC = "oauth-credential-recovery.test.ts";
@@ -597,6 +606,10 @@ if (!E2E_RUN_ID) {
 }
 const E2E_RUN_CACHE_DIR = resolve(DESKTOP_DIR, ".e2e-cache", E2E_RUN_ID);
 const E2E_APP_OUTPUT_DIR = resolve(E2E_RUN_CACHE_DIR, "app");
+const E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME = resolve(
+  E2E_RUN_CACHE_DIR,
+  "official-plugin-cache-home",
+);
 const E2E_APP_ENTRY_POINT = resolve(E2E_APP_OUTPUT_DIR, "main/index.js");
 const E2E_APP_RENDERER_ASSETS_DIR = resolve(E2E_APP_OUTPUT_DIR, "renderer/assets");
 const E2E_REMOTE_ASSET_VERSION = String(
@@ -635,6 +648,13 @@ process.env.ZCODE_DATA_BASE_DIR = E2E_HOME_DIR;
 process.env.ZCODE_DESKTOP_APPLICATION_NAME = "ZCode E2E";
 process.env.ZCODE_DESKTOP_HOME_DIR = E2E_HOME_DIR;
 process.env.ZCODE_DESKTOP_USE_ELECTRON_DEFAULT_USER_DATA = "1";
+// Fix rationale: a shell launched from the ZCode client inherits the app's own environment (ZCODE_ENV=production,
+// ZCODE_BASE_URL=https://zcode.z.ai). onPrepare's agent build reads them and bakes them into the artifacts,
+// which sends E2E to the production domain, ignores the endpoint in settings, and the fixture mock server receives no requests.
+// Desktop package normalization happens inside ensure-e2e-desktop-build; this keeps the WDIO-side build chain consistent.
+process.env.ZCODE_ENV = "test";
+delete process.env.ZCODE_BASE_URL;
+delete process.env.ZCODE_RUNTIME_ENV;
 // Bugfix: the renderer E2E store bridge may be opened only explicitly by the WDIO process, so the ZCODE_ENV=test product environment does not expose a global mutable store.
 process.env.VITE_ZCODE_E2E_STORE_BRIDGE = "1";
 // Fork: bake a reserved telemetry endpoint into E2E builds so /event/report capture specs see requests.
@@ -656,6 +676,7 @@ let clientScenesMockServer: ClientScenesMockServer | null = null;
 let stopOAuthCompletionRaceFixture: (() => Promise<void>) | null = null;
 let stopTtftOtlpFixture: (() => Promise<void>) | null = null;
 let stopAccessToken401Fixture: (() => Promise<void>) | null = null;
+let stopVoiceInputFixture: (() => Promise<void>) | null = null;
 let stopOfficialMcpAuthRoutingFixture: (() => Promise<void>) | null = null;
 let stopMcpFailureGuidanceFixture: (() => Promise<void>) | null = null;
 let pluginCdnZipFixtureServer: PluginCdnZipFixtureServer | null = null;
@@ -954,6 +975,10 @@ function prepareDesktopAppBuild() {
     console.log(`[e2e] using packaged app: ${E2E_PACKAGED_APP_BINARY_PATH}`);
     return;
   }
+  // Bug root cause: on Windows the Agent CLI can only start through zcode-runtime-host.exe, which the build:no-runtime-assets step below does not produce,
+  // so every Windows CI case reports "runtime host missing" and empty slash directories.
+  // Reused builds (ZCODE_E2E_SKIP_BUILD) must check this too, since the artifacts are not protected by the out stamp.
+  ensureWindowsRuntimeHost();
   // Fix reason: the WDIO config is parsed by esbuild first; CI-executed strings must keep ASCII quotes.
   // The shard's mock port is allocated after the parent build; when a web mock is present, the compile-time origin must be rebuilt with the current port.
   if (shouldReuseDesktopE2EBuild(process.env)) {
@@ -966,6 +991,16 @@ function prepareDesktopAppBuild() {
   // So the WDIO entry always builds first, ensuring tests use desktop artifacts that match the current source.
   runPnpmWorkspaceCommand(["--filter", "@zcode/desktop", "build:no-runtime-assets"]);
   assertDesktopE2EBuildReady("onPrepare build");
+}
+
+// 非 Windows 由脚本 --if-windows 跳过；--ensure 按源码摘要复用已有产物，只在缺失或过期时调用 CMake。
+// 调用方持有 E2E build 锁，分片 runner 不会并发写同一个 bundled-tools 目录。
+function ensureWindowsRuntimeHost() {
+  execFileSync(
+    process.execPath,
+    [resolve(REPO_ROOT, "scripts/build-windows-runtime-host.mjs"), "--if-windows", "--ensure"],
+    { cwd: REPO_ROOT, env: createPnpmChildEnv(), stdio: "inherit" },
+  );
 }
 
 function runPnpmWorkspaceCommand(
@@ -1292,7 +1327,8 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     | "fiveHourUse"
     | "multiFiveHourUse"
     | "multiFiveHourUseLagging"
-    | "urgentOpportunity" = "none";
+    | "urgentOpportunity"
+    | "weekToggle" = "none";
   let resetScenarioStartedAt = Date.now();
   let resetOpportunityGranted = false;
   let resetUseAccepted = false;
@@ -1307,6 +1343,9 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
   // multiFiveHourUseLagging (QR-E2E-15): on top of multiFiveHourUse, the /use consumption result is delayed
   // by RESET_USE_VISIBLE_LAG_MS before it becomes visible in /status; within that window /status returns the pre-consumption snapshot (the previous used_at).
   const RESET_USE_VISIBLE_LAG_MS = 600;
+  // weekToggle（QR-E2E-16）：FIVE_HOUR、WEEK 各 1 张；WEEK 是否在 /status 里可见由测试经
+  // /__e2e/coding-plan/reset-week-available 切换，模拟周机会被别处核销后又重新发放。
+  let resetWeekAvailable = true;
   let resetMultiLag: {
     usedAt: number | null;
     usedCount: number;
@@ -1427,7 +1466,8 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
         body.resetScenario === "fiveHourUse" ||
         body.resetScenario === "multiFiveHourUse" ||
         body.resetScenario === "multiFiveHourUseLagging" ||
-        body.resetScenario === "urgentOpportunity"
+        body.resetScenario === "urgentOpportunity" ||
+        body.resetScenario === "weekToggle"
           ? body.resetScenario
           : "none";
       resetOpportunityGranted = false;
@@ -1438,8 +1478,15 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
       resetMultiUsedKeys.clear();
       resetMultiUnread = false;
       resetMultiLag = null;
+      resetWeekAvailable = true;
       requests.length = 0;
       writeJson(response, { ok: true, resetScenario });
+      return;
+    }
+    if (url.pathname === "/__e2e/coding-plan/reset-week-available" && request.method === "POST") {
+      const body = await readRequestJson<{ available?: unknown }>(request);
+      resetWeekAvailable = body.available === true;
+      writeJson(response, { ok: true, available: resetWeekAvailable });
       return;
     }
     if (url.pathname === "/__e2e/coding-plan/reset-confirm-use" && request.method === "POST") {
@@ -1703,7 +1750,9 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
                 [{ expire_at: Date.now() + 120_000 }]
               : [{ expire_at: resetScenarioStartedAt + 3_600_000 }];
       const availableWeekResets =
-        resetScenario === "existingMultiple" || resetScenario === "fiveHourUse"
+        resetScenario === "existingMultiple" ||
+        resetScenario === "fiveHourUse" ||
+        (resetScenario === "weekToggle" && resetWeekAvailable)
           ? [{ expire_at: resetScenarioStartedAt + 86_400_000 }]
           : [];
       writeJson(response, {
@@ -2279,6 +2328,7 @@ const HIGHSPEED_DATA_PLANE_FIXTURE_PATHS = [
   "test/e2e/fixtures/upstream/conversation-session/conversation-session-highspeed-card-draw-timeout.json",
   "test/e2e/fixtures/upstream/conversation-session/conversation-session-highspeed-card-draw-miss.json",
   "test/e2e/fixtures/upstream/conversation-session/conversation-session-highspeed-card-fallback-unlocks-model.json",
+  "test/e2e/fixtures/upstream/auth-config/highspeed-owner-ui-race.json",
 ];
 
 async function readDataPlaneTurnFixtures(path: string): Promise<DataPlaneTurnFixture[]> {
@@ -2308,9 +2358,11 @@ async function startCodingPlanDataPlaneProxy(specs: readonly string[]) {
       )
     : null;
   // Each round of requests in the Highspeed draw case goes through the Team Coding Plan built-in HTTPS endpoint (spec §7);
-  // a static body cannot distinguish rounds, so multi-round cases would be judged complete in the first round; they must be marked for replay per round.
-  const highspeedFixtures = specs.some((spec) =>
-    spec.includes("conversation-session-highspeed-card"),
+  // a static body cannot tell rounds apart, so multi-round cases would be judged complete in the first round and must be marked for replay per round.
+  const highspeedFixtures = specs.some(
+    (spec) =>
+      spec.includes("conversation-session-highspeed-card") ||
+      spec.includes("highspeed-owner-ui-race.test.ts"),
   )
     ? (
         await Promise.all(
@@ -2746,7 +2798,7 @@ async function startPluginCdnZipFixtureIfNeeded(specs: string[] = []) {
   if (!shouldUsePluginCdnZipMarketplaceFixture(specs)) {
     return;
   }
-  pluginCdnZipFixtureServer ??= await startPluginCdnZipFixtureServer();
+  pluginCdnZipFixtureServer ??= await startPluginCdnZipFixtureServer(specs);
 }
 
 async function stopPluginCdnZipFixture() {
@@ -3245,12 +3297,17 @@ function forceFinalizeE2ERunnerFromGuard() {
 async function resetE2EHome(specs: string[] = []) {
   await removeE2EHomeWithRetry();
   mkdirSync(E2E_HOME_DIR, { recursive: true });
+  // 先拷官方插件缓存，再写各 spec 的 fixture，避免覆盖 fixture 自己写入的插件状态。
+  await installOfficialPluginCacheTemplate({
+    homeDir: E2E_HOME_DIR,
+    templateHome: E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME,
+  });
   seedE2EStartupState(specs);
   await seedRemoteOnboardingFixture({
     // The marketing popup preempts the first-run guidance focus; this suite starts from an account that has completed guidance, to verify popup delivery independently.
     enabled:
       process.env.ZCODE_E2E_REMOTE_PROFILE === "1" ||
-      specs.some((spec) => spec.endsWith("ui-shell/marketing-touch-delivery.test.ts")),
+      specs.some((spec) => spec.endsWith("ui-shell/marketing/marketing-touch-delivery.test.ts")),
     specs,
     appConfigDir: E2E_APP_CONFIG_DIR,
     userId: E2E_USER_PROFILE.id,
@@ -3258,13 +3315,20 @@ async function resetE2EHome(specs: string[] = []) {
   if (workerSpecsContain(specs, PROJECT_UPGRADE_ORDER_SPEC)) {
     await seedProjectUpgradeOrderFixture(E2E_HOME_DIR, E2E_APP_SETTINGS_FILE);
   }
+  if (specs.some((spec) => spec.endsWith("sidebar-rich-content-performance.test.ts"))) {
+    await seedSidebarRichContentFixture({
+      cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+      e2eHomeDir: E2E_HOME_DIR,
+      workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+    });
+  }
   if (
     usesProviderReadinessColdStartFixture(specs) ||
     usesGitReviewEntryFixture(specs) ||
     workerSpecsContain(specs, "conversation-session-permanent-delete.test.ts")
   ) {
-    // SP13 must seed both a real task row and an openable
-    // CLI session before Host opens tasks-index; in-test injection would bypass the real task/service resolution chain of the Header and status panel.
+    // SP13 must seed both a real task row and an openable CLI session before Host opens tasks-index;
+    // in-test injection would bypass the real task/service resolution chain of the Header and status panel.
     await seedProviderReadinessHistoryFixture({
       cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
       e2eHomeDir: E2E_HOME_DIR,
@@ -3323,7 +3387,9 @@ async function resetE2EHome(specs: string[] = []) {
   await seedE2EGitReviewEntryWorkspace(specs);
   seedE2EGitCommitDialogWorkspace(specs);
   seedE2EWorktreeChatFirstWorkspace(specs);
-  if (specs.some((spec) => spec.includes("conversation-session-history-first.test.ts"))) {
+  if (
+    specs.some((spec) => /conversation-session-history-first(?:-migration)?\.test\.ts$/.test(spec))
+  ) {
     await seedSessionHistoryFirstFixture({
       cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
       e2eHomeDir: E2E_HOME_DIR,
@@ -3331,6 +3397,9 @@ async function resetE2EHome(specs: string[] = []) {
       providerId: e2eProviderPreset.providerId,
       modelId: e2eProviderPreset.model,
       thoughtLevel: readE2EThoughtLevel(),
+      legacyTitleHandoff: specs.some((spec) =>
+        spec.endsWith("conversation-session-history-first-migration.test.ts"),
+      ),
     });
   }
   if (specs.some((spec) => spec.includes(HOOKS_LIFECYCLE_SPEC))) {
@@ -3392,6 +3461,7 @@ function seedE2EPluginCdnZipMarketplace(specs: string[] = []) {
     e2eHomeDir: E2E_HOME_DIR,
     server: pluginCdnZipFixtureServer,
     lastUpdated: resolvePluginCdnZipMarketplaceLastUpdated(specs),
+    localCatalog: specs.some((spec) => spec.includes("agent-plugin-discovery.test.ts")),
   });
 }
 
@@ -3410,7 +3480,12 @@ function seedE2EPluginMcpSkillInstalledPlugins(specs: string[] = []) {
       : "installed-plugins.disabled.template.json";
   const fixturePath = resolve(DESKTOP_DIR, "test/e2e/fixtures/plugin-mcp-skill", templateName);
   const pluginRoot = resolve(DESKTOP_DIR, "test/e2e/fixtures/plugin-mcp-skill/e2e-plugin-mcp-ping");
-  const template = readFileSync(fixturePath, "utf-8").replaceAll("__INSTALL_PATH__", pluginRoot);
+  // 修复原因：Windows 路径的反斜杠直接拼进 JSON 字符串会成为非法转义（如 `\U`），
+  // installed_plugins.json 解析失败后插件安装记录整体丢失；必须按 JSON 字符串编码替换。
+  const template = readFileSync(fixturePath, "utf-8").replaceAll(
+    '"__INSTALL_PATH__"',
+    JSON.stringify(pluginRoot),
+  );
   // pluginStorageRoot = <home>/.zcode/cli/plugins
   const targetDir = resolve(E2E_STORAGE_ROOT, "cli/plugins");
   mkdirSync(targetDir, { recursive: true });
@@ -3616,10 +3691,17 @@ function seedE2EStartupState(specs: string[] = []) {
     ),
     "utf-8",
   );
+  if (workerSpecsContain(specs, "credential-store-recovery.test.ts")) {
+    // 容器恢复专项只能在隔离 HOME 注入损坏字节，不能复用真实用户凭据。
+    writeFileSync(E2E_APP_CREDENTIALS_FILE, '{"bot:fixture":"synthetic",', "utf8");
+  }
 }
 
 function isOAuthCredentialRecoverySpec(specs: string[] = []) {
-  return workerSpecsContain(specs, OAUTH_CREDENTIAL_RECOVERY_SPEC);
+  return (
+    workerSpecsContain(specs, OAUTH_CREDENTIAL_RECOVERY_SPEC) ||
+    workerSpecsContain(specs, "credential-store-recovery.test.ts")
+  );
 }
 
 function isJwtExpiryReauthenticationSpec(specs: string[] = []) {
@@ -4628,6 +4710,8 @@ export const config: WebdriverIO.Config = {
       : {}),
     HOME: E2E_HOME_DIR,
     USERPROFILE: E2E_HOME_DIR,
+    ZCODE_CREDENTIAL_SECRET:
+      resolveE2ECredentialSecret(configuredE2ESpecs, process.env.ZCODE_CREDENTIAL_SECRET) ?? "",
     // PLM-LC-010 uses a non-ZCODE_ prefix to verify Claude-compatible env expansion for plugin MCP.
     // The value is used only for hash comparison by the fixture; neither tool results nor screenshots may echo the original value.
     E2E_PLUGIN_RUNTIME_SECRET: "e2e-plugin-runtime-secret-fixture-20260718",
@@ -4711,6 +4795,10 @@ export const config: WebdriverIO.Config = {
         appArgs: [
           ...(E2E_PACKAGED_APP_BINARY_PATH ? [] : [`--app=${E2E_APP_ENTRY_POINT}`]),
           "--no-sandbox",
+          // Voice input E2E (docs/chat/composer-voice-input.md): use Chromium's fake microphone device,
+          // without touching a real device or showing a system prompt; other cases never call getUserMedia and are unaffected.
+          "--use-fake-device-for-media-stream",
+          "--use-fake-ui-for-media-stream",
           // Fix reason: environment variables do not appear in the process command line; so pass both runId and HOME identity,
           // letting cross-platform cleanup prefer hits for the current run and keep a path-level fallback for Windows shards.
           buildE2ERunIdArg(E2E_RUN_ID),
@@ -4777,45 +4865,81 @@ export const config: WebdriverIO.Config = {
     // Fix reason: real model config plus first-session warmup can exceed 30s, so keep a wider per-case cap to avoid Mocha truncating before the upstream response arrives.
     // The real GitHub Archive smoke downloads the Claude official marketplace and the target plugin; the E2E capture proxy also
     // records full binary responses, so it cannot reuse the 120-second cap that only covers local fixtures.
-    // WPL-011 goes through SSH assets, marketplace mirror, remote install and runtime refresh;
-    // a fixed 120 seconds would truncate the case before the UI has a chance to report the specific sync result.
-    // Bug cause: the Mocha adapter wraps the case with the config timeout before entering the test body,
-    // so this.timeout inside the case cannot add budget for manual phases. The explicit hold only extends
+    // WPL-011 goes through SSH assets, the marketplace mirror, remote install and runtime refresh;
+    // a fixed 120 seconds would truncate the case before the UI can report the specific sync result.
+    // Bug root cause: the Mocha adapter wraps each case with the config timeout before entering the test body,
+    // so this.timeout inside a case cannot add budget for manual phases. The explicit hold only extends
     // manual-review runs and does not change the ordinary E2E 120-second cap.
+    // Fix reason: the old nested ternary took the first matching branch in source order; when one shard held several long-budget specs,
+    // an earlier, smaller budget truncated a later, longer case (for example a 240s budget cutting off background-bash's 360s).
+    // Now the largest matching budget wins, so new branches do not depend on order.
     timeout:
-      (configuredE2ESpecs.some(
-        (spec) =>
-          spec.endsWith("conversation-session-remote-sidebar-menus.test.ts") ||
-          spec.endsWith("conversation-session-ssh-probe-validation.test.ts"),
-      )
-        ? // This case includes a real SSH first install, directory reuse, settings location, 16 screenshots and reconnection to the original directory;
-          // The probe-validation case likewise goes through a real first install and recovery from existing device faults, so it cannot be truncated before the state assertions.
-          // The Mocha outer timeout must match the case's 15-minute budget, so it is not truncated at the default 120 seconds during first-install extraction.
-          15 * 60_000
-        : configuredE2ESpecs.some((spec) =>
+      Math.max(
+        requestSecuritySpecTimeout(configuredE2ESpecs, 120000),
+        ...[
+          {
+            // This case includes a real SSH first install, directory reuse, settings location, 16 screenshots and reconnection to the original directory;
+            // the probe-validation case likewise goes through a real first install and recovery from existing device faults, so it cannot be truncated before the state assertions.
+            // The Mocha outer timeout must match the case's 15-minute budget, so it is not truncated at the default 120 seconds during first-install extraction.
+            matched: configuredE2ESpecs.some(
+              (spec) =>
+                spec.endsWith("conversation-session-remote-sidebar-menus.test.ts") ||
+                spec.endsWith("conversation-session-ssh-probe-validation.test.ts"),
+            ),
+            ms: 15 * 60_000,
+          },
+          {
+            // Flake cause: RDUX15 serially goes through background connections for SSH and four Docker entry points; the case declares a 20-minute budget,
+            // but this.timeout cannot cover the outer layer, so under heavy load it is cut off at 120 seconds in the Docker stage (Error: Timeout).
+            matched: configuredE2ESpecs.some((spec) =>
+              spec.endsWith("conversation-session-background-connection.test.ts"),
+            ),
+            ms: 20 * 60_000,
+          },
+          {
+            // The walkthrough case serially completes a real first install, failure/cancel/background, the settings page and container-stop disconnection recovery, recording the whole run;
+            // it matches the 30-minute budget inside the case.
+            matched: configuredE2ESpecs.some((spec) =>
               spec.endsWith("conversation-session-remote-ui-walkthrough.test.ts"),
-            )
-          ? // The walkthrough case serially completes a real first install, failure/cancel/background, settings page and container-stop disconnection recovery, recording the whole run;
-            // Matches the 30-minute budget inside the case.
-            30 * 60_000
-          : configuredE2ESpecs.some((spec) =>
-                spec.endsWith("conversation-session-r3-mobile.test.ts"),
-              )
-            ? // This case serially completes a real SSH install, two relay pairings and network-disconnect recovery; its original budget is kept in sync,
-              // avoid WDIO truncating at the default 120 seconds while the phone is offline; this.timeout cannot cover the outer layer.
-              40 * 60_000
-            : pluginNoGitGitHubArchiveE2E ||
-                workspacePluginRemoteExplicitSyncE2E ||
-                configuredE2ESpecs.some((spec) =>
-                  spec.endsWith("conversation-session-subagent-cross-host.test.ts"),
-                )
-              ? 600000
-              : // Background Bash cold-recovery regression waits for the real child to finish, the 120s publisher grace and the 60s cleanup cadence.
-                configuredE2ESpecs.some((spec) =>
-                    spec.endsWith("conversation-session-background-bash-output.test.ts"),
-                  )
-                ? 360000
-                : requestSecuritySpecTimeout(configuredE2ESpecs, 120000)) + manualReviewHoldMs,
+            ),
+            ms: 30 * 60_000,
+          },
+          {
+            // This case serially completes a real SSH install, two relay pairings and network-disconnect recovery; its original budget is kept in sync,
+            // avoiding WDIO truncation at the default 120 seconds while the phone is offline; this.timeout cannot cover the outer layer.
+            matched: configuredE2ESpecs.some((spec) =>
+              spec.endsWith("conversation-session-r3-mobile.test.ts"),
+            ),
+            ms: 40 * 60_000,
+          },
+          {
+            matched:
+              pluginNoGitGitHubArchiveE2E ||
+              workspacePluginRemoteExplicitSyncE2E ||
+              configuredE2ESpecs.some((spec) =>
+                spec.endsWith("conversation-session-subagent-cross-host.test.ts"),
+              ),
+            ms: 600000,
+          },
+          {
+            // SHR14/SHR17 serially run two workspaces, four rounds of parent-child requests and settings saves; the case declares
+            // this.timeout(240000), but the outer Mocha wrapper truncates at 120 seconds first (about 130 seconds measured on Windows).
+            matched: configuredE2ESpecs.some((spec) =>
+              spec.endsWith("conversation-session-subagent-multi-workspace.test.ts"),
+            ),
+            ms: 240000,
+          },
+          {
+            // The background Bash cold-recovery regression waits for the real child to finish, the 120s publisher grace and the 60s cleanup cadence.
+            matched: configuredE2ESpecs.some((spec) =>
+              spec.endsWith("conversation-session-background-bash-output.test.ts"),
+            ),
+            ms: 360000,
+          },
+        ]
+          .filter((budget) => budget.matched)
+          .map((budget) => budget.ms),
+      ) + manualReviewHoldMs,
   },
   async onPrepare() {
     try {
@@ -4883,6 +5007,13 @@ export const config: WebdriverIO.Config = {
           });
         } else await buildAndStage();
         prepareZCodeAgentServer();
+        // 正式包使用随包 CLI，模板 seed 源不同，不预热；缺模板时各 HOME 照常冷 seed。
+        if (!E2E_PACKAGED_APP_BINARY_PATH) {
+          await prepareOfficialPluginCacheTemplate({
+            cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+            templateHome: E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME,
+          });
+        }
       });
     } catch (error) {
       // Fix reason: WDIO records onPrepare exceptions as hook errors and keeps dispatching workers;
@@ -4932,9 +5063,13 @@ export const config: WebdriverIO.Config = {
       specs.some((spec) =>
         spec.endsWith("conversation-session-r3-desktop-settings-authority.test.ts"),
       );
+    const credentialOwnerProbe = specs.some((spec) =>
+      /system-credential-owner(?:-mcp)?\.test\.ts$/.test(spec),
+    );
     if (
       !E2E_PACKAGED_APP_BINARY_PATH &&
-      (storageDiagnostics ||
+      (credentialOwnerProbe ||
+        storageDiagnostics ||
         specs.some((spec) =>
           /conversation-session-subagent-(context-boundaries|multi-workspace|cross-host)\.test\.ts/.test(
             spec,
@@ -4946,14 +5081,21 @@ export const config: WebdriverIO.Config = {
       const entry = resolve(E2E_APP_OUTPUT_DIR, "main/subagent-e2e.mjs");
       const proxy = resolve(
         REPO_ROOT,
-        storageDiagnostics
-          ? "packages/desktop/test/e2e/helpers/storage-worker-diagnostics.mjs"
-          : "packages/desktop/test/e2e/helpers/subagent-config-proxy.mjs",
+        credentialOwnerProbe
+          ? "packages/desktop/test/e2e/helpers/credential-owner-probe.mjs"
+          : storageDiagnostics
+            ? "packages/desktop/test/e2e/helpers/storage-worker-diagnostics.mjs"
+            : "packages/desktop/test/e2e/helpers/subagent-config-proxy.mjs",
       );
-      const preload = `--import=${JSON.stringify(proxy)}`;
-      const diagnostics = storageDiagnostics
-        ? `process.env.ZCODE_E2E_STORAGE_WORKER_DIAGNOSTICS_DIR = ${JSON.stringify(resolve(e2eReporter.artifactDir, "storage-workers"))};\n`
-        : "";
+      // Bug 根因：Windows 上 `--import="C:\..."` 会被 ESM loader 当作协议 `c:` 拒绝
+      // （ERR_UNSUPPORTED_ESM_URL_SCHEME）；Host utility process 继承 NODE_OPTIONS 后启动即
+      // exit 1，用例卡在等待工作区。预加载统一传 file:// URL，macOS/Linux 行为不变。
+      const preload = `--import=${JSON.stringify(pathToFileURL(proxy).href)}`;
+      const diagnostics = credentialOwnerProbe
+        ? `process.env.ZCODE_E2E_CREDENTIAL_OWNER_LOG = ${JSON.stringify(resolve(E2E_HOME_DIR, "credential-owner.ndjson"))};\nawait import(${JSON.stringify(pathToFileURL(proxy).href)});\n`
+        : storageDiagnostics
+          ? `process.env.ZCODE_E2E_STORAGE_WORKER_DIAGNOSTICS_DIR = ${JSON.stringify(resolve(e2eReporter.artifactDir, "storage-workers"))};\n`
+          : "";
       await writeFile(
         entry,
         `${diagnostics}process.env.NODE_OPTIONS = ${JSON.stringify(preload)};\nawait import(${JSON.stringify(pathToFileURL(E2E_APP_ENTRY_POINT).href)});\n`,
@@ -4981,6 +5123,12 @@ export const config: WebdriverIO.Config = {
         if (specs.some((spec) => spec.endsWith("conversation-session-r3-subagent.test.ts"))) {
           process.env.ZCODE_DYNAMIC_WORKFLOW_MODE = "alwaysOn";
         }
+        const fixtureCredentialSecret = resolveE2ECredentialSecret(
+          specs,
+          process.env.ZCODE_CREDENTIAL_SECRET,
+        );
+        if (fixtureCredentialSecret) process.env.ZCODE_CREDENTIAL_SECRET = fixtureCredentialSecret;
+        else delete process.env.ZCODE_CREDENTIAL_SECRET;
         await runE2EBeforeSessionSetup({
           cid,
           specs,
@@ -4995,6 +5143,18 @@ export const config: WebdriverIO.Config = {
           startPluginCdnZipFixtureIfNeeded,
           startOffPeakMockIfNeeded: startOffPeakE2EMock,
         });
+        if (
+          process.platform === "darwin" &&
+          specs.some((spec) => spec.endsWith("system-credential-storage.test.ts"))
+        ) {
+          // Main first touches the keychain before the UI is ready, so the native suite must first prepare the system-library entry for the isolated HOME.
+          await mkdir(resolve(E2E_HOME_DIR, "Library"), { recursive: true });
+          await symlink(
+            resolve(userInfo().homedir, "Library/Keychains"),
+            resolve(E2E_HOME_DIR, "Library/Keychains"),
+            "dir",
+          );
+        }
         // Client Scenes is a remote directory dependency of the layout cases; it must override the endpoint after resetHome completes and before Electron
         // starts, so Main → Host gets the case-local fixture on its first import.
         await startClientScenesE2EMockIfNeeded(specs);
@@ -5007,6 +5167,7 @@ export const config: WebdriverIO.Config = {
           credentialsFile: E2E_APP_CREDENTIALS_FILE,
           settingsFile: E2E_APP_SETTINGS_FILE,
         });
+        stopVoiceInputFixture = await prepareVoiceInputFixture(specs);
         stopOfficialMcpAuthRoutingFixture = await prepareOfficialMcpAuthRoutingFixture({
           specs,
           credentialsFile: E2E_APP_CREDENTIALS_FILE,
@@ -5131,6 +5292,8 @@ export const config: WebdriverIO.Config = {
           stopTtftOtlpFixture = null;
           await stopAccessToken401Fixture?.();
           stopAccessToken401Fixture = null;
+          await stopVoiceInputFixture?.();
+          stopVoiceInputFixture = null;
           await stopOfficialMcpAuthRoutingFixture?.();
           stopOfficialMcpAuthRoutingFixture = null;
           await stopMcpFailureGuidanceFixture?.();
@@ -5215,6 +5378,8 @@ export const config: WebdriverIO.Config = {
           stopOAuthCompletionRaceFixture = null;
           await stopAccessToken401Fixture?.();
           stopAccessToken401Fixture = null;
+          await stopVoiceInputFixture?.();
+          stopVoiceInputFixture = null;
           await stopOfficialMcpAuthRoutingFixture?.();
           stopOfficialMcpAuthRoutingFixture = null;
           await stopMcpFailureGuidanceFixture?.();

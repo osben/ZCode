@@ -59,7 +59,10 @@ export interface SaveProjectInput {
   reuseExistingRoot?: boolean;
 }
 export interface ProjectDirectories {
+  /** Workspace the task belongs to; for a worktree task this is the project's main directory, not the cwd. */
   workspacePath: string;
+  /** Task cwd; present only when it differs from workspacePath (managed worktree task, docs/git/worktree.md §6.6.1). */
+  cwd?: string;
   /** Attachment identity registered by the remote assembly layer; execution still uses workspacePath. */
   workspaceIdentity?: string;
   additionalDirectories: string[];
@@ -73,7 +76,7 @@ export interface AutoArchiveInput {
 export interface ProjectRepositoryContract extends ProjectReservationCleanupContract {
   /** Read on the CLI's first allocation; soft-deleted projects and historical tasks of removed roots keep their project ownership. */
   hasProjectWorkspace(workspace: { workspacePath: string; workspaceIdentity?: string }): boolean;
-  /** Filters purely by CLI last activity time in a single transaction, excluding pinned tasks and activeTasks; writes only organization state and covers unassigned cwds. */
+  /** Filters purely by CLI last activity time in a single transaction, excluding pinned tasks and activeTasks; archives and pauses bound scheduled tasks, and covers unassigned cwds. */
   archiveInactive(input: AutoArchiveInput): ProjectTaskRef[];
   /** May fetch directories only, and participates in the caller's existing SQLite read snapshot. */
   readTree(options?: {
@@ -89,10 +92,32 @@ export interface ProjectRepositoryContract extends ProjectReservationCleanupCont
   reorderProjects(ids: string[]): void;
   resolveSessionDirectories(task: ProjectTaskRef): ProjectDirectories;
   /**
+  /**
    * Atomically reserves ownership before the CLI create; a reservation row without facts does not enter the list, and a retry does not overwrite organization operations.
    * While the forked parent row has no owner yet (host_id NULL), returns null: no child row is written, and admitForkSummary claims it once the parent is owned.
    */
   reserveCreatedTask<T extends ReserveCreatedTaskInput>(input: T): ReserveCreatedTaskResult<T>;
+  /**
+   * Read-only lookup of creation receipts by creation command, without a workspace: the project's main directory may have changed by the retry, so the receipt and its task row are the only source of truth for the retry.
+   * Returns each receipt's task directories (cwd does not change after creation); no receipts returns an empty array; an error is raised when a receipt's task no longer exists.
+   */
+  findCreationReceipts(input: {
+    creationCommand: { clientId: string; commandId: string };
+  }): Array<{ sessionId: string; directories: ProjectDirectories }>;
+  /** The cwd recorded on the task row (`root_path`); returns null when there is no such row, never falling back to the workspace path. */
+  readTaskCwd(task: ProjectTaskRef): string | null;
+  /**
+   * Revokes a creation reservation that has no CLI facts yet, together with its creation receipt (abandon or "do not use worktree" after worktree creation fails,
+   * docs/git/worktree.md §3.5). released = revoked; absent = no such row; kept = the row already has CLI facts (the session exists) and is not deleted.
+   */
+  releaseReservedTask(input: { task: ProjectTaskRef }): "released" | "absent" | "kept";
+  /**
+   * Read-only: non-deleted tasks on this Host running in the given managed worktree (exact match on worktree_root),
+   * used by the management dialog's "tasks using it" and the pre-delete occupancy check (docs/git/worktree.md §6.6.1).
+   */
+  listTasksByWorktree(input: {
+    worktreeRoot: string;
+  }): Array<ProjectTaskRef & { projectId: string | null; title: string; archived: boolean }>;
 }
 
 /** A plain create always resolves its directories; a fork resolves null while its parent has no owner yet. */
@@ -119,6 +144,14 @@ export type ReserveCreatedTaskInput =
       creationCommand?: { clientId: string; commandId: string };
       /** Execution directories frozen by the Host; persisted on the first reservation and unchanged on retry. undefined means a plain create. */
       additionalDirectories?: string[];
+      /** Managed worktree task cwd and worktree root (docs/git/worktree.md §6.6.1); both must be given together and only on the first reservation. */
+      cwd?: string;
+      worktreeRoot?: string;
+      /**
+       * Same-directory fork parent task ID (App Control fork reservation). When the parent runs in a managed worktree, the child row inherits
+       * the parent's cwd, worktree root and additional directories in the same transaction (docs/git/worktree.md §3.6).
+       */
+      forkedFromTaskId?: string;
       forkOf?: undefined;
     }
   | {

@@ -12,7 +12,11 @@ import type {
   StableForkGoalBoundaryMetadata,
   TraceContext,
 } from "@zcode/contracts";
-import type { DynamicWorkflowMode, ZCodeAutomationBotDeliveryTarget } from "@zcode/shared";
+import type {
+  DynamicWorkflowMode,
+  ModelSelection,
+  ZCodeAutomationBotDeliveryTarget,
+} from "@zcode/shared";
 import type {
   CommandAck,
   CommandEnvelope,
@@ -84,6 +88,8 @@ export type V4StableForkTargetResolution =
  */
 export interface V4SessionRecordView {
   app: ZCodeApp;
+  /** 冷恢复保留的 Session 原选择；运行绑定暂不可用时仍保留，显式选模后由 owner 清除。 */
+  restoredModelSelection?: ModelSelection;
   /**
    * 会话根 traceContext（traceId 位于 sessionId 之上，对应整条任务链）。
    * 命令层调 runtime 方法/补发 core 事件时透传沿用，不得中途另起 trace。
@@ -123,6 +129,8 @@ export interface V4CommandCoreHost {
   hasQueuedDelivery?(sessionId: string, delivery: "guide" | "queue"): boolean;
   getQueueLength?(sessionId: string): number;
   getQueueAutoDrain?(sessionId: string): boolean | null;
+  /** 队首正被 composer 编辑态冻结（投影 queue.items[0].editLock）。 */
+  isQueueHeadEditLocked?(sessionId: string): boolean;
   /** Highspeed queue 的执行材料含凭据，只允许驻留内存，禁止进入 queue event/snapshot。 */
   retainQueuedTurnExecution?(
     sessionId: string,
@@ -272,12 +280,6 @@ export interface V4CommandCoreHost {
 
   // ── 过渡期钩子（legacy 兼容窗口）─────────────────────────
   /**
-   * turn 开跑前的模型就绪检查（凭据/catalog 解析）。
-   * 现由旧协议 binder 实现（ensureSessionModelAvailableForNextTurn）；
-   * 归宿：core app 层自持模型解析后，由其取代本钩子。
-   */
-  ensureModelReady?(record: V4SessionRecordView): Promise<void>;
-  /**
    * 切模型前由 Agent 进程 Registry 校验目标 Provider。普通模型命令只携带 Selection，
    * 因此这里不能接收或安装 Host 运行快照。
    */
@@ -314,6 +316,8 @@ export interface V4CommandCoreHost {
     expectedSubmissionId?: string;
     /** Command id of the frozen first input of a reserved submission; admission is checked by this id. */
     expectedFirstInputCommandId?: string;
+    /** 会话 cwd 与 workspace 不同（受管 worktree）；只允许本地 workspace。 */
+    cwd?: string;
     permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /**
@@ -396,6 +400,8 @@ export interface V4CommandCoreHost {
       goalBoundary: StableForkGoalBoundaryMetadata;
       sourceCommandId: string;
       revisionAtDecision: number;
+      /** 协议原样透传；校验（仅本地）与项目身份派生由宿主负责。 */
+      targetCwd?: CommandPayloadMap["forkAssistant"]["targetCwd"];
     },
   ): Promise<{ forkedSessionId: string }>;
   /** @deprecated 仅旧宿主结构兼容；新 editUserQuery 永不调用，显式 forkAssistant 不受影响。 */

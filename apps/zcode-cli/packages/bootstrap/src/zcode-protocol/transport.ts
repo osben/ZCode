@@ -48,6 +48,10 @@ const PLUGIN_READ_IMMEDIATE_METHODS = new Set<string>([
   zcodeProtocolMethods.pluginsDescribe,
   zcodeProtocolMethods.pluginsList,
   zcodeProtocolMethods.pluginsOverview,
+  // 扩展 settings.get 的只读查询；排在安装之后会让扩展激活等待整个安装。
+  zcodeProtocolMethods.pluginsReadUserOptions,
+  // `@` 面板候选项按键触发、只读；排队会让候选项落后于输入。
+  zcodeProtocolMethods.pluginsMentionItems,
 ]);
 // MCP App requests are isolated by instance credentials and callId; if they waited for completion
 // alongside ordinary commands, uiCallTool would block its own cancel/close and deadlock the real stdio link.
@@ -91,6 +95,7 @@ interface ZCodeProtocolNdjsonConnectionOptions {
 export class ZCodeProtocolNdjsonConnection {
   private buffer = "";
   private processing: Promise<void> = Promise.resolve();
+  private readonly presentationReads = new Set<Promise<void>>();
   private lastQueuedMessageStarted: Promise<void> = Promise.resolve();
   private readonly closedPromise: Promise<void>;
   private resolveClosed!: () => void;
@@ -165,7 +170,7 @@ export class ZCodeProtocolNdjsonConnection {
     // EOF preserves half-closed responses for short requests, but a hanging handler must not keep
     // the process alive forever.
     this.drainTimer = setTimeout(() => this.finish(), PROTOCOL_EOF_DRAIN_MS);
-    void this.processing.then(
+    void Promise.all([this.processing, ...this.presentationReads]).then(
       () => this.finish(),
       (error: Error) => this.fail(error),
     );
@@ -265,6 +270,25 @@ export class ZCodeProtocolNdjsonConnection {
         .catch((error: unknown) => {
           this.fail(error instanceof Error ? error : new Error(String(error)));
         });
+      return;
+    }
+    if (
+      "id" in message &&
+      "method" in message &&
+      message.method === zcodeProtocolMethods.workspaceReadPresentation
+    ) {
+      // 根因：命令目录的插件发现占住普通队列，后续 Provider 刷新及依赖它的历史订阅一起等待。
+      // 读取仍等待已接收的前序配置更新完成，但其完成不再阻塞后续请求；Provider FIFO 不变。
+      // 在途集合只用于 EOF 排空，终止后的待执行/迟到读取由 handleMessage 的 terminal 检查拦截。
+      const reading = this.processing.then(() => this.handleMessage(message));
+      this.presentationReads.add(reading);
+      void reading.then(
+        () => this.presentationReads.delete(reading),
+        (error: unknown) => {
+          this.presentationReads.delete(reading);
+          this.fail(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
       return;
     }
     let markStarted!: () => void;

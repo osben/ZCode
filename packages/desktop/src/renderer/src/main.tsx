@@ -9,10 +9,11 @@ import {
   GlobalDatabaseStartupLoading,
   UpdateStatusWindowRoot,
   ZCodeIntlProvider,
+  getRemoteWorkspaceSession,
   registerBaseWorkspaceServices,
   registerRemoteWorkspaceSession,
+  unregisterRemoteWorkspaceSession,
   createRemoteWorkspaceDisconnectedError,
-  installDocumentHiddenMotionPause,
   playTaskNotificationSound,
   setStreamClientId,
   setReactErrorArmsReporter,
@@ -45,6 +46,7 @@ import { handleSourceSettingsServicePortMessage } from "./sourceSettingsServiceP
 import {
   notifyRemoteWorkspaceServicePortReady,
   parseRemoteWorkspaceServicePortMessage,
+  parseRemoteWorkspaceServicePortReleasedMessage,
   type RemoteWorkspaceServicePortRegistration,
 } from "./remoteWorkspaceServicePortBridge.js";
 
@@ -143,6 +145,8 @@ const initialLocaleFlag = readStringFlag("locale");
 const initialLocale: Locale = isLocale(initialLocaleFlag) ? initialLocaleFlag : DEFAULT_LOCALE;
 let baseServicesForRemoteSessions: IServiceAccessor | null = null;
 const pendingRemoteWorkspaceServicePorts: RemoteWorkspaceServicePortRegistration[] = [];
+// 登记对象 → attachment：释放通知只作用于当时那次登记；用 WeakMap 随 session 注销自动回收。
+const remoteSessionAttachmentIds = new WeakMap<object, string>();
 
 const desktopPlatform = createDesktopPlatform({ isLocalDevelopmentRuntime });
 initializeDesktopLocalTtft(desktopPlatform);
@@ -161,8 +165,6 @@ initializeDesktopUserActionTrace({
  */
 // Previously, an anonymous function registered addEventListener("message") again on reload/HMR,
 // causing createRoot to mount multiple times on the same DOM node. Use a flag to prevent reinitialization.
-// Disable CSS animations while the window is hidden so DocumentTimeline does not retain unloaded DOM subtrees.
-installDocumentHiddenMotionPause();
 let appInitialized = false;
 const databaseStartupAdmission = new DatabaseStartupAdmission();
 // Vite HMR re-evaluates this entry (it has no exports to accept) before the follow-up full reload, so a
@@ -194,6 +196,7 @@ function renderDatabaseStartup(): void {
               });
           }}
           onCopy={(details) => navigator.clipboard.writeText(details)}
+          onExportLogs={() => desktopPlatform.exportLogs()}
           onExit={() => sendStartupControl({ action: "exit" })}
         />
       </ZCodeIntlProvider>
@@ -238,7 +241,7 @@ function registerRemoteWorkspaceServicePort(params: RemoteWorkspaceServicePortRe
     targetKind: params.target.kind,
     sourceServerId: params.sourceServerId,
   });
-  registerRemoteWorkspaceSession({
+  const session = {
     sessionId: params.sessionId,
     ...(params.sourceServerId ? { sourceServerId: params.sourceServerId } : {}),
     ...(params.workspacePath ? { workspacePath: params.workspacePath } : {}),
@@ -246,13 +249,23 @@ function registerRemoteWorkspaceServicePort(params: RemoteWorkspaceServicePortRe
     ...(params.workspacePurpose ? { workspacePurpose: params.workspacePurpose } : {}),
     target: params.target,
     services,
-    dispose: (reason) =>
+    dispose: (reason?: Error) =>
       remoteConnection.dispose(reason ?? createRemoteWorkspaceDisconnectedError()),
-  });
+  };
+  remoteSessionAttachmentIds.set(session, params.attachmentId);
+  registerRemoteWorkspaceSession(session);
   // Canonical workspace binding replaces the remote-scoped port.
   // Report ready only after the store registers the new services, so callers can reload and use the new
   // generation after the bind IPC returns.
   notifyRemoteWorkspaceServicePortReady(params);
+}
+
+function releaseRemoteWorkspaceServicePort(params: { attachmentId: string; sessionId: string }) {
+  const session = getRemoteWorkspaceSession(params.sessionId);
+  // 只释放通知所指的那次登记；同一 session 已被后续 attachment 覆盖时不受影响。
+  if (session && remoteSessionAttachmentIds.get(session) === params.attachmentId) {
+    unregisterRemoteWorkspaceSession(params.sessionId);
+  }
 }
 
 function flushPendingRemoteWorkspaceServicePorts(): void {
@@ -313,6 +326,12 @@ function handleServicePortMessage(event: MessageEvent): void {
     return;
   }
 
+  const releasedRemoteWorkspacePort = parseRemoteWorkspaceServicePortReleasedMessage(event);
+  if (releasedRemoteWorkspacePort) {
+    releaseRemoteWorkspaceServicePort(releasedRemoteWorkspacePort);
+    return;
+  }
+
   if (
     event.source !== window ||
     event.data?.type !== InternalChannels.ServicePort ||
@@ -330,6 +349,9 @@ function initializeBusinessRoot(port: MessagePort): void {
   const services = connectViaMessagePort(port, {
     sourceServerManagementService: true,
     deviceSyncStateService: true,
+    managedWorktreeService: true,
+    // 扩展门面只在桌面本机 Host 注册（docs/plugins/extension-host.md）。
+    extensionsService: true,
   });
   baseServicesForRemoteSessions = services;
   registerBaseWorkspaceServices(services);

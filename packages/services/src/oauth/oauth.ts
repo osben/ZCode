@@ -1,5 +1,7 @@
 import type {
   OAuthCachedSessionRestoreResult,
+  OAuthAccountAvailability,
+  OAuthWebsiteSession,
   OAuthCallbackResult,
   OAuthProviderId,
   OAuthProviderMeta,
@@ -29,6 +31,17 @@ export interface IOAuthService {
 
   /** Get the current active provider. */
   getActiveProvider(): Promise<OAuthProviderId | null>;
+
+  /** Only returns the subscription capabilities of the current principal; no credentials are exposed. */
+  getAccountAvailability(): Promise<OAuthAccountAvailability>;
+
+  /** Atomically reads handoff material for the trusted embedded website; does not return associated business credentials. */
+  getWebsiteSession(): Promise<OAuthWebsiteSession | null>;
+
+  /** Safely supplements the current principal's association; a failure does not clear an existing login. */
+  refreshAccountProfile(
+    expected?: Pick<OAuthAccountAvailability, "loginProvider" | "userId" | "sessionRevision">,
+  ): Promise<OAuthAccountAvailability>;
 
   /** Restore the session display state from the local cache at startup: return user information on success without validating the token remotely. */
   restoreCachedSession(): Promise<UserInfo | null>;

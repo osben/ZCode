@@ -1,5 +1,5 @@
 {
-  "upstreamCommit": "a9fe401eede6e6e5e01be9048679c206fe6f02d9",
+  "upstreamCommit": "b95ebaffeab641907b38652f45c1502bd762972d",
   "sets": {
     "cli": [
       {
@@ -97,6 +97,10 @@
       {
         "id": "0024_session_database_identity",
         "checksum": "3eb41922313d66d492544ac05e0b314d55cdccbfc49f118768c0b4b0121e18b3"
+      },
+      {
+        "id": "0025_session_permanent_deletion",
+        "checksum": "608f3ea3aad458679a4b377968413575749f2231c88133765a088564fc20691e"
       }
     ],
     "tasks_index:base": [
@@ -119,6 +123,10 @@
       {
         "id": "0006_task_group_admissions",
         "checksum": "0af559d04bb3f1a1dab12d6533d59292d232b09ea3ef3ef6ca3c9373bd663019"
+      },
+      {
+        "id": "0007_task_permanent_deletion",
+        "checksum": "d538105c40bab701c4061024c812486a6c57bb3659306436260ab3ea7307c53b"
       }
     ],
     "tasks_index:projects": [
@@ -145,6 +153,10 @@
       {
         "id": "0010_remote_task_ownership",
         "checksum": "2cdc92772dc930cd037d17a48b95c4c38bbb80701653f92f64a02839fe2b1f75"
+      },
+      {
+        "id": "0010_task_worktree_root",
+        "checksum": "3aecdd4658f4672147d1e757b6a401bb986daf6590838a8072cb3409a4395d79"
       }
     ],
     "tasks_index:controller-remote": [

@@ -76,7 +76,8 @@ export type ProviderProvisioningCredentialEntry = z.infer<
 export const providerProvisioningEnvelopeSchema = z
   .object({
     // In v2, a missing account Key no longer means deletion; old Targets must reject the envelope before any write.
-    schemaVersion: z.union([z.literal(1), z.literal(2)]),
+    // v3 carries the domestic/related sessions as one group; old Targets must reject unknown versions before any write.
+    schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
     syncId: nonEmptyString,
     personalConfig: providerProvisioningPersonalConfigSchema,
     accountSettings: providerProvisioningAccountSettingsSchema,
@@ -87,7 +88,7 @@ export const providerProvisioningEnvelopeSchema = z
     (value) =>
       value.schemaVersion === 1 ||
       value.credentials.every((entry) => entry.scope === "oauth-session"),
-    { message: "Provisioning v2 only accepts OAuth credentials", path: ["credentials"] },
+    { message: "Provisioning v2/v3 only accepts OAuth credentials", path: ["credentials"] },
   );
 
 export type ProviderProvisioningEnvelope = z.infer<typeof providerProvisioningEnvelopeSchema>;

@@ -34,6 +34,8 @@ Maintenance items use local Markdown and no remote Issue is created. An existing
 
 Write `Status:` under the file title, use local links for dependencies, and append `## Comments` for necessary discussion. The Issue status and the delivery state of MR, version and dynamic configuration are recorded separately; `done` cannot replace evidence of online adoption.
 
+Real calls go first to the highest-traffic Providers as given by the maintainer; other entries get a separate pending list and are not pulled into billed regression automatically. Each round records the actual scope, the untested items and the reason; configuration completion and real validation are delivered separately (see [validation priority](./validation.md#real-validation-priority)).
+
 ## One configuration change
 
 1. Branch from the latest staging, record the baseline commit, and run `node scripts/check-workspace-freshness.mjs`. First check this directory's current state, research records and maintenance items to avoid duplicate projects for the same vendor.

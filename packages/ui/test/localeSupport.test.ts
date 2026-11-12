@@ -30,7 +30,7 @@ describe("matchSupportedLocale", () => {
   });
 
   it("returns null for unsupported or empty tags", () => {
-    for (const tag of ["ru-RU", "xx-XX", "C", "", null, undefined]) {
+    for (const tag of ["fr-FR", "xx-XX", "C", "", null, undefined]) {
       assert.equal(matchSupportedLocale(tag), null, String(tag));
     }
   });

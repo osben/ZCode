@@ -7,10 +7,20 @@ import { join } from "node:path";
 import { formatProjectMemoryIndexContent } from "../../memory/index-content.js";
 import type {
   ContextSection,
+  InstructionFile,
   ResolvedUserInstructionSource,
   ResolvedUserInstructions,
 } from "../types.js";
 import { estimateTokens } from "../utils.js";
+import {
+  createInstructionFile,
+  INSTRUCTION_TYPE_AUTO_MEMORY,
+  INSTRUCTION_TYPE_PROJECT,
+  INSTRUCTION_TYPE_USER,
+  INSTRUCTIONS_PREAMBLE,
+  renderInstructionAnnouncement,
+  renderInstructionFile,
+} from "./instruction-files.js";
 
 // Same-level background-context heading: when instruction sources are also present it closes
 // the `# agentsMd` section so Project Memory never rides under its OVERRIDE banner.
@@ -24,10 +34,14 @@ export function buildRequestUserContextSection(input: {
   memoryRoot?: string;
   memoryIndexAsContext?: boolean;
 }): ContextSection | null {
-  const content = buildRequestUserContextContent(input);
-  if (!content) {
+  const instructionFiles = buildInstructionFiles(input);
+  if (instructionFiles.length === 0) {
     return null;
   }
+  const content =
+    input.memoryIndexAsContext === true
+      ? renderMemoryAsContextAnnouncement(instructionFiles)
+      : renderInstructionAnnouncement(instructionFiles);
 
   return {
     name: "Request User Context",
@@ -38,86 +52,72 @@ export function buildRequestUserContextSection(input: {
     tokens: estimateTokens(content),
     content,
     preview: content.slice(0, 100),
+    instructionFiles,
   };
 }
 
-function buildRequestUserContextContent(input: {
+/** 指令文件在前、Memory 索引在后；正文为空的文件不出现。 */
+function buildInstructionFiles(input: {
   userInstructions?: ResolvedUserInstructions;
   memoryIndexContent?: string;
   memoryRoot?: string;
-  memoryIndexAsContext?: boolean;
-}): string | null {
-  const asContext = input.memoryIndexAsContext === true;
-
-  const instructionContent = input.userInstructions
-    ? buildInstructionContent(input.userInstructions)
-    : null;
-  const memoryIndexContent = buildProjectMemoryIndexContent(
-    input.memoryRoot,
-    input.memoryIndexContent,
-    asContext,
-  );
-
-  const sections: string[] = [];
-  if (instructionContent) {
-    sections.push(asContext ? buildInstructionBlock(instructionContent) : instructionContent);
-  }
-  if (memoryIndexContent) {
-    sections.push(memoryIndexContent);
-  }
-  if (sections.length === 0) {
-    return null;
-  }
-
-  if (asContext) {
-    // Only real instruction sources carry the OVERRIDE banner; Project Memory is
-    // background context and must not ride on instruction authority.
-    return sections.join("\n\n");
-  }
-
-  return [
-    "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.",
-    "",
-    sections.join("\n\n"),
-  ].join("\n");
+}): InstructionFile[] {
+  const files = input.userInstructions
+    ? normalizedInstructionSources(input.userInstructions).flatMap((source) => {
+        const file = buildInstructionSourceFile(source);
+        return file ? [file] : [];
+      })
+    : [];
+  const memoryIndexFile = buildProjectMemoryIndexFile(input.memoryRoot, input.memoryIndexContent);
+  if (memoryIndexFile) files.push(memoryIndexFile);
+  return files;
 }
 
-function buildInstructionBlock(instructionContent: string): string {
-  return [
-    "# agentsMd",
-    "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.",
-    "",
-    instructionContent,
-  ].join("\n");
+/**
+ * Fork opt-in (memoryIndexAsContext): the Project Memory index is background context, so it is
+ * rendered after the instructions block and never under the instructions preamble (OVERRIDE banner).
+ */
+function renderMemoryAsContextAnnouncement(files: readonly InstructionFile[]): string {
+  const memoryFiles = files.filter((file) => file.type === INSTRUCTION_TYPE_AUTO_MEMORY);
+  const instructionFiles = files.filter((file) => file.type !== INSTRUCTION_TYPE_AUTO_MEMORY);
+  const blocks: string[] = [];
+  if (instructionFiles.length > 0) {
+    blocks.push(
+      [
+        "# agentsMd",
+        INSTRUCTIONS_PREAMBLE,
+        "",
+        instructionFiles.map(renderInstructionFile).join("\n\n"),
+      ].join("\n"),
+    );
+  }
+  if (memoryFiles.length > 0) {
+    blocks.push(
+      [
+        MEMORY_CONTEXT_HEADING,
+        "",
+        memoryFiles.map(renderInstructionFile).join("\n\n"),
+        "",
+        MEMORY_CONTEXT_FOOTER,
+      ].join("\n"),
+    );
+  }
+  return blocks.join("\n\n");
 }
 
-function buildProjectMemoryIndexContent(
+function buildProjectMemoryIndexFile(
   memoryRoot: string | undefined,
   indexContent: string | undefined,
-  asContext: boolean,
-): string | null {
+): InstructionFile | null {
   if (!memoryRoot || indexContent === undefined) return null;
   const formatted = formatProjectMemoryIndexContent(indexContent);
   if (!formatted) return null;
 
-  const lines = [
-    ...(asContext ? [MEMORY_CONTEXT_HEADING, ""] : []),
-    `Contents of ${join(memoryRoot, "MEMORY.md")} (user's auto-memory, persists across conversations):`,
-    "",
+  return createInstructionFile(
+    join(memoryRoot, "MEMORY.md"),
+    INSTRUCTION_TYPE_AUTO_MEMORY,
     formatted,
-  ];
-  if (asContext) {
-    lines.push("", MEMORY_CONTEXT_FOOTER);
-  }
-  return lines.join("\n");
-}
-
-function buildInstructionContent(instructions: ResolvedUserInstructions): string | null {
-  const sections = normalizedInstructionSources(instructions)
-    .map((source) => buildInstructionSourceContent(source))
-    .filter((content): content is string => content !== null);
-
-  return sections.length > 0 ? sections.join("\n\n") : null;
+  );
 }
 
 export function normalizedInstructionSources(
@@ -140,7 +140,7 @@ export function normalizedInstructionSources(
   ];
 }
 
-function buildInstructionSourceContent(source: ResolvedUserInstructionSource): string | null {
+function buildInstructionSourceFile(source: ResolvedUserInstructionSource): InstructionFile | null {
   const body = source.truncated
     ? `${source.content}\n\n[File truncated: ${source.fileName}]`
     : source.content;
@@ -149,15 +149,9 @@ function buildInstructionSourceContent(source: ResolvedUserInstructionSource): s
     return null;
   }
 
-  return [
-    `Contents of ${source.filePath} (${formatInstructionSourceScope(source.scope)}):`,
-    "",
+  return createInstructionFile(
+    source.filePath,
+    source.scope === "user" ? INSTRUCTION_TYPE_USER : INSTRUCTION_TYPE_PROJECT,
     trimmedBody,
-  ].join("\n");
-}
-
-function formatInstructionSourceScope(scope: ResolvedUserInstructionSource["scope"]): string {
-  return scope === "user"
-    ? "user's private global instructions for all projects"
-    : "project instructions, checked into the codebase";
+  );
 }

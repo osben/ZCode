@@ -21,6 +21,12 @@ Developer ID signature; a download carrying a Chrome quarantine attribute was ju
 - A formal tag release must not upload `.unnotarized.dmg`; test, sandbox and MR pipelines may keep un-notarized
   artifacts for troubleshooting but they must not enter a formal release.
 
+### DMG notarization upload endpoint
+
+When `scripts/notarize-macos.sh` submits the arm64 and x64 DMGs it must pass `--no-s3-acceleration` explicitly, so the ordinary S3 upload endpoint is used. The S3 acceleration endpoint can hit `HTTPClientError.connectTimeout` or `deadlineExceeded` during multipart upload; getting a Submission ID does not mean the file finished uploading.
+
+The endpoint choice does not change Apple credentials, `--wait`, the bounded retry and failure-exit rules. Only after notarization succeeds do staple, rename and release acceptance continue. The engineering regression runs the real Bash script and checks the submit arguments for both architectures and every retry.
+
 ## CI flow
 
 1. `build:macos:*` imports the Developer ID Application p12 into a temporary keychain.

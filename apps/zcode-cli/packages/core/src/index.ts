@@ -173,7 +173,14 @@ export { DREAM_COMMAND_USAGE_RESPONSE } from "./runtime/methods/dream.js";
 // remapping parentID and anchors embedded in parts. Export this instead of duplicating it because symptoms of a missed remap
 // (a dangling parentID or an anchor pointing to the parent session) are far from the cause.
 export { cloneMessageForFork, clonePartForFork } from "./runtime/helpers/steering.js";
-// Mobile remote-control input prediction: the bootstrap v4 inputPrediction handler consumes these pure functions directly.
+// context 组成：bootstrap 的 v4 contextComposition 处理器消费查询结果类型。
+export type {
+  ContextCompositionChangeListener,
+  ContextCompositionChangeReason,
+  ContextCompositionMeasurement,
+  ContextCompositionQuery,
+} from "./runtime/context-composition/index.js";
+// 手机远控输入预测：bootstrap 的 v4 inputPrediction 处理器直接消费这些纯函数。
 export {
   decideInputPrediction,
   generateInputPredictionCandidates,
@@ -196,7 +203,10 @@ export type {
   AgentRuntimeConfig,
   AgentRuntimeDeps,
   ConversationRewindResult,
+  EditPendingInputOptions,
+  EditPendingInputResult,
   ExecuteTurnOptions,
+  LockPendingInputEditResult,
   ModelExecutionContext,
   PromptAdmissionOptions,
   PromptAdmissionReceipt,
@@ -204,6 +214,7 @@ export type {
   ResumeSessionOptions,
   ResumeSessionResult,
   StartSavedWorkflowRunResult,
+  StableConversationForkTargetCwd,
   AmendWorkflowRunSettingsInput,
   AmendWorkflowRunSettingsResult,
   TurnResult,

@@ -32,6 +32,7 @@ export type PluginSource = "official" | "inline" | "cache";
 export type PluginDiagnosticSeverity = "warning" | "error";
 
 export type PluginDiagnosticCode =
+  | "plugin_startup_timeout"
   | "plugin_root_not_found"
   | "plugin_manifest_not_found"
   | "plugin_manifest_invalid"
@@ -55,6 +56,8 @@ export type PluginDiagnosticCode =
   | "plugin_marketplace_source_unsupported"
   | "plugin_validation_deferred"
   | "plugin_variable_missing"
+  // 敏感选项私有文件读不出（损坏或 I/O 失败）：按空处理，诊断里只有文件路径，不含任何值。
+  | "plugin_secrets_unreadable"
   | "plugin_duplicate_id"
   | "plugin_not_found"
   | "plugin_ambiguous_name"
@@ -304,6 +307,8 @@ export interface PluginLoadOutcome {
 }
 
 export interface PluginDiscoverRequest {
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
   config: PluginConfig;
   env?: Record<string, string | undefined>;
   // Bootstrap may pass a list of official plugin ids that are safe to enable by default, so
@@ -323,6 +328,8 @@ export interface PluginOperationOptions {
 }
 
 export interface PluginPort {
+  /** 管理写入完成后清除可复用材料；无缓存实现可省略。 */
+  invalidate?(): void;
   discoverPlugins(
     request: PluginDiscoverRequest,
     options?: PluginOperationOptions,

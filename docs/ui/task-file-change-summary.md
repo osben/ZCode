@@ -85,12 +85,13 @@ user clicks undo files
 
 - File undo is allowed only when the session is idle; in running, compacting, permission/elicitation and
   other active states the entry is disabled or the command is rejected, avoiding a race with a tool loop
-  that is writing files.
+  that is writing files. This session lock is expressed by `availability.rewindFiles`; the row's `canRewindFiles` only says whether that turn can be undone.
+- When disabled by the session lock, the file summary's "Undo" button and the undo dialog's "Undo files" button show the same fixed text on hover: the session is running or has a pending request, undo is available when it finishes. The text does not vary by reason. If the lock is taken after the dialog opens, the "Undo files" button is disabled at once and sends no command; it is enabled again when the lock clears. Other disable reasons (already undone, runtime not ready, read-only pane, a file in the preview that cannot be undone safely) do not show this hint. When the "reset with files" button in message editing is disabled by the same lock, it uses the same text. Phone touch has no hover and shows only the disabled state.
 - At the preview stage, if any file has an external modification, a missing or unreadable checkpoint or an
   unsupported patch, the confirm button is disabled; apply does no partial write-back.
 - After a successful apply the conversation rows stay unchanged; only the file summary panel of the turn
   shows the undone state and may keep the diff review entry.
-- Subagent file undo is gated only by the child projection's `canRewindFiles`; whether the parent task is
+- Subagent file undo is gated only by the child projection's `canRewindFiles` and `availability.rewindFiles`; whether the parent task is
   still running adds no parent guard. Modifications by the parent task or external processes to the same
   file are still judged unsafe by the existing hash preview.
 - The right-side child detail keeps the conversation read-only, exposing preview/apply only as an explicit

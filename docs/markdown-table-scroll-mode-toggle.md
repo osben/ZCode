@@ -23,6 +23,8 @@ Markdown tables use a virtual horizontal scrollbar that hides the native scrollb
 - Horizontal-overflow state changes may only toggle the virtual scrollbar's visibility/interactivity; they must not mount/unmount nodes or change vertical placeholders, to avoid disturbing V4 timeline `scrollHeight` / `scrollTop`, bottom-follow state, or session scroll memory.
 - The V4 composer fade mask must hang on the full-width message mask layer of the timeline; body column width, centering, and horizontal panel offset belong to `data-v4-timeline-virtual-history` and the live tail. The mask layer must not reuse the body column's `max-width`, or the parts of extended mode that extend past the body column get clipped by the CSS mask.
 
+When the outer sidebar or window width changes continuously, the table and the virtual scrollbar follow the current layout and add no 200 ms catch-up transition for each intermediate width. When the user toggles enhanced scroll mode on purpose, the 200 ms ease-out size transition is kept. Both use the same geometry and scroll-position owner; the animation must not affect copy, download, preview, sticky avoidance or the horizontal scroll range.
+
 ## Interaction
 
 The toolbar adds a mode button to the right of "preview table":

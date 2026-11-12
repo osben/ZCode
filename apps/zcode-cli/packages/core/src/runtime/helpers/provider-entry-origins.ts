@@ -99,6 +99,11 @@ export function isMidTurnInput(entry: RuntimeMessageEntry): boolean {
   return inputRoleOf(entry) === "mid_turn";
 }
 
+/** 用户真实输入的 prompt：不含中途消息、child 任务、新轮通知、goal 续跑、中断标记和 compact summary。 */
+export function isRealUserPrompt(entry: RuntimeMessageEntry): boolean {
+  return isCanonicalRealUser(entry) && !isPresentedInput(entry);
+}
+
 /**
  * Inputs that open a user turn: entries in history that are ordinary user messages (real
  * prompts, child tasks, new-turn notifications, interruption markers, compact summaries).

@@ -154,6 +154,8 @@ Submission snapshot and does not overwrite a continuation selection determined b
 temporarily maintain a continuation selection within their own lifecycle; after user input takes over, the
 user-submitted selection is adopted.
 
+An explicit model choice in an existing App session (including the automatic choice when the Provider is switched) saves the full Selection at once through `switchModelConfig`; once it succeeds, new input from same-session entries such as Feishu uses it. A new unbound draft still defers to first send. A config update does not replace the running Active Model and does not rewrite the Submission of an already accepted queue; an old queue consumer must not overwrite a newer config. Details: [Composer interaction contract](../../../../composer-model-thinking.md#model-selection-in-an-existing-session-takes-effect-at-once).
+
 Provider Config updates do not rewrite Session Selection. The next execution queries the latest Registry
 from this Selection and creates a new Model. Only Selection is saved in the Session, so API Key, Endpoint, or
 model config updates take effect when new Models are created.
@@ -182,8 +184,7 @@ Old field -> pure format/static identity migration -> Formal original intent
 When the current field exists (even if cleared or corrupted), do not repair from the old field. Ordinary
 unknown models/Providers keep explicit identity; temporary unavailability does not block migration. Session
 restoration returns the original selection without first discarding it by Registry; true Runtime binding
-still allows only valid complete selections. Composer re-selection/clearing changes only drafts; formal
-Selection/Recent is updated by the send acceptance boundary; failures and refresh write nothing empty. Idle
+still allows only valid complete selections. Composer re-selection/clearing of an unbound session changes only drafts; for an existing session a config command confirms Session Selection, and Recent is still updated by the send acceptance boundary; failures and refresh write nothing empty. Idle
 task identity/Ticket migration stays excluded. In-place migration of user-directory Subagent Markdown is
 defined by Todo97; other sources do not write automatically.
 

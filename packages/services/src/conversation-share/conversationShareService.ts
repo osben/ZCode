@@ -23,9 +23,15 @@ import {
   extractConversationPreviewFileReferences,
   type ConversationPreviewArtifactCandidate,
   localizeConversationShareUrl,
+  resolveConversationShareTtlOptions,
   resolveRuntimeZCodeEndpointOrigin,
+  toZhOrEnLocale,
 } from "@zcode/shared";
-import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+import {
+  isWireConversationRow,
+  type ConversationRow,
+  type WireConversationRow,
+} from "@zcode/shared/zcode-protocol-v4";
 import {
   PROTOCOL_V4_LIMITS,
   ZCODE_ATTACHMENT_FAULT_CODES,
@@ -101,6 +107,15 @@ function wait(delayMs: number): Promise<void> {
  * in checking for a long time. The concurrency cap prevents overwhelming the remote host. Results are written back by index,
  * so issue ordering remains deterministic (identical to the serial implementation).
  */
+const SOURCE_SESSION_ID_MAX_LENGTH = 128;
+
+function sourceSessionIdOf(sessionId: string): { source_session_id: string } | undefined {
+  const trimmed = sessionId.trim();
+  return trimmed && trimmed.length <= SOURCE_SESSION_ID_MAX_LENGTH
+    ? { source_session_id: trimmed }
+    : undefined;
+}
+
 async function mapWithConcurrency<Input, Output>(
   items: readonly Input[],
   limit: number,
@@ -243,14 +258,17 @@ function previewPreflightKey(
  * Title prefix for imported sessions. The services layer has no intl, so maintain only a minimal mapping here.
  * The prefix is fixed during import and persisted as session.title (titleSource: "custom"); later UI-language changes do not rewrite it.
  */
-const IMPORTED_SHARE_TITLE_PREFIX: Readonly<Record<Locale, string>> = {
+const IMPORTED_SHARE_TITLE_PREFIX: Readonly<Record<"zh-CN" | "en-US" | "uk-UA", string>> = {
   "zh-CN": "来自分享：",
   "en-US": "From Share: ",
   "uk-UA": "Зі спільного доступу: ",
 };
 
 function formatImportedShareSessionTitle(shareTitle: string, locale: Locale | undefined): string {
-  return `${IMPORTED_SHARE_TITLE_PREFIX[locale ?? "zh-CN"]}${shareTitle.trim()}`;
+  // Ukrainian keeps its own prefix (fork); unknown or undefined locales use Chinese, and other UI locales such as ja-JP use English.
+  const prefixLocale =
+    locale === undefined ? "zh-CN" : locale === "uk-UA" ? "uk-UA" : toZhOrEnLocale(locale);
+  return `${IMPORTED_SHARE_TITLE_PREFIX[prefixLocale]}${shareTitle.trim()}`;
 }
 
 function localizePublishedShare(
@@ -291,12 +309,12 @@ const importedConversationShareFileSchema = z
   .strip();
 
 interface ConversationRowsRead {
-  rows: ConversationRow[];
+  rows: WireConversationRow[];
   revision: number;
   logEpoch: string;
 }
 
-function turnOrdinalByProductTurn(rows: readonly ConversationRow[]): Map<string, number> {
+function turnOrdinalByProductTurn(rows: readonly WireConversationRow[]): Map<string, number> {
   const result = new Map<string, number>();
   for (const row of rows) {
     if (row.kind !== "turnHeader" || !row.productTurnId || result.has(row.productTurnId)) continue;
@@ -305,7 +323,10 @@ function turnOrdinalByProductTurn(rows: readonly ConversationRow[]): Map<string,
   return result;
 }
 
-function rowTurnOrdinal(row: ConversationRow, ordinals: Map<string, number>): number | undefined {
+function rowTurnOrdinal(
+  row: WireConversationRow,
+  ordinals: Map<string, number>,
+): number | undefined {
   return row.productTurnId ? ordinals.get(row.productTurnId) : undefined;
 }
 
@@ -325,8 +346,10 @@ function hasUnsupportedArtifactReference(value: unknown): boolean {
  * Downgrade only finalized content that cannot be carried. Running turns/rows/tools/subagents are still blocked by
  * collectShareStructureIssues; that content is not finalized, so skipping it would share a partial result.
  */
-function sanitizeUnsupportedShareStructures(rows: readonly ConversationRow[]): ConversationRow[] {
-  const sanitized: ConversationRow[] = [];
+function sanitizeUnsupportedShareStructures(
+  rows: readonly WireConversationRow[],
+): WireConversationRow[] {
+  const sanitized: WireConversationRow[] = [];
   for (const row of rows) {
     if (row.kind === "timelineMarker") {
       // Keep running markers so collectShareStructureIssues continues to block them; the content is not finalized.
@@ -366,10 +389,10 @@ function sanitizeUnsupportedShareStructures(rows: readonly ConversationRow[]): C
 }
 
 function sanitizeUnsupportedShareArtifacts(
-  rows: readonly ConversationRow[],
+  rows: readonly WireConversationRow[],
   capabilities: ConversationShareCapabilities,
-  ordinalRows: readonly ConversationRow[],
-): { rows: ConversationRow[]; warnings: ConversationShareFailureIssue[] } {
+  ordinalRows: readonly WireConversationRow[],
+): { rows: WireConversationRow[]; warnings: ConversationShareFailureIssue[] } {
   const ordinals = turnOrdinalByProductTurn(ordinalRows);
   const warnings: ConversationShareFailureIssue[] = [];
   const retained = rows.filter((row) => {
@@ -406,12 +429,12 @@ function sanitizeUnsupportedShareArtifacts(
 }
 
 function collectShareStructureIssues(
-  rows: readonly ConversationRow[],
-  ordinalRows: readonly ConversationRow[] = rows,
+  rows: readonly WireConversationRow[],
+  ordinalRows: readonly WireConversationRow[] = rows,
 ): ConversationShareFailureIssue[] {
   const issues: ConversationShareFailureIssue[] = [];
   const ordinals = turnOrdinalByProductTurn(ordinalRows);
-  const add = (row: ConversationRow, code: ConversationShareFailureIssue["code"]) => {
+  const add = (row: WireConversationRow, code: ConversationShareFailureIssue["code"]) => {
     issues.push({
       code,
       scope: code === "missing_product_turn" ? "conversation" : "turn",
@@ -570,7 +593,9 @@ function buildTurnPreflightResults(
   });
 }
 
-function removeIndependentArtifactRows(rows: readonly ConversationRow[]): ConversationRow[] {
+function removeIndependentArtifactRows(
+  rows: readonly WireConversationRow[],
+): WireConversationRow[] {
   // Share candidates are limited to user-input attachments and final visible Assistant preview cards; embedded
   // images are converted separately afterwards. Historical artifact rows without a corresponding preview card
   // are no longer a third independent discovery source for the public projection.
@@ -585,9 +610,9 @@ function throwServiceError(
 }
 
 function selectRows(
-  rows: ConversationRow[],
+  rows: WireConversationRow[],
   selection: PublishTextConversationInput["selection"],
-): { rows: ConversationRow[]; productTurnIds: string[] } {
+): { rows: WireConversationRow[]; productTurnIds: string[] } {
   let selectedProductTurnIds: Set<string>;
   if (selection.kind === "all") {
     selectedProductTurnIds = new Set(
@@ -781,12 +806,13 @@ export class ConversationShareService implements IConversationShareService {
   ): Promise<ConversationSharePreflightResult> {
     const capabilities = await this.client.getCapabilities();
     const supportedArtifactTypes = allowedArtifactSummaries(capabilities);
+    const ttlOptions = resolveConversationShareTtlOptions(capabilities);
     const conversation = await this.loadAllRows(input, agentService);
     const blockingIssues: ConversationShareFailureIssue[] = [];
     const skippableWarnings: ConversationShareFailureIssue[] = [];
     const deferredIssues: ConversationShareFailureIssue[] = [];
 
-    let selected: { rows: ConversationRow[]; productTurnIds: string[] };
+    let selected: { rows: WireConversationRow[]; productTurnIds: string[] };
     try {
       selected = selectRows(conversation.rows, input.selection);
     } catch (error) {
@@ -806,6 +832,7 @@ export class ConversationShareService implements IConversationShareService {
         skippableWarnings,
         deferredIssues,
         supportedArtifactTypes,
+        ...(ttlOptions ? { ttlOptions } : {}),
         turnResults: [],
       };
     }
@@ -883,12 +910,12 @@ export class ConversationShareService implements IConversationShareService {
     // classify them in the original order. Two passes retain the remote concurrency benefit while
     // keeping issue ordering consistent with the serial implementation.
     const attachmentChecks: {
-      row: Extract<ConversationRow, { kind: "userInput" }> & {
+      row: Extract<WireConversationRow, { kind: "userInput" }> & {
         entityId: string;
       };
       attachmentIndex: number;
       attachment: NonNullable<
-        Extract<ConversationRow, { kind: "userInput" }>["attachments"]
+        Extract<WireConversationRow, { kind: "userInput" }>["attachments"]
       >[number];
       allowed: ReturnType<typeof allowedArtifactFor>;
       baseIssue: Omit<ConversationShareFailureIssue, "code">;
@@ -1039,6 +1066,7 @@ export class ConversationShareService implements IConversationShareService {
         skippableWarnings: sanitizedWarnings.issues,
         deferredIssues: sanitizedDeferred.issues,
         supportedArtifactTypes,
+        ...(ttlOptions ? { ttlOptions } : {}),
         turnResults: buildTurnPreflightResults(
           selected.productTurnIds,
           turnOrdinalByProductTurnId,
@@ -1091,7 +1119,7 @@ export class ConversationShareService implements IConversationShareService {
 
     const headersByProductTurnId = new Map<
       string,
-      Extract<ConversationRow, { kind: "turnHeader" }>
+      Extract<WireConversationRow, { kind: "turnHeader" }>
     >();
     const assistantTextByProductTurnId = new Map<string, string[]>();
     for (const row of selectedRows) {
@@ -1263,6 +1291,7 @@ export class ConversationShareService implements IConversationShareService {
       skippableWarnings: sanitizedWarnings.issues,
       deferredIssues: sanitizedDeferred.issues,
       supportedArtifactTypes,
+      ...(ttlOptions ? { ttlOptions } : {}),
       turnResults: buildTurnPreflightResults(
         selected.productTurnIds,
         turnOrdinalByProductTurnId,
@@ -1296,6 +1325,22 @@ export class ConversationShareService implements IConversationShareService {
     });
   }
 
+  listManagedShares(input: { cursor?: string }) {
+    return this.client.listManagedShares(input.cursor);
+  }
+
+  revokeManagedShare(shareId: string) {
+    return this.client.revokeManagedShare(shareId);
+  }
+
+  restoreManagedShare(shareId: string) {
+    return this.client.restoreManagedShare(shareId);
+  }
+
+  deleteManagedShare(shareId: string) {
+    return this.client.deleteManagedShare(shareId);
+  }
+
   /** Internal Host attachment facade: reuse the same business service and replace only the trusted Agent scope for V4 Rows/File queries. */
   [conversationShareConnectionScopeFactory](
     agentService: ConversationShareAgentService,
@@ -1316,6 +1361,10 @@ export class ConversationShareService implements IConversationShareService {
       getImportedConversation: (input) => this.getImportedConversation(input),
       getPreview: (shareCode) => this.getPreview(shareCode),
       getContinuation: (input) => this.getContinuation(input),
+      listManagedShares: (input) => this.listManagedShares(input),
+      revokeManagedShare: (shareId) => this.revokeManagedShare(shareId),
+      restoreManagedShare: (shareId) => this.restoreManagedShare(shareId),
+      deleteManagedShare: (shareId) => this.deleteManagedShare(shareId),
     };
   }
 
@@ -2035,6 +2084,14 @@ export class ConversationShareService implements IConversationShareService {
     if (!capabilities.access_modes.includes(input.accessMode)) {
       throwServiceError("feature_disabled", "Requested share access mode is unavailable");
     }
+    // 预检与发布之间服务端可能回滚或改配置；有效期不可用时明确失败，不能静默改用默认值。
+    const ttlOptions = resolveConversationShareTtlOptions(capabilities);
+    if (
+      input.ttlMs !== undefined &&
+      (!ttlOptions || input.ttlMs < ttlOptions.minMs || input.ttlMs > ttlOptions.maxMs)
+    ) {
+      throwServiceError("feature_disabled", "Requested share expiry is unavailable");
+    }
 
     const conversation = await this.loadAllRows(input, agentService);
     const selected = selectRows(conversation.rows, input.selection);
@@ -2231,6 +2288,9 @@ export class ConversationShareService implements IConversationShareService {
       title: input.title.trim(),
       schema_version: 1,
       access_mode: input.accessMode,
+      ...(input.ttlMs === undefined ? {} : { ttl_ms: input.ttlMs }),
+      // 来源会话只用于 owner 管理列表的「跳转对话」；超出服务端列宽时不发送，不能让它阻断发布。
+      ...sourceSessionIdOf(input.sessionId),
       payload_sha256: payloadSha256,
       artifact_count: publicProjection.artifacts.length,
     });
@@ -2559,6 +2619,7 @@ export class ConversationShareService implements IConversationShareService {
     >,
     agentService: ConversationShareAgentService,
   ): Promise<ConversationRowsRead> {
+    // 读到的行是宽类型（可能含 unreadable 占位行），拒绝检查通过后才窄化成 wire 行。
     const pages: ConversationRow[][] = [];
     let beforeRowId: number | undefined;
     let logEpoch: string | undefined;
@@ -2590,7 +2651,16 @@ export class ConversationShareService implements IConversationShareService {
       beforeRowId = firstRowId;
     }
 
-    const rows = pages.flat();
+    // rows/range 现在逐行降级（04-sync-and-recovery 封闭规则 13），所以这里可能收到 unreadable
+    // 占位行。分享必须**拒绝**，不能静默省略：少掉几行的分享会让读到链接的人看到一份失真的对话，
+    // 那比发不出去更坏。本端读不懂说明发送端比本端新，提示用户升级后重试。
+    const rows = pages.flat().filter(isWireConversationRow);
+    if (rows.length !== pages.reduce((total, page) => total + page.length, 0)) {
+      throwServiceError(
+        "invalid_conversation",
+        "Conversation contains rows this version cannot read; update ZCode and try again",
+      );
+    }
     for (let index = 1; index < rows.length; index += 1) {
       const previous = rows[index - 1]!;
       const current = rows[index]!;

@@ -35,6 +35,7 @@
     "@zcode/acp-agent-runtime": "workspace:*",
     "@zcode/provider": "workspace:*",
     "@zcode/provider-node": "workspace:*",
+    "@zcode/session-control": "workspace:*",
     "@zcode/shared": "workspace:*",
     "@zcode/telemetry": "workspace:*",
     "diff": "^9.0.0",

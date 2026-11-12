@@ -34,11 +34,11 @@ const LIST_MODELS_MODEL_BYTES = 24_000;
 const LIST_MODELS_ERROR_CODE = { CATALOG_UNAVAILABLE: 31 } as const;
 
 const LIST_MODELS_DESCRIPTION = [
-  "Lists the models this host has configured, so a dynamic workflow's subagents can be pointed at one.",
+  "Lists the models this host has configured, so another tool can be pointed at one.",
   "",
-  "- Each row's `id` (`providerId/modelId`) pastes verbatim into the `subagent_model` field of CreateWorkflow or AmendWorkflow. Append `$<level>` to pick a reasoning level from that row's `reasoningLevels`.",
-  "- This tool does NOT change the model you are running on. The session model is the user's choice and only the user changes it; `subagent_model` only moves the workflow's subagents.",
-  "- The model the session is on right now is marked `[current]` — setting the subagents to that one is the same as omitting the field.",
+  "- Each row's `id` (`providerId/modelId`) pastes verbatim into the `model` field of CreateSession, or the `subagent_model` field of CreateWorkflow or AmendWorkflow. Append `$<level>` to pick a reasoning level from that row's `reasoningLevels`.",
+  "- This tool does NOT change the model you are running on, and no tool changes an existing session's model. It only picks the model for a session or a workflow subagent you are about to create.",
+  "- The model the session is on right now is marked `[current]`. Omitting the field uses the configured default, which is not necessarily that one.",
   "- A row marked `disabled` cannot be used (no API key, disabled by policy). Resolve that with the user rather than picking around it silently.",
 ].join("\n");
 
@@ -113,7 +113,9 @@ function formatListModelsModelContent(output: unknown): ModelMessageContent {
     if (model.reasoningLevels.length > 0) {
       const levels = model.reasoningLevels.join(",");
       const fallback =
-        model.defaultReasoningLevel === undefined ? "" : ` (default ${model.defaultReasoningLevel})`;
+        model.defaultReasoningLevel === undefined
+          ? ""
+          : ` (default ${model.defaultReasoningLevel})`;
       parts.push(`; levels: ${levels}${fallback}`);
     }
     // Put current and disabled at the end of each row, each in brackets: the model uses them to **exclude** a row, and a longer tier
@@ -127,7 +129,8 @@ function formatListModelsModelContent(output: unknown): ModelMessageContent {
 }
 
 export const listModelsToolEntry: ToolEntry = {
-  capability: "List the models this host has configured, for choosing a workflow's subagent model",
+  capability:
+    "List the models this host has configured, for choosing a new session or subagent model",
   metadata: {
     shouldDefer: true,
     name: LIST_MODELS_TOOL_NAME,

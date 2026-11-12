@@ -20,6 +20,19 @@
 - Mobile Web supports one-finger drag pan and two-finger pinch zoom via Pointer Events. All gestures are captured only inside the dialog content area, so the chat list, remote replayable message recovery and the desktop continuous main path are unaffected.
 - The diagram theme keeps reusing the current Mermaid themeVariables; the preview container uses design tokens such as `--color-popover` / `--color-border` / `--color-foreground`, compatible with light, dark and Zai themes.
 
+## Mermaid code block SVG style
+
+Diagrams are still shown as inline SVG by `packages/ui/src/components/ai-elements/mermaid-block.tsx`; `code-block.tsx` removes the outer backing plate and the language title only in the Mermaid render branch.
+
+- Diagrams use SVG text labels; default node and edge labels use the existing surface, border and foreground colors, and lines stay thin. Text reuses the host sans-serif font and body size.
+- The diagram area and the outer code block have no separate background, border or rounded plate; they blend into the message body. No language name or file icon is shown; copy and zoom stay on the right. Ordinary code blocks and streaming source keep their title and plate.
+- Colors and shapes that the source sets explicitly are kept.
+- A diagram shrinks to the code block's available width, keeping proportions and selectable text; Chinese, multi-line and narrow screens cause no horizontal overflow outside the code block. Large diagrams can use the existing zoom preview.
+- Existing copy, zoom preview, streaming boundary, render queue and error fallback are kept.
+- No change to the global theme, theme sync, Gen UI or visualize; no new theme layer, render framework, cache or layout engine.
+
+Acceptance: flowchart, sequence and explicit color/shape samples in light and dark themes and at desktop/mobile width; check SVG text, edge labels, size, source fallback and the existing zoom preview. Commit only after runtime evidence and code checks are done.
+
 ## Streaming boundary
 
 While a chat message is still streaming, a `mermaid` code block shows its source; once the message completes it switches to the diagram. This avoids unclosed or half-written Mermaid source repeatedly triggering render errors during streaming updates.

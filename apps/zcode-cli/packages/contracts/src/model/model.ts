@@ -48,6 +48,8 @@ export interface Model {
     readonly toolSearch?: ToolSearchCapability;
     /** True when the protocol folds a tool result and the user text after it into one message; the projection merges the immediately following reminder into the tool result on this basis. */
     readonly foldRemindersIntoToolResults?: boolean;
+    /** 协议的请求不带没有工具调用、没有可见内容（只有思考和空白文字）的回复时为 true，投影第一步删除这类回复。 */
+    readonly dropReasoningOnlyOrBlankAssistants?: boolean;
   };
   readonly providerId: ModelProviderId;
   readonly modelId: ModelId;

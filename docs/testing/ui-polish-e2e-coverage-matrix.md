@@ -104,7 +104,7 @@ Todo 88 / R08, R13 correction (2026-09-07): the model edit dialog keeps two alwa
 
 ## E2E handoff
 
-- Formal spec: `packages/desktop/test/e2e/settings/settings-ui-polish.test.ts`
+- Formal spec: `packages/desktop/test/e2e/settings/general/settings-ui-polish.test.ts`
 - Provider fixture: none; the case seeds local provider/settings files and performs no model request.
 - Timing: ordinary UI waits (`fast-text` equivalent), no stream timing.
 - Docker preset: settings/default desktop suite after manual review and promotion.

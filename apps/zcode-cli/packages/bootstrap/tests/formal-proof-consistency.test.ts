@@ -22,7 +22,7 @@ import {
   ProductProjection,
   computeAvailability,
   computeInputRouting,
-  type AvailabilityContext,
+  type SessionAvailabilityContext,
 } from "../src/zcode-protocol-v4/index.js";
 
 // ── ProductContext (formal-proof vocabulary) → AvailabilityContext (v4 guard input surface) ──
@@ -33,7 +33,7 @@ const COMPACT_MEMORIES = ["never", "compactable", "justCompacted", "notNeeded"] 
 const GOALS = ["none", "active", "verifying", "verified", "failed"] as const;
 const TURNS = ["latest", "old", "none"] as const;
 
-function toAvailabilityContext(context: ProductContext): AvailabilityContext {
+function toAvailabilityContext(context: ProductContext): SessionAvailabilityContext {
   return {
     phase:
       context.runPhase === "running" || context.runPhase === "goalVerifying"
@@ -57,6 +57,14 @@ function toAvailabilityContext(context: ProductContext): AvailabilityContext {
     // formal-proof has no autoDrain dimension; invariant: a queue lingering under completed can only be a held
     // queue with autoDrain=false (with autoDrain=true, assistantComplete consumes it immediately).
     autoDrain: context.queue === "empty",
+    // 只影响 availability.rewindFiles，不在本对账面（formal-proof 无文件撤销候选）。
+    activeWorkCount:
+      context.runPhase === "running" ||
+      context.runPhase === "compacting" ||
+      context.runPhase === "goalVerifying"
+        ? 1
+        : 0,
+    pendingInteractionCount: 0,
   };
 }
 

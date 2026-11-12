@@ -78,7 +78,7 @@ async function prepareStorage(runtime: string, existingDir?: string) {
     input,
     output,
   });
-  seedOfficialPluginsForForkRustAgent({ cwd: dir, env, logger });
+  await seedOfficialPluginsForForkRustAgent({ cwd: dir, env, logger });
   output.end();
   return { dir, frames, pluginRoot: join(storageDir, "cli", "plugins"), warnings };
 }
@@ -98,7 +98,7 @@ describe("fork: prepare-storage seeds the official plugins for the Rust agent", 
     ) as { manifest: { plugins: Array<{ cachePath: string; name: string }> } };
     const visualize = partition.manifest.plugins.find((plugin) => plugin.name === "visualize");
     expect(visualize?.cachePath).toBe(
-      join(pluginRoot, "cache", "zcode-plugins-official", "visualize", "0.1.1"),
+      join(pluginRoot, "cache", "zcode-plugins-official", "visualize", "0.1.2"),
     );
     expect(existsSync(join(visualize!.cachePath, "skills", "visualize", "SKILL.md"))).toBe(true);
   }, 60_000);
@@ -107,12 +107,12 @@ describe("fork: prepare-storage seeds the official plugins for the Rust agent", 
     const first = await prepareStorage("rust");
     const visualizeCache = join(first.pluginRoot, "cache", "zcode-plugins-official", "visualize");
     // An older install: only a previous visualize version is in the cache.
-    await rename(join(visualizeCache, "0.1.1"), join(visualizeCache, "0.1.0"));
-    faults.promoteFailsFor = join("visualize", "0.1.1");
+    await rename(join(visualizeCache, "0.1.2"), join(visualizeCache, "0.1.0"));
+    faults.promoteFailsFor = join("visualize", "0.1.2");
 
     const { pluginRoot } = await prepareStorage("rust", first.dir);
 
-    expect(existsSync(join(visualizeCache, "0.1.1"))).toBe(false);
+    expect(existsSync(join(visualizeCache, "0.1.2"))).toBe(false);
     const partition = JSON.parse(
       await readFile(
         join(pluginRoot, "marketplaces", "zcode-plugins-official", "bundled-marketplace.json"),
@@ -123,7 +123,7 @@ describe("fork: prepare-storage seeds the official plugins for the Rust agent", 
     // zcode-rs loads `cachePath` (platform/src/local/plugin_inventory.rs), so it now sees the same
     // visualize the Node agent loads from the seeder's fallback roots.
     expect(byName.get("visualize")?.cachePath).toBe(join(visualizeCache, "0.1.0"));
-    expect(byName.get("visualize")?.version).toBe("0.1.1");
+    expect(byName.get("visualize")?.version).toBe("0.1.2");
     expect(byName.get("skill-creator")?.cachePath).toBe(
       join(pluginRoot, "cache", "zcode-plugins-official", "skill-creator", byName.get("skill-creator")!.version),
     );

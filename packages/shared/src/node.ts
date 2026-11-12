@@ -51,6 +51,10 @@ export {
   hashBytes,
   withFileLock,
   type AtomicWriteFileOptions,
+  withCredentialFileRead,
+  withCredentialFileMutation,
+  captureCredentialFileGuard,
+  type CredentialFileGuard,
   type SharedFileLockOptions,
 } from "./node/privateFilePersistence.js";
 export {

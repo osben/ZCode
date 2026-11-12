@@ -5,7 +5,7 @@ import { IifeContextExecutor, type ReplExecutor } from "./executors.js";
 import {
   PROCESS_MODULE_IDS,
   createReplRequire,
-  createRestrictedProcessFacade,
+  createProtocolSafeProcessFacade,
   normalizeReplError,
   stringifyReplResult,
 } from "./node-repl-runtime-helpers.js";
@@ -70,8 +70,8 @@ export type NodeReplRequestMeta = Record<string, unknown>;
 export interface NodeReplSessionOptions {
   /** Additional globals injected into the sandbox (such as the browser execute bridge or agent object). */
   injectedGlobals?: Record<PropertyKey, unknown> | (() => Record<PropertyKey, unknown>);
-  /** MCP stdio runtime uses a restricted process facade so a cell cannot close the process or corrupt protocol stdout. */
-  restrictProcess?: boolean;
+  /** MCP stdio runtime 使用协议保护 process facade，防止 cell 关闭进程或写坏协议 stdout；不限制 cell 的能力。 */
+  protectProtocolStdio?: boolean;
 }
 
 function browserScreenshotIndexResult(
@@ -135,7 +135,7 @@ function latestCuaAppResult(
 export class NodeReplSession {
   private context: Context;
   private readonly createInjectedGlobals: () => Record<PropertyKey, unknown>;
-  private readonly restrictedProcess: Readonly<Record<string, unknown>> | undefined;
+  private readonly protocolSafeProcess: Readonly<Record<string, unknown>> | undefined;
   private currentSink: NodeReplWriteSink | null = null;
   private nodeReplApi: {
     requestMeta: NodeReplRequestMeta;
@@ -150,7 +150,9 @@ export class NodeReplSession {
     const injectedGlobals = options.injectedGlobals;
     this.createInjectedGlobals =
       typeof injectedGlobals === "function" ? injectedGlobals : () => injectedGlobals ?? {};
-    this.restrictedProcess = options.restrictProcess ? createRestrictedProcessFacade() : undefined;
+    this.protocolSafeProcess = options.protectProtocolStdio
+      ? createProtocolSafeProcessFacade()
+      : undefined;
     this.executor = new IifeContextExecutor();
     this.context = this.buildContext();
   }
@@ -201,8 +203,8 @@ export class NodeReplSession {
       error: (...args: unknown[]) => this.emit(args),
       debug: (...args: unknown[]) => this.emit(args),
     };
-    // Use the current working directory as the require base.
-    const req = createReplRequire(createRequire(`${process.cwd()}/`), this.restrictedProcess);
+    // 用当前工作目录作 require 基准。
+    const req = createReplRequire(createRequire(`${process.cwd()}/`), this.protocolSafeProcess);
     const nodeReplApi = {
       cwd: process.cwd(),
       homeDir: homedir(),
@@ -217,9 +219,9 @@ export class NodeReplSession {
       setResponseMeta: (meta: unknown) => this.setResponseMeta(meta),
     };
     this.nodeReplApi = nodeReplApi;
-    const sandbox: Record<PropertyKey, unknown> = {
+    const replGlobals: Record<PropertyKey, unknown> = {
       console: teeConsole,
-      process: this.restrictedProcess ?? process,
+      process: this.protocolSafeProcess ?? process,
       Buffer,
       URL,
       URLSearchParams,
@@ -241,8 +243,8 @@ export class NodeReplSession {
       // must not drift into the new generation, keeping the bootstrap boundary consistent with a new session.
       ...this.createInjectedGlobals(),
     };
-    const context = createContext(sandbox);
-    // Make globalThis self-referential so the model can persist values explicitly with globalThis.x = ...
+    const context = createContext(replGlobals);
+    // globalThis 自引用，让模型可用 globalThis.x = ... 显式持久化。
     runInContext("globalThis.globalThis = globalThis;", context);
     return context;
   }
@@ -466,8 +468,8 @@ export class NodeReplSession {
   }
 
   private async importModule(specifier: string): Promise<unknown> {
-    if (this.restrictedProcess && PROCESS_MODULE_IDS.has(specifier)) {
-      return { ...this.restrictedProcess, default: this.restrictedProcess };
+    if (this.protocolSafeProcess && PROCESS_MODULE_IDS.has(specifier)) {
+      return { ...this.protocolSafeProcess, default: this.protocolSafeProcess };
     }
     return await import(specifier);
   }

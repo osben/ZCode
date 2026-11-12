@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  type ResourceUsageCategory,
-  type ResourceUsageSnapshot,
-  type StorageManagementBridge,
-  type NetworkCaptureBridge,
-} from "@zcode/shared";
+import type { ResourceManagerAppProps, ResourceManagerTab } from "@/resource-manager/contract.js";
+import { type ResourceUsageCategory, type ResourceUsageSnapshot } from "@zcode/shared";
 import { TID_RESOURCE_MANAGER_TAB, testId } from "@zcode/shared/test-ids";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { useZCodeIntl } from "@/i18n/index.js";
@@ -19,19 +15,8 @@ import {
   type ResourceUsageGroupView,
 } from "./resourceUsageView.js";
 
-export interface ResourceManagerAppProps {
-  /** Omitted means the bridge is unavailable (for example, outside the desktop environment) */
-  getSnapshot?: () => Promise<ResourceUsageSnapshot>;
-  setSamplingActive?: (active: boolean) => void;
-  /** Storage management bridge (window.resourceManager.storage); when omitted, the “Storage” tab shows that the interface is unavailable */
-  storage?: StorageManagementBridge;
-  network?: NetworkCaptureBridge;
-  refreshIntervalMs?: number;
-  /** Initial tab; defaults to CPU */
-  initialTab?: ResourceManagerTab;
-}
+export type { ResourceManagerAppProps, ResourceManagerTab } from "@/resource-manager/contract.js";
 
-export type ResourceManagerTab = "cpu" | "memory" | "storage" | "network";
 const RESOURCE_MANAGER_TABS: ResourceManagerTab[] = ["cpu", "memory", "storage", "network"];
 const TAB_LABEL_IDS: Record<ResourceManagerTab, string> = {
   cpu: "resourceManager.cpu",
@@ -43,6 +28,7 @@ const TAB_LABEL_IDS: Record<ResourceManagerTab, string> = {
 const DEFAULT_REFRESH_INTERVAL_MS = 1_000;
 const CATEGORY_LABEL_IDS: Record<ResourceUsageCategory, string> = {
   base: "resourceManager.category.base",
+  task: "resourceManager.category.task",
   "builtin-plugin": "resourceManager.category.builtinPlugin",
   "community-plugin": "resourceManager.category.communityPlugin",
 };
@@ -67,6 +53,7 @@ export function ResourceManagerApp({
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<ResourceUsageCategory, boolean>>({
     base: true,
+    task: true,
     "builtin-plugin": true,
     "community-plugin": true,
   });

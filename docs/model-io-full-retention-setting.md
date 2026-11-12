@@ -8,7 +8,7 @@
 
 ## User semantics
 
-Settings / General provides the "完整保留模型 I/O" (full model I/O retention) switch:
+Settings / Agent capabilities / Behavior and tools provides the "完整保留模型 I/O" (full model I/O retention) switch:
 
 - Off: bounded mode. Production keeps at most 3 session files and resets a session after 64 MiB;
   dev resets after 256 MiB; request messages use `full` / `delta` / `tail` compaction with
@@ -92,7 +92,7 @@ mixes semantics.
 | Active CLI preference | Host latest preference snapshot | workspace CLI protocol context | `workspace/updateModelIoPreferences` | process memory only |
 | Per-write mode        | `AiSdkModelAdapter`             | adapter attempt snapshot       | runner input                         | none                |
 
-Single UI entry: `GeneralSectionContent` + `Switch` via `useSettings`; all workspaces read the app
+Single UI entry: `AgentBehaviorSectionContent` + `Switch` via `useSettings`; all workspaces read the app
 global default (`false`) from `appSettingsSchema`. Standalone CLIs have no UI and stay `false`.
 
 ## Invariants

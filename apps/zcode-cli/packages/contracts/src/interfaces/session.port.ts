@@ -322,6 +322,7 @@ export type TurnSteerDeliveryMode = "guide" | "queue";
 /** Persistence contract for message.data metadata.highspeed; excludes runtime credentials. */
 export interface HighspeedMessageMetadata {
   schemaVersion: 1;
+  ownerKey?: string;
   cardId: string;
   taskId: string;
   provider: string;
@@ -345,9 +346,16 @@ export interface HighspeedMessageMetadata {
 /** Protocol-independent input intent metadata; bootstrap v4 assembles ConversationInputIntent at the event boundary. */
 export type TurnInputSourceMetadata =
   | { kind: "pluginUi"; pluginId: string; toolCallId: string }
-  | { kind: "genUi"; path: string; title?: string };
+  | { kind: "genUi"; path: string; title?: string }
+  // title 只读旧数据（规格 0.13）：标题是会变的派生展示字段，新数据只带身份。
+  | { kind: "session"; sessionId: string; title?: string }
+  // 扩展经 Window Host 代发；只由 Host 注入，模型与工具不能设置。
+  | { kind: "extension"; pluginId: string };
 
+// 仅当前 CLI 实例内传递本次输入的能力。Symbol 键不进入 JSON 历史，冷恢复不能继承旧端的授权。
+export const PLUGIN_DISCOVERY_INPUT = Symbol("pluginDiscoveryInput");
 export interface TurnInputIntentMetadata {
+  [PLUGIN_DISCOVERY_INPUT]?: true;
   planEnabled?: boolean;
   conversationQuotes?: Array<{
     text: string;
@@ -356,6 +364,10 @@ export interface TurnInputIntentMetadata {
     senderId?: string;
     messageId?: string;
     sentAt?: string;
+    /** 用户对该选区的批注，随引用一起作为模型材料。 */
+    comment?: string;
+    /** 选区来自子 agent 输出时的 agent 类型。 */
+    agent?: string;
   }>;
   inputOrigin?: "desktop" | "mobile";
   botGroupSource?: {

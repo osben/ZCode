@@ -2,13 +2,13 @@
 // bundled-agents/<platform>/glm and writing its metadata.
 //
 // The dev and packaging pipelines must use the same staging implementation.
-// Staging only in the packaging path (prepare-agent-node-bundle.mjs) is insufficient because the dev
-// path (scripts/build-desktop-agent-cli.mjs) would not stage the bundle. In an unpackaged dev build,
+// Staging only in the packaging path (prepare-agent-node-bundle.mjs) is not enough: the dev path
+// (scripts/build-desktop-agent-cli.mjs) would then not stage the bundle. In an unpackaged dev build,
 // desktopRuntimeEnv.ts resolves the agent binary with resolveBundledZCodeAgentBinaryPath(), whose only
-// candidate is bundled-agents/; it does not check cli/dist/. Dev would therefore keep running the copy
-// from the previous package build. One observed copy was three days old, so agent CLI changes silently
-// had no effect in dev and looked like code changes were not working. Sharing this implementation keeps
-// the two paths aligned.
+// candidate is bundled-agents/ and never cli/dist/. Dev would keep running the copy from the previous
+// package build (one observed copy was three days old), so agent CLI changes silently had no effect.
+// Sharing this implementation keeps both paths aligned.
+import { stageCredentialKeyring } from "../../../scripts/stage-credential-keyring.mjs";
 import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -55,7 +55,7 @@ export function resolveAgentBundlePaths({ repoRoot, platformKey }) {
  * zcode-agent or zcode-acp) and old metadata from a previous local build would otherwise ship in the
  * installer. Clean CI checkouts do not contain them, but local worktrees can.
  */
-export function stageAgentBundle({ repoRoot, platformKey, log = console.log }) {
+export async function stageAgentBundle({ repoRoot, platformKey, log = console.log }) {
   const { cliBundlePath, glmDir, stagedBundlePath, stagedMetaPath } = resolveAgentBundlePaths({
     repoRoot,
     platformKey,
@@ -89,6 +89,11 @@ export function stageAgentBundle({ repoRoot, platformKey, log = console.log }) {
     }
     log(`[stage:agent-bundle] staged node-repl-host runtime for dev self-seed`);
   }
+  await stageCredentialKeyring({
+    sourceRoot: resolve(repoRoot, "packages/shared"),
+    targetRoot: glmDir,
+    platformKey,
+  });
   log(`[stage:agent-bundle] staged ${stagedBundlePath}`);
   return { stagedBundlePath, stagedMetaPath };
 }

@@ -40,11 +40,13 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
     // Same helper as the initial registration in runtime-tools.ts; a refresh must not drop the LSP tool.
     includeLsp: resolveRuntimeLspToolIncluded(runtime),
+    // 会话工具同名两种实现，刷新必须沿用首次装配选定的运行位置，不能回落到另一种。
+    sessionControlKind: runtime.sessionControlKind,
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
     disallowedTools: runtime.config.toolDisallowlist,
     silentDuplicateWarnings: true,
   });
-  runtime.cachedTools = null;
+  runtime.invalidateToolCache();
 }
 
 export function filterEmbeddedSearchRuntimeVisibleTools(

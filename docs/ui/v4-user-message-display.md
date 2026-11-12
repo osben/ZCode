@@ -12,7 +12,7 @@ replayable chains.
 - For a goal control query confirmed at the send entry, a leading `/goal` / `/target` in the read-only body
   renders as a `goal` / `target` label with a Goal icon and without the `/`; same-named text that
   degraded to an ordinary prompt stays as is.
-- Copy and inline editing always use the raw `userInput.text`, never the already flattened display text.
+- Copy and editing (composer edit mode) always use the raw `userInput.text`, never the already flattened display text.
 - Attachments, Web element context and the conversation selection chip sit outside the collapsible body
   area and stay fully visible while the body is collapsed.
 

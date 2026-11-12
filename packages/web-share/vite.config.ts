@@ -47,6 +47,22 @@ export default defineConfig(({ mode }) => {
           find: /^@zcode\/shared$/,
           replacement: resolve(REPO_ROOT, "packages/shared/src/index.ts"),
         },
+        // Bugfix: message.tsx's file-link menu statically references useWorkspaceServices and
+        // file-menu, which value-import @zcode/rpc, so the read-only share timeline pulls in rpc.
+        // The share image does not install it and the Docker build fails to resolve it. rpc has
+        // no third-party deps and the share page never reaches that branch without services, so
+        // point directly at source (the Dockerfile copies rpc/src).
+        {
+          find: /^@zcode\/rpc$/,
+          replacement: resolve(REPO_ROOT, "packages/rpc/src/index.ts"),
+        },
+        // Bugfix: shared/app-control value-imports the session-control contract. The image copies
+        // only that package's source (its sole third-party dep, zod, is already installed by shared),
+        // and without this alias the Docker build fails to resolve it.
+        {
+          find: /^@zcode\/session-control\/contracts$/,
+          replacement: resolve(REPO_ROOT, "packages/session-control/src/contract.ts"),
+        },
         // The share image does not install @zcode/ui (it would pull in the
         // services/rpc closure), so subpath imports must point at source files
         // explicitly.
@@ -61,6 +77,19 @@ export default defineConfig(({ mode }) => {
         {
           find: "@zcode/shared/test-ids",
           replacement: resolve(REPO_ROOT, "packages/shared/src/test-ids.ts"),
+        },
+        // 分享管理页复用的基础控件；只依赖 radix-ui / cva / lucide，均在 share-ui 依赖闭包内。
+        {
+          find: "@zcode/ui/button",
+          replacement: resolve(REPO_ROOT, "packages/ui/src/components/ui/button.tsx"),
+        },
+        {
+          find: "@zcode/ui/dropdown-menu",
+          replacement: resolve(REPO_ROOT, "packages/ui/src/components/ui/dropdown-menu.tsx"),
+        },
+        {
+          find: "@zcode/ui/alert-dialog",
+          replacement: resolve(REPO_ROOT, "packages/ui/src/components/ui/alert-dialog.tsx"),
         },
         {
           find: "@zcode/ui/conversation-share-readonly",

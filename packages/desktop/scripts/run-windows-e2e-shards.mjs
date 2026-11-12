@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { spawnCancellableStep, startStepExecution } from "./e2e-step-process.mjs";
 import { applyForkE2ETelemetryReportEndpoint } from "./fork-e2e-telemetry-endpoint.mjs";
 import { hasRequiredSshE2EEnvironment, isSshFormalSpec } from "./e2e-formal-spec-selection.mjs";
+import { normalizeE2EDesktopBuildEnv } from "./ensure-e2e-desktop-build.mjs";
+import { isFormalSpecAdmittedByEnvironment } from "./e2e-formal-spec-selection.mjs";
 
 const RUNNER_SHARD_ARG_PREFIX = "--shards=";
 const DEFAULT_SPEC_DURATION_PROFILE_PATH = "test/e2e/spec-duration-weights.json";
@@ -93,7 +95,6 @@ export function resolveWindowsE2EShardTotal({
 export function listDefaultFormalE2ESpecs(desktopDir, env = process.env) {
   const e2eDir = join(desktopDir, "test/e2e");
   const specs = [];
-  const includeSshSpecs = hasRequiredSshE2EEnvironment(env);
   const visit = (directory, relativeDirectory = "") => {
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
       a.name.localeCompare(b.name),
@@ -107,8 +108,8 @@ export function listDefaultFormalE2ESpecs(desktopDir, env = process.env) {
       if (
         entry.isFile() &&
         entry.name.endsWith(".test.ts") &&
-        relativePath !== "upstream-provider.test.ts" &&
-        (includeSshSpecs || !isSshFormalSpec(`./test/e2e/${relativePath}`))
+        entry.name !== "upstream-provider.test.ts" &&
+        isFormalSpecAdmittedByEnvironment(`./test/e2e/${relativePath}`, env)
       ) {
         specs.push(`./test/e2e/${relativePath}`);
       }
@@ -161,14 +162,18 @@ export function createWindowsE2ERunId({ timestamp, processId, entropy }) {
 
 function createBuildEnv(env) {
   const { NODE_OPTIONS: _nodeOptions, ...buildEnv } = env;
-  return applyForkE2ETelemetryReportEndpoint({
-    ...buildEnv,
-    PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false",
-    VITE_ZCODE_E2E_STORE_BRIDGE: "1",
-    // Windows full E2E 反复执行时复用 Turbo 内容缓存；冷缓存仍按依赖图构建，
-    // targeted/non-Windows 路径不会经过父 runner 的 sharded build env。
-    ZCODE_DESKTOP_AGENT_BUILD_MODE: env.ZCODE_DESKTOP_AGENT_BUILD_MODE ?? "turbo",
-  });
+  // Running from the ZCode client shell, the build inherits ZCODE_ENV=production and ZCODE_BASE_URL.
+  // Those would be baked into the agent and desktop package, sending E2E to production domains and breaking fixture endpoints.
+  return applyForkE2ETelemetryReportEndpoint(
+    normalizeE2EDesktopBuildEnv({
+      ...buildEnv,
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false",
+      VITE_ZCODE_E2E_STORE_BRIDGE: "1",
+      // Windows full E2E 反复执行时复用 Turbo 内容缓存；冷缓存仍按依赖图构建，
+      // targeted/non-Windows 路径不会经过父 runner 的 sharded build env。
+      ZCODE_DESKTOP_AGENT_BUILD_MODE: env.ZCODE_DESKTOP_AGENT_BUILD_MODE ?? "turbo",
+    }),
+  );
 }
 
 export function createWindowsE2EShardPlan({

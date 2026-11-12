@@ -98,6 +98,7 @@ export function ChatPromptEditor({
   onDrop,
   excludedSlashCommandNames,
   appSlashCommands,
+  extraPlugins,
   enableMentionPanel,
   quickPrompts,
 }: {
@@ -180,6 +181,8 @@ export function ChatPromptEditor({
   enableMentionPanel?: boolean;
   /** Quick prompts for the "/" panel; the quick prompt editor omits it so its own body cannot insert quick prompts. */
   quickPrompts?: readonly QuickPromptSlashItem[];
+  /** 额外挂进编辑器的 Lexical 插件（透传 LexicalChatInput）。 */
+  extraPlugins?: ReactNode;
 }) {
   const { intl } = useZCodeIntl();
   const isInline = layout === "inline";
@@ -370,6 +373,7 @@ export function ChatPromptEditor({
     <div className={isInline ? "min-w-1/2 flex-1 py-1 [&_[contenteditable]]:min-h-5" : "contents"}>
       <LexicalChatInput
         voicePreview={voicePreview}
+        extraPlugins={extraPlugins}
         placeholder={placeholder}
         disabled={disabled}
         submitDisabled={submitDisabled}

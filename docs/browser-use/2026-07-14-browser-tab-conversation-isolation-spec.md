@@ -72,6 +72,7 @@ A user tab is discoverable only when its guest is alive and its current URL is n
   is no conversation, so a kept view would be invisible and unclaimable and would hold a guest forever
   (`apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md`, "Subagent sessions").
 - Window close / explicit user close still really closes the tab.
+- After a task is archived or permanently deleted, really close all tabs owned by that taskId's sessionId: both user-opened Browser tabs and browser-use tabs. The trigger is the task fact stream, not a command entry: when the Window Host Controller receives `workspace_task_list_changed` for the current source (reason `task_archived` / `task_deleted` with a taskId), it sends `closeSession({ closeTabs: true })` for that taskId through the host-to-main browser bridge, with the owner scope taken from that source's workspaceKey and remoteSessionId. Manual archive/delete, mobile remote control, auto-archive (one `task_archived` per task after the scan) and CLI-side session deletion all pass through this fact stream. A bulk permanent delete sends one event without a taskId; it acts only on archived tasks, whose tabs were already closed at archive time. After main closes the guest it notifies the renderer to remove the shell as usual. Once a task leaves the list it has no visible scope, so leftover tabs would have no UI to close them, and audible tabs are protected by residency and never evicted. A cleanup failure only logs a warning and does not rewrite the committed archive or delete result. Unarchive does not restore closed tabs. Tabs under a subagent session are out of scope and are still handled by the subagent's own closeSession.
 
 ### 2.4 Visibility and background keep-alive on conversation switch
 
@@ -103,6 +104,7 @@ A active:resolve active tab from registry[A] + ensureResident[A] + side pane exp
   `collapsed=true`.
 - If the user manually collapsed the panel inside A, leaving and returning still restores by "current
   conversation has a tab -> expand"; only explicitly closing the tab ends that tab's restore eligibility.
+- Only the current conversation's tabs make sound. The `currentTask` in the residency report from the renderer shares one scope decision with tab bar visibility (`getVisibleSidePaneTabs`); main calls `setAudioMuted(!currentTask)` on the guest accordingly. Unselected tabs inside the current conversation are not muted. A new guest (including rebind) takes the last reported value; before main receives the first report it does not mute.
 - Plain Web / mobile `/remote` do not support the Electron embedded browser-use pane; this rule adds no
   mobile snapshot field and does not change the `web-remote-replayable` recovery boundary.
 

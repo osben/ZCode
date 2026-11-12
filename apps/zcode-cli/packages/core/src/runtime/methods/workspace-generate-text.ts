@@ -24,8 +24,8 @@ import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 import { INPUT_PREDICTION_QUERY_SOURCE } from "./input-prediction-sidecar.js";
 
 const WORKSPACE_GENERATE_TEXT_TIMEOUT_MS = 60_000;
-const CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS = 1;
-// Probe requests use a fixed minimal prompt to avoid unnecessary reasoning; do not change the role/text or include session history.
+const CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS = 512;
+// 探测请求使用固定最小 prompt，避免多余推理开销；不可改写角色、文本或混入会话历史。
 const CONNECTIVITY_PROBE_SYSTEM = "You are ZCode connectivity probe.";
 const CONNECTIVITY_PROBE_USER = "hi";
 const GIT_COMMIT_MESSAGE_QUERY_SOURCE = "git_commit_message";
@@ -61,7 +61,10 @@ export async function testModelConnectivity(
   // Set a separate limit of 1 token while keeping the lowest public tier; do not change budgets for other auxiliary calls.
   const model = baseModel.bind({
     reasoningLevel: baseModel.optionSpecs.reasoningLevel.values[0]!,
-    maxOutputTokens: CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: Math.min(
+      CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS,
+      baseModel.optionSpecs.maxOutputTokens.max,
+    ),
   });
   const traceContext = createChildTraceContext(options?.traceContext ?? this.rootTraceContext, {
     attributes: {
@@ -79,12 +82,13 @@ export async function testModelConnectivity(
       { role: "user", content: CONNECTIVITY_PROBE_USER },
     ],
   };
+  using statusSink = this.createModelStatusSink(traceContext, []);
   let finished = false;
   await runWithModelInvocationContext(
     {
       metadata: traceContextToLogContext(traceContext),
       modelCall: { operation: "workspace_generate_text" },
-      statusSink: this.createModelStatusSink(traceContext, []),
+      statusSink,
       traceContext,
       refreshRuntimeHeadersBeforeAttempt: createRefreshRuntimeHeadersBeforeModelAttempt(this, {
         abortSignal,
@@ -197,6 +201,7 @@ async function generateWorkspaceTextImpl(
       : { options: { maxOutputTokens: requestMaxOutputTokens } }),
   };
 
+  using statusSink = this.createModelStatusSink(modelTraceContext, events);
   const result = await runWithModelInvocationContext(
     {
       metadata: traceContextToLogContext(modelTraceContext),
@@ -209,7 +214,7 @@ async function generateWorkspaceTextImpl(
           ? { reasoning: { requestedLevel: model.options.reasoningLevel } }
           : {}),
       },
-      statusSink: this.createModelStatusSink(modelTraceContext, events),
+      statusSink,
       traceContext: modelTraceContext,
       refreshRuntimeHeadersBeforeAttempt: createRefreshRuntimeHeadersBeforeModelAttempt(this, {
         abortSignal,

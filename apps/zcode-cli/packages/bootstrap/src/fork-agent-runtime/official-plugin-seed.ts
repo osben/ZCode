@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { writeBundledOfficialMarketplacePartitionSync } from "@zcode/adapters";
+import { writeBundledOfficialMarketplacePartition } from "@zcode/adapters";
 import { createConfig, resolvePath } from "@zcode/adapters/config";
 import { type Logger, ZCODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@zcode/contracts";
 import { FORK_AGENT_RUNTIME_ENV } from "@zcode/shared";
@@ -19,17 +19,17 @@ import { getCliStorageRoot, getPluginStorageRoot } from "../app/paths.js";
  * the Node agent passes to discovery next to the catalog. `zcode-rs` reads only the catalog, so the
  * catalog entry is pointed at that cache instead; the Rust agent then loads the same plugins.
  */
-export function seedOfficialPluginsForForkRustAgent(input: {
+export async function seedOfficialPluginsForForkRustAgent(input: {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   logger?: Logger;
-}): void {
+}): Promise<void> {
   const env = input.env ?? process.env;
   if (env[FORK_AGENT_RUNTIME_ENV]?.trim() !== "rust") return;
   try {
     const storageRoot = resolveForkPluginStorageRoot({ cwd: input.cwd, env });
-    const fallbackRoots = resolveOfficialPluginRoots({ env, logger: input.logger, storageRoot });
-    pointCatalogAtFallbackCaches(storageRoot, fallbackRoots);
+    const fallbackRoots = await resolveOfficialPluginRoots({ env, logger: input.logger, storageRoot });
+    await pointCatalogAtFallbackCaches(storageRoot, fallbackRoots);
   } catch (error) {
     input.logger?.warn("Official plugin seed for the Rust agent failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -62,7 +62,10 @@ export function resolveForkPluginStorageRoot(input: {
  * cache (`cache/zcode-plugins-official/<name>/<older version>`). Only `cachePath` changes: the entry
  * keeps the bundled version, as the Node catalog does after the same degraded seed.
  */
-function pointCatalogAtFallbackCaches(storageRoot: string, fallbackRoots: string[]): void {
+async function pointCatalogAtFallbackCaches(
+  storageRoot: string,
+  fallbackRoots: string[],
+): Promise<void> {
   if (fallbackRoots.length === 0) return;
   const fallbackByName = new Map(fallbackRoots.map((root) => [basename(dirname(root)), root]));
   const partitionPath = join(
@@ -71,11 +74,11 @@ function pointCatalogAtFallbackCaches(storageRoot: string, fallbackRoots: string
     ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
     "bundled-marketplace.json",
   );
-  const partition = JSON.parse(readFileSync(partitionPath, "utf8")) as {
+  const partition = JSON.parse(await readFile(partitionPath, "utf8")) as {
     manifest: Record<string, unknown>;
   };
   const plugins = Array.isArray(partition.manifest.plugins) ? partition.manifest.plugins : [];
-  writeBundledOfficialMarketplacePartitionSync({
+  await writeBundledOfficialMarketplacePartition({
     manifest: {
       ...partition.manifest,
       plugins: plugins.map((plugin: unknown) => {
