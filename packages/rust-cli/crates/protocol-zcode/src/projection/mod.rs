@@ -258,6 +258,8 @@ impl Projection {
             .permission_grant
             .clone_from(&self.permission_grant);
         projection.plan_transition.clone_from(&self.plan_transition);
+        // Fork (B2): the runs going now were not spawned in this projection's sight, so they get no Stop.
+        projection.subagents.recovering = true;
         projection
     }
 
@@ -781,13 +783,20 @@ impl Projection {
                 // so the cold read settles it by the same text.
                 let plan_denied =
                     output.is_error && text == rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
-                let status = if self.denied.remove(tool_use.as_str()) || plan_denied {
-                    ToolStatus::Cancelled
-                } else if output.is_error {
-                    ToolStatus::Error
-                } else {
-                    ToolStatus::Success
-                };
+                // Fork: a foreground subagent stopped on its own is Node's `ToolCancelled` (`onToolCallError`): the
+                // executor keeps the Agent display with `status: "killed"` (`ToolError::Stopped`), which no hook can
+                // rewrite. A cold read has no display and settles the row as an error, as Node's hydration does.
+                let subagent_stopped = output.is_error
+                    && output.display[rust_cli_kernel_api::agents::DISPLAY_KEY]["status"]
+                        == "killed";
+                let status =
+                    if self.denied.remove(tool_use.as_str()) || plan_denied || subagent_stopped {
+                        ToolStatus::Cancelled
+                    } else if output.is_error {
+                        ToolStatus::Error
+                    } else {
+                        ToolStatus::Success
+                    };
                 if status == ToolStatus::Error
                     && text == rust_cli_kernel_api::tool::REJECT_MESSAGE
                     && let Some(turn) = self.turn.as_mut()
@@ -799,7 +808,11 @@ impl Projection {
                     |row| {
                         row.insert("status".into(), json!(status.as_str()));
                         if !plan_denied {
-                            row.insert("output".into(), settled);
+                            // Node's `onToolCallError` settles a `ToolCancelled` call with `endedAt` and no
+                            // output or error.
+                            if !subagent_stopped {
+                                row.insert("output".into(), settled);
+                            }
                             row.insert("endedAt".into(), json!(now));
                         }
                         row.remove("approvalInteractionId");

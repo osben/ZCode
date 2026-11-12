@@ -43,6 +43,7 @@ pub(crate) async fn decide(
         "pauseGoal" => goal(live, envelope, revision, Command::PauseGoal).await,
         "resumeGoal" => goal(live, envelope, revision, Command::ResumeGoal).await,
         "cancelBackgroundWork" => background_work::cancel(live, envelope, revision).await,
+        "stopSubagent" => background_work::stop_subagent(live, envelope, revision).await,
         // Fork: the prepared worktree's compare-and-set update (crate::worktree).
         "updateWorktreePreparation" => {
             crate::worktree::update(server, live, envelope, revision).await

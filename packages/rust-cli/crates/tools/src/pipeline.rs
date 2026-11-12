@@ -447,11 +447,17 @@ impl Pipeline {
                 .await
             }
             Err(failure) => {
-                let interrupted = matches!(failure, ToolError::Cancelled);
-                let text = if interrupted {
-                    INTERRUPT_FOR_TOOL_USE.to_owned()
-                } else {
-                    format_error(&failure.to_string())
+                // Fork: a call stopped on its own keeps its display and reaches the model as its own message (Node keeps
+                // the `ToolCancelled` text), while the hooks see an interrupt (Node `isInterrupt`).
+                let (failure, display) = match failure {
+                    ToolError::Stopped { message, display } => (Err(message), display),
+                    other => (Ok(other), Value::Null),
+                };
+                let interrupted = matches!(failure, Ok(ToolError::Cancelled) | Err(_));
+                let text = match &failure {
+                    Ok(ToolError::Cancelled) => INTERRUPT_FOR_TOOL_USE.to_owned(),
+                    Ok(other) => format_error(&other.to_string()),
+                    Err(message) => message.clone(),
                 };
                 let payload = tag(
                     hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context),
@@ -461,7 +467,10 @@ impl Pipeline {
                     hooks::event(HookEventName::PostToolUseFailure, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;
                 messages.after.append(&mut post.messages);
-                error(text)
+                ToolOutput {
+                    display,
+                    ..error(text)
+                }
             }
         }
     }

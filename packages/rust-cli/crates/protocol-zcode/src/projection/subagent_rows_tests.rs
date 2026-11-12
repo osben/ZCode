@@ -52,6 +52,8 @@ fn manifest(deltas: &[Value]) -> Option<&Value> {
 
 fn entry(n: u32, status: SubagentStatus, waiting: bool) -> SubagentEntry {
     SubagentEntry {
+        execution: 0,
+        previous: None,
         agent: AgentId::new(format!("agent_{n}")),
         child: SessionId::new(format!("sess_subagent_agent_{n}")),
         agent_type: "general-purpose".into(),
@@ -305,5 +307,171 @@ fn a_foreground_child_is_no_background_work() {
     assert_eq!(
         feed.projection.snapshot(feed.seq, "e")["backgroundWorks"],
         json!([])
+    );
+}
+
+fn control(feed: &Feed, child: &str) -> Option<Value> {
+    feed.projection.snapshot(feed.seq, "epoch")["subagents"]["running"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["childSessionId"] == child)
+        .and_then(|item| item.get("stopControl").cloned())
+}
+
+/// B2 (Node `liveSubagentStopControlByChildId`): the running summary names the live run the Stop button ends. It
+/// comes from the kernel's live table only: none before the table lists the child (a cold open), none for a child a
+/// subagent spawned, a new run replaces it, and an ended child has none.
+#[test]
+fn the_stop_control_comes_from_the_live_table() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let first = agent_call(&mut feed, 1);
+    progress(&mut feed, &first, 1);
+    let nested = agent_call(&mut feed, 2);
+    progress(&mut feed, &nested, 2);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+
+    let mut own = entry(1, SubagentStatus::Running, false);
+    own.background = false;
+    let mut inner = entry(2, SubagentStatus::Running, false);
+    inner.background = false;
+    inner.owner = Some(AgentId::new("agent_1"));
+    let deltas = feed
+        .projection
+        .subagent_table(&[own.clone(), inner.clone()], 10);
+    assert_eq!(
+        manifest(&deltas).unwrap()["running"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["childSessionId"] == "sess_subagent_agent_1")
+            .unwrap()["stopControl"],
+        json!({"taskId": "agent_1", "executionId": "0"})
+    );
+    assert_eq!(control(&feed, "sess_subagent_agent_2"), None);
+
+    own.execution = 1;
+    feed.projection
+        .subagent_table(&[own.clone(), inner.clone()], 20);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+    );
+
+    own.status = SubagentStatus::Killed;
+    feed.projection.subagent_table(&[own, inner], 30);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+}
+
+/// A foreground child stopped on its own (Node `ToolCancelled`, `onToolCallError`): the Agent row and the child's row
+/// are cancelled, not an error, while the parent turn goes on. The typed display marker decides it, not the result
+/// text (a failure hook may rewrite that text).
+#[test]
+fn a_stopped_foreground_child_settles_its_rows_as_cancelled() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let tool = agent_call(&mut feed, 1);
+    progress(&mut feed, &tool, 1);
+    let deltas = feed.apply(KernelEvent::ToolDone {
+        tool_use: tool.clone(),
+        output: ToolOutput {
+            content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {
+                text: "rewritten by a failure hook".to_owned(),
+            }],
+            is_error: true,
+            display: json!({"agent": {
+                "agentId": "agent_1",
+                "childSessionId": "sess_subagent_agent_1",
+                "agentType": "general-purpose",
+                "status": "killed",
+            }}),
+        },
+    });
+    let status_of = |kind: &str| {
+        deltas
+            .iter()
+            .rev()
+            .find(|delta| delta["row"]["kind"] == kind)
+            .map(|delta| delta["row"]["status"].clone())
+    };
+    assert_eq!(
+        status_of("subagent"),
+        Some(json!("cancelled")),
+        "{deltas:?}"
+    );
+    assert_eq!(
+        status_of("toolCall"),
+        Some(json!("cancelled")),
+        "{deltas:?}"
+    );
+    let call = deltas
+        .iter()
+        .rev()
+        .find(|delta| delta["row"]["kind"] == "toolCall")
+        .unwrap();
+    assert!(call["row"].get("output").is_none(), "{call}");
+    assert!(call["row"].get("endedAt").is_some(), "{call}");
+}
+
+/// B2 (Node `product-projection.ts` hydration: "cold recovery must not re-grant stop capability"): after a rewind
+/// rebuilt the projection, a background child that was already running gets no Stop; its next run (a resume, Node's
+/// `SubagentSpawned`) does.
+#[test]
+fn a_rebuilt_projection_grants_no_stop_to_a_run_already_going() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let call = agent_call(&mut feed, 1);
+    progress(&mut feed, &call, 1);
+    let mut running = entry(1, SubagentStatus::Running, false);
+    feed.projection.subagent_table(&[running.clone()], 10);
+    assert!(control(&feed, "sess_subagent_agent_1").is_some());
+
+    feed.projection = feed.projection.rebuilt(&super::view(Vec::new()));
+    let call = agent_call(&mut feed, 1);
+    progress(&mut feed, &call, 1);
+    feed.projection.subagent_table(&[running.clone()], 20);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+    feed.projection.subagent_table(&[running.clone()], 30);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+
+    running.execution = 1;
+    feed.projection.subagent_table(&[running], 40);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+    );
+}
+
+/// B2: the change stream coalesces, so one table read can show a later run of a child whose stop, settle and resume
+/// all landed after the last read. The stopped run's row is closed as cancelled before the new run reopens it, and the
+/// Stop button moves to the new run, as Node projects the stop and the spawn as separate facts.
+#[test]
+fn a_run_missed_between_reads_is_closed_before_the_next_one_opens() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let tool = agent_call(&mut feed, 1);
+    progress(&mut feed, &tool, 1);
+    done(&mut feed, &tool, 1, "async_launched");
+    feed.projection
+        .subagent_table(&[entry(1, SubagentStatus::Running, false)], 10);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "0"}))
+    );
+
+    let mut resumed = entry(1, SubagentStatus::Running, false);
+    resumed.execution = 1;
+    resumed.previous = Some(SubagentStatus::Killed);
+    let deltas = feed.projection.subagent_table(&[resumed], 20);
+    let statuses: Vec<&Value> = deltas
+        .iter()
+        .filter(|delta| delta["op"] == "row.upserted" && delta["row"]["kind"] == "subagent")
+        .map(|delta| &delta["row"]["status"])
+        .collect();
+    assert_eq!(statuses, [&json!("cancelled"), &json!("running")]);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "1"}))
     );
 }

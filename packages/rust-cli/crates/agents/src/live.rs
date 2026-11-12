@@ -97,6 +97,12 @@ pub(crate) struct LiveAgent {
     /// Fork: its child session was erased while it was live (`routing::end_erased`). Its ending reaches only an owner
     /// that is not erased itself, never a Hub (an erased top-level session's Hub has no reader).
     pub(crate) erased: bool,
+    /// Fork: SendMessage messages that arrived after a stop claimed this run (Node: a message to a killed agent resumes
+    /// it, core `runner.ts`). The run's own mailbox messages are dropped with the stop, as upstream does; these resume
+    /// it once the stopped run has settled (`routing::settle`), each with the SendMessage call that sent it: on the
+    /// desktop the resumed run belongs to the first one (Node's notification carries its `<tool-use-id>`). Cleared by
+    /// each new run.
+    pub(crate) late_messages: Vec<(String, ToolUseId)>,
 }
 
 /// 列表显示用的记录：启动顺序、这次运行的开始与结束时刻、等待中的交互、子会话的提交次数、当前活动。
@@ -112,16 +118,44 @@ pub(crate) struct Shown {
     /// 最近一个完成的子代理请求的输出速度（修复线 F112，tui-panels.md §1.7：查看它时 footer 的 TPS）：只在内存里，
     /// 与主会话的速度同一个口径（tui-display.md §2.6）。续跑与结束都不清掉。
     pub(crate) speed: Option<rust_cli_kernel_api::metering::OutputSpeed>,
+    /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every new run
+    /// ([`LiveAgent::begin_run`]).
+    pub(crate) execution: u64,
+    /// Fork: how the previous run ended (`SubagentEntry::previous`), set by [`LiveAgent::begin_run`].
+    pub(crate) previous: Option<rust_cli_kernel_api::panels::SubagentStatus>,
 }
 
 impl LiveAgent {
     pub(crate) fn status(&self) -> BackgroundStatus {
         match &self.state {
+            // Fork: a claimed stop is the run's end already (Node takes `killed` synchronously, core `runner.ts`).
+            AgentState::Running { .. } if self.stop_claimed() => BackgroundStatus::Killed,
             AgentState::Running { .. } => BackgroundStatus::Running,
             // 停放的子代理状态是 completed（带 keepalive）。
             AgentState::Parked { .. } => BackgroundStatus::Completed,
             AgentState::Finished(ending) => ending.status(),
         }
+    }
+
+    /// Fork: starts a new run (Node gives every resumed lifecycle a new execution id, core `runner.ts`). Every return
+    /// to running goes through here, also the ones that replace a run ending in the same lock section (a stranded
+    /// message or a leftover notice in `routing::settle`), which `settle_times` alone would not see as a new run.
+    pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>) {
+        self.shown.previous = Some(crate::views::status(self));
+        self.state = AgentState::Running { abort, mailbox };
+        self.late_messages.clear();
+        self.shown.execution += 1;
+        // The previous run ended in this section when none was recorded: `settle_times` restarts the clock.
+        self.shown.ended_ms.get_or_insert(0);
+        self.shown.doing = None;
+    }
+
+    /// Fork (B2): the run is still running, but its abort is armed, so its ending is claimed: it ends as stopped
+    /// (`routing::settle`). Every stop path (`Live::stop`, `Live::stop_execution`), SendMessage (`Live::enqueue`), the
+    /// status and the subagent table read this one predicate, so a second stop is refused and the run leaves the
+    /// running list at the claim, not at the settle.
+    pub(crate) fn stop_claimed(&self) -> bool {
+        matches!(&self.state, AgentState::Running { abort, .. } if abort.is_aborted())
     }
 
     /// 还在跑或停放。
@@ -203,16 +237,17 @@ impl Live {
         self.changes.subscribe()
     }
 
-    /// Fork (node_desktop): resolves once `agent` is no longer running (finished, parked or gone). Its run settles
-    /// and routes its own notification under the same lock that leaves the running state, so after this the
-    /// notification is already in the owner's inbox.
-    pub(crate) async fn left_running(&self, agent: &AgentId) {
+    /// Fork (node_desktop): resolves once run `execution` of `agent` has ended (finished, parked, gone, or a later run
+    /// started: a message accepted after the stop resumes the agent in the same settle, Node runner `waitForStop`
+    /// waits for this execution only). The run settles and routes its own notification under the same lock that ends
+    /// it, so after this the notification is already in the owner's inbox.
+    pub(crate) async fn left_running(&self, agent: &AgentId, execution: u64) {
         let mut changes = self.subscribe();
         loop {
-            let running = self
-                .agents()
-                .get(agent)
-                .is_some_and(|entry| matches!(entry.state, AgentState::Running { .. }));
+            let running = self.agents().get(agent).is_some_and(|entry| {
+                entry.shown.execution == execution
+                    && matches!(entry.state, AgentState::Running { .. })
+            });
             if !running || changes.changed().await.is_err() {
                 return;
             }
@@ -371,10 +406,7 @@ impl Live {
             entry.background = true;
             entry.tool_use = tool_use;
             entry.stopped_by_user = false;
-            entry.state = AgentState::Running {
-                abort,
-                mailbox: Vec::new(),
-            };
+            entry.begin_run(abort, Vec::new());
             Some(routes.claim(&entry.child, &entry.root))
         })
     }
@@ -387,14 +419,24 @@ impl Live {
         });
     }
 
-    /// 排进正在跑的子代理的邮箱；不在跑时返回 false。
-    pub(crate) fn enqueue(&self, agent: &AgentId, message: String) -> bool {
-        match self.agents().get_mut(agent).map(|entry| &mut entry.state) {
-            Some(AgentState::Running { mailbox, .. }) => {
+    /// 排进正在跑的子代理的邮箱；不在跑时返回 [`Enqueued::NotRunning`]。
+    /// Fork: a run whose stop is claimed keeps the message for the resume after it settles ([`Enqueued::AfterStop`]).
+    pub(crate) fn enqueue(&self, agent: &AgentId, message: String, sender: &ToolUseId) -> Enqueued {
+        let mut state = self.agents();
+        let Some(entry) = state.get_mut(agent) else {
+            return Enqueued::NotRunning;
+        };
+        if entry.stop_claimed() {
+            let first = entry.late_messages.is_empty();
+            entry.late_messages.push((message, sender.clone()));
+            return Enqueued::AfterStop { first };
+        }
+        match &mut entry.state {
+            AgentState::Running { mailbox, .. } => {
                 mailbox.push(Mail::Message(message));
-                true
+                Enqueued::Steered
             }
-            _ => false,
+            _ => Enqueued::NotRunning,
         }
     }
 
@@ -436,26 +478,92 @@ impl Live {
 
     /// 中止正在跑的子代理；不在跑时返回 false（停放的由 `routing::stop_parked` 处理）。
     /// `by_user`: the user stopped it (desktop), not the model's TaskStop.
-    pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> bool {
-        match self.agents().get_mut(agent) {
-            Some(entry) => match &entry.state {
+    /// Fork (desktop `stopSubagent`): the check and the abort of [`Self::stop`] in one lock section, so a run that
+    /// ended or restarted after the check is never aborted. A parked agent is left to `routing::stop_parked`
+    /// ([`GuardedStop::Parked`]), which ends it only while it is still parked in the same execution.
+    pub(crate) fn stop_execution(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+    ) -> GuardedStop {
+        // A change: the claim leaves the running list at once (the change notice re-reads the table).
+        self.change(|agents| {
+            let Some(entry) = agents
+                .get_mut(agent)
+                .filter(|entry| entry.parent == *session && entry.owner.is_none())
+            else {
+                return GuardedStop::NotFound;
+            };
+            if entry.shown.execution.to_string() != execution {
+                return GuardedStop::NotRunning;
+            }
+            // A claimed run is already ending: a second stop before it settles is refused, as Node claims `killed`
+            // synchronously (core `runner.ts`).
+            if entry.stop_claimed() {
+                return GuardedStop::NotRunning;
+            }
+            match &entry.state {
+                AgentState::Running { abort, .. } => {
+                    abort.abort(AbortReason::User);
+                    entry.stopped_by_user = true;
+                    drop_mailbox_messages(entry);
+                    GuardedStop::Aborted
+                }
+                AgentState::Parked { .. } => GuardedStop::Parked(entry.shown.execution),
+                AgentState::Finished(_) => GuardedStop::NotRunning,
+            }
+        })
+    }
+
+    /// Claims the stop of a running agent and returns the claimed execution; None when it is not running or its stop is already claimed (the first
+    /// stop keeps its attribution, Node `completion-notification.ts`).
+    pub(crate) fn stop(&self, agent: &AgentId, by_user: bool) -> Option<u64> {
+        self.change(|agents| {
+            let entry = agents.get_mut(agent)?;
+            if entry.stop_claimed() {
+                return None;
+            }
+            match &entry.state {
                 AgentState::Running { abort, .. } => {
                     abort.abort(AbortReason::User);
                     entry.stopped_by_user = by_user;
-                    true
+                    drop_mailbox_messages(entry);
+                    Some(entry.shown.execution)
                 }
-                _ => false,
-            },
-            None => false,
-        }
+                _ => None,
+            }
+        })
     }
+}
+
+/// The stop drops the messages queued to the stopped run (upstream: a stop clears the queued commands sent to it);
+/// notices stay for `routing::settle`. Messages that arrive later go to `late_messages`.
+fn drop_mailbox_messages(entry: &mut LiveAgent) {
+    if let AgentState::Running { mailbox, .. } = &mut entry.state {
+        mailbox.retain(|mail| matches!(mail, Mail::Notice(_)));
+    }
+}
+
+/// Fork: where [`Live::enqueue`] put a SendMessage message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Enqueued {
+    /// Into the running agent's mailbox (its next tool boundary).
+    Steered,
+    /// The run's stop is claimed: it resumes after it settles. `first`: this message resumes it; later ones wait in
+    /// the resumed run's mailbox (Node: once the resume started, a message is queued to the running agent).
+    AfterStop {
+        first: bool,
+    },
+    NotRunning,
 }
 
 /// 状态转移之后统一记时刻：进入运行时重新开始计时，离开运行（停放、结束）时记结束时刻。状态改在很多处
 /// （routing、TaskStop、SendMessage），时刻只在这里记，不在每个转移点各写一遍。
 fn settle_times(agents: &mut Agents, now: u64) {
     for agent in agents.values_mut() {
-        let running = matches!(agent.state, AgentState::Running { .. });
+        // A claimed stop ends the run's time (it no longer shows as running).
+        let running = matches!(agent.state, AgentState::Running { .. }) && !agent.stop_claimed();
         match (running, agent.shown.ended_ms) {
             (true, Some(_)) => {
                 agent.shown.started_ms = now;
@@ -468,4 +576,14 @@ fn settle_times(agents: &mut Agents, now: u64) {
             _ => {}
         }
     }
+}
+
+/// Fork: the outcome of [`Live::stop_execution`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuardedStop {
+    Aborted,
+    /// Parked in this execution: `routing::stop_parked` ends it only while it is still parked in it.
+    Parked(u64),
+    NotFound,
+    NotRunning,
 }

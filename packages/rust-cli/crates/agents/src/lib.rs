@@ -31,6 +31,9 @@ mod runs;
 mod shell_notices;
 mod signals;
 mod spawn;
+#[cfg(test)]
+#[path = "stop_subagent_tests.rs"]
+mod stop_subagent_tests;
 mod task_output;
 mod task_stop;
 mod tasks;
@@ -441,6 +444,40 @@ impl AgentSignals for Signals {
             .await
             .map(|stopped| stopped.message())
             .map_err(|error| error.to_string())
+    }
+
+    /// Fork (desktop `stopSubagent`, specs/fork-rust-agent-parity.md B2): the guarded user stop of one run. A parked
+    /// agent ends as a `/tasks` stop of it does (`KilledByUser` on the desktop, its child's background commands stopped).
+    async fn stop_subagent(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+        operation: rust_cli_kernel_api::env::OperationContext,
+    ) -> Result<(), rust_cli_kernel_api::agents::SubagentStopRefusal> {
+        use rust_cli_kernel_api::agents::SubagentStopRefusal;
+        match self.0.live.stop_execution(session, agent, execution) {
+            live::GuardedStop::Aborted => Ok(()),
+            live::GuardedStop::NotFound => Err(SubagentStopRefusal::NotFound),
+            live::GuardedStop::NotRunning => Err(SubagentStopRefusal::NotRunning),
+            live::GuardedStop::Parked(execution) => {
+                let tool = task_stop::TaskStopTool {
+                    core: self.0.clone(),
+                };
+                let machine = self.0.ports.machines.primary_machine();
+                let caller = task_stop::Caller {
+                    session,
+                    agent: None,
+                    machine: &machine,
+                    operation: &operation,
+                    by_user: true,
+                };
+                tool.stop_parked(agent, execution, &caller)
+                    .await
+                    .then_some(())
+                    .ok_or(SubagentStopRefusal::NotRunning)
+            }
+        }
     }
 
     /// 输入框下面的子代理列表（tui-panels.md §1.1）。

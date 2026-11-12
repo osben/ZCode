@@ -241,6 +241,7 @@ impl Tool for AgentTool {
             tool_use: Some(context.tool_use.clone()),
             stopped_by_user: false,
             erased: false,
+            late_messages: Vec::new(),
             description: input.description.clone(),
             // fork 总用父运行的模型与档位（`effort` 参数忽略）。
             selection: if fork {
@@ -313,8 +314,22 @@ impl Tool for AgentTool {
             // 还有在跑的后台子代理（交互模式）：转成后台、停放，父调用回“已启动”（`async_launched`）。
             return Ok(launched_output(&entry));
         }
-        match (finished.ending, finished.error) {
-            (Ending::Killed, _) => Err(ToolError::Cancelled),
+        // Fork: `settled.ending`, not the query's: a stop accepted before the run settled ends it as stopped.
+        match (settled.ending, finished.error) {
+            // The parent turn was interrupted: the call is cancelled with it.
+            (Ending::Killed, _) if context.cancel.is_cancelled() => Err(ToolError::Cancelled),
+            // Fork: the child alone was stopped (desktop `stopSubagent`, TaskStop). Node ends only this Agent call with
+            // `ToolCancelled` and keeps its child link, so the stop keeps `display.agent` (the `SubagentLinked` fact that
+            // cold subagent queries read), with `status: "killed"`, which the projection reads as cancelled.
+            (Ending::Killed, _) => Err(ToolError::Stopped {
+                message: rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER.to_owned(),
+                display: with_display(
+                    rust_cli_kernel_api::tool::text(String::new()),
+                    &entry,
+                    serde_json::json!({ "status": "killed" }),
+                )
+                .display,
+            }),
             (_, Some(error)) => Err(ToolError::Failed {
                 message: error.to_string(),
             }),
