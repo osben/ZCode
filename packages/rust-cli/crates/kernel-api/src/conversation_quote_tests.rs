@@ -8,6 +8,8 @@ fn quote(text: &str) -> Quote {
         sender_id: None,
         message_id: None,
         sent_at: None,
+        comment: None,
+        agent: None,
     }
 }
 
@@ -37,9 +39,11 @@ fn keys_are_written_in_schema_order() {
         sender_id: Some("i".to_owned()),
         message_id: Some("m".to_owned()),
         sent_at: Some("2026-11-11T10:00:00Z".to_owned()),
+        comment: Some("c".to_owned()),
+        agent: Some("a".to_owned()),
     };
     assert!(compose("", &[full]).contains(
-        "[{\"text\":\"t\",\"path\":\"p\",\"senderName\":\"n\",\"senderId\":\"i\",\"messageId\":\"m\",\"sentAt\":\"2026-11-11T10:00:00Z\"}]"
+        "[{\"text\":\"t\",\"path\":\"p\",\"senderName\":\"n\",\"senderId\":\"i\",\"messageId\":\"m\",\"sentAt\":\"2026-11-11T10:00:00Z\",\"comment\":\"c\",\"agent\":\"a\"}]"
     ));
 }
 
@@ -87,4 +91,47 @@ fn sent_at_is_an_offset_date_time() {
     ] {
         assert!(!at(bad), "{bad}");
     }
+}
+
+/// Node `withConversationQuotes`: a quote with a non-blank comment adds `QUOTE_COMMENT_GUIDANCE` after the block.
+#[test]
+fn a_comment_adds_nodes_guidance_after_the_block() {
+    let mut commented = quote("passage");
+    commented.comment = Some("why?".to_owned());
+    commented.agent = Some("Explore".to_owned());
+    let block = "<conversation_quote>\n[{\"text\":\"passage\",\"comment\":\"why?\",\"agent\":\"Explore\"}]\n</conversation_quote>";
+    assert_eq!(
+        compose("hi", std::slice::from_ref(&commented)),
+        format!("hi\n\n{block}\n\n{COMMENT_GUIDANCE}")
+    );
+    assert_eq!(
+        compose("", std::slice::from_ref(&commented)),
+        format!("{block}\n\n{COMMENT_GUIDANCE}")
+    );
+    // A blank comment or an agent alone adds no guidance (Node `quote.comment?.trim()`).
+    let mut blank = quote("passage");
+    blank.comment = Some("  ".to_owned());
+    blank.agent = Some("Explore".to_owned());
+    assert!(!compose("hi", &[blank]).contains(COMMENT_GUIDANCE));
+}
+
+#[test]
+fn comment_and_agent_limits_match_the_app_schema() {
+    let with = |comment: usize, agent: usize| {
+        let mut q = quote("q");
+        q.comment = Some("😀".repeat(comment));
+        q.agent = Some("a".repeat(agent));
+        validate(&[q])
+    };
+    assert!(with(MAX_COMMENT_CHARS, MAX_AGENT_CHARS).is_ok());
+    assert!(with(MAX_COMMENT_CHARS + 1, 1).is_err());
+    assert!(with(1, MAX_AGENT_CHARS + 1).is_err());
+}
+
+#[test]
+fn the_guidance_is_nodes_sentence() {
+    assert_eq!(
+        COMMENT_GUIDANCE,
+        "Each conversation_quote item with a `comment` field is a user annotation on that exact quoted text: treat the comment as the user's question or instruction about that passage. An `agent` field names the subagent that produced the quoted text."
+    );
 }
