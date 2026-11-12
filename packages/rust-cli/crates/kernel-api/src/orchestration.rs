@@ -603,8 +603,9 @@ pub enum InteractionRequest {
         /// `approvalMode: "user-once"`): the App offers no "always allow" option for it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         once: bool,
-        /// Fork (B3): an independent confirmation (Node `optionsPolicy`): the App offers no permission mode switch
-        /// for it, and a grant answering it is refused (specs/fork-rust-agent-parity.md B3).
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy: "no-always-allow"`): the App offers allow
+        /// once and deny only and no permission mode switch, and a grant answering it is refused
+        /// (specs/fork-rust-agent-parity.md B3). Unlike `once`, PermissionRequest hooks still run for it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         independent: bool,
         /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the

@@ -490,8 +490,9 @@ impl Projection {
                     "summary": message,
                     "detail": input,
                     "freeText": true,
-                    "options": if *once {
-                        // Node `approvalMode: "user-once"`: only allow once / deny.
+                    "options": if *once || *independent {
+                        // Node `approvalMode: "user-once"` and `optionsPolicy: "no-always-allow"`: only allow once /
+                        // deny.
                         state::single_use_permission_options()
                     } else {
                         state::permission_options()

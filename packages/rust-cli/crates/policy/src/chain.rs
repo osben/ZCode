@@ -260,8 +260,10 @@ pub fn plan_mcp(tool: &str, mcp: PlanMcp, result: Inner) -> Inner {
             message: texts::request_message(tool, None),
             kind: AskKind::Other,
             suggestions: Vec::new(),
-            once: true,
-            // Node `mode.plan.mcp`: `optionsPolicy: "no-always-allow"`, no permission mode switch.
+            // Node sets no `approvalMode: "user-once"` here: PermissionRequest hooks still run for this ask.
+            once: false,
+            // Node `mode.plan.mcp`: `optionsPolicy: "no-always-allow"` (allow once and deny only), no permission mode
+            // switch.
             independent: true,
         },
         _ => result,

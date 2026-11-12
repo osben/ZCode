@@ -356,7 +356,7 @@ fn a_subagent_ask_and_an_independent_ask_offer_no_mode_switch() {
         description: "child".into(),
         parent_tool_use: None,
     };
-    for (origin, once, independent) in [(Some(origin), false, false), (None, true, true)] {
+    for (origin, once, independent) in [(Some(origin), false, false), (None, false, true)] {
         let mut feed = Feed::new();
         feed.apply(KernelEvent::TurnStarted {
             turn: TurnId::new("turn_1"),
@@ -386,6 +386,43 @@ fn a_subagent_ask_and_an_independent_ask_offer_no_mode_switch() {
         assert!(payload.get("modeSwitch").is_none(), "{payload}");
         assert!(payload.get("fullAccessOption").is_none(), "{payload}");
     }
+}
+
+/// Plan mode's MCP ask is independent but not `once` (its PermissionRequest hooks run); it still offers allow once and
+/// deny only (Node `optionsPolicy: "no-always-allow"`).
+#[test]
+fn an_independent_ask_offers_allow_once_and_deny_only() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let asked = feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_1"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: ToolUseId::new("toolu_1"),
+            tool: "mcp__srv__write".into(),
+            input: json!({}),
+            message: "ask".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: true,
+        },
+    });
+    let payload = asked
+        .iter()
+        .find_map(|delta| delta["patch"]["pendingInteractions"].get(0))
+        .map(|pending| &pending["payload"])
+        .unwrap();
+    assert_eq!(
+        payload["options"],
+        crate::projection::state::single_use_permission_options()
+    );
+    assert!(payload.get("modeSwitch").is_none(), "{payload}");
 }
 
 #[test]
