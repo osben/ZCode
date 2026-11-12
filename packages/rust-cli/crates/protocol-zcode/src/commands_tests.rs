@@ -828,3 +828,38 @@ async fn a_mode_switch_answer_grants_through_one_command() {
     );
     assert_eq!(run(KernelAck::Duplicate).await.status, Status::Duplicate);
 }
+
+/// #422 review P2-1: `allowAlways` on an ask that offers no always-allow option (a `once` or
+/// an independent ask) denies, like Node's broker for an option it did not offer; on a normal ask it remembers the
+/// suggestions.
+#[test]
+fn allow_always_denies_an_ask_that_does_not_offer_it() {
+    use rust_cli_kernel_api::interaction::PermissionAnswer;
+    use rust_cli_kernel_api::permission::PermissionRule;
+    let rule = PermissionRule {
+        tool: "Bash".to_owned(),
+        content: Some("ls:*".to_owned()),
+    };
+    let offered = |always: bool| Offered {
+        suggestions: vec![rule.clone()],
+        always,
+    };
+    assert_eq!(
+        permission_answer(Some("allowAlways"), offered(true), None),
+        PermissionAnswer::Allow {
+            remember: vec![rule.clone()]
+        }
+    );
+    assert_eq!(
+        permission_answer(Some("allowAlways"), offered(false), Some(" no ")),
+        PermissionAnswer::Deny {
+            feedback: Some("no".to_owned())
+        }
+    );
+    assert_eq!(
+        permission_answer(Some("allowOnce"), offered(false), None),
+        PermissionAnswer::Allow {
+            remember: Vec::new()
+        }
+    );
+}

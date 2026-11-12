@@ -1692,12 +1692,20 @@ async fn resolve(
             .find(|(id, _)| id.as_str() == interaction)
             .map(|(_, request)| request)
     });
-    let (suggestions, tool) = match pending {
+    let (offered, tool) = match pending {
         Some(InteractionRequest::Permission {
             suggestions,
             tool_use,
+            once,
+            independent,
             ..
-        }) => (suggestions, tool_use),
+        }) => (
+            Offered {
+                suggestions,
+                always: !once && !independent,
+            },
+            tool_use,
+        ),
         Some(request) => {
             return resolve_elicitation(handle, live, envelope, revision, &resolved, &request)
                 .await;
@@ -1712,23 +1720,7 @@ async fn resolve(
             );
         }
     };
-    let answer = match option {
-        Some("allowOnce") => PermissionAnswer::Allow {
-            remember: Vec::new(),
-        },
-        Some("allowAlways") => PermissionAnswer::Allow {
-            remember: suggestions,
-        },
-        _ => PermissionAnswer::Deny {
-            feedback: resolved
-                .answer
-                .free_text
-                .as_deref()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_owned),
-        },
-    };
+    let answer = permission_answer(option, offered, resolved.answer.free_text.as_deref());
     if let PermissionAnswer::Deny { .. } = &answer {
         live.deny(&tool);
     }
@@ -1840,6 +1832,36 @@ async fn grant(
 }
 
 /// Fork: answers a question or plan approval (Node's interaction broker mapping, projection/elicitation.rs).
+/// What a pending permission ask offers: its always-allow suggestions, and whether it offers always-allow at all
+/// (not for a `once` or an `independent` ask; the projection shows allow once and deny only).
+struct Offered {
+    suggestions: Vec<rust_cli_kernel_api::permission::PermissionRule>,
+    always: bool,
+}
+
+/// The answer to a permission ask for an option that is not a mode switch. `allowAlways` on an ask that does not offer
+/// it is a deny, like any option the ask did not offer (Node `interaction-broker.ts`).
+fn permission_answer(
+    option: Option<&str>,
+    offered: Offered,
+    free_text: Option<&str>,
+) -> PermissionAnswer {
+    match option {
+        Some("allowOnce") => PermissionAnswer::Allow {
+            remember: Vec::new(),
+        },
+        Some("allowAlways") if offered.always => PermissionAnswer::Allow {
+            remember: offered.suggestions,
+        },
+        _ => PermissionAnswer::Deny {
+            feedback: free_text
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned),
+        },
+    }
+}
+
 async fn resolve_elicitation(
     handle: &dyn SessionHandle,
     live: &crate::live::Live,

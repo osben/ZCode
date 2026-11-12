@@ -215,3 +215,35 @@ fn failure_and_permission_request() {
         .retry
     );
 }
+
+/// #422 review P2-2: `continue: false` denies before any decision is read; the last stopping hook's `stopReason` wins
+/// (Node `mergeHookRunResult` replaces it), with Node's default text when it has none.
+#[test]
+fn a_stopping_permission_request_hook_denies() {
+    let allow = HookResult {
+        permission_request: Some(PermissionRequestDecision::Allow {
+            updated_input: Some(json!({"a": 1})),
+        }),
+        ..HookResult::default()
+    };
+    let stop = |reason: Option<&str>| HookResult {
+        prevent: true,
+        stop_reason: reason.map(str::to_owned),
+        ..HookResult::default()
+    };
+    let out = permission_request(&[allow.clone(), stop(Some("first")), stop(Some("last"))]);
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "last".to_owned()
+        })
+    );
+    assert_eq!(out.updated_input, None);
+    let out = permission_request(&[stop(Some("first")), stop(None), allow]);
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "Denied by PermissionRequest hook".to_owned()
+        })
+    );
+}
