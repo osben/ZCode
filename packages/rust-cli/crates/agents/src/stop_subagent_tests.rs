@@ -353,6 +353,8 @@ struct ReadWatcher {
     agent: AgentId,
     parked_at_read: std::sync::Mutex<Vec<bool>>,
     stopped: std::sync::Mutex<Vec<String>>,
+    /// The read is where a notice wakes the parked agent into a new run (between the read and the transition).
+    wake_on_read: bool,
 }
 
 #[async_trait::async_trait]
@@ -368,6 +370,14 @@ impl rust_cli_kernel_api::machine::Shell for ReadWatcher {
             .get(&self.agent)
             .is_some_and(|entry| matches!(entry.state, crate::live::AgentState::Parked { .. }));
         self.parked_at_read.lock().unwrap().push(parked);
+        if self.wake_on_read {
+            self.live.with(|agents| {
+                agents
+                    .get_mut(&self.agent)
+                    .unwrap()
+                    .begin_run(rust_cli_kernel_api::abort::Abort::new(), Vec::new());
+            });
+        }
         Ok(rust_cli_kernel_api::env_shell::ShellState {
             cwd: workspace.root.clone(),
             outputs: None,
@@ -419,6 +429,7 @@ async fn a_parked_stop_reads_its_cleanup_targets_before_the_agent_can_restart() 
         agent: agent.clone(),
         parked_at_read: std::sync::Mutex::default(),
         stopped: std::sync::Mutex::default(),
+        wake_on_read: false,
     });
     let machine = rust_cli_kernel_api::testing::unsupported_machine()
         .with_shell(watcher.clone())
@@ -475,4 +486,53 @@ async fn a_stopped_foreground_child_is_a_cancelled_call_that_keeps_its_link() {
     assert_eq!(agent["agentId"], "agent_1");
     assert_eq!(agent["childSessionId"], "sess_subagent_agent_1");
     assert_eq!(agent["status"], "killed");
+}
+
+/// Codex review of #418 @dc4b08512 (2): a TaskStop that ends nothing (the parked agent woke into a new run while its
+/// cleanup targets were read) is refused with Node's `not running` error, never reported as stopped.
+#[tokio::test]
+async fn a_task_stop_that_ends_nothing_is_refused() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    let parent = SessionId::new("sess_parent");
+    let agent = undriven(&harness, "agent_u");
+    let live = harness.agents.core.live.clone();
+    live.with(|agents| {
+        agents.get_mut(&agent).unwrap().state = crate::live::AgentState::Parked {
+            report: crate::report::Report::default(),
+            notified: true,
+        };
+    });
+    let watcher = Arc::new(ReadWatcher {
+        live: live.clone(),
+        agent: agent.clone(),
+        parked_at_read: std::sync::Mutex::default(),
+        stopped: std::sync::Mutex::default(),
+        wake_on_read: true,
+    });
+    let machine = rust_cli_kernel_api::testing::unsupported_machine()
+        .with_shell(watcher.clone())
+        .with_background(watcher.clone());
+    let tool = crate::task_stop::TaskStopTool {
+        core: harness.agents.core.clone(),
+    };
+    let operation = operation(&parent);
+    let caller = crate::task_stop::Caller {
+        session: &parent,
+        agent: None,
+        machine: &machine,
+        operation: &operation,
+        by_user: false,
+    };
+    let Err(refused) = tool.stop("agent_u", &caller).await else {
+        panic!("a stop that ended nothing reported success");
+    };
+    assert_eq!(
+        refused.to_string(),
+        "Task agent_u is not running (status: running)"
+    );
+    assert!(matches!(
+        live.get(&agent).unwrap().state,
+        crate::live::AgentState::Running { .. }
+    ));
+    assert!(watcher.stopped.lock().unwrap().is_empty());
 }

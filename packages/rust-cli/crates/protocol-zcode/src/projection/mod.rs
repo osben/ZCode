@@ -781,9 +781,12 @@ impl Projection {
                 // so the cold read settles it by the same text.
                 let plan_denied =
                     output.is_error && text == rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
-                // Fork: a foreground subagent stopped on its own is Node's `ToolCancelled` (`onToolCallError`).
-                let subagent_stopped =
-                    output.is_error && text == rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER;
+                // Fork: a foreground subagent stopped on its own is Node's `ToolCancelled` (`onToolCallError`): the
+                // executor keeps the Agent display with `status: "killed"` (`ToolError::Stopped`), which no hook can
+                // rewrite. A cold read has no display and settles the row as an error, as Node's hydration does.
+                let subagent_stopped = output.is_error
+                    && output.display[rust_cli_kernel_api::agents::DISPLAY_KEY]["status"]
+                        == "killed";
                 let status =
                     if self.denied.remove(tool_use.as_str()) || plan_denied || subagent_stopped {
                         ToolStatus::Cancelled

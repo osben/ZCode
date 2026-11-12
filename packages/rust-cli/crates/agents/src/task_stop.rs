@@ -322,13 +322,28 @@ impl TaskStopTool {
                     if self.core.node_desktop && !context.by_user {
                         self.core.live.left_running(&agent).await;
                     }
-                } else if let Some(execution) = self
-                    .core
-                    .live
-                    .get(&agent)
-                    .map(|entry| entry.shown.execution)
-                {
-                    self.stop_parked(&agent, execution, context).await;
+                } else {
+                    let execution = self
+                        .core
+                        .live
+                        .get(&agent)
+                        .map(|entry| entry.shown.execution);
+                    let stopped = match execution {
+                        Some(execution) => self.stop_parked(&agent, execution, context).await,
+                        None => false,
+                    };
+                    // Fork: a stop that ended nothing (it woke or ended meanwhile) is refused, as Node rejects a
+                    // TaskStop whose claim failed (`task-stop.ts`, `background_task_not_running`).
+                    if !stopped {
+                        let status = self
+                            .core
+                            .live
+                            .get(&agent)
+                            .map_or("unknown", |entry| entry.status().as_str());
+                        return Err(ToolError::Failed {
+                            message: format!("Task {id} is not running (status: {status})"),
+                        });
+                    }
                 }
                 Ok(StoppedTask {
                     id: id.to_owned(),

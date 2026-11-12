@@ -318,18 +318,17 @@ impl Tool for AgentTool {
             // The parent turn was interrupted: the call is cancelled with it.
             (Ending::Killed, _) if context.cancel.is_cancelled() => Err(ToolError::Cancelled),
             // Fork: the child alone was stopped (desktop `stopSubagent`, TaskStop). Node ends only this Agent call with
-            // `ToolCancelled` and keeps its child link, so the result keeps `display.agent` (the `SubagentLinked` fact
-            // that cold subagent queries read); the projection settles the row as cancelled by its text.
-            (Ending::Killed, _) => Ok(with_display(
-                ToolOutput {
-                    is_error: true,
-                    ..rust_cli_kernel_api::tool::text(
-                        rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER.to_owned(),
-                    )
-                },
-                &entry,
-                serde_json::json!({ "status": "killed" }),
-            )),
+            // `ToolCancelled` and keeps its child link, so the stop keeps `display.agent` (the `SubagentLinked` fact that
+            // cold subagent queries read), with `status: "killed"`, which the projection reads as cancelled.
+            (Ending::Killed, _) => Err(ToolError::Stopped {
+                message: rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER.to_owned(),
+                display: with_display(
+                    rust_cli_kernel_api::tool::text(String::new()),
+                    &entry,
+                    serde_json::json!({ "status": "killed" }),
+                )
+                .display,
+            }),
             (_, Some(error)) => Err(ToolError::Failed {
                 message: error.to_string(),
             }),

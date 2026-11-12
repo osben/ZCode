@@ -364,7 +364,8 @@ fn the_stop_control_comes_from_the_live_table() {
 }
 
 /// A foreground child stopped on its own (Node `ToolCancelled`, `onToolCallError`): the Agent row and the child's row
-/// are cancelled, not an error, while the parent turn goes on.
+/// are cancelled, not an error, while the parent turn goes on. The typed display marker decides it, not the result
+/// text (a failure hook may rewrite that text).
 #[test]
 fn a_stopped_foreground_child_settles_its_rows_as_cancelled() {
     let mut feed = Feed::new();
@@ -375,7 +376,7 @@ fn a_stopped_foreground_child_settles_its_rows_as_cancelled() {
         tool_use: tool.clone(),
         output: ToolOutput {
             content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {
-                text: rust_cli_kernel_api::tool::SUBAGENT_STOPPED_BY_USER.to_owned(),
+                text: "rewritten by a failure hook".to_owned(),
             }],
             is_error: true,
             display: json!({"agent": {
