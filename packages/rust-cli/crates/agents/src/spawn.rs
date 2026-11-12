@@ -58,6 +58,7 @@ pub(crate) fn mode(parent: PermissionMode, declared: Option<PermissionMode>) -> 
 
 fn user(core: &Core, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: core.ports.ids.message(),
         content: vec![ContentBlock::Text {
@@ -274,7 +275,8 @@ pub(crate) async fn drive(
         .with_ledger(ledger)
         .asking(&agent.definition.agent_type, agent.asks.clone())
         .with_origin(agent)
-        .with_core(core.clone()),
+        .with_core(core.clone())
+        .with_execution(agent.shown.execution),
     );
     // Fork (node_desktop): an open side tab on the child session streams this run; the guard ends it on every exit.
     let mut mirrored = crate::mirror::MirrorRun::start(core, &agent.child, &agent.selection);

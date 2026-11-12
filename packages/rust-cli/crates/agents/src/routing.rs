@@ -82,6 +82,7 @@ fn to_root(hub: &Hub, root: &SessionId, notice: Notice) {
 pub(crate) fn deliver(
     agents: &mut Agents,
     hub: &Hub,
+    ids: &dyn rust_cli_kernel_api::clock::Ids,
     owner: Option<&AgentId>,
     root: &SessionId,
     notice: Notice,
@@ -99,7 +100,7 @@ pub(crate) fn deliver(
             // 修正（2026-11-05）：被通知唤醒的续跑不属于派生它的那次 Agent 调用，之后的完成通知不带 `<tool-use-id>`
             // （agents.md §5）；以前这里留着它，第二次通知多一行。同 SendMessage 留下的消息续跑（`settle` 清掉它）。
             entry.tool_use = None;
-            entry.begin_run(Abort::new(), Vec::new());
+            entry.begin_run(Abort::new(), Vec::new(), ids.execution());
             Some(Wake {
                 agent: entry.clone(),
                 resume: Resume::Notices(vec![notice.envelope]),
@@ -195,7 +196,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             let notice = notice_of(&entry, ending, &finished.report, error.as_deref(), false);
             // A foreground run's owner hears of it from its own Agent call, as on the normal path.
             let wakes = if entry.background {
-                to_live_owner(agents, &core.hub, &entry, notice)
+                to_live_owner(agents, &core.hub, core.ports.ids.as_ref(), &entry, notice)
                     .into_iter()
                     .collect()
             } else {
@@ -261,7 +262,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
                     // 取快照：续跑用快照里的 Abort，TaskStop 中止的是条目里的同一个。
                     // 续跑不属于派生它的那次 Agent 调用，之后的通知不带 `<tool-use-id>`（同 `deliver`）。
                     slot.tool_use = None;
-                    slot.begin_run(Abort::new(), Vec::new());
+                    slot.begin_run(Abort::new(), Vec::new(), core.ports.ids.execution());
                     wakes.push(Wake {
                         agent: slot.clone(),
                         resume: Resume::Notices(
@@ -274,6 +275,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
                 wakes.extend(deliver(
                     agents,
                     &core.hub,
+                    core.ports.ids.as_ref(),
                     entry.owner.as_ref(),
                     &entry.root,
                     notice,
@@ -298,6 +300,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             wakes.extend(deliver(
                 agents,
                 &core.hub,
+                core.ports.ids.as_ref(),
                 entry.owner.as_ref(),
                 &entry.root,
                 notice,
@@ -317,6 +320,7 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
             slot.begin_run(
                 Abort::new(),
                 stranded.into_iter().map(Mail::Message).collect(),
+                core.ports.ids.execution(),
             );
             wakes.push(Wake {
                 agent: slot.clone(),
@@ -364,9 +368,16 @@ pub(crate) async fn release(core: &Core, id: &AgentId) -> Vec<Wake> {
             return Vec::new();
         }
         let notice = notice_of(&entry, Ending::Completed, report, None, holds);
-        deliver(agents, &core.hub, entry.owner.as_ref(), &entry.root, notice)
-            .into_iter()
-            .collect()
+        deliver(
+            agents,
+            &core.hub,
+            core.ports.ids.as_ref(),
+            entry.owner.as_ref(),
+            &entry.root,
+            notice,
+        )
+        .into_iter()
+        .collect()
     })
 }
 
@@ -390,9 +401,16 @@ pub(crate) fn stop_parked(
         }
         let (entry, notice) = end_parked(agents, id, ending)?;
         Some(
-            deliver(agents, &core.hub, entry.owner.as_ref(), &entry.root, notice)
-                .into_iter()
-                .collect(),
+            deliver(
+                agents,
+                &core.hub,
+                core.ports.ids.as_ref(),
+                entry.owner.as_ref(),
+                &entry.root,
+                notice,
+            )
+            .into_iter()
+            .collect(),
         )
     })
 }
@@ -419,7 +437,12 @@ fn end_parked(agents: &mut Agents, id: &AgentId, ending: Ending) -> Option<(Live
 /// refuses a tree with a running subagent (Node parity, `running_agent_sessions`), so one reaches here only when it
 /// started between the guard and the row erase; its run settles as erased. Called under the Live lock; the wakes run
 /// outside.
-pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId]) -> Vec<Wake> {
+pub(crate) fn end_erased(
+    agents: &mut Agents,
+    hub: &Hub,
+    ids: &dyn rust_cli_kernel_api::clock::Ids,
+    sessions: &[SessionId],
+) -> Vec<Wake> {
     // Every entry of an erased child is marked, a finished one too: SendMessage would restart it into the deleted
     // session. Only a parked one also ends here (`end_parked` leaves the others).
     let erased: Vec<AgentId> = agents
@@ -437,7 +460,7 @@ pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId])
     }
     let mut wakes = Vec::new();
     for (entry, notice) in notices {
-        wakes.extend(to_live_owner(agents, hub, &entry, notice));
+        wakes.extend(to_live_owner(agents, hub, ids, &entry, notice));
     }
     wakes
 }
@@ -447,6 +470,7 @@ pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId])
 fn to_live_owner(
     agents: &mut Agents,
     hub: &Hub,
+    ids: &dyn rust_cli_kernel_api::clock::Ids,
     entry: &LiveAgent,
     notice: Notice,
 ) -> Option<Wake> {
@@ -454,7 +478,7 @@ fn to_live_owner(
     if agents.get(owner).is_none_or(|owner| owner.erased) {
         return None;
     }
-    deliver(agents, hub, Some(owner), &entry.root, notice)
+    deliver(agents, hub, ids, Some(owner), &entry.root, notice)
 }
 
 /// 续跑：在子会话里提交第一条消息（通知是 meta、来源 `task-notification`；留下的 SendMessage 消息是人类

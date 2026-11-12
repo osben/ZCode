@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Projection, ToolStatus, tool_key, turn_key};
 
 pub(super) use rust_cli_kernel_api::background_origin::{
-    batch_meta, notified_outputs, notified_statuses, notified_tools, origin_meta,
+    batch_meta, notified_outputs, notified_statuses, notified_tools, origin_meta_with_execution,
 };
 
 impl Projection {
@@ -19,7 +19,18 @@ impl Projection {
     /// A batch is one user message with a text block per notification (the desktop kernel, like
     /// Node) or one message per notification (the TUI kernel), so the header is retitled as the batch
     /// grows. A notification merged into a turn the user opened leaves the header alone.
-    pub(super) fn background_result(&mut self, content: &[ContentBlock], out: &mut Vec<Value>) {
+    pub(super) fn background_result(
+        &mut self,
+        content: &[ContentBlock],
+        stall_execution: Option<&str>,
+        out: &mut Vec<Value>,
+    ) {
+        // The execution belongs to a message that is exactly one stall reminder (Node `subagentStall.executionId`).
+        let stall_execution = if content.len() == 1 {
+            stall_execution
+        } else {
+            None
+        };
         let Some(turn) = &mut self.turn else {
             return;
         };
@@ -28,7 +39,9 @@ impl Projection {
         }
         turn.notified
             .extend(content.iter().filter_map(|block| match block {
-                ContentBlock::Text { text } => Some(origin_meta(text)),
+                ContentBlock::Text { text } => {
+                    Some(origin_meta_with_execution(text, stall_execution))
+                }
                 _ => None,
             }));
         let meta = batch_meta(&turn.notified);

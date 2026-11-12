@@ -82,6 +82,8 @@ pub(crate) struct ChildSink {
     record: Mutex<Record>,
     /// 子代理里的 Monitor 交给 agents（agents.md §5.3，工作线 F83）；没有时（测试）不支持。
     core: Option<Arc<crate::Core>>,
+    /// 这次运行的 execution（`Shown::execution`）：活动只记在它还是 agent 当前运行时。
+    execution: u64,
 }
 
 impl ChildSink {
@@ -107,7 +109,15 @@ impl ChildSink {
             origin: None,
             record: Mutex::default(),
             core: None,
+            execution: 0,
         }
+    }
+
+    /// The run this sink belongs to (`Shown::execution` when it started). Its events update the clock only while it is
+    /// still the agent's run.
+    pub(crate) fn with_execution(mut self, execution: u64) -> Self {
+        self.execution = execution;
+        self
     }
 
     /// 子代理里的 Monitor 经 agents 起转发任务（`spawn::drive` 给出）。
@@ -196,18 +206,23 @@ impl ChildSink {
 struct Waiting<'a> {
     live: &'a Live,
     agent: &'a AgentId,
+    execution: u64,
 }
 
 impl<'a> Waiting<'a> {
-    fn start(live: &'a Live, agent: &'a AgentId) -> Self {
-        live.waiting(agent, true);
-        Self { live, agent }
+    fn start(live: &'a Live, agent: &'a AgentId, execution: u64) -> Self {
+        live.waiting(agent, execution, true);
+        Self {
+            live,
+            agent,
+            execution,
+        }
     }
 }
 
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
-        self.live.waiting(self.agent, false);
+        self.live.waiting(self.agent, self.execution, false);
     }
 }
 
@@ -261,7 +276,7 @@ impl Interactions for ChildSink {
             None => request,
         };
         // 等用户回答期间列表显示 ` · waiting`（tui-panels.md §1.1）；被取消时 guard 复原。
-        let _waiting = Waiting::start(&self.live, &self.agent);
+        let _waiting = Waiting::start(&self.live, &self.agent, self.execution);
         asker.ask(request).await
     }
 
@@ -392,6 +407,10 @@ impl RunSink for ChildSink {
         message: Option<Message>,
         metered: rust_cli_kernel_api::metering::Metered,
     ) -> Result<(), StoreError> {
+        // 模型请求完成是进展（stall.rs，Node `ModelComplete`）。
+        if matches!(metered, rust_cli_kernel_api::metering::Metered::Model(_)) {
+            self.live.progress(&self.agent, self.execution);
+        }
         let speed = match &metered {
             rust_cli_kernel_api::metering::Metered::Model(call) => matches!(
                 call.source,
@@ -408,10 +427,39 @@ impl RunSink for ChildSink {
         }
     }
 
+    async fn request_started(&self) {
+        self.live.progress(&self.agent, self.execution);
+    }
+
+    async fn tool_scheduled(
+        &self,
+        tool_use: &rust_cli_kernel_api::ids::ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        self.live
+            .tool_scheduled(&self.agent, self.execution, tool_use, name, input);
+    }
+
     async fn emit(&self, event: QueryEvent) -> bool {
         // `ToolFinished` 先于工具结果的提交到达（同一个任务里按顺序调用）：记下 checkpoint 与子代理关联。
         if let QueryEvent::ToolFinished { tool_use, output } = &event {
             self.record().ledger.tool_finished(tool_use, output);
+        }
+        // 无进展提醒的进展：工具调用开始与结束（stall.rs，Node `ToolCallStarted` / `ToolCallResult`）。
+        match &event {
+            QueryEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => self
+                .live
+                .tool_started(&self.agent, self.execution, tool_use, name, input),
+            QueryEvent::ToolFinished { tool_use, .. } => {
+                self.live
+                    .tool_finished(&self.agent, self.execution, tool_use)
+            }
+            _ => {}
         }
         // 列表行的当前活动（前台与后台都记，L35，stall-visibility.md §4.3）。
         if let Some(doing) = Doing::after(&event) {

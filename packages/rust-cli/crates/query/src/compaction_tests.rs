@@ -77,6 +77,7 @@ fn result(trigger: CompactTrigger) -> CompactResult {
             discovered_tools: Vec::new(),
         },
         summary: UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_summary"),
             content: vec![ContentBlock::Text {

@@ -58,6 +58,10 @@ pub struct SubagentEntry {
     /// never ends a later run (specs/fork-rust-agent-parity.md, B2).
     #[serde(default)]
     pub execution: u64,
+    /// Fork: the run's execution id (Node `executionId`, a UUID per run). `stopControl` names it, and a stall reminder's
+    /// `subagentStall.executionId` is the same value. `execution` above orders the runs.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub execution_id: String,
     /// Fork: how the agent's previous run ended, when this is not its first (set when a new run begins). A reader that
     /// missed the previous run's end (coalesced table changes) still closes that run before the new one
     /// (specs/fork-rust-agent-parity.md, B2).

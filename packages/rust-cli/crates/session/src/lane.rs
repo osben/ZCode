@@ -7,7 +7,7 @@
 //! 修正（L18）：以前通知只在回合结束后各开一个回合（按缺省优先级 `later`
 //! 理解），排在全部排队输入之后；通知应是 `next`，在下一个工具边界并入。
 
-use rust_cli_kernel_api::agents::AgentNotice;
+use rust_cli_kernel_api::agents::{AgentNotice, AgentStall};
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::machine_notices::MachineNotice;
@@ -27,12 +27,35 @@ use crate::turn::TurnInput;
 /// 取回时输入已经不在队列里（`Command::Dequeue` 的 `Rejected.reason`，给用户看）。
 pub(crate) const ALREADY_SENT: &str = "the message already went out";
 
+/// Node `orderTaskNotificationsForParsing`: in a batch, the terminal notifications come first (stable order), so the
+/// batch's representative (its title and source) is the first of them. A stall reminder is never terminal.
+///
+/// Node decides this by the `originMeta.subagentStall` prefix of each notification; here it is decided by the
+/// variant. The match lists every variant, so a new kind has to be placed on purpose and cannot land in a group by
+/// accident.
+pub(crate) fn order_for_parsing(notices: &mut [Waiting]) {
+    notices.sort_by_key(|notice| match notice {
+        // Terminal notifications: a finished command, a finished subagent, or a monitor's final line.
+        Waiting::Shell(_) | Waiting::Agent(_) | Waiting::MonitorEnd { .. } => 0,
+        // Not terminal, but they have always sorted with the terminal group. Keep them there.
+        Waiting::Peer(_) | Waiting::MonitorEvent(_) => 0,
+        // A stall reminder goes last, after every notification that reports a result.
+        Waiting::Stall(_) => 1,
+    });
+}
+
+#[cfg(test)]
+#[path = "lane_order_tests.rs"]
+mod order_tests;
+
 /// 一条等候中的后台通知，或跨会话的消息与回执（同伴消息同样是优先级 `next`，cross-session.md §1.7）。
 #[derive(Debug, Clone)]
 pub(crate) enum Waiting {
     /// 后台命令的终态通知，带它所在的机器（R3：ack 发给那台机器）。
     Shell(MachineNotice),
     Agent(AgentNotice),
+    /// 无进展提醒（Node `task-notification` 命令的 stall 形式）：全文原样，不 ack，不计入后台工作。
+    Stall(AgentStall),
     Peer(PeerItem),
     /// Monitor 的事件或说明（工作线 F83，tools-more.md §19.6）：actor 自己产生，全文已包装；不 ack，也不按文字去重
     /// （同样的一行可以出现多次）。
@@ -50,6 +73,7 @@ impl Waiting {
         match self {
             Self::Shell(notice) => task_notification(&notice.notice),
             Self::Agent(notice) => notice.text.clone(),
+            Self::Stall(stall) => stall.text.clone(),
             Self::Peer(item) => item.text(),
             Self::MonitorEvent(text) | Self::MonitorEnd { text, .. } => text.clone(),
         }
@@ -90,6 +114,7 @@ impl Waiting {
                 a.machine == b.machine && a.notice.seq == b.notice.seq
             }
             (Self::Agent(a), Self::Agent(b)) => a.seq == b.seq,
+            (Self::Stall(a), Self::Stall(b)) => a == b,
             (Self::Peer(a), Self::Peer(b)) => a == b,
             (Self::MonitorEnd { notice: a, .. }, Self::MonitorEnd { notice: b, .. }) => {
                 a.machine == b.machine && a.notice.seq == b.notice.seq
@@ -149,7 +174,7 @@ impl Actor {
             Waiting::Shell(notice) => self.ack(notice).await,
             Waiting::MonitorEnd { notice, .. } => self.ack(notice).await,
             Waiting::Agent(notice) => self.ack_agent(notice.seq).await,
-            Waiting::Peer(_) | Waiting::MonitorEvent(_) => {}
+            Waiting::Stall(_) | Waiting::Peer(_) | Waiting::MonitorEvent(_) => {}
         }
     }
 

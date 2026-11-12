@@ -149,7 +149,7 @@ impl Projection {
             Message::User(user) if is_task_notification(&user.origin) => {
                 let text = text_of(&user.content);
                 self.remember_notified(&text);
-                self.background_result(&user.content, out);
+                self.background_result(&user.content, user.stall_execution.as_deref(), out);
                 self.settle_notified_tools(&text, now, out);
             }
             Message::Assistant(assistant) => {

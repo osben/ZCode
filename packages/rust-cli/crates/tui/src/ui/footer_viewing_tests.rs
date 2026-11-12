@@ -154,6 +154,7 @@ fn subagent_view(mode: PermissionMode, plan: bool, stats: bool) -> Transcript {
 
 fn entry() -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
         execution: 0,
         previous: None,
         agent: AgentId::new("agent_a"),

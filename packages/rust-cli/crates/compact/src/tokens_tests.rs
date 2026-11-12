@@ -5,6 +5,7 @@ use super::*;
 
 fn user(text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {

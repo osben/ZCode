@@ -85,11 +85,30 @@ pub struct ChildLiveFeed {
     pub live: BoxStream<'static, ChildLive>,
 }
 
+/// 后台子代理的无进展提醒（Node `subagent-stall-reminder.ts`，specs/fork-rust-agent-parity.md「Background subagent
+/// stall reminder」）。不是终态通知：不 ack、不计入后台工作，只进对话的通知通道，全文不再包装。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentStall {
+    /// 长时间没有进展的后台子代理。
+    pub agent: AgentId,
+    /// 提醒全文（`[SYSTEM NOTIFICATION …]` 开头，Node 的 `formatBackgroundSubagentStallNotification` 原样）。
+    pub text: String,
+    /// 提醒所依据的运行的计数（#418 的 `execution`，只用来判断是不是同一次运行）。
+    pub execution: u64,
+    /// 提醒所依据的运行的 execution id（Node `executionId`，每次运行一个 UUID）：stopControl 用的是同一个值，写进
+    /// `subagentStall.executionId`。
+    pub execution_id: String,
+    /// 提醒所依据的最后一次进展（Node `lastProgressAt`）。出队时进展前进了，提醒就过时。
+    pub progress_ms: u64,
+}
+
 /// 发给某个会话的信号。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentSignal {
     Notice(AgentNotice),
+    /// 无进展提醒（不 ack，交出后即不再保留）。
+    Stall(AgentStall),
     /// 任务清单变了；`tasks` 是变化后的完整清单（[`TaskList::tasks`] 的 JSON）。
     TasksChanged {
         tasks: Value,
@@ -103,6 +122,12 @@ pub trait AgentSignals: Send + Sync {
 
     /// `seq` 这条通知已作为消息提交（幂等）。没有 ack 的通知在重新订阅时再次送达。
     async fn ack(&self, session: &SessionId, seq: u64);
+
+    /// 无进展提醒是否仍然成立（Node `isBackgroundSubagentStallReminderCurrent`）：子代理还在跑、没在等审批、仍是提醒
+    /// 依据的那次运行、进展没有前进。默认成立（没有子代理能力的实现没有提醒）。
+    async fn stall_current(&self, _session: &SessionId, _stall: &AgentStall) -> bool {
+        true
+    }
 
     /// 还在跑、或已结束但通知还没有 ack 的后台子代理（`-p` 等它们都处理完才收尾）。
     async fn background(&self, session: &SessionId) -> Vec<AgentId>;

@@ -27,6 +27,7 @@ fn note(task: &str, tool_use: Option<&str>, description: &str) -> String {
 
 fn meta(id: &str, text: String) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text }],

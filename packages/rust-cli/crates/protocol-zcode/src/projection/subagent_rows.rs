@@ -333,7 +333,7 @@ impl Projection {
             .map(|entry| {
                 (
                     entry.child.as_str().to_owned(),
-                    json!({"taskId": entry.agent.as_str(), "executionId": entry.execution.to_string()}),
+                    json!({"taskId": entry.agent.as_str(), "executionId": entry.execution_id}),
                 )
             })
             .collect();

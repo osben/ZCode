@@ -142,6 +142,7 @@ pub(crate) fn batch(command: Option<&str>, facts: Vec<Fact>) -> FactBatch {
 pub(crate) fn user(id: &str, text: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],

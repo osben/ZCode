@@ -134,15 +134,16 @@ impl Telemetry {
                     if let UserOrigin::Meta { .. } | UserOrigin::Human = user.origin
                         && let Some(turn) = &mut self.turn
                     {
-                        let sources = notification_sources(user.content.iter().filter_map(
-                            |block| match block {
-                                ContentBlock::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            },
-                        ));
-                        turn.consumed_subagent |= sources.iter().any(|source| source == "subagent");
+                        let metas =
+                            notification_metas(user.content.iter().filter_map(
+                                |block| match block {
+                                    ContentBlock::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                },
+                            ));
+                        turn.consumed_subagent |= subagent_result_consumed(&metas);
                         if turn.held.is_some() {
-                            turn.background_source = sources.into_iter().next();
+                            turn.background_source = background_source(&metas);
                         }
                     }
                     self.release_held(at, &mut out);
@@ -155,9 +156,8 @@ impl Telemetry {
                             == queued_command::TASK_NOTIFICATION =>
                 {
                     if let Some(turn) = &mut self.turn {
-                        turn.consumed_subagent |= notification_sources([attachment.text.as_str()])
-                            .iter()
-                            .any(|source| source == "subagent");
+                        let metas = notification_metas([attachment.text.as_str()]);
+                        turn.consumed_subagent |= subagent_result_consumed(&metas);
                     }
                 }
                 Message::Assistant(assistant) => {
@@ -566,16 +566,38 @@ impl Telemetry {
     }
 }
 
-/// The `backgroundSource` of each task notification in a message, in order.
-fn notification_sources<'a>(texts: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+/// The `origin_meta` of each task notification block in a message, in order.
+fn notification_metas<'a>(texts: impl IntoIterator<Item = &'a str>) -> Vec<Value> {
     texts
         .into_iter()
         .flat_map(|text| text.split("<task-notification>").skip(1))
-        .filter_map(|block| {
-            rust_cli_kernel_api::background_origin::origin_meta(block)
-                .and_then(|meta| meta["backgroundSource"].as_str().map(str::to_owned))
-        })
+        .filter_map(rust_cli_kernel_api::background_origin::origin_meta)
         .collect()
+}
+
+/// Node `backgroundSubagentResultConsumed` (runtime-command-queue.ts): the batch carries a subagent's result. A stall
+/// reminder carries `backgroundSource: "subagent"` too, but it is not a result, so it does not count.
+fn subagent_result_consumed(metas: &[Value]) -> bool {
+    metas
+        .iter()
+        .any(|meta| meta["backgroundSource"] == "subagent" && meta.get("subagentStall").is_none())
+}
+
+/// The `backgroundSource` a turn's results share, resolved as Node's
+/// `resolveBackgroundTaskNotificationSource`. A stall reminder is not a result, so it is skipped; the
+/// source is reported only when every remaining result names the same one. A mixed or missing source
+/// yields `None`, so the order of notifications cannot change the turn's cause.
+fn background_source(metas: &[Value]) -> Option<String> {
+    let sources: Vec<Option<&str>> = metas
+        .iter()
+        .filter(|meta| meta.get("subagentStall").is_none())
+        .map(|meta| meta["backgroundSource"].as_str())
+        .collect();
+    let first = (*sources.first()?)?;
+    sources
+        .iter()
+        .all(|source| *source == Some(first))
+        .then(|| first.to_owned())
 }
 
 fn uuid_v7_now(now: u64) -> impl FnOnce() -> String {

@@ -363,6 +363,7 @@ async fn a_subagent_link_lands_in_the_tool_part_state() {
     };
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {

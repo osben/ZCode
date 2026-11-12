@@ -156,6 +156,7 @@ impl Actor {
             .map(|record| crate::local_record::record_messages(self.deps.ids.as_ref(), &record))
             .unwrap_or_default();
         messages.push(Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: self.deps.ids.message(),
             content: vec![ContentBlock::Text { text: note }],

@@ -301,6 +301,10 @@ impl Ids for SequentialIds {
         RunId::new(self.next("run"))
     }
 
+    fn execution(&self) -> String {
+        self.next("exec")
+    }
+
     fn operation(&self) -> OperationId {
         OperationId::new(self.next("op"))
     }

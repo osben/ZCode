@@ -253,6 +253,15 @@ pub trait RunSink: Interactions + SessionOps {
     /// Default: nothing.
     async fn compact_skipped(&self, _trigger: CompactTrigger) {}
 
+    /// A tool call joined the response's batch (Node `ToolCallScheduled`), before it starts, possibly behind a running
+    /// call. Only the subagent's no-progress reminder reads it; it is not logged. Default: nothing.
+    async fn tool_scheduled(&self, _tool_use: &ToolUseId, _name: &str, _input: &Value) {}
+
+    /// A model request is about to be sent (Node `ModelRequest`, which also sets the subagent's last progress). Called
+    /// once per model step, each time the run sends a request to the model. Retries inside the provider adapter are
+    /// not counted, as in Node. Default: nothing.
+    async fn request_started(&self) {}
+
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序
     /// （L18，docs/specs/rust-cli/query.md §4、§5）。取走即属于当前回合；本回合已中止时插话不取，继续排队。顶层会话的
     /// 通知由会话 actor 在回合结束后开新回合；子代理收到它派生的后台子代理的通知（agents.md §5.1）。工作线 F134 以前

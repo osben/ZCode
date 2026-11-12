@@ -148,9 +148,16 @@ async fn deliver(
         status,
         envelope,
     };
-    let wake = core
-        .live
-        .with(|agents| routing::deliver(agents, &core.hub, Some(&live.agent), &live.root, notice));
+    let wake = core.live.with(|agents| {
+        routing::deliver(
+            agents,
+            &core.hub,
+            core.ports.ids.as_ref(),
+            Some(&live.agent),
+            &live.root,
+            notice,
+        )
+    });
     routing::wake(core, wake.into_iter().collect()).await;
 }
 

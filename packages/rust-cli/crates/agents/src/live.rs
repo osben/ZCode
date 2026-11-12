@@ -21,6 +21,7 @@ use crate::definitions::AgentDefinition;
 use crate::doing::Doing;
 use crate::report::{Ending, Report};
 use crate::routes::{Routes, Started};
+use crate::stall::Activity;
 
 /// 发给某个子代理的一条通知：它派生的后台子代理结束了。
 #[derive(Debug, Clone)]
@@ -118,9 +119,14 @@ pub(crate) struct Shown {
     /// 最近一个完成的子代理请求的输出速度（修复线 F112，tui-panels.md §1.7：查看它时 footer 的 TPS）：只在内存里，
     /// 与主会话的速度同一个口径（tui-display.md §2.6）。续跑与结束都不清掉。
     pub(crate) speed: Option<rust_cli_kernel_api::metering::OutputSpeed>,
+    /// 当前的进展与在跑的工具，供无进展提醒的钟（stall.rs）；离开运行时工具清掉，续跑时整体清掉。
+    pub(crate) activity: Activity,
     /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every new run
     /// ([`LiveAgent::begin_run`]).
     pub(crate) execution: u64,
+    /// The run's execution id (Node `executionId`, a UUID per run): stopControl names it and a stall reminder
+    /// carries it. Set when the run begins (`begin_run`), with the counter.
+    pub(crate) execution_id: String,
     /// Fork: how the previous run ended (`SubagentEntry::previous`), set by [`LiveAgent::begin_run`].
     pub(crate) previous: Option<rust_cli_kernel_api::panels::SubagentStatus>,
 }
@@ -140,11 +146,14 @@ impl LiveAgent {
     /// Fork: starts a new run (Node gives every resumed lifecycle a new execution id, core `runner.ts`). Every return
     /// to running goes through here, also the ones that replace a run ending in the same lock section (a stranded
     /// message or a leftover notice in `routing::settle`), which `settle_times` alone would not see as a new run.
-    pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>) {
+    pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>, execution_id: String) {
         self.shown.previous = Some(crate::views::status(self));
         self.state = AgentState::Running { abort, mailbox };
         self.late_messages.clear();
         self.shown.execution += 1;
+        self.shown.execution_id = execution_id;
+        // A new run starts with no activity (Node: a new execution has its own task snapshot).
+        self.shown.activity = Activity::default();
         // The previous run ended in this section when none was recorded: `settle_times` restarts the clock.
         self.shown.ended_ms.get_or_insert(0);
         self.shown.doing = None;
@@ -195,6 +204,8 @@ pub(crate) struct Live {
     order: AtomicU64,
     /// 每次改动后加一（tokio watch：多次改动合并成一次通知，tui-panels.md §0）。
     changes: tokio::sync::watch::Sender<u64>,
+    /// 无进展提醒的钟的唤醒（每次注册表或活动变化加一）。与 `changes` 分开：列表的订阅方不因每次工具调用重取。
+    wake: tokio::sync::watch::Sender<u64>,
 }
 
 impl Live {
@@ -204,6 +215,7 @@ impl Live {
             clock,
             order: AtomicU64::new(0),
             changes: tokio::sync::watch::channel(0).0,
+            wake: tokio::sync::watch::channel(0).0,
         }
     }
 
@@ -229,12 +241,127 @@ impl Live {
         };
         self.changes
             .send_modify(|version| *version = version.wrapping_add(1));
+        self.wake_clock();
         result
     }
 
     /// 变化通知的订阅（列表的查询方据此重取）。
     pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
         self.changes.subscribe()
+    }
+
+    /// 无进展提醒的钟的唤醒订阅（stall.rs）。
+    pub(crate) fn subscribe_wake(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.wake.subscribe()
+    }
+
+    fn wake_clock(&self) {
+        self.wake
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
+    /// 改动一个子代理的活动（进展、工具）。只唤醒钟：列表不因此重取。
+    fn activity(&self, agent: &AgentId, execution: u64, work: impl FnOnce(&mut Activity, u64)) {
+        let now = self.clock.now_ms();
+        let current = match self.agents().get_mut(agent) {
+            // An event of an earlier run (a late reply or tool result of a stopped run) changes nothing: the run
+            // it belongs to is no longer the agent's (Node `belongs()` checks the executionId).
+            Some(entry) if entry.shown.execution == execution => {
+                work(&mut entry.shown.activity, now);
+                true
+            }
+            _ => false,
+        };
+        if current {
+            self.wake_clock();
+        }
+    }
+
+    /// 模型请求完成、或子代理有了进展（stall.rs 的进展）。
+    pub(crate) fn progress(&self, agent: &AgentId, execution: u64) {
+        self.activity(agent, execution, Activity::progress);
+    }
+
+    /// 工具调用开始（子循环的 `ToolStarted`）。
+    pub(crate) fn tool_started(
+        &self,
+        agent: &AgentId,
+        execution: u64,
+        tool_use: &ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        let summary = crate::stall::input_summary(input);
+        self.activity(agent, execution, |activity, now| {
+            activity.tool_started(tool_use.as_str(), name, summary, now);
+        });
+    }
+
+    /// 工具调用加入批次（子循环的 `ToolScheduled`）：列出它，但排队不算进展。
+    pub(crate) fn tool_scheduled(
+        &self,
+        agent: &AgentId,
+        execution: u64,
+        tool_use: &ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        let summary = crate::stall::input_summary(input);
+        self.activity(agent, execution, |activity, now| {
+            activity.tool_scheduled(tool_use.as_str(), name, summary, now);
+        });
+    }
+
+    /// Node `isBackgroundSubagentStallReminderCurrent` for a queued reminder: the same run, still a running top-level
+    /// background agent, not waiting for an answer, and no progress since the reminder was built.
+    pub(crate) fn stall_current(&self, stall: &rust_cli_kernel_api::agents::AgentStall) -> bool {
+        self.stall_candidates().iter().any(|candidate| {
+            candidate.agent == stall.agent
+                && !candidate.waiting
+                && candidate.execution == stall.execution
+                && candidate.progress_time() == stall.progress_ms
+        })
+    }
+
+    /// 工具调用结束（子循环的 `ToolFinished`）。
+    pub(crate) fn tool_finished(&self, agent: &AgentId, execution: u64, tool_use: &ToolUseId) {
+        self.activity(agent, execution, |activity, now| {
+            activity.tool_finished(tool_use.as_str(), now)
+        });
+    }
+
+    /// 无进展提醒的候选：顶层会话启动、在跑、没有 owner、没被 erase 的后台子代理，按启动顺序。
+    pub(crate) fn stall_candidates(&self) -> Vec<crate::stall::Candidate> {
+        let mut candidates: Vec<(u64, crate::stall::Candidate)> = self
+            .agents()
+            .values()
+            .filter(|agent| {
+                agent.background
+                    && agent.owner.is_none()
+                    && !agent.erased
+                    && matches!(agent.state, AgentState::Running { .. })
+            })
+            .map(|agent| {
+                (
+                    agent.shown.order,
+                    crate::stall::Candidate {
+                        agent: agent.agent.clone(),
+                        root: agent.root.clone(),
+                        description: agent.description.clone(),
+                        started_ms: agent.shown.started_ms,
+                        execution: agent.shown.execution,
+                        execution_id: agent.shown.execution_id.clone(),
+                        activity: agent.shown.activity.clone(),
+                        waiting: agent.shown.waiting > 0,
+                    },
+                )
+            })
+            .collect();
+        candidates.sort_by_key(|(order, _)| *order);
+        candidates
+            .into_iter()
+            .map(|(_, candidate)| candidate)
+            .collect()
     }
 
     /// Fork (node_desktop): resolves once run `execution` of `agent` has ended (finished, parked, gone, or a later run
@@ -293,9 +420,11 @@ impl Live {
     }
 
     /// 子代理经父会话询问时记一次等待（`waiting` 为假时结束一次）。
-    pub(crate) fn waiting(&self, agent: &AgentId, waiting: bool) {
+    pub(crate) fn waiting(&self, agent: &AgentId, execution: u64, waiting: bool) {
         self.change(|agents| {
-            if let Some(entry) = agents.get_mut(agent) {
+            if let Some(entry) = agents.get_mut(agent)
+                && entry.shown.execution == execution
+            {
                 entry.shown.waiting = if waiting {
                     entry.shown.waiting + 1
                 } else {
@@ -303,6 +432,10 @@ impl Live {
                 };
             }
         });
+        // 答复了审批：等人的时间不算无进展，从这一刻重新计时（Node `PermissionResolved` 的 lastProgressAt）。
+        if !waiting {
+            self.progress(agent, execution);
+        }
     }
 
     /// 子会话提交了一条消息（只读查看据此重取）；这条消息是一个完成的子代理请求的回复时同时记下它的速度（F112）。
@@ -397,6 +530,7 @@ impl Live {
         agent: &AgentId,
         abort: Abort,
         tool_use: Option<ToolUseId>,
+        execution_id: String,
     ) -> Option<Option<Started>> {
         self.change_routed(|agents, routes| {
             let entry = agents.get_mut(agent)?;
@@ -406,7 +540,7 @@ impl Live {
             entry.background = true;
             entry.tool_use = tool_use;
             entry.stopped_by_user = false;
-            entry.begin_run(abort, Vec::new());
+            entry.begin_run(abort, Vec::new(), execution_id);
             Some(routes.claim(&entry.child, &entry.root))
         })
     }
@@ -495,7 +629,7 @@ impl Live {
             else {
                 return GuardedStop::NotFound;
             };
-            if entry.shown.execution.to_string() != execution {
+            if entry.shown.execution_id != execution {
                 return GuardedStop::NotRunning;
             }
             // A claimed run is already ending: a second stop before it settles is refused, as Node claims `killed`
@@ -572,6 +706,7 @@ fn settle_times(agents: &mut Agents, now: u64) {
             (false, None) => {
                 agent.shown.ended_ms = Some(now);
                 agent.shown.doing = None;
+                agent.shown.activity.tools.clear();
             }
             _ => {}
         }

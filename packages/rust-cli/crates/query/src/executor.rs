@@ -259,6 +259,19 @@ impl ToolBatch {
             .push(run.map(move |output| (index, output)).boxed());
     }
 
+    /// The call the last `add` put in the batch, when it will run (Node `ToolCallScheduled`). An unknown tool's
+    /// immediate result is not scheduled, so nothing waits for it to finish.
+    pub(crate) fn scheduled(&self) -> Option<(ToolUseId, String, Value)> {
+        let tracked = self.tools.last()?;
+        (!matches!(tracked.status, Status::Completed(_))).then(|| {
+            (
+                tracked.id.clone(),
+                tracked.name.clone(),
+                tracked.input.clone(),
+            )
+        })
+    }
+
     /// 这次响应里加入的调用数（日志用）。
     pub(crate) fn len(&self) -> usize {
         self.tools.len()
@@ -371,6 +384,7 @@ impl ToolBatch {
 
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: self.scope.parts.ids.message(),
             content: vec![ContentBlock::ToolResult {

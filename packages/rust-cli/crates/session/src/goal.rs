@@ -569,6 +569,7 @@ impl Actor {
 
     fn meta(&self, source: &str, text: String) -> Message {
         Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: self.deps.ids.message(),
             content: vec![ContentBlock::Text { text }],
@@ -581,6 +582,7 @@ impl Actor {
     /// `/goal <args>` 写进对话的消息（goal.md §2.1）；第一条人类输入用回合预先生成的 `prompt` ID。
     pub(crate) fn goal_inputs(&self, args: &str, prompt: MessageId) -> Inputs {
         let input = Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: prompt,
             content: vec![ContentBlock::Text {

@@ -65,6 +65,7 @@ impl HookRunner for Evaluator {
 
 fn feedback() -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("msg_feedback"),
         content: vec![ContentBlock::Text {

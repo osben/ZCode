@@ -54,6 +54,7 @@ fn tool_call_output_round_trips() {
     round_trip(&ToolCallOutput {
         output: output.clone(),
         new_messages: vec![Message::User(UserMessage {
+            stall_execution: None,
             intent: None,
             id: MessageId::new("msg_skill"),
             content: vec![ContentBlock::Text {
@@ -400,6 +401,9 @@ fn command_and_generation_ids_default_to_fresh_operation_ids() {
             unreachable!()
         }
         fn run(&self) -> crate::ids::RunId {
+            unreachable!()
+        }
+        fn execution(&self) -> String {
             unreachable!()
         }
         fn operation(&self) -> crate::ids::OperationId {

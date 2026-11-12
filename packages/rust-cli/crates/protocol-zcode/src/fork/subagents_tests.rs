@@ -49,6 +49,7 @@ fn entry(
     ended_ago_ms: Option<u64>,
 ) -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
         execution: 0,
         previous: None,
         agent: AgentId::new("agent_x"),

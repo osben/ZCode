@@ -31,6 +31,7 @@ mod runs;
 mod shell_notices;
 mod signals;
 mod spawn;
+mod stall;
 #[cfg(test)]
 #[path = "stop_subagent_tests.rs"]
 mod stop_subagent_tests;
@@ -58,6 +59,7 @@ pub use agent_tool::AgentTool;
 pub use context::AgentCatalog;
 pub use definitions::{AgentDefinition, AgentSource, builtins};
 pub use plugin::PluginAgentFile;
+pub use stall::StallConfig;
 pub use tasks::{MemoryTaskLists, task_tools_enabled};
 
 use crate::live::Live;
@@ -132,6 +134,8 @@ pub struct AgentsConfig {
     /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
     /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
     pub node_desktop: bool,
+    /// 后台子代理的无进展提醒（Node `subagents.backgroundStallNotifyMs` 与 `backgroundStallMaxIntervalMs`）。
+    pub stall: StallConfig,
 }
 
 impl AgentsPorts {
@@ -287,6 +291,12 @@ impl Agents {
             }
             AgentRegistry { base, own, core }
         });
+        // 无进展提醒的钟：弱引用，注册表释放后驱动结束（stall.rs）。
+        stall::spawn(
+            Arc::downgrade(&registry.core),
+            config.stall,
+            &registry.core.ports.spawner,
+        );
         Self {
             core: registry.core.clone(),
             registry,
@@ -346,6 +356,14 @@ impl AgentSignals for Signals {
 
     fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {
         shell_notices::adopt(&self.0, meta);
+    }
+
+    async fn stall_current(
+        &self,
+        _session: &SessionId,
+        stall: &rust_cli_kernel_api::agents::AgentStall,
+    ) -> bool {
+        self.0.live.stall_current(stall)
     }
 
     fn session_closing(&self, session: &SessionId) {

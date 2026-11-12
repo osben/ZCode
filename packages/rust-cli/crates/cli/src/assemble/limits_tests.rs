@@ -9,6 +9,29 @@ fn env(pairs: &[(&str, &str)]) -> rust_cli_base::secret::EnvSnapshot {
         .collect()
 }
 
+/// `ZCODE_SUBAGENT_STALL_NOTIFY_MS` follows Node's `readSubagentStallNotifyOverride`: trimmed digits only, a safe
+/// integer above 0, and at least 10 seconds.
+#[test]
+fn subagent_stall_notify_follows_node_rule() {
+    let read = |value: &str| {
+        subagent_stall_notify_ms(&env(&[(
+            rust_cli_base::names::env::ZCODE_SUBAGENT_STALL_NOTIFY_MS,
+            value,
+        )]))
+    };
+    assert_eq!(read(" 30000 "), Some(30_000));
+    assert_eq!(read("5"), Some(10_000), "below the floor is 10 seconds");
+    assert_eq!(read("9007199254740991"), Some(9_007_199_254_740_991));
+    for refused in ["0", "30s", "", "1e4", "-5", "+5", "9007199254740992", "1.5"] {
+        assert_eq!(read(refused), None, "{refused:?} is ignored");
+    }
+    assert_eq!(
+        subagent_stall_notify_ms(&env(&[])),
+        None,
+        "unset means the default"
+    );
+}
+
 /// `js_int`：parseInt、科学计数法（整数才算）、千分位、首尾空白。
 #[test]
 fn values_parse_as_integers() {

@@ -76,6 +76,7 @@ fn assembler(surface: Surface) -> PromptAssembler {
 
 fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
@@ -165,6 +166,7 @@ async fn ultrathink_is_only_for_the_input_step() {
         usage: None,
     }));
     history.push(Message::User(UserMessage {
+        stall_execution: None,
         intent: None,
         id: MessageId::new("r"),
         content: vec![ContentBlock::ToolResult {
