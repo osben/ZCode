@@ -52,6 +52,7 @@ fn manifest(deltas: &[Value]) -> Option<&Value> {
 
 fn entry(n: u32, status: SubagentStatus, waiting: bool) -> SubagentEntry {
     SubagentEntry {
+        execution_id: "run_0".to_owned(),
         execution: 0,
         previous: None,
         agent: AgentId::new(format!("agent_{n}")),
@@ -347,16 +348,18 @@ fn the_stop_control_comes_from_the_live_table() {
             .iter()
             .find(|item| item["childSessionId"] == "sess_subagent_agent_1")
             .unwrap()["stopControl"],
-        json!({"taskId": "agent_1", "executionId": "0"})
+        json!({"taskId": "agent_1", "executionId": "run_0"})
     );
     assert_eq!(control(&feed, "sess_subagent_agent_2"), None);
 
     own.execution = 1;
+
+    own.execution_id = "run_1".to_owned();
     feed.projection
         .subagent_table(&[own.clone(), inner.clone()], 20);
     assert_eq!(
         control(&feed, "sess_subagent_agent_1"),
-        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+        Some(json!({"taskId": "agent_1", "executionId": "run_1"}))
     );
 
     own.status = SubagentStatus::Killed;
@@ -436,10 +439,12 @@ fn a_rebuilt_projection_grants_no_stop_to_a_run_already_going() {
     assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
 
     running.execution = 1;
+
+    running.execution_id = "run_1".to_owned();
     feed.projection.subagent_table(&[running], 40);
     assert_eq!(
         control(&feed, "sess_subagent_agent_1"),
-        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+        Some(json!({"taskId": "agent_1", "executionId": "run_1"}))
     );
 }
 
@@ -457,11 +462,12 @@ fn a_run_missed_between_reads_is_closed_before_the_next_one_opens() {
         .subagent_table(&[entry(1, SubagentStatus::Running, false)], 10);
     assert_eq!(
         control(&feed, "sess_subagent_agent_1"),
-        Some(json!({"taskId": "agent_1", "executionId": "0"}))
+        Some(json!({"taskId": "agent_1", "executionId": "run_0"}))
     );
 
     let mut resumed = entry(1, SubagentStatus::Running, false);
     resumed.execution = 1;
+    resumed.execution_id = "run_1".to_owned();
     resumed.previous = Some(SubagentStatus::Killed);
     let deltas = feed.projection.subagent_table(&[resumed], 20);
     let statuses: Vec<&Value> = deltas
@@ -472,6 +478,6 @@ fn a_run_missed_between_reads_is_closed_before_the_next_one_opens() {
     assert_eq!(statuses, [&json!("cancelled"), &json!("running")]);
     assert_eq!(
         control(&feed, "sess_subagent_agent_1"),
-        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+        Some(json!({"taskId": "agent_1", "executionId": "run_1"}))
     );
 }

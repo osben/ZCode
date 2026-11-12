@@ -124,6 +124,9 @@ pub(crate) struct Shown {
     /// Fork: which run this is (`SubagentEntry::execution`): 0 at spawn, plus one on every new run
     /// ([`LiveAgent::begin_run`]).
     pub(crate) execution: u64,
+    /// The run's execution id (Node `executionId`, a UUID per run): stopControl names it and a stall reminder
+    /// carries it. Set when the run begins (`begin_run`), with the counter.
+    pub(crate) execution_id: String,
     /// Fork: how the previous run ended (`SubagentEntry::previous`), set by [`LiveAgent::begin_run`].
     pub(crate) previous: Option<rust_cli_kernel_api::panels::SubagentStatus>,
 }
@@ -143,11 +146,12 @@ impl LiveAgent {
     /// Fork: starts a new run (Node gives every resumed lifecycle a new execution id, core `runner.ts`). Every return
     /// to running goes through here, also the ones that replace a run ending in the same lock section (a stranded
     /// message or a leftover notice in `routing::settle`), which `settle_times` alone would not see as a new run.
-    pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>) {
+    pub(crate) fn begin_run(&mut self, abort: Abort, mailbox: Vec<Mail>, execution_id: String) {
         self.shown.previous = Some(crate::views::status(self));
         self.state = AgentState::Running { abort, mailbox };
         self.late_messages.clear();
         self.shown.execution += 1;
+        self.shown.execution_id = execution_id;
         // A new run starts with no activity (Node: a new execution has its own task snapshot).
         self.shown.activity = Activity::default();
         // The previous run ended in this section when none was recorded: `settle_times` restarts the clock.
@@ -346,6 +350,7 @@ impl Live {
                         description: agent.description.clone(),
                         started_ms: agent.shown.started_ms,
                         execution: agent.shown.execution,
+                        execution_id: agent.shown.execution_id.clone(),
                         activity: agent.shown.activity.clone(),
                         waiting: agent.shown.waiting > 0,
                     },
@@ -525,6 +530,7 @@ impl Live {
         agent: &AgentId,
         abort: Abort,
         tool_use: Option<ToolUseId>,
+        execution_id: String,
     ) -> Option<Option<Started>> {
         self.change_routed(|agents, routes| {
             let entry = agents.get_mut(agent)?;
@@ -534,7 +540,7 @@ impl Live {
             entry.background = true;
             entry.tool_use = tool_use;
             entry.stopped_by_user = false;
-            entry.begin_run(abort, Vec::new());
+            entry.begin_run(abort, Vec::new(), execution_id);
             Some(routes.claim(&entry.child, &entry.root))
         })
     }
@@ -623,7 +629,7 @@ impl Live {
             else {
                 return GuardedStop::NotFound;
             };
-            if entry.shown.execution.to_string() != execution {
+            if entry.shown.execution_id != execution {
                 return GuardedStop::NotRunning;
             }
             // A claimed run is already ending: a second stop before it settles is refused, as Node claims `killed`

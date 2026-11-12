@@ -33,6 +33,7 @@ pub(crate) fn app(lang: Lang) -> App {
 
 pub(crate) fn entry(id: &str, background: bool, status: SubagentStatus) -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
         execution: 0,
         previous: None,
         agent: AgentId::new(id),

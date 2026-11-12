@@ -29,8 +29,19 @@ pub(crate) const ALREADY_SENT: &str = "the message already went out";
 
 /// Node `orderTaskNotificationsForParsing`: in a batch, the terminal notifications come first (stable order), so the
 /// batch's representative (its title and source) is the first of them. A stall reminder is never terminal.
+///
+/// Node decides this by the `originMeta.subagentStall` prefix of each notification; here it is decided by the
+/// variant. The match lists every variant, so a new kind has to be placed on purpose and cannot land in a group by
+/// accident.
 pub(crate) fn order_for_parsing(notices: &mut [Waiting]) {
-    notices.sort_by_key(|notice| matches!(notice, Waiting::Stall(_)));
+    notices.sort_by_key(|notice| match notice {
+        // Terminal notifications: a finished command, a finished subagent, or a monitor's final line.
+        Waiting::Shell(_) | Waiting::Agent(_) | Waiting::MonitorEnd { .. } => 0,
+        // Not terminal, but they have always sorted with the terminal group. Keep them there.
+        Waiting::Peer(_) | Waiting::MonitorEvent(_) => 0,
+        // A stall reminder goes last, after every notification that reports a result.
+        Waiting::Stall(_) => 1,
+    });
 }
 
 #[cfg(test)]

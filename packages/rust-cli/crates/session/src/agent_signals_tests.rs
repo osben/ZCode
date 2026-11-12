@@ -268,6 +268,7 @@ async fn a_stall_reminder_opens_a_turn_with_its_raw_text_and_is_never_acked() {
     sender
         .send(AgentSignal::Stall(
             rust_cli_kernel_api::agents::AgentStall {
+                execution_id: String::new(),
                 agent: AgentId::new("agent_1"),
                 text: STALL_TEXT.to_owned(),
                 execution: 0,

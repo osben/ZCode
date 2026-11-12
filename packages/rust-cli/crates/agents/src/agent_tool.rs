@@ -267,7 +267,10 @@ impl Tool for AgentTool {
                 .flatten()
                 .map(crate::child::Asks),
             state: AgentState::Finished(Ending::Completed),
-            shown: crate::live::Shown::default(),
+            shown: crate::live::Shown {
+                execution_id: self.core.ports.ids.execution(),
+                ..Default::default()
+            },
             delivered: Vec::new(),
             fork_prefix: inherited.map(Arc::new),
         };

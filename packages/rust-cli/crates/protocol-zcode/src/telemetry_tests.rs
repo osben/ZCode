@@ -7,7 +7,10 @@ use rust_cli_kernel_api::session_api::{KernelEvent, TurnOutcome};
 use rust_cli_kernel_api::tool::ToolOutput;
 use serde_json::{Value, json};
 
-use super::{Observed, Provider, Role, SubagentLink, Telemetry, uuid_v7};
+use super::{
+    Observed, Provider, Role, SubagentLink, Telemetry, background_source, notification_metas,
+    subagent_result_consumed, uuid_v7,
+};
 
 /// The fields `conversationTelemetryFactSchema` allows per kind (packages/shared/src/zcode-protocol-v4/telemetry.ts);
 /// the schema is strict, so any other field drops the fact on the Host.
@@ -564,4 +567,77 @@ fn a_subagent_without_its_call_id_omits_the_parent_tool_call() {
     }]);
     run.assert_schema();
     assert!(run.facts[0].get("parentToolCallId").is_none());
+}
+
+/// One task-notification block of a batch, for a finished subagent or background command.
+fn finished_notice(summary: &str) -> String {
+    format!(
+        "<task-notification>\n<task-id>agent_1</task-id>\n<status>completed</status>\n\
+         <summary>{summary}</summary>\n</task-notification>"
+    )
+}
+
+/// A no-progress reminder block (Node `subagentStall`); it carries no `backgroundSource` of its own.
+fn stall_notice() -> String {
+    "<task-notification>\n<background-agent-stall>\n  <task-id>agent_2</task-id>\n  \
+     <description>Silent job</description>\n  <no-progress-for-ms>900000</no-progress-for-ms>\n  \
+     <last-progress-at>2026-11-12T10:00:00.000Z</last-progress-at>\n</background-agent-stall>"
+        .to_owned()
+}
+
+fn source_of(texts: &[String]) -> Option<String> {
+    background_source(&notification_metas(texts.iter().map(String::as_str)))
+}
+
+#[test]
+fn a_batch_of_only_stall_reminders_has_no_background_source() {
+    assert_eq!(source_of(&[stall_notice()]), None);
+}
+
+#[test]
+fn a_stall_reminder_does_not_hide_the_result_it_is_batched_with() {
+    let agent = finished_notice("Agent \"Check history\" completed");
+    let bash = finished_notice("Background command \"Build\" completed");
+    assert_eq!(
+        source_of(&[stall_notice(), bash.clone()]).as_deref(),
+        Some("bash")
+    );
+    assert_eq!(
+        source_of(&[bash, stall_notice()]).as_deref(),
+        Some("bash"),
+        "batch order does not change the source"
+    );
+    assert_eq!(
+        source_of(&[agent, stall_notice()]).as_deref(),
+        Some("subagent")
+    );
+}
+
+#[test]
+fn a_single_background_command_result_names_bash() {
+    let bash = finished_notice("Background command \"Build\" completed");
+    assert_eq!(source_of(&[bash]).as_deref(), Some("bash"));
+}
+
+#[test]
+fn results_from_different_sources_have_no_background_source() {
+    let agent = finished_notice("Agent \"Check history\" completed");
+    let bash = finished_notice("Background command \"Build\" completed");
+    assert_eq!(source_of(&[agent.clone(), bash.clone()]), None);
+    assert_eq!(source_of(&[bash, agent]), None);
+}
+
+#[test]
+fn a_stall_reminder_is_not_a_consumed_subagent_result() {
+    assert!(!subagent_result_consumed(&notification_metas([
+        stall_notice().as_str()
+    ])));
+    let agent = finished_notice("Agent \"Check history\" completed");
+    assert!(subagent_result_consumed(&notification_metas([
+        agent.as_str()
+    ])));
+    let bash = finished_notice("Background command \"Build\" completed");
+    assert!(!subagent_result_consumed(&notification_metas([
+        bash.as_str()
+    ])));
 }

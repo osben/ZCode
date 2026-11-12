@@ -258,7 +258,8 @@ pub trait RunSink: Interactions + SessionOps {
     async fn tool_scheduled(&self, _tool_use: &ToolUseId, _name: &str, _input: &Value) {}
 
     /// A model request is about to be sent (Node `ModelRequest`, which also sets the subagent's last progress). Called
-    /// for every attempt, retries included. Default: nothing.
+    /// once per model step, each time the run sends a request to the model. Retries inside the provider adapter are
+    /// not counted, as in Node. Default: nothing.
     async fn request_started(&self) {}
 
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序

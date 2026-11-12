@@ -17,6 +17,7 @@ fn reminder(
     next_report_in_ms: u64,
 ) -> Reminder {
     Reminder {
+        execution_id: String::new(),
         agent: AgentId::new("agent_abc"),
         root: SessionId::new("sess_root"),
         description: description.to_owned(),
@@ -227,6 +228,7 @@ fn the_config_defaults_and_keeps_the_cap_above_the_first_interval() {
 /// A candidate that started at `started` and has seen no progress since.
 fn candidate(agent: &str, started: u64) -> Candidate {
     Candidate {
+        execution_id: String::new(),
         agent: AgentId::new(agent),
         root: SessionId::new("sess_root"),
         description: "task".to_owned(),

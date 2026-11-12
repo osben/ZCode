@@ -13,6 +13,7 @@ use crate::ui::test_support::{app, ctrl, key};
 
 fn entry(id: &str, status: SubagentStatus, ended_ago_ms: Option<u64>) -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
         execution: 0,
         previous: None,
         agent: AgentId::new(id),

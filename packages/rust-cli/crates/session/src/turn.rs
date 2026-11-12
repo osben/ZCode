@@ -150,7 +150,9 @@ impl Actor {
         let stalls: Vec<Option<String>> = notices
             .iter()
             .map(|notice| match notice {
-                Waiting::Stall(stall) => Some(stall.execution.to_string()),
+                Waiting::Stall(stall) => {
+                    (!stall.execution_id.is_empty()).then(|| stall.execution_id.clone())
+                }
                 _ => None,
             })
             .collect();

@@ -5,6 +5,7 @@ use crate::ids::SessionId;
 #[test]
 fn subagent_entries_round_trip() {
     let entry = SubagentEntry {
+        execution_id: String::new(),
         execution: 0,
         previous: None,
         agent: AgentId::new("agent_1"),
@@ -99,6 +100,7 @@ fn subagent_activities_round_trip() {
 fn tasks_snapshots_round_trip() {
     let snapshot = TasksSnapshot {
         subagents: vec![SubagentEntry {
+            execution_id: String::new(),
             execution: 0,
             previous: None,
             agent: AgentId::new("agent_1"),

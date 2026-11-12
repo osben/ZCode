@@ -93,8 +93,11 @@ pub struct AgentStall {
     pub agent: AgentId,
     /// 提醒全文（`[SYSTEM NOTIFICATION …]` 开头，Node 的 `formatBackgroundSubagentStallNotification` 原样）。
     pub text: String,
-    /// 提醒所依据的运行（Node `executionId`）：#418 的 execution 计数，与 stopControl 用的是同一个值。
+    /// 提醒所依据的运行的计数（#418 的 `execution`，只用来判断是不是同一次运行）。
     pub execution: u64,
+    /// 提醒所依据的运行的 execution id（Node `executionId`，每次运行一个 UUID）：stopControl 用的是同一个值，写进
+    /// `subagentStall.executionId`。
+    pub execution_id: String,
     /// 提醒所依据的最后一次进展（Node `lastProgressAt`）。出队时进展前进了，提醒就过时。
     pub progress_ms: u64,
 }

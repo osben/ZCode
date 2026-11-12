@@ -403,6 +403,9 @@ fn command_and_generation_ids_default_to_fresh_operation_ids() {
         fn run(&self) -> crate::ids::RunId {
             unreachable!()
         }
+        fn execution(&self) -> String {
+            unreachable!()
+        }
         fn operation(&self) -> crate::ids::OperationId {
             let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             crate::ids::OperationId::new(format!("op_{n}"))

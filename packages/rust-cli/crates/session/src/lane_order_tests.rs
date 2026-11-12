@@ -18,6 +18,7 @@ fn terminal(agent: &str) -> Waiting {
 
 fn stall(agent: &str) -> Waiting {
     Waiting::Stall(AgentStall {
+        execution_id: String::new(),
         agent: AgentId::new(agent),
         text: format!("[SYSTEM NOTIFICATION - NOT USER INPUT] {agent}"),
         execution: 0,
@@ -54,6 +55,25 @@ fn an_order_that_is_already_right_stays_put() {
             "<task-notification>a</task-notification>",
             "<task-notification>c</task-notification>",
             "[SYSTEM NOTIFICATION - NOT USER INPUT] b",
+        ]
+    );
+}
+
+#[test]
+fn a_monitor_event_keeps_its_arrival_place_among_the_terminal_notices() {
+    // A monitor event sorts with the terminal group, as it did before the explicit match: arrival order holds.
+    let mut notices = vec![
+        stall("a"),
+        Waiting::MonitorEvent("monitor line".to_owned()),
+        terminal("bash"),
+    ];
+    order_for_parsing(&mut notices);
+    assert_eq!(
+        texts(&notices),
+        [
+            "monitor line",
+            "<task-notification>bash</task-notification>",
+            "[SYSTEM NOTIFICATION - NOT USER INPUT] a",
         ]
     );
 }

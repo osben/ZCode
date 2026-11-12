@@ -77,8 +77,13 @@ fn times_follow_the_state_and_restart_resets_the_clock() {
 
     // SendMessage 续跑：重新开始计时。
     assert!(
-        live.restart(&AgentId::new("agent_a"), Abort::new(), None)
-            .is_some()
+        live.restart(
+            &AgentId::new("agent_a"),
+            Abort::new(),
+            None,
+            "exec_test".to_owned()
+        )
+        .is_some()
     );
     clock.set(12_000);
     let entry = &entries(&live, &root)[0];
@@ -393,7 +398,10 @@ fn the_current_activity_follows_the_child_events() {
     apply(thinking("again"));
     live.finish(&agent, Ending::Completed);
     assert_eq!(activity(), None);
-    assert!(live.restart(&agent, Abort::new(), None).is_some());
+    assert!(
+        live.restart(&agent, Abort::new(), None, "exec_test".to_owned())
+            .is_some()
+    );
     assert_eq!(activity(), None);
 }
 
