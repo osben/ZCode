@@ -361,10 +361,13 @@ pub enum Command {
     /// Fork: the foreground promotion lease (Node `acquireForegroundPromotionLease`, `send-now:`/`sendQueuedNow`). While
     /// reserved, nothing starts a turn on its own (queued inputs, background notices, cron): the caller interrupts the
     /// running turn and submits the promoted input to the idle session. Releasing while idle resumes the drain as a turn
-    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. Always
-    /// `Accepted`.
+    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. The lease
+    /// has one owner (`lease`, Node's `leaseId`): another lease is refused with [`FOREGROUND_BUSY`], the owner taking it
+    /// again is accepted, and only the owner's release ends it (another lease's release is accepted and changes
+    /// nothing), as Node `acquireForegroundPromotionLease` / `releaseForegroundPromotionLease`.
     ReserveForeground {
         reserved: bool,
+        lease: String,
     },
     /// Fork: the release lease of `session/releaseUnderDirectory` (specs/fork-rust-agent-parity.md, A3). Taking it
     /// (`reserved: true`) is refused with [`SESSION_BUSY`] while a turn, compaction or job runs, an input is queued or
@@ -540,6 +543,8 @@ pub struct QueuedAttachments {
 pub const SESSION_BUSY: &str = "session.busy";
 /// Fork: a command reached a session whose release lease is held (`Command::ReserveRelease`).
 pub const SESSION_RELEASING: &str = "session.releasing";
+/// Fork: `Command::ReserveForeground` refused because another promotion owns the foreground (Node's lease `conflict`).
+pub const FOREGROUND_BUSY: &str = "session.foregroundBusy";
 
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";

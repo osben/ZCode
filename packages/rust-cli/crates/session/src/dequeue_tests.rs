@@ -48,12 +48,12 @@ async fn a_queued_input_taken_back_never_goes_out() {
     let interaction = asked(&mut events).await;
     session.send(submit("c2", "after this turn")).await;
     assert_eq!(session.view().await.unwrap().queue.len(), 1);
-    assert_eq!(
+    assert!(matches!(
         session.send(dequeue("c3", "c2")).await,
         Ack::Accepted {
-            result: rust_cli_kernel_api::session_api::CommandResult::Done
+            result: rust_cli_kernel_api::session_api::CommandResult::Dequeued { .. }
         }
-    );
+    ));
     let view = session.view().await.unwrap();
     assert!(view.queue.is_empty());
     session.send(answer("c4", interaction)).await;
@@ -194,10 +194,94 @@ async fn a_dequeued_content_input_hands_back_its_content() {
             },
         })
         .await;
+    let Ack::Accepted {
+        result:
+            rust_cli_kernel_api::session_api::CommandResult::Dequeued {
+                input,
+                content: handed,
+            },
+    } = session.send(dequeue("c3", "c2")).await
+    else {
+        panic!("the dequeue hands back the input");
+    };
+    assert_eq!(handed, content);
+    assert_eq!(input.command, CommandId::new("c2"));
+    assert_eq!(input.text, "look");
+}
+
+/// Fork: `Dequeue` hands back the input as the queue holds it when it is removed, so a promotion that read the item
+/// before an `editQueueItem` submits the edited text, intent and content together (Node takes them from one item).
+#[tokio::test]
+async fn a_dequeued_input_is_the_edited_one() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    asked(&mut events).await;
+    let mut intent = rust_cli_kernel_api::input_intent::InputIntent::default();
+    intent.set(
+        rust_cli_kernel_api::input_intent::ATTACHMENT_REFS,
+        serde_json::json!([{"id": "old"}]),
+    );
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("c2"),
+            command: Command::SubmitWith {
+                intent: Some(Box::new(intent)),
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: "old".to_owned(),
+                content: vec![ContentBlock::Text {
+                    text: "old".to_owned(),
+                }],
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: false,
+            },
+        })
+        .await;
+    let fresh = vec![
+        ContentBlock::Text {
+            text: "new".to_owned(),
+        },
+        ContentBlock::Text {
+            text: "<file b.txt>".to_owned(),
+        },
+    ];
+    assert!(matches!(
+        session
+            .send(CommandEnvelope {
+                id: CommandId::new("c3"),
+                command: Command::EditQueued {
+                    command: CommandId::new("c2"),
+                    edit: rust_cli_kernel_api::session_api::QueuedEdit {
+                        text: Some("new".to_owned()),
+                        attachments: Some(rust_cli_kernel_api::session_api::QueuedAttachments {
+                            refs: serde_json::json!([{"id": "new"}]),
+                            content: vec![ContentBlock::Text {
+                                text: "<file b.txt>".to_owned(),
+                            }],
+                        }),
+                        ..Default::default()
+                    },
+                },
+            })
+            .await,
+        Ack::Accepted { .. }
+    ));
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Dequeued { input, content },
+    } = session.send(dequeue("c4", "c2")).await
+    else {
+        panic!("the dequeue hands back the input");
+    };
+    assert_eq!(input.text, "new");
+    assert_eq!(content, fresh);
     assert_eq!(
-        session.send(dequeue("c3", "c2")).await,
-        Ack::Accepted {
-            result: rust_cli_kernel_api::session_api::CommandResult::Dequeued { content }
-        }
+        input
+            .intent
+            .as_ref()
+            .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS))
+            .cloned(),
+        Some(serde_json::json!([{"id": "new"}]))
     );
 }

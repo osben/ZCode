@@ -203,9 +203,9 @@ impl Actor {
     /// 跟着条目一起去掉）。判断与出队在 actor 的一次处理里：开回合、成批与工具边界的结局（`settle_steering`）也都在
     /// actor 里出队，所以一条输入要么取回、要么发出，不会两样都有。
     /// Fork: a composer edit lock refuses the removal (Node `removePendingInputById`); [`Self::clear_queued`] ignores it.
-    /// An input with attachments hands back its content
-    /// ([`rust_cli_kernel_api::session_api::CommandResult::Dequeued`]), so a promotion
-    /// (`sendQueuedNow`) submits what the queue held.
+    /// The removed input and its content are handed back
+    /// ([`rust_cli_kernel_api::session_api::CommandResult::Dequeued`]) from this one state of the queue, so a promotion
+    /// (`sendQueuedNow`) submits what the queue held, edits included.
     pub(crate) fn dequeue(&mut self, command: &CommandId) -> rust_cli_kernel_api::session_api::Ack {
         if self.inbox.edit_lock_of(command).is_some() {
             return crate::actor::rejected(QUEUE_ITEM_EDIT_LOCKED);
@@ -217,13 +217,15 @@ impl Actor {
             return crate::actor::rejected(ALREADY_SENT);
         };
         self.emit_queue();
-        match removed.kind {
-            crate::inbox::InputKind::Content(content) => {
-                rust_cli_kernel_api::session_api::Ack::Accepted {
-                    result: rust_cli_kernel_api::session_api::CommandResult::Dequeued { content },
-                }
-            }
-            _ => crate::actor::accepted(),
+        let content = match removed.kind {
+            crate::inbox::InputKind::Content(content) => content,
+            _ => Vec::new(),
+        };
+        rust_cli_kernel_api::session_api::Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Dequeued {
+                input: Box::new(removed.input),
+                content,
+            },
         }
     }
 
@@ -363,16 +365,35 @@ impl Actor {
 
     /// Fork: `Command::ReserveForeground` (Node's foreground promotion lease): while reserved, [`Self::start_next`]
     /// starts nothing, so the turn end after the interrupt cannot start a background notice (or a queued input) ahead of
-    /// the promoted input. Releasing while idle resumes the drain as a turn end would. Always `Accepted`.
+    /// the promoted input. The lease has one owner, as Node `acquireForegroundPromotionLease` /
+    /// `releaseForegroundPromotionLease`: another owner's take is refused with `FOREGROUND_BUSY` (Node `conflict`), the
+    /// owner's repeat take is accepted, and only the owner's release ends it. Releasing while idle resumes the drain as a
+    /// turn end would.
     pub(crate) async fn reserve_foreground(
         &mut self,
         reserved: bool,
+        lease: String,
     ) -> rust_cli_kernel_api::session_api::Ack {
-        let was = self.inbox.set_reserved(reserved);
-        if was && !reserved && !self.busy() {
-            self.start_next().await;
+        let owner = self.inbox.foreground_owner().map(str::to_owned);
+        if !reserved {
+            // Only the owner ends the lease: a finished promotion must not open the foreground another one still holds.
+            if owner.as_deref() == Some(lease.as_str()) {
+                self.inbox.set_foreground_owner(None);
+                if !self.busy() {
+                    self.start_next().await;
+                }
+            }
+            return crate::actor::accepted();
         }
-        crate::actor::accepted()
+        match owner {
+            Some(owner) if owner != lease => {
+                crate::actor::rejected(rust_cli_kernel_api::session_api::FOREGROUND_BUSY)
+            }
+            _ => {
+                self.inbox.set_foreground_owner(Some(lease));
+                crate::actor::accepted()
+            }
+        }
     }
 
     /// Fork: `Command::ReserveRelease` (`session/releaseUnderDirectory`, specs/fork-rust-agent-parity.md A3). The lease

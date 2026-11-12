@@ -1379,12 +1379,26 @@ async fn send_text_now(
 ) -> Ack {
     let handle = live.handle.as_ref();
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
-    send(
+    // Node `send-now:<commandId>`: the lease's owner. Another promotion owning the foreground refuses the input as
+    // Node does (`send now foreground promotion is busy`), and that lease is left alone.
+    if let rust_cli_kernel_api::session_api::Ack::Rejected { .. } = send(
         handle,
         &part("reserve"),
-        Command::ReserveForeground { reserved: true },
+        Command::ReserveForeground {
+            reserved: true,
+            lease: format!("send-now:{}", envelope.command_id),
+        },
     )
-    .await;
+    .await
+    {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "fault.command.inputRejected",
+            "send now foreground promotion is busy",
+            revision,
+        );
+    }
     let ack = match crate::fork::settle_running_turn(live, envelope).await {
         Ok(()) => {
             send_text(
@@ -1410,7 +1424,10 @@ async fn send_text_now(
     send(
         handle,
         &part("release"),
-        Command::ReserveForeground { reserved: false },
+        Command::ReserveForeground {
+            reserved: false,
+            lease: format!("send-now:{}", envelope.command_id),
+        },
     )
     .await;
     ack

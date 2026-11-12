@@ -39,9 +39,11 @@ pub enum CommandResult {
     Directory(DirectoryOutcome),
     /// `BackgroundForeground`：转到后台的前台命令数。
     Backgrounded { count: usize },
-    /// Fork: `Dequeue` of an input with attachments: its content (the typed text block first, then the attachments),
-    /// so a promotion submits what the queue held. A text input answers [`CommandResult::Done`].
+    /// Fork: `Dequeue` hands back the removed input and its content (for an input with attachments the typed text
+    /// block first, then the attachments; empty otherwise), taken from one state of the queue, so a promotion submits
+    /// exactly what the queue held when it was removed (Node takes the intent and the attachments from one item).
     Dequeued {
+        input: Box<crate::session_api::QueuedInput>,
         content: Vec<crate::message::ContentBlock>,
     },
 }

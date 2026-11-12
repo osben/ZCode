@@ -532,20 +532,38 @@ pub(super) async fn send_queued_now(
         );
     }
     let part = |suffix: &str| format!("{}:{suffix}", envelope.command_id);
-    let release = || Command::ReserveForeground { reserved: false };
+    // Node `queue-promotion:<commandId>`: the lease's owner, so only this promotion's release ends it.
+    let lease = format!("queue-promotion:{}", envelope.command_id);
+    let release = || Command::ReserveForeground {
+        reserved: false,
+        lease: lease.clone(),
+    };
     // The promotion lease: while the window is open neither another queued item nor a background notice can start
     // (Node `dequeueNextRunnableBatch` returns only the promoted command). The user's own hold stays as it is.
-    send(
+    // Node `acquireForegroundPromotionLease`: another promotion owns the foreground (`conflict`) → refused, the item
+    // stays queued and the other lease is left alone.
+    if let KernelAck::Rejected { reason } = send(
         handle,
         &part("reserve"),
-        Command::ReserveForeground { reserved: true },
+        Command::ReserveForeground {
+            reserved: true,
+            lease: lease.clone(),
+        },
     )
-    .await;
+    .await
+    {
+        return failed(
+            PROMOTION_BUSY,
+            format!("v4 queue promotion is owned by another lease: {reason}"),
+        );
+    }
     if let Err(reason) = settle_running_turn(live, envelope).await {
         send(handle, &part("resume"), release()).await;
         return failed(ITEM_UNAVAILABLE, reason);
     }
-    // Removed only when the promotion is about to start, like Node's promotion commit.
+    // Removed only when the promotion is about to start, like Node's promotion commit. The kernel hands back the input
+    // as the queue held it then: an `editQueueItem` that landed while the running turn settled is in it, so the text,
+    // the intent (quotes, chips) and the content submitted below come from one state (Node takes them from one item).
     let taken = send(
         handle,
         &part("take"),
@@ -554,17 +572,26 @@ pub(super) async fn send_queued_now(
         },
     )
     .await;
-    let content = match taken {
+    let (input, content) = match taken {
+        KernelAck::Accepted {
+            result: CommandResult::Dequeued { input, content },
+        } => (*input, content),
         KernelAck::Rejected { reason } => {
             send(handle, &part("resume"), release()).await;
             return failed(PROMOTION_COMMIT_FAILED, reason);
         }
-        KernelAck::Accepted {
-            result: CommandResult::Dequeued { content },
-        } => content,
-        KernelAck::Accepted { .. } | KernelAck::Duplicate => Vec::new(),
+        KernelAck::Accepted { .. } | KernelAck::Duplicate => {
+            send(handle, &part("resume"), release()).await;
+            return failed(
+                PROMOTION_COMMIT_FAILED,
+                format!(
+                    "v4 sendQueuedNow queue item not handed back: {}",
+                    body.queue_item_id
+                ),
+            );
+        }
     };
-    let chips = item
+    let chips = input
         .intent
         .as_ref()
         .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS))
@@ -573,7 +600,7 @@ pub(super) async fn send_queued_now(
         .unwrap_or_default();
     // The item starts with its own frozen execution state; a selection the client re-sent with the
     // promotion overrides the item's model, like the row commands' resubmit.
-    let mut execution = item.execution.clone();
+    let mut execution = input.execution.clone();
     if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref()) {
         let state = execution.as_ref().map_or_else(
             || {
@@ -592,7 +619,7 @@ pub(super) async fn send_queued_now(
         InputMeta {
             client: envelope.client_id.clone(),
             origin: envelope.input_origin.clone(),
-            text: item.text.clone(),
+            text: input.text.clone(),
             admitted_at: 0,
             requested: "queue",
             admitted: "startNow",
@@ -604,9 +631,9 @@ pub(super) async fn send_queued_now(
         &part("send"),
         Command::SubmitWith {
             // Node `inputIntentMetadataFromQueueItem`: the item's intent unchanged.
-            intent: item.intent,
-            kind: item.kind,
-            text: item.text,
+            intent: input.intent,
+            kind: input.kind,
+            text: input.text,
             content,
             delivery: Delivery::Queue,
             execution,

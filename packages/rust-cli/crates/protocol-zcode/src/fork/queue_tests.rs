@@ -32,8 +32,10 @@ use crate::server::Defaults;
 struct TestHandle {
     id: SessionId,
     view: SessionView,
-    /// What `Dequeue` hands back (the kernel's queued content).
-    dequeued: Vec<ContentBlock>,
+    /// What `Dequeue` hands back (the kernel's queued input and content).
+    dequeued: Option<(QueuedInput, Vec<ContentBlock>)>,
+    /// Another promotion owns the foreground: `ReserveForeground { reserved: true }` is refused.
+    foreground_owned: bool,
     sent: StdMutex<Vec<Command>>,
 }
 
@@ -44,13 +46,24 @@ impl HandleOverride for TestHandle {
     }
 
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
-        let result = match &envelope.command {
-            Command::Dequeue { .. } if !self.dequeued.is_empty() => CommandResult::Dequeued {
-                content: self.dequeued.clone(),
+        let refused = self.foreground_owned
+            && matches!(
+                envelope.command,
+                Command::ReserveForeground { reserved: true, .. }
+            );
+        let result = match (&envelope.command, &self.dequeued) {
+            (Command::Dequeue { .. }, Some((input, content))) => CommandResult::Dequeued {
+                input: Box::new(input.clone()),
+                content: content.clone(),
             },
             _ => CommandResult::Done,
         };
         self.sent.lock_unpoisoned().push(envelope.command);
+        if refused {
+            return KernelAck::Rejected {
+                reason: rust_cli_kernel_api::session_api::FOREGROUND_BUSY.to_owned(),
+            };
+        }
         KernelAck::Accepted { result }
     }
 
@@ -95,12 +108,13 @@ impl Kernel for OneKernel {
 }
 
 async fn fixture() -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
-    fixture_with(Vec::new(), Vec::new()).await
+    fixture_with(Vec::new(), None, false).await
 }
 
 async fn fixture_with(
     queue: Vec<QueuedInput>,
-    dequeued: Vec<ContentBlock>,
+    dequeued: Option<(QueuedInput, Vec<ContentBlock>)>,
+    foreground_owned: bool,
 ) -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
     let meta = SessionMeta {
         id: SessionId::new("s1"),
@@ -121,6 +135,7 @@ async fn fixture_with(
         id: SessionId::new("s1"),
         view,
         dequeued,
+        foreground_owned,
         sent: StdMutex::new(Vec::new()),
     });
     let scope = TaskScope::root("test", |_| {});
@@ -258,7 +273,8 @@ async fn send_now_submits_the_queued_content() {
         kind: QueuedKind::Text,
         execution: None,
     };
-    let (_scope, server, handle) = fixture_with(vec![item], content.clone()).await;
+    let (_scope, server, handle) =
+        fixture_with(vec![item.clone()], Some((item, content.clone())), false).await;
     let live = server.live(&SessionId::new("s1")).await.unwrap();
     let mut envelope = envelope(json!({"queueItemId": "queue_c1"}));
     envelope.kind = "sendQueuedNow".to_owned();
@@ -273,4 +289,83 @@ async fn send_now_submits_the_queued_content() {
         })
         .expect("the promotion submits");
     assert_eq!(submitted, content);
+}
+
+fn queued_item(text: &str, refs: Value) -> QueuedInput {
+    let mut intent = rust_cli_kernel_api::input_intent::InputIntent::default();
+    intent.set(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS, refs);
+    QueuedInput {
+        edit_lock: None,
+        intent: Some(Box::new(intent)),
+        command: rust_cli_kernel_api::ids::CommandId::new("c1"),
+        text: text.to_owned(),
+        delivery: Delivery::Queue,
+        kind: QueuedKind::Text,
+        execution: None,
+    }
+}
+
+fn send_now_envelope() -> Envelope {
+    let mut envelope = envelope(json!({"queueItemId": "queue_c1"}));
+    envelope.kind = "sendQueuedNow".to_owned();
+    envelope
+}
+
+/// An `editQueueItem` that lands while the promotion waits for the running turn changes the queued item after the
+/// promotion read it: the promotion submits the input `Dequeue` handed back, so its text, intent (quotes, chips) and
+/// content come from one state of the queue (Node `handlers/queue.ts` takes the intent and attachments from one item).
+#[tokio::test]
+async fn send_now_submits_the_dequeued_input_not_the_one_it_read() {
+    let read = queued_item("old", json!([{"id": "old"}]));
+    let dequeued = queued_item("new", json!([{"id": "new"}]));
+    let content = vec![ContentBlock::Text {
+        text: "new".to_owned(),
+    }];
+    let (_scope, server, handle) =
+        fixture_with(vec![read], Some((dequeued, content.clone())), false).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = send_queued_now(&live, &send_now_envelope(), 3).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    let Some(Command::SubmitWith {
+        text,
+        intent,
+        content: submitted,
+        ..
+    }) = sent
+        .iter()
+        .find(|command| matches!(command, Command::SubmitWith { .. }))
+    else {
+        panic!("the promotion submits");
+    };
+    assert_eq!(text, "new");
+    assert_eq!(submitted, &content);
+    assert_eq!(
+        intent
+            .as_ref()
+            .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS))
+            .cloned(),
+        Some(json!([{"id": "new"}]))
+    );
+}
+
+/// Node `acquireForegroundPromotionLease` answers `conflict` while another promotion owns the foreground, and
+/// `sendQueuedNow` fails with `guard.queuePromotionBusy`: the item stays queued and the other lease is not released.
+#[tokio::test]
+async fn send_now_is_refused_while_another_promotion_owns_the_foreground() {
+    let item = queued_item("look", json!([]));
+    let (_scope, server, handle) =
+        fixture_with(vec![item.clone()], Some((item, Vec::new())), true).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = send_queued_now(&live, &send_now_envelope(), 3).await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert_eq!(ack.reason_code.as_deref(), Some(PROMOTION_BUSY), "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    assert_eq!(
+        sent,
+        vec![Command::ReserveForeground {
+            reserved: true,
+            lease: "queue-promotion:cmd-1".to_owned(),
+        }]
+    );
 }

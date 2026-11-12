@@ -284,7 +284,10 @@ async fn a_reserved_foreground_keeps_a_waiting_notice_behind_the_promoted_input(
     queued(&mut events, "b1").await;
     let reserve = |id: &str, reserved: bool| CommandEnvelope {
         id: CommandId::new(id),
-        command: Command::ReserveForeground { reserved },
+        command: Command::ReserveForeground {
+            reserved,
+            lease: "p1".to_owned(),
+        },
     };
     assert!(matches!(
         session.send(reserve("c2", true)).await,
@@ -327,6 +330,56 @@ fn owned_lease(id: &str, owner: &str, reserved: bool) -> CommandEnvelope {
             lease: owner.to_owned(),
         },
     }
+}
+
+fn foreground(id: &str, owner: &str, reserved: bool) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveForeground {
+            reserved,
+            lease: owner.to_owned(),
+        },
+    }
+}
+
+/// Fork: the foreground promotion lease has one owner (Node `acquireForegroundPromotionLease` answers `conflict` to
+/// another lease, and `releaseForegroundPromotionLease` ends only its own): a second `sendQueuedNow` is refused, and
+/// the first promotion's release cannot end a lease another promotion would still need.
+#[tokio::test]
+async fn the_foreground_lease_has_one_owner() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    assert!(matches!(
+        session.send(foreground("c1", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(foreground("c2", "b", true)).await,
+        refused(rust_cli_kernel_api::session_api::FOREGROUND_BUSY)
+    );
+    assert!(matches!(
+        session.send(foreground("c3", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    // Another lease's release changes nothing: the foreground is still held, so the release lease is refused.
+    assert!(matches!(
+        session.send(foreground("c4", "b", false)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(lease("c5", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY)
+    );
+    assert!(matches!(
+        session.send(foreground("c6", "a", false)).await,
+        Ack::Accepted { .. }
+    ));
+    assert!(matches!(
+        session.send(foreground("c7", "b", true)).await,
+        Ack::Accepted { .. }
+    ));
 }
 
 fn refused(reason: &str) -> Ack {
@@ -432,7 +485,10 @@ async fn the_release_lease_is_refused_while_a_promotion_holds_the_foreground() {
     let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
     let foreground = |id: &str, reserved: bool| CommandEnvelope {
         id: CommandId::new(id),
-        command: Command::ReserveForeground { reserved },
+        command: Command::ReserveForeground {
+            reserved,
+            lease: "p1".to_owned(),
+        },
     };
     assert!(matches!(
         session.send(foreground("c1", true)).await,

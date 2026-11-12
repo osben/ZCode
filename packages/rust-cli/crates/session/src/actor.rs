@@ -766,7 +766,9 @@ impl Actor {
                 self.reorder_queued(&command, before.as_ref())
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
-            Command::ReserveForeground { reserved } => self.reserve_foreground(reserved).await,
+            Command::ReserveForeground { reserved, lease } => {
+                self.reserve_foreground(reserved, lease).await
+            }
             Command::ReserveRelease { reserved, lease } => {
                 self.reserve_release(reserved, lease).await
             }
