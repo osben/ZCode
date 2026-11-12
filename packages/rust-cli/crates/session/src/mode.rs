@@ -138,17 +138,29 @@ impl Actor {
 
     /// The session's permission mode becomes `mode` (plan kept, saved like a user `SetMode`) and so does every queued
     /// input's frozen mode (their plan switches kept); then `PermissionGranted`. The same mode as now is still a grant
-    /// (Node does not short-circuit it).
+    /// (Node does not short-circuit it): the execution state and the grant's receipt are committed in one batch either
+    /// way (Node `commitPermissionFullAccess`), before anything changes in memory.
     async fn grant_mode(
         &mut self,
         command: CommandId,
         interaction: String,
         mode: PermissionMode,
     ) -> Result<(), StoreError> {
-        if self.execution.mode != mode {
-            self.apply(Some(command), self.execution.with_mode(mode), true)
-                .await?;
-        }
+        let receipt = Fact::PermissionGranted {
+            interaction: interaction.clone(),
+            previous: self.execution,
+            next: self.execution.with_mode(mode),
+            queue_items: self.inbox.ledger_queue_ids(),
+        };
+        self.apply_with_facts(
+            Some(command),
+            self.execution.with_mode(mode),
+            true,
+            true,
+            vec![receipt],
+        )
+        .await?;
+        self.permission_grant = Some(interaction.clone());
         if self.inbox.set_queued_mode(mode) {
             self.emit_queue();
         }
@@ -175,10 +187,24 @@ impl Actor {
         save: bool,
         start_peers: bool,
     ) -> Result<(), StoreError> {
+        self.apply_with_facts(command, next, save, start_peers, Vec::new())
+            .await
+    }
+
+    /// [`Self::apply_with`] with `extra` facts committed in the same batch (a grant's receipt).
+    async fn apply_with_facts(
+        &mut self,
+        command: Option<CommandId>,
+        next: ExecutionState,
+        save: bool,
+        start_peers: bool,
+        extra: Vec<Fact>,
+    ) -> Result<(), StoreError> {
         let mut facts = vec![Fact::ExecutionChanged { state: next }];
         if save {
             facts.push(Fact::ProjectModeSet { mode: next.mode });
         }
+        facts.extend(extra);
         self.commit(command, facts).await?;
         let previous = self.execution;
         self.plan_flags = self

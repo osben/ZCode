@@ -185,6 +185,9 @@ pub(crate) struct Actor {
     pub(crate) meta: SessionMeta,
     /// Fork: where `meta.title` came from; changed only with it ([`Actor::set_title`]).
     pub(crate) title_source: rust_cli_kernel_api::title::Source,
+    /// Fork (B3): the interaction of the last permission mode grant (the stored receipt, then each grant), in the view
+    /// as the composer's adoption key (Node `lastPermissionGrantId`).
+    pub(crate) permission_grant: Option<String>,
     pub(crate) messages: Vec<Message>,
     /// 冷读取时只供显示的、最后一个压缩点之前的消息（工作线 F102，compact.md §5.1）：打开后不变，只进 `view()`。
     /// 模型侧的一切（主循环、压缩、token、标题、rewind、fork、goal 与任务的恢复）只看 `messages`。另一个只读的读者：
@@ -324,6 +327,7 @@ impl Actor {
         let mut actor = Self {
             deps,
             log,
+            permission_grant: state.permission_grant,
             title_source: state
                 .title_source
                 .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&state.meta.title)),
@@ -865,6 +869,7 @@ impl Actor {
                 .collect(),
             goal: self.goal_state(),
             title_source: Some(self.title_source),
+            permission_grant: self.permission_grant.clone(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

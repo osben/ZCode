@@ -445,6 +445,10 @@ pub struct SessionView {
     /// title).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the session's last permission mode grant (the stored receipt, then each grant),
+    /// projected as `config.permissionGrant` (Node `lastPermissionGrantId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,

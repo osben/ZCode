@@ -91,6 +91,16 @@ pub enum Fact {
     RevertSet {
         cursor: RevertCursor,
     },
+    /// Fork (B3): the receipt of a permission mode grant from a permission ask (Node `runtime/permission_full_access`,
+    /// `commitPermissionFullAccess`), committed in the grant's batch with its `ExecutionChanged`. `previous` and `next`
+    /// are the session's execution state before and after; `queue_items` the ledger ids (`queue_<command>`) of the
+    /// queued inputs whose frozen mode the grant rewrote.
+    PermissionGranted {
+        interaction: String,
+        previous: crate::permission::ExecutionState,
+        next: crate::permission::ExecutionState,
+        queue_items: Vec<String>,
+    },
     /// 本工程独有的状态，映射成带 `rust-cli/` 前缀的 session_entry（Node 忽略未知类型）。`kind` 取 [`entry_kinds`]。
     Entry {
         kind: String,
@@ -328,6 +338,10 @@ pub struct LoadedSession {
     /// `normalizeStoredTitleSource`). `None` when the store does not keep it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the last stored permission mode grant receipt (Node `restorePermissionGrantMarker`,
+    /// `lastPermissionGrantId`), the composer's one-shot adoption key after a cold read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
     /// Fork (desktop App): the stored goal row (Node `session_target`), an interrupted active stretch already counted
     /// into `time_used_seconds` (Node `recoverInterruptedSessionTargetRun`); `iteration` is not stored (0).
     #[serde(default, skip_serializing_if = "Option::is_none")]

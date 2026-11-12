@@ -113,8 +113,8 @@ pub struct Projection {
     selection: ModelSelection,
     mode: PermissionMode,
     plan: bool,
-    /// Fork: the last full-access grant (`config.permissionGrant`), the composer's one-shot
-    /// adoption key; protocol memory like Node's runtime `lastPermissionGrantId`.
+    /// Fork: the last permission mode grant (`config.permissionGrant`), the composer's one-shot adoption key: the
+    /// view's (the session actor's, from the stored receipt), then each `PermissionGranted`.
     permission_grant: Option<String>,
     /// Fork: the last plan tool transition (`config.planTransition`: call id, plan switch).
     plan_transition: Option<(String, bool)>,
@@ -254,9 +254,6 @@ impl Projection {
         projection.catalog = self.catalog.clone();
         projection.auto_drain = self.auto_drain;
         projection.pause_reason = self.pause_reason;
-        projection
-            .permission_grant
-            .clone_from(&self.permission_grant);
         projection.plan_transition.clone_from(&self.plan_transition);
         // Fork (B2): the runs going now were not spawned in this projection's sight, so they get no Stop.
         projection.subagents.recovering = true;
@@ -286,7 +283,8 @@ impl Projection {
             selection: view.selection.clone(),
             mode: view.mode,
             plan: view.plan,
-            permission_grant: None,
+            // Fork (B3): the session's last grant (its stored receipt after a cold read, Node `lastPermissionGrantId`).
+            permission_grant: view.permission_grant.clone(),
             plan_transition: None,
             goal: view.goal.clone(),
             followup,

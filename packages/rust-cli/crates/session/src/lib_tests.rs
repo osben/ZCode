@@ -324,6 +324,7 @@ async fn asking_session_input(
             child_live: None,
             title_pending: true,
             title_source: None,
+            permission_grant: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),

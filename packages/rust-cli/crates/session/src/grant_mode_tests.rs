@@ -11,7 +11,21 @@ async fn permission_session(
     scope: &TaskScope,
     permission: serde_json::Value,
 ) -> (Session, BoxStream<'static, SequencedEvent>, InteractionId) {
-    let (_store, _model, session) = asking_session_input(
+    let (_store, session, events, interaction) = stored_permission_session(scope, permission).await;
+    (session, events, interaction)
+}
+
+/// [`permission_session`] with its store.
+async fn stored_permission_session(
+    scope: &TaskScope,
+    permission: serde_json::Value,
+) -> (
+    Arc<MemoryStore>,
+    Session,
+    BoxStream<'static, SequencedEvent>,
+    InteractionId,
+) {
+    let (store, _model, session) = asking_session_input(
         scope,
         Arc::new(NoHooks),
         serde_json::json!({"permission": permission}),
@@ -20,7 +34,7 @@ async fn permission_session(
     let mut events = session.subscribe(Some(0));
     session.send(submit("c1", "ask me")).await;
     let interaction = asked(&mut events).await;
-    (session, events, interaction)
+    (store, session, events, interaction)
 }
 
 fn grant(id: &str, interaction: &InteractionId, mode: PermissionMode) -> CommandEnvelope {
@@ -64,8 +78,8 @@ async fn unchanged(session: &Session, interaction: &InteractionId) {
 #[tokio::test]
 async fn a_guarded_grant_switches_the_mode_and_allows_the_call_once() {
     let scope = TaskScope::root("test", |_| {});
-    let (session, mut events, interaction) =
-        permission_session(&scope, serde_json::json!({})).await;
+    let (store, session, mut events, interaction) =
+        stored_permission_session(&scope, serde_json::json!({})).await;
     session
         .send(queued("c2", PermissionMode::Default, true))
         .await;
@@ -97,6 +111,62 @@ async fn a_guarded_grant_switches_the_mode_and_allows_the_call_once() {
     let view = session.view().await.unwrap();
     assert_eq!((view.mode, view.plan), (PermissionMode::Guarded, true));
     assert!(view.pending.is_empty());
+    // B3 review: the receipt is committed with the execution state in one batch (plan was off when it was granted; the
+    // queued input turned it on later) (Node `commitPermissionFullAccess`),
+    // and the view names the grant (`config.permissionGrant`).
+    assert_eq!(view.permission_grant.as_deref(), Some(interaction.as_str()));
+    let facts = store.facts(&view.meta.id);
+    let at = facts
+        .iter()
+        .position(|fact| matches!(fact, Fact::PermissionGranted { .. }))
+        .expect("no receipt");
+    assert!(
+        matches!(
+            &facts[at - 2..=at],
+            [
+                Fact::ExecutionChanged { .. },
+                Fact::ProjectModeSet { .. },
+                Fact::PermissionGranted { interaction: granted, previous, next, queue_items },
+            ] if granted == interaction.as_str()
+                && previous.mode == PermissionMode::Default
+                && *next == ExecutionState { mode: PermissionMode::Guarded, plan: false }
+                && queue_items == &["queue_c2".to_owned()]
+        ),
+        "{:?}",
+        &facts[at - 2..=at]
+    );
+}
+
+/// A grant to the mode the session already has still commits its execution state and receipt (Node does not
+/// short-circuit), so a cold read names it.
+#[tokio::test]
+async fn a_grant_to_the_current_mode_still_stores_its_receipt() {
+    let scope = TaskScope::root("test", |_| {});
+    let (store, session, _events, interaction) =
+        stored_permission_session(&scope, serde_json::json!({})).await;
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("m1"),
+            command: Command::SetMode {
+                mode: PermissionMode::Guarded,
+            },
+        })
+        .await;
+    let before = store.facts(&session.view().await.unwrap().meta.id).len();
+    let ack = session
+        .send(grant("c2", &interaction, PermissionMode::Guarded))
+        .await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let view = session.view().await.unwrap();
+    let after = store.facts(&view.meta.id);
+    assert!(
+        after[before..]
+            .iter()
+            .any(|fact| matches!(fact, Fact::PermissionGranted { .. })),
+        "{:?}",
+        &after[before..]
+    );
+    assert_eq!(view.permission_grant.as_deref(), Some(interaction.as_str()));
 }
 
 /// Full access rewrites the queued modes too, keeping each plan switch (Node `fullAccess`); a once-ask (guarded

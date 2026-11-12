@@ -1480,6 +1480,31 @@ fn full_access_grants_and_plan_tool_transitions_are_in_the_config() {
     assert_eq!(snapshot["config"]["planTransition"]["toolCallId"], "call-1");
 }
 
+/// B3 review: a cold read keeps the last grant (the session view's, from the stored receipt, Node
+/// `restorePermissionGrantMarker`), so the composer does not adopt it again; a rebuilt projection keeps the view's.
+#[test]
+fn a_cold_projection_keeps_the_stored_permission_grant() {
+    let mut granted = view(Vec::new());
+    granted.permission_grant = Some("ask-1".into());
+    let projection = Projection::from_view(&granted, Followup::Queue, vec!["high".into()]);
+    let snapshot = projection.snapshot(1, "e");
+    assert_eq!(
+        snapshot["config"]["permissionGrant"],
+        json!({"interactionId": "ask-1"})
+    );
+    let rebuilt = projection.rebuilt(&granted).snapshot(2, "e");
+    assert_eq!(
+        rebuilt["config"]["permissionGrant"]["interactionId"],
+        "ask-1"
+    );
+    let fresh = Projection::from_view(&view(Vec::new()), Followup::Queue, Vec::new());
+    assert!(
+        fresh.snapshot(1, "e")["config"]
+            .get("permissionGrant")
+            .is_none()
+    );
+}
+
 /// Fork: the desktop goal is the snapshot `goal` (Node `goalStateSchema`) and drives the
 /// `pauseGoal` / `resumeGoal` actions.
 #[test]
