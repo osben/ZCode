@@ -316,9 +316,16 @@ async fn a_reserved_foreground_keeps_a_waiting_notice_behind_the_promoted_input(
 }
 
 fn lease(id: &str, reserved: bool) -> CommandEnvelope {
+    owned_lease(id, "r1", reserved)
+}
+
+fn owned_lease(id: &str, owner: &str, reserved: bool) -> CommandEnvelope {
     CommandEnvelope {
         id: CommandId::new(id),
-        command: Command::ReserveRelease { reserved },
+        command: Command::ReserveRelease {
+            reserved,
+            lease: owner.to_owned(),
+        },
     }
 }
 
@@ -413,4 +420,72 @@ async fn a_held_release_lease_refuses_commands_and_holds_the_drain() {
     ));
     until_finished(&mut events, 1).await;
     assert_eq!(model.requests().len(), 2);
+}
+
+/// `sendQueuedNow` holds the foreground from its `Dequeue` to its `SubmitWith` (Node keeps the whole promotion
+/// `inFlight`): a release lease taken in between would refuse the submit and lose the dequeued item.
+#[tokio::test]
+async fn the_release_lease_is_refused_while_a_promotion_holds_the_foreground() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    let foreground = |id: &str, reserved: bool| CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::ReserveForeground { reserved },
+    };
+    assert!(matches!(
+        session.send(foreground("c1", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(lease("c2", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY)
+    );
+    session.send(foreground("c3", false)).await;
+    assert!(matches!(
+        session.send(lease("c4", true)).await,
+        Ack::Accepted { .. }
+    ));
+}
+
+/// The lease has one owner: another release cannot take it, and its return does not end the owner's lease.
+#[tokio::test]
+async fn the_release_lease_has_one_owner() {
+    let scope = TaskScope::root("test", |_| {});
+    let env = Arc::new(NoticeEnvironment::default());
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let session = session(&scope, env, model, Vec::new(), Vec::new()).await;
+    let mut events = session.subscribe(Some(0));
+    assert!(matches!(
+        session.send(owned_lease("c1", "a", true)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(owned_lease("c2", "b", true)).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_BUSY),
+        "held by another release"
+    );
+    assert!(
+        matches!(
+            session.send(owned_lease("c3", "a", true)).await,
+            Ack::Accepted { .. }
+        ),
+        "the owner taking it again is idempotent"
+    );
+    assert!(matches!(
+        session.send(owned_lease("c4", "b", false)).await,
+        Ack::Accepted { .. }
+    ));
+    assert_eq!(
+        session.send(submit("c5", "too early")).await,
+        refused(rust_cli_kernel_api::session_api::SESSION_RELEASING),
+        "another release's return leaves the owner's lease"
+    );
+    session.send(owned_lease("c6", "a", false)).await;
+    assert!(matches!(
+        session.send(submit("c7", "now")).await,
+        Ack::Accepted { .. }
+    ));
+    until_finished(&mut events, 1).await;
 }

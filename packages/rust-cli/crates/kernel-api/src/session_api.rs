@@ -370,9 +370,13 @@ pub enum Command {
     /// (`reserved: true`) is refused with [`SESSION_BUSY`] while a turn, compaction or job runs, an input is queued or
     /// in the lane, or an interaction is pending. While held, every other command is refused with
     /// [`SESSION_RELEASING`] and no turn starts on its own; the lease ends when the session closes or when it is
-    /// returned (`reserved: false`, always `Accepted`), which resumes the drain as a turn end would.
+    /// returned (`reserved: false`, always `Accepted`), which resumes the drain as a turn end would. The lease has one
+    /// owner (`lease`, one per release): another lease is refused with [`SESSION_BUSY`], the owner taking it again is
+    /// accepted, and only the owner's return ends it. It is refused too while a promotion holds the foreground
+    /// ([`Command::ReserveForeground`]), whose dequeued item must still be submitted.
     ReserveRelease {
         reserved: bool,
+        lease: String,
     },
 }
 

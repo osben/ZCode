@@ -6,6 +6,7 @@ use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
 use super::*;
 use crate::lane::ALREADY_SENT;
 use crate::test_support::ScriptedHooks;
+use rust_cli_kernel_api::message::ContentBlock;
 
 fn steer(id: &str, text: &str) -> CommandEnvelope {
     CommandEnvelope {
@@ -160,4 +161,43 @@ async fn a_steer_taken_back_while_its_hook_runs_is_not_absorbed() {
         message,
         Message::Attachment(attachment) if attachment.source == "queued_command"
     )));
+}
+
+/// Fork: a dequeued content input hands back its content (typed text block and attachments), so `sendQueuedNow` can
+/// submit what the queue held (Node passes the item's attachments into the promoted turn).
+#[tokio::test]
+async fn a_dequeued_content_input_hands_back_its_content() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    asked(&mut events).await;
+    let content = vec![
+        ContentBlock::Text {
+            text: "look".to_owned(),
+        },
+        ContentBlock::Text {
+            text: "<file a.txt>".to_owned(),
+        },
+    ];
+    session
+        .send(CommandEnvelope {
+            id: CommandId::new("c2"),
+            command: Command::SubmitWith {
+                intent: None,
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: "look".to_owned(),
+                content: content.clone(),
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: false,
+            },
+        })
+        .await;
+    assert_eq!(
+        session.send(dequeue("c3", "c2")).await,
+        Ack::Accepted {
+            result: rust_cli_kernel_api::session_api::CommandResult::Dequeued { content }
+        }
+    );
 }

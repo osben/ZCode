@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use rust_cli_kernel_api::goal::{GoalPhase, VerificationStatus};
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, Delivery, KernelEvent, QUEUE_EDIT_LOCK_LOST,
+    Ack as KernelAck, Command, CommandResult, Delivery, KernelEvent, QUEUE_EDIT_LOCK_LOST,
     QUEUE_EDIT_LOCK_MISSING, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING, QUEUE_ITEM_NOT_EDITABLE,
     QueueEditLock, QueuedAttachments, QueuedEdit,
 };
@@ -472,8 +472,8 @@ pub(crate) async fn settle_running_turn(
 /// The promoted item keeps its kernel kind and frozen execution state (the body's
 /// `modelSelection` overrides the frozen selection) and restarts under a fresh command id.
 ///
-/// Not ported: Node's reservation (`guard.queueItemReserved`) — the kernel has a single queue owner
-/// and no competing promotions; queued attachments — a promoted item restarts without them.
+/// The promoted item keeps its attachments: the kernel's `Dequeue` hands back the queued content (Node passes the
+/// item's attachments into the promoted turn), and the chips follow the intent's `attachmentRefs`.
 pub(super) async fn send_queued_now(
     live: &Bridged<Live>,
     envelope: &Envelope,
@@ -554,10 +554,23 @@ pub(super) async fn send_queued_now(
         },
     )
     .await;
-    if let KernelAck::Rejected { reason } = taken {
-        send(handle, &part("resume"), release()).await;
-        return failed(PROMOTION_COMMIT_FAILED, reason);
-    }
+    let content = match taken {
+        KernelAck::Rejected { reason } => {
+            send(handle, &part("resume"), release()).await;
+            return failed(PROMOTION_COMMIT_FAILED, reason);
+        }
+        KernelAck::Accepted {
+            result: CommandResult::Dequeued { content },
+        } => content,
+        KernelAck::Accepted { .. } | KernelAck::Duplicate => Vec::new(),
+    };
+    let chips = item
+        .intent
+        .as_ref()
+        .and_then(|intent| intent.get(rust_cli_kernel_api::input_intent::ATTACHMENT_REFS))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     // The item starts with its own frozen execution state; a selection the client re-sent with the
     // promotion overrides the item's model, like the row commands' resubmit.
     let mut execution = item.execution.clone();
@@ -583,7 +596,7 @@ pub(super) async fn send_queued_now(
             admitted_at: 0,
             requested: "queue",
             admitted: "startNow",
-            attachments: Vec::new(),
+            attachments: chips,
         },
     );
     let submitted = send(
@@ -594,7 +607,7 @@ pub(super) async fn send_queued_now(
             intent: item.intent,
             kind: item.kind,
             text: item.text,
-            content: Vec::new(),
+            content,
             delivery: Delivery::Queue,
             execution,
             behind_held: false,

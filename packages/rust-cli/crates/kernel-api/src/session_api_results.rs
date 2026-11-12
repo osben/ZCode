@@ -39,6 +39,11 @@ pub enum CommandResult {
     Directory(DirectoryOutcome),
     /// `BackgroundForeground`：转到后台的前台命令数。
     Backgrounded { count: usize },
+    /// Fork: `Dequeue` of an input with attachments: its content (the typed text block first, then the attachments),
+    /// so a promotion submits what the queue held. A text input answers [`CommandResult::Done`].
+    Dequeued {
+        content: Vec<crate::message::ContentBlock>,
+    },
 }
 
 impl CommandResult {

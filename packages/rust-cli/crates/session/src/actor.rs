@@ -767,7 +767,9 @@ impl Actor {
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
             Command::ReserveForeground { reserved } => self.reserve_foreground(reserved).await,
-            Command::ReserveRelease { reserved } => self.reserve_release(reserved).await,
+            Command::ReserveRelease { reserved, lease } => {
+                self.reserve_release(reserved, lease).await
+            }
             // 在 `handle` 里处理（回执要等事务结束或名字）。
             Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")

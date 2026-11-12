@@ -211,7 +211,8 @@ pub(crate) async fn change(
             | CommandResult::Rewound { .. }
             | CommandResult::Restored { .. }
             | CommandResult::Stopped { .. }
-            | CommandResult::Backgrounded { .. }) => {
+            | CommandResult::Backgrounded { .. }
+            | CommandResult::Dequeued { .. }) => {
                 Err(failed(format!("unexpected /cd receipt: {other:?}")))
             }
         },

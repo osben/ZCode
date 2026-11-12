@@ -35,14 +35,19 @@ pub(crate) async fn release(server: &Server, params: &Value) -> Result<Value, Rp
     // Node checks the busy facts and starts the unload with no await in between. Here the owners answer: each actor
     // takes the release lease only when it is idle by its own state, and while it holds the lease it refuses every
     // command and starts no turn, so nothing admitted after the check reaches a session that is about to close.
-    let lease = LEASES.fetch_add(1, Ordering::Relaxed);
+    let number = LEASES.fetch_add(1, Ordering::Relaxed);
+    // The lease's owner: another release cannot take it or end it.
+    let lease = format!("release-under-directory:{number}");
     let mut busy = Vec::new();
     let mut leased = Vec::with_capacity(matched.len());
     for (id, open) in matched {
         let take = send(
             open.handle.as_ref(),
-            &format!("release-lease:{lease}:take"),
-            Command::ReserveRelease { reserved: true },
+            &format!("{lease}:take"),
+            Command::ReserveRelease {
+                reserved: true,
+                lease: lease.clone(),
+            },
         )
         .await;
         if matches!(take, KernelAck::Accepted { .. }) {
@@ -69,8 +74,11 @@ pub(crate) async fn release(server: &Server, params: &Value) -> Result<Value, Rp
             // Returning the lease resumes the drain as a turn end would.
             send(
                 open.handle.as_ref(),
-                &format!("release-lease:{lease}:return"),
-                Command::ReserveRelease { reserved: false },
+                &format!("{lease}:return"),
+                Command::ReserveRelease {
+                    reserved: false,
+                    lease: lease.clone(),
+                },
             )
             .await;
         }

@@ -14,8 +14,8 @@ use rust_cli_kernel_api::message::ContentBlock;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, CommandEnvelope, CreateSession, Kernel, KernelError, SequencedEvent,
-    SessionHandle, SessionView,
+    Ack as KernelAck, CommandEnvelope, CommandResult, CreateSession, Kernel, KernelError,
+    QueuedInput, QueuedKind, SequencedEvent, SessionHandle, SessionView,
 };
 use rust_cli_kernel_api::store::{
     SessionFilter, SessionKind, SessionMeta, SessionSummary, StoreQueries,
@@ -32,6 +32,8 @@ use crate::server::Defaults;
 struct TestHandle {
     id: SessionId,
     view: SessionView,
+    /// What `Dequeue` hands back (the kernel's queued content).
+    dequeued: Vec<ContentBlock>,
     sent: StdMutex<Vec<Command>>,
 }
 
@@ -42,10 +44,14 @@ impl HandleOverride for TestHandle {
     }
 
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
+        let result = match &envelope.command {
+            Command::Dequeue { .. } if !self.dequeued.is_empty() => CommandResult::Dequeued {
+                content: self.dequeued.clone(),
+            },
+            _ => CommandResult::Done,
+        };
         self.sent.lock_unpoisoned().push(envelope.command);
-        KernelAck::Accepted {
-            result: Default::default(),
-        }
+        KernelAck::Accepted { result }
     }
 
     fn subscribe(&self, _after: Option<u64>) -> BoxStream<'static, SequencedEvent> {
@@ -89,6 +95,13 @@ impl Kernel for OneKernel {
 }
 
 async fn fixture() -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
+    fixture_with(Vec::new(), Vec::new()).await
+}
+
+async fn fixture_with(
+    queue: Vec<QueuedInput>,
+    dequeued: Vec<ContentBlock>,
+) -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
     let meta = SessionMeta {
         id: SessionId::new("s1"),
         kind: SessionKind::Interactive,
@@ -102,9 +115,12 @@ async fn fixture() -> (TaskScope, Arc<Server>, Arc<TestHandle>) {
         created_at_ms: 1000,
         incognito: None,
     };
+    let mut view = SessionView::new(meta, Vec::new(), selection(), PermissionMode::Default);
+    view.queue = queue;
     let handle = Arc::new(TestHandle {
         id: SessionId::new("s1"),
-        view: SessionView::new(meta, Vec::new(), selection(), PermissionMode::Default),
+        view,
+        dequeued,
         sent: StdMutex::new(Vec::new()),
     });
     let scope = TaskScope::root("test", |_| {});
@@ -219,4 +235,42 @@ async fn an_invalid_attachment_ref_refuses_the_edit_before_the_kernel() {
     assert_eq!(ack.status, Status::Rejected);
     assert_eq!(ack.reason_code.as_deref(), Some("proto.invalidPayload"));
     assert!(sent.is_empty(), "the kernel never saw the edit: {sent:?}");
+}
+
+/// Node `sendQueuedNow` passes the item's attachments into the promoted turn: the content the kernel's `Dequeue`
+/// hands back is what the promotion submits.
+#[tokio::test]
+async fn send_now_submits_the_queued_content() {
+    let content = vec![
+        ContentBlock::Text {
+            text: "look".to_owned(),
+        },
+        ContentBlock::Text {
+            text: "<file a.txt>".to_owned(),
+        },
+    ];
+    let item = QueuedInput {
+        edit_lock: None,
+        intent: None,
+        command: rust_cli_kernel_api::ids::CommandId::new("c1"),
+        text: "look".to_owned(),
+        delivery: Delivery::Queue,
+        kind: QueuedKind::Text,
+        execution: None,
+    };
+    let (_scope, server, handle) = fixture_with(vec![item], content.clone()).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let mut envelope = envelope(json!({"queueItemId": "queue_c1"}));
+    envelope.kind = "sendQueuedNow".to_owned();
+    let ack = send_queued_now(&live, &envelope, 3).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let sent = handle.sent.lock_unpoisoned().clone();
+    let submitted = sent
+        .iter()
+        .find_map(|command| match command {
+            Command::SubmitWith { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .expect("the promotion submits");
+    assert_eq!(submitted, content);
 }

@@ -203,11 +203,28 @@ impl Actor {
     /// 跟着条目一起去掉）。判断与出队在 actor 的一次处理里：开回合、成批与工具边界的结局（`settle_steering`）也都在
     /// actor 里出队，所以一条输入要么取回、要么发出，不会两样都有。
     /// Fork: a composer edit lock refuses the removal (Node `removePendingInputById`); [`Self::clear_queued`] ignores it.
+    /// An input with attachments hands back its content
+    /// ([`rust_cli_kernel_api::session_api::CommandResult::Dequeued`]), so a promotion
+    /// (`sendQueuedNow`) submits what the queue held.
     pub(crate) fn dequeue(&mut self, command: &CommandId) -> rust_cli_kernel_api::session_api::Ack {
         if self.inbox.edit_lock_of(command).is_some() {
             return crate::actor::rejected(QUEUE_ITEM_EDIT_LOCKED);
         }
-        self.clear_queued(command)
+        let Some(removed) = self
+            .inbox
+            .remove_input(command, crate::inbox::Left::Cancelled("user_removed"))
+        else {
+            return crate::actor::rejected(ALREADY_SENT);
+        };
+        self.emit_queue();
+        match removed.kind {
+            crate::inbox::InputKind::Content(content) => {
+                rust_cli_kernel_api::session_api::Ack::Accepted {
+                    result: rust_cli_kernel_api::session_api::CommandResult::Dequeued { content },
+                }
+            }
+            _ => crate::actor::accepted(),
+        }
     }
 
     /// Fork: `Command::ClearQueued` (Node `clearAllPendingInputs`): remove the input whatever its lock; the lock goes
@@ -364,21 +381,36 @@ impl Actor {
     pub(crate) async fn reserve_release(
         &mut self,
         reserved: bool,
+        lease: String,
     ) -> rust_cli_kernel_api::session_api::Ack {
+        use rust_cli_kernel_api::session_api::SESSION_BUSY;
+        let owner = self.inbox.release_owner().map(str::to_owned);
         if !reserved {
-            if self.inbox.set_releasing(false) && !self.busy() {
-                self.start_next().await;
+            // Only the owner ends the lease: another release's return must not open a session the owner is closing.
+            if owner.as_deref() == Some(lease.as_str()) {
+                self.inbox.set_release_owner(None);
+                if !self.busy() {
+                    self.start_next().await;
+                }
             }
             return crate::actor::accepted();
         }
-        if self.busy()
+        match owner {
+            Some(owner) if owner == lease => return crate::actor::accepted(),
+            Some(_) => return crate::actor::rejected(SESSION_BUSY),
+            None => {}
+        }
+        // A promotion holds the foreground from its `Dequeue` to its `SubmitWith` (Node keeps it `inFlight`): its
+        // dequeued item must still be submitted.
+        if self.inbox.foreground_reserved()
+            || self.busy()
             || self.mirror.running()
             || self.inbox.has_inputs()
             || !self.pending.is_empty()
         {
-            return crate::actor::rejected(rust_cli_kernel_api::session_api::SESSION_BUSY);
+            return crate::actor::rejected(SESSION_BUSY);
         }
-        self.inbox.set_releasing(true);
+        self.inbox.set_release_owner(Some(lease));
         crate::actor::accepted()
     }
 

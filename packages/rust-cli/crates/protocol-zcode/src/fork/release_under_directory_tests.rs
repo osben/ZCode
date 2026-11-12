@@ -76,7 +76,7 @@ impl HandleOverride for TestHandle {
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
         self.sent.lock_unpoisoned().push(envelope.command.clone());
         match envelope.command {
-            Command::ReserveRelease { reserved: true } if self.busy => KernelAck::Rejected {
+            Command::ReserveRelease { reserved: true, .. } if self.busy => KernelAck::Rejected {
                 reason: SESSION_BUSY.to_owned(),
             },
             Command::ReserveRelease { .. } => KernelAck::Accepted {
@@ -241,8 +241,23 @@ fn closes(handles: &HashMap<String, Arc<TestHandle>>, id: &str) -> Vec<EndReason
     handles[id].closes.lock_unpoisoned().clone()
 }
 
-fn sent(handles: &HashMap<String, Arc<TestHandle>>, id: &str) -> Vec<Command> {
-    handles[id].sent.lock_unpoisoned().clone()
+/// The release lease commands the session got: `true` takes, `false` returns. One release uses one lease owner.
+fn sent(handles: &HashMap<String, Arc<TestHandle>>, id: &str) -> Vec<bool> {
+    let sent = handles[id].sent.lock_unpoisoned().clone();
+    let owners: std::collections::BTreeSet<String> = sent
+        .iter()
+        .filter_map(|command| match command {
+            Command::ReserveRelease { lease, .. } => Some(lease.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(owners.len() <= 1, "one owner per release: {owners:?}");
+    sent.iter()
+        .filter_map(|command| match command {
+            Command::ReserveRelease { reserved, .. } => Some(*reserved),
+            _ => None,
+        })
+        .collect()
 }
 
 #[tokio::test]
@@ -355,10 +370,7 @@ async fn one_running_session_blocks_every_release() {
     assert!(is_open(&server, "run"));
     assert_eq!(
         sent(&handles, "idle"),
-        vec![
-            Command::ReserveRelease { reserved: true },
-            Command::ReserveRelease { reserved: false }
-        ],
+        vec![true, false],
         "the idle session's lease is returned, so it takes commands again"
     );
 }
@@ -402,10 +414,7 @@ async fn a_running_background_command_is_busy() {
     assert!(closes(&handles, "bg").is_empty());
     assert_eq!(
         sent(&handles, "bg"),
-        vec![
-            Command::ReserveRelease { reserved: true },
-            Command::ReserveRelease { reserved: false }
-        ],
+        vec![true, false],
         "the lease it took is returned"
     );
 }
@@ -424,7 +433,7 @@ async fn a_stale_running_projection_does_not_make_an_idle_actor_busy() {
     assert_eq!(closes(&handles, "stale"), vec![EndReason::Other]);
     assert_eq!(
         sent(&handles, "stale"),
-        vec![Command::ReserveRelease { reserved: true }],
+        vec![true],
         "closed while it holds the lease"
     );
 }
@@ -442,7 +451,7 @@ async fn an_actor_that_refuses_the_lease_is_busy() {
     assert!(closes(&handles, "fresh").is_empty());
     assert_eq!(
         sent(&handles, "fresh"),
-        vec![Command::ReserveRelease { reserved: true }],
+        vec![true],
         "a refused lease is not returned"
     );
 }

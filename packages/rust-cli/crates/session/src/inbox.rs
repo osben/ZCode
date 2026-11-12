@@ -201,8 +201,9 @@ pub(crate) struct Inbox {
     held: bool,
     /// Fork: the foreground promotion lease (`Command::ReserveForeground`): no turn starts on its own.
     reserved: bool,
-    /// Fork: the release lease (`Command::ReserveRelease`): no turn starts on its own and the actor takes no command.
-    releasing: bool,
+    /// Fork: the release lease's owner (`Command::ReserveRelease`): while held no turn starts on its own and the actor
+    /// takes no command.
+    releasing: Option<String>,
 }
 
 impl Inbox {
@@ -581,17 +582,27 @@ impl Inbox {
 
     /// Fork: the foreground is reserved for a promoted input (`Command::ReserveForeground`).
     pub(crate) fn reserved(&self) -> bool {
-        self.reserved || self.releasing
+        self.reserved || self.releasing.is_some()
+    }
+
+    /// Fork: a promotion holds the foreground (`Command::ReserveForeground`), without the release lease.
+    pub(crate) fn foreground_reserved(&self) -> bool {
+        self.reserved
     }
 
     /// Fork: the release lease is held (`Command::ReserveRelease`).
     pub(crate) fn releasing(&self) -> bool {
-        self.releasing
+        self.releasing.is_some()
     }
 
-    /// Fork: take or return the release lease; the previous value.
-    pub(crate) fn set_releasing(&mut self, releasing: bool) -> bool {
-        std::mem::replace(&mut self.releasing, releasing)
+    /// Fork: the owner of the release lease, if one holds it.
+    pub(crate) fn release_owner(&self) -> Option<&str> {
+        self.releasing.as_deref()
+    }
+
+    /// Fork: take (`Some(owner)`) or end (`None`) the release lease.
+    pub(crate) fn set_release_owner(&mut self, owner: Option<String>) {
+        self.releasing = owner;
     }
 
     /// Fork: set the reservation; returns the previous value.
