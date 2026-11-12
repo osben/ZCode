@@ -404,4 +404,40 @@ fn a_stopped_foreground_child_settles_its_rows_as_cancelled() {
         Some(json!("cancelled")),
         "{deltas:?}"
     );
+    let call = deltas
+        .iter()
+        .rev()
+        .find(|delta| delta["row"]["kind"] == "toolCall")
+        .unwrap();
+    assert!(call["row"].get("output").is_none(), "{call}");
+    assert!(call["row"].get("endedAt").is_some(), "{call}");
+}
+
+/// B2 (Node `product-projection.ts` hydration: "cold recovery must not re-grant stop capability"): after a rewind
+/// rebuilt the projection, a background child that was already running gets no Stop; its next run (a resume, Node's
+/// `SubagentSpawned`) does.
+#[test]
+fn a_rebuilt_projection_grants_no_stop_to_a_run_already_going() {
+    let mut feed = Feed::new();
+    start(&mut feed);
+    let call = agent_call(&mut feed, 1);
+    progress(&mut feed, &call, 1);
+    let mut running = entry(1, SubagentStatus::Running, false);
+    feed.projection.subagent_table(&[running.clone()], 10);
+    assert!(control(&feed, "sess_subagent_agent_1").is_some());
+
+    feed.projection = feed.projection.rebuilt(&super::view(Vec::new()));
+    let call = agent_call(&mut feed, 1);
+    progress(&mut feed, &call, 1);
+    feed.projection.subagent_table(&[running.clone()], 20);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+    feed.projection.subagent_table(&[running.clone()], 30);
+    assert_eq!(control(&feed, "sess_subagent_agent_1"), None);
+
+    running.execution = 1;
+    feed.projection.subagent_table(&[running], 40);
+    assert_eq!(
+        control(&feed, "sess_subagent_agent_1"),
+        Some(json!({"taskId": "agent_1", "executionId": "1"}))
+    );
 }

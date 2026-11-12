@@ -11,7 +11,7 @@ use rust_cli_kernel_api::panels::SubagentStatus;
 use serde_json::json;
 use tokio::sync::Notify;
 
-use crate::test_support::{harness, text};
+use crate::test_support::{desktop_harness, harness, text};
 
 fn operation(session: &SessionId) -> OperationContext {
     OperationContext::new(
@@ -335,12 +335,28 @@ async fn a_stale_stop_leaves_an_agent_parked_again_in_a_later_execution() {
     });
     park();
     assert_eq!(execution(&harness, &agent), 1);
-    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, checked).is_none());
+    assert!(
+        crate::routing::stop_parked(
+            &harness.agents.core,
+            &agent,
+            checked,
+            crate::report::Ending::KilledParked
+        )
+        .is_none()
+    );
     assert!(matches!(
         live.get(&agent).unwrap().state,
         AgentState::Parked { .. }
     ));
-    assert!(crate::routing::stop_parked(&harness.agents.core, &agent, 1).is_some());
+    assert!(
+        crate::routing::stop_parked(
+            &harness.agents.core,
+            &agent,
+            1,
+            crate::report::Ending::KilledParked
+        )
+        .is_some()
+    );
     assert!(matches!(
         live.get(&agent).unwrap().state,
         AgentState::Finished(crate::report::Ending::KilledParked)
@@ -535,4 +551,58 @@ async fn a_task_stop_that_ends_nothing_is_refused() {
         crate::live::AgentState::Running { .. }
     ));
     assert!(watcher.stopped.lock().unwrap().is_empty());
+}
+
+/// #418 review (3): on the desktop the model's TaskStop of a parked agent reads `was stopped by ZCode`, as Node's model
+/// stop does (`completion-notification.ts`), and keeps the parked stop's last report and usage. The user's stop, and the
+/// TUI's, keep `was stopped by user`.
+#[tokio::test]
+async fn a_model_stop_of_a_parked_agent_is_stopped_by_zcode() {
+    for (by_user, ending) in [
+        (false, crate::report::Ending::KilledParkedByZCode),
+        (true, crate::report::Ending::KilledParked),
+    ] {
+        let harness = desktop_harness();
+        let parent = SessionId::new("sess_parent");
+        let agent = undriven(&harness, "agent_u");
+        let live = harness.agents.core.live.clone();
+        live.with(|agents| {
+            agents.get_mut(&agent).unwrap().state = crate::live::AgentState::Parked {
+                report: crate::report::Report::default(),
+                notified: true,
+            };
+        });
+        let machine = rust_cli_kernel_api::testing::unsupported_machine();
+        let tool = crate::task_stop::TaskStopTool {
+            core: harness.agents.core.clone(),
+        };
+        let operation = operation(&parent);
+        let caller = crate::task_stop::Caller {
+            session: &parent,
+            agent: None,
+            machine: &machine,
+            operation: &operation,
+            by_user,
+        };
+        assert!(tool.stop_parked(&agent, 0, &caller).await);
+        assert!(matches!(
+            live.get(&agent).unwrap().state,
+            crate::live::AgentState::Finished(found) if found == ending
+        ));
+    }
+    let report = crate::report::Report::default();
+    let text = crate::report::envelope(
+        "agent_u",
+        None,
+        "Long job",
+        crate::report::Ending::KilledParkedByZCode,
+        &report,
+        None,
+        false,
+    );
+    assert!(
+        text.contains("<summary>Agent \"Long job\" was stopped by ZCode</summary>"),
+        "{text}"
+    );
+    assert!(text.contains("<usage>"), "{text}");
 }

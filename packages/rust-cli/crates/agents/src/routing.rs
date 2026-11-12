@@ -348,7 +348,13 @@ pub(crate) async fn release(core: &Core, id: &AgentId) -> Vec<Wake> {
 /// `user`）。不是停放状态时返回 None。
 /// Fork: it ends only while it is still parked in `execution`, checked in the same lock section as the transition
 /// (Node rechecks the execution and claims the task synchronously).
-pub(crate) fn stop_parked(core: &Core, id: &AgentId, execution: u64) -> Option<Vec<Wake>> {
+/// `ending` is `KilledParked`, or (node_desktop) `KilledParkedByZCode` for the model's TaskStop.
+pub(crate) fn stop_parked(
+    core: &Core,
+    id: &AgentId,
+    execution: u64,
+    ending: Ending,
+) -> Option<Vec<Wake>> {
     core.live.with(|agents| {
         if agents
             .get(id)
@@ -356,7 +362,7 @@ pub(crate) fn stop_parked(core: &Core, id: &AgentId, execution: u64) -> Option<V
         {
             return None;
         }
-        let (entry, notice) = end_parked(agents, id)?;
+        let (entry, notice) = end_parked(agents, id, ending)?;
         Some(
             deliver(agents, &core.hub, entry.owner.as_ref(), &entry.root, notice)
                 .into_iter()
@@ -367,14 +373,14 @@ pub(crate) fn stop_parked(core: &Core, id: &AgentId, execution: u64) -> Option<V
 
 /// Ends a parked agent as stopped (`KilledParked`) and returns it with its notice, still to be delivered. None when it
 /// is not parked.
-fn end_parked(agents: &mut Agents, id: &AgentId) -> Option<(LiveAgent, Notice)> {
+fn end_parked(agents: &mut Agents, id: &AgentId, ending: Ending) -> Option<(LiveAgent, Notice)> {
     let entry = agents.get(id).cloned()?;
     let AgentState::Parked { report, .. } = &entry.state else {
         return None;
     };
-    let notice = notice_of(&entry, Ending::KilledParked, report, None, false);
+    let notice = notice_of(&entry, ending, report, None, false);
     if let Some(slot) = agents.get_mut(id) {
-        slot.state = AgentState::Finished(Ending::KilledParked);
+        slot.state = AgentState::Finished(ending);
     }
     Some((entry, notice))
 }
@@ -400,7 +406,7 @@ pub(crate) fn end_erased(agents: &mut Agents, hub: &Hub, sessions: &[SessionId])
             continue;
         };
         entry.erased = true;
-        notices.extend(end_parked(agents, id));
+        notices.extend(end_parked(agents, id, Ending::KilledParked));
     }
     let mut wakes = Vec::new();
     for (entry, notice) in notices {

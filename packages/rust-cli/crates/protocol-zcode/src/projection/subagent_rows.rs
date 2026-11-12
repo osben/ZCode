@@ -80,6 +80,13 @@ pub(super) struct Subagents {
     /// desktop's Stop ends. Rebuilt from each live table, never from rows, so a cold open has none and a new run
     /// replaces the old one.
     stop_controls: HashMap<String, Value>,
+    /// Fork (B2): the projection was rebuilt (rewind, edit, retry), and its next table read is the recovery baseline.
+    /// Node clears the stop controls when it hydrates ("cold recovery must not re-grant stop capability") and grants
+    /// one only on a live `SubagentSpawned`.
+    pub(super) recovering: bool,
+    /// Fork (B2): the runs (agent, execution) that were already going at the recovery baseline. They never get a stop
+    /// control; a later execution of the same agent (a resume) is a new spawn and does.
+    recovered: HashSet<(String, u64)>,
 }
 
 impl Projection {
@@ -294,12 +301,20 @@ impl Projection {
                 &mut out,
             );
         }
-        // A child this session spawned itself (no owning subagent) that runs or is parked.
+        let live = |entry: &&SubagentEntry| entry.status == SubagentStatus::Running || entry.parked;
+        let run = |entry: &SubagentEntry| (entry.agent.as_str().to_owned(), entry.execution);
+        if std::mem::take(&mut self.subagents.recovering) {
+            self.subagents.recovered = entries.iter().filter(live).map(run).collect();
+        } else {
+            let going: HashSet<_> = entries.iter().filter(live).map(run).collect();
+            self.subagents.recovered.retain(|run| going.contains(run));
+        }
+        // A child this session spawned itself (no owning subagent) that runs or is parked, in a run spawned live.
+        let recovered = &self.subagents.recovered;
         self.subagents.stop_controls = entries
             .iter()
-            .filter(|entry| {
-                entry.owner.is_none() && (entry.status == SubagentStatus::Running || entry.parked)
-            })
+            .filter(live)
+            .filter(|entry| entry.owner.is_none() && !recovered.contains(&run(entry)))
             .map(|entry| {
                 (
                     entry.child.as_str().to_owned(),

@@ -258,6 +258,8 @@ impl Projection {
             .permission_grant
             .clone_from(&self.permission_grant);
         projection.plan_transition.clone_from(&self.plan_transition);
+        // Fork (B2): the runs going now were not spawned in this projection's sight, so they get no Stop.
+        projection.subagents.recovering = true;
         projection
     }
 
@@ -806,7 +808,11 @@ impl Projection {
                     |row| {
                         row.insert("status".into(), json!(status.as_str()));
                         if !plan_denied {
-                            row.insert("output".into(), settled);
+                            // Node's `onToolCallError` settles a `ToolCancelled` call with `endedAt` and no
+                            // output or error.
+                            if !subagent_stopped {
+                                row.insert("output".into(), settled);
+                            }
                             row.insert("endedAt".into(), json!(now));
                         }
                         row.remove("approvalInteractionId");

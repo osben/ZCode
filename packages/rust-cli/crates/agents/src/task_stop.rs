@@ -299,7 +299,14 @@ impl TaskStopTool {
         let Some((entry, commands)) = self.parked_commands(agent, execution, context).await else {
             return false;
         };
-        let Some(wakes) = routing::stop_parked(&self.core, agent, execution) else {
+        // Fork (node_desktop): the model's stop reads `was stopped by ZCode`, as Node's does; the TUI keeps upstream's
+        // `was stopped by user` for a parked agent.
+        let ending = if self.core.node_desktop && !context.by_user {
+            crate::report::Ending::KilledParkedByZCode
+        } else {
+            crate::report::Ending::KilledParked
+        };
+        let Some(wakes) = routing::stop_parked(&self.core, agent, execution, ending) else {
             return false;
         };
         self.stop_commands(&entry, commands, context).await;
