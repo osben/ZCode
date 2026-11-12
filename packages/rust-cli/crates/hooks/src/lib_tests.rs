@@ -303,3 +303,59 @@ async fn a_permission_request_hook_that_exits_two_denies_the_ask() {
         })
     );
 }
+
+/// #423 review P1-1: Node runs PermissionRequest hooks one by one in config order and the last decision wins
+/// (`mergeHookRunResult`). Rust runs them concurrently, so the fold reads them in config order, not completion order.
+#[tokio::test(start_paused = true)]
+async fn permission_request_hooks_fold_in_config_order() {
+    let decision = |behavior: &str| {
+        format!(
+            r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{{"behavior":"{behavior}","message":"no"}}}}}}"#
+        )
+    };
+    let allow_slow = Script {
+        delay_ms: 50,
+        ..script(&decision("allow"), "", 0)
+    };
+    let deny_slow = Script {
+        delay_ms: 50,
+        ..script(&decision("deny"), "", 0)
+    };
+    for (first, second, expected) in [
+        (
+            ("allow", allow_slow),
+            ("deny", script(&decision("deny"), "", 0)),
+            PermissionDecision::Deny {
+                message: "no".to_owned(),
+            },
+        ),
+        (
+            ("deny", deny_slow),
+            ("allow", script(&decision("allow"), "", 0)),
+            PermissionDecision::Allow {
+                updated_input: None,
+            },
+        ),
+    ] {
+        let env = Arc::new(ScriptedEnv::with(&[first.clone(), second.clone()]));
+        let settings = json!({"hooks": {"PermissionRequest": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": first.0}, {"type": "command", "command": second.0}
+        ]}]}});
+        let outcome = engine(env, &settings)
+            .run(
+                event(
+                    HookEventName::PermissionRequest,
+                    json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_1"}),
+                ),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(
+            outcome.decision,
+            Some(expected),
+            "{} then {}",
+            first.0,
+            second.0
+        );
+    }
+}

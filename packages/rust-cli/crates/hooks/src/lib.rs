@@ -243,6 +243,11 @@ impl HookRunner for HookEngine {
                 .collect();
             return fold_session::outside(event.name, &summaries);
         }
+        // Node runs PermissionRequest hooks one by one in config order and the last decision or stop wins
+        // (`mergeHookRunResult`); the concurrent run finishes in any order, so the fold reads config order.
+        if event.name == HookEventName::PermissionRequest {
+            done.sort_by_key(|(index, _)| *index);
+        }
         let mut results: Vec<_> = done
             .into_iter()
             .map(|(index, executed)| {

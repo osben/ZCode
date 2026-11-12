@@ -39,6 +39,8 @@ pub(crate) struct HookResult {
     pub outcome: Outcome,
     pub blocking: Option<Blocking>,
     pub prevent: bool,
+    /// Top-level `decision: "block"` (Node `blockRequested`): a PermissionRequest stop with `stop_reason`.
+    pub block_requested: bool,
     pub stop_reason: Option<String>,
     pub behavior: Option<Behavior>,
     /// `hookPermissionDecisionReason`。

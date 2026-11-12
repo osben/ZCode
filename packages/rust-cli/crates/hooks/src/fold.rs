@@ -221,9 +221,9 @@ pub(crate) fn permission_request(results: &[HookResult]) -> HookOutcome {
         }
         Some(PermissionRequestDecision::Deny { message }) => {
             outcome.decision = Some(PermissionDecision::Deny {
+                // Node `decision.message ?? "Denied by PermissionRequest hook"`: an empty message is kept.
                 message: message
-                    .filter(|text| !text.is_empty())
-                    .unwrap_or_else(|| texts::PERMISSION_DENIED_BY_HOOK.to_owned()),
+                    .unwrap_or_else(|| texts::DENIED_BY_PERMISSION_REQUEST_HOOK.to_owned()),
             });
         }
         None if results
@@ -239,20 +239,12 @@ pub(crate) fn permission_request(results: &[HookResult]) -> HookOutcome {
     outcome
 }
 
-/// Whether a PermissionRequest hook stops the call, and its Node `stopReason`: `decision: "block"` gives
-/// `stopReason ?? reason ?? systemMessage`, `continue: false` gives `stopReason ?? reason` (already folded in
-/// `output::process`), exit code 2 gives the blocking text.
+/// Whether a PermissionRequest hook stops the call, and its Node `stopReason`. Node stops only on
+/// `preventContinuation`: `continue: false` (`stopReason ?? reason`), top-level `decision: "block"`
+/// (`stopReason ?? reason ?? systemMessage`), both folded into `stop_reason` by `output::process`, and exit code 2
+/// (the blocking text). A `hookSpecificOutput` deny is a decision, not a stop (Node `permissionRequestResult`).
 fn permission_request_stop(result: &HookResult) -> Option<Option<String>> {
-    if result.behavior == Some(Behavior::Deny) {
-        return Some(
-            result
-                .stop_reason
-                .clone()
-                .or_else(|| result.reason.clone())
-                .or_else(|| result.system_message.clone()),
-        );
-    }
-    if result.prevent {
+    if result.prevent || result.block_requested {
         return Some(result.stop_reason.clone());
     }
     result

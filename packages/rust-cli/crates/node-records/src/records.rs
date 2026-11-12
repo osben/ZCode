@@ -200,11 +200,7 @@ pub fn permission_grant_of(session: &str, data: &Value) -> Option<String> {
     non_empty(&event["id"])?;
     non_empty(&event["traceId"])?;
     let turn_ok = event.get("turnId").is_none_or(Value::is_string);
-    // `z.coerce.date`: `new Date(value)` accepts numbers, strings, booleans and null; objects and arrays are invalid.
-    let time_ok = matches!(
-        event["timestamp"],
-        Value::Number(_) | Value::String(_) | Value::Bool(_) | Value::Null
-    );
+    let time_ok = js_date(&event["timestamp"]);
     let payload = strict(
         &event["payload"],
         &[
@@ -230,7 +226,10 @@ pub fn permission_grant_of(session: &str, data: &Value) -> Option<String> {
         && queue_ok
         && event["sessionId"] == session
         && event["type"] == "session_mode_changed"
-        && event["sequenceNumber"].as_u64().is_some()
+        // `z.number().int().nonnegative()`: `1.0` is an integer.
+        && event["sequenceNumber"]
+            .as_f64()
+            .is_some_and(|number| number >= 0.0 && number.fract() == 0.0)
         && matches!(payload["mode"].as_str(), Some("guarded" | "yolo"))
         && matches!(
             payload["previousMode"].as_str(),
@@ -253,6 +252,96 @@ fn strict<'a>(
     let known = |key: &str| required.contains(&key) || optional.contains(&key);
     (required.iter().all(|key| object.contains_key(*key)) && object.keys().all(|key| known(key)))
         .then_some(object)
+}
+
+/// `z.coerce.date()`: `new Date(value)` is not an Invalid Date. Booleans and null are 0 or 1 ms, a number is valid within
+/// ±8.64e15 ms, objects and arrays are invalid. A string must be in the ECMAScript date-time format (what
+/// `toISOString` writes, and its shorter forms); V8's legacy fallback (`"Nov 12 2026"`) is not accepted.
+fn js_date(value: &Value) -> bool {
+    const MAX_TIME_MS: f64 = 8.64e15;
+    match value {
+        Value::Bool(_) | Value::Null => true,
+        Value::Number(number) => number
+            .as_f64()
+            .is_some_and(|ms| ms.trunc().abs() <= MAX_TIME_MS),
+        Value::String(text) => js_date_string(text.as_bytes()).is_some(),
+        Value::Array(_) | Value::Object(_) => false,
+    }
+}
+
+/// The ECMAScript date-time string format as V8 reads it: `YYYY[-MM[-DD]]` (or `±YYYYYY`, not `-000000`), then
+/// optionally `THH:mm[:ss[.s…]]` and `Z` or `±HH:mm`. V8 lets the day run to 31 in any month and allows hour 24 only
+/// at `24:00:00.000`.
+fn js_date_string(text: &[u8]) -> Option<()> {
+    let mut at = 0;
+    let digits = |count: usize, at: &mut usize| -> Option<u32> {
+        let slice = text.get(*at..*at + count)?;
+        if !slice.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        *at += count;
+        std::str::from_utf8(slice).ok()?.parse().ok()
+    };
+    match text.first()? {
+        b'+' | b'-' => {
+            let negative = text[0] == b'-';
+            at = 1;
+            let year = digits(6, &mut at)?;
+            if negative && year == 0 {
+                return None;
+            }
+        }
+        _ => {
+            digits(4, &mut at)?;
+        }
+    }
+    let part = |at: &mut usize, separator: u8, range: std::ops::RangeInclusive<u32>| {
+        if text.get(*at) != Some(&separator) {
+            return Some(None);
+        }
+        *at += 1;
+        let value = digits(2, at)?;
+        range.contains(&value).then_some(Some(value))
+    };
+    if part(&mut at, b'-', 1..=12)?.is_some() {
+        part(&mut at, b'-', 1..=31)?;
+    }
+    if text.get(at) == Some(&b'T') {
+        at += 1;
+        let hour = digits(2, &mut at)?;
+        let mut zero = true;
+        let minute = part(&mut at, b':', 0..=59)??;
+        zero &= minute == 0;
+        if let Some(second) = part(&mut at, b':', 0..=59)? {
+            zero &= second == 0;
+            if text.get(at) == Some(&b'.') {
+                at += 1;
+                let start = at;
+                while text.get(at).is_some_and(u8::is_ascii_digit) {
+                    zero &= text[at] == b'0';
+                    at += 1;
+                }
+                if at == start {
+                    return None;
+                }
+            }
+        }
+        if hour > 24 || (hour == 24 && !zero) {
+            return None;
+        }
+        match text.get(at) {
+            Some(b'Z') => at += 1,
+            Some(b'+' | b'-') => {
+                at += 1;
+                if digits(2, &mut at)? > 23 {
+                    return None;
+                }
+                part(&mut at, b':', 0..=59)??;
+            }
+            _ => {}
+        }
+    }
+    (at == text.len()).then_some(())
 }
 
 fn non_empty(value: &Value) -> Option<&str> {

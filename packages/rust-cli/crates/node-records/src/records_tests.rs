@@ -101,3 +101,74 @@ fn the_written_receipt_passes_the_schema() {
         Some("int_1")
     );
 }
+
+fn with_event_field(key: &str, value: Value) -> Value {
+    let mut data = receipt();
+    data["event"][key] = value;
+    data
+}
+
+/// #423 review P2-2: `z.coerce.date()` is `new Date(value)` and fails on an Invalid Date. Results probed in Node 26:
+/// booleans and null are dates (0 or 1 ms), a number is one within ±8.64e15 ms, a string is one in the ECMAScript
+/// date-time format (V8 lets the day run to 31 and allows hour 24 at :00). `sequenceNumber` is `z.number().int()`, so
+/// `1.0` passes.
+#[test]
+fn the_receipt_timestamp_follows_js_date() {
+    let valid = [
+        json!(true),
+        json!(null),
+        json!(-1),
+        json!(1.5),
+        json!(8.64e15),
+        json!("2026-11-12T10:00:00.000Z"),
+        json!("2026-11-12"),
+        json!("2026-11"),
+        json!("2026"),
+        json!("2026-02-30"),
+        json!("2026-11-12T10:00"),
+        json!("2026-11-12T10:00:00.1234Z"),
+        json!("2026-11-12T10:00:00+02:00"),
+        json!("+002026-11-12T00:00:00Z"),
+        json!("2026-11-12T24:00:00Z"),
+    ];
+    for value in valid {
+        assert_eq!(
+            permission_grant_of("s1", &with_event_field("timestamp", value.clone())).as_deref(),
+            Some("int_1"),
+            "{value}"
+        );
+    }
+    let invalid = [
+        json!(8.64e15 + 2.0),
+        json!(""),
+        json!("abc"),
+        json!("1700000000000"),
+        json!("2026-13-01"),
+        json!("2026-11-32"),
+        json!("2026-11-12T25:00Z"),
+        json!("2026-11-12T24:00:01Z"),
+        json!("2026-11-12T10:60Z"),
+        json!("-000000-01-01T00:00:00Z"),
+        json!("2026-11-12T10:00:00+2:00"),
+        json!([]),
+    ];
+    for value in invalid {
+        assert_eq!(
+            permission_grant_of("s1", &with_event_field("timestamp", value.clone())),
+            None,
+            "{value}"
+        );
+    }
+    for (value, expected) in [
+        (json!(1.0), Some("int_1")),
+        (json!(1.5), None),
+        (json!(-1), None),
+    ] {
+        assert_eq!(
+            permission_grant_of("s1", &with_event_field("sequenceNumber", value.clone()))
+                .as_deref(),
+            expected,
+            "{value}"
+        );
+    }
+}
