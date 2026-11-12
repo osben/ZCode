@@ -152,7 +152,10 @@ async function startRecording() {
   await waitForVoiceState("recording", "点击麦克风后没有进入录音状态");
 }
 
-describe("Composer 语音输入", () => {
+// Fork: owner decision 5 of the upstream 3.18.0 sync (specs/upstream-sync-3.18.0.md) keeps one
+// composer mic, fork dictation; the upstream voice input button is never rendered, so this suite has
+// nothing to drive. Kept skipped (not deleted) so upstream syncs merge cleanly.
+describe.skip("Composer 语音输入", () => {
   let originalSettings: Awaited<ReturnType<typeof readSettings>>;
 
   before(async () => {

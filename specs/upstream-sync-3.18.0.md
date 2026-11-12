@@ -169,7 +169,9 @@ Changed code (test written first, then the change):
    guide (`specs/upstream-backport-3.18.1.md` item 4) belongs to the upstream input and is not reachable from
    the composer.
 5. context-builder: follows upstream; the four autonomy paragraphs are removed from the fork's editable
-   context-management default (`packages/shared/src/system-prompt.ts`), not only from the test.
+   context-management default (`packages/shared/src/system-prompt.ts`), not only from the test. This changes
+   the prompt for every user without a `context-management` override. Still undecided: the memory-as-context
+   instruction delta path in `request-user-context.ts` (only the full announcement is re-applied).
 6. `packages/ui/src/ToolCallBlocks/useStageDurationText.tsx` deleted (fork-only, no consumers).
 
 Recorded, no code change:
