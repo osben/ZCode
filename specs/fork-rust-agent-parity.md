@@ -955,7 +955,34 @@ Acceptance cases (`fork/release_under_directory_tests.rs`): (1) an idle session 
 
 ### Shared database check (before any purge work)
 
-Upstream adds session-store migration `0025_session_permanent_deletion` (`session_purge`, `session_runtime_presence`, and triggers that abort writes while a purge is pending) and tasks-index migration `0007_task_permanent_deletion` (`task_purge`). Rust references none of these tables. It is not yet confirmed whether a purge sees a Rust-run session as live, or how Rust handles the `session-data.deleting` abort. Upstream migration definitions stay untouched; fork additions use `9001_fork_*`.
+Checked 2026-11-12 against `origin/fork` 8c622563a by reading the code; nothing was run against a live database. No purge logic is ported; this section records what any later purge work must account for.
+
+Upstream adds session-store migration `0025_session_permanent_deletion` and tasks-index migration `0007_task_permanent_deletion`. 0025 creates `session_purge` (state `deleting` or `deleted`), `session_runtime_presence`, and triggers that raise `session-data.deleting` on writes for a session that has any `session_purge` row, in either state. The triggers cover inserts and updates of `session` (own id or parent), `session_task_link`, `session_runtime_presence`, `message`, `part`, `session_input`, `session_entry`, `todo`, `model_usage`, `session_target`, `turn_usage`, `tool_usage` and `input_history`, plus `dwf_run` and `workflow_run` through `parent_session_id`.
+
+Facts:
+
+1. **The Rust store does not know 0025.** `node-store` embeds Node migrations up to `0024_session_database_identity` and ignores unknown ledger rows (`repo/open_tests.rs`). The Node storage preparation entry still migrates the database before zcode-rs starts (`fork-agent-runtime/command.ts`), so in practice the tables and triggers exist under a Rust session. Rust never reads or writes `session_purge` or `session_runtime_presence`.
+2. **Rust mode cannot start a purge.** In Rust mode every agent process, including the management process, is zcode-rs. It does not serve `v4/storage/sessionData/deletionPreview`, `deletionExecute`, `sessionDataPurge` or `sessionDataMeasure`; they answer `method_not_found` (`protocol-zcode/src/server.rs`). The Host does not gate these calls by runtime, so permanent deletion fails with that error in Rust mode. The Host's handling of that error, including the `reservePermanentDeletion` reservation, was not exercised.
+3. **A purge can still come from another process on the same database.** The upstream app, or this fork in Node mode, shares `~/.zcode/cli/db/db.sqlite`. Its `beginSessionDeletion` refuses with `session-data.running` only when it sees one of these:
+   - a foreign `session_runtime_presence` row with a live pid;
+   - an `admitted` `session_input` row;
+   - an `active` `session_target` row.
+
+   Rust registers no presence. Its `admitted` rows exist only while an input waits in the queue: the running turn's own input is `promoted` when it starts (`node-store/src/session_inputs.rs`). So a Node purge does not see an idle Rust session, or a Rust session in a turn with an empty queue, as running. It does see Rust's queued inputs and an active goal.
+
+4. **After such a purge starts, Rust writes fail.** Any `session_purge` row, in either state, aborts Rust's later inserts and updates for that session.
+   - A turn commit then fails with the storage error: the actor records `Running.failure`, the turn ends as failed, and later commits in that turn are refused (`session/src/actor.rs`, `commit.rs`).
+   - `session_input` writes are observations: they roll back only their own savepoint and log `session_input.write_failed` (`node-store/src/session_inputs.rs`).
+   - Because the triggers persist after state `deleted`, Rust cannot recreate the purged rows; the session in memory only fails.
+5. **The tasks index is outside Rust.** zcode-rs does not open `tasks-index.sqlite`, so `task_purge` does not concern it.
+
+Consequence for any later purge work: before Rust serves the deletion methods, or before a mixed Node and Rust setup is supported for deletion, Rust must take part in the runtime presence protocol. That means:
+
+- insert a `session_runtime_presence` row (`owner_id = <pid>:<uuid>`) when a session opens;
+- delete it on close;
+- treat `session-data.deleting` as "deleted elsewhere" instead of a generic storage failure.
+
+Until then it is a known gap that a concurrent Node purge can delete an open Rust session, and that session's next turn fails. Upstream migration definitions stay untouched; any fork addition uses `9001_fork_*`.
 
 ### (b) Hidden because Rust reports the capability false
 
