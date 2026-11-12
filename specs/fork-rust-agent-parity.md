@@ -832,7 +832,7 @@ The `worktreePreparation` override replaces branch, path, base and attempt. Node
 
 ## Upstream 3.18 native worktree: divergence
 
-Upstream 3.18.0 (`docs/git/worktree.md`, capability `worktreeCwd`) ships its own worktree sessions with a different shape. The fork is on 3.17.2; this section records what the 3.18 sync has to reconcile.
+Upstream 3.18.0 (`docs/git/worktree.md`, capability `worktreeCwd`) ships its own worktree sessions with a different shape. The fork merged 3.18.0 on 2026-11-12 (#402); Rust still reports `worktreeCwd: false`, so the Host hides managed worktrees for Rust workspaces. This section records what reconciling the two shapes involves (gap B1 below).
 
 | Aspect                    | Fork execution worktree (this section, Node and Rust)                                                          | Upstream 3.18 managed worktree                                                                                                              |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -854,6 +854,38 @@ Upstream 3.18.0 (`docs/git/worktree.md`, capability `worktreeCwd`) ships its own
 - the `executionWorktreeMissing` stat and the fail-closed root with the `Write` guard.
 
 The marker, the prepare / update / activate compare-and-set and the execution-column read and write are fork-shape only. Rust keeps reading them for as long as fork-shape sessions exist in the database.
+
+## Upstream 3.18.0 gaps (wave 2)
+
+Gap map from 2026-11-12, upstream `a9fe401e` (3.17.2) to `b95ebaffe` (3.18.0). Rust's `inbound.json` is generated from the 3.18.0 zod schemas, so new command shapes pass validation. They then reach `commands.rs` `unsupported()` (`proto.unsupportedCommand`). Unknown `v4/*` methods answer `-32601`. Node's capability list (`zcode-protocol/server.ts` `runtime/capabilities`) adds `highspeedCardOwner`, `providerRegistryRefresh`, `pluginDiscoveryUi`, `worktreeCwd`, `extensionInputSource`, `conversationQuoteComment` and `pluginExtensionSummary`; Rust reports none of them.
+
+### (a) Broken in Rust today, no Host gate
+
+| Id  | Item                                                                                                                        | Node 3.18                                                                              | Rust today                                                                                                                                                             | Rule after the port                                                                                                           |
+| --- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Queued-item edit lock: `lockQueueItemEdit`, `releaseQueueItemEdit`, `editQueueItem.editorId`, snapshot `queueItem.editLock` | core `steering.ts` (`editLockVerdict`); UI `composer-edit-mode/useComposerEditMode.ts` | unsupported, so the UI shows `chat.composerEdit.lockFailed.generic` and never enters edit mode. `fork/queue.rs` `EditPayload` carries only `queueItemId` and `newText` | The lock and its verdicts follow Node. `editQueueItem` keeps the full Node payload (attachments, model selection, mode, plan) |
+| A2  | `applyQueueItemsConfig`                                                                                                     | `command.ts`; UI `composer-edit-mode/queueConfigApply.ts`                              | unsupported                                                                                                                                                            | Applies model and mode to queued items like Node. Depends on A1                                                               |
+| A3  | `session/releaseUnderDirectory`                                                                                             | Host `zcodeAgentService.ts`, `managed-worktree-tasks/removal.ts`                       | `-32601`, so removing a managed worktree fails with `session-close-failed` and the worktree stays                                                                      | Releases the Rust sessions whose cwd is under the directory, then answers like Node                                           |
+
+### Shared database check (before any purge work)
+
+Upstream adds session-store migration `0025_session_permanent_deletion` (`session_purge`, `session_runtime_presence`, and triggers that abort writes while a purge is pending) and tasks-index migration `0007_task_permanent_deletion` (`task_purge`). Rust references none of these tables. It is not yet confirmed whether a purge sees a Rust-run session as live, or how Rust handles the `session-data.deleting` abort. Upstream migration definitions stay untouched; fork additions use `9001_fork_*`.
+
+### (b) Hidden because Rust reports the capability false
+
+- **B1 `worktreeCwd`**: `createSession.cwd` and `worktreeCreation`, `forkAssistant.targetCwd`, `workspace` on cold-restore entries, and `subscribe.worktreeSessionIds`. L, and it needs a design first. Until then Rust rejects a received `cwd` or `targetCwd` explicitly instead of creating the session in the workspace directory.
+- **B2 `stopSubagent` and `runningSubagentSummary.stopControl`**: the status-panel Stop button for running subagents is hidden on Rust.
+- **B3 Permission `modeSwitch` (`choose` / `fullAccessOnly`) and the `allowAndSwitchGuarded` grant**: Rust once-asks offer no full-access switch.
+- **B4 `extensionInputSource`**: the Host refuses extension-originated input for Rust.
+- **B5 `conversationQuoteComment`**: the selection-comment entry is hidden. It is cheap if Rust's `conversation_quote` already keeps `comment` and `agent`.
+- `pluginDiscoveryUi` stays out of scope (plugins). `highspeedCardOwner`, `providerRegistryRefresh` and `pluginExtensionSummary` are cosmetic.
+
+### (c) Model-facing, telemetry and skew-safe
+
+- Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): absent in Rust and model-facing.
+- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported.
+
+Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4, then the stall reminder. B1 waits for a design agreed with the user.
 
 ## Known differences kept on purpose
 
