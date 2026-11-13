@@ -9,9 +9,10 @@
 use std::collections::{HashMap, HashSet};
 
 use rust_cli_kernel_api::hooks::queued_command;
-use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
+use rust_cli_kernel_api::message::{ContentBlock, Message, ToolResultContent, UserOrigin};
 use rust_cli_kernel_api::model::BlockDelta;
 use rust_cli_kernel_api::session_api::{KernelEvent, TurnOutcome};
+use rust_cli_kernel_api::tool_names;
 use serde_json::{Map, Value, json};
 
 /// The notification method (Node `V4_NOTIFICATIONS.conversationTelemetryFact`).
@@ -265,13 +266,21 @@ impl Telemetry {
                 let duration = tool
                     .started_at
                     .map(|started| at.now.saturating_sub(started));
+                // Fork: Node `cronCreateAutomationId`: a completed CronCreate names the automation it created.
+                let created = (!output.is_error && tool.name == tool_names::CRON_CREATE)
+                    .then(|| created_automation(&output.content))
+                    .flatten();
                 let (phase, error) = if output.is_error {
                     let message = rust_cli_kernel_api::message::text_of(&output.content);
                     ("failed", Some(message))
                 } else {
                     ("completed", None)
                 };
-                out.push(self.tool_fact(tool_use.as_str(), phase, duration, error, at));
+                let mut fact = self.tool_fact(tool_use.as_str(), phase, duration, error, at);
+                if let (Some(created), Some(fact)) = (created, fact.as_object_mut()) {
+                    fact.insert("automationId".into(), json!(created));
+                }
+                out.push(fact);
             }
             KernelEvent::TurnFinished { outcome, .. } => {
                 self.release_held(at, &mut out);
@@ -578,6 +587,16 @@ impl Telemetry {
         fact.insert("kind".into(), json!(kind));
         fact
     }
+}
+
+/// Fork: the `automation.automationId` of a CronCreate output (its text is the JSON the tool answered).
+fn created_automation(content: &[ToolResultContent]) -> Option<String> {
+    let text = rust_cli_kernel_api::message::text_of(content);
+    let value: Value = serde_json::from_str(&text).ok()?;
+    value["automation"]["automationId"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
 }
 
 /// Fork: Node `automationAdmission`: an automation turn names its automation, and the trigger (and scheduled time)

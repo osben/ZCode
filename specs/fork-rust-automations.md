@@ -144,6 +144,9 @@ Owners (Node layering):
   result against the method's reply schema (inbound schema).
 - **Session** (`SessionOps::freeze_title`, Node `setCustomSessionTitle`): after a successful create the tool asks its
   session to take the automation title as a custom title; a subagent's request goes to its owner session.
+- **Telemetry** (`protocol-zcode` telemetry observer, Node `cronCreateAutomationId`): a successful CronCreate's
+  `tool.lifecycle` completion fact carries the created `automationId`, read from the tool's JSON output
+  (`automation.automationId`); a failed call or other output adds nothing.
 
 Rules:
 
@@ -215,7 +218,7 @@ Rust tests (protocol-zcode, tools):
 6. Desktop session: the tool catalog has Node's five Cron tools and no local cron store; CronCreate sends
    `automation/checkTaskBinding` then `automation/create` with the session's selection, mode, `targetTaskId` and
    workspace; a bound session refuses; a non-`-32601` check failure refuses; `-32601` falls back to `automation/list`;
-   success freezes the title. CronPauseSelf sends `automation/pause` with the turn's id.
+   success freezes the title and its completed `tool.lifecycle` fact names the created `automationId`. CronPauseSelf sends `automation/pause` with the turn's id.
 7. The generated contracts equal Node's (`automation-tools.mts --check`); the CronCreate contract contains the
    `prompt` field description and the model instructions; the Cron tools are not deferred and subagents (forks
    included) do not get them under `node_desktop`; the builtin `/loop` is not offered under the Host's automations.
