@@ -6201,6 +6201,645 @@
     "setRowPinned"
   ],
   "replies": {
+    "automation/checkTaskBinding": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "bound": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bound"
+      ],
+      "additionalProperties": false
+    },
+    "automation/create": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "automation": {
+          "type": "object",
+          "properties": {
+            "automationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string"
+            },
+            "cronExpr": {
+              "type": "string",
+              "minLength": 1
+            },
+            "prompt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelSelection": {
+              "type": "object",
+              "properties": {
+                "providerId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "modelId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "options": {
+                  "type": "object",
+                  "properties": {
+                    "reasoningLevel": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "providerId",
+                "modelId"
+              ],
+              "additionalProperties": false
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "default",
+                "yolo",
+                "guarded",
+                "plan",
+                "edit",
+                "acceptEdits",
+                "auto",
+                "dontAsk",
+                "bypassPermissions",
+                "autoEdit",
+                "build"
+              ]
+            },
+            "targetTaskId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lifecycleStatus": {
+              "type": "string",
+              "enum": [
+                "active",
+                "completed",
+                "failed",
+                "paused"
+              ]
+            },
+            "nextRunAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastRunAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "runCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "recurring": {
+              "type": "boolean"
+            },
+            "maxRuns": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "scheduleRule": {
+              "type": "object",
+              "properties": {
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "minute",
+                    "hourly",
+                    "daily",
+                    "weekly",
+                    "monthly",
+                    "yearly"
+                  ]
+                },
+                "interval": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "hour": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 23
+                },
+                "minute": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 59
+                },
+                "anchorAt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "weekdays": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "monthDays": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                  }
+                },
+                "months": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                  }
+                },
+                "monthlyMode": {
+                  "type": "string",
+                  "enum": [
+                    "date",
+                    "weekday"
+                  ]
+                }
+              },
+              "required": [
+                "unit",
+                "interval",
+                "hour",
+                "minute",
+                "anchorAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "automationId",
+            "title",
+            "cronExpr",
+            "prompt",
+            "enabled",
+            "lifecycleStatus",
+            "runCount",
+            "recurring"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "additionalProperties": false
+    },
+    "automation/delete": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "deleted"
+      ],
+      "additionalProperties": false
+    },
+    "automation/list": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "automations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "automationId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "cronExpr": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modelSelection": {
+                "type": "object",
+                "properties": {
+                  "providerId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "options": {
+                    "type": "object",
+                    "properties": {
+                      "reasoningLevel": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "providerId",
+                  "modelId"
+                ],
+                "additionalProperties": false
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "yolo",
+                  "guarded",
+                  "plan",
+                  "edit",
+                  "acceptEdits",
+                  "auto",
+                  "dontAsk",
+                  "bypassPermissions",
+                  "autoEdit",
+                  "build"
+                ]
+              },
+              "targetTaskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lifecycleStatus": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "completed",
+                  "failed",
+                  "paused"
+                ]
+              },
+              "nextRunAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "lastRunAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "runCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "recurring": {
+                "type": "boolean"
+              },
+              "maxRuns": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "scheduleRule": {
+                "type": "object",
+                "properties": {
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "minute",
+                      "hourly",
+                      "daily",
+                      "weekly",
+                      "monthly",
+                      "yearly"
+                    ]
+                  },
+                  "interval": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  },
+                  "minute": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 59
+                  },
+                  "anchorAt": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "weekdays": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 6
+                    }
+                  },
+                  "monthDays": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 31
+                    }
+                  },
+                  "months": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 12
+                    }
+                  },
+                  "monthlyMode": {
+                    "type": "string",
+                    "enum": [
+                      "date",
+                      "weekday"
+                    ]
+                  }
+                },
+                "required": [
+                  "unit",
+                  "interval",
+                  "hour",
+                  "minute",
+                  "anchorAt"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "automationId",
+              "title",
+              "cronExpr",
+              "prompt",
+              "enabled",
+              "lifecycleStatus",
+              "runCount",
+              "recurring"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "automations"
+      ],
+      "additionalProperties": false
+    },
+    "automation/pause": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paused"
+      ],
+      "additionalProperties": false
+    },
+    "automation/update": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "automation": {
+          "type": "object",
+          "properties": {
+            "automationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string"
+            },
+            "cronExpr": {
+              "type": "string",
+              "minLength": 1
+            },
+            "prompt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelSelection": {
+              "type": "object",
+              "properties": {
+                "providerId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "modelId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "options": {
+                  "type": "object",
+                  "properties": {
+                    "reasoningLevel": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "providerId",
+                "modelId"
+              ],
+              "additionalProperties": false
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "default",
+                "yolo",
+                "guarded",
+                "plan",
+                "edit",
+                "acceptEdits",
+                "auto",
+                "dontAsk",
+                "bypassPermissions",
+                "autoEdit",
+                "build"
+              ]
+            },
+            "targetTaskId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lifecycleStatus": {
+              "type": "string",
+              "enum": [
+                "active",
+                "completed",
+                "failed",
+                "paused"
+              ]
+            },
+            "nextRunAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastRunAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "runCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "recurring": {
+              "type": "boolean"
+            },
+            "maxRuns": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "scheduleRule": {
+              "type": "object",
+              "properties": {
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "minute",
+                    "hourly",
+                    "daily",
+                    "weekly",
+                    "monthly",
+                    "yearly"
+                  ]
+                },
+                "interval": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "hour": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 23
+                },
+                "minute": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 59
+                },
+                "anchorAt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "weekdays": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "monthDays": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                  }
+                },
+                "months": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                  }
+                },
+                "monthlyMode": {
+                  "type": "string",
+                  "enum": [
+                    "date",
+                    "weekday"
+                  ]
+                }
+              },
+              "required": [
+                "unit",
+                "interval",
+                "hour",
+                "minute",
+                "anchorAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "automationId",
+            "title",
+            "cronExpr",
+            "prompt",
+            "enabled",
+            "lifecycleStatus",
+            "runCount",
+            "recurring"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "additionalProperties": false
+    },
     "interaction/requestCredentialCipher": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

@@ -11,6 +11,12 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import {
+  zcodeAutomationCheckTaskBindingResultSchema,
+  zcodeAutomationCreateResultSchema,
+  zcodeAutomationDeleteResultSchema,
+  zcodeAutomationListResultSchema,
+  zcodeAutomationPauseResultSchema,
+  zcodeAutomationUpdateResultSchema,
   zcodeProcessHostAttachedParamsSchema,
   zcodeLspPreferencesGetParamsSchema,
   zcodeLspPreferencesSetParamsSchema,
@@ -95,6 +101,13 @@ const METHODS = {
 };
 // Replies to the agent's own requests that zcode-rs validates.
 const REPLIES = {
+  // The Host's answers to the desktop Cron tools (specs/fork-rust-automations.md, slice 2).
+  "automation/checkTaskBinding": zcodeAutomationCheckTaskBindingResultSchema,
+  "automation/create": zcodeAutomationCreateResultSchema,
+  "automation/delete": zcodeAutomationDeleteResultSchema,
+  "automation/list": zcodeAutomationListResultSchema,
+  "automation/pause": zcodeAutomationPauseResultSchema,
+  "automation/update": zcodeAutomationUpdateResultSchema,
   "interaction/requestProviderRuntimeHeaders": zcodeProviderRuntimeHeadersResponseSchema,
   // Desktop credentials: the Host's answer to the Rust agent's encrypt/decrypt request (specs/fork-rust-credential-cipher.md).
   "interaction/requestCredentialCipher": credentialCipherReplySchema,

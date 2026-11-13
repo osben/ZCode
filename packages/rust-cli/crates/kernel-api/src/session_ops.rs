@@ -43,7 +43,7 @@ pub struct RunView {
     /// outside a turn the Host dispatched, and always for a subagent: like Node, a child run takes the session's tool
     /// config, not the turn's. Node registers no Cron tool for a subagent child (`runtime-tools.ts`
     /// `mainAutomationToolsIncluded`); slice 2 (#449: `agents/src/spawn.rs` `WithoutCron`, `ToolSet::without_cron`)
-    /// does the same for desktop subagents and forks. Until it lands, the local Cron tools stay offered to subagents.
+    /// does the same for desktop subagents and forks, so a subagent of an automation run has no Cron tool.
     pub turn: crate::turn_limits::TurnLimits,
 }
 
@@ -97,6 +97,11 @@ pub trait SessionOps: Send + Sync {
     /// 改会话的工作目录（EnterWorktree / ExitWorktree）；owner 是会话 actor，它同时设执行环境的 shell cwd
     /// （tools-more.md §11.4）。前台子代理改的是父会话的；不持有会话的返回 `Unsupported`。
     async fn set_workspace(&self, root: EnvPath) -> Result<(), OrchestrationError>;
+
+    /// Fork: take `title` as the session's custom title, so a generated title no longer replaces it (Node
+    /// `setCustomSessionTitle` after a desktop CronCreate; specs/fork-rust-automations.md, slice 2). Not awaited: a
+    /// failure is only logged. A foreground subagent's request goes to its parent; sinks without a session ignore it.
+    async fn freeze_title(&self, title: String);
 
     /// Monitor 工具起好的 monitor 交给它的 owner（工作线 F83，tools-more.md §19.6）：主线程是会话 actor，子代理里是
     /// agents。`events` 是 `start_command` 返回、工具读过 `Started` 的那条流。不持有的返回 `Unsupported`，调用方停掉

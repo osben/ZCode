@@ -171,6 +171,14 @@ impl Context {
         self.sessions.lock_unpoisoned().get(session).cloned()
     }
 
+    /// The protocol `workspace` ref of an open session (`zcodeWorkspaceRefSchema`, a local workspace: its key is its
+    /// path).
+    pub fn workspace_ref(&self, session: &str) -> Option<serde_json::Value> {
+        self.workspace_of(session).map(
+            |workspace| serde_json::json!({"workspacePath": workspace, "workspaceKey": workspace}),
+        )
+    }
+
     pub fn now(&self) -> u64 {
         self.clock.now_ms()
     }

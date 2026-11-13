@@ -88,6 +88,8 @@
     "architecture:adopt": "node scripts/architecture/architecture-check.mjs adopt",
     "db:migrations:check": "node --test scripts/test/upstream-migration-baseline.test.mjs && tsx --test scripts/test/check-upstream-migrations.test.ts && tsx scripts/check-upstream-migrations.ts",
     "rust-agent:inbound-schema:check": "tsx scripts/fork-rust-agent/inbound-schema.mts --check",
+    "rust-agent:automation-tools:check": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts --check",
+    "rust-agent:automation-tools:update": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts",
     "db:migrations:baseline:update": "tsx scripts/check-upstream-migrations.ts --update",
     "docs:stale-phrases:check": "node scripts/check-stale-doc-phrases.mjs",
     "db:schema:check": "node --test scripts/test/sqlite-schema-contract.test.mjs && pnpm --dir apps/zcode-cli exec tsx ../../scripts/check-sqlite-schema.ts",

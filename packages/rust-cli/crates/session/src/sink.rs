@@ -240,6 +240,11 @@ impl SessionOps for ActorSink {
             .await
     }
 
+    /// Fork: the same path as a hook's title (`retitle`): committed as a custom title, generation stops.
+    async fn freeze_title(&self, title: String) {
+        self.title(title).await;
+    }
+
     /// monitor 的 owner 是会话 actor（工作线 F83）。
     async fn arm_monitor(
         &self,

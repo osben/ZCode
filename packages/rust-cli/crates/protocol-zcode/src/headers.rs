@@ -102,14 +102,13 @@ impl HeaderSource for HostHeaders {
             .ok_or_else(|| failed("account credentials need the requesting session"))?;
         let workspace = self
             .context
-            .workspace_of(session.as_str())
+            .workspace_ref(session.as_str())
             .ok_or_else(|| failed("the requesting session is not open in this agent"))?;
         let request_id = format!(
             "{}:provider-runtime-headers:{}",
             session.as_str(),
             self.context.fresh("auth")
         );
-        let workspace = json!({"workspacePath": workspace, "workspaceKey": workspace});
         // Fork: ChatGPT Plan is routed by provider id and carries no zhipu-shaped access (rule 7). After a 401 it
         // names the scope of the rejected token; without one Node cannot recover the token either (rule 9).
         let chatgpt = request.access == HeaderAccess::ChatGptPlan;
