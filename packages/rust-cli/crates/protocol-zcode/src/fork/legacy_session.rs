@@ -329,6 +329,9 @@ pub(crate) async fn set_mode(server: &Server, params: &Value) -> Result<Value, R
 pub(crate) async fn set_thought_level(server: &Server, params: &Value) -> Result<Value, RpcError> {
     let id = super::methods::session_id(params)?;
     let thought = params["thoughtLevel"].as_str().unwrap_or_default();
+    if thought.is_empty() {
+        return Err(RpcError::invalid_params("thoughtLevel is required"));
+    }
     // The model is read inside the switch turn, not here.
     let (request, live) = opened(
         server,
