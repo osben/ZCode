@@ -151,7 +151,9 @@ impl McpTrustStore {
     pub async fn load(&self) -> McpTrustLoad {
         match rust_cli_fs::read_optional(&self.file).await {
             Ok(None) => McpTrustLoad::Missing,
-            Ok(Some(bytes)) => parse_store(&bytes).map_or(McpTrustLoad::Corrupt, McpTrustLoad::Records),
+            Ok(Some(bytes)) => {
+                parse_store(&bytes).map_or(McpTrustLoad::Corrupt, McpTrustLoad::Records)
+            }
             Err(_) => McpTrustLoad::Corrupt,
         }
     }

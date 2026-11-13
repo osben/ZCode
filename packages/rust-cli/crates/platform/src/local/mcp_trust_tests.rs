@@ -1,5 +1,8 @@
 //! Workspace MCP trust records: the Node format, decide under the lock, fail-closed parsing.
-#![allow(clippy::disallowed_methods, reason = "tests read back the written file")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests read back the written file"
+)]
 use super::*;
 
 const D1: &str = "177736e2ee5a13cc08c0576241bdf310a4068df9827856e0f9b9559e7d5a4051";
@@ -38,15 +41,27 @@ async fn decide_writes_the_bytes_node_writes() {
     let dir = tempfile::tempdir().unwrap();
     let store = store(dir.path());
     assert_eq!(store.load().await, McpTrustLoad::Missing);
-    store.decide(async || true, record("alpha", D2), true).await.unwrap();
-    store.decide(async || true, record("gamma", D1), true).await.unwrap();
-    store.decide(async || true, record("alpha", D2), false).await.unwrap();
+    store
+        .decide(async || true, record("alpha", D2), true)
+        .await
+        .unwrap();
+    store
+        .decide(async || true, record("gamma", D1), true)
+        .await
+        .unwrap();
+    store
+        .decide(async || true, record("alpha", D2), false)
+        .await
+        .unwrap();
     let text = std::fs::read_to_string(store.path()).unwrap();
     assert_eq!(text, NODE_TEXT);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(store.path()).unwrap().permissions().mode();
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 }
@@ -67,9 +82,18 @@ async fn a_node_written_store_is_read() {
 async fn a_regrant_replaces_the_record_and_keeps_others() {
     let dir = tempfile::tempdir().unwrap();
     let store = store(dir.path());
-    store.decide(async || true, record("gamma", D1), true).await.unwrap();
-    store.decide(async || true, record("alpha", D2), true).await.unwrap();
-    store.decide(async || true, record("gamma", D1), true).await.unwrap();
+    store
+        .decide(async || true, record("gamma", D1), true)
+        .await
+        .unwrap();
+    store
+        .decide(async || true, record("alpha", D2), true)
+        .await
+        .unwrap();
+    store
+        .decide(async || true, record("gamma", D1), true)
+        .await
+        .unwrap();
     let names: Vec<_> = store
         .load()
         .await
@@ -84,7 +108,9 @@ async fn a_regrant_replaces_the_record_and_keeps_others() {
 async fn a_changed_declaration_refuses_without_writing() {
     let dir = tempfile::tempdir().unwrap();
     let store = store(dir.path());
-    let result = store.decide(async || false, record("gamma", D1), true).await;
+    let result = store
+        .decide(async || false, record("gamma", D1), true)
+        .await;
     assert!(matches!(result, Err(McpTrustError::Changed)));
     assert_eq!(store.load().await, McpTrustLoad::Missing);
 }

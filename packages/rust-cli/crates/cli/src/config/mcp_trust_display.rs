@@ -32,7 +32,8 @@ static RULES: LazyLock<Vec<(Regex, String)>> = LazyLock::new(|| {
             "${1}M:M@",
         ),
         rule(
-            r#"(?i)(authorization\s*:\s*(?:basic|bearer)\s+)(?:"[^"]*"|'[^']*'|[^\s,;"']+)"#.to_owned(),
+            r#"(?i)(authorization\s*:\s*(?:basic|bearer)\s+)(?:"[^"]*"|'[^']*'|[^\s,;"']+)"#
+                .to_owned(),
             "${1}M",
         ),
         rule(

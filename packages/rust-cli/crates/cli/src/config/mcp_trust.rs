@@ -45,10 +45,8 @@ impl Target {
     }
 
     pub(crate) fn fallback_path(&self) -> String {
-        PathStyle::infer(&self.working_directory).join(
-            &self.working_directory,
-            &[FALLBACK_DIR, FALLBACK_FILE],
-        )
+        PathStyle::infer(&self.working_directory)
+            .join(&self.working_directory, &[FALLBACK_DIR, FALLBACK_FILE])
     }
 
     /// Node `digest(name, config, sourcePaths)`.
@@ -386,7 +384,10 @@ fn stdio_command(command: &str, args: &[Value]) -> (String, Vec<Value>) {
     if cfg!(windows)
         && (lower == "cmd" || lower == "cmd.exe")
         && args.first().and_then(Value::as_str) == Some("/c")
-        && let Some(inner) = args.get(1).and_then(Value::as_str).filter(|s| !s.is_empty())
+        && let Some(inner) = args
+            .get(1)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
     {
         return (inner.to_owned(), args[2..].to_vec());
     }
@@ -569,7 +570,12 @@ pub(crate) fn dto_config(dto: &Value) -> Option<(String, Map<String, Value>)> {
     let name = object.get("name")?.as_str()?.to_owned();
     let pairs = |key: &str| -> Value {
         let mut record = Map::new();
-        for pair in object.get(key).and_then(Value::as_array).into_iter().flatten() {
+        for pair in object
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if let (Some(name), Some(value)) = (pair.get("name"), pair.get("value"))
                 && let Some(name) = name.as_str()
             {
@@ -590,11 +596,19 @@ pub(crate) fn dto_config(dto: &Value) -> Option<(String, Map<String, Value>)> {
     } else {
         copy(&mut config, "type");
     }
-    if let Some(scope) = object.get("scope").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(scope) = object
+        .get("scope")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         config.insert("source".into(), json!({"kind": scope}));
     }
     if stdio {
-        if object.get("cwd").and_then(Value::as_str).is_some_and(|cwd| !cwd.is_empty()) {
+        if object
+            .get("cwd")
+            .and_then(Value::as_str)
+            .is_some_and(|cwd| !cwd.is_empty())
+        {
             copy(&mut config, "cwd");
         }
         copy(&mut config, "command");

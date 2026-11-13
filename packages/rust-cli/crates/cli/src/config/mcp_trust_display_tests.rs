@@ -6,20 +6,35 @@ use super::*;
 #[test]
 fn sanitize_matches_node() {
     let cases = [
-        ("node server.js --api-key sk-123 --flag", "node server.js --api-key •••• --flag"),
+        (
+            "node server.js --api-key sk-123 --flag",
+            "node server.js --api-key •••• --flag",
+        ),
         ("/usr/bin/env TOKEN=abc run", "/usr/bin/env TOKEN=•••• run"),
         (
             "curl https://user:pass@example.com/x?access_token=zzz&b=1",
             "curl https://••••:••••@example.com/x?access_token=••••",
         ),
-        ("Authorization: Bearer abc.def, next", "Authorization: Bearer ••••, next"),
-        ("authorization = 'quoted value' tail", "authorization = •••• tail"),
+        (
+            "Authorization: Bearer abc.def, next",
+            "Authorization: Bearer ••••, next",
+        ),
+        (
+            "authorization = 'quoted value' tail",
+            "authorization = •••• tail",
+        ),
         (
             r#"{"client_secret": "s3", "my-api-key":42}"#,
             r#"{"client_secret": ••••, "my-api-key":••••"#,
         ),
-        ("x MY_PASSWORD: hunter2\nAPI_KEY=1 y", "x MY_PASSWORD: ••••\nAPI_KEY=•••• y"),
-        (r#"--Private-Key "a b" --other"#, "--Private-Key •••• --other"),
+        (
+            "x MY_PASSWORD: hunter2\nAPI_KEY=1 y",
+            "x MY_PASSWORD: ••••\nAPI_KEY=•••• y",
+        ),
+        (
+            r#"--Private-Key "a b" --other"#,
+            "--Private-Key •••• --other",
+        ),
         ("tokenizer stays, Tokens: x", "tokenizer stays, Tokens: x"),
         ("plain text", "plain text"),
     ];
