@@ -41,6 +41,8 @@ pub struct Context {
     model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
     /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
     mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
+    /// Fork: the language-server host behind `lsp/*` (specs/fork-rust-lsp.md); without it they answer -32000.
+    language_servers: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>>,
 }
 
 impl Context {
@@ -79,6 +81,18 @@ impl Context {
     /// the Host answers credential cipher requests.
     pub(crate) async fn host_ready(&self) -> Option<bool> {
         self.attach.ready().await
+    }
+
+    /// Fork: the language-server host (the app-server sets it once at startup).
+    pub fn set_language_servers(&self, host: Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>) {
+        let _ = self.language_servers.set(host);
+    }
+
+    /// Fork: the language-server host, when the entry point provided one.
+    pub(crate) fn language_servers(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>> {
+        self.language_servers.get()
     }
 
     /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
@@ -137,6 +151,7 @@ impl Context {
             node_helper: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
+            language_servers: std::sync::OnceLock::new(),
         }
     }
 
