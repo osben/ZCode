@@ -5,7 +5,7 @@
 //! [`crate::legacy::read`].
 
 use rust_cli_kernel_api::ids::SessionId;
-use rust_cli_kernel_api::session_api::Command;
+use rust_cli_kernel_api::session_api::{Command, EndReason};
 use rust_cli_protocol_core::rpc::RpcError;
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -167,7 +167,10 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
     )
     .await;
     let result = ack_result(ack)?.unwrap_or_default();
-    let id = SessionId::new(result["sessionId"].as_str().unwrap_or_default());
+    let Some(id) = result["sessionId"].as_str().filter(|id| !id.is_empty()) else {
+        return Err(RpcError::internal("createSession answered no session id"));
+    };
+    let id = SessionId::new(id);
     let live = server
         .live(&id)
         .await
@@ -181,12 +184,15 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         .await;
     }
     if params.persistence.as_deref() != Some("deferred") {
-        server
-            .kernel
-            .queries()
-            .persist_for_input(&id, "")
-            .await
-            .map_err(|error| RpcError::internal(error.to_string()))?;
+        let queries = server.kernel.queries();
+        if let Err(error) = queries.persist_for_input(&id, "").await {
+            // Leave no half-created id behind, so a retry with the same id is not refused as existing: drop the draft
+            // and the runtime like a deferred `session/close`.
+            let _ = queries.discard_draft(&id).await;
+            server.bridge.close(&id);
+            live.handle.close(EndReason::Other).await;
+            return Err(RpcError::internal(error.to_string()));
+        }
     }
     crate::legacy::read(server, &snapshot_params(&id)).await
 }

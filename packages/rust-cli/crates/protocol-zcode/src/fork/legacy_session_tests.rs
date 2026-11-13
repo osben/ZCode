@@ -12,8 +12,8 @@ use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    Ack as KernelAck, Command, CommandEnvelope, CommandResult, CreateSession, Kernel, KernelError,
-    SequencedEvent, SessionHandle, SessionView,
+    Ack as KernelAck, Command, CommandEnvelope, CommandResult, CreateSession, EndReason, Kernel,
+    KernelError, SequencedEvent, SessionHandle, SessionView,
 };
 use rust_cli_kernel_api::store::{
     Admission, FrontendRecord, SessionFilter, SessionKind, SessionMeta, SessionStore,
@@ -72,12 +72,22 @@ impl HandleOverride for TestHandle {
     async fn view(&self) -> Result<SessionView, KernelError> {
         Ok(self.view.lock().unwrap().clone())
     }
+
+    async fn close(&self, _reason: EndReason) -> Vec<String> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("close {}", self.id.as_str()));
+        Vec::new()
+    }
 }
 
 /// The memory store, recording the draft persistence.
 struct Queries {
     store: Arc<MemoryStore>,
     log: Log,
+    /// The draft persistence fails (a store error at create).
+    fail_persist: bool,
 }
 
 #[async_trait]
@@ -128,7 +138,20 @@ impl StoreQueries for Queries {
             .lock()
             .unwrap()
             .push(format!("persist {} {input:?}", session.as_str()));
+        if self.fail_persist {
+            return Err(StoreError::Storage {
+                message: "disk full".to_owned(),
+            });
+        }
         Ok(Admission::default())
+    }
+
+    async fn discard_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("discard {}", session.as_str()));
+        Ok(true)
     }
 }
 
@@ -137,6 +160,7 @@ struct TestKernel {
     handles: StdMutex<HashMap<SessionId, Arc<TestHandle>>>,
     created: StdMutex<HashMap<SessionId, (ModelSelection, PermissionMode)>>,
     log: Log,
+    fail_persist: std::sync::atomic::AtomicBool,
 }
 
 impl TestKernel {
@@ -192,6 +216,7 @@ impl Kernel for TestKernel {
         Arc::new(Queries {
             store: self.store.clone(),
             log: self.log.clone(),
+            fail_persist: self.fail_persist.load(std::sync::atomic::Ordering::SeqCst),
         })
     }
 
@@ -256,6 +281,7 @@ fn server() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
         handles: StdMutex::new(HashMap::new()),
         created: StdMutex::new(HashMap::new()),
         log: Arc::new(StdMutex::new(Vec::new())),
+        fail_persist: std::sync::atomic::AtomicBool::new(false),
     });
     let server = Arc::new(Server::new(
         context,
@@ -346,6 +372,31 @@ async fn an_immediate_create_persists_the_session_and_keeps_titles() {
     params.as_object_mut().unwrap().remove("persistence");
     call(&server, "session/create", params).await.unwrap();
     assert!(log(&kernel).contains(&"persist s3 \"\"".to_owned()));
+}
+
+/// A failed persistence at an immediate create leaves no half-created id: the draft is discarded, the runtime closed
+/// and the bridge entry dropped, so the Host's retry with the same id is not refused as existing.
+#[tokio::test]
+async fn a_failed_immediate_persistence_leaves_no_session_behind() {
+    let (_scope, server, kernel) = server();
+    kernel
+        .fail_persist
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut params = automation_create("s3");
+    params["persistence"] = json!("immediate");
+    let error = call(&server, "session/create", params).await.unwrap_err();
+    assert!(error.message.contains("disk full"), "{error:?}");
+    assert_eq!(
+        log(&kernel),
+        vec![
+            "create s3 m2 high edit".to_owned(),
+            "DisableTitleGeneration".to_owned(),
+            "persist s3 \"\"".to_owned(),
+            "discard s3".to_owned(),
+            "close s3".to_owned(),
+        ]
+    );
+    assert!(server.bridge.get(&SessionId::new("s3")).is_none());
 }
 
 #[tokio::test]

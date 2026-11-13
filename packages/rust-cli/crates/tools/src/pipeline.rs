@@ -504,6 +504,20 @@ impl ToolExecutor for Pipeline {
                 tool.name()
             )));
         }
+        // Fork: a tool the running turn hides (an automation turn's mutation tools, the Host's disallowlist,
+        // CronPauseSelf outside an automation turn) answers like an unregistered one when the model names it anyway
+        // (specs/fork-rust-automations.md).
+        if context
+            .session_ops
+            .view()
+            .await
+            .is_some_and(|view| view.turn.hides(tool.name()))
+        {
+            return ToolExecution::output(error(format!(
+                "<tool_use_error>Error: No such tool available: {}</tool_use_error>",
+                tool.name()
+            )));
+        }
         let mut messages = HookMessages::default();
         let (input, call) = match self
             .admit(tool.as_ref(), input, context, &mut messages)
