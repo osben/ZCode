@@ -348,7 +348,24 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
     }
 }
 
+/// Fork: what a create does with an id that already exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Existing {
+    /// The v4 rule: an untouched prewarm is repeated ([`crate::preparation::recreate_existing`]).
+    Repeat,
+    /// The legacy `session/create` rule (Node `createSessionWith`): any existing id, live or stored, is refused.
+    Refuse,
+}
+
 pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack {
+    create_session_with(server, envelope, Existing::Repeat).await
+}
+
+pub(crate) async fn create_session_with(
+    server: &Server,
+    envelope: &Envelope,
+    existing_id: Existing,
+) -> Ack {
     let payload: CreateSessionPayload = match payload(envelope) {
         Ok(payload) => payload,
         Err(ack) => return *ack,
@@ -495,6 +512,16 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             // No error text: a storage error can name the storage path.
             Err(_) => return failed("reading the session failed"),
         };
+    // Fork: the legacy create refuses every existing id, a live draft the store does not hold yet included.
+    if existing_id == Existing::Refuse && (existing.is_some() || server.bridge.get(&id).is_some()) {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "sessionId already exists".to_owned(),
+            0,
+        );
+    }
     // Fork: a soft-deleted id is not free (Node refuses it before any write).
     if existing.is_none() {
         match crate::preparation::deleted(server, &id).await {

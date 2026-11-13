@@ -81,11 +81,14 @@ sequenceDiagram
    (`zcodeSessionCreateParamsSchema`, strict). The session is created through the v4 `createSession` path without a
    first input, so it stays a draft until the first accepted input persists it (Node `persistence: "deferred"`);
    `"immediate"`, Node's default when the field is absent, persists it at create. `model` with `thoughtLevel` as its
-   reasoning level chooses the selection, `mode` the permission mode, `incognito` the profile (validated like v4).
+   reasoning level chooses the selection (`thoughtLevel` without `model` is the level of the default model, the one the
+   create picks; a `model` that is not an object is refused), `mode` the permission mode, `incognito` the profile
+   (validated like v4).
    `titleGenerationEnabled: false` turns off model-generated titles for the actor's lifetime (Node
    `titleGeneration: {enabled: false}`, kernel `Command::DisableTitleGeneration`); the first input still names the
    session. Any id that already exists (live, stored or soft-deleted) is refused with `-32602 "sessionId already
-exists"`. The answer is the legacy snapshot of `session/read` (the Host validates it with
+exists"`; the check runs with the create under the reservation gate (`Existing::Refuse`), so a concurrent create
+   of the same id cannot slip between them. The answer is the legacy snapshot of `session/read` (the Host validates it with
    `zcodeSessionStateSnapshotSchema`). Fields the Rust agent cannot honour refuse the request with `-32602`
    `"<field> is not supported by this agent"` instead of being dropped: a non-empty `toolAllowlist` / `toolDenylist`,
    `importedHistory`, `parentSessionId` and `executionWorktree` (none of them is sent on the automation path; the
@@ -99,8 +102,13 @@ exists"`. The answer is the legacy snapshot of `session/read` (the Host validate
    (the same commands as `switchCollaborationMode` / `switchModelConfig`) and answer the legacy snapshot. The Host uses
    them as fallbacks (`setMode` for `auto`, `setThoughtLevel` after a create schema rejection). Divergence:
    `persistAsWorkspaceLastUsed` is ignored (the switch only changes the session); the Host's automation path never
-   relies on it, it switches models through v4 `switchModelConfig`. A failed `"immediate"` persistence drops the draft
-   and the runtime before answering the error, so a retry with the same id is not refused as existing.
+   relies on it, it switches models through v4 `switchModelConfig`. Each call is its own command (a fresh command id:
+   the actor dedupes ids for its lifetime), and a refusal without a message names its status and reason code. The v4
+   route guard runs first: a session whose prepared worktree is not active refuses like v4 (`v4 command session not
+found`) before it is opened. `setThoughtLevel` reads the model from the session (its view), not from the
+   projection, which learns of a `setModel` just applied only when its event arrives. A failed `"immediate"`
+   persistence drops the draft and the runtime and reports the session `unloaded` before answering a generic error
+   (the store's text can name the storage path), so a retry with the same id is not refused as existing.
 4. **`sendText` turn identity** (Node `prompt-turn.ts`): `automationId` (trimmed, non-empty) and `toolDisallowlist`
    ride on the input's execution and apply to that turn only (a queued input keeps its own). The turn's tool list
    drops every name in the disallowlist, plus CronCreate/CronUpdate/CronDelete when the turn has an automation id.
