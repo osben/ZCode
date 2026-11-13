@@ -168,6 +168,8 @@ async fn serve(
         preferences: preferences.as_path().to_path_buf(),
     })));
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
+    // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
+    context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
     let defaults = Defaults {
