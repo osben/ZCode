@@ -28,6 +28,8 @@ futures-util.workspace = true
 rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
 rust-cli-protocol-core.workspace = true
+# Fork: the unknown-model output limit of workspace model calls.
+rust-cli-prompts.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }

@@ -34,8 +34,10 @@ const PROBE_USER: &str = "hi";
 const PROBE_MAX_OUTPUT: u64 = 512;
 /// Node `auxiliaryModelOptions`: the output budget of auxiliary calls.
 const AUXILIARY_MAX_OUTPUT: u64 = 5_000;
-/// The output limit of a model whose configuration declares none (`rust_cli_prompts::UNKNOWN_MAX_OUTPUT_TOKENS`).
-const UNKNOWN_MAX_OUTPUT: u64 = 32_000;
+/// The output limit of a model whose configuration declares none.
+const UNKNOWN_MAX_OUTPUT: u32 = rust_cli_prompts::models::UNKNOWN_MAX_OUTPUT_TOKENS;
+/// Node `validateOptions` (`adapters/src/model/model.ts`): a caller budget above the model limit is rejected.
+const BUDGET_OUT_OF_RANGE: &str = "maxOutputTokens is outside the model option range";
 const PROBE_UNFINISHED: &str = "模型连通性测试流在 finish 事件前结束";
 /// The params refine of `zcodeWorkspaceGenerateTextParamsSchema` (not expressible in the generated JSON schema).
 const NEEDS_INPUT: &str = "prompt 或 messages 至少需要提供一个";
@@ -265,9 +267,19 @@ fn limit(entry: &CatalogModel) -> Option<u64> {
     (entry.max_output_tokens > 0).then_some(entry.max_output_tokens)
 }
 
-/// `budget` capped by the model's known limit.
+/// A fixed budget (probe, auxiliary) capped by the model's known limit (Node `Math.min(budget, spec.max)`).
 fn capped(entry: &CatalogModel, budget: u64) -> u64 {
     limit(entry).map_or(budget, |max| budget.min(max))
+}
+
+/// A caller budget is sent as is within the model's known limit and rejected above it, never clamped.
+fn within(entry: &CatalogModel, budget: u64) -> Result<u64, RpcError> {
+    match limit(entry) {
+        Some(max) if budget > max => {
+            Err(protocol_error("invalid_model_request", BUDGET_OUT_OF_RANGE))
+        }
+        _ => Ok(budget),
+    }
 }
 
 /// `max_tokens` is a `u32` on the wire.
@@ -518,17 +530,18 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
     let auxiliary = query_source == GIT_COMMIT_MESSAGE || query_source == INPUT_PREDICTION;
     let (level, budget) = if auxiliary {
         // Node `auxiliaryModelOptions`; the Git call ignores a caller budget.
+        // Request options override the bound ones, so a non-Git caller budget replaces 5000 and is validated.
         let budget = match params["maxOutputTokens"].as_u64() {
-            Some(caller) if query_source != GIT_COMMIT_MESSAGE => caller,
-            _ => AUXILIARY_MAX_OUTPUT,
+            Some(caller) if query_source != GIT_COMMIT_MESSAGE => within(&entry, caller)?,
+            _ => capped(&entry, AUXILIARY_MAX_OUTPUT),
         };
-        (
-            entry.reasoning_levels.first().cloned(),
-            Some(capped(&entry, budget)),
-        )
+        (entry.reasoning_levels.first().cloned(), Some(budget))
     } else {
         let budget = params["maxOutputTokens"].as_u64();
-        (level, budget.map(|budget| capped(&entry, budget)))
+        (
+            level,
+            budget.map(|budget| within(&entry, budget)).transpose()?,
+        )
     };
     let source = if query_source == GIT_COMMIT_MESSAGE {
         SideSource::GitCommitMessage
@@ -542,7 +555,7 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
         source,
         system,
         messages,
-        tokens(limit(&entry).unwrap_or(UNKNOWN_MAX_OUTPUT)),
+        limit(&entry).map_or(UNKNOWN_MAX_OUTPUT, tokens),
         Requester {
             session: registered.session.clone(),
             run: None,

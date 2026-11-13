@@ -875,7 +875,7 @@ async fn a_call_without_an_operation_times_out_after_sixty_seconds() {
 }
 
 /// A model without a declared output limit (catalog 0) keeps the fixed budgets and falls back to the unknown-model
-/// limit; a caller budget is capped by a known limit.
+/// limit; a caller budget above a known limit is rejected like Node's `validateOptions`, never clamped.
 #[tokio::test]
 async fn output_budgets_respect_known_and_unknown_limits() {
     let ok = || reply(&[text("ok")], StopReason::EndTurn, usage(1, 1));
@@ -896,15 +896,32 @@ async fn output_budgets_respect_known_and_unknown_limits() {
         .await
         .unwrap();
     }
+    // Within the known limit the caller budget is sent as is.
     generate_text(
         &server,
         &json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"},
-            "prompt": "p", "querySource": "x", "maxOutputTokens": 10_000_000_000_u64}),
+            "prompt": "p", "querySource": "x", "maxOutputTokens": 256}),
     )
     .await
     .unwrap();
+    for budget in [257_u64, 10_000_000_000] {
+        let error = generate_text(
+            &server,
+            &json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"},
+                "prompt": "p", "querySource": "x", "maxOutputTokens": budget}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, -32603);
+        assert_eq!(
+            error.message,
+            "maxOutputTokens is outside the model option range"
+        );
+        assert_eq!(error.data.unwrap()["code"], "invalid_model_request");
+    }
 
     let requests = model.requests();
+    assert_eq!(requests.len(), 4, "a rejected budget sends no request");
     assert_eq!(requests[0].max_tokens, 512);
     assert_eq!(requests[0].options.provider_max_output_tokens, Some(512));
     assert_eq!(requests[1].max_tokens, 5_000);
@@ -913,6 +930,48 @@ async fn output_budgets_respect_known_and_unknown_limits() {
     assert_eq!(requests[2].options.provider_max_output_tokens, None);
     assert_eq!(requests[3].max_tokens, 256);
     assert_eq!(requests[3].options.provider_max_output_tokens, Some(256));
+}
+
+/// Input prediction binds the auxiliary budget (5000 capped by the model limit), a caller budget overrides it within
+/// the limit, and a caller budget above the limit is rejected (Node merges request options over the bound ones and
+/// validates the result).
+#[tokio::test]
+async fn input_prediction_budget_follows_the_model_limit() {
+    let ok = || reply(&[text("ok")], StopReason::EndTurn, usage(1, 1));
+    let model = Arc::new(ScriptedModel::new(vec![ok(), ok()]));
+    let (_scope, server) = server(model.clone());
+    let small = json!({"providerId": "p", "modelId": "small"});
+    generate_text(
+        &server,
+        &json!({"workspace": workspace(), "selection": small, "prompt": "p", "querySource": "input_prediction"}),
+    )
+    .await
+    .unwrap();
+    generate_text(
+        &server,
+        &json!({"workspace": workspace(), "selection": small, "prompt": "p", "querySource": "input_prediction",
+            "maxOutputTokens": 100}),
+    )
+    .await
+    .unwrap();
+    let error = generate_text(
+        &server,
+        &json!({"workspace": workspace(), "selection": small, "prompt": "p", "querySource": "input_prediction",
+            "maxOutputTokens": 257}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.message,
+        "maxOutputTokens is outside the model option range"
+    );
+    assert_eq!(error.data.unwrap()["code"], "invalid_model_request");
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].max_tokens, 256);
+    assert_eq!(requests[1].max_tokens, 100);
+    assert_eq!(requests[1].options.provider_max_output_tokens, Some(100));
 }
 
 /// A reply without a stop reason reads `unknown` (the stored rows' and the AI SDK's name), `StopReason::Unknown`

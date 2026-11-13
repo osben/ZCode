@@ -2156,6 +2156,7 @@ dependencies = [
  "rust-cli-fs",
  "rust-cli-image",
  "rust-cli-kernel-api",
+ "rust-cli-prompts",
  "rust-cli-protocol-core",
  "serde",
  "serde_json",
