@@ -110,6 +110,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            topic_resources: None,
         },
     );
     kernel.start_extensions().await;
@@ -218,6 +219,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            topic_resources: None,
         },
     );
     kernel.start_extensions().await;
@@ -259,4 +261,93 @@ async fn the_session_catalog_follows_the_incognito_profile() {
     let locked = catalog(without_plugins).await.unwrap();
     assert!(!plugin_skill(&locked), "{locked:?}");
     assert!(!plugin_server(&locked), "{locked:?}");
+}
+
+struct NoTopic;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::topic_resource::TopicResources for NoTopic {
+    async fn read(
+        &self,
+        _request: rust_cli_kernel_api::topic_resource::TopicResourceRequest,
+    ) -> Result<rust_cli_kernel_api::topic_resource::TopicResource, String> {
+        Err("unused".to_owned())
+    }
+}
+
+/// Fork (specs/fork-rust-topic-resource.md, acceptance case 3): `ReadTopicResource` exists only when the entry gives
+/// topic resources (the app-server).
+#[tokio::test]
+async fn read_topic_resource_is_registered_only_with_topic_resources() {
+    for (resources, expected) in [
+        (None, false),
+        (
+            Some(Arc::new(NoTopic)
+                as Arc<
+                    dyn rust_cli_kernel_api::topic_resource::TopicResources,
+                >),
+            true,
+        ),
+    ] {
+        let env = MemoryEnvironment::new(EnvFacts {
+            cwd: EnvPath::new("/Users/dev/work"),
+            platform: "darwin".to_owned(),
+            os_version: "Darwin 24".to_owned(),
+            shell: "zsh".to_owned(),
+            is_git_repo: false,
+            home: Some(EnvPath::new("/Users/dev")),
+            uid: None,
+        });
+        let store = Arc::new(MemoryStore::default());
+        let kernel = LocalKernel::with_extensions(
+            Ports {
+                model: Arc::new(ScriptedModel::new(Vec::new())),
+                environments: environments(Arc::new(env)),
+                store: store.clone(),
+                artifacts: store,
+                clock: Arc::new(FixedClock(1_000)),
+                ids: Arc::new(SequentialIds::default()),
+            },
+            Defaults {
+                selection: selection().into(),
+                mode: PermissionMode::Default,
+                max_turns: None,
+                search_tools: false,
+                task_tools: None,
+                limits: Default::default(),
+            },
+            ContextConfig::new(Surface::Print),
+            CompactConfig::default(),
+            Arc::new(MemoryTaskLists::default()),
+            Extensions {
+                topic_resources: resources,
+                ..Extensions::none()
+            },
+        );
+        let session = kernel
+            .create_session(CreateSession {
+                id: None,
+                workspace: workspace(),
+                selection: selection(),
+                mode: PermissionMode::Default,
+                plan: false,
+                incognito: None,
+            })
+            .await
+            .unwrap();
+        let catalog = kernel
+            .session_catalog(rust_cli_kernel_api::catalog::CatalogQuery {
+                session,
+                workspace: workspace(),
+                selection: selection(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            catalog.tools.iter().any(|name| name == "ReadTopicResource"),
+            expected,
+            "{:?}",
+            catalog.tools
+        );
+    }
 }

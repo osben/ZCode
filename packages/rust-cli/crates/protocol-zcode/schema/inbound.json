@@ -4852,6 +4852,51 @@
           "additionalProperties": false
         }
       ]
+    },
+    "topic/resource/cancel": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cancelled"
+      ],
+      "additionalProperties": false
+    },
+    "topic/resource/read": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "mime": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        }
+      },
+      "required": [
+        "ref",
+        "fileName",
+        "mime",
+        "bytes"
+      ],
+      "additionalProperties": false
     }
   }
 }

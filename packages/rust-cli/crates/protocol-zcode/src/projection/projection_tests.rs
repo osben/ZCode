@@ -2021,6 +2021,64 @@ fn an_extension_source_shows_on_the_row_and_the_queue_item() {
     assert_eq!(queue["items"][0]["source"], source);
 }
 
+/// Fork (specs/fork-rust-topic-resource.md): a bot-group input's row and queue item carry its `botGroupSource` (Node
+/// `projection-rows.ts`, queue item `botGroupSource`), and the row shows the typed text instead of the prompt the
+/// model read.
+#[test]
+fn a_bot_group_input_shows_its_source_and_typed_text() {
+    use rust_cli_kernel_api::input_intent::InputIntent;
+    use rust_cli_kernel_api::session_api::{Delivery, QueuedKind};
+    let source = json!({"botId": "b1", "chatId": "oc_1", "threadId": "omt_1", "authorizationId": "a1",
+        "messageId": "om_1"});
+    let intent: InputIntent =
+        serde_json::from_value(json!({"text": "hello bot", "botGroupSource": source})).unwrap();
+    let Message::User(mut sent) = user(
+        "msg_u1",
+        "hello bot\n\nTopic history: see the attached file",
+    ) else {
+        unreachable!()
+    };
+    sent.intent = Some(Box::new(intent.clone()));
+    let projection = Projection::from_view(
+        &view(vec![
+            Message::User(sent),
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+            user("msg_u2", "plain"),
+            assistant("msg_a2", vec![ContentBlock::Text { text: "ok".into() }]),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs[0]["text"], "hello bot");
+    assert_eq!(inputs[0]["botGroupSource"], source);
+    assert!(inputs[1].get("botGroupSource").is_none());
+
+    let mut feed = Feed::new();
+    let deltas = feed.apply(KernelEvent::QueueChanged {
+        items: vec![QueuedInput {
+            edit_lock: None,
+            intent: Some(Box::new(intent)),
+            command: CommandId::new("c1"),
+            text: "hello bot".into(),
+            delivery: Delivery::Queue,
+            kind: QueuedKind::Text,
+            execution: None,
+        }],
+    });
+    let queue = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("queue"))
+        .unwrap();
+    assert_eq!(queue["items"][0]["botGroupSource"], source);
+}
+
 fn sequenced(seq: u64, event: KernelEvent) -> SequencedEvent {
     SequencedEvent {
         seq,

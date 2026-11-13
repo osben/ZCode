@@ -16,6 +16,7 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
+use rust_cli_protocol_zcode::topic_resource::HostTopicResources;
 use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
 
 use crate::assemble::{self, Controller};
@@ -121,6 +122,7 @@ async fn serve(
     let spec = Controller::app(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
+        Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;

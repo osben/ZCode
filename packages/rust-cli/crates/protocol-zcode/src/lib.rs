@@ -29,6 +29,8 @@ mod reservations;
 mod server;
 mod subscribe;
 mod telemetry;
+// Fork: specs/fork-rust-topic-resource.md.
+pub mod topic_resource;
 mod uploads;
 mod wire;
 mod worktree;

@@ -38,4 +38,4 @@ tracing.workspace = true
 image.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "test-util", "time"] }
