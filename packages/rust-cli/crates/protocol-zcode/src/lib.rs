@@ -23,6 +23,7 @@ mod index;
 mod legacy;
 mod lifecycle;
 mod live;
+mod network_capture;
 mod preparation;
 mod projection;
 mod reservations;
@@ -49,6 +50,7 @@ pub use fork::node_helper::{
     Timing as NodeHelperTiming,
 };
 pub use headers::HostHeaders;
+pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
 pub use topic_resource::HostTopicResources;
 
