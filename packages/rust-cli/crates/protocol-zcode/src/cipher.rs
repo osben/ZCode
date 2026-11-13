@@ -80,13 +80,22 @@ impl HostCredentialCipher {
             "operation": operation.name(),
             "value": value,
         });
-        let answer =
-            tokio::time::timeout(self.limit, self.context.peer.request(REQUEST, &params)).await;
+        // The wait for the Host's attach acknowledgement is part of the same bound (F1).
+        let answer = tokio::time::timeout(self.limit, async {
+            if self.context.host_ready().await == Some(false) {
+                return Err(unavailable("the host has no credential cipher"));
+            }
+            // JSON-RPC 错误（例如 -32602）与连接关闭都是传输失败；原始消息不向上传。
+            self.context
+                .peer
+                .request(REQUEST, &params)
+                .await
+                .map_err(|_| unavailable("the credential cipher request failed"))
+        })
+        .await;
         let result = match answer {
             Err(_) => return Err(unavailable("the credential cipher did not reply in time")),
-            // JSON-RPC 错误（例如 -32602）与连接关闭都是传输失败；原始消息不向上传。
-            Ok(Err(_)) => return Err(unavailable("the credential cipher request failed")),
-            Ok(Ok(result)) => result,
+            Ok(result) => result?,
         };
         Inbound::get()
             .reply(REQUEST, &result)

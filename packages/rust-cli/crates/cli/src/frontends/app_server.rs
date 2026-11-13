@@ -16,7 +16,9 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
-use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
+use rust_cli_protocol_zcode::{
+    AttachGate, Context, Defaults, HOST_ATTACH_ACK_ENV, HostCredentialCipher, HostHeaders, Startup,
+};
 
 use crate::assemble::{self, Controller};
 use crate::process::{ControllerRun, Start};
@@ -108,12 +110,17 @@ async fn serve(
     // 读者在组装之前就开始（specs/fork-rust-credential-cipher.md，启动死锁）：组装里的凭据加解密要它送来回复；对端的
     // 请求在内核装好之前等待。
     let (deferred, install) = rust_cli_protocol_core::connection::Deferred::new();
+    // Fork: a Host that promises `process/hostAttached` gets no reverse request before it listens; the gate handles
+    // the acknowledgement in front of `Deferred` (specs/fork-rust-credential-cipher.md F1).
+    if facts.process.env.text(HOST_ATTACH_ACK_ENV) == Some("1") {
+        context.expect_host_attach();
+    }
     let reader = spawner.spawn(
         "app-server-reader",
         rust_cli_protocol_core::connection::serve(
             tokio::io::BufReader::new(tokio::io::stdin()),
             context.peer.clone(),
-            deferred,
+            AttachGate::wrap(context.clone(), deferred),
             spawner.clone(),
             Options::default(),
         ),

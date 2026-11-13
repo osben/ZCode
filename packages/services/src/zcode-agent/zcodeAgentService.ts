@@ -172,6 +172,7 @@ import {
   summarizeOfficialMcpIdentityHeaders,
   zcodeProtocolEmptyResultSchema,
   zcodeProtocolMethods,
+  type ZCodeProcessHostAttachedParams,
   zcodeProtocolNotifications,
   zcodeMcpTelemetryEventSchema,
   zcodeMcpResourceSamplesSchema,
@@ -3919,6 +3920,20 @@ export function createZCodeAgentService(
       }),
     ];
     clientDisposables.set(client, disposables);
+    // Fork: the agent may hold its reverse requests until the Host listens (spawned with ZCODE_HOST_ATTACH_ACK);
+    // a request sent before `onRequest` above would be dropped (specs/fork-rust-credential-cipher.md F1).
+    const attached: ZCodeProcessHostAttachedParams = {
+      credentialCipher: Boolean(options?.credentialCipherProvider),
+    };
+    void Promise.resolve()
+      .then(() => client.notify(zcodeProtocolMethods.processHostAttached, attached))
+      .catch((error: unknown) => {
+        // Without the acknowledgement a gating agent waits for its reverse-request bound.
+        logger.warn(undefined, "Host attach acknowledgement was not sent", {
+          lane,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   function rememberSessionTrace(

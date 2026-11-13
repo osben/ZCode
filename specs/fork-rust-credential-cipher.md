@@ -1,6 +1,7 @@
 # Rust agent: credential cipher bridge (desktop `enc:v2:`)
 
-Status: spec for the fix on `fix/rust-credential-cipher-bridge` (2026-11-13).
+Status: bridge shipped in PR #436 (2026-11-13). Follow-ups (Host attach acknowledgement, usage "unknown" state,
+re-settled default, standalone system cipher) are specified below in "Follow-ups (2026-11-13)".
 Parent: `specs/fork-rust-agent-parity.md`. Code: `packages/rust-cli/crates/{kernel-api,platform,protocol-zcode}`.
 
 ## Problem
@@ -28,8 +29,10 @@ Root-cause evidence (both sides, at `c12012582`):
 
 1. The OS keyring is owned by Electron Main. In desktop (app-server) mode the Rust agent never reads a key,
    never touches the keyring, and never decrypts locally. Every encrypt and decrypt goes to the Host.
-2. Standalone Rust (TUI, `-p`, `zcode login`) keeps the local v1 codec (`ZCODE_CREDENTIAL_SECRET` or the
-   derived fallback). It does not read desktop-encrypted values yet.
+2. Standalone Rust (TUI, `-p`, `zcode login`) uses the system cipher, like the standalone Node CLI
+   (`shared-credentials.ts` → `createSystemCredentialCipher`): key from `ZCODE_CREDENTIAL_SECRET`,
+   `ZCODE_CREDENTIAL_SECRET_FILE`, the default `credential-secret` file, or the OS keyring; reads `enc:v1:` and
+   `enc:v2:`, writes `enc:v2:`. See "Standalone system cipher".
 3. Unavailable and decrypt failures are not logout. They never clear tokens, never produce `login_required`,
    and never write `credentials.json`. The user sees that credentials could not be read.
 4. Values that look encrypted but are not understood are errors, never plaintext.
@@ -63,7 +66,7 @@ pub enum CipherError {            // every variant carries a static reason; no v
 
 Implementations:
 
-- `platform::LocalCipher`: the v1 codec. Standalone only. Rules: no prefix → plaintext; `enc:v1:` → v1
+- `platform::LocalCipher`: the v1 codec, kept for tests and examples (standalone uses `SystemCipher`, F4). Rules: no prefix → plaintext; `enc:v1:` → v1
   decrypt; `enc:v2:` → `Unavailable` ("standalone agent cannot read desktop-encrypted (v2) credentials yet");
   any other `enc:` prefix → `Decrypt` ("unknown encryption format"); encrypt → v1.
 - `protocol-zcode::HostCredentialCipher`: the bridge (below). Used for every app-server run.
@@ -170,7 +173,7 @@ sequenceDiagram
 | #   | Scenario                                                 | Expected                                                                       |
 | --- | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | A1  | Standalone: `enc:v1:` value                              | decrypts as before (Node-identical vectors)                                    |
-| A2  | Standalone: `enc:v2:` value                              | `Unavailable`, message names the standalone limit                              |
+| A2  | `LocalCipher`: `enc:v2:` value                           | `Unavailable` (standalone reads it through `SystemCipher`, F4)                 |
 | A3  | Standalone: `enc:v9:` or `enc:` garbage                  | `Decrypt`, never the raw string                                                |
 | A4  | Bridge: encrypt then decrypt round trip with a fake Host | same plaintext                                                                 |
 | A5  | Bridge: reply `requestId` differs                        | `Unavailable`                                                                  |
@@ -221,7 +224,7 @@ Host side (`packages/services/src/zcode-agent/zcodeAgentProcessManager.ts`, `zco
 protocol client, and so the stdout reader, is created at spawn. `onRequest` is attached in `wireClient`, right
 after `getClient` returns (chat lane, `zcodeAgentService.ts`). The agent sends its first reverse request only
 after its own process start, argument parsing, config and store open, which is tens of milliseconds after
-spawn. The Host sends no acknowledgement, so this ordering is not formal; see the open gap below.
+spawn. This ordering alone is not formal; the acknowledgement (F1) closes it.
 
 ## Degraded default (not remembered)
 
@@ -231,26 +234,164 @@ catalog has no account models and the default is picked from what is left. That 
 for it. The remembered choice therefore stays the remembered one, and the next startup with readable
 credentials settles from the full catalog again. Test: `a_default_settled_while_credentials_are_unreadable_is_not_remembered`.
 
-The session keeps the degraded default: it is not re-settled when the store becomes readable later in the same
-session (see open gaps).
+The default is settled again when the store becomes readable later in the same session (F3).
+
+## Follow-ups (2026-11-13)
+
+### F1. Host attach acknowledgement
+
+Problem: the Host attaches `onRequest` in `wireClient`, after `getClient` returns from spawn. A reverse request
+that arrives earlier is dropped, and assembly (`wait_model`) then waits for the 300 s bound before `ready`.
+
+Contract (`packages/shared/src/zcode-protocol/index.ts`):
+
+- Spawn declaration: `ZCodeAgentProcessManager` sets `ZCODE_HOST_ATTACH_ACK=1` (`ZCODE_HOST_ATTACH_ACK_ENV`) in
+  every agent's environment. Every client it returns is wired by `zcodeAgentService.wireClient` before use (chat,
+  plugin and mcp-status lanes), so every declared agent gets the acknowledgement.
+- Notification Host → agent, sent once per client by `wireClient`, right after `client.onRequest(...)` is attached:
+
+  ```json
+  { "method": "process/hostAttached", "params": { "credentialCipher": true } }
+  ```
+
+  `zcodeProcessHostAttachedParamsSchema = z.object({ credentialCipher: z.boolean() }).strict()`.
+  `credentialCipher` says whether this Host can answer `interaction/requestCredentialCipher`.
+
+- Node agent: the transport drops the notification on arrival (it never enters the serial queue). Node sends its
+  reverse requests only from a served connection and fails an early cipher call fast, so it needs no gate.
+- Rust agent (`protocol-zcode::Context`):
+  - The app-server reads `ZCODE_HOST_ATTACH_ACK` once at start. Declared: reverse requests (credential cipher,
+    provider runtime headers) wait for the acknowledgement before they are sent. Not declared (an older Host, a
+    test harness): they are sent at once, as before.
+  - The wait is part of the existing per-request bound (300 s cipher, headers bound unchanged); there is no new
+    timeout.
+  - `credentialCipher: false`: cipher calls fail as `Unavailable` ("the host has no credential cipher") without a
+    request.
+  - The acknowledgement is handled by a wrapper in front of `connection::Deferred`, inline in the reader's
+    notification task. It must not go through `Deferred`: assembly waits for it, and `Deferred` waits for assembly.
+  - Params are validated against `inbound.json` (`methods["process/hostAttached"]`). An invalid acknowledgement is
+    ignored with a `warn`; the bound applies.
+- Compatibility: a new Host with an older agent sends a notification the agent ignores. An older Host never
+  declares, so a new Rust agent behaves as before.
+
+```mermaid
+sequenceDiagram
+  participant PM as Host process manager
+  participant S as Host service (wireClient)
+  participant A as Rust agent
+  PM->>A: spawn (env ZCODE_HOST_ATTACH_ACK=1)
+  A->>A: reader starts, assembly begins
+  A->>A: cipher call waits for the ack (inside the 300 s bound)
+  PM-->>S: getClient returns
+  S->>S: client.onRequest(...) attached
+  S->>A: process/hostAttached {credentialCipher:true}
+  A->>S: interaction/requestCredentialCipher (now routed)
+  S-->>A: reply
+  A->>S: startup/storageState ready
+```
+
+### F2. Usage panel "unknown" state
+
+`FamilyAccount.signed_in: bool` becomes `login: FamilyLogin { SignedIn, SignedOut, Unreadable }` (platform), and
+the TUI's `FamilyStatus` carries the same three states.
+
+- `Unreadable` when `credentials.json` cannot be read (`CredentialStore::read` fails), or this family's login or
+  manual key read fails with `Unavailable`/`Decrypt`. It is per family: one family's undecryptable value does not
+  mark the other family.
+- `SignedOut` only when the values are absent (the existing rule).
+- TUI: the family row says "sign-in unreadable"; the family page shows an Account row "Could not read the saved
+  sign-in" and offers neither Sign in nor Sign out (a write would abort, product rule 3); the session page's Account
+  row says "sign-in unreadable"; `/logout` with no signed-in family but an unreadable one says the sign-in could
+  not be read and signs nothing out.
+
+### F3. Re-settled session default
+
+When the default was settled degraded (credentials unreadable, `Settled { degraded: true }`), the default-model task
+keeps running in the `default-model` scope (TUI and app-server alike, held by `Built`):
+
+1. It waits for `Platform::credentials_readable()`, which resolves when a registry read
+   (`Registry::current`) succeeds after an unreadable one. Recovery is pull-based: the next catalog read does it
+   (a Host model or registry request, a session's endpoint lookup, the TUI model picker or settings).
+2. It runs the same choice again (`--model`, effort) and revises `DefaultModel` (`SettleDefault::settle` may be
+   called again; `settled()` returns the latest value).
+3. A non-degraded result is remembered (`memory::remember`); a degraded one waits again.
+
+Only sessions created after the revision take the new default. Existing sessions keep their selection. The
+app-server's `Defaults.selection` becomes the shared `DefaultModel`, read at each session creation.
+
+```mermaid
+sequenceDiagram
+  participant T as default-model task
+  participant P as Platform / Registry
+  participant D as DefaultModel
+  participant K as session creation
+  T->>P: choose(): catalog read, credentials unreadable
+  T->>D: settle(degraded choice), not remembered
+  K->>D: current() → degraded choice
+  P->>P: later read succeeds (Host answers again)
+  P-->>T: credentials_readable()
+  T->>P: choose() again
+  T->>D: settle(full choice), remembered
+  K->>D: current() → full choice (new sessions only)
+```
+
+### F4. Standalone system cipher
+
+`platform::SystemCipher` ports `systemCredentialCipher.ts` for standalone Rust (TUI, `-p`, `zcode login`). The
+app-server keeps `HostCredentialCipher` (product rule 1).
+
+- Key sources, in Node's order: `ZCODE_CREDENTIAL_SECRET` (both it and `ZCODE_CREDENTIAL_SECRET_FILE` set:
+  `Unavailable`); `ZCODE_CREDENTIAL_SECRET_FILE` (readable file, 32–4096 bytes); otherwise, under the
+  `<credentials.json>.keyring` file lock: `credential-source` must be absent or `os\n`; if neither it nor
+  `enc:v2:os:` pins the OS source, the default `<dir>/credential-secret` (private: no group/other mode bits on Unix,
+  32–4096 bytes) is the `env` key; a file with `enc:v2:env:` and no secret is `Unavailable`; else the OS keyring
+  entry (service `ZCode Credential Encryption`, account = hex sha256 of the resolved `credentials.json` path),
+  43 base64url characters → 32 bytes. Creating the key (encrypt only, when nothing pins the OS source and the file
+  has no `enc:v2:`) writes a random key, reads it back, and pins `credential-source` to `os\n`.
+- Keyring backend: the same crates `@napi-rs/keyring` 2.1.2 uses (`keyring-core` 1, `apple-native-keyring-store`
+  keychain on macOS, `dbus-secret-service-keyring-store` with `crypto-rust`+`vendored` on Linux,
+  `windows-native-keyring-store` on Windows), with `Entry::new(service, account)`: the same item the desktop app
+  reads and writes. Calls run on the blocking pool.
+- Format: `enc:v2:<os|env>:<first 24 hex of sha256(key)>:<iv>.<tag>.<ct>` (base64url, AES-256-GCM). Decrypt
+  checks the shape (`Decrypt`), then the source and fingerprint (`Unavailable`), then the tag (`Decrypt`).
+- `enc:v1:` values: the legacy candidates are `[secret, secret.trim(), fallback]` with the env secret, or the
+  fallback alone with the OS source (Node passes `ZCODE_CREDENTIAL_SECRET: undefined`). Plaintext values are returned
+  as they are. Neither needs the keyring value, so reading them never touches the keyring (Node resolves the key
+  first; the outputs are the same).
+- Any other `enc:` prefix: `Decrypt`.
+- Cache: one key lookup per cipher; a failure is cached only when the lock was acquired (a denied Keychain
+  prompt is not repeated; a lock timeout is retried).
+- Not ported: read-time migration of `enc:v1:` values to `enc:v2:` (`migrateCredentialRecord`). Rust rewrites a
+  value only when it writes that key. The file is shared with the desktop app, which reads both formats.
+- Tests never construct the OS keyring: the key store is injected (`KeyStore` trait). Parity vectors come from the
+  Node implementation (fixed key, fixed IV) in both directions.
+- `zcode login` without any key source (headless Linux without Secret Service) fails as `Unavailable` with Node's
+  message, like the Node CLI.
+
+### Acceptance scenarios (follow-ups)
+
+| #   | Scenario                                                                | Expected                                                        |
+| --- | ----------------------------------------------------------------------- | --------------------------------------------------------------- |
+| B1  | Ack declared; cipher call before the ack                                | not sent until the ack; sent right after it                     |
+| B2  | Ack declared; ack says `credentialCipher:false`                         | `Unavailable` at once, no request                               |
+| B3  | Ack not declared                                                        | request sent at once (as before)                                |
+| B4  | App-server process with the ack declared; Host acks after a delay       | `ready` follows the ack; the cipher request comes after the ack |
+| B5  | Host `wireClient`                                                       | one `process/hostAttached` per client, after `onRequest`        |
+| B6  | Node transport receives `process/hostAttached`                          | dropped, connection unaffected                                  |
+| B7  | Credentials unreadable                                                  | families `Unreadable`, no Sign in / Sign out                    |
+| B8  | One family's token undecryptable                                        | that family `Unreadable`, the other unaffected                  |
+| B9  | Default settled degraded, then a registry read succeeds                 | default revised to the full choice and remembered               |
+| B10 | Standalone: Node-encrypted `enc:v2:os` / `enc:v2:env` values            | decrypted; Rust output decrypts in Node                         |
+| B11 | Standalone: fingerprint or source mismatch                              | `Unavailable`                                                   |
+| B12 | Standalone: both env sources / bad secret file / pinned non-`os` source | `Unavailable`                                                   |
+| B13 | Standalone: encrypt with no key yet                                     | key created once, read back, `credential-source` = `os\n`       |
+| B14 | Standalone: decrypt `enc:v2:` with no key                               | `Unavailable`, no key created                                   |
 
 ## Open gaps
 
-- Degraded session default is not re-settled within the session when the credentials become readable later
-  (see "Degraded default"). The session keeps the degraded choice until the next startup. Follow-up: re-run the
-  choice when the registry next reads successfully.
-- Standalone resolver for `enc:v2:` (keyring file, `credential-secret` file, `credential-source`): a follow-up.
-  Until then standalone Rust cannot use desktop-written credentials. Standalone `zcode login` still works.
-- Startup attach race (see "Startup ordering"): the Host attaches `onRequest` after `getClient` returns
-  from spawn. Assembly waits on the cipher reply (`wait_model`), so a request the Host drops stalls startup
-  until the 300 s bound, then fails. The window is small in practice, but it is not closed. Closing it needs a
-  Host acknowledgement, or the Host attaching before spawn. Not verified at runtime (no desktop E2E here).
 - Process test covers the startup stall and the cipher round trip, not the account entitlement or the
   selected default after startup at process level. The entitlement path is covered by the platform
   integration test `desktop_encrypted_credentials_entitle_the_account_models`. A process test needs the account
   HTTP fake served from the cli test; follow-up.
-- Usage panel (`Platform::family_accounts`, `usage/status.rs`) still reports the families as signed out when
-  `credentials.json` cannot be read. The model path keeps the last known result; the panel does not yet.
-  Follow-up: carry an "unknown" state into `FamilyAccount`.
-- No desktop E2E was run for this change (the E2E must not run on this Mac).
+- Standalone read-time `enc:v1:` → `enc:v2:` migration is not ported (F4).
 - Node's own bridge has no timeout; the Rust bound (300 s) is a Rust-only addition, see the timeout rationale above.

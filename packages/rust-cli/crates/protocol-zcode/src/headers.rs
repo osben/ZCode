@@ -87,7 +87,12 @@ impl HeaderSource for HostHeaders {
                 "workspace": workspace}),
             ),
         };
-        let answer = tokio::time::timeout(LIMIT, self.context.peer.request(REQUEST, &params)).await;
+        // Fork: held until the Host's attach acknowledgement, inside the same bound (F1).
+        let answer = tokio::time::timeout(LIMIT, async {
+            self.context.host_ready().await;
+            self.context.peer.request(REQUEST, &params).await
+        })
+        .await;
         let result = match answer {
             // 超时：Pending 的 Drop 发取消。
             Err(_) => return Err(failed("Requesting the account credentials timed out")),
