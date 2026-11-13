@@ -228,3 +228,23 @@ async fn control_notifications_are_applied_in_arrival_order_and_not_spawned() {
         vec!["other".to_owned()]
     );
 }
+
+/// Fork: a control reaches the real service behind [`Deferred`] once it is installed; before that, nothing handles it
+/// and the reader passes it on as a notification, which waits for the service.
+#[tokio::test]
+async fn deferred_forwards_controls_once_the_service_is_installed() {
+    let scope = TaskScope::root("test", |_| {});
+    let (peer, _writer) = start(tokio::io::sink(), &scope.spawner(), Options::default());
+    let echo = Arc::new(Echo {
+        peer,
+        seen: Mutex::new(Vec::new()),
+        controls: Mutex::new(Vec::new()),
+    });
+    let (deferred, install) = Deferred::new();
+    let params = json!({"n": 1});
+    assert!(!deferred.control("control/set", &params));
+    install.install(echo.clone());
+    assert!(deferred.control("control/set", &params));
+    assert!(!deferred.control("other", &params));
+    assert_eq!(*echo.controls.lock_unpoisoned(), vec![params]);
+}

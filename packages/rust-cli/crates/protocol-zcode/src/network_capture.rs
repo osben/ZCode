@@ -124,15 +124,20 @@ impl NetworkCapture {
 
     /// One outbound request as it starts (Node's `record`). Never blocks and never fails the request.
     pub fn record(&self, method: &str, url: &str) {
+        if method == "CONNECT" || self.state.lock_unpoisoned().capture.is_none() {
+            return;
+        }
+        // The URL is caller-supplied: sanitize it without holding the process-wide lock.
+        let url = sanitize_url(url);
         let mut state = self.state.lock_unpoisoned();
-        if state.capture.is_none() || method == "CONNECT" {
+        if state.capture.is_none() {
             return;
         }
         if state.records.len() >= BATCH_LIMIT {
             state.dropped += 1;
             return;
         }
-        let Some(url) = sanitize_url(url) else {
+        let Some(url) = url else {
             return;
         };
         state.records.push(json!({
@@ -149,26 +154,30 @@ impl NetworkCapture {
         let generation = state.generation;
         drop(state);
         let (shared, peer, delay) = (self.state.clone(), self.peer.clone(), self.delay);
-        drop(self.spawner.spawn("network-capture-flush", async move {
-            tokio::time::sleep(delay).await;
-            let batch = {
-                let mut state = shared.lock_unpoisoned();
-                if state.generation != generation {
-                    return;
-                }
-                state.armed = false;
-                let Some(capture) = state.capture.clone() else {
-                    return;
-                };
-                json!({
-                    "captureId": capture,
-                    "records": std::mem::take(&mut state.records),
-                    "dropped": std::mem::take(&mut state.dropped),
-                })
-            };
-            // A closed connection drops the observation only.
-            let _ = peer.notify(REQUESTS, &batch).await;
-        }));
+        // Resident: shutdown drops a pending flush instead of waiting out its delay (Node `timer.unref()`).
+        drop(
+            self.spawner
+                .spawn_resident("network-capture-flush", async move {
+                    tokio::time::sleep(delay).await;
+                    let batch = {
+                        let mut state = shared.lock_unpoisoned();
+                        if state.generation != generation {
+                            return;
+                        }
+                        state.armed = false;
+                        let Some(capture) = state.capture.clone() else {
+                            return;
+                        };
+                        json!({
+                            "captureId": capture,
+                            "records": std::mem::take(&mut state.records),
+                            "dropped": std::mem::take(&mut state.dropped),
+                        })
+                    };
+                    // A closed connection drops the observation only.
+                    let _ = peer.notify(REQUESTS, &batch).await;
+                }),
+        );
     }
 }
 
@@ -188,9 +197,10 @@ pub(crate) fn sanitize_url(value: &str) -> Option<String> {
     url.set_username("").ok()?;
     url.set_password(None).ok()?;
     url.set_fragment(None);
+    let mut seen = std::collections::HashSet::new();
     let mut keys: Vec<String> = Vec::new();
     for (key, _) in url.query_pairs() {
-        if !keys.iter().any(|seen| *seen == key) {
+        if seen.insert(key.clone()) {
             keys.push(key.into_owned());
         }
     }

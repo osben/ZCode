@@ -114,6 +114,13 @@ impl Service for Deferred {
             service.notification(method, params).await;
         }
     }
+
+    /// Fork: the installed service's control, read without waiting. Before installation nothing handles it, so the
+    /// reader passes it on as a notification, which waits for the service.
+    fn control(&self, method: &str, params: &Value) -> bool {
+        let service = self.0.borrow().clone();
+        service.is_some_and(|service| service.control(method, params))
+    }
 }
 
 /// 缺省：一行的上限（字节）。

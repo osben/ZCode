@@ -92,17 +92,24 @@ pub struct WebSocket {
 }
 
 /// `ws:` / `wss:` 换成 HTTP 的写法。
+/// The accepted socket base schemes as `(http scheme, socket scheme)`: the one table both the connect and the request
+/// observer use.
+pub(crate) fn schemes(scheme: &str) -> Option<(&'static str, &'static str)> {
+    match scheme {
+        "ws" | "http" => Some(("http", "ws")),
+        "wss" | "https" => Some(("https", "wss")),
+        _ => None,
+    }
+}
+
 fn http_url(url: &str) -> Result<String, WsError> {
     let mut parsed =
         reqwest::Url::parse(url).map_err(|error| WsError::Protocol(error.to_string()))?;
-    let scheme = match parsed.scheme() {
-        "ws" | "http" => "http",
-        "wss" | "https" => "https",
-        other => {
-            return Err(WsError::Protocol(format!(
-                "unsupported socket base scheme {other}:"
-            )));
-        }
+    let Some((scheme, _)) = schemes(parsed.scheme()) else {
+        return Err(WsError::Protocol(format!(
+            "unsupported socket base scheme {}:",
+            parsed.scheme()
+        )));
     };
     parsed
         .set_scheme(scheme)

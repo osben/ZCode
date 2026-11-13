@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use rust_cli_base::secret::RedactedString;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_net::{
     CaBundle, Egress, HeaderValue, HttpRequest, NetError, NetworkPolicy, NoProxy, TrustRoots,
 };
@@ -247,7 +248,6 @@ struct Seen(std::sync::Mutex<Vec<(String, String)>>);
 
 impl rust_cli_net::RequestObserver for Seen {
     fn request(&self, method: &str, url: &str) {
-        use rust_cli_base::sync::LockUnpoisoned;
         self.0
             .lock_unpoisoned()
             .push((method.to_owned(), url.to_owned()));
@@ -276,7 +276,7 @@ async fn the_observer_sees_observed_requests_and_upgrades_but_not_unobserved_one
     let _ = egress.websocket("ws://127.0.0.1:1/plain", &[]).await;
     let _ = egress.websocket("ftp://127.0.0.1:1/refused", &[]).await;
     assert_eq!(
-        *seen.0.lock().unwrap(),
+        *seen.0.lock_unpoisoned(),
         vec![
             ("POST".to_owned(), url),
             ("GET".to_owned(), "wss://127.0.0.1:1/socket?t=1".to_owned()),
@@ -297,6 +297,6 @@ async fn the_first_observer_stays() {
     egress.set_observer(first.clone());
     egress.set_observer(second.clone());
     egress.send(HttpRequest::get(server.url())).await.unwrap();
-    assert_eq!(first.0.lock().unwrap().len(), 1);
-    assert!(second.0.lock().unwrap().is_empty());
+    assert_eq!(first.0.lock_unpoisoned().len(), 1);
+    assert!(second.0.lock_unpoisoned().is_empty());
 }

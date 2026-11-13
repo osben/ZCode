@@ -161,6 +161,21 @@ fn urls_are_sanitized_like_node() {
     for (input, expected) in cases {
         assert_eq!(sanitize_url(input).as_deref(), expected, "{input}");
     }
+    // Many repeated keys: each kept once, in first-appearance order.
+    let many: Vec<String> = (0..2_000)
+        .map(|index| format!("k{}=v", index % 300))
+        .collect();
+    let expected: Vec<String> = (0..300)
+        .map(|index| format!("k{index}=%5Bredacted%5D"))
+        .collect();
+    let expected: String = format!("https://example.com/?{}", expected.join("&"))
+        .chars()
+        .take(URL_LIMIT)
+        .collect();
+    assert_eq!(
+        sanitize_url(&format!("https://example.com/?{}", many.join("&"))),
+        Some(expected)
+    );
     let long = format!("https://example.com/{}", "a".repeat(3_000));
     let sanitized = sanitize_url(&long).unwrap();
     assert_eq!(sanitized.len(), URL_LIMIT);
@@ -280,4 +295,31 @@ async fn controls_reach_the_capture_before_the_kernel_is_installed() {
     drop(host_out);
     reader.await.unwrap().unwrap();
     assert_eq!(h.capture.current().as_deref(), Some("c2"));
+}
+
+/// A flush armed just before shutdown does not hold the scope's close for its delay (Node `timer.unref()`).
+#[tokio::test]
+async fn an_armed_flush_does_not_delay_shutdown() {
+    // The connection lives on its own scope: only the capture's flush runs on `scope`.
+    let connection_scope = TaskScope::root("connection", |_| {});
+    let scope = TaskScope::root("test", |_| {});
+    let (peer, _writer) = connection::start(
+        tokio::io::sink(),
+        &connection_scope.spawner(),
+        Options::default(),
+    );
+    let capture = NetworkCapture::with_delay(
+        peer,
+        Arc::new(FixedClock(1)),
+        scope.spawner(),
+        1,
+        Duration::from_secs(30),
+    );
+    assert!(capture.control(&json!({"captureId": "c1"})));
+    capture.record("GET", "https://example.com/a");
+    capture.set(None);
+    let left = tokio::time::timeout(Duration::from_secs(5), scope.close(Duration::from_secs(10)))
+        .await
+        .expect("close does not wait for the flush delay");
+    assert!(left.is_empty(), "{left:?}");
 }

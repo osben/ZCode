@@ -68,7 +68,8 @@ impl Snapshot {
 /// the request's task, so it must not block.
 pub trait RequestObserver: Send + Sync {
     /// `method` is the HTTP method (`GET` for a WebSocket upgrade); `url` is the target as sent, `ws:`/`wss:` for an
-    /// upgrade. It is not sanitized.
+    /// upgrade. It is NOT sanitized: it may carry credentials, tokens in the path and query values. An observer must
+    /// sanitize it before keeping or forwarding it and must never log the raw value.
     fn request(&self, method: &str, url: &str);
 }
 
@@ -111,7 +112,12 @@ impl Egress {
 
     /// Fork: installs the request observer. Only the first call takes effect (one observer per process).
     pub fn set_observer(&self, observer: Arc<dyn RequestObserver>) {
-        let _ = self.observer.set(observer);
+        if self.observer.set(observer).is_err() {
+            tracing::warn!(
+                event = "net.observer.duplicate",
+                "a request observer is already installed; the new one is ignored"
+            );
+        }
     }
 
     fn observe(&self, method: &str, url: &str) {
@@ -170,7 +176,9 @@ impl Egress {
         protocols: &[String],
     ) -> Result<crate::websocket::WebSocket, crate::websocket::WsError> {
         let snapshot = self.current.load_full();
-        if let Some(target) = socket_url(url) {
+        if self.observer.get().is_some()
+            && let Some(target) = socket_url(url)
+        {
             self.observe("GET", &target);
         }
         crate::websocket::connect(&snapshot.client, snapshot.headers.clone(), url, protocols).await
@@ -181,12 +189,8 @@ impl Egress {
 /// connect refuses anyway is not reported.
 fn socket_url(url: &str) -> Option<String> {
     let mut parsed = reqwest::Url::parse(url).ok()?;
-    let scheme = match parsed.scheme() {
-        "ws" | "http" => "ws",
-        "wss" | "https" => "wss",
-        _ => return None,
-    };
-    parsed.set_scheme(scheme).ok()?;
+    let (_, socket) = crate::websocket::schemes(parsed.scheme())?;
+    parsed.set_scheme(socket).ok()?;
     Some(parsed.into())
 }
 

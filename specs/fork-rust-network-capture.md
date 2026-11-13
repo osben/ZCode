@@ -42,8 +42,9 @@ control notification and reported none, so the panel showed no `cli` rows in Rus
 app-server passes the capture to the assembly (`Controller::app`), which installs it on the egress as soon as the
 egress exists, so requests made while assembling are reported too. It also wraps the deferred service so the control
 reaches the capture while the kernel is still being assembled (the Host sends the control right after spawn). The
-wrapper owns `Service::control`: `Deferred` handles no notification inline and does not forward `control` to the
-installed kernel.
+wrapper owns the capture control. `Deferred` forwards any other control to the installed service without waiting;
+before installation it handles none, so the reader passes such a notification on as an ordinary one, which waits for
+the service.
 
 Differences kept on purpose:
 
@@ -71,7 +72,8 @@ sequenceDiagram
 ```
 
 A flush armed under one generation does nothing after the generation changed. When the reader ends the capture is set
-to `null`.
+to `null`. The flush task is resident: closing the app-server scope drops a pending flush instead of waiting out its
+delay (Node unrefs the timer). The URL is sanitized outside the capture's lock.
 
 ## Acceptance cases
 

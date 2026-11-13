@@ -23,7 +23,7 @@ mod index;
 mod legacy;
 mod lifecycle;
 mod live;
-pub mod network_capture;
+mod network_capture;
 mod preparation;
 mod projection;
 mod reservations;
