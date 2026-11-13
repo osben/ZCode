@@ -73,6 +73,8 @@ pub struct Server {
         Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
+    /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
+    pub(crate) workspace_operations: crate::fork::WorkspaceOperations,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -140,6 +142,7 @@ impl Server {
             unreceipted: Mutex::new(std::collections::HashSet::new()),
             prepared_incognito: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
+            workspace_operations: crate::fork::WorkspaceOperations::default(),
         }
     }
 
