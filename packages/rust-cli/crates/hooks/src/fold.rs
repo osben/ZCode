@@ -47,16 +47,6 @@ fn aggregate(current: Option<Behavior>, next: Behavior) -> Option<Behavior> {
     })
 }
 
-/// Where a PreToolUse deny came from. Its text is picked after the loop: Node takes the last truthy reason of the hooks
-/// that gave a decision (`hookPermissionDecisionReason`), not the reason of the hook that denied.
-enum Denial {
-    /// A prevented call (`continue: false`, exit 2, `decision: "block"`): the reason, else the last stop reason, else
-    /// Node's `Blocked by PreToolUse hook`.
-    Stopped,
-    /// A `permissionDecision: "deny"` that does not prevent: the reason, else the documented default text.
-    Decision,
-}
-
 /// Node `mergePermissionBehavior` over the PreToolUse results in config order (`runner.ts`). `continue: false` is a
 /// deny (`processHookOutput` sets `permissionBehavior: "deny"`) and refuses the call even when a later hook allows it.
 pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutcome {
@@ -65,7 +55,6 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
         ..HookOutcome::default()
     };
     let mut aggregated: Option<Behavior> = None;
-    let mut denial: Option<Denial> = None;
     let mut reason: Option<String> = None;
     // Node `updatedInput`: the last hook that sets it, whatever its behavior.
     let mut updated_input: Option<Value> = None;
@@ -75,27 +64,15 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
             // Node `mergeHookRunResult` assigns `stopReason` on every preventing result, even when it has none.
             outcome.stop_reason.clone_from(&result.stop_reason);
             aggregated = aggregate(aggregated, Behavior::Deny);
-            denial = Some(Denial::Stopped);
         }
         if let Some(blocking) = &result.blocking {
             outcome.blocking_error = Some(texts::pre_tool_blocking(fold.hook_name, blocking));
             aggregated = aggregate(aggregated, Behavior::Deny);
-            // A blocking result without a permission decision (or one that also prevents) refuses like a stop.
-            if result.prevent || result.behavior != Some(Behavior::Deny) {
-                denial = Some(Denial::Stopped);
-            }
         }
         if let Some(behavior) = result.behavior {
             aggregated = aggregate(aggregated, behavior);
             if result.reason.is_some() {
                 reason.clone_from(&result.reason);
-            }
-            if behavior == Behavior::Deny {
-                denial = Some(if result.prevent {
-                    Denial::Stopped
-                } else {
-                    Denial::Decision
-                });
             }
         }
         if result.updated_input.is_some() {
@@ -114,21 +91,17 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
             updated_input: None,
         }),
         Some(Behavior::Ask) => {
-            let message = reason.clone().unwrap_or_else(|| {
-                texts::decision_default(fold.hook_name, "asked for confirmation for")
-            });
+            let message = reason
+                .clone()
+                .unwrap_or_else(|| texts::ASK_REQUIRES_APPROVAL.to_owned());
             Some(PermissionDecision::ask(message, Vec::new()))
         }
+        // Node `call-runner.ts`: `hookPermissionDecisionReason ?? stopReason ?? "Blocked by PreToolUse hook"`.
         Some(Behavior::Deny) => {
-            let message = match denial {
-                Some(Denial::Stopped) => reason
-                    .clone()
-                    .or_else(|| outcome.stop_reason.clone())
-                    .unwrap_or_else(|| texts::BLOCKED_BY_PRE_TOOL_USE.to_owned()),
-                Some(Denial::Decision) | None => reason
-                    .clone()
-                    .unwrap_or_else(|| texts::decision_default(fold.hook_name, "denied")),
-            };
+            let message = reason
+                .clone()
+                .or_else(|| outcome.stop_reason.clone())
+                .unwrap_or_else(|| texts::BLOCKED_BY_PRE_TOOL_USE.to_owned());
             Some(PermissionDecision::Deny { message })
         }
     };

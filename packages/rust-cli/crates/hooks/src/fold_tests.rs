@@ -50,7 +50,7 @@ fn pre_tool_use_precedence_and_texts() {
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "Hook PreToolUse:Bash denied this tool".to_owned()
+            message: "Blocked by PreToolUse hook".to_owned()
         })
     );
     // ask 盖过 allow，带上 ask 的 updatedInput。
@@ -70,7 +70,7 @@ fn pre_tool_use_precedence_and_texts() {
     assert_eq!(
         out.decision,
         Some(PermissionDecision::ask(
-            "Hook PreToolUse:Bash asked for confirmation for this tool",
+            "Tool requires approval by PreToolUse hook",
             Vec::new()
         ))
     );
@@ -540,6 +540,31 @@ fn pre_tool_use_a_refusal_reason_takes_part_in_the_merge() {
         out.decision,
         Some(PermissionDecision::Deny {
             message: "B ok".to_owned()
+        })
+    );
+}
+
+/// Node `call-runner.ts`: `hookPermissionDecisionReason ?? stopReason ?? "Blocked by PreToolUse hook"`. An earlier stop's
+/// reason comes before the default when a later hook denies without a reason.
+#[test]
+fn pre_tool_use_a_reasonless_deny_keeps_an_earlier_stop_reason() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            HookResult {
+                prevent: true,
+                stop_reason: Some("frozen".to_owned()),
+                ..HookResult::default()
+            },
+            decided(Behavior::Deny, None, None),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "frozen".to_owned()
         })
     );
 }
