@@ -91,7 +91,6 @@ pub struct WebSocket {
     closing: bool,
 }
 
-/// `ws:` / `wss:` 换成 HTTP 的写法。
 /// The accepted socket base schemes as `(http scheme, socket scheme)`: the one table both the connect and the request
 /// observer use.
 pub(crate) fn schemes(scheme: &str) -> Option<(&'static str, &'static str)> {
@@ -102,6 +101,7 @@ pub(crate) fn schemes(scheme: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// `ws:` / `wss:` 换成 HTTP 的写法。
 fn http_url(url: &str) -> Result<String, WsError> {
     let mut parsed =
         reqwest::Url::parse(url).map_err(|error| WsError::Protocol(error.to_string()))?;
