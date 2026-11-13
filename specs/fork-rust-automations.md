@@ -108,27 +108,50 @@ exists"`. The answer is the legacy snapshot of `session/read` (the Host validate
 
 ### Slice 2: Cron tools under the desktop agent (agent→Host)
 
-Under the desktop agent (`node_desktop`), the Cron tools are Node's five, with Node's schemas, descriptions, model
-instructions and permission specs (`core/src/tool/handlers/cron.ts`, `contracts/src/tools/automation.ts`):
-CronCreate, CronUpdate, CronList, CronDelete, CronPauseSelf. They call the Host with the requests above through the
-same peer-request pattern as `protocol-zcode/src/headers.rs`. The local file store (`.zcode/scheduled_tasks.json`,
-`tools/src/cron_durable.rs`) and the Claude-style Cron tools are **not** assembled for a desktop session, so a schedule
-is never fired twice and every schedule shows in the Automations UI. ScheduleWakeup (`/loop`) is not a Cron tool and
-is unchanged. The TUI keeps its local cron.
+Under the desktop agent (`node_desktop`), the Cron tools are Node's five: CronCreate, CronUpdate, CronList, CronDelete,
+CronPauseSelf (`core/src/tool/handlers/cron.ts`). Their provider contracts (name, description with the `Usage:` list of
+model instructions, input JSON schema) are generated from Node's TypeScript by
+`scripts/fork-rust-agent/automation-tools.mts` into `packages/rust-cli/crates/tools/assets/node_automation_tools.json`
+(`pnpm rust-agent:automation-tools:check` in CI), never copied by hand. The local file store
+(`.zcode/scheduled_tasks.json`, `tools/src/cron_durable.rs`) and the Claude-style Cron tools are **not** assembled for a
+desktop session, so a schedule is never fired twice and every schedule shows in the Automations UI. ScheduleWakeup
+(`/loop`) is not a Cron tool and is unchanged. The TUI keeps its local cron.
 
-Port rules (`automation-port.ts`):
+Owners (Node layering):
 
-- CronCreate, CronUpdate and CronDelete refuse on a turn with an automation id (`... is not allowed while running a
-scheduled automation.`), before any request.
+- **Tools** (`tools/src/automation_tools.rs`, Node `cron.ts`): parse and check the input (Node's zod refinements), refuse
+  on a restricted turn, build the output `{automation, message}` / `{automations}` / `{deleted, id, message}` /
+  `{paused, id, message}` with Node's texts, sent to the model and the UI as that JSON (the chat card parses it).
+- **Port** (`kernel-api` `AutomationPort`, implemented by `protocol-zcode/src/automation_port.rs`, Node
+  `automation-port.ts`): the Host requests, the bound-session check, the selection/mode/target fields, the reply
+  validation (inbound schema) and the Host error mapping.
+- **Session** (`SessionOps::freeze_title`, Node `setCustomSessionTitle`): after a successful create the tool asks its
+  session to take the automation title as a custom title; a subagent's request goes to its owner session.
+
+Rules:
+
+- A turn is _restricted_ when it carries an automation id, or when its disallowlist hides all three mutation tools
+  (Node `isAutomationMutationRestrictedTurn`). CronCreate, CronUpdate and CronDelete refuse on it
+  (`<Tool> is not allowed while running a scheduled automation.`) before any request. CronPauseSelf refuses without an
+  automation id (`CronPauseSelf is only available while running a scheduled automation.`) and pauses only that id.
 - CronCreate refuses in a session already bound to an automation (`automation/checkTaskBinding`); `-32601` alone falls
-  back to `automation/list`; any other failure refuses with `AUTOMATION_CREATE_BOUND_SESSION_CHECK_ERROR`.
-- CronCreate sends the session's stable selection as `modelSelection` and its permission mode as `mode` (`auto` →
-  `build`), `targetTaskId` = the session id, the interval carrier or `maxRuns` like Node, and freezes the session title
-  to the automation title after success (a failure to freeze is only logged).
-- Every request carries the session's `workspace` ref (`sessionWorkspaceRouting`).
-- A create limit error from the Host ends the turn's tool recovery like Node `AutomationCreateLimitError`.
-- Remote workspaces (`workspaceIdentity` of a remote kind) get no Cron tools.
-- Incognito `automationTools: false` removes them, as today.
+  back to `automation/list`; any other failure refuses with the bound-session check error.
+- CronCreate sends the session's selection as `modelSelection` and its permission mode as `mode` (Node names, `auto` →
+  `build`), `targetTaskId` = the owner session id, `relativeDelayMinutes` / the interval carrier / `maxRuns` and
+  `recurring` exactly as `automation-port.ts`. CronUpdate sends `recurring: true, maxRuns: null` with an interval
+  carrier.
+- Every request carries the owner session's `workspace` ref (`sessionWorkspaceRouting`).
+- CronCreate, CronUpdate, CronDelete ask for approval (Node `needsApproval: true`: the generic chain asks unless a
+  bypass mode or an allow rule); CronList and CronPauseSelf are allowed.
+- Exposure: Node's desktop agent runs with `toolSearchMode: "off"` (the Host default), so its first request carries
+  the Cron contracts directly. zcode-rs does not read the Host's tool-search preference yet; the desktop Cron tools are
+  therefore not deferred, which matches Node's default request. A Host that turns tool search on is a known gap.
+- Subagents get no Cron tools under `node_desktop` (Node registers them for the main session only).
+- Incognito `automationTools: false` removes all five.
+
+Known gaps (no zcode-rs mechanism yet, stated rather than invented): Node's `AutomationCreateLimitError` closes the
+turn's tool recovery after a create limit error, while zcode-rs returns it as an ordinary tool error; remote workspaces
+are not gated (the Host routes requests by workspace ref); the Host's `toolSearchMode` preference is not read.
 
 ### Slice 3: off-peak
 
@@ -164,6 +187,12 @@ Rust tests (protocol-zcode, tools):
    `automation/checkTaskBinding` then `automation/create` with the session's selection, mode, `targetTaskId` and
    workspace; a bound session refuses; a non-`-32601` check failure refuses; `-32601` falls back to `automation/list`;
    success freezes the title. CronPauseSelf sends `automation/pause` with the turn's id.
+7. The generated contracts equal Node's (`automation-tools.mts --check`); the CronCreate contract contains the
+   `prompt` field description and the model instructions; the Cron tools are not deferred and subagents do not get
+   them under `node_desktop`.
+8. Input checks: each Node refinement of `CronCreateInputSchema` / `CronUpdateInputSchema` refuses its case; a
+   restricted turn (automation id, or a disallowlist hiding all three mutation tools) refuses CronCreate/Update/Delete
+   before any request; CronPauseSelf without an automation id refuses before any request.
 
 Desktop E2E in the Linux box, on both runtimes (`packages/desktop/test/e2e`):
 

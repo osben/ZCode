@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@zcode/contracts": ["../../apps/zcode-cli/packages/contracts/src/index.ts"] }
+  }
+}

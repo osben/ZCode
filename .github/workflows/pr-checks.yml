@@ -113,6 +113,10 @@ jobs:
       - name: zcode-rs inbound schema
         run: pnpm rust-agent:inbound-schema:check
 
+      # The desktop Cron tool contracts of zcode-rs are generated from Node's tool entries (specs/fork-rust-automations.md).
+      - name: zcode-rs automation tool contracts
+        run: pnpm rust-agent:automation-tools:check
+
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 
