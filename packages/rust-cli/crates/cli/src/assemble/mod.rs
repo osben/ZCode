@@ -38,7 +38,7 @@ use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::provider::{HeaderSource, ModelDirectory, ModelLimits};
+use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
 use rust_cli_net::Egress;
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::StoragePaths;
@@ -146,6 +146,8 @@ pub(crate) struct Controller {
     pub(crate) primary: Primary,
     /// 账号模型每请求鉴权的来源（G8：app-server 经 Host）；None 时平台层自己算。
     pub(crate) headers: Option<Arc<dyn HeaderSource>>,
+    /// 凭据加解密（app-server 经 Host 委托 Main 的密钥库，specs/fork-rust-credential-cipher.md）；None 时用本地 v1 编解码。
+    pub(crate) credential_cipher: Option<Arc<dyn CredentialCipher>>,
     pub(crate) root_bypass: RootBypass,
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
@@ -171,6 +173,7 @@ impl Controller {
             machines: Some(machines::When::Background),
             primary: Primary::Configured,
             headers: None,
+            credential_cipher: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
             token_budget: true,
@@ -194,6 +197,7 @@ impl Controller {
             }),
             primary: Primary::Configured,
             headers: None,
+            credential_cipher: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
             token_budget: true,
@@ -205,7 +209,11 @@ impl Controller {
 
     /// app-server（app-protocol.md §3.7）：交互形态的提示词；Fork: 标题照 Node 桌面端生成（Node 的提示词）；不登记跨会话通信、不连远端机器、只接受本地主
     /// env；账号凭据经 Host；root 下的 bypass 照 Node 不拒绝。
-    pub(crate) fn app(headers: Arc<dyn HeaderSource>, desktop_context: bool) -> Self {
+    pub(crate) fn app(
+        headers: Arc<dyn HeaderSource>,
+        credential_cipher: Arc<dyn CredentialCipher>,
+        desktop_context: bool,
+    ) -> Self {
         Self {
             surface: Surface::Interactive,
             titles: Titles::Node,
@@ -213,6 +221,7 @@ impl Controller {
             machines: None,
             primary: Primary::LocalOnly,
             headers: Some(headers),
+            credential_cipher: Some(credential_cipher),
             root_bypass: RootBypass::Allow,
             wait_model: true,
             token_budget: false,
@@ -317,7 +326,13 @@ pub(crate) async fn open(
         );
     }
     let egress = setup::egress(&facts.process).await?;
-    let platform = setup::platform(facts, paths, egress.clone(), clock.clone())?;
+    let platform = setup::platform(
+        facts,
+        paths,
+        egress.clone(),
+        clock.clone(),
+        spec.credential_cipher.clone(),
+    )?;
     let platform = Arc::new(match &spec.headers {
         // 缺口 G8：账号模型的凭据向 Host 要（与 Node 相同经反向请求）；API key 的 provider 不受影响。
         Some(headers) => platform.with_header_source(headers.clone()),

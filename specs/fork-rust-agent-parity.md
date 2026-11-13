@@ -1186,6 +1186,10 @@ Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4
 
 - **A guide's model inside the running turn.** Node switches the loop's model to a drained guide's selection (unless the turn's model is fixed) and rebuilds the context prefix. The Rust run keeps one model selection per run; the guide's mode and Plan switch apply, and the next input carries its own selection. Porting it needs a per-request selection in the query loop.
 
+## Desktop credential cipher (`enc:v2:` bridge)
+
+See `specs/fork-rust-credential-cipher.md`: desktop `enc:v2:` credentials are decrypted by Main through `interaction/requestCredentialCipher`; standalone keeps the v1 codec and rejects v2.
+
 ## Open gaps (not yet ported)
 
 - **Hooks lifecycle cases that fail only on Rust** (desktop E2E `hooks/conversation-session-hooks-lifecycle`, container run after the SessionStart pending slot; each passes on Node):

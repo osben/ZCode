@@ -75,3 +75,79 @@ pub(crate) async fn offline_services() -> AccountServices {
 pub(crate) fn golden() -> serde_json::Value {
     serde_json::from_str(include_str!("../tests/fixtures/team-plan-golden.json")).unwrap()
 }
+
+/// 替身 cipher：`enc:v2:os:` 形状、可逆（反转字符），让桌面读取路径不经 Host 就能测（A11）。
+pub(crate) struct ReversedCipher;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::provider::CredentialCipher for ReversedCipher {
+    async fn encrypt(
+        &self,
+        plaintext: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        let reversed: String = plaintext.chars().rev().collect();
+        Ok(format!("enc:v2:os:0123456789abcdef01234567:{reversed}"))
+    }
+
+    async fn decrypt(
+        &self,
+        value: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        match value.strip_prefix("enc:v2:os:0123456789abcdef01234567:") {
+            Some(body) => Ok(body.chars().rev().collect()),
+            None => Ok(value.to_owned()),
+        }
+    }
+}
+
+/// 替身 cipher：每次都说不可用（A12-A15）。
+pub(crate) struct UnavailableCipher;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::provider::CredentialCipher for UnavailableCipher {
+    async fn encrypt(
+        &self,
+        _plaintext: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        Err(rust_cli_kernel_api::provider::CipherError::Unavailable {
+            reason: "credential storage unavailable",
+        })
+    }
+
+    async fn decrypt(
+        &self,
+        _value: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        Err(rust_cli_kernel_api::provider::CipherError::Unavailable {
+            reason: "credential storage unavailable",
+        })
+    }
+}
+
+/// 替身 cipher：开关控制是否说不可用，测试“上一次结果保留”（A14）。
+pub(crate) struct SwitchCipher {
+    pub down: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::provider::CredentialCipher for SwitchCipher {
+    async fn encrypt(
+        &self,
+        plaintext: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        if self.down.load(std::sync::atomic::Ordering::SeqCst) {
+            return UnavailableCipher.encrypt(plaintext).await;
+        }
+        ReversedCipher.encrypt(plaintext).await
+    }
+
+    async fn decrypt(
+        &self,
+        value: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        if self.down.load(std::sync::atomic::Ordering::SeqCst) {
+            return UnavailableCipher.decrypt(value).await;
+        }
+        ReversedCipher.decrypt(value).await
+    }
+}

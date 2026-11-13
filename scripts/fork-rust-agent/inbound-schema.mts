@@ -32,6 +32,7 @@ import {
   commandsQueryParamsSchema,
 } from "../../packages/shared/src/zcode-protocol-v4/command.ts";
 import { sessionsIndexReconcileParamsSchema } from "../../packages/shared/src/zcode-protocol-v4/sessions-index.ts";
+import { credentialCipherReplySchema } from "../../packages/shared/src/validation.ts";
 import {
   v4ConnectionFlowParamsSchema,
   v4ConversationResyncParamsSchema,
@@ -63,6 +64,8 @@ const METHODS = {
 // Replies to the agent's own requests that zcode-rs validates.
 const REPLIES = {
   "interaction/requestProviderRuntimeHeaders": zcodeProviderRuntimeHeadersResponseSchema,
+  // Desktop credentials: the Host's answer to the Rust agent's encrypt/decrypt request (specs/fork-rust-credential-cipher.md).
+  "interaction/requestCredentialCipher": credentialCipherReplySchema,
 };
 
 const schemaPath = fileURLToPath(

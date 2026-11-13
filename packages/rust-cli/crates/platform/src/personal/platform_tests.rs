@@ -247,7 +247,11 @@ async fn an_app_login_alone_lists_the_individual_plan() {
         let ours = storage_key(&server.url(), family(name), profile, None);
         let credentials = harness.credentials().await;
         assert_eq!(
-            credentials.present(&ours).map(|v| v.expose().to_owned()),
+            credentials
+                .present(&ours)
+                .await
+                .unwrap()
+                .map(|v| v.expose().to_owned()),
             login["location"]["value"].as_str().map(str::to_owned),
             "{name}"
         );
@@ -266,7 +270,11 @@ async fn an_app_login_alone_lists_the_individual_plan() {
         assert_eq!(keys, expected_keys, "{name}");
         for (key, value) in record {
             assert_eq!(
-                credentials.present(key).map(|v| v.expose().to_owned()),
+                credentials
+                    .present(key)
+                    .await
+                    .unwrap()
+                    .map(|v| v.expose().to_owned()),
                 value.as_str().map(|v| v.trim().to_owned()),
                 "{name}: {key}"
             );
@@ -288,9 +296,13 @@ async fn an_app_location_is_reused() {
         let profile = login["profileId"].as_str().unwrap();
         let key = storage_key(&server.url(), family(name), profile, None);
         let value = login["location"]["value"].as_str().unwrap().to_owned();
+        let sealed = harness.store().seal(&value).await.unwrap();
         harness
             .store()
-            .mutate(|credentials| credentials.set(&key, &value))
+            .mutate(async |credentials| {
+                credentials.put_sealed(&key, sealed.clone());
+                Ok(())
+            })
             .await
             .unwrap();
         assert!(listed(&harness, &provider(name)).await, "{name}");
@@ -341,11 +353,15 @@ async fn a_node_cli_identity_is_neither_needed_nor_enough() {
     assert!(
         credentials
             .present(&format!("account-provider:{zai}:auth-source"))
+            .await
+            .unwrap()
             .is_none()
     );
     assert!(
         credentials
             .present(&format!("account-provider:{zai}:identity"))
+            .await
+            .unwrap()
             .is_none()
     );
 }
@@ -441,15 +457,26 @@ async fn a_manual_key_wins_over_the_app_login_without_a_subscription_check() {
     .await;
     let zai = provider("zai");
     let identity = "key-0123456789abcdef01234567";
+    let store = harness.store();
+    let sealed_identity = store.seal(identity).await.unwrap();
+    let sealed_source = store.seal("manual").await.unwrap();
+    let sealed_key = store.seal("sk-manual").await.unwrap();
     harness
         .store()
-        .mutate(|credentials| {
-            credentials.set(&format!("account-provider:{zai}:identity"), identity)?;
-            credentials.set(&format!("account-provider:{zai}:auth-source"), "manual")?;
-            credentials.set(
+        .mutate(async |credentials| {
+            credentials.put_sealed(
+                &format!("account-provider:{zai}:identity"),
+                sealed_identity.clone(),
+            );
+            credentials.put_sealed(
+                &format!("account-provider:{zai}:auth-source"),
+                sealed_source.clone(),
+            );
+            credentials.put_sealed(
                 &format!("account-provider:coding-plan:{zai}:account:{identity}:api-key"),
-                "sk-manual",
-            )
+                sealed_key.clone(),
+            );
+            Ok(())
         })
         .await
         .unwrap();
@@ -476,9 +503,13 @@ async fn a_rejected_token_is_not_retried_after_the_zcode_jwt_changed() {
         .unwrap();
     assert_eq!(token(&first), "pat-1");
     // App 的账号范围含 zcodejwttoken：它变了之后，旧令牌的 401 不拿新范围重发。
+    let sealed = harness.store().seal("zcode-jwt-2").await.unwrap();
     harness
         .store()
-        .mutate(|credentials| credentials.set("zcodejwttoken", "zcode-jwt-2"))
+        .mutate(async |credentials| {
+            credentials.put_sealed("zcodejwttoken", sealed.clone());
+            Ok(())
+        })
         .await
         .unwrap();
     let message = match harness

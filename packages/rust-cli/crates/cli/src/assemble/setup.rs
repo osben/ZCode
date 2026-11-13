@@ -8,6 +8,7 @@ use rust_cli_base::clock::SystemClock;
 use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
 use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::provider::CredentialCipher;
 use rust_cli_net::Egress;
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::{StoragePaths, StorageSettings};
@@ -57,12 +58,14 @@ pub(crate) fn windows_profile() -> Option<PathBuf> {
     None
 }
 
-/// 平台层：Provider registry、账号（每请求鉴权、登录）与设置。
+/// 平台层：Provider registry、账号（每请求鉴权、登录）与设置。`cipher`：app-server 的凭据委托（Host → Main）；None 时
+/// 用本地 v1 编解码（standalone）。
 pub(crate) fn platform(
     facts: &Facts,
     paths: &StoragePaths,
     egress: Arc<Egress>,
     clock: Arc<SystemClock>,
+    cipher: Option<Arc<dyn CredentialCipher>>,
 ) -> Result<Platform> {
     let secret = CredentialSecret {
         explicit: facts.controller.credential_secret.clone(),
@@ -79,8 +82,11 @@ pub(crate) fn platform(
         origins,
     };
     // `ZCODE_MAX_OUTPUT_TOKENS`：Provider 配置的 `maxOutputTokens.map` 用 min(配置的 max, 它)（cli-args.md §9.1，F42）。
-    Ok(Platform::new(paths, &secret, services)
-        .with_max_output_tokens(facts.controller.max_output_tokens))
+    let platform = match cipher {
+        Some(cipher) => Platform::with_cipher(paths, cipher, services),
+        None => Platform::new(paths, &secret, services),
+    };
+    Ok(platform.with_max_output_tokens(facts.controller.max_output_tokens))
 }
 
 /// 网络出口（config.md §2.4，F21）：按环境快照算出口策略；`NODE_EXTRA_CA_CERTS` 用不了时先在 stderr 写警告。
@@ -123,7 +129,8 @@ pub(crate) async fn account(command: login::Command) -> Result<u8> {
     let paths = facts.storage_paths(&StorageSettings::default());
     let egress = egress(&facts.process).await?;
     let clock = Arc::new(SystemClock::new(facts.process.zone.clone()));
-    let platform = platform(&facts, &paths, egress, clock)?;
+    // `zcode login`（standalone）：本地 v1 编解码。
+    let platform = platform(&facts, &paths, egress, clock, None)?;
     Ok(login::run(command, &platform).await)
 }
 

@@ -19,7 +19,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::rpc::{self, Incoming, RpcError};
+use crate::rpc::{self, Incoming, RpcError, codes};
 
 /// 连接断开后发出的请求得到的错误码（实现自定义的范围）。
 pub const CONNECTION_CLOSED: i64 = -32000;
@@ -60,6 +60,51 @@ pub trait Service: Send + Sync + 'static {
     /// 对端的通知。缺省忽略（不认识的通知一律忽略）。
     async fn notification(&self, method: &str, params: Value) {
         let _ = (method, params);
+    }
+}
+
+/// 启动期的服务占位（specs/fork-rust-credential-cipher.md，启动死锁）：读者在组装内核之前就开始读对端的输入，所以
+/// 自己请求的回复（例如组装里的凭据加解密）在组装期间就能送达；对端的请求在真正的服务装好之前等待，不丢弃。
+/// 读者的回复路由不经过服务，因此等待服务不会挡住回复。
+pub struct Deferred(tokio::sync::watch::Receiver<Option<Arc<dyn Service>>>);
+
+/// 装上真正的服务（[`Deferred::new`] 的另一端）。不装就丢掉时，等待中的请求得到错误。
+pub struct Install(tokio::sync::watch::Sender<Option<Arc<dyn Service>>>);
+
+impl Deferred {
+    pub fn new() -> (Arc<Self>, Install) {
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        (Arc::new(Self(receiver)), Install(sender))
+    }
+
+    async fn ready(&self) -> Result<Arc<dyn Service>, RpcError> {
+        let mut receiver = self.0.clone();
+        let value = receiver
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| RpcError::new(codes::INTERNAL_ERROR, "the service was never installed"))?;
+        let service = value.clone();
+        service
+            .ok_or_else(|| RpcError::new(codes::INTERNAL_ERROR, "the service was never installed"))
+    }
+}
+
+impl Install {
+    pub fn install(self, service: Arc<dyn Service>) {
+        self.0.send_replace(Some(service));
+    }
+}
+
+#[async_trait]
+impl Service for Deferred {
+    async fn request(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
+        self.ready().await?.request(method, params).await
+    }
+
+    async fn notification(&self, method: &str, params: Value) {
+        if let Ok(service) = self.ready().await {
+            service.notification(method, params).await;
+        }
     }
 }
 
@@ -350,3 +395,42 @@ where
 #[cfg(test)]
 #[path = "connection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod deferred_tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    struct Echo;
+
+    #[async_trait]
+    impl Service for Echo {
+        async fn request(&self, _method: &str, params: Value) -> Result<Reply, RpcError> {
+            Ok(Reply::from(params))
+        }
+    }
+
+    /// 装上服务之前的请求等着，装上后得到答复；没有装就丢掉安装端时，等待中的请求得到错误而不是挂住。
+    #[tokio::test]
+    async fn requests_wait_for_the_installed_service() {
+        let (deferred, install) = Deferred::new();
+        let asking = tokio::spawn(async move { deferred.request("echo", json!({"n": 1})).await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !asking.is_finished(),
+            "the request waits instead of failing"
+        );
+        install.install(Arc::new(Echo));
+        let reply = asking.await.unwrap().unwrap();
+        assert_eq!(reply.result, json!({"n": 1}));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_installer_fails_the_waiting_request() {
+        let (deferred, install) = Deferred::new();
+        let asking = tokio::spawn(async move { deferred.request("echo", json!({})).await });
+        drop(install);
+        assert!(asking.await.unwrap().is_err());
+    }
+}

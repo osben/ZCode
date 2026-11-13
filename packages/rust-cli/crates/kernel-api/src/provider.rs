@@ -266,6 +266,29 @@ pub trait HeaderSource: Send + Sync {
     async fn request_auth(&self, request: HeaderRequest) -> Result<SuppliedAuth, ModelError>;
 }
 
+/// 凭据加解密的失败（specs/fork-rust-credential-cipher.md）。每个变体只带静态原因，不带值、密钥或 Host 的消息。
+/// `Unavailable` 不是登录失效：调用方不能清除令牌、不能报 `login_required`、不能写凭据文件。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CipherError {
+    /// 解密失败（原因文案与 Node 相同前缀：`凭据解密失败：<原因>`）。
+    #[error("凭据解密失败：{reason}")]
+    Decrypt { reason: &'static str },
+    #[error("无法加密凭据：{reason}")]
+    Encrypt { reason: &'static str },
+    /// 系统凭据存储不可用（Host 或 Main 的密钥库、传输失败、超时、回复不合法）。
+    #[error("凭据存储不可用：{reason}")]
+    Unavailable { reason: &'static str },
+}
+
+/// 凭据的加解密端口。standalone 用本地 v1 编解码；桌面（app-server）用 Host 委托 Main 的密钥库（Main 持有密钥）。
+#[async_trait]
+pub trait CredentialCipher: Send + Sync {
+    /// 明文加密成存入 `credentials.json` 的值。
+    async fn encrypt(&self, plaintext: &str) -> Result<String, CipherError>;
+    /// 存储值解密成明文；没有加密前缀的旧值原样返回（Node 相同）。
+    async fn decrypt(&self, value: &str) -> Result<String, CipherError>;
+}
+
 /// 读取模型目录。
 #[async_trait]
 pub trait ModelDirectory: Send + Sync {

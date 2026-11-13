@@ -12,6 +12,7 @@ use super::LoginError;
 use crate::account::{self, CodingPlanProvider};
 use crate::credentials::{CredentialError, CredentialStore, Credentials, PRIVATE_WRITE};
 use rust_cli_base::account::Family;
+use rust_cli_kernel_api::provider::CipherError;
 
 /// 没有账号 Profile 的连接身份取 sha256 十六进制摘要的前几位。
 const IDENTITY_DIGEST_HEX_CHARS: usize = 24;
@@ -56,14 +57,23 @@ pub(crate) async fn save_login(
     provider: &CodingPlanProvider,
     writes: &[(&str, Option<String>)],
 ) -> Result<(), CredentialError> {
+    // 加密在拿锁之前（Node 的顺序）；解密只为了找出要删的手工连接键。
+    let mut sealed = Vec::with_capacity(writes.len());
+    for (key, value) in writes {
+        let value = match value {
+            Some(value) => Some(store.seal(value).await?),
+            None => None,
+        };
+        sealed.push((*key, value));
+    }
     store
-        .mutate(|credentials| {
-            for key in manual_connection(credentials, &provider.provider) {
+        .mutate(async |credentials| {
+            for key in manual_connection(credentials, &provider.provider).await? {
                 credentials.remove(&key);
             }
-            for (key, value) in writes {
+            for (key, value) in &sealed {
                 match value {
-                    Some(value) => credentials.set(key, value)?,
+                    Some(value) => credentials.put_sealed(key, value.clone()),
                     None => credentials.remove(key),
                 }
             }
@@ -80,28 +90,45 @@ pub(crate) async fn save_manual(
     key: &str,
 ) -> Result<(), CredentialError> {
     let provider = &provider.provider;
+    let identity_sealed = store.seal(identity).await?;
+    let source_sealed = store.seal("manual").await?;
+    let key_sealed = store.seal(key).await?;
     store
-        .mutate(|credentials| {
-            credentials.set(&account::identity_key(provider), identity)?;
-            credentials.set(&account::source_key(provider), "manual")?;
-            credentials.set(&account::manual_key(provider, identity), key)
+        .mutate(async |credentials| {
+            credentials.put_sealed(&account::identity_key(provider), identity_sealed.clone());
+            credentials.put_sealed(&account::source_key(provider), source_sealed.clone());
+            credentials.put_sealed(&account::manual_key(provider, identity), key_sealed.clone());
+            Ok(())
         })
         .await
 }
 
 /// 一个 provider 的手工连接（与 Node 独立 CLI 写的 OAuth 身份、来源）的键：身份、来源，来源是 manual 时还有按身份
 /// 算出的 key。解不开的身份算不出 key 的键名，只给身份与来源（坏密文不阻止退出与登录）。
-fn manual_connection(credentials: &Credentials, provider: &str) -> Vec<String> {
-    let manual = credentials
-        .present(&account::source_key(provider))
+async fn manual_connection(
+    credentials: &Credentials,
+    provider: &str,
+) -> Result<Vec<String>, CredentialError> {
+    let manual = tolerate(credentials.present(&account::source_key(provider)).await)?
         .is_some_and(|source| source.expose() == "manual");
     let mut keys = Vec::new();
-    if manual && let Some(identity) = credentials.present(&account::identity_key(provider)) {
+    if manual
+        && let Some(identity) =
+            tolerate(credentials.present(&account::identity_key(provider)).await)?
+    {
         keys.push(account::manual_key(provider, identity.expose()));
     }
     keys.push(account::identity_key(provider));
     keys.push(account::source_key(provider));
-    keys
+    Ok(keys)
+}
+
+/// 坏密文（解密失败）只让那个键名算不出来，不阻止退出或登录（以前的行为）。存储不可用则中止：不能在不知道键名时写。
+fn tolerate<T>(result: Result<Option<T>, CredentialError>) -> Result<Option<T>, CredentialError> {
+    match result {
+        Err(CredentialError::Cipher(CipherError::Decrypt { .. })) => Ok(None),
+        other => other,
+    }
 }
 
 /// 退出（App `OAuthService.logoutAll` 加本工程与 Node 独立 CLI 自己的键，platform.md §5.6）：删掉共享的 OAuth 键；
@@ -112,16 +139,18 @@ pub(crate) async fn forget_connections(
     providers: &[CodingPlanProvider],
 ) -> Result<(), CredentialError> {
     store
-        .mutate(|credentials| {
+        .mutate(async |credentials| {
             let mut keys: Vec<String> = SHARED_KEYS.iter().map(|key| (*key).to_owned()).collect();
             for candidate in providers {
                 let provider = &candidate.provider;
-                let profile = Family::parse(&candidate.family)
-                    .and_then(|family| account::profile_id(credentials, family));
+                let profile = match Family::parse(&candidate.family) {
+                    Some(family) => tolerate(account::profile_id(credentials, family).await)?,
+                    None => None,
+                };
                 if let Some(profile) = profile {
                     keys.push(account::manual_key(provider, &profile));
                 }
-                keys.extend(manual_connection(credentials, provider));
+                keys.extend(manual_connection(credentials, provider).await?);
             }
             for key in &keys {
                 credentials.remove(key);

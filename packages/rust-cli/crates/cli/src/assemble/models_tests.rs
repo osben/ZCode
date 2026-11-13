@@ -215,3 +215,58 @@ fn the_effort_flag_sets_the_new_session_level() {
         Some("max".to_owned())
     );
 }
+
+/// A default settled while the credentials are unreadable (no account models in the catalog) is not remembered:
+/// the remembered account model stays the remembered one, and a readable settlement does remember.
+#[tokio::test]
+async fn a_default_settled_while_credentials_are_unreadable_is_not_remembered() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = rust_cli_paths::StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    let path = paths.default_model();
+    let flags: memory::Flags = (None, None);
+    let remembered = ModelSelection::new(
+        "account:zai-individual-coding-plan",
+        rust_cli_base::models::GLM_5_3_ACCOUNT,
+    );
+    memory::remember(path.as_path(), &flags, &remembered).await;
+
+    let gateway = ModelSelection::new("personal:gateway", "custom-chat");
+    let degraded = Chosen::Later {
+        flags: flags.clone(),
+        choosing: Box::pin({
+            let gateway = gateway.clone();
+            async move {
+                Settled {
+                    selection: gateway,
+                    degraded: true,
+                }
+            }
+        }),
+    };
+    let (chosen, _scope) = default_model(degraded, path.clone(), true, Instant::now()).await;
+    assert_eq!(
+        chosen.current(),
+        gateway,
+        "the session uses what the degraded catalog offers"
+    );
+    assert_eq!(
+        memory::recall(path.as_path(), &flags).await,
+        Some(remembered),
+        "the degraded settlement must not replace the remembered account model"
+    );
+
+    let readable = Chosen::Later {
+        flags: flags.clone(),
+        choosing: Box::pin({
+            let gateway = gateway.clone();
+            async move {
+                Settled {
+                    selection: gateway,
+                    degraded: false,
+                }
+            }
+        }),
+    };
+    let _ = default_model(readable, path.clone(), true, Instant::now()).await;
+    assert_eq!(memory::recall(path.as_path(), &flags).await, Some(gateway));
+}
