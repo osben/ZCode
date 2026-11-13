@@ -1,6 +1,17 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": ".",
-    "paths": { "@zcode/contracts": ["../../apps/zcode-cli/packages/contracts/src/index.ts"] }
-  }
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "noUncheckedIndexedAccess": false,
+    "types": ["node"],
+    "paths": {
+      "@zcode/contracts": ["../../apps/zcode-cli/packages/contracts/src/index.ts"]
+    }
+  },
+  "include": ["automation-tools.mts"]
 }

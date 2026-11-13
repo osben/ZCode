@@ -26,13 +26,7 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
 ];
 
 /// Fork: the desktop Cron tools (Node registers them for the main session only).
-const MAIN_SESSION_CRON: &[&str] = &[
-    tool_names::CRON_CREATE,
-    tool_names::CRON_LIST,
-    tool_names::CRON_UPDATE,
-    tool_names::CRON_DELETE,
-    tool_names::CRON_PAUSE_SELF,
-];
+const MAIN_SESSION_CRON: &[&str] = &tool_names::CRON_TOOLS;
 
 /// 后台子代理只能用的工具（含 SendMessage、TaskStop、Monitor）。
 const ASYNC_ALLOWED: &[&str] = &[

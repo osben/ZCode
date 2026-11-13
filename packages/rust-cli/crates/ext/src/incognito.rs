@@ -24,14 +24,12 @@ const GLOBAL_MCP_TOOLS: [&str; 4] = [
     tool_names::WAIT_FOR_MCP_SERVERS,
 ];
 
-/// Node's incognito `automationTools`: every Cron tool, the desktop's five included.
-const AUTOMATION_TOOLS: [&str; 5] = [
-    tool_names::CRON_CREATE,
-    tool_names::CRON_DELETE,
-    tool_names::CRON_LIST,
-    tool_names::CRON_UPDATE,
-    tool_names::CRON_PAUSE_SELF,
-];
+/// Node's incognito `automationTools`: whether `profile` hides the tool `name`; `None` when it is not a Cron tool.
+fn hides_automation_tool(profile: &IncognitoProfile, name: &str) -> Option<bool> {
+    tool_names::CRON_TOOLS
+        .contains(&name)
+        .then_some(!profile.automation_tools)
+}
 
 /// Whether the profile keeps an MCP server of `scope`.
 pub(crate) fn keeps_scope(profile: &IncognitoProfile, scope: McpScope) -> bool {
@@ -68,8 +66,8 @@ impl IncognitoToolGate for IncognitoTools {
             return false;
         };
         let name = tool.name();
-        if AUTOMATION_TOOLS.contains(&name) {
-            return !profile.automation_tools;
+        if let Some(hidden) = hides_automation_tool(&profile, name) {
+            return hidden;
         }
         if let Some(info) = tool.mcp_info() {
             // A server that is gone has no scope to admit it.

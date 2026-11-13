@@ -519,7 +519,7 @@ impl AutomationTool {
             .view()
             .await
             .and_then(|view| view.selection);
-        let params = create_params(&input, selection.as_ref(), context.mode, owner);
+        let params = create_params(&input, selection.as_ref(), context.base_mode, owner);
         let result = self
             .request(owner, port::CREATE, params)
             .await
@@ -589,7 +589,7 @@ impl AutomationTool {
         limits: &TurnLimits,
         owner: &SessionId,
     ) -> Result<ToolOutput, ToolError> {
-        let Some(id) = limits.automation.as_deref() else {
+        let Some(id) = limits.automation() else {
             return Err(failed(PAUSE_SELF_OUTSIDE_RUN.to_owned()));
         };
         let result = self
@@ -679,7 +679,18 @@ impl Tool for AutomationTool {
         Some(RESULT_CHARS)
     }
 
-    async fn validate_input(&self, input: &Value, _context: &ToolUseContext) -> Validation {
+    async fn validate_input(&self, input: &Value, context: &ToolUseContext) -> Validation {
+        // Node refuses a mutation on an automation turn before it parses the input (`assertNotAutomationTurn`
+        // first): leave the refinements to `call`, whose dispatch refuses before any parse.
+        if matches!(self.kind, Kind::Create | Kind::Update)
+            && context
+                .session_ops
+                .view()
+                .await
+                .is_some_and(|view| view.turn.restricts_automation_mutations())
+        {
+            return Validation::Ok;
+        }
         let checked = match self.kind {
             Kind::Create => create_input(input).map(drop),
             Kind::Update => update_input(input).map(drop),

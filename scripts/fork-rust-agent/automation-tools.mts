@@ -4,8 +4,8 @@
 // stay Node's (specs/fork-rust-automations.md, slice 2). The description is Node's `toolDescriptionForProvider`
 // (core/src/tool/registry.ts): the metadata description, then `Usage:` and one `- ` line per model instruction.
 //
-//   pnpm exec tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts
-//   pnpm rust-agent:automation-tools:check                       # fail when out of date (CI, pre-push)
+//   pnpm rust-agent:automation-tools:update   # regenerate the asset
+//   pnpm rust-agent:automation-tools:check    # fail when out of date (CI, pre-push)
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -60,9 +60,7 @@ const current = await readFile(assetPath, "utf8").catch(() => "");
 
 if (process.argv.includes("--check")) {
   if (next !== current) {
-    console.error(
-      `${assetPath} is out of date: run pnpm exec tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts`,
-    );
+    console.error(`${assetPath} is out of date: run pnpm rust-agent:automation-tools:update`);
     process.exit(1);
   }
 } else if (next !== current) {

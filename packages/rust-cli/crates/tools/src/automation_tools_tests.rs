@@ -224,6 +224,25 @@ async fn create_update_and_delete_ask_while_list_and_pause_self_are_allowed() {
     }
 }
 
+/// Node sends the base mode (`getMode()`; plan is a separate switch), so a task created in plan mode keeps the
+/// session's base mode, never `plan`.
+#[tokio::test]
+async fn create_in_plan_mode_saves_the_session_s_base_mode() {
+    let host = Host::answering(vec![
+        Ok(json!({"bound": false})),
+        Ok(json!({"automation": automation("auto_1", "t")})),
+    ]);
+    let mut context = context(Arc::new(Session::default()), PermissionMode::AcceptEdits);
+    context.mode = PermissionMode::Plan;
+    let input = json!({"cron": "0 9 * * *", "prompt": "p", "title": "t"});
+    call(&tool(&host, "CronCreate"), input, context)
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    let requests = host.requests();
+    assert_eq!(requests[1].1, "automation/create");
+    assert_eq!(requests[1].2["mode"], "edit");
+}
+
 #[tokio::test]
 async fn create_checks_the_binding_then_sends_node_s_params_and_freezes_the_title() {
     let host = Host::answering(vec![
@@ -515,6 +534,66 @@ async fn a_restricted_turn_refuses_the_mutations_before_any_request() {
             );
             assert!(host.requests().is_empty(), "{name}");
         }
+    }
+}
+
+/// Node checks the turn before it parses the input (`assertNotAutomationTurn` first), so on a restricted turn an
+/// input that breaks a refinement still gets the refusal, not the field's error.
+#[tokio::test]
+async fn a_restricted_turn_refuses_before_the_input_refinements() {
+    let session = Arc::new(Session {
+        limits: TurnLimits::new(Some("auto_1"), Vec::new()),
+        ..Session::default()
+    });
+    for (name, input) in [
+        (
+            "CronCreate",
+            json!({"cron": "0 9 * * *", "prompt": "p", "title": "t", "recurring": false, "maxRuns": 0}),
+        ),
+        (
+            "CronUpdate",
+            json!({"id": "a", "title": "t", "maxRuns": null}),
+        ),
+    ] {
+        let host = Arc::new(Host::default());
+        let tool = tool(&host, name);
+        let ctx = context(session.clone(), PermissionMode::Default);
+        assert!(
+            matches!(tool.validate_input(&input, &ctx).await, Validation::Ok),
+            "{name}"
+        );
+        let message = failure(call(&tool, input, ctx).await);
+        assert_eq!(
+            message,
+            format!("{name} is not allowed while running a scheduled automation.")
+        );
+        assert!(host.requests().is_empty(), "{name}");
+    }
+    // An ordinary turn still reports the refinement.
+    let host = Arc::new(Host::default());
+    let ctx = context(Arc::new(Session::default()), PermissionMode::Default);
+    let input =
+        json!({"cron": "0 9 * * *", "prompt": "p", "title": "t", "recurring": false, "maxRuns": 0});
+    assert!(matches!(
+        tool(&host, "CronCreate").validate_input(&input, &ctx).await,
+        Validation::Invalid { .. }
+    ));
+}
+
+/// Node parses CronList and CronPauseSelf with `z.object({}).strict()`; here the pipeline's schema check refuses the
+/// extra key before the tool runs (Node's executor checks the same JSON schema first too).
+#[test]
+fn list_and_pause_self_refuse_unknown_keys_at_the_schema() {
+    let host = Arc::new(Host::default());
+    for name in ["CronList", "CronPauseSelf"] {
+        let tool = tool(&host, name);
+        let message =
+            crate::validate::validate(name, &tool.input_schema(), &json!({"includePaused": true}));
+        assert!(message.is_some(), "{name}");
+        assert!(
+            crate::validate::validate(name, &tool.input_schema(), &json!({})).is_none(),
+            "{name}"
+        );
     }
 }
 

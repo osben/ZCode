@@ -11,6 +11,15 @@ pub const CRON_LIST: &str = "CronList";
 /// Fork: the desktop agent's Host-backed Cron tools (specs/fork-rust-automations.md).
 pub const CRON_PAUSE_SELF: &str = "CronPauseSelf";
 pub const CRON_UPDATE: &str = "CronUpdate";
+/// Fork: every Cron tool (the desktop's five): the incognito `automationTools` gate and the main-session-only rule
+/// both read this one list.
+pub const CRON_TOOLS: [&str; 5] = [
+    CRON_CREATE,
+    CRON_DELETE,
+    CRON_LIST,
+    CRON_UPDATE,
+    CRON_PAUSE_SELF,
+];
 pub const EDIT: &str = "Edit";
 pub const ENTER_PLAN_MODE: &str = "EnterPlanMode";
 pub const ENTER_WORKTREE: &str = "EnterWorktree";
