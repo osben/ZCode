@@ -17,7 +17,7 @@ use super::{Manifest, Plugin, Plugins, Reader};
 const OFFICIAL: &str = rust_cli_base::names::OFFICIAL_MARKETPLACE;
 /// Node `DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS`（`official-plugin-definitions.ts` 里标了 `defaultEnabled`
 /// 的插件，与 `packages/shared/src/plugin-marketplaces.ts` 一致），都在官方市场。
-const DEFAULT_ENABLED: [&str; 11] = [
+const DEFAULT_ENABLED: [&str; 12] = [
     "browser-use",
     "image-search",
     "documents",
@@ -27,6 +27,8 @@ const DEFAULT_ENABLED: [&str; 11] = [
     "node-repl-host",
     "skill-creator",
     "plugin-creator",
+    // Fork: declares only a language server (specs/fork-rust-lsp.md).
+    "typescript-lsp",
     "zcode-guide",
     "visualize",
 ];
@@ -259,7 +261,11 @@ impl Admission<'_> {
         if self.session.contains(&name) {
             return reject(SkipReason::ShadowedBySession);
         }
-        if loaded.iter().any(|plugin| plugin.name == name) {
+        let clash = loaded
+            .iter()
+            .any(|plugin| plugin.name == name && takes_name(plugin));
+        // An official candidate may turn out to claim no name (see `takes_name`); that needs its components.
+        if clash && candidate.marketplace != OFFICIAL {
             return reject(SkipReason::DuplicateName);
         }
         let tables = self.reader.mcp_tables(dir, &manifest).await;
@@ -271,8 +277,31 @@ impl Admission<'_> {
         ) {
             return reject(SkipReason::NodeRuntime(dependency));
         }
-        Ok(self.reader.components(dir, name, manifest, &tables).await)
+        let plugin = self
+            .reader
+            .components(dir, id.clone(), name, manifest, &tables)
+            .await;
+        if clash && takes_name(&plugin) {
+            return reject(SkipReason::DuplicateName);
+        }
+        Ok(plugin)
     }
+}
+
+/// Whether a loaded plugin keeps a later plugin of the same name out. Fork (specs/fork-rust-lsp.md): an official plugin
+/// with no skill, MCP server, agent or hook (the default-enabled `typescript-lsp` declares only a language server)
+/// claims no name-keyed namespace, so it neither keeps out nor is kept out by a plugin of the same name; Node dedupes
+/// by full id only, so both load there too.
+fn takes_name(plugin: &Plugin) -> bool {
+    let official = plugin
+        .id
+        .strip_suffix(OFFICIAL)
+        .is_some_and(|rest| rest.ends_with('@'));
+    let empty = plugin.skill_dirs.is_empty()
+        && plugin.mcp_servers.is_empty()
+        && plugin.agent_files.is_empty()
+        && plugin.hooks.is_empty();
+    !(official && empty)
 }
 
 fn log(skipped: &Skipped) {

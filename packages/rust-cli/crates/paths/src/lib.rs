@@ -82,6 +82,8 @@ const HOOK_TRUST_STORE: &str = "security/workspace-hook-trust-v1.json";
 /// Node `getCliStorageRoot` 的子目录与 `getPluginStorageRoot` 的子目录。
 const CLI_DIR: &str = cli_dir!();
 const PLUGINS_DIR: &str = "plugins";
+/// Fork: Node `LSP_PREFERENCES_FILE_NAME` (specs/fork-rust-lsp.md "Preferences file").
+const LSP_PREFERENCES: &str = "fork_lsp_preferences.json";
 /// 模型轨迹的目录（Node `getModelIoDir`：开发态 `debug`，其余 `rollout`，docs/specs/rust-cli/model-io.md §3.2）。
 const MODEL_IO_DEBUG_DIR: &str = "debug";
 const MODEL_IO_ROLLOUT_DIR: &str = "rollout";
@@ -276,6 +278,15 @@ impl StoragePaths {
     /// 路径相对 `base`（Node `resolve` 相对进程 cwd）；末段已是 `cli` 时不再加一层。
     pub fn plugin_storage(&self, storage_dir: Option<&str>, base: &Path) -> StoragePath {
         StoragePath(self.cli_storage_root(storage_dir, base).join(PLUGINS_DIR))
+    }
+
+    /// Fork: the language-server preferences sidecar `<cliStorageRoot>/fork_lsp_preferences.json`, shared with Node's
+    /// `LspPreferencesStore`; the root follows the same rule as [`Self::plugin_storage`].
+    pub fn lsp_preferences(&self, storage_dir: Option<&str>, base: &Path) -> StoragePath {
+        StoragePath(
+            self.cli_storage_root(storage_dir, base)
+                .join(LSP_PREFERENCES),
+        )
     }
 
     /// 模型轨迹的目录（工作线 F91，docs/specs/rust-cli/model-io.md §3.2）：Node 的 `getModelIoDir(getCliStorageRoot(

@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 import {
   zcodeMcpListParamsSchema,
   zcodeMcpReadResourceParamsSchema,
+  zcodeLspPreferencesGetParamsSchema,
+  zcodeLspPreferencesSetParamsSchema,
+  zcodeLspStatusParamsSchema,
   zcodeProviderRefreshRegistryParamsSchema,
   zcodeProviderRuntimeHeadersResponseSchema,
   zcodeProviderTestModelConnectivityParamsSchema,
@@ -54,6 +57,10 @@ import {
 const METHODS = {
   "mcp/list": zcodeMcpListParamsSchema,
   "mcp/readResource": zcodeMcpReadResourceParamsSchema,
+  // Answered with Node's no-LSP-host error after this check (specs/fork-rust-agent-parity.md, "Language servers").
+  "lsp/preferences/get": zcodeLspPreferencesGetParamsSchema,
+  "lsp/preferences/set": zcodeLspPreferencesSetParamsSchema,
+  "lsp/status": zcodeLspStatusParamsSchema,
   "provider/refreshRegistry": zcodeProviderRefreshRegistryParamsSchema,
   "provider/testModelConnectivity": zcodeProviderTestModelConnectivityParamsSchema,
   "provider/updateAccountConfig": zcodeProviderUpdateAccountConfigParamsSchema,

@@ -81,7 +81,11 @@ pub(crate) async fn dispatch(
         "session/cancelBackgroundTask" => super::background_task::cancel(server, &params).await,
         // Fork: the Host's resource sampler (Node `process/childProcesses`); params are not read.
         "process/childProcesses" => Ok(super::child_processes::child_processes(server)),
-        _ => return None,
+        _ => {
+            return super::lsp::dispatch(server.context.language_servers(), method, &params)
+                .await
+                .map(|result| result.map(Reply::new));
+        }
     };
     Some(result.map(Reply::new))
 }
