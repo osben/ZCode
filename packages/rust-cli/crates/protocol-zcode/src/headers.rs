@@ -2,13 +2,16 @@
 //! `provider-runtime-headers.ts`，经反向请求 `interaction/requestProviderRuntimeHeaders` 问 Host 要这次请求的凭据；
 //! 调用方放弃（模型请求被取消）或超过 180 s 时发 `interaction/providerRuntimeHeadersCancelled`，Host 释放它的队列。
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use rust_cli_base::hash;
 use rust_cli_base::secret::RedactedString;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::model::ModelError;
-use rust_cli_kernel_api::provider::{HeaderRequest, HeaderSource, SuppliedAuth};
+use rust_cli_kernel_api::provider::{HeaderAccess, HeaderRequest, HeaderSource, SuppliedAuth};
 use serde_json::{Value, json};
 
 use crate::context::Context;
@@ -19,14 +22,42 @@ pub const CANCELLED: &str = "interaction/providerRuntimeHeadersCancelled";
 /// 端口的总时限（Node `PROVIDER_RUNTIME_HEADERS_TIMEOUT_MS`）：同时覆盖 Host 的排队与凭据解析。
 const LIMIT: Duration = Duration::from_secs(180);
 
+/// Fork: how many ChatGPT Plan token scopes are remembered (oldest dropped first).
+const SCOPES_KEPT: usize = 32;
+/// Fork: Node `siwc_account_scope_invalidated` (the account behind the token changed, or no scope to check).
+const SCOPE_INVALIDATED: &str = "siwc_account_scope_invalidated";
+
 /// 经 Host 取账号凭据。
 pub struct HostHeaders {
     context: Arc<Context>,
+    /// Fork (specs/fork-rust-chatgpt-plan.md rules 8-9): `sha256(apiKey)` → the Host's `accountScope` for ChatGPT
+    /// Plan tokens, so a renewal after a 401 can send the scope the rejected token belonged to.
+    scopes: Mutex<VecDeque<(String, String)>>,
 }
 
 impl HostHeaders {
     pub fn new(context: Arc<Context>) -> Self {
-        Self { context }
+        Self {
+            context,
+            scopes: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    fn scope_of(&self, fingerprint: &str) -> Option<String> {
+        self.scopes
+            .lock_unpoisoned()
+            .iter()
+            .find(|(known, _)| known == fingerprint)
+            .map(|(_, scope)| scope.clone())
+    }
+
+    fn remember(&self, fingerprint: String, scope: String) {
+        let mut scopes = self.scopes.lock_unpoisoned();
+        scopes.retain(|(known, _)| *known != fingerprint);
+        while scopes.len() >= SCOPES_KEPT {
+            scopes.pop_front();
+        }
+        scopes.push_back((fingerprint, scope));
     }
 }
 
@@ -67,16 +98,31 @@ impl HeaderSource for HostHeaders {
             self.context.fresh("auth")
         );
         let workspace = json!({"workspacePath": workspace, "workspaceKey": workspace});
+        // Fork: ChatGPT Plan is routed by provider id and carries no zhipu-shaped access (rule 7). After a 401 it
+        // names the scope of the rejected token; without one Node cannot recover the token either (rule 9).
+        let chatgpt = request.access == HeaderAccess::ChatGptPlan;
+        let expected = match (chatgpt, &request.rejected_fingerprint) {
+            (true, Some(fingerprint)) => Some(
+                self.scope_of(fingerprint)
+                    .ok_or_else(|| failed(SCOPE_INVALIDATED))?,
+            ),
+            _ => None,
+        };
         let mut params = json!({
             "requestId": request_id,
             "sessionId": session.as_str(),
             "workspace": workspace,
             "modelSelection": {"providerId": request.selection.provider, "modelId": request.selection.model},
             "providerId": request.selection.provider,
-            "accountAccess": {"type": "zhipu-account", "accountType": request.account_type,
-                "mode": request.mode, "entitled": true},
             "reason": "model-request",
         });
+        if let HeaderAccess::Zhipu { account_type, mode } = &request.access {
+            params["accountAccess"] = json!({"type": "zhipu-account",
+                "accountType": account_type, "mode": mode, "entitled": true});
+        }
+        if let Some(scope) = &expected {
+            params["expectedAccountScope"] = json!(scope);
+        }
         if let Some(fingerprint) = &request.rejected_fingerprint {
             params["rejectedProjectTokenFingerprint"] = json!(fingerprint);
         }
@@ -116,10 +162,17 @@ impl HeaderSource for HostHeaders {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(SuppliedAuth {
-            api_key: auth["apiKey"].as_str().map(RedactedString::new),
-            headers,
-        })
+        let api_key = auth["apiKey"].as_str().map(RedactedString::new);
+        if chatgpt {
+            let scope = auth["accountScope"].as_str();
+            if expected.is_some() && scope != expected.as_deref() {
+                return Err(failed(SCOPE_INVALIDATED));
+            }
+            if let (Some(key), Some(scope)) = (&api_key, scope) {
+                self.remember(hash::sha256_hex(key.expose().as_bytes()), scope.to_owned());
+            }
+        }
+        Ok(SuppliedAuth { api_key, headers })
     }
 }
 

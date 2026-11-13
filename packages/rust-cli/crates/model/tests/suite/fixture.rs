@@ -28,7 +28,10 @@ pub struct Captured {
     pub method: String,
     pub target: String,
     pub headers: Vec<(String, String)>,
+    /// The body as lossy UTF-8: a compressed body comes out mangled here, so read `raw` for those.
     pub body: String,
+    /// The body bytes as received (compressed bodies are not UTF-8).
+    pub raw: Vec<u8>,
 }
 
 impl Captured {
@@ -212,11 +215,13 @@ async fn read_request(socket: &mut TcpStream) -> Option<Captured> {
         }
         bytes.extend_from_slice(&chunk[..read]);
     }
-    let body = String::from_utf8_lossy(&bytes[head_end..head_end + length]).into_owned();
+    let raw = bytes[head_end..head_end + length].to_vec();
+    let body = String::from_utf8_lossy(&raw).into_owned();
     Some(Captured {
         method,
         target,
         headers,
         body,
+        raw,
     })
 }

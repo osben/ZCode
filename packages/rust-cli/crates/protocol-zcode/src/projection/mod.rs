@@ -1407,6 +1407,14 @@ impl Projection {
                 if let Some(source) = item.intent.as_ref().and_then(|intent| intent.source()) {
                     value["source"] = source.clone();
                 }
+                // Fork: a queued bot-group input shows its bot source (Node queue item `botGroupSource`).
+                if let Some(source) = item
+                    .intent
+                    .as_ref()
+                    .and_then(|intent| intent.bot_group_source())
+                {
+                    value["botGroupSource"] = source.clone();
+                }
                 if let Some(execution) = &item.execution {
                     if let Some(selection) = &execution.selection {
                         value["modelSelection"] = state::selection(selection);

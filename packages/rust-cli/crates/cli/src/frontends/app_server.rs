@@ -16,7 +16,9 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
-use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
+use rust_cli_protocol_zcode::{
+    Context, Defaults, HostCredentialCipher, HostHeaders, HostTopicResources, Startup,
+};
 
 use crate::assemble::{self, Controller};
 use crate::frontends::node_helper;
@@ -122,6 +124,7 @@ async fn serve(
     let spec = Controller::app(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
+        Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
@@ -162,6 +165,8 @@ async fn serve(
     // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
     context.set_mcp_processes(opened.mcp.clone());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
+    // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
+    context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
     let defaults = Defaults {

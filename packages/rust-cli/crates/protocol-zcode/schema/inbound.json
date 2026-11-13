@@ -14,6 +14,71 @@
       ],
       "additionalProperties": false
     },
+    "provider/testModelConnectivity": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "workspacePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceIdentity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remoteSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspacePath",
+            "workspaceKey"
+          ],
+          "additionalProperties": false
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "reasoningLevel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "providerId",
+            "modelId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace",
+        "selection"
+      ],
+      "additionalProperties": false
+    },
     "provider/updateAccountConfig": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -657,6 +722,242 @@
       "required": [
         "workspaceId",
         "sessionIds"
+      ],
+      "additionalProperties": false
+    },
+    "workspace/cancelGenerateText": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "additionalProperties": false
+    },
+    "workspace/generateText": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "workspacePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceIdentity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remoteSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspacePath",
+            "workspaceKey"
+          ],
+          "additionalProperties": false
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "reasoningLevel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "providerId",
+            "modelId"
+          ],
+          "additionalProperties": false
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messages": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "const": "system"
+                  },
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "const": "user"
+                  },
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "const": "assistant"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "toolCalls": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "input": {}
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "input"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "const": "tool"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "toolCallId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toolName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "isError": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "role",
+                  "content",
+                  "toolCallId",
+                  "toolName"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string"
+              },
+              "inputSchema": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "name",
+              "inputSchema"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "querySource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "operationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "workspace",
+        "selection",
+        "querySource"
       ],
       "additionalProperties": false
     },
@@ -4871,6 +5172,51 @@
           "additionalProperties": false
         }
       ]
+    },
+    "topic/resource/cancel": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cancelled"
+      ],
+      "additionalProperties": false
+    },
+    "topic/resource/read": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "mime": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        }
+      },
+      "required": [
+        "ref",
+        "fileName",
+        "mime",
+        "bytes"
+      ],
+      "additionalProperties": false
     }
   }
 }
