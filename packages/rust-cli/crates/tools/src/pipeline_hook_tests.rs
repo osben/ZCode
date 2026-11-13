@@ -369,6 +369,37 @@ async fn non_hook_rejections_drop_the_pre_tool_stop() {
     assert!(ran.execution.after.is_empty() && !ran.execution.prevent_continuation);
 }
 
+/// Node `processHookOutput` + `call-runner.ts`: a PreToolUse `continue: false` refuses the call. The fold hands the
+/// pipeline a deny with the stop, so the tool handler (`Echo`, which answers `ran <command>`) is never invoked.
+#[tokio::test]
+async fn a_pre_tool_use_stop_refuses_before_the_tool_runs() {
+    let allow_gate = Gate::new(
+        PermissionDecision::Allow {
+            updated_input: None,
+        },
+        None,
+    );
+    let pre_outcome = HookOutcome {
+        decision: Some(PermissionDecision::Deny {
+            message: "frozen".to_owned(),
+        }),
+        after_result: vec![note("hook_stopped_continuation", "pre stop")],
+        prevent_continuation: true,
+        ..HookOutcome::default()
+    };
+    let ran = run(allow_gate, &[(HookEventName::PreToolUse, pre_outcome)]).await;
+    assert_eq!(text(&ran.execution.output), "frozen");
+    assert_eq!(
+        ran.execution
+            .after
+            .iter()
+            .map(|m| m.id().as_str().to_owned())
+            .collect::<Vec<_>>(),
+        ["pre stop"]
+    );
+    assert!(ran.execution.prevent_continuation);
+}
+
 /// 修复线 F20：guarded 的危险命令只批准这一次（Node user-once）：PermissionRequest hook 不能替用户批准，
 /// 不跑这个事件，直接问用户。工作线 F137：判决链的询问带 `once`（以前是单独的 `ask_once`）。
 #[tokio::test]

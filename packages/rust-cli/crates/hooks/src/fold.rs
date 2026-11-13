@@ -1,7 +1,7 @@
 //! 工具类事件的合并（docs/specs/rust-cli/hooks.md §4.3、§6）。
 //!
-//! 结果按完成顺序到达，逐个折叠（PreToolUse、PostToolUse、PostToolUseFailure、PermissionRequest 各一个
-//! 函数）；聚合规则（权限优先级、updatedInput）在结果循环里逐个合并。
+//! 结果按配置顺序传入（engine 排序，Node 逐个运行 hook），逐个折叠（PreToolUse、PostToolUse、
+//! PostToolUseFailure、PermissionRequest 各一个函数）；聚合规则（权限优先级、updatedInput）在结果循环里逐个合并。
 
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::hooks::HookOutcome;
@@ -47,61 +47,36 @@ fn aggregate(current: Option<Behavior>, next: Behavior) -> Option<Behavior> {
     })
 }
 
+/// Node `mergePermissionBehavior` over the PreToolUse results in config order (`runner.ts`). `continue: false` is a
+/// deny (`processHookOutput` sets `permissionBehavior: "deny"`) and refuses the call even when a later hook allows it.
 pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutcome {
     let mut outcome = HookOutcome {
         notices: notices(results),
         ..HookOutcome::default()
     };
     let mut aggregated: Option<Behavior> = None;
-    let mut decision: Option<PermissionDecision> = None;
-    let mut decision_input: Option<Value> = None;
-    let mut passthrough_input: Option<Value> = None;
+    let mut reason: Option<String> = None;
+    // Node `updatedInput`: the last hook that sets it, whatever its behavior.
+    let mut updated_input: Option<Value> = None;
     for result in results {
         if result.prevent {
             outcome.prevent_continuation = true;
-            if result.stop_reason.is_some() {
-                outcome.stop_reason.clone_from(&result.stop_reason);
-            }
+            // Node `mergeHookRunResult` assigns `stopReason` on every preventing result, even when it has none.
+            outcome.stop_reason.clone_from(&result.stop_reason);
+            aggregated = aggregate(aggregated, Behavior::Deny);
         }
         if let Some(blocking) = &result.blocking {
-            let message = texts::pre_tool_blocking(fold.hook_name, blocking);
-            outcome.blocking_error = Some(message.clone());
-            decision = Some(PermissionDecision::Deny { message });
-            decision_input = None;
-            aggregated = Some(Behavior::Deny);
+            outcome.blocking_error = Some(texts::pre_tool_blocking(fold.hook_name, blocking));
+            aggregated = aggregate(aggregated, Behavior::Deny);
         }
         if let Some(behavior) = result.behavior {
             aggregated = aggregate(aggregated, behavior);
-            // 只交出与当前聚合行为相同的决定。
-            if aggregated == Some(behavior) {
-                let reason = result.reason.clone();
-                match behavior {
-                    Behavior::Allow => {
-                        decision = Some(PermissionDecision::Allow {
-                            updated_input: None,
-                        });
-                        decision_input.clone_from(&result.updated_input);
-                    }
-                    Behavior::Ask => {
-                        let message = reason.unwrap_or_else(|| {
-                            texts::decision_default(fold.hook_name, "asked for confirmation for")
-                        });
-                        decision = Some(PermissionDecision::ask(message, Vec::new()));
-                        decision_input.clone_from(&result.updated_input);
-                    }
-                    // 同一个 hook 已给出阻塞时保留阻塞文本：JSON deny 的结果是
-                    // `PreToolUse:Bash hook error: <permissionDecisionReason>`，不是原因本身。
-                    Behavior::Deny if result.blocking.is_some() => decision_input = None,
-                    Behavior::Deny => {
-                        let message = reason
-                            .unwrap_or_else(|| texts::decision_default(fold.hook_name, "denied"));
-                        decision = Some(PermissionDecision::Deny { message });
-                        decision_input = None;
-                    }
-                }
+            if result.reason.is_some() {
+                reason.clone_from(&result.reason);
             }
-        } else if result.updated_input.is_some() {
-            passthrough_input.clone_from(&result.updated_input);
+        }
+        if result.updated_input.is_some() {
+            updated_input.clone_from(&result.updated_input);
         }
         if let Some(context) = &result.additional_context {
             outcome.additional_context.push(context.clone());
@@ -110,9 +85,31 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
                 .extend(fold.context(fold.hook_name, std::slice::from_ref(context)));
         }
     }
-    outcome.decision = decision;
-    // allow / ask 的 updatedInput 优先，否则用单独交出的。
-    outcome.updated_input = decision_input.or(passthrough_input);
+    outcome.decision = match aggregated {
+        None => None,
+        Some(Behavior::Allow) => Some(PermissionDecision::Allow {
+            updated_input: None,
+        }),
+        Some(Behavior::Ask) => {
+            let message = reason
+                .clone()
+                .unwrap_or_else(|| texts::ASK_REQUIRES_APPROVAL.to_owned());
+            Some(PermissionDecision::ask(message, Vec::new()))
+        }
+        // Node `call-runner.ts`: `hookPermissionDecisionReason ?? stopReason ?? "Blocked by PreToolUse hook"`.
+        Some(Behavior::Deny) => {
+            let message = reason
+                .clone()
+                .or_else(|| outcome.stop_reason.clone())
+                .unwrap_or_else(|| texts::BLOCKED_BY_PRE_TOOL_USE.to_owned());
+            Some(PermissionDecision::Deny { message })
+        }
+    };
+    // A refused call never applies `updatedInput` (Node returns before it, `call-runner.ts`).
+    outcome.updated_input = match outcome.decision {
+        Some(PermissionDecision::Deny { .. }) => None,
+        _ => updated_input,
+    };
     if outcome.prevent_continuation {
         let message = outcome
             .stop_reason

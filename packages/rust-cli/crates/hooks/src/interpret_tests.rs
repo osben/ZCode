@@ -1,7 +1,7 @@
 //! 退出码语义与“外部”路径（spec §4.1、§4.3）。
 
 use super::*;
-use crate::result::Blocking;
+use crate::result::{Behavior, Blocking};
 
 fn command(stdout: &str, stderr: &str, exit: i32) -> Executed {
     Executed::Raw(Raw::Command {
@@ -16,16 +16,22 @@ fn exit_codes() {
     let ok = repl(command("  hello \n", "", 0), "c", "UserPromptSubmit");
     assert_eq!(ok.outcome, Outcome::Success);
     assert_eq!(ok.success_content.as_deref(), Some("hello"));
+    // PreToolUse: Node's synthetic deny, the reason is trimmed stderr (`createExitCodeBlockOutput`).
     let blocked = repl(command("", "  bad thing\n", 2), "guard.sh", "PreToolUse");
     assert_eq!(
         blocked.blocking,
         Some(Blocking {
-            error: "[guard.sh]:   bad thing\n".to_owned(),
+            error: "bad thing".to_owned(),
             command: "guard.sh".to_owned()
         })
     );
+    assert!(blocked.prevent && blocked.behavior == Some(Behavior::Deny));
+    assert_eq!(blocked.reason.as_deref(), Some("bad thing"));
     let silent = repl(command("", "", 2), "g", "PreToolUse");
-    assert_eq!(silent.blocking.unwrap().error, "[g]: No stderr output");
+    assert_eq!(silent.blocking.unwrap().error, "Hook blocked execution");
+    // Other events keep the `[command]: stderr` form.
+    let stop = repl(command("", "  bad thing\n", 2), "guard.sh", "Stop");
+    assert_eq!(stop.blocking.unwrap().error, "[guard.sh]:   bad thing\n");
     let other = repl(command("out", " oops \n", 1), "c", "PreToolUse");
     assert_eq!(other.outcome, Outcome::NonBlockingError);
     assert_eq!(

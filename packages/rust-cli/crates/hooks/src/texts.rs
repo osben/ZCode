@@ -12,6 +12,8 @@ use crate::result::Blocking;
 
 /// PreToolUse 的 `continue: false`。
 pub(crate) const STOPPED_BY_HOOK: &str = "Execution stopped by hook";
+/// Node `call-runner.ts` fallback for a PreToolUse refusal with neither a reason nor a stop reason.
+pub(crate) const BLOCKED_BY_PRE_TOOL_USE: &str = "Blocked by PreToolUse hook";
 /// Stop 的 `continue: false`。
 pub(crate) const STOP_PREVENTED: &str = "Stop hook prevented continuation";
 /// UserPromptSubmit 的 `continue: false`。
@@ -164,10 +166,8 @@ pub(crate) fn pre_tool_blocking(hook_name: &str, blocking: &Blocking) -> String 
     format!("{hook_name} hook error: {}", blocking.error)
 }
 
-/// PreToolUse 的 JSON 决定没有原因时的文本（`getRuleBehaviorDescription`）。
-pub(crate) fn decision_default(hook_name: &str, verb: &str) -> String {
-    format!("Hook {hook_name} {verb} this tool")
-}
+/// Node `hook-flow.ts`: a PreToolUse ask with no `permissionDecisionReason`.
+pub(crate) const ASK_REQUIRES_APPROVAL: &str = "Tool requires approval by PreToolUse hook";
 
 /// UserPromptSubmit 的阻塞说明。
 pub(crate) fn prompt_blocked(blocking: &Blocking, prompt: &str, suppress: bool) -> String {

@@ -50,7 +50,7 @@ fn pre_tool_use_precedence_and_texts() {
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "Hook PreToolUse:Bash denied this tool".to_owned()
+            message: "Blocked by PreToolUse hook".to_owned()
         })
     );
     // ask 盖过 allow，带上 ask 的 updatedInput。
@@ -70,19 +70,25 @@ fn pre_tool_use_precedence_and_texts() {
     assert_eq!(
         out.decision,
         Some(PermissionDecision::ask(
-            "Hook PreToolUse:Bash asked for confirmation for this tool",
+            "Tool requires approval by PreToolUse hook",
             Vec::new()
         ))
     );
-    // 退出码 2 的阻塞：PreToolUse 的拒绝文本。
-    let out = pre_tool_use(&f, &[blocking("[g]: nope")]);
+    // 退出码 2 的拒绝：Node 的合成输出，文本是理由本身（没有 `hook error` 前缀）。
+    let out = pre_tool_use(
+        &f,
+        &[HookResult::pre_tool_refusal(
+            "nope".to_owned(),
+            "g".to_owned(),
+        )],
+    );
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "PreToolUse:Bash hook error: [g]: nope".to_owned()
+            message: "nope".to_owned()
         })
     );
-    // JSON deny：保留阻塞文本。
+    // JSON deny：理由就是拒绝文本，阻塞文本不再加前缀。
     let json_deny = HookResult {
         blocking: Some(Blocking {
             error: "no rm".to_owned(),
@@ -94,7 +100,7 @@ fn pre_tool_use_precedence_and_texts() {
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "PreToolUse:Bash hook error: no rm".to_owned()
+            message: "no rm".to_owned()
         })
     );
 }
@@ -118,8 +124,14 @@ fn pre_tool_use_passthrough_context_and_stop() {
             },
         ],
     );
-    assert_eq!(out.decision, None);
-    assert_eq!(out.updated_input, Some(json!({"command": "x"})));
+    // Node `processHookOutput`: `continue: false` on PreToolUse is a deny, so the call is refused and its input dropped.
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "Blocked by PreToolUse hook".to_owned()
+        })
+    );
+    assert_eq!(out.updated_input, None);
     assert_eq!(out.messages.len(), 2, "每个 hook 一条附加上下文");
     assert!(text(&out.messages[1]).contains("PreToolUse:Bash hook additional context: two"));
     assert!(out.prevent_continuation);
@@ -399,4 +411,160 @@ fn pre_tool_use_merge_is_deny_then_ask_then_last() {
         deny_wins.decision,
         Some(PermissionDecision::Deny { .. })
     ));
+}
+
+/// Node `call-runner.ts` refuses on `preventContinuation` even when a later hook allows, and the message is the
+/// stop reason when no hook gave a `permissionDecisionReason`.
+#[test]
+fn pre_tool_use_continue_false_denies_even_when_a_later_hook_allows() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            HookResult {
+                prevent: true,
+                stop_reason: Some("stop here".to_owned()),
+                ..HookResult::default()
+            },
+            decided(Behavior::Allow, None, Some(json!({"command": "b"}))),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "stop here".to_owned()
+        })
+    );
+    assert!(out.prevent_continuation);
+    assert_eq!(out.updated_input, None);
+}
+
+/// Node `updatedInput` is overwritten by every hook that sets one, whatever its behavior, and the reason is the last
+/// truthy `permissionDecisionReason` (`output.ts` `mergeHookRunResult`). Here an ask and an allow carry different
+/// inputs and reasons: the ask text becomes the allow's reason and the input is the allow's.
+#[test]
+fn pre_tool_use_ask_then_allow_takes_the_last_input_and_reason() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            decided(Behavior::Ask, Some("check"), Some(json!({"command": "a"}))),
+            decided(Behavior::Allow, Some("ok"), Some(json!({"command": "b"}))),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::ask("ok", Vec::new()))
+    );
+    assert_eq!(out.updated_input, Some(json!({"command": "b"})));
+    // An allow without a reason or input keeps the ask's reason and input (Node keeps the last truthy values).
+    let out = pre_tool_use(
+        &f,
+        &[
+            decided(Behavior::Ask, Some("check"), Some(json!({"command": "a"}))),
+            decided(Behavior::Allow, None, None),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::ask("check", Vec::new()))
+    );
+    assert_eq!(out.updated_input, Some(json!({"command": "a"})));
+}
+
+/// A denied call has no updated input, whatever a hook set on it (Node returns before `updatedInput` is applied).
+#[test]
+fn pre_tool_use_a_denied_call_drops_the_updated_input() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            decided(Behavior::Allow, None, Some(json!({"command": "a"}))),
+            decided(Behavior::Deny, Some("no"), Some(json!({"command": "b"}))),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "no".to_owned()
+        })
+    );
+    assert_eq!(out.updated_input, None);
+}
+
+/// Node `mergeHookRunResult` assigns `stopReason` on every preventing result, even when it has none: the last stop
+/// decides the text, and with no text the refusal is Node's default.
+#[test]
+fn pre_tool_use_a_stop_without_a_reason_replaces_an_earlier_one() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let stop = |reason: Option<&str>| HookResult {
+        prevent: true,
+        stop_reason: reason.map(str::to_owned),
+        ..HookResult::default()
+    };
+    let out = pre_tool_use(&f, &[stop(Some("quota exceeded")), stop(None)]);
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "Blocked by PreToolUse hook".to_owned()
+        })
+    );
+    assert_eq!(out.stop_reason, None);
+    let out = pre_tool_use(&f, &[stop(None), stop(Some("later"))]);
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "later".to_owned()
+        })
+    );
+}
+
+/// The exit-code-2 refusal reason is a `permissionDecisionReason` (Node synthetic output), so it takes part in the
+/// last-truthy reason merge: a later allow with a reason gives the refusal that reason.
+#[test]
+fn pre_tool_use_a_refusal_reason_takes_part_in_the_merge() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            HookResult::pre_tool_refusal("A says no".to_owned(), "a".to_owned()),
+            decided(Behavior::Allow, Some("B ok"), None),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "B ok".to_owned()
+        })
+    );
+}
+
+/// Node `call-runner.ts`: `hookPermissionDecisionReason ?? stopReason ?? "Blocked by PreToolUse hook"`. An earlier stop's
+/// reason comes before the default when a later hook denies without a reason.
+#[test]
+fn pre_tool_use_a_reasonless_deny_keeps_an_earlier_stop_reason() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            HookResult {
+                prevent: true,
+                stop_reason: Some("frozen".to_owned()),
+                ..HookResult::default()
+            },
+            decided(Behavior::Deny, None, None),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "frozen".to_owned()
+        })
+    );
 }

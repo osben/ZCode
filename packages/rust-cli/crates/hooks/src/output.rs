@@ -273,6 +273,10 @@ pub(crate) fn process(
             result.behavior = Some(Behavior::Deny);
             result.blocking = Some(block(reason.clone()));
             result.block_requested = true;
+            // Node `shouldPreventContinuation` covers PreToolUse: its `block` also prevents the call.
+            if event == "PreToolUse" {
+                result.prevent = true;
+            }
             // Node `hooks/output.ts`: `stopReason ?? reason ?? systemMessage`, replacing the `continue: false` one
             // (Rust keeps its own Stop handling).
             if event != "Stop" {
@@ -300,9 +304,6 @@ pub(crate) fn process(
             result.blocking = Some(block(reason.clone()));
         }
     }
-    if result.behavior.is_some() && reason.is_some() {
-        result.reason.clone_from(&reason);
-    }
     let Some(output) = output else {
         return Ok(finish(result));
     };
@@ -323,7 +324,10 @@ pub(crate) fn process(
                     result.blocking = Some(block(why));
                 }
             }
-            result.reason = string(output, "permissionDecisionReason");
+            // Node sets `hookPermissionDecisionReason` only with a `permissionDecision` (`output.ts`).
+            if decision.is_some() {
+                result.reason = string(output, "permissionDecisionReason");
+            }
             result.updated_input = output.get("updatedInput").cloned();
             result.additional_context = context;
         }
