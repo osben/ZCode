@@ -5,6 +5,7 @@
 mod background_work;
 pub(crate) mod commands;
 mod file_summary;
+mod lsp;
 pub(crate) mod methods;
 mod queue;
 mod release_under_directory;
