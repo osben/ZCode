@@ -34,6 +34,7 @@ fn workspace() -> WorkspaceRef {
 #[test]
 fn plugin_parts_carry_the_plugin_name_and_root() {
     let plugins = Plugins(vec![Plugin {
+        id: "kit@inline".to_owned(),
         name: "kit".to_owned(),
         dir: KIT.to_owned(),
         manifest: json!({}),

@@ -179,6 +179,20 @@ async fn serve(
     );
     // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
     context.set_mcp_processes(opened.mcp.clone());
+    // Fork: one language-server host per process, shared by all workspaces (specs/fork-rust-lsp.md "Owners"). The
+    // sidecar's root follows the startup config's `storage.dir`, as Node's protocol entry resolves it once.
+    let preferences = paths.lsp_preferences(
+        opened.config.storage.dir.as_deref(),
+        std::path::Path::new(opened.workspace.root.as_str()),
+    );
+    context.set_language_servers(Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
+        files: opened.primary.files().clone(),
+        environment: opened.workspace.environment.clone(),
+        paths: paths.clone(),
+        process_env: facts.process.env.clone(),
+        view_host: desktop_context,
+        preferences: preferences.as_path().to_path_buf(),
+    })));
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
     context.set_model_port(ported.ports.model.clone());
