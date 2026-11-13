@@ -236,7 +236,7 @@ fn server(clock: SetClock, queries: Arc<FixedQueries>) -> (TaskScope, Arc<Server
         Arc::new(UsageKernel { queries }),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

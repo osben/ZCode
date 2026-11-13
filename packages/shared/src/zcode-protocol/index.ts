@@ -4682,6 +4682,8 @@ export const zcodeProtocolMethods = {
   // Resource manager: CLI reports MCP child-process pids and plugin ownership (in-memory only, no I/O); sampling occurs on the Host side.
   processChildProcesses: "process/childProcesses",
   processNetworkCapture: "process/networkCapture",
+  // Fork: Host → agent, once per client after its reverse-request listener is attached (specs/fork-rust-credential-cipher.md F1).
+  processHostAttached: "process/hostAttached",
   interactionRequestPermission: "interaction/requestPermission",
   interactionRequestUserInput: "interaction/requestUserInput",
   interactionRequestProviderRuntimeHeaders: "interaction/requestProviderRuntimeHeaders",
@@ -4693,6 +4695,21 @@ export const zcodeProtocolMethods = {
 } as const;
 
 export type ZCodeProtocolMethod = (typeof zcodeProtocolMethods)[keyof typeof zcodeProtocolMethods];
+
+/**
+ * Fork: set by the Host's process manager on every agent it spawns. It promises a `process/hostAttached`
+ * notification once the Host listens for reverse requests, so an agent may hold its reverse requests until then
+ * (specs/fork-rust-credential-cipher.md F1). Agents that do not gate ignore both.
+ */
+export const ZCODE_HOST_ATTACH_ACK_ENV = "ZCODE_HOST_ATTACH_ACK";
+
+/** Fork: `process/hostAttached` params; `credentialCipher` says whether this Host answers `interaction/requestCredentialCipher`. */
+export const zcodeProcessHostAttachedParamsSchema = z
+  .object({
+    credentialCipher: z.boolean(),
+  })
+  .strict();
+export type ZCodeProcessHostAttachedParams = z.infer<typeof zcodeProcessHostAttachedParamsSchema>;
 
 export const zcodeProtocolEmptyResultSchema = z.object({}).strict();
 

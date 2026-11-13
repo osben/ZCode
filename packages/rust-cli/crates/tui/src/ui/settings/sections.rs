@@ -8,7 +8,7 @@ use rust_cli_tui_kit::theme::schemes;
 
 use super::data;
 use super::page::{Act, Change, Ctx, ItemRow, Page, Row, TextRow, View, Write};
-use crate::services::{FamilyStatus, PlanConnection, TeamStatus};
+use crate::services::{FamilyLogin, FamilyStatus, PlanConnection, TeamStatus};
 
 /// TUI 自己的段：三个选择，存在 `theme.json`（Puffin `appearance`）。
 pub(super) fn appearance(look: ThemeChoice) -> Vec<Row> {
@@ -229,8 +229,10 @@ fn team_name(t: &TeamStatus) -> String {
 
 /// 家族行的状态（Puffin `family_status`）。
 fn family_status(f: &FamilyStatus) -> Vec<Part> {
-    if !f.signed_in {
-        return vec![Part::new("not signed in", Ink::Fg3)];
+    match f.login {
+        FamilyLogin::SignedIn => {}
+        FamilyLogin::SignedOut => return vec![Part::new("not signed in", Ink::Fg3)],
+        FamilyLogin::Unreadable => return vec![Part::new("sign-in unreadable", Ink::Fg3)],
     }
     vec![
         Part::new("signed in", Ink::Ok),
@@ -249,12 +251,13 @@ pub(super) fn family(id: &str, ctx: &Ctx<'_>) -> View {
     };
     let s = f;
     let teams: Vec<Opt> = if s.teams.is_empty() {
-        let why = if !s.signed_in {
-            "Sign in to see your teams".to_owned()
-        } else if !s.teams_error.is_empty() {
-            format!("Could not read your teams: {}", s.teams_error)
-        } else {
-            "This account has no team plan".to_owned()
+        let why = match s.login {
+            FamilyLogin::Unreadable => "Could not read the saved sign-in".to_owned(),
+            FamilyLogin::SignedOut => "Sign in to see your teams".to_owned(),
+            FamilyLogin::SignedIn if !s.teams_error.is_empty() => {
+                format!("Could not read your teams: {}", s.teams_error)
+            }
+            FamilyLogin::SignedIn => "This account has no team plan".to_owned(),
         };
         vec![Opt::new("team-coding-plan", "Team Plan").disabled(why)]
     } else {
@@ -299,24 +302,30 @@ pub(super) fn family(id: &str, ctx: &Ctx<'_>) -> View {
             })
         }),
     }];
-    if s.signed_in {
-        let who = if s.account.is_empty() {
-            "signed in"
-        } else {
-            s.account.as_str()
-        };
-        rows.push(Row::info("Account", vec![Part::new(who, Ink::Fg2)]));
-        rows.push(Row::action(
-            "signOut",
-            "Sign out",
-            "The desktop app is signed out too: they share one account.",
-            Act::Write(
-                Write::new(Change::SignOut, Applies::Next)
-                    .saying("Signed out. The desktop app is signed out too."),
-            ),
-        ));
-    } else {
-        rows.push(Row::action(
+    match s.login {
+        // Neither Sign in nor Sign out: the saved sign-in may be fine once the keyring unlocks (spec F2).
+        FamilyLogin::Unreadable => rows.push(Row::info(
+            "Account",
+            vec![Part::new("Could not read the saved sign-in", Ink::Fg2)],
+        )),
+        FamilyLogin::SignedIn => {
+            let who = if s.account.is_empty() {
+                "signed in"
+            } else {
+                s.account.as_str()
+            };
+            rows.push(Row::info("Account", vec![Part::new(who, Ink::Fg2)]));
+            rows.push(Row::action(
+                "signOut",
+                "Sign out",
+                "The desktop app is signed out too: they share one account.",
+                Act::Write(
+                    Write::new(Change::SignOut, Applies::Next)
+                        .saying("Signed out. The desktop app is signed out too."),
+                ),
+            ));
+        }
+        FamilyLogin::SignedOut => rows.push(Row::action(
             "signIn",
             "Sign in",
             &format!(
@@ -324,14 +333,14 @@ pub(super) fn family(id: &str, ctx: &Ctx<'_>) -> View {
                 s.name
             ),
             Act::SignIn(s.family),
-        ));
+        )),
     }
     rows.push(Row::Heading("Models".to_owned()));
     if f.models.is_empty() {
-        let note = if s.signed_in {
-            "No models."
-        } else {
-            "Sign in to see your models."
+        let note = match s.login {
+            FamilyLogin::Unreadable => "Could not read the saved sign-in.",
+            FamilyLogin::SignedIn => "No models.",
+            FamilyLogin::SignedOut => "Sign in to see your models.",
         };
         rows.push(Row::Note(note.to_owned()));
     } else {

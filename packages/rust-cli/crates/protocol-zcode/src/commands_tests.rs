@@ -184,6 +184,8 @@ impl rust_cli_kernel_api::store::StoreQueries for DeletedRow {
 #[derive(Default)]
 struct DeletedKernel {
     creates: std::sync::Mutex<Vec<String>>,
+    /// The model of each created session's selection.
+    models: std::sync::Mutex<Vec<rust_cli_kernel_api::model::ModelSelection>>,
 }
 
 #[async_trait::async_trait]
@@ -200,6 +202,7 @@ impl rust_cli_kernel_api::session_api::Kernel for DeletedKernel {
     ) -> Result<SessionId, rust_cli_kernel_api::session_api::KernelError> {
         let id = request.id.unwrap_or_else(|| SessionId::new("generated"));
         self.creates.lock().unwrap().push(id.as_str().to_owned());
+        self.models.lock().unwrap().push(request.selection);
         Ok(id)
     }
 
@@ -259,7 +262,7 @@ async fn a_soft_deleted_id_is_refused_before_any_write() {
         kernel.clone(),
         scope.spawner(),
         crate::server::Defaults {
-            selection: rust_cli_kernel_api::testing::selection(),
+            selection: rust_cli_kernel_api::testing::selection().into(),
             mode: rust_cli_kernel_api::permission::PermissionMode::Default,
             environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
         },
@@ -302,6 +305,71 @@ async fn a_soft_deleted_id_is_refused_before_any_write() {
     )
     .await;
     assert_eq!(*kernel.creates.lock().unwrap(), ["s2"]);
+}
+
+/// B9 (fork spec `fork-rust-credential-cipher.md` F3): the default is read at each session creation, so a degraded
+/// default revised later reaches only the sessions created after the revision.
+#[tokio::test]
+async fn a_revised_default_reaches_only_new_sessions() {
+    let scope = rust_cli_base::TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = rust_cli_protocol_core::connection::start(
+        out,
+        &scope.spawner(),
+        rust_cli_protocol_core::connection::Options::default(),
+    );
+    let context = std::sync::Arc::new(crate::context::Context::new(
+        peer,
+        std::sync::Arc::new(rust_cli_kernel_api::testing::FixedClock(5)),
+    ));
+    let (settle, default) = rust_cli_kernel_api::default_model::DefaultModel::pending();
+    settle.settle(rust_cli_kernel_api::model::ModelSelection::new(
+        "personal:gateway",
+        "degraded",
+    ));
+    let kernel = std::sync::Arc::new(DeletedKernel::default());
+    let server = Server::new(
+        context,
+        kernel.clone(),
+        scope.spawner(),
+        crate::server::Defaults {
+            selection: default,
+            mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        },
+    );
+    let create = |id: &str| Envelope {
+        command_id: format!("c-{id}"),
+        client_id: "client".to_owned(),
+        session_id: None,
+        base_revision: None,
+        kind: "createSession".to_owned(),
+        payload: json!({"workspaceId": "/w", "sessionId": id}),
+        input_origin: None,
+    };
+    create_session(&server, &create("s2")).await;
+    settle.settle(rust_cli_kernel_api::model::ModelSelection::new(
+        "account:zai-individual-coding-plan",
+        "full",
+    ));
+    create_session(&server, &create("s3")).await;
+    let created: Vec<(String, String)> = kernel
+        .models
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|s| (s.provider.clone(), s.model.clone()))
+        .collect();
+    assert_eq!(
+        created,
+        [
+            ("personal:gateway".to_owned(), "degraded".to_owned()),
+            (
+                "account:zai-individual-coding-plan".to_owned(),
+                "full".to_owned()
+            ),
+        ]
+    );
 }
 
 /// Fork: each field of an input's execution state overrides the session's own (Node `resolveExecutionState`): a plan

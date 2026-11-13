@@ -212,7 +212,7 @@ async fn fixture() -> Fixture {
         kernel.clone(),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

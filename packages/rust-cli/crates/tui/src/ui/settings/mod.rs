@@ -343,7 +343,7 @@ impl App {
             && let Some(SectionData::Models(m)) = ui.data.get(&data::Section::Models)
         {
             ui.sign_out = false;
-            match m.families.iter().find(|f| f.signed_in) {
+            match m.families.iter().find(|f| f.signed_in()) {
                 Some(f) => {
                     let id = f.family.as_str();
                     let page = Page::Family(id.to_owned());
@@ -351,6 +351,13 @@ impl App {
                         .insert(Page::Top("models"), format!("family:{id}"));
                     ui.chosen.insert(page.clone(), "signOut".to_owned());
                     ui.stack.push(page);
+                }
+                None if m
+                    .families
+                    .iter()
+                    .any(|f| f.login == crate::services::FamilyLogin::Unreadable) =>
+                {
+                    ui.said = Some(Err("Could not read the saved sign-in.".to_owned()));
                 }
                 None => ui.said = Some(Err("You are not signed in.".to_owned())),
             }

@@ -31,6 +31,8 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
+    pub(crate) attach: crate::attach::HostAttach,
     /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
     /// configured a helper command (specs/fork-rust-node-helper.md).
     node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
@@ -63,6 +65,22 @@ impl Context {
     /// Fork: the storage root (Node `context.deps.storageRoot`).
     pub fn set_storage_root(&self, root: std::path::PathBuf) {
         let _ = self.storage_root.set(root);
+    }
+
+    /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.
+    pub fn expect_host_attach(&self) {
+        self.attach.expect();
+    }
+
+    /// Fork: the Host's attach acknowledgement arrived.
+    pub(crate) fn host_attached(&self, credential_cipher: bool) {
+        self.attach.attached(credential_cipher);
+    }
+
+    /// Fork: waits until reverse requests may be sent. `None` when no acknowledgement was promised; otherwise whether
+    /// the Host answers credential cipher requests.
+    pub(crate) async fn host_ready(&self) -> Option<bool> {
+        self.attach.ready().await
     }
 
     /// Fork: the language-server host (the app-server sets it once at startup).
@@ -129,6 +147,7 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),

@@ -45,6 +45,6 @@ pub fn terminal_columns() -> Option<u16> {
 }
 pub use services::{
     Account, Authorize, AutoCompactCell, Clipboard, Configured, CopyRoute, Editor, Family,
-    FamilyStatus, HistoryRecorder, ImageBytes, LocaleStore, LoginFailure, MemoryFile,
+    FamilyLogin, FamilyStatus, HistoryRecorder, ImageBytes, LocaleStore, LoginFailure, MemoryFile,
     PlanConnection, Preferences, Services, TeamStatus, UiConfig, UiLocale,
 };
