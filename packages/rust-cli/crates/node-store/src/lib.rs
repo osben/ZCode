@@ -14,6 +14,7 @@ mod compaction;
 mod drafts;
 mod facts;
 mod fork;
+mod fork_acp_binding;
 mod fork_clone;
 mod fork_execution_worktree;
 mod fork_usage_query;
@@ -60,10 +61,10 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::{ArtifactId, SessionId};
 use rust_cli_kernel_api::permission::{PermissionMode, ProjectRules};
 use rust_cli_kernel_api::store::{
-    AppUsageRows, AppUsageSpan, ArtifactPurpose, ArtifactRef, ArtifactStore, CommitReceipt,
-    ErasedSessionTree, FactBatch, ForkReceipt, LoadedSession, LocalSettings, SessionFilter,
-    SessionFork, SessionKind, SessionMeta, SessionPage, SessionQuery, SessionStore, SessionSummary,
-    SessionTreeCounts, StoreError, StoreQueries, TaskUsageTotals,
+    AcpSessionBinding, AcpSessionConfig, AppUsageRows, AppUsageSpan, ArtifactPurpose, ArtifactRef,
+    ArtifactStore, CommitReceipt, ErasedSessionTree, FactBatch, ForkReceipt, LoadedSession,
+    LocalSettings, SessionFilter, SessionFork, SessionKind, SessionMeta, SessionPage, SessionQuery,
+    SessionStore, SessionSummary, SessionTreeCounts, StoreError, StoreQueries, TaskUsageTotals,
 };
 use rust_cli_kernel_api::workspace_trust::TrustKey;
 use rust_cli_paths::StoragePaths;
@@ -670,6 +671,82 @@ impl StoreQueries for NodeStore {
                 return Ok(());
             }
             fork_execution_worktree::write(conn, &session, &path, branch.as_deref())
+        })
+        .await
+    }
+
+    /// Fork: the session's ACP binding (Node `fork_acp_session_binding`); `None` without a row or without the tables.
+    async fn acp_binding(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<AcpSessionBinding>, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| fork_acp_binding::binding(conn, &session))
+            .await
+    }
+
+    /// Fork: upserts the binding and moves the pending choices of the same agent into it (Node `write`).
+    async fn set_acp_binding(
+        &self,
+        session: &SessionId,
+        binding: &AcpSessionBinding,
+    ) -> Result<(), StoreError> {
+        let session = session.as_str().to_owned();
+        let binding = binding.clone();
+        self.with_db(move |conn, ids| {
+            fork_acp_binding::set_binding(conn, &session, &binding, ids.now_ms())
+        })
+        .await
+    }
+
+    /// Fork: deletes the binding, its config and the pending choices (Node `clear`).
+    async fn clear_acp_binding(&self, session: &SessionId) -> Result<(), StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| fork_acp_binding::clear(conn, &session))
+            .await
+    }
+
+    /// Fork: the session's ACP config state (Node `readConfig`).
+    async fn acp_config(&self, session: &SessionId) -> Result<AcpSessionConfig, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_db(move |conn, _| fork_acp_binding::config(conn, &session))
+            .await
+    }
+
+    /// Fork: replaces the offered options of an existing binding (Node `writeOffered`).
+    async fn set_acp_offered(
+        &self,
+        session: &SessionId,
+        offered: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        let session = session.as_str().to_owned();
+        let offered = offered.clone();
+        self.with_db(move |conn, ids| {
+            fork_acp_binding::set_offered(conn, &session, &offered, ids.now_ms())
+        })
+        .await
+    }
+
+    /// Fork: sets one chosen config value (Node `writeChoice`).
+    async fn set_acp_choice(
+        &self,
+        session: &SessionId,
+        agent_id: &str,
+        config_id: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
+        let session = session.as_str().to_owned();
+        let (agent_id, config_id, value) =
+            (agent_id.to_owned(), config_id.to_owned(), value.to_owned());
+        self.with_db(move |conn, ids| {
+            fork_acp_binding::set_choice(
+                conn,
+                &session,
+                &agent_id,
+                &config_id,
+                &value,
+                ids.now_ms(),
+            )
         })
         .await
     }

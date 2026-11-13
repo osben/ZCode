@@ -616,6 +616,27 @@ pub struct ExecutionWorktree {
     pub branch: Option<String>,
 }
 
+/// Fork: the ACP session a session's external agent resumes (Node `ForkAcpSessionBinding`,
+/// `fork_acp_session_binding`, specs/acp-agent-runtime.md "S5"). `launch_key` is a digest of the launch config,
+/// never the config itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpSessionBinding {
+    pub agent_id: String,
+    pub acp_session_id: String,
+    pub cwd: String,
+    pub launch_key: String,
+}
+
+/// Fork: a session's ACP config state (Node `ForkAcpSessionConfig`, `readConfig`). `agent_id` is the binding's
+/// agent, or the agent of the pending choices when there is no binding; `offered` is the last offered options
+/// (display copy), `None` before the first turn or when the stored value is malformed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AcpSessionConfig {
+    pub agent_id: Option<String>,
+    pub offered: Option<Value>,
+    pub choices: std::collections::BTreeMap<String, String>,
+}
+
 /// Fork: what a `session/eraseTree` deleted. `erased_roots` pairs each erased requested root with
 /// the workspace its session row carried (read inside the delete transaction), for the
 /// sessions-index announcement.
@@ -1003,6 +1024,64 @@ pub trait StoreQueries: Send + Sync {
     ) -> Result<(), StoreError> {
         Err(StoreError::Unsupported {
             what: "incognito profile".to_owned(),
+        })
+    }
+
+    /// Fork: the session's ACP binding (`None` without a row or without the tables).
+    async fn acp_binding(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<AcpSessionBinding>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: upsert the binding columns; offered options and choices are kept. Pending choices of the same agent
+    /// move into the binding's choices; pending choices of another agent are dropped (Node `write`). `Unsupported`
+    /// without the tables.
+    async fn set_acp_binding(
+        &self,
+        _session: &SessionId,
+        _binding: &AcpSessionBinding,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "ACP session binding".to_owned(),
+        })
+    }
+
+    /// Fork: delete the binding, its offered options and its choices, and any pending choices (Node `clear`).
+    async fn clear_acp_binding(&self, _session: &SessionId) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Fork: the session's ACP config state (Node `readConfig`); empty without a binding or pending choices.
+    async fn acp_config(&self, _session: &SessionId) -> Result<AcpSessionConfig, StoreError> {
+        Ok(AcpSessionConfig::default())
+    }
+
+    /// Fork: replace the offered options of an existing binding; a no-op without the row (Node `writeOffered`).
+    /// `Unsupported` without the tables.
+    async fn set_acp_offered(
+        &self,
+        _session: &SessionId,
+        _offered: &Value,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "ACP session offered options".to_owned(),
+        })
+    }
+
+    /// Fork: set one chosen config value (Node `writeChoice`). A binding of `agent_id` keeps it in its choices;
+    /// without a binding it is a pending choice. `StoreError::Storage` for a binding of another agent;
+    /// `Unsupported` without the tables.
+    async fn set_acp_choice(
+        &self,
+        _session: &SessionId,
+        _agent_id: &str,
+        _config_id: &str,
+        _value: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "ACP session choice".to_owned(),
         })
     }
 }
