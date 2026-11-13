@@ -31,8 +31,23 @@ fn open(value: &str) -> Option<String> {
     Some(body.chars().rev().collect())
 }
 
+/// How the fake Host acknowledges that it listens (specs/fork-rust-credential-cipher.md F1).
+#[derive(Clone, Copy)]
+enum Ack {
+    /// No `ZCODE_HOST_ATTACH_ACK`: an older Host.
+    Undeclared,
+    /// Declared; `process/hostAttached` is sent after this delay.
+    After(Duration),
+}
+
 /// 起 app-server，回答它的加解密请求，读到 `ready` 为止；返回收到的加解密请求数与耗时。
 fn start(home: &Path, work: &Path) -> (String, usize, Duration) {
+    let (status, asked, elapsed, _) = start_with(home, work, Ack::Undeclared);
+    (status, asked, elapsed)
+}
+
+/// Like [`start`]; also returns how many cipher requests arrived before the acknowledgement was sent.
+fn start_with(home: &Path, work: &Path, ack: Ack) -> (String, usize, Duration, usize) {
     let mut command = rust_cli_proc::std_command(env!("CARGO_BIN_EXE_zcode-rs"));
     command
         .args(["app-server", "--stdio", "--surface", "desktop"])
@@ -43,6 +58,9 @@ fn start(home: &Path, work: &Path) -> (String, usize, Duration) {
         .env("USERPROFILE", home)
         .env("PATH", "/usr/bin:/bin")
         .env("ZCODE_DATA_BASE_DIR", home);
+    if let Ack::After(_) = ack {
+        command.env("ZCODE_HOST_ATTACH_ACK", "1");
+    }
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -62,15 +80,38 @@ fn start(home: &Path, work: &Path) -> (String, usize, Duration) {
     });
     let started = Instant::now();
     let mut asked = 0;
+    let mut early = 0;
     let mut ready = None;
+    let mut acked = matches!(ack, Ack::Undeclared);
     while ready.is_none() {
+        if let Ack::After(delay) = ack
+            && !acked
+            && started.elapsed() >= delay
+        {
+            let frame =
+                json!({"method": "process/hostAttached", "params": {"credentialCipher": true}});
+            writeln!(stdin, "{frame}").unwrap();
+            stdin.flush().unwrap();
+            acked = true;
+        }
         let remaining = READY_WITHIN.saturating_sub(started.elapsed());
-        let Ok(line) = frames.recv_timeout(remaining) else {
-            break;
+        let wait = match ack {
+            Ack::After(delay) if !acked => delay.saturating_sub(started.elapsed()).min(remaining),
+            _ => remaining,
+        };
+        let line = match frames.recv_timeout(wait) {
+            Ok(line) => line,
+            Err(mpsc::RecvTimeoutError::Timeout) if !acked && started.elapsed() < READY_WITHIN => {
+                continue;
+            }
+            Err(_) => break,
         };
         let frame: Value = serde_json::from_str(&line).unwrap();
         if frame["method"] == "interaction/requestCredentialCipher" {
             asked += 1;
+            if !acked {
+                early += 1;
+            }
             let params = &frame["params"];
             let value = params["value"].as_str().unwrap();
             let result = if params["operation"] == "decrypt" {
@@ -101,6 +142,7 @@ fn start(home: &Path, work: &Path) -> (String, usize, Duration) {
         },
         asked,
         elapsed,
+        early,
     )
 }
 
@@ -126,4 +168,36 @@ fn an_encrypted_account_login_does_not_stall_startup() {
         status, "ready",
         "no ready within {READY_WITHIN:?} (after {elapsed:?})"
     );
+}
+
+/// B4: with the acknowledgement declared, the agent sends no cipher request before the Host says it listens, and
+/// reaches `ready` right after it.
+#[test]
+fn a_declared_host_gets_no_cipher_request_before_it_acknowledges() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let (home, work) = (base.join("home"), base.join("work"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    std::fs::create_dir_all(home.join(".zcode/v2")).unwrap();
+    let record = json!({
+        "oauth:zai:user_info": seal(r#"{"id":"u-1","username":"a","displayName":"A"}"#),
+        "oauth:zai:access_token": seal("login-token"),
+    });
+    std::fs::write(home.join(".zcode/v2/credentials.json"), record.to_string()).unwrap();
+
+    let delay = Duration::from_millis(1500);
+    let (status, asked, elapsed, early) = start_with(&home, &work, Ack::After(delay));
+    assert_eq!(
+        status, "ready",
+        "no ready within {READY_WITHIN:?} (after {elapsed:?})"
+    );
+    assert_eq!(
+        early, 0,
+        "a cipher request arrived before the acknowledgement"
+    );
+    assert!(
+        asked > 0,
+        "the encrypted credentials are read through the Host"
+    );
+    assert!(elapsed >= delay, "ready came before the acknowledgement");
 }

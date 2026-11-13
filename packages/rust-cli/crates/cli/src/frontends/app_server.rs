@@ -17,8 +17,8 @@ use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
-    Context, Defaults, HostCredentialCipher, HostHeaders, HostTopicResources, NetworkCapture,
-    Startup,
+    Context, Defaults, HOST_ATTACH_ACK_ENV, HostCredentialCipher, HostHeaders, HostTopicResources,
+    NetworkCapture, Startup,
 };
 
 use crate::assemble::{self, Controller};
@@ -122,11 +122,16 @@ async fn serve(
     // 读者在组装之前就开始（specs/fork-rust-credential-cipher.md，启动死锁）：组装里的凭据加解密要它送来回复；对端的
     // 请求在内核装好之前等待。
     let (deferred, install) = rust_cli_protocol_core::connection::Deferred::new();
+    // Fork: a Host that promises `process/hostAttached` gets no reverse request before it listens; the gate handles
+    // the acknowledgement in front of `Deferred` (specs/fork-rust-credential-cipher.md F1).
+    if facts.process.env.text(HOST_ATTACH_ACK_ENV) == Some("1") {
+        context.expect_host_attach();
+    }
     let reader = spawner.spawn(
         "app-server-reader",
-        rust_cli_protocol_core::connection::serve(
+        rust_cli_protocol_zcode::serve_attached(
             tokio::io::BufReader::new(tokio::io::stdin()),
-            context.peer.clone(),
+            context.clone(),
             // Fork: the capture control is applied in arrival order while the kernel is still being assembled.
             rust_cli_protocol_zcode::with_network_capture(deferred, capture.clone()),
             spawner.clone(),
@@ -179,14 +184,29 @@ async fn serve(
     );
     // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
     context.set_mcp_processes(opened.mcp.clone());
+    // Fork: one language-server host per process, shared by all workspaces (specs/fork-rust-lsp.md "Owners"). The
+    // sidecar's root follows the startup config's `storage.dir`, as Node's protocol entry resolves it once.
+    let preferences = paths.lsp_preferences(
+        opened.config.storage.dir.as_deref(),
+        std::path::Path::new(opened.workspace.root.as_str()),
+    );
+    context.set_language_servers(Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
+        files: opened.primary.files().clone(),
+        environment: opened.workspace.environment.clone(),
+        paths: paths.clone(),
+        process_env: facts.process.env.clone(),
+        view_host: desktop_context,
+        preferences: preferences.as_path().to_path_buf(),
+    })));
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
     context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
     let defaults = Defaults {
-        // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。
-        selection: built.selection.current(),
+        // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。Shared, so
+        // a degraded default revised later reaches new sessions (fork spec `fork-rust-credential-cipher.md` F3).
+        selection: built.selection.clone(),
         mode: built.mode,
         environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
     };

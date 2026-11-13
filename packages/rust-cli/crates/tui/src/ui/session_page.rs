@@ -24,7 +24,7 @@ use super::i18n::Lang;
 use super::page_frame::PageBody;
 use super::stats_page::{self, Tab};
 use crate::machines::{MachineRow, MachineStatus};
-use crate::services::FamilyStatus;
+use crate::services::{FamilyLogin, FamilyStatus};
 
 /// 标签从第 3 列起、补到 11 列；值从第 14 列起（同卡的 Context 行）。
 const LABEL_AT: usize = 3;
@@ -616,15 +616,17 @@ impl App {
         if let Some(family) =
             facts.and_then(|f| f.families.iter().find(|f| &f.provider == provider))
         {
-            let value = if family.signed_in {
-                let mut v = Vec::new();
-                if !family.account.is_empty() {
-                    v.extend([sp(family.account.clone(), Style::DEFAULT), dot(theme)]);
+            let value = match family.login {
+                FamilyLogin::SignedIn => {
+                    let mut v = Vec::new();
+                    if !family.account.is_empty() {
+                        v.extend([sp(family.account.clone(), Style::DEFAULT), dot(theme)]);
+                    }
+                    v.push(sp(super::settings::sections::plan_name(family), theme.fg2));
+                    v
                 }
-                v.push(sp(super::settings::sections::plan_name(family), theme.fg2));
-                v
-            } else {
-                vec![sp("not signed in", theme.fg3)]
+                FamilyLogin::Unreadable => vec![sp("sign-in unreadable", theme.fg3)],
+                FamilyLogin::SignedOut => vec![sp("not signed in", theme.fg3)],
             };
             lines.push(labeled(theme, "Account", value));
         }

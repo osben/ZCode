@@ -7,6 +7,7 @@ mod background_work;
 mod child_processes;
 pub(crate) mod commands;
 mod file_summary;
+mod lsp;
 pub(crate) mod methods;
 pub mod node_helper;
 mod queue;

@@ -25,6 +25,7 @@ import {
   type AgentProcessExitCause,
 } from "@zcode/shared/agent-crash-diagnostic";
 import {
+  ZCODE_HOST_ATTACH_ACK_ENV,
   ZCODE_AGENT_RUNTIME,
   ZCODE_AGENT_PROVIDER,
   ZCODE_RUNTIME_ENV_KEY,
@@ -1323,6 +1324,9 @@ export class ZCodeAgentProcessManager {
       // Identity/isolation semantics use workspaceIdentity; cwd continues to use workspacePath.
       ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
       ...buildE2EAgentCoverageEnv(),
+      // Fork: every client this manager returns is wired by zcodeAgentService, which then sends
+      // `process/hostAttached` (specs/fork-rust-credential-cipher.md F1).
+      [ZCODE_HOST_ATTACH_ACK_ENV]: "1",
     };
     const windowsRuntime =
       process.platform === "win32"

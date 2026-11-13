@@ -96,6 +96,8 @@ pub mod env {
     pub const ZCODE_DATA_BASE_DIR: &str = "ZCODE_DATA_BASE_DIR";
     pub const ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: &str = "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE";
     pub const ZCODE_CREDENTIAL_SECRET: &str = "ZCODE_CREDENTIAL_SECRET";
+    /// Fork: a file holding the credential secret (specs/fork-rust-credential-cipher.md F4).
+    pub const ZCODE_CREDENTIAL_SECRET_FILE: &str = "ZCODE_CREDENTIAL_SECRET_FILE";
     pub const ZCODE_MODEL_BASE_URL: &str = "ZCODE_MODEL_BASE_URL";
     pub const ZCODE_API_KEY: &str = "ZCODE_API_KEY";
     pub const ZCODE_MODEL: &str = "ZCODE_MODEL";

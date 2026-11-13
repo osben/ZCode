@@ -197,6 +197,60 @@ async fn session_plugins_and_first_comers_win_name_conflicts() {
     );
 }
 
+/// Fork (specs/fork-rust-lsp.md): the default-enabled official `typescript-lsp` declares only a language server, so it
+/// claims no skill, MCP, agent or hook name and does not push out an installed plugin of the same name (Node keeps both).
+#[tokio::test]
+async fn an_official_plugin_without_session_components_does_not_take_its_name() {
+    let lsp = r#", "lspServers": {"typescript": {"command": "tsls", "extensionToLanguage": {".ts": "typescript"}}}"#;
+    let files = [
+        official_manifest("typescript-lsp", lsp),
+        manifest("/Users/dev/claude-ts", r#"{"name": "typescript-lsp"}"#),
+        (
+            "/Users/dev/claude-ts/skills/ts/SKILL.md".to_owned(),
+            "---\nname: ts\ndescription: d\n---\n".to_owned(),
+        ),
+        manifest("/Users/dev/again", r#"{"name": "typescript-lsp"}"#),
+    ];
+    let sources = PluginSources {
+        candidates: vec![
+            official("typescript-lsp"),
+            candidate(
+                "/Users/dev/claude-ts",
+                "claude-market",
+                PluginOrigin::Installed,
+            ),
+            candidate("/Users/dev/again", "other-market", PluginOrigin::Installed),
+        ],
+        enabled_plugins: enabled(&[
+            ("typescript-lsp@claude-market", true),
+            ("typescript-lsp@other-market", true),
+        ]),
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+    let ids: Vec<&str> = loaded
+        .plugins
+        .0
+        .iter()
+        .map(|plugin| plugin.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "typescript-lsp@zcode-plugins-official",
+            "typescript-lsp@claude-market"
+        ]
+    );
+    // The installed copy has a skill, so it does take the name.
+    assert_eq!(
+        reasons(&loaded),
+        [(
+            Some("typescript-lsp@other-market"),
+            &SkipReason::DuplicateName
+        )]
+    );
+}
+
 #[tokio::test]
 async fn bundled_plugins_that_need_the_node_runtime_are_skipped() {
     let host_mcp = r#", "mcpServers": {"documents": {"type": "stdio", "command": "/opt/zcode/zcode", "args": ["__zcode-plugin-host", "/x/dist/mcp/server.js"]}}"#;
@@ -290,6 +344,64 @@ async fn visualize_loads_with_the_desktop_view_host() {
         [(
             Some("computer-use@zcode-plugins-official"),
             &SkipReason::NodeRuntime(NodeDependency::NodeRepl)
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_component_less_official_plugin_loads_after_a_same_named_one() {
+    let lsp = r#", "lspServers": {"typescript": {"command": "tsls", "extensionToLanguage": {".ts": "typescript"}}}"#;
+    let skill = "---\nname: s\ndescription: d\n---\n".to_owned();
+    let files = [
+        manifest("/Users/dev/cfg-ts", r#"{"name": "typescript-lsp"}"#),
+        (
+            "/Users/dev/cfg-ts/skills/s/SKILL.md".to_owned(),
+            skill.clone(),
+        ),
+        manifest("/Users/dev/cfg-review", r#"{"name": "review"}"#),
+        (
+            "/Users/dev/cfg-review/skills/s/SKILL.md".to_owned(),
+            skill.clone(),
+        ),
+        official_manifest("typescript-lsp", lsp),
+        official_manifest("review", ""),
+        (
+            format!("{CACHE}/{OFFICIAL}/review/1.0.0/skills/s/SKILL.md"),
+            skill,
+        ),
+    ];
+    let sources = PluginSources {
+        candidates: vec![
+            candidate("/Users/dev/cfg-ts", "inline", PluginOrigin::ConfigDir),
+            candidate("/Users/dev/cfg-review", "inline", PluginOrigin::ConfigDir),
+            official("typescript-lsp"),
+            official("review"),
+        ],
+        enabled_plugins: enabled(&[("review@zcode-plugins-official", true)]),
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+    let ids: Vec<&str> = loaded
+        .plugins
+        .0
+        .iter()
+        .map(|plugin| plugin.id.as_str())
+        .collect();
+    // Node dedupes by full id only, so the built-in language server still loads next to a config-dir plugin of
+    // the same name. An official plugin with a skill does claim the name and stays out.
+    assert_eq!(
+        ids,
+        [
+            "typescript-lsp@inline",
+            "review@inline",
+            "typescript-lsp@zcode-plugins-official"
+        ]
+    );
+    assert_eq!(
+        reasons(&loaded),
+        [(
+            Some("review@zcode-plugins-official"),
+            &SkipReason::DuplicateName
         )]
     );
 }

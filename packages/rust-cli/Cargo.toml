@@ -141,6 +141,12 @@ regex = "1"
 regress = "0.12"
 # rust-cli-platform：credentials.json 的 AES-256-GCM（与 rustls 共用同一个 ring）。
 ring = "0.17"
+# Fork: the OS credential store for the standalone `enc:v2` cipher, the crates `@napi-rs/keyring` 2.1.2 links
+# (specs/fork-rust-credential-cipher.md F4). Pinned to those versions: the entry the desktop app reads must stay the same.
+keyring-core = "=1.0.1"
+apple-native-keyring-store = { version = "=1.0.2", features = ["keychain"] }
+dbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust", "vendored"] }
+windows-native-keyring-store = "=1.1.0"
 # 只在 rust-cli-net。与 apps/zcode-cli-rust 同为 0.13；关闭 system-proxy（默认特性），代理只按显式配置。
 # rustls-no-provider 不自带算法，统一用 ring（与 rustls 的 ring 特性配套）。
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "socks"] }

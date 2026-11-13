@@ -13,7 +13,7 @@ use rust_cli_tui_kit::render::StyledLine;
 
 use super::*;
 use crate::machines::{ExecutorInfo, MachineRow, MachineStatus};
-use crate::services::{Family, FamilyStatus, MemoryFile, PlanConnection};
+use crate::services::{Family, FamilyLogin, FamilyStatus, MemoryFile, PlanConnection};
 use crate::ui::agents::{AgentList, Viewing};
 use crate::ui::context_tree::tests::sample;
 use crate::ui::stats_page::StatsPage;
@@ -76,7 +76,7 @@ fn facts() -> SessionFacts {
         families: vec![FamilyStatus {
             family: Family::Zai,
             name: "Z.ai".into(),
-            signed_in: true,
+            login: FamilyLogin::SignedIn,
             account: "dev@example.com".into(),
             connection: PlanConnection::Individual,
             teams: Vec::new(),
@@ -438,5 +438,25 @@ fn custom_providers_and_long_names_read_well() {
             .any(|l| l == "   Model      scripted"),
         "{:#?}",
         text(&app, 100)
+    );
+}
+
+/// An unreadable sign-in is neither signed in nor signed out (fork spec F2).
+#[test]
+fn an_unreadable_sign_in_is_named_on_the_session_tab() {
+    let mut app = started();
+    titled(&mut app);
+    let _ = app.open_stats_page(Tab::Session);
+    app.context_counted(Some(SessionId::new(ID)), Ok(sample()), Instant::now(), 0);
+    let mut facts = facts();
+    facts.families[0].login = FamilyLogin::Unreadable;
+    facts.families[0].account = String::new();
+    app.session_facts_arrived(facts);
+    let lines = text(&app, 100);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "   Account    sign-in unreadable"),
+        "{lines:#?}"
     );
 }

@@ -549,7 +549,7 @@ fn server() -> (TaskScope, Arc<Server>, Arc<WorktreeKernel>) {
         kernel.clone(),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

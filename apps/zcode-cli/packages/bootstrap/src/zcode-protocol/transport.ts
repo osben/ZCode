@@ -237,6 +237,16 @@ export class ZCodeProtocolNdjsonConnection {
       }
       return;
     }
+    if (
+      !("id" in message) &&
+      "method" in message &&
+      message.method === zcodeProtocolMethods.processHostAttached
+    ) {
+      // Fork: the Host's attach acknowledgement gates reverse requests in agents that wait for it
+      // (specs/fork-rust-credential-cipher.md F1). Node fails an early cipher call fast instead, so drop it here
+      // rather than queue it behind ordinary requests.
+      return;
+    }
     if ("id" in message && ("result" in message || "error" in message)) {
       // The Agent synchronously registers a pending response before sending a reverse request.
       // If the response waits for "the last queued request to start," later ordinary requests move
