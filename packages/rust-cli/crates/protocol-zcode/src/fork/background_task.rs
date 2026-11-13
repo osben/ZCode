@@ -73,20 +73,22 @@ fn result(
             Ok(value)
         }
         KernelAck::Rejected { reason } => {
+            // The not-found text ends with the running agents' free-text descriptions, so it is recognised first (by its
+            // anchored prefix) before the "not running" pattern is searched for.
+            if is_not_found(&reason) {
+                return Ok(json!({
+                    "cancelled": false,
+                    "reason": "background_task_not_found",
+                    "status": "lost",
+                    "taskId": task,
+                }));
+            }
             if let Some(status) = not_running_status(&reason) {
                 let status = info_status(status);
                 return Ok(json!({
                     "cancelled": status == "cancelled",
                     "reason": "background_task_not_running",
                     "status": status,
-                    "taskId": task,
-                }));
-            }
-            if is_not_found(&reason) {
-                return Ok(json!({
-                    "cancelled": false,
-                    "reason": "background_task_not_found",
-                    "status": "lost",
                     "taskId": task,
                 }));
             }
@@ -111,12 +113,20 @@ pub(super) async fn cancel(server: &Server, params: &Value) -> Result<Value, Rpc
         task,
         "session/cancelBackgroundTask received"
     );
-    let listed = live
-        .handle
-        .background_tasks()
-        .await
-        .ok()
-        .and_then(|entries| entries.into_iter().find(|entry| entry.id == task));
+    let listed = match live.handle.background_tasks().await {
+        Ok(entries) => entries.into_iter().find(|entry| entry.id == task),
+        Err(error) => {
+            // The stop still runs; the answer only lacks the snapshot.
+            tracing::warn!(
+                event = "protocol.session.cancel_background_task.list_failed",
+                session = session.as_str(),
+                task,
+                %error,
+                "listing background tasks failed"
+            );
+            None
+        }
+    };
     let id = server.context.fresh("cancel-background-task");
     let command = Command::StopTask {
         task: task.to_owned(),

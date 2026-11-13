@@ -372,15 +372,9 @@ async fn plan_over_a_bypass_base_allows_built_in_read_only_tools() {
 /// WebSearch needs no approval in Node (see `web_search_needs_no_approval_under_node_semantics`).
 #[tokio::test]
 async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
-    let [web_fetch, _] = web_tools();
-    let web_fetch = || {
-        [(
-            ReadOnly(web_fetch.0.0, web_fetch.0.1.clone()),
-            web_fetch.1.clone(),
-        )]
-    };
+    let [(tool, input), _] = web_tools();
     for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
-        for (tool, input) in web_fetch() {
+        {
             let gate = PolicyGate::default().with_node_plan_mode(true);
             let (once, independent, _) = asked(&read_only_over(&gate, &tool, &input, base).await);
             assert!(!once && !independent, "{} over {base:?}", tool.0);
@@ -396,7 +390,7 @@ async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
         }
     }
     // A view whose base is plan itself (a subagent, the fallback view) keeps the plan gate's denial.
-    for (tool, input) in web_fetch() {
+    {
         let gate = PolicyGate::default().with_node_plan_mode(true);
         assert_eq!(
             read_only_over(&gate, &tool, &input, PermissionMode::Plan).await,
@@ -519,8 +513,9 @@ async fn web_search_needs_no_approval_under_node_semantics() {
     // Over an auto base Node denies first (`mode.auto.unimplemented`); the test above keeps that denial.
 }
 
-/// After a PreToolUse hook (allow or ask) the rules check has nothing to add for WebSearch, so a hook's ask reaches the
-/// user with the hook's reason instead of being decided (and allowed) by the gate; an ask rule still asks.
+/// After a PreToolUse hook (allow or ask) the rules check has nothing to add for WebSearch (it runs under bypass, which
+/// already passes the tool's own ask), so a hook's ask reaches the user with the hook's reason instead of being decided,
+/// and allowed, by the gate; an ask rule still asks. Regression pin for the pipeline's hook-ask path.
 #[tokio::test]
 async fn web_search_leaves_a_hooks_ask_to_the_hook() {
     let (tool, input) = web_search();
@@ -540,6 +535,36 @@ async fn web_search_leaves_a_hooks_ask_to_the_hook() {
     assert!(
         matches!(decision, Some(PermissionDecision::Ask { .. })),
         "{decision:?}"
+    );
+}
+
+/// Node denies every call in auto mode (`mode.auto.unimplemented`): the WebSearch allow does not apply there.
+#[tokio::test]
+async fn web_search_is_not_allowed_in_auto_mode() {
+    let (tool, input) = web_search();
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    let decision = gate
+        .decide(&tool, &input, &context(PermissionMode::Auto))
+        .await;
+    assert_ne!(decision, allow());
+}
+
+/// The allow does not depend on WebSearch's own check asking: a passthrough (no permission subject) is allowed too.
+#[tokio::test]
+async fn web_search_passthrough_needs_no_approval_either() {
+    let tool = ReadOnly("WebSearch", PermissionDecision::Passthrough);
+    let input = json!({"query": "q"});
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    for mode in [PermissionMode::Default, PermissionMode::AcceptEdits] {
+        assert_eq!(
+            gate.decide(&tool, &input, &context(mode)).await,
+            allow(),
+            "{mode:?}"
+        );
+    }
+    assert_eq!(
+        read_only_over(&gate, &tool, &input, PermissionMode::Default).await,
+        allow()
     );
 }
 

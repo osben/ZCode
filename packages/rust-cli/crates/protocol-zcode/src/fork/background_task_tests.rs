@@ -51,7 +51,7 @@ impl HandleOverride for TestHandle {
         };
         self.stopped.lock_unpoisoned().push(task.clone());
         match task.as_str() {
-            "bg_1" | "agent_1" | "monitor_1" => KernelAck::Accepted {
+            "bg_1" | "agent_1" | "monitor_1" | "unlisted_1" => KernelAck::Accepted {
                 result: Default::default(),
             },
             "killed_1" => KernelAck::Rejected {
@@ -62,6 +62,10 @@ impl HandleOverride for TestHandle {
             },
             "odd_1" => KernelAck::Rejected {
                 reason: "Task odd_1 is not running (status: unknown)".to_owned(),
+            },
+            // The kernel's not-found text lists the running agents with their free-text descriptions.
+            "ghost_1" => KernelAck::Rejected {
+                reason: "No task found with ID: ghost_1. Running background agents: agent_1 (Task x is not running (status: completed))".to_owned(),
             },
             "broken_1" => KernelAck::Rejected {
                 reason: "environment unavailable: machine m1 is disconnected".to_owned(),
@@ -312,6 +316,32 @@ async fn an_unknown_task_answers_not_found() {
             "status": "lost",
             "taskId": "nope",
         })
+    );
+}
+
+/// A not-found refusal is recognised first: a running agent's description in its listing cannot turn it into
+/// "not running".
+#[tokio::test]
+async fn a_not_found_listing_with_a_lookalike_description_is_still_not_found() {
+    let fixture = fixture().await;
+    assert_eq!(
+        cancel_task(&fixture, "ghost_1").await,
+        json!({
+            "cancelled": false,
+            "reason": "background_task_not_found",
+            "status": "lost",
+            "taskId": "ghost_1",
+        })
+    );
+}
+
+/// A stopped task the list did not hold has no snapshot.
+#[tokio::test]
+async fn a_stopped_task_missing_from_the_list_has_no_snapshot() {
+    let fixture = fixture().await;
+    assert_eq!(
+        cancel_task(&fixture, "unlisted_1").await,
+        json!({"cancelled": true, "status": "cancelled", "taskId": "unlisted_1"})
     );
 }
 
