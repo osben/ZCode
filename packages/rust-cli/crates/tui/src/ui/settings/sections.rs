@@ -8,7 +8,7 @@ use rust_cli_tui_kit::theme::schemes;
 
 use super::data;
 use super::page::{Act, Change, Ctx, ItemRow, Page, Row, TextRow, View, Write};
-use crate::services::{FamilyStatus, PlanConnection, TeamStatus};
+use crate::services::{FamilyLogin, FamilyStatus, PlanConnection, TeamStatus};
 
 /// TUI 自己的段：三个选择，存在 `theme.json`（Puffin `appearance`）。
 pub(super) fn appearance(look: ThemeChoice) -> Vec<Row> {
@@ -229,8 +229,10 @@ fn team_name(t: &TeamStatus) -> String {
 
 /// 家族行的状态（Puffin `family_status`）。
 fn family_status(f: &FamilyStatus) -> Vec<Part> {
-    if !f.signed_in {
-        return vec![Part::new("not signed in", Ink::Fg3)];
+    match f.login {
+        FamilyLogin::SignedIn => {}
+        FamilyLogin::SignedOut => return vec![Part::new("not signed in", Ink::Fg3)],
+        FamilyLogin::Unreadable => return vec![Part::new("sign-in unreadable", Ink::Fg3)],
     }
     vec![
         Part::new("signed in", Ink::Ok),
@@ -249,7 +251,9 @@ pub(super) fn family(id: &str, ctx: &Ctx<'_>) -> View {
     };
     let s = f;
     let teams: Vec<Opt> = if s.teams.is_empty() {
-        let why = if !s.signed_in {
+        let why = if s.login == FamilyLogin::Unreadable {
+            "Could not read the saved sign-in".to_owned()
+        } else if !s.signed_in() {
             "Sign in to see your teams".to_owned()
         } else if !s.teams_error.is_empty() {
             format!("Could not read your teams: {}", s.teams_error)
@@ -299,7 +303,13 @@ pub(super) fn family(id: &str, ctx: &Ctx<'_>) -> View {
             })
         }),
     }];
-    if s.signed_in {
+    if s.login == FamilyLogin::Unreadable {
+        // Neither Sign in nor Sign out: the saved sign-in may be fine once the keyring unlocks (spec F2).
+        rows.push(Row::info(
+            "Account",
+            vec![Part::new("Could not read the saved sign-in", Ink::Fg2)],
+        ));
+    } else if s.signed_in() {
         let who = if s.account.is_empty() {
             "signed in"
         } else {
@@ -328,7 +338,9 @@ pub(super) fn family(id: &str, ctx: &Ctx<'_>) -> View {
     }
     rows.push(Row::Heading("Models".to_owned()));
     if f.models.is_empty() {
-        let note = if s.signed_in {
+        let note = if s.login == FamilyLogin::Unreadable {
+            "Could not read the saved sign-in."
+        } else if s.signed_in() {
             "No models."
         } else {
             "Sign in to see your models."

@@ -378,7 +378,7 @@ app-server keeps `HostCredentialCipher` (product rule 1).
 | B4  | App-server process with the ack declared; Host acks after a delay       | `ready` follows the ack; the cipher request comes after the ack |
 | B5  | Host `wireClient`                                                       | one `process/hostAttached` per client, after `onRequest`        |
 | B6  | Node transport receives `process/hostAttached`                          | dropped, connection unaffected                                  |
-| B7  | Credentials unreadable                                                  | families `Unreadable`, no Sign in / Sign out                    |
+| B7  | Stored values unreadable                                                | those families `Unreadable`, no Sign in / Sign out              |
 | B8  | One family's token undecryptable                                        | that family `Unreadable`, the other unaffected                  |
 | B9  | Default settled degraded, then a registry read succeeds                 | default revised to the full choice and remembered               |
 | B10 | Standalone: Node-encrypted `enc:v2:os` / `enc:v2:env` values            | decrypted; Rust output decrypts in Node                         |

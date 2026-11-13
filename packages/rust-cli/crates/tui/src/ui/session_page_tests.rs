@@ -13,7 +13,7 @@ use rust_cli_tui_kit::render::StyledLine;
 
 use super::*;
 use crate::machines::{ExecutorInfo, MachineRow, MachineStatus};
-use crate::services::{Family, FamilyStatus, MemoryFile, PlanConnection};
+use crate::services::{Family, FamilyLogin, FamilyStatus, MemoryFile, PlanConnection};
 use crate::ui::agents::{AgentList, Viewing};
 use crate::ui::context_tree::tests::sample;
 use crate::ui::stats_page::StatsPage;
@@ -76,7 +76,7 @@ fn facts() -> SessionFacts {
         families: vec![FamilyStatus {
             family: Family::Zai,
             name: "Z.ai".into(),
-            signed_in: true,
+            login: FamilyLogin::SignedIn,
             account: "dev@example.com".into(),
             connection: PlanConnection::Individual,
             teams: Vec::new(),

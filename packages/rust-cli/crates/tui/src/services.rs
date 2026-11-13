@@ -10,9 +10,9 @@ use rust_cli_tui_kit::app::widgets::usage::{
 };
 pub use rust_cli_tui_ports::services::{
     Account, Authorize, CancellationToken, CockpitNote, CockpitPort, Configured, CopyRoute, Editor,
-    Family, FamilyModel, FamilyStatus, ImageBytes, LocaleStore, LoginFailure, MemoryFile,
-    PlanConnection, Preferences, RedactedString, StoreFile, Stores, TeamStatus, UiLocale,
-    WorkspaceTrust,
+    Family, FamilyLogin, FamilyModel, FamilyStatus, ImageBytes, LocaleStore, LoginFailure,
+    MemoryFile, PlanConnection, Preferences, RedactedString, StoreFile, Stores, TeamStatus,
+    UiLocale, WorkspaceTrust,
 };
 
 /// 输入历史的追加（tui.md「输入历史」）：发送时调用，不等待写完；入口唯一的写者按调用顺序追加到历史文件。`at_ms` 是

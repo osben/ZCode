@@ -19,12 +19,23 @@ pub enum AccountPlan {
     Team(usize),
 }
 
+/// Whether a family is signed in (fork spec `fork-rust-credential-cipher.md` F2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyLogin {
+    /// OAuth 登录（profile id 与 access token 都在），或个人 provider 有手工 key。
+    SignedIn,
+    /// The values are absent.
+    SignedOut,
+    /// The store or this family's values could not be read (locked keyring, unavailable Host cipher, undecryptable
+    /// value). Not a logout: nothing may be signed in or out over it.
+    Unreadable,
+}
+
 /// 一个内置家族的账号状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FamilyAccount {
     pub family: Family,
-    /// OAuth 登录（profile id 与 access token 都在），或个人 provider 有手工 key。
-    pub signed_in: bool,
+    pub login: FamilyLogin,
     /// 登录的账号：user_info 的邮箱，其次名字；不知道时为 ""。
     pub account: String,
     pub plan: AccountPlan,
@@ -61,13 +72,12 @@ async fn account_label(credentials: &Credentials, family: Family) -> Option<Stri
 }
 
 impl Platform {
-    /// 每个内置家族的账号状态（FAMILIES 的顺序）。凭据读不出时都算没有登录。
+    /// 每个内置家族的账号状态（FAMILIES 的顺序）。凭据读不出时是 `Unreadable`，不算没有登录（fork spec F2）。
     pub async fn family_accounts(&self) -> Vec<FamilyAccount> {
         let view = self.usage_view().await;
         let selection = self.default_selection().await;
         let credentials = self.credentials.read().await.ok();
         let current = self.registry.current().await;
-        // 凭据读不出时按没有登录显示（与以前相同；specs/fork-rust-credential-cipher.md 的开放项）。
         let mut readings = Vec::new();
         for family in FAMILIES {
             let individual = view
@@ -77,29 +87,34 @@ impl Platform {
                 .and_then(|p| p.individual.as_ref())
                 .map(|p| p.provider.clone())
                 .unwrap_or_default();
-            let (signed_in, account) = match credentials.as_ref() {
-                None => (false, String::new()),
+            let (login, account) = match credentials.as_ref() {
+                None => (FamilyLogin::Unreadable, String::new()),
                 Some(c) => {
-                    let signed_in = match Login::read(c, family).await {
-                        Ok(login) => {
-                            (login.identity.is_some() && login.token.is_some())
-                                || (!individual.is_empty()
-                                    && account::manual_authorized(c, &individual)
-                                        .await
-                                        .unwrap_or(false))
+                    let login = match Login::read(c, family).await {
+                        Ok(login) if login.identity.is_some() && login.token.is_some() => {
+                            FamilyLogin::SignedIn
                         }
-                        Err(_) => false,
+                        Ok(_) if individual.is_empty() => FamilyLogin::SignedOut,
+                        Ok(_) => match account::manual_authorized(c, &individual).await {
+                            Ok(true) => FamilyLogin::SignedIn,
+                            Ok(false) => FamilyLogin::SignedOut,
+                            Err(_) => FamilyLogin::Unreadable,
+                        },
+                        Err(_) => FamilyLogin::Unreadable,
                     };
-                    let account = account_label(c, family).await.unwrap_or_default();
-                    (signed_in, account)
+                    let account = match login {
+                        FamilyLogin::Unreadable => String::new(),
+                        _ => account_label(c, family).await.unwrap_or_default(),
+                    };
+                    (login, account)
                 }
             };
-            readings.push((signed_in, account));
+            readings.push((login, account));
         }
         FAMILIES
             .into_iter()
             .zip(readings)
-            .map(|(family, (signed_in, account))| {
+            .map(|(family, (login, account))| {
                 let plans = view.families.iter().find(|p| p.family == family);
                 let individual = plans
                     .and_then(|p| p.individual.as_ref())
@@ -131,7 +146,7 @@ impl Platform {
                     .collect();
                 FamilyAccount {
                     family,
-                    signed_in,
+                    login,
                     account,
                     plan,
                     teams,
