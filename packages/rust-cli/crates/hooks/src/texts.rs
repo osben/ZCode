@@ -12,6 +12,8 @@ use crate::result::Blocking;
 
 /// PreToolUse 的 `continue: false`。
 pub(crate) const STOPPED_BY_HOOK: &str = "Execution stopped by hook";
+/// Node `call-runner.ts` fallback for a PreToolUse refusal with neither a reason nor a stop reason.
+pub(crate) const BLOCKED_BY_PRE_TOOL_USE: &str = "Blocked by PreToolUse hook";
 /// Stop 的 `continue: false`。
 pub(crate) const STOP_PREVENTED: &str = "Stop hook prevented continuation";
 /// UserPromptSubmit 的 `continue: false`。

@@ -326,6 +326,12 @@ Node turns a hook's JSON output into a `HookRunResult` (`processHookOutput`) and
 
 - **PreToolUse `permissionDecision: "defer"`.** Node's schema (`HookSpecificOutputSchema`) accepts only `allow`, `ask` and `deny`, so a hook answering `defer` fails validation and its output counts as a hook error (`configured-runner-callback.ts`), contributing no decision. Rust used to accept `defer` and rank it above `ask` and `allow` when merging hooks (deny > defer > ask > allow), so `defer` from one hook dropped another hook's `ask` and the permission chain could allow a call that Node prompts for. Rust now refuses `defer` in the PreToolUse schema like any other unknown value (the same `Hook JSON output validation failed` path), and the merge is Node's: deny > ask > last.
 
+- **PreToolUse merge order and fields (review of #429).** Node runs the hooks of one event one by one in config order (`hooks/runner.ts`, the `for` loop at line 83 awaits each callback before the next), so every fold reads results in config order, not completion order. Rust runs the hooks of a batch concurrently, so `HookEngine::run` sorts the results of every event by config index before folding. The `repl_results_merge_in_completion_order` test is renamed to config order.
+  - `continue: false` on PreToolUse refuses the call. Node `processHookOutput` (`output.ts:20-28`) sets `permissionBehavior = "deny"` and `preventContinuation`, and `call-runner.ts:371` refuses the call on either one, even when the same hook also says `permissionDecision: "allow"`. Rust folds such a result as a deny: `prevent` contributes `Deny` to the aggregation, so a later allow or ask cannot undo it, and the tool handler is never invoked. The message is `permissionDecisionReason ?? stopReason ?? "Blocked by PreToolUse hook"` (Node `call-runner.ts:376-378`). Before, Rust only set `prevent_continuation`, so the tool ran and the turn stopped afterwards.
+  - `updatedInput` is taken from the last hook that sets it, whatever its behavior (Node `output.ts:81-82`: `target.updatedInput = next.updatedInput` for every processed result). A refused call ignores it (Node returns at `call-runner.ts:371` before `:399`). Before, a hook whose behavior lost the merge (an allow under an ask) dropped its input, and a hook without an input cleared an earlier one.
+  - The reason is the last truthy `hookPermissionDecisionReason` among hooks that gave a `permissionDecision` (Node `output.ts:88` keeps the last truthy value; `output.ts:122-123` sets it only inside `hookSpecificOutput.permissionDecision`). An ask or a non-blocking deny uses it, so an allow after an ask with a reason changes the ask text to that reason, as Node does. Before, a reason from a hook whose behavior lost the merge was dropped, and a top-level `reason` (with `decision: "approve"` or `"block"`) was recorded as a reason, which Node never does.
+  - Exit-code-2 and JSON-deny blocking texts are unchanged.
+
 Acceptance:
 
 - Hooks fold unit tests cover the following:
@@ -335,7 +341,12 @@ Acceptance:
   - the last decision wins;
   - `approve` without a decision allows;
   - a PostToolUse `continue: false` keeps the turn going and still delivers the context.
+  - a PreToolUse `continue: false` denies with `permissionDecisionReason ?? stopReason ?? "Blocked by PreToolUse hook"`, also when a later hook allows;
+  - the updated input is the last one given, whatever the behavior, and a denied call has none;
+  - the ask text is the last truthy reason among the hooks that gave a decision.
 - Hooks engine test: a PermissionRequest hook that exits 2 denies.
+- Hooks engine test: PreToolUse hooks fold in config order when the first finishes last (two allows with different inputs: the second in config order wins, though it finishes first).
+- Pipeline test: a PreToolUse `continue: false` denies and the tool handler is not invoked.
 
 ## Tool rows while the tool input streams (Node `tool_input_start`)
 

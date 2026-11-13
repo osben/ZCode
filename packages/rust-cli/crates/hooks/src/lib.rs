@@ -233,20 +233,17 @@ impl HookRunner for HookEngine {
             prompt_model: loaded.config.prompt_model.as_ref(),
         };
         let mut done = run::run_all(&self.ports, &batch, &hooks, &cancel).await;
+        // Node runs the hooks of one event one by one in config order (`runner.ts`) and folds each result as it
+        // comes (`mergeHookRunResult`: last `updatedInput`, last reason, last decision). The concurrent run finishes
+        // in any order, so every fold reads the results in config order.
+        done.sort_by_key(|(index, _)| *index);
         let event_name = event.name.as_str();
         if outside(event.name) {
-            // 结果按配置顺序排列（不按完成顺序）。
-            done.sort_by_key(|(index, _)| *index);
             let summaries: Vec<_> = done
                 .into_iter()
                 .map(|(index, executed)| interpret::outside(executed, &hooks[index].display()))
                 .collect();
             return fold_session::outside(event.name, &summaries);
-        }
-        // Node runs PermissionRequest hooks one by one in config order and the last decision or stop wins
-        // (`mergeHookRunResult`); the concurrent run finishes in any order, so the fold reads config order.
-        if event.name == HookEventName::PermissionRequest {
-            done.sort_by_key(|(index, _)| *index);
         }
         let mut results: Vec<_> = done
             .into_iter()

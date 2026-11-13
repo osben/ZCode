@@ -88,8 +88,10 @@ async fn untrusted_or_empty_configs_run_nothing() {
     assert_eq!(env.started().len(), 1);
 }
 
+/// Node runs the hooks of one event in config order (`runner.ts`), so the fold reads config order even when the first
+/// hook finishes last.
 #[tokio::test(start_paused = true)]
-async fn repl_results_merge_in_completion_order() {
+async fn repl_results_merge_in_config_order() {
     let slow = Script {
         delay_ms: 50,
         ..script(
@@ -114,7 +116,7 @@ async fn repl_results_merge_in_completion_order() {
             CancellationToken::new(),
         )
         .await;
-    assert_eq!(outcome.additional_context, ["fast", "slow"]);
+    assert_eq!(outcome.additional_context, ["slow", "fast"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -368,4 +370,85 @@ async fn permission_request_hooks_fold_in_config_order() {
             second.0
         );
     }
+}
+
+/// Node `mergeHookRunResult` keeps the last `updatedInput`: the first hook in config order is the one that finishes
+/// last, so completion order would pick the wrong input.
+#[tokio::test(start_paused = true)]
+async fn pre_tool_use_updated_input_is_the_last_in_config_order() {
+    let allow = |input: &str| {
+        script(
+            &format!(
+                r#"{{"hookSpecificOutput":{{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{{"command":"{input}"}}}}}}"#
+            ),
+            "",
+            0,
+        )
+    };
+    let slow = Script {
+        delay_ms: 50,
+        ..allow("first")
+    };
+    let env = Arc::new(ScriptedEnv::with(&[
+        ("slow", slow),
+        ("fast", allow("second")),
+    ]));
+    let settings = json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "slow"}, {"type": "command", "command": "fast"}
+    ]}]}});
+    let outcome = engine(env, &settings)
+        .run(
+            event(
+                HookEventName::PreToolUse,
+                json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "t"}),
+            ),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(outcome.updated_input, Some(json!({"command": "second"})));
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Allow {
+            updated_input: None
+        })
+    );
+}
+
+/// Node `processHookOutput` + `call-runner.ts`: a PreToolUse `continue: false` refuses the call, even when another
+/// hook allows it.
+#[tokio::test]
+async fn pre_tool_use_continue_false_refuses_the_call() {
+    let env = Arc::new(ScriptedEnv::with(&[
+        (
+            "stop",
+            script(r#"{"continue": false, "stopReason": "frozen"}"#, "", 0),
+        ),
+        (
+            "allow",
+            script(
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}"#,
+                "",
+                0,
+            ),
+        ),
+    ]));
+    let settings = json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "stop"}, {"type": "command", "command": "allow"}
+    ]}]}});
+    let outcome = engine(env, &settings)
+        .run(
+            event(
+                HookEventName::PreToolUse,
+                json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "t"}),
+            ),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Deny {
+            message: "frozen".to_owned()
+        })
+    );
+    assert!(outcome.prevent_continuation);
 }
