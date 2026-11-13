@@ -2400,6 +2400,8 @@ export function SettingsPage({
                               allowErase={!isWebRemoteControl}
                               scope={sessionsScope}
                               onClearScope={() => setSessionsScope(undefined)}
+                              showExternalSessions={Boolean(isDesktop) && !isWebRemoteControl}
+                              onCreateTask={onCreateTask}
                             />
                           ) : activeSection === "subagents" ? (
                             <SubagentsSection

@@ -432,6 +432,19 @@ export type {
   QuickPromptUpdateInput,
 } from "#src/quick-prompts/contract.js";
 
+export {
+  EXTERNAL_SESSION_SOURCE_CATALOG,
+  EXTERNAL_SESSION_TRANSCRIPT_UNAVAILABLE,
+  IExternalSessionsService,
+  externalSessionSourceLabel,
+} from "#src/external-sessions/contract.js";
+export type {
+  ExternalSessionSource,
+  ExternalSessionSummary,
+  ExternalSessionTranscript,
+  ExternalSessionsListResult,
+} from "#src/external-sessions/contract.js";
+
 // Subagents service — ISubagentsService is both a type (interface) and value (descriptor)
 export { ISubagentsService } from "./subagents/subagents.js";
 

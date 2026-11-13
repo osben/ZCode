@@ -140,6 +140,8 @@ export const ServiceChannels = {
   TaskGroups: "task-groups",
   /** Fork: composer quick prompts (specs/composer-quick-prompts.md). */
   QuickPrompts: "quick-prompts",
+  /** Fork: sessions recorded by other AI coding CLIs (specs/external-sessions.md). */
+  ExternalSessions: "external-sessions",
   RemoteProjects: "remote-projects",
   /** Window directory of a mobile remote attachment; the original project keeps belonging to the workspace. */
   WindowProject: "window-project",

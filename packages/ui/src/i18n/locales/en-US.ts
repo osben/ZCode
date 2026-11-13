@@ -9663,6 +9663,41 @@ const enUS: Record<string, string> = {
   "sessionManager.empty.noSessions": "No sessions yet",
   "sessionManager.empty.noArchived": "No archived sessions",
   "sessionManager.empty.noMatch": "No sessions match these filters",
+  "externalSessions.title": "Sessions from other tools",
+  "externalSessions.refresh": "Rescan sessions from other tools",
+  "externalSessions.loading": "Scanning sessions from other tools…",
+  "externalSessions.empty.scoped": "No sessions from other tools for this workspace",
+  "externalSessions.empty.all": "No sessions from other tools on this machine",
+  "externalSessions.empty.unavailable":
+    "No session store from another tool could be read on this machine",
+  "externalSessions.messages": "{count} messages",
+  "externalSessions.workspaceMissing": "Folder missing",
+  "externalSessions.rowMenu.ariaLabel": "External session actions",
+  "externalSessions.action.openTranscript": "Open transcript",
+  "externalSessions.action.transcriptUnavailable":
+    "This tool stores transcripts in a format ZCode can't read yet",
+  "externalSessions.action.resume": "Resume in {tool}",
+  "externalSessions.action.continue": "Continue in ZCode",
+  "externalSessions.action.import": "Import to ZCode",
+  "externalSessions.action.importUnavailable":
+    "Import unavailable: the Claude Code importer skips sessions under .claude/worktrees",
+  "externalSessions.action.copyCommand": "Copy resume command",
+  "externalSessions.action.copySessionId": "Copy session id",
+  "externalSessions.action.showInFileManager": "Show in file manager",
+  "externalSessions.toast.resumeOpened": "Terminal opened in {path}",
+  "externalSessions.toast.resumeCopied": "Resume command copied: {command}",
+  "externalSessions.toast.imported": "Imported to ZCode",
+  "externalSessions.toast.importFailed": "Import failed: {error}",
+  "externalSessions.toast.workspaceMissing":
+    "Folder {path} no longer exists, so the draft cannot be created there",
+  "externalSessions.toast.secondaryRoot":
+    "This folder is a secondary root of project {project}; ZCode drafts start in its primary folder {primary}, so open the folder as its own project first",
+  "externalSessions.transcript.meta": "{source} · {count} messages · {path}",
+  "externalSessions.transcript.loading": "Reading transcript…",
+  "externalSessions.transcript.truncated":
+    "Transcript trimmed to the most recent messages; tool calls and reasoning are not shown.",
+  "externalSessions.transcript.roleUser": "User",
+  "externalSessions.transcript.roleAssistant": "Assistant",
   "quickPick.command.manageSessions": "Manage sessions",
   "taskList.incognitoTaskLabel": "Incognito session",
   "settings.incognito.description":

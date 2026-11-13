@@ -476,6 +476,11 @@ import {
   IQuickPromptService,
   QUICK_PROMPTS_CHANGED_CHANNEL,
 } from "#src/quick-prompts/index.js";
+import {
+  createDefaultExternalSessionAdapters,
+  createExternalSessionsService,
+} from "#src/external-sessions/index.js";
+import { IExternalSessionsService } from "#src/external-sessions/contract.js";
 import { type BotProjectConnection } from "#src/bot-project-runtime/index.js";
 import { createGitService } from "./git/gitService.js";
 import { GitCommitMessageGenerator } from "./git/gitCommitMessageGenerator.js";
@@ -3474,6 +3479,17 @@ export function createLocalServices(options: {
       }),
     )
     .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
+
+  // Sessions recorded by other AI coding CLIs (specs/external-sessions.md): read-only scanner with an in-memory
+  // cache per Host, nothing to close. Same desktop-local gate as voice dictation: the HTTP and stdio server entry
+  // points share createLocalServices and must never expose other CLIs' transcripts over a network channel.
+  if (options?.serviceAuthorityMode === "desktop-local") {
+    services.register(
+      IExternalSessionsService,
+      // Scans the OS home directory only: other CLIs keep their stores there, and ZCode's own data dir is never one.
+      createExternalSessionsService({ adapters: createDefaultExternalSessionAdapters() }),
+    );
+  }
 
   // Voice dictation depends on the local microphone and a local transcription model (koffi native library), so per the
   // accessor contract it is provided only by the desktop-local host; remote/standalone servers do not register it, and

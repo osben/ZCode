@@ -63,6 +63,7 @@ import type { IVoiceDictationService } from "./voice-dictation/voiceDictation.js
 // API members used by packages/ui (upstream 3.16.1). Optional so existing hosts and test doubles still compile.
 import type { ITaskGroupService } from "#src/task-groups/contract.js";
 import type { IQuickPromptService } from "#src/quick-prompts/contract.js";
+import type { IExternalSessionsService } from "#src/external-sessions/contract.js";
 import type { IProjectService } from "#src/project/contract.js";
 import type { IRemoteProjectService } from "#src/remote-projects/contract.js";
 import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
@@ -75,6 +76,8 @@ export interface IServiceAccessor {
   readonly taskGroupService?: ITaskGroupService;
   /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
   readonly quickPromptService?: IQuickPromptService;
+  /** Fork: sessions recorded by other AI coding CLIs; desktop local Host only (specs/external-sessions.md). */
+  readonly externalSessionsService?: IExternalSessionsService;
   readonly projectService?: IProjectService;
   /** 受管 worktree 管理；仅本地桌面 Host 提供，手机与旧 Host 缺省。 */
   readonly managedWorktreeService?: IManagedWorktreeService;

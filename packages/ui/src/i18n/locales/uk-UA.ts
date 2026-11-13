@@ -8836,6 +8836,41 @@ const ukUA: Record<string, string> = {
   "sessionManager.empty.noSessions": "Сесій ще немає",
   "sessionManager.empty.noArchived": "Архівованих сесій немає",
   "sessionManager.empty.noMatch": "Жодна сесія не відповідає цим фільтрам",
+  "externalSessions.title": "Сесії з інших інструментів",
+  "externalSessions.refresh": "Пересканувати сесії з інших інструментів",
+  "externalSessions.loading": "Сканування сесій з інших інструментів…",
+  "externalSessions.empty.scoped": "Для цього робочого простору немає сесій з інших інструментів",
+  "externalSessions.empty.all": "На цьому комп'ютері немає сесій з інших інструментів",
+  "externalSessions.empty.unavailable":
+    "На цьому комп'ютері не вдалося прочитати жодне сховище сесій іншого інструмента",
+  "externalSessions.messages": "{count} повідомлень",
+  "externalSessions.workspaceMissing": "Теки немає",
+  "externalSessions.rowMenu.ariaLabel": "Дії із зовнішньою сесією",
+  "externalSessions.action.openTranscript": "Відкрити транскрипт",
+  "externalSessions.action.transcriptUnavailable":
+    "Цей інструмент зберігає транскрипти у форматі, який ZCode поки не читає",
+  "externalSessions.action.resume": "Продовжити в {tool}",
+  "externalSessions.action.continue": "Продовжити в ZCode",
+  "externalSessions.action.import": "Імпортувати в ZCode",
+  "externalSessions.action.importUnavailable":
+    "Імпорт недоступний: імпортер Claude Code пропускає сесії в .claude/worktrees",
+  "externalSessions.action.copyCommand": "Копіювати команду відновлення",
+  "externalSessions.action.copySessionId": "Копіювати id сесії",
+  "externalSessions.action.showInFileManager": "Показати у файловому менеджері",
+  "externalSessions.toast.resumeOpened": "Термінал відкрито в {path}",
+  "externalSessions.toast.resumeCopied": "Команду відновлення скопійовано: {command}",
+  "externalSessions.toast.imported": "Імпортовано в ZCode",
+  "externalSessions.toast.importFailed": "Імпорт не вдався: {error}",
+  "externalSessions.toast.workspaceMissing":
+    "Теки {path} більше немає, тому створити там чернетку не можна",
+  "externalSessions.toast.secondaryRoot":
+    "Ця тека є додатковим коренем проєкту {project}; чернетки ZCode створюються в його головній теці {primary}, тож спершу відкрийте теку як окремий проєкт",
+  "externalSessions.transcript.meta": "{source} · {count} повідомлень · {path}",
+  "externalSessions.transcript.loading": "Читання транскрипту…",
+  "externalSessions.transcript.truncated":
+    "Транскрипт обрізано до останніх повідомлень; виклики інструментів і міркування не показано.",
+  "externalSessions.transcript.roleUser": "Користувач",
+  "externalSessions.transcript.roleAssistant": "Асистент",
   "quickPick.command.manageSessions": "Керування сесіями",
   // Incognito session (specs/incognito-session.md)
   "taskList.incognitoTaskLabel": "Сесія інкогніто",
