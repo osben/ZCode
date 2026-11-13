@@ -287,6 +287,10 @@ impl AppWorkspace {
     /// Closes the displaced lane, then starts `fresh`'s servers only while it is still the stored lane: a connect
     /// displaced during the close starts nothing, so no server runs without a lane that owns it. The start happens
     /// under the lane lock, so a later displacement always sees the started servers and closes them.
+    ///
+    /// Not cancel-safe between [`Self::install`] and the start: a dropped future would leave the lane's servers
+    /// `connecting` until the next connect. No caller drops it: each protocol request runs in its own detached task
+    /// (`protocol-core` `connection::serve`), which only the process shutdown aborts.
     async fn settle(
         &self,
         fresh: Arc<Lane>,

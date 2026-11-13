@@ -449,7 +449,9 @@ async fn a_revoke_with_a_stale_digest_keeps_the_grant() {
 }
 
 /// A connect displaced while it still closes the previous lane never starts its servers (the newer lane owns the
-/// workspace), and until a lane starts, its admitted servers show `connecting`, not `disconnected`.
+/// workspace), and until a lane starts, its admitted servers show `connecting`, not `disconnected`. The older connect
+/// really closes a started lane here; its only decision after the close is the installed-lane check under the lane
+/// lock, so the newer lane installing before that check is the race, wherever inside the close it happened.
 #[tokio::test]
 async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting() {
     let fixture = fixture(
@@ -467,10 +469,26 @@ async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting(
             )
         }
     };
+    // A started lane for the older connect to close.
+    let (workspace, servers) = admitted("k").await;
+    let (started, displaced) = fixture
+        .admin
+        .install(fixture.admin.arrival(), "k", servers)
+        .unwrap();
+    fixture
+        .admin
+        .settle(started.clone(), displaced, workspace)
+        .await;
+    assert_eq!(fixture.transport.started(), ["mine"]);
+
     let (workspace, servers) = admitted("k").await;
     let older = fixture.admin.arrival();
     let (first, displaced) = fixture.admin.install(older, "k", servers).unwrap();
-    assert!(displaced.is_none());
+    assert!(
+        displaced
+            .as_ref()
+            .is_some_and(|lane| Arc::ptr_eq(lane, &started))
+    );
     assert_eq!(
         list(&fixture, "k", false).await["mine"]["status"],
         "connecting"
@@ -478,14 +496,21 @@ async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting(
 
     let (newer_workspace, newer_servers) = admitted("k").await;
     let newer = fixture.admin.arrival();
-    let (second, displaced) = fixture.admin.install(newer, "k", newer_servers).unwrap();
+    let (second, newer_displaced) = fixture.admin.install(newer, "k", newer_servers).unwrap();
     fixture
         .admin
-        .settle(second, displaced, newer_workspace)
+        .settle(second, newer_displaced, newer_workspace)
         .await;
-    // The older connect resumes after its close and finds itself displaced.
-    fixture.admin.settle(first, None, workspace).await;
-    assert_eq!(fixture.transport.started(), ["mine"]);
+    // The older connect now closes the started lane and finds itself displaced.
+    fixture.admin.settle(first, displaced, workspace).await;
+    assert_eq!(fixture.transport.started(), ["mine", "mine"]);
+    assert!(
+        started
+            .manager
+            .server_infos()
+            .iter()
+            .all(|info| info.state == McpServerState::Disabled)
+    );
 }
 
 #[tokio::test]
