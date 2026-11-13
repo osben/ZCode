@@ -3744,12 +3744,12 @@ const enUS: Record<string, string> = {
   "settings.appearance.codeTitle": "Code settings",
   "settings.appearance.codeDescription":
     "Choose code themes, font size, and display options independently from the interface font size.",
-  "settings.uiFontSize": "UI font size",
-  "settings.uiFontSizeDescription":
-    "Adjust interface text without changing icons or layout dimensions.",
   "settings.fontSmoothing": "Font smoothing",
   "settings.fontSmoothingDescription":
     "Use grayscale smoothing. Text may look thinner; results vary by display.",
+  "settings.uiFontSize": "UI font size",
+  "settings.uiFontSizeDescription":
+    "Adjust interface text without changing icons or layout dimensions.",
   "settings.agentBehavior.title": "Behavior and tools",
   "settings.systemTitle": "General",
   "settings.systemDescription": "These preferences affect the current window experience.",
@@ -10230,15 +10230,15 @@ const enUS: Record<string, string> = {
   "voiceInput.permission.title": "Microphone access needed",
   "voiceInput.permission.description.mac":
     'Click "Request again", then choose "Allow" in the system dialog. You can also turn on ZCode in System Settings › Privacy & Security › Microphone.',
-  "voiceInput.permission.description.windows":
-    'In Settings › Privacy & security › Microphone, turn on both "Microphone access" and "Let desktop apps access your microphone".',
   "voiceInput.permission.reauthorize": "Request again",
-  "voiceInput.permission.relaunch": "Restart ZCode",
   "voiceInput.permission.restartTitle": "Restart ZCode",
   "voiceInput.permission.restartDescription":
     'The microphone permission was reset. Restart ZCode, click the microphone, then choose "Allow" in the system dialog.',
+  "voiceInput.permission.relaunch": "Restart ZCode",
   "voiceInput.permission.granted":
     "Microphone access is on. Click the microphone to start voice input.",
+  "voiceInput.permission.description.windows":
+    'In Settings › Privacy & security › Microphone, turn on both "Microphone access" and "Let desktop apps access your microphone".',
   "voiceInput.error.permissionDenied.linux":
     "Cannot access the microphone. Check the system microphone permission and the PulseAudio / PipeWire input device.",
   "voiceInput.error.silent":

@@ -429,25 +429,23 @@ export class ZCodeProtocolAgentServer {
   }
 
   /**
-   * 内存诊断计数器，随 60s 资源采样写本地日志。
-   * 只读 Map.size / 数组长度，不触碰 session 状态；持久化 event store 不提供 getStats 时计 0。
-   * `includeEventStats: false` 跳过逐 session 的 event store 统计（profile recorder 每 15s 调用，避免遍历）。
+   * 内存诊断计数器；完整事件统计沿用 60s 周期，不触碰 session 状态。
+   * getStats 会扫描历史事件，15s 分配诊断必须跳过，避免长对话因采集增加 CPU 开销。
    */
-  collectMemoryDiagnostics(options: { includeEventStats?: boolean } = {}): Record<string, number> {
-    const counters: Record<string, number> = { sessions: this.context.sessions.size };
-    if (options.includeEventStats !== false) {
-      let eventRows = 0;
-      let eventEvicted = 0;
-      let eventTransientRetained = 0;
+  collectMemoryDiagnostics(options?: { includeEventStats?: boolean }): Record<string, number> {
+    const counters: Record<string, number> = {
+      sessions: this.context.sessions.size,
+    };
+    if (options?.includeEventStats !== false) {
+      counters.eventRows = 0;
+      counters.eventEvicted = 0;
+      counters.eventTransientRetained = 0;
       for (const record of this.context.sessions.values()) {
         const stats = record.eventStore.getStats?.();
-        eventRows += stats?.events ?? 0;
-        eventEvicted += stats?.evictedEvents ?? 0;
-        eventTransientRetained += stats?.retainedTransient ?? 0;
+        counters.eventRows += stats?.events ?? 0;
+        counters.eventEvicted += stats?.evictedEvents ?? 0;
+        counters.eventTransientRetained += stats?.retainedTransient ?? 0;
       }
-      counters.eventRows = eventRows;
-      counters.eventEvicted = eventEvicted;
-      counters.eventTransientRetained = eventTransientRetained;
     }
     const v4 = this.context.v4Gateway?.collectMemoryDiagnostics();
     if (v4) {

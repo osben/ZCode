@@ -45,6 +45,9 @@ const localeAllowlist = new Set([
   // matrix, and the x-client-language header for each persisted language.
   "packages/desktop/test/e2e/conversation-session/projects/conversation-session-virtual-project.test.ts",
   "packages/desktop/test/e2e/settings/general/settings-client-language-header.test.ts",
+  // Upstream 3.18.1 manual-review browser suites that render each fixture under zh-CN and en-US.
+  "packages/ui/test/browser/manual-review/pending/font-smoothing.test.mjs",
+  "packages/ui/test/browser/manual-review/pending/interaction-origin-badge.test.mjs",
 ]);
 // Upstream 3.17.1 and 3.17.2 manual-review suites kept byte-identical to upstream (zh-CN default-locale copy and
 // CJK locators). Both checks skip them; convert a suite to English copy and drop it here when the

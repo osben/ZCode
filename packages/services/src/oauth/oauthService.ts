@@ -817,12 +817,12 @@ export class OAuthService implements IOAuthService {
       // Host still polls the flow, but browser callbacks return to the official-site relay page and are forwarded to zcode://oauth/callback.
       authorizeUrl.searchParams.set("redirect", buildDesktopOAuthRedirectUriFromEnv(this.env));
     } else if (isZaiOAuthProvider(provider)) {
-      // The Z.AI backend init may still return a provider-specific callback, causing redirect behavior to differ from BigModel.
-      // Desktop rewrites it to the official-site relay page, which forwards to zcode://oauth/callback.
-      // zai_cn also goes through the relay and additionally carries a provider hint on the relay URL (3.18.1 behaviour).
-      const relayUrl = new URL(buildDesktopOAuthRedirectUriFromEnv(this.env));
-      if (provider === ZAI_CN_PROVIDER_ID) relayUrl.searchParams.set("provider", provider);
-      authorizeUrl.searchParams.set("redirect_uri", relayUrl.toString());
+      // The China channel once skipped the relay rewrite; pass the channel explicitly so the official site never sends a
+      // China authorization code to the overseas callback. Only the callback changes; the authorize host, client_id and
+      // state stay with the server.
+      const redirectUri = new URL(buildDesktopOAuthRedirectUriFromEnv(this.env));
+      if (provider === ZAI_CN_PROVIDER_ID) redirectUri.searchParams.set("provider", provider);
+      authorizeUrl.searchParams.set("redirect_uri", redirectUri.toString());
     }
     const state = authorizeUrl.searchParams.get("state")?.trim();
     const remainingLifetimeMs = expiresAt - this.now();
@@ -1145,21 +1145,19 @@ export class OAuthService implements IOAuthService {
     }
 
     if (pending.provider === ZAI_CN_PROVIDER_ID && pending.polling) {
-      // Polling owns completion for zai_cn: a browser callback that carries a code never exchanges the token here, so the
-      // poll result is the only completion path. The callback may still persist its attribution, but only while the same
-      // flow generation is current and either this pending flow is still active or polling just completed it (grace window).
+      // 官网已把国内授权码交给后端；客户端再次兑换会争抢一次性 code。
+      // 唤起只补归因，登录仍由同一 flow 的 polling 提交；旧回调不能写入新会话。
       const generation = this.oauthFlowStartGeneration;
       return this.runSessionMutation(async () => {
         const completed = this.recentlyCompletedPollingState;
-        if (
+        const sameFlow =
           this.oauthFlowStartGeneration === generation &&
           (this.pendingState === pending ||
             (!this.pendingState &&
               completed?.state === pending.state &&
               completed.generation === generation &&
-              this.now() < completed.expiresAt)) &&
-          attribution
-        ) {
+              this.now() < completed.expiresAt));
+        if (sameFlow && attribution) {
           const save = () => this.repo.saveLoginAttribution(attribution);
           await (pending.credentialGuard ? pending.credentialGuard(save) : save());
         }

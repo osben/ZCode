@@ -31,7 +31,7 @@ import type {
   VoiceInputStopReason,
 } from "@/voice-input/contract.js";
 import { startPcmCapture, type PcmCapture } from "@/voice-input/adapters/pcmCapture.js";
-import { useVoicePermissionGuide } from "@/voice-input/ui/useVoicePermissionGuide.js";
+import { useMicrophonePermissionGuide } from "@/voice-input/ui/useMicrophonePermissionGuide.js";
 import {
   classifyCapturedAudio,
   classifyGetUserMediaError,
@@ -65,7 +65,7 @@ export function useComposerVoiceInput(options: {
   const isLoggedIn = useZCodeStore((state) => state.user !== null);
   const { intl, locale } = useZCodeIntl();
   const available = Boolean(options.enabled && microphone && voiceInputService && isLoggedIn);
-  const permissionGuide = useVoicePermissionGuide();
+  const permissionGuide = useMicrophonePermissionGuide();
   const showPermissionGuide = permissionGuide.show;
 
   const [state, setState] = useState<VoiceInputState>("idle");

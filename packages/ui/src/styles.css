@@ -102,7 +102,7 @@ body {
   overflow: hidden;
 }
 
-/* macOS font smoothing is user-controlled (Settings > Appearance); the class is set on <html> by applyFontSmoothingEnabled. */
+/* 本机 macOS 专属偏好：关闭时不覆盖系统默认，Web/远控不继承桌面渲染策略。 */
 :root.platform-mac-desktop.font-smoothing-enabled {
   -webkit-font-smoothing: antialiased;
 }

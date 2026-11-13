@@ -1,9 +1,18 @@
 /**
- * 麦克风权限引导状态（docs/chat/composer-voice-input.md「麦克风权限」）。
+ * 麦克风权限引导浮层的状态（docs/chat/composer-voice-input.md「权限引导浮层」）。
  *
- * - phase 只由 show（权限被拒绝）、close、reauthorize 的结果改变；UI 只读。
- * - 窗口重新获得焦点时（用户从系统设置切回）静默复查权限，已授权则关闭引导并提示成功。
- * - reauthorize 在途时忽略重复点击；Main 侧也会合并并发重置。
+ * ```text
+ * closed ─show()─▶ denied ─重新授权─┬─ granted ──────────▶ closed（toast 已开启）
+ *                    ▲              ├─ denied ───────────▶ denied
+ *                    │              ├─ restart-required ─▶ restart-required ─重启 ZCode─▶ 应用重启
+ *                    │              └─ failed ───────────▶ denied（打开系统设置）
+ *                    └─ 窗口 focus：ensureAccess 为 granted ─▶ closed（toast 已开启）
+ * ```
+ *
+ * - 浮层只在 macOS / Windows 打开；Linux 没有系统设置页，仍用 toast。
+ * - 窗口重新获得焦点时检查一次权限，事件触发，不轮询。
+ * - 重新授权进行中（系统弹框打开时窗口会失焦再获焦）跳过焦点检查，
+ *   避免同时调用 askForMediaAccess；结果以重新授权的返回值为准。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DesktopCommandIds } from "@zcode/shared";
@@ -11,29 +20,32 @@ import { toast } from "@/components/ui/toast.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import type { VoicePermissionGuide, VoicePermissionPhase } from "@/voice-input/contract.js";
+import type {
+  MicrophonePermissionGuide,
+  MicrophonePermissionGuidePhase,
+} from "@/voice-input/contract.js";
 import { resolveVoiceInputOs } from "@/voice-input/domain/voiceInputFailure.js";
 
-export function useVoicePermissionGuide(): VoicePermissionGuide {
+export function useMicrophonePermissionGuide(): MicrophonePermissionGuide {
   const platform = useOptionalPlatform();
   const microphone = platform?.microphone;
   const { intl } = useZCodeIntl();
   const os = resolveVoiceInputOs(typeof navigator === "undefined" ? "" : navigator.userAgent);
-
-  const [phase, setPhase] = useState<VoicePermissionPhase | null>(null);
+  const [phase, setPhase] = useState<MicrophonePermissionGuidePhase | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
 
   const close = useCallback(() => setPhase(null), []);
-  const show = useCallback(() => setPhase("denied"), []);
 
-  const announceGranted = useCallback(() => {
+  const closeGranted = useCallback(() => {
     setPhase(null);
     toast(intl.formatMessage({ id: "voiceInput.permission.granted" }), {
       variant: "success",
       dedupeKey: "voice-input-permission-granted",
     });
   }, [intl]);
+
+  const show = useCallback(() => setPhase("denied"), []);
 
   const openSettings = useCallback(() => {
     void microphone?.openSettings("privacy");
@@ -49,51 +61,51 @@ export function useVoicePermissionGuide(): VoicePermissionGuide {
     logger.lifecycle.info("[voice-input] reauthorize", { result });
     switch (result) {
       case "granted":
-        announceGranted();
+        closeGranted();
         return;
       case "restart-required":
-        // 仅在引导仍可见时切换阶段，避免用户已关闭弹层后又被重新打开。
-        setPhase((current) => (current ? "restart-required" : null));
+        setPhase((current) => (current ? "restart-required" : current));
         return;
       case "failed":
-        // 无法在应用内重置（受限、非打包版或 tccutil 失败）：引导用户到系统设置手动开启。
-        microphone.openSettings("privacy");
+        void microphone.openSettings("privacy");
         return;
       case "denied":
         return;
     }
-  }, [announceGranted, microphone]);
+  }, [closeGranted, microphone]);
 
   const relaunch = useCallback(() => {
     if (typeof platform?.executeDesktopCommand !== "function") return;
     logger.lifecycle.info("[voice-input] relaunch for microphone permission");
-    void platform.executeDesktopCommand(DesktopCommandIds.RelaunchApp).catch((error: unknown) => {
+    platform.executeDesktopCommand(DesktopCommandIds.RelaunchApp).catch((error: unknown) => {
       logger.lifecycle.warn("[voice-input] relaunch failed", {
         message: error instanceof Error ? error.message : String(error),
       });
     });
   }, [platform]);
 
-  const visible = phase !== null;
+  // 用户在系统设置里打开开关后回到 ZCode：检查一次，已允许就关闭浮层。
+  const open = phase !== null;
   useEffect(() => {
-    if (!visible || !microphone) return;
-    const recheckOnFocus = () => {
+    if (!open || !microphone) return;
+    const onFocus = () => {
       if (busyRef.current) return;
-      microphone
+      void microphone
         .ensureAccess()
         .catch(() => "unsupported" as const)
         .then((access) => {
-          if (access === "granted" && !busyRef.current) announceGranted();
+          if (access === "granted" && !busyRef.current) closeGranted();
         });
     };
-    window.addEventListener("focus", recheckOnFocus);
-    return () => window.removeEventListener("focus", recheckOnFocus);
-  }, [announceGranted, microphone, visible]);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [closeGranted, microphone, open]);
 
+  // 引用随状态变化，VoiceInputButton（memo）不随 Composer 的其他渲染重绘。
   return useMemo(
     () => ({
       phase,
-      os: os === "windows" ? "windows" : "mac",
+      os: os === "windows" ? ("windows" as const) : ("mac" as const),
       available: os !== "linux",
       busy,
       show,

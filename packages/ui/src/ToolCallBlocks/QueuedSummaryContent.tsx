@@ -102,6 +102,8 @@ export function QueuedSummaryContent({
     reducedMotion,
   });
   if (!shouldAnimate) {
+    // #185：禁用动画时逐 token 在 effect 里复制 state，会在连续同步提交中积累嵌套更新。
+    // 静态路径直接显示输入；卸载播放 owner 同时释放旧队列，重新启用从当前内容开始。
     return (
       <>
         {primaryText}
@@ -112,7 +114,7 @@ export function QueuedSummaryContent({
   }
 
   return (
-    <AnimatedQueuedSummaryContent
+    <AnimatedSummaryContent
       content={{
         key: contentKey,
         refreshVersion: contentRefreshVersion,
@@ -124,19 +126,12 @@ export function QueuedSummaryContent({
   );
 }
 
-// Animation state lives here so the disabled path above never runs queue timers.
-// Same-key updates are read straight from the latest props (trailing counts, refresh version, body text),
-// so they do not need a state update or a replayed roll.
-function AnimatedQueuedSummaryContent({ content }: { content: SummaryContentSnapshot }) {
+function AnimatedSummaryContent({ content }: { content: SummaryContentSnapshot }) {
   const [displayedContent, setDisplayedContent] = useState(content);
-  const displayedContentRef = useRef(displayedContent);
+  const displayedContentRef = useRef(content);
   const queuedContentRef = useRef<SummaryContentSnapshot[]>([]);
   const animationTimerRef = useRef<number | null>(null);
   const isAnimatingRef = useRef(false);
-
-  useEffect(() => {
-    displayedContentRef.current = displayedContent;
-  }, [displayedContent]);
 
   useEffect(() => {
     const clearAnimationTimer = () => {
@@ -190,10 +185,10 @@ function AnimatedQueuedSummaryContent({ content }: { content: SummaryContentSnap
       }, SUMMARY_ROLL_TOTAL_MS);
     };
     const nextContent = content;
-
     if (displayedContentRef.current.key === nextContent.key) {
-      // Do not replay the full summary for diffs in the same Changes child or updates to the same streaming Assistant message;
-      // the render below reads the latest props for the same key, so trailing counts and body text refresh in place.
+      // Body text and counts of the same summary derive straight from the input, so no setState here; the outer group
+      // header also updates per token. Only keep the last displayed snapshot after commit, so the current item's latest
+      // content still freezes when the next item queues.
       displayedContentRef.current = nextContent;
       return;
     }
@@ -219,27 +214,28 @@ function AnimatedQueuedSummaryContent({ content }: { content: SummaryContentSnap
     };
   }, []);
 
-  // Same key as the state: show the latest props; a new key still in the queue keeps showing the snapshot being rolled.
-  const shown = displayedContent.key === content.key ? content : displayedContentRef.current;
+  // state 只推进播放项；ref 保存该项的最新已提交输入，不在 render 中写入。
+  const renderedContent =
+    content.key === displayedContent.key ? content : displayedContentRef.current;
 
   return (
     <span className="relative inline-flex min-w-0 items-center gap-2 overflow-hidden align-middle">
       <AnimatePresence initial={false} mode="popLayout">
         <motion.span
-          key={shown.key}
+          key={renderedContent.key}
           className="inline-flex min-w-0 items-center gap-2"
           initial={{ y: "0.8em", opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: "-0.8em", opacity: 0 }}
           transition={SUMMARY_ROLL_TRANSITION}
         >
-          {shown.primaryText}
-          {shown.secondaryText}
+          {renderedContent.primaryText}
+          {renderedContent.secondaryText}
         </motion.span>
       </AnimatePresence>
       {/* Reason for the fix: The Changes diff count must come from the same queued snapshot as the file summary,
           but the number should keep animating independently with FlipMetricValue rather than scrolling vertically with the whole summary. */}
-      {shown.trailingText}
+      {renderedContent.trailingText}
     </span>
   );
 }

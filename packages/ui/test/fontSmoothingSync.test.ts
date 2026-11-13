@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// macOS font smoothing preference: default on, persisted as "true"/"false" under the 3.18.1 key,
-// reflected as an <html> class, and broadcast-synced without a rebroadcast loop.
+// macOS font smoothing preference (upstream 3.18.1): default on, persisted as "true"/"false",
+// reflected as an <html> class, and broadcast-synced through the fork stateBroadcast wiring without a loop.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BroadcastMessage, IBroadcastService } from "@zcode/services";
 import { createZCodeStore } from "@/store/index.js";

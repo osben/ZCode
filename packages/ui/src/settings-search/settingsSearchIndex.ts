@@ -2,12 +2,12 @@ import type { SettingsSectionId } from "@/lib/settingsNavigation.js";
 
 export interface SettingsSearchAvailability {
   desktop: boolean;
+  macDesktop: boolean;
   windowsHost: boolean;
   tray: boolean;
   notWindows: boolean;
   workflow: boolean;
   computerUse: boolean;
-  macDesktop: boolean;
 }
 
 // 翻译 key 同时作为稳定定位 id；索引只描述入口，不持有任何配置值。

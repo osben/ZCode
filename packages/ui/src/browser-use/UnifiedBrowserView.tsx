@@ -1182,7 +1182,6 @@ export function UnifiedBrowserView({
   const isDesignToolsVisible = design.toolsVisible;
   // 调整面板：设计稿页面，或任何页面上正在点选（人类 tab 的「选择元素」统一成这套点选，11-06）
   const isDesignPanelAvailable = isDesignToolsVisible || design.mode !== "off";
-
   // 人类 tab：地址栏「选择元素」在任何页面上都是同一套点选（再点一次或页面里 Esc 退出），取代原来的元素选择器（11-06）；
   // 能不能改由页面决定：本机 HTML 在调整面板里直接改，其他页面面板只读、交给 Agent。Agent tab 仍是元素 chip 选择器。
   const handleTogglePicker = useCallback(() => {

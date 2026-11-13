@@ -20,8 +20,8 @@ export interface VoiceInputFailureNotice {
   messageId?: string;
   /** 带「打开系统设置」按钮时打开的页面 */
   settingsTarget?: "privacy" | "sound";
-  /** mac / Windows 权限被拒绝：不弹 toast，改为显示权限引导弹层 */
-  permissionGuide?: boolean;
+  /** macOS / Windows 权限被拒：不用 toast，显示权限引导浮层 */
+  permissionGuide?: true;
 }
 
 export function resolveVoiceInputOs(userAgent: string): VoiceInputOs {
@@ -72,7 +72,7 @@ export function resolveVoiceInputFailureNotice(
     os === "linux" ? { messageId: `${messageId}.linux` } : { messageId, settingsTarget };
   switch (failure) {
     case "permission_denied":
-      // mac / Windows 的开启步骤不同，由权限引导弹层按系统给出步骤和重新授权按钮。
+      // mac / Windows 用引导浮层（docs/chat/composer-voice-input.md「权限引导浮层」）；Linux 没有设置页，只提示文字。
       return os === "linux"
         ? { messageId: "voiceInput.error.permissionDenied.linux" }
         : { permissionGuide: true };

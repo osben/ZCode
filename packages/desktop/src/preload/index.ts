@@ -96,8 +96,8 @@ import type {
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
+  MicrophoneAccessResetResult,
   MicrophoneAccessResult,
-  MicrophoneResetResult,
   MicrophoneSettingsTarget,
   CaptureBrowserGuestPageRequest,
   CaptureBrowserGuestPageResult,
@@ -387,8 +387,8 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Voice input: check and request system microphone permission on demand */
   ensureMicrophoneAccess: (): Promise<MicrophoneAccessResult> =>
     ipcRenderer.invoke(PlatformChannels.MicrophoneAccess),
-  /** Voice input: clear the macOS microphone decision and request it again (see MicrophoneResetResult) */
-  resetMicrophoneAccess: (): Promise<MicrophoneResetResult> =>
+  /** Voice input: on macOS, reset this app's microphone authorization record and ask again */
+  resetMicrophoneAccess: (): Promise<MicrophoneAccessResetResult> =>
     ipcRenderer.invoke(PlatformChannels.ResetMicrophoneAccess),
   /** Voice input: open the system microphone / sound input settings page */
   openMicrophoneSettings: (target: MicrophoneSettingsTarget): Promise<boolean> =>

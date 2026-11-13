@@ -89,13 +89,13 @@ export function AppearanceSectionContent({
   setPalette,
   uiFontSizePx,
   setUiFontSizePx,
-  isMacDesktop,
-  fontSmoothingEnabled,
-  setFontSmoothingEnabled,
   uiFontFamily,
   setUiFontFamily,
   monoFontFamily,
   setMonoFontFamily,
+  isMacDesktop,
+  fontSmoothingEnabled,
+  setFontSmoothingEnabled,
 }: {
   codePreviewSettings: CodePreviewSettings;
   setCodePreviewSettings: (settings: Partial<CodePreviewSettings>) => void;
@@ -103,11 +103,11 @@ export function AppearanceSectionContent({
   setTheme: (theme: Theme) => void;
   palette: ThemePalette;
   setPalette: (palette: ThemePalette) => void;
-  uiFontSizePx: number;
-  setUiFontSizePx: (fontSizePx: number) => void;
   isMacDesktop: boolean;
   fontSmoothingEnabled: boolean;
   setFontSmoothingEnabled: (enabled: boolean) => void;
+  uiFontSizePx: number;
+  setUiFontSizePx: (fontSizePx: number) => void;
   uiFontFamily: string | null;
   setUiFontFamily: (value: string | null) => void;
   monoFontFamily: string | null;
@@ -201,9 +201,7 @@ export function AppearanceSectionContent({
               <SettingsRow
                 searchId="settings.fontSmoothing"
                 label={intl.formatMessage({ id: "settings.fontSmoothing" })}
-                description={intl.formatMessage({
-                  id: "settings.fontSmoothingDescription",
-                })}
+                description={intl.formatMessage({ id: "settings.fontSmoothingDescription" })}
                 control={
                   <Switch
                     data-testid="font-smoothing-switch"

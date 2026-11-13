@@ -9,8 +9,7 @@ import {
   applyFontPreferencesBroadcast,
   applyPersistedFontPreferences,
 } from "@/store/fontPreferences.js";
-import { applyUiFontSizePx } from "@/lib/uiFontSize.js";
-import { applyFontSmoothingEnabled } from "@/lib/uiFontSize.js";
+import { applyFontSmoothing, applyUiFontSizePx } from "@/lib/uiFontSize.js";
 import type { Theme } from "../useTheme.js";
 import { applyTheme, isThemePalette, migrateThemeSelection } from "../useTheme.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
@@ -120,6 +119,6 @@ export function wireStateBroadcast(
   syncSystemThemeListener(useStore.getState().theme);
   applyTheme(useStore.getState().theme, useStore.getState().palette);
   applyUiFontSizePx(useStore.getState().uiFontSizePx);
-  applyFontSmoothingEnabled(useStore.getState().fontSmoothingEnabled);
+  applyFontSmoothing(useStore.getState().fontSmoothingEnabled);
   applyPersistedFontPreferences(useStore.getState());
 }

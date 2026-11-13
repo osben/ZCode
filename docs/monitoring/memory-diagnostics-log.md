@@ -2,6 +2,73 @@
 
 Status: **confirmed, implemented per this spec**
 
+## CLI allocation diagnostics (3.18.1)
+
+Besides the 60-second base log described below, the CLI enables a separate, bounded diagnostics recorder once
+app-server is ready. The goal is to correlate memory growth with release-code locations; it does not change task
+scheduling, recovery or model behaviour.
+
+- The CLI adapter is the single owner of collection and file retention. Bootstrap only exposes read-only counters
+  and stops collection with the runtime.
+- Every 15 seconds it reads the memory breakdown and read-only counters and keeps the last 8 readings: read-only
+  session counts and V4 container sizes, without calling `eventStore.getStats()`, which walks historical events.
+  Full event statistics keep the original 60-second period; message bodies are not walked and business objects are
+  not re-serialized.
+- It uses an in-process inspector Session: no debug port is opened, script sources are not read, no source map is
+  generated or loaded, no heap snapshot is taken, no forced GC. The allocation sampling interval is 1 MiB with
+  stack depth 16; the sampling window resets every 60 seconds.
+- Each 15-second sample inspects at most 4096 profile nodes and outputs only the top 32 allocation hotspots with
+  the last 8 stack frames of each. The profile is not retained size or a retention chain, and Buffer backing
+  stores do not necessarily show up in the JS profile, so it must be read together with `external`.
+- Only function names of the release bundle and zero-based line/column numbers are stored; for other scripts no
+  paths, function names or source are stored. The bundle SHA-256, build version, Node/V8 versions, process
+  instance and PID are stored, so growth can be located against the same internal build.
+- At most one collect/write operation per round; when busy the round is dropped, not queued. If one synchronous
+  sampling/projection exceeds 25 ms or the node count exceeds the limit, this process permanently degrades to
+  metrics only. A sampling exception degrades the same way and must never throw into a task. Startup and exit do
+  not wait for disk collection. After degrading, the record keeps the last valid hotspot and its collection time,
+  so metrics-only rotation does not overwrite existing evidence. Past 80% of the heap-usage limit it also
+  degrades, never materializing a profile near OOM. If a write is still in flight when the sampling window
+  expires, the profiler is released; a slow disk must not let sampling state accumulate without bound.
+- All CLI processes share `~/.zcode/cli/memory-diagnostics`: at most 2 completed files per instance, at most 16
+  in the whole directory, 64 KiB each, completed files totalling at most 1 MiB. A directory lock serializes
+  eviction and writing; contention retries only briefly and then drops the round. Evict first, then write, with
+  atomic replacement; inside the lock, temporary files left by a previous crash are cleaned up, so at most one
+  extra 64 KiB temporary file exists. Files older than 7 days are evicted too. The JSONL is not appended to, so
+  it cannot grow without bound with run length or process restarts.
+- Feedback full/compact archives and manual log export both carry the records. Feedback places this directory
+  ahead of the normal logs, accepts only the specified file names and structured numeric/location fields, and
+  must not drop a whole profile because generic body redaction matched it; environment variables, conversations,
+  tool arguments, configuration or script contents are never uploaded. When feedback is submitted without
+  attaching logs, this directory is not packaged or uploaded.
+- A remote CLI records on the remote side; local feedback does not auto-download remote diagnostics. Mobile still
+  reuses the Host and adds no duplicate collector.
+
+```text
+app-server ready -> adapter allocation sampling + 15s metrics -> bounded files (directory lock is the sole writer)
+                          | 60s window reset                 |
+                          v                                  v
+                    over budget -> metrics only     existing feedback / log export -> structured safe projection
+runtime stop -> stop timers, disconnect the inspector; a crash relies on the files already written
+```
+
+Acceptance: the CLI regression covers sampling-window reset, over-budget degradation, no writes after stop, no
+queueing on slow writes, concurrent retention limits, expired/temporary-file cleanup and forbidden data fields; a
+real runtime verifies allocation locations of the minified bundle and external growth of Buffers; the real
+archive function is verified with synthetic records for full/compact carriage, privacy filtering and the total
+budget. Alternating the sampling switch under the same load records CPU/elapsed time and the per-collection
+cost; a "low sampling frequency" is not accepted in place of performance evidence.
+
+Local verification (2026-11-11, macOS, Node 24.21.0 shipped with the desktop): a synthetic bundle, minified
+without source maps, recorded allocation locations and a matching SHA-256, with a single inspection taking
+13.8 ms. Across 8 same-load tests alternating the sampling switch, the median elapsed time was 441.9 ms off and
+446.6 ms on (about +1.1%), with no median CPU increase. This short test measures the cost of allocation
+sampling; the cost of the 15-second periodic check is measured separately and cannot be extrapolated into a
+performance guarantee for all real tasks. After 8 processes competed to write 400 times, 14 valid files
+totalling 10,164 bytes remained, with no leftover locks or temporary files. A real feedback archive kept the
+allocation locations and removed injected body and environment-variable fields; Windows/Linux runtimes are not
+verified yet.
+
 ## Problem
 
 When users report steadily growing desktop memory, a log archive could not answer three questions: which process
@@ -18,9 +85,9 @@ host→main or renderer→main message types, or change any business logic.
 ## Product contract
 
 1. Four process kinds each sample their own memory: main, renderer (per window), utility_host (per-window Local
-   Host), agent_node (the `zcode-cli` of each workspace). The sampling period is fixed at `60_000ms`; agent_node
-   reuses the beat of the existing `process/resourceSample` sampler for the line-format log. The CLI profile file
-   (below) has its own 15 s timer; it is the only extra timer.
+   Host), agent_node (the `zcode-cli` of each workspace). The base log's sampling period is fixed at `60_000ms`;
+   agent_node reuses the beat of the existing `process/resourceSample` sampler. The 3.18.1 allocation diagnostics
+   use the separate 15-second timer described above.
 2. Sampling and writing are separate. After each sample it is written on any of these conditions, otherwise
    dropped:
    - first sample (`reason=first`);
@@ -32,11 +99,7 @@ host→main or renderer→main message types, or change any business logic.
 3. Worst case is one line per process per minute and, when idle, one line per 5 minutes. Estimated for 8
    processes: about 3.4 MB per day, roughly a tenth of the current log volume.
 4. Log lines contain only numbers and low-cardinality enums: no pid, path, workspace / session / task id, model
-   name, prompt or file content. **Exception (CLI profile file, see below):** the agent_node profile file
-   `~/.zcode/cli/memory-diagnostics/memory-<ms>-<instanceId>.jsonl` carries a random `instanceId` (UUID), the CLI `pid`,
-   the bundle's `bundleSha256`, and allocation stacks whose frames are functions of the CLI bundle itself (name, line,
-   column). Frames from other files are dropped, so no user path or content appears. The file is local-only and reaches
-   a feedback upload only through the log export described below.
+   name, prompt or file content.
 5. A failure in sampling, counter reading, formatting or writing drops only the current sample: no retry, no
    queue, no business impact.
 6. The gating and formatting logic has a single implementation, `packages/shared/src/memoryDiagnostics.ts`, reused
@@ -49,7 +112,7 @@ host→main or renderer→main message types, or change any business logic.
  60s: performance.memory          60s: process.memoryUsage()      existing 60s sampler, inside onSample
       + ui domain counters             + services domain counters       process.memoryUsage()
       │ logger.logMemoryDiagnostics    │ host logger.info                + server domain counters
-      │ (bypasses prod gating, goes     │ (existing [host-log] forwarding) │ CLI logger.info
+      │ (bypasses prod gating, goes    │ (existing [host-log] forwarding) │ CLI logger.info
       │  through window.zcode.log)      v                                 v
       v
  ~/.zcode/v2/logs/YYYY-MM-DD.log  ←── main 60s: memoryUsage + per-role working set + main counters
@@ -60,9 +123,8 @@ host→main or renderer→main message types, or change any business logic.
   renderer via the existing preload `window.zcode.log` bridge).
 - agent_node writes the CLI's own JSONL log. The CLI log of a remote workspace stays on the remote machine; this
   is deliberate, as resource samples add no protocol fields.
-- Log export (`exportLogs.ts`) and the user feedback archive (`prepareCompactLogArchive`) also collect the CLI
-  profile files from `~/.zcode/cli/memory-diagnostics/` (see "CLI profile file"). The per-file and per-source caps
-  for these files differ from the log caps; see that section.
+- Log export (`exportLogs.ts`) and the user feedback archive (`prepareCompactLogArchive`) already cover these
+  files and need no change.
 
 ## Line format
 
@@ -88,8 +150,6 @@ The CLI side writes a structured log: `event=zcode_protocol.process.memory_sampl
 | agent_node   | `eventRows`                                                                                                                              | Sum of in-memory event-store rows over all records                                                                                                                                                                                                     |
 | agent_node   | `eventEvicted` / `eventTransientRetained`                                                                                                | Accumulated transient events evicted by the turn-window policy / transient events still resident (`apps/zcode-cli/docs/design/v2/session-event-store-retention.md`)                                                                                    |
 | agent_node   | `v4.publishers` / `v4.detachedLive` / `v4.detachedTerminal` / `v4.rawSeqStates`                                                          | V4 gateway publishers, detached child sessions, terminal detached child sessions awaiting release, size of the raw seq state table                                                                                                                     |
-| agent_node   | `v4.hydrations` / `v4.historyOpenings`                                                                                                   | In-flight conversation publisher hydrations, pending history openings (`hydrationInFlight`, `historyOpenings` maps)                                                                                                                                    |
-| agent_node   | `v4.binaryCacheEntries` / `v4.binaryCacheBytes`                                                                                          | Entries and accumulated bytes of the binary read cache (`binaryReadCache`, `binaryReadCacheBytes`)                                                                                                                                                     |
 | utility_host | `agent.sessionEmitters` / `agent.seqStates` / `agent.pendingPermissions` / `agent.pendingUserInputs`                                     | Per-session mirror tables of `zcodeAgentService`                                                                                                                                                                                                       |
 | utility_host | `task.runtimeCommands` / `task.toolMemoryTasks` / `task.taskEmitters` / `task.overlays`                                                  | Per-task tables of `zcodeTaskServiceAdapter`                                                                                                                                                                                                           |
 | utility_host | `terminal.open` / `fileWatcher.open`                                                                                                     | Number of pty and `fs.watch` instances                                                                                                                                                                                                                 |
@@ -110,11 +170,6 @@ The CLI side writes a structured log: `event=zcode_protocol.process.memory_sampl
 A new counter self-registers in its module with `registry.register(name, provider)`; a provider must be a pure
 read (only `Map.size` / `Set.size` / array length), must not change state and must not do IO.
 
-The CLI's `collectMemoryDiagnostics({ includeEventStats })` option gates the `sessions` + `eventRows` /
-`eventEvicted` / `eventTransientRetained` sums. The line-format sampler calls it with the default (all keys); the
-profile recorder calls it with `includeEventStats: false` on each 15 s tick, so it never walks every session's
-event store at that rate.
-
 ## Mandatory boundaries
 
 - `zcodeProcessResourceSampleSchema` is unchanged; protocol samples still send only `rssKb` / CPU fields.
@@ -126,8 +181,8 @@ event store at that rate.
   directly.
 - Main does not supplement other processes with `ps` / PowerShell; it uses only `process.memoryUsage()` and
   `app.getAppMetrics()`.
-- Each workspace process on the CLI side has the existing `unref()` 60 s sampler timer plus one `unref()` 15 s timer
-  for the profile recorder. Both are cleared by the sampler's `stop()`.
+- The CLI's base log reuses the resource-sampling timer; the allocation diagnostics hold their own separate
+  `unref()` timer, which stops with the runtime.
 
 ## How to read
 
@@ -156,16 +211,10 @@ same classification logic does not keep two sets of role names.
 
 - Shared: `packages/shared/src/memoryDiagnostics.ts` (`createMemorySampleWriteGate`, `formatMemorySampleLine`,
   `createMemoryDiagnosticsRegistry`, `memoryUsageToSampleFields`)
-- CLI profile file: `apps/zcode-cli/packages/bootstrap/src/memory-diagnostics/recorder.ts` (recorder, allocation
-  projection), `writer.ts` (retention and lock), `start.ts` (inspector profiler, bundle hash, wiring); wired from
-  `zcode-protocol/resource-sampler.ts`, which returns the sampler wrapper that also stops the recorder.
 - CLI: `apps/zcode-cli/packages/bootstrap/src/process-resource-sampler.ts`, `zcode-protocol-entrypoint.ts`,
   `zcode-protocol/server.ts`, `zcode-protocol-v4/v4-gateway.ts`,
   `apps/zcode-cli/packages/adapters/src/storage/index.ts`
 - services: `packages/services/src/memoryDiagnostics.ts` and the self-registration of five services
-- archive: `packages/services/src/feedback/feedbackLogArchive.ts` (`cli-memory` content policy), `compactLogArchive.ts`
-  (first source), `packages/desktop/src/main/exportLogs.ts` (`createLogArchiveArtifacts` by-name collection and
-  `createFeedbackLogArchiveFromExportLogs` source); sanitizer and bounds in `packages/shared/src/memoryDiagnostics.ts`
 - host: `packages/desktop/src/host/hostMemoryDiagnosticsLog.ts` (gating and line format); the entry in
   host/index.ts is `hostSelfResourceTelemetry.ts`, which wraps this module and hands the same `memoryUsage()`
   reading to resource telemetry too (the `onMemoryUsage` hook is independent of the write gate: the local line may
@@ -176,73 +225,18 @@ same classification logic does not keep two sets of role names.
   resource telemetry via `IPlatformService.reportRendererHeapSample` (the local line may be skipped by gating
   while the telemetry sample is sent every 60 s; Web and mobile remote control have no bridge, so it is a no-op)
 
-## CLI profile file (agent_node)
-
-The agent_node process also keeps a local V8 sampling profile and a heap-trend record, written to a separate
-JSONL file. This is the only memory evidence in the CLI that is not a `[memory]` line.
-
-- **Enablement:** always on, no environment variable or setting gates it. It starts with the protocol resource
-  sampler (`startProtocolResourceSampler`) and stops with it.
-- **Sampling:** `node:inspector` `HeapProfiler.startSampling` with `samplingInterval` 1 MiB,
-  `stackDepth` 16, `includeObjectsCollectedByMajorGC` and `includeObjectsCollectedByMinorGC` both `false`. Every
-  15 s the recorder reads `process.memoryUsage()` plus `v8.getHeapStatistics().heap_size_limit` and the counters
-  (`includeEventStats: false`), and appends one entry to a ring of the last 8 samples.
-- **Profile window:** the sampling profile is read each tick and reset (`HeapProfiler.disable` + `startSampling`)
-  once the current window is 60 s old. The top 32 allocation sites are kept, keyed by self bytes and limited to
-  frames whose script URL equals the running bundle (names and line / column only; the top 8 frames of each stack).
-- **Write:** each tick writes one file `memory-<Date.now()>-<instanceId>.jsonl` containing one JSON object followed
-  by a newline, under `~/.zcode/cli/memory-diagnostics/`. The format is `zcode-cli-memory-v1`:
-  `format`, `timestamp`, `instanceId`, `pid`, `version`, `commit`, `node`, `v8`, `bundleSha256` (empty when the
-  bundle is missing or larger than 128 MiB), `sampler`, `samples`, `allocations`.
-- **Sampler states** (`sampler.state`):
-  - `active`: profiling works and the recorder stays within its budgets.
-  - `unsupported`: the initial `startSampling` failed; no profile is read and the profiler is disposed.
-  - `budget-exceeded`: the profiler is disposed and the file keeps being written without a new profile, when any
-    of these holds: the first `startSampling` took more than 25 ms; a tick's heap usage reached 80 % of
-    `heapLimit`; the profile projection returned nothing (more than 4096 nodes visited); or the tick took more than
-    25 ms (checked after the profile read and again at the end of the tick).
-  - `error`: a profile read or projection threw; the profiler is disposed.
-- **Sanitizer:** `sanitizeCliMemoryDiagnostic` (`packages/shared/src/memoryDiagnostics.ts`) is applied to the record
-  before the write and again on read by the archive. Unknown keys are dropped; numbers are coerced to finite,
-  non-negative values; `instanceId` must match `^[a-f0-9-]{36}$`, `bundleSha256` `^[a-f0-9]{64}$`, stack names
-  `^[a-zA-Z0-9_$.[\]<>-]{0,64}$`, and `version` / `commit` / `node` / `v8` `^[a-zA-Z0-9._-]{1,80}$`. The counter
-  keys are fixed to the `CLI_MEMORY_DIAGNOSTIC_COUNTER_KEYS` list and the memory keys to `CLI_MEMORY_DIAGNOSTIC_MEMORY_KEYS`.
-- **Retention (writer):** under a `records` directory lock (`acquireFileLock`, no retry, 25 ms maximum wait).
-  Temporary `.memory-*.tmp` files are removed. Files are removed when they are not regular files, have more than
-  one link, exceed 65536 bytes, or are older than 7 days. Among the remaining files, the writing instance keeps only
-  its newest older file, and then the 15 newest files of any instance are kept. The new record is added on top, so
-  the directory holds at most 16 files.
-- **Re-entrancy:** a module-level flag drops a write while another is in flight.
-- **Export:** the log export (`createLogArchiveArtifacts`, `createFeedbackLogArchiveFromExportLogs`) and the
-  feedback archive (`prepareCompactLogArchive`) include files matching `^memory-[0-9]+-[a-f0-9-]{36}\.jsonl$` from
-  this directory, flat (no recursion), with no lookback window. The feedback source uses `contentPolicy: "cli-memory"`:
-  at most 16 accepted files, each at most 65536 bytes, no `redactFeedbackText`. Each file is parsed as one JSON value,
-  sanitized and re-serialized; unparseable or non-matching content is skipped as `invalid-memory-diagnostic`.
-
 ## Acceptance cases
 
-| Case ID | Setup                                 | Action                                                                          | Assertions                                                                                                                                                                                          | Layer |
-| ------- | ------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| MEM-001 | empty gate                            | first evaluate                                                                  | returns `first`                                                                                                                                                                                     | unit  |
-| MEM-002 | last heap 100000                      | heap 104000, counters unchanged                                                 | returns `null`                                                                                                                                                                                      | unit  |
-| MEM-003 | last heap 100000                      | heap 106000                                                                     | returns `changed`                                                                                                                                                                                   | unit  |
-| MEM-004 | one counter key changes               | evaluate                                                                        | returns `changed`                                                                                                                                                                                   | unit  |
-| MEM-005 | all unchanged                         | 300 s elapsed                                                                   | returns `heartbeat`, timing restarts                                                                                                                                                                | unit  |
-| MEM-006 | registry has a throwing provider      | collect                                                                         | other providers return normally, the thrower is skipped                                                                                                                                             | unit  |
-| MEM-007 | CLI sampler                           | inject readMemoryUsage                                                          | second onSample argument is the full memoryUsage, protocol sample shape unchanged                                                                                                                   | unit  |
-| MEM-008 | host 60s tick                         | advance timer                                                                   | logger.info prints a line with `role=utility_host heapUsedKb=`; no more output after stop; the same reading is also sent as `HostResourceSample` via parentPort                                     | unit  |
-| MEM-009 | main 6 x 10s ticks                    | advance timer                                                                   | logger.info prints a line with `role=main` and `ws.<process_role>=`; the same reading is also the main heap sample of `perf_process_window`                                                         | unit  |
-| MEM-010 | renderer production build             | `logMemoryDiagnostics`                                                          | still calls the bridge; no-op without a bridge                                                                                                                                                      | unit  |
-| MEM-011 | renderer 60s tick                     | advance timer                                                                   | the same reading sends the heap sample over the preload bridge and writes a local line per the gate; ticks skipped by the gate still send the sample; a bridge throw does not affect the local line | unit  |
-| MEM-012 | CLI recorder with fake profiler       | first `start` under 25 ms                                                       | state `active`, `startSampling` called with `samplingInterval` 1 MiB and `stackDepth` 16                                                                                                            | unit  |
-| MEM-013 | start takes 30 ms (fake clock)        | `start`                                                                         | state `budget-exceeded`, profiler disposed, no read on later ticks                                                                                                                                  | unit  |
-| MEM-014 | `startSampling` throws                | `start`                                                                         | state `unsupported`, profiler disposed                                                                                                                                                              | unit  |
-| MEM-015 | tick heapUsed >= 0.8 x heapLimit      | `sample`                                                                        | state `budget-exceeded`, file still written with that sample and no allocations change                                                                                                              | unit  |
-| MEM-016 | projection visits > 4096 nodes        | `sample`                                                                        | state `budget-exceeded`, allocations array keeps the previous value                                                                                                                                 | unit  |
-| MEM-017 | profile read throws                   | `sample`                                                                        | state `error`, profiler disposed, file written                                                                                                                                                      | unit  |
-| MEM-018 | 60 s window elapsed                   | `sample` while `active`                                                         | `profiler.reset` called, `windowStartedAt` advances, `profileCapturedAt` is set                                                                                                                     | unit  |
-| MEM-019 | sanitizer input                       | object with unknown keys, bad regex fields, non-finite numbers                  | output contains only known keys, bad strings become `""`, non-finite numbers become `0`, bad state returns `null`                                                                                   | unit  |
-| MEM-020 | writer, 3 own-instance files          | `writeMemoryDiagnostic`                                                         | at most one older own file remains plus the new one; temp `.memory-*.tmp` removed; mode `0700` on directory                                                                                         | unit  |
-| MEM-021 | writer, 20 other-instance files       | `writeMemoryDiagnostic`                                                         | at most 15 other files remain; files over 7 days or over 65536 bytes are removed                                                                                                                    | unit  |
-| MEM-022 | archive, cli-memory source            | 17 valid files, one invalid JSON, one oversized, one wrong name, one nested dir | 16 cap applied, invalid skipped as `invalid-memory-diagnostic`, oversized skipped as `metadata-policy`, wrong name and nested files not collected, `about.txt` lists the counts                     | unit  |
-| MEM-023 | log export, createLogArchiveArtifacts | memory dir with one valid file                                                  | file appears at `.zcode/cli/memory-diagnostics/<name>` and is not recency-filtered                                                                                                                  | unit  |
+| Case ID | Setup                            | Action                          | Assertions                                                                                                                                                                                          | Layer |
+| ------- | -------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| MEM-001 | empty gate                       | first evaluate                  | returns `first`                                                                                                                                                                                     | unit  |
+| MEM-002 | last heap 100000                 | heap 104000, counters unchanged | returns `null`                                                                                                                                                                                      | unit  |
+| MEM-003 | last heap 100000                 | heap 106000                     | returns `changed`                                                                                                                                                                                   | unit  |
+| MEM-004 | one counter key changes          | evaluate                        | returns `changed`                                                                                                                                                                                   | unit  |
+| MEM-005 | all unchanged                    | 300 s elapsed                   | returns `heartbeat`, timing restarts                                                                                                                                                                | unit  |
+| MEM-006 | registry has a throwing provider | collect                         | other providers return normally, the thrower is skipped                                                                                                                                             | unit  |
+| MEM-007 | CLI sampler                      | inject readMemoryUsage          | second onSample argument is the full memoryUsage, protocol sample shape unchanged                                                                                                                   | unit  |
+| MEM-008 | host 60s tick                    | advance timer                   | logger.info prints a line with `role=utility_host heapUsedKb=`; no more output after stop; the same reading is also sent as `HostResourceSample` via parentPort                                     | unit  |
+| MEM-009 | main 6 x 10s ticks               | advance timer                   | logger.info prints a line with `role=main` and `ws.<process_role>=`; the same reading is also the main heap sample of `perf_process_window`                                                         | unit  |
+| MEM-010 | renderer production build        | `logMemoryDiagnostics`          | still calls the bridge; no-op without a bridge                                                                                                                                                      | unit  |
+| MEM-011 | renderer 60s tick                | advance timer                   | the same reading sends the heap sample over the preload bridge and writes a local line per the gate; ticks skipped by the gate still send the sample; a bridge throw does not affect the local line | unit  |

@@ -18,10 +18,9 @@ import {
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { readSafeLocalStorage, writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 import {
-  applyFontSmoothingEnabled,
+  applyFontSmoothing,
   applyUiFontSizePx,
   FONT_SMOOTHING_STORAGE_KEY,
-  loadFontSmoothingEnabled,
   loadUiFontSizePx,
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
@@ -155,13 +154,12 @@ export interface ZCodeState extends FontPreferencesState {
   fileManagerNavigationOpenByWorkspace: Record<string, boolean>;
   setFileManagerNavigationOpen: (workspaceKey: string, open: boolean) => void;
 
+  /** Local macOS grayscale font smoothing preference. Broadcast-synced like theme and locale. */
+  fontSmoothingEnabled: boolean;
+  setFontSmoothingEnabled: (enabled: boolean) => void;
   /** Root UI font size in rem (px). */
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
-
-  /** macOS desktop only: antialiased font rendering. Broadcast-synced like theme and locale. */
-  fontSmoothingEnabled: boolean;
-  setFontSmoothingEnabled: (enabled: boolean) => void;
 
   /** Whether performance mode is enabled. */
   performanceMode: boolean;
@@ -343,19 +341,19 @@ export function createZCodeStore(
       });
     },
 
+    fontSmoothingEnabled: readSafeLocalStorage(FONT_SMOOTHING_STORAGE_KEY) !== "false",
+    setFontSmoothingEnabled: (enabled) => {
+      writeSafeLocalStorage(FONT_SMOOTHING_STORAGE_KEY, String(enabled));
+      applyFontSmoothing(enabled);
+      set({ fontSmoothingEnabled: enabled });
+    },
+
     uiFontSizePx: loadUiFontSizePx(),
     setUiFontSizePx: (fontSizePx: number) => {
       const normalizedFontSizePx = normalizeUiFontSizePx(fontSizePx);
       writeSafeLocalStorage(UI_FONT_SIZE_STORAGE_KEY, String(normalizedFontSizePx));
       applyUiFontSizePx(normalizedFontSizePx);
       set({ uiFontSizePx: normalizedFontSizePx });
-    },
-
-    fontSmoothingEnabled: loadFontSmoothingEnabled(),
-    setFontSmoothingEnabled: (enabled: boolean) => {
-      writeSafeLocalStorage(FONT_SMOOTHING_STORAGE_KEY, String(enabled));
-      applyFontSmoothingEnabled(enabled);
-      set({ fontSmoothingEnabled: enabled });
     },
 
     ...createFontPreferencesSlice((partial) => set(partial)),

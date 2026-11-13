@@ -15,7 +15,7 @@ export function InteractionRequestOriginBadge({
   }
 
   // description names which subagent is asking (dynamic-workflow subagents use `<name> (<siteId>@<ordinal>)`,
-  // see docs/dynamic-workflow/launch.md "Permissions inside a run"); the badge truncates, with the full text in the tooltip.
+  // see docs/dynamic-workflow/launch.md "Permissions inside a run"); the origin description wraps in full.
   const description = origin.description?.trim();
   const label = description
     ? intl.formatMessage({ id: "chat.interactionOrigin.subagent.named" }, { description })
@@ -41,6 +41,7 @@ export function InteractionRequestOriginBadge({
         className,
       )}
     >
+      {/* 完整换行避免长名称被裁切，连续的实例标识也不能撑出窄屏容器。 */}
       {label}
     </span>
   );

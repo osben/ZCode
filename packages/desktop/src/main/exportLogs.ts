@@ -17,11 +17,8 @@ import { dirname, join, posix } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
+import { CLI_MEMORY_DIAGNOSTIC_DIRECTORY, CLI_MEMORY_FILE_PATTERN } from "@zcode/shared";
 
-import {
-  CLI_MEMORY_DIAGNOSTICS_DIR_NAME,
-  CLI_MEMORY_DIAGNOSTIC_FILE_NAME_PATTERN,
-} from "@zcode/shared";
 import {
   createFeedbackDiagnosticArchive,
   getAppConfigDir,
@@ -55,15 +52,6 @@ function getCuaHelperRunDir() {
 
 function isCuaHelperDiagnosticFileName(fileName: string): boolean {
   return fileName.endsWith(".exit.log");
-}
-
-/** Agent CLI heap-profile records written by the protocol recorder (memory-<ms>-<instanceId>.jsonl). */
-function getZCodeCliMemoryDiagnosticsDir(): string {
-  return join(getZCodeCliDir(), CLI_MEMORY_DIAGNOSTICS_DIR_NAME);
-}
-
-function isCliMemoryDiagnosticFileName(fileName: string): boolean {
-  return CLI_MEMORY_DIAGNOSTIC_FILE_NAME_PATTERN.test(fileName);
 }
 
 interface LogArchiveFileEntry {
@@ -1276,15 +1264,13 @@ export async function createLogArchiveArtifacts(
     files,
   );
 
-  // Agent CLI heap-profile records: flat directory, file-name allowlist only, no lookback window (see memory-diagnostics-log.md).
+  const zcodeCliDir = getZCodeCliDir();
   await collectLogArchiveFilesByName(
-    getZCodeCliMemoryDiagnosticsDir(),
-    posix.join(".zcode", "cli", CLI_MEMORY_DIAGNOSTICS_DIR_NAME),
-    isCliMemoryDiagnosticFileName,
+    join(zcodeCliDir, CLI_MEMORY_DIAGNOSTIC_DIRECTORY),
+    posix.join(".zcode", "cli", CLI_MEMORY_DIAGNOSTIC_DIRECTORY),
+    (name) => CLI_MEMORY_FILE_PATTERN.test(name),
     files,
   );
-
-  const zcodeCliDir = getZCodeCliDir();
   // Troubleshooting agent CLI also requires its runtime configuration and model I/O traces.
   // config.json is the active configuration and rollout contains model-I/O call traces; neither is under ~/.zcode/cli/log,
   // so collect them separately to reconstruct the full situation.
@@ -1457,7 +1443,7 @@ export async function createFeedbackLogArchiveFromExportLogs(
   return createFeedbackDiagnosticArchive({
     sources: [
       {
-        directory: getZCodeCliMemoryDiagnosticsDir(),
+        directory: join(getZCodeCliDir(), CLI_MEMORY_DIAGNOSTIC_DIRECTORY),
         archivePrefix: ".zcode/cli/memory-diagnostics",
         contentPolicy: "cli-memory",
         onlyCurrentDay: false,
