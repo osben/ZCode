@@ -13,6 +13,13 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Option<Result<Reply, RpcError>> {
+    // Fork: the Node helper answers the forwarded families when the Host configured one. `None` falls through, so
+    // an unadvertised method keeps its answer (`-32601`, or `{"runs": []}` for the run list).
+    if let Some(helper) = server.context.node_helper()
+        && let Some(result) = helper.forward(method, &params).await
+    {
+        return Some(result.map(Reply::new));
+    }
     let result = match method {
         "v4/conversation/plans" => plans(server, &params).await,
         // Fork: the App's per-turn file summary queries (specs/fork-rust-agent-parity.md).

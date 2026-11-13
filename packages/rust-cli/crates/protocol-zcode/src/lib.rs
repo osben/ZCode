@@ -23,6 +23,7 @@ mod index;
 mod legacy;
 mod lifecycle;
 mod live;
+mod network_capture;
 mod preparation;
 mod projection;
 mod reservations;
@@ -44,8 +45,13 @@ use serde_json::json;
 
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
+pub use fork::node_helper::{
+    NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
+    Timing as NodeHelperTiming,
+};
 pub use fork::{Admission, WorkspaceAdmin, WorkspaceTarget};
 pub use headers::HostHeaders;
+pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
 pub use topic_resource::HostTopicResources;
 

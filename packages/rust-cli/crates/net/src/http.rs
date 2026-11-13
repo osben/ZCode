@@ -64,6 +64,9 @@ pub struct HttpRequest {
     pub body: Bytes,
     /// 从发出请求到收到响应头的时限；为空时不限（调用方用取消令牌结束）。
     pub timeout: Option<Duration>,
+    /// Fork: whether the egress observer sees this request (the Network panel, specs/fork-rust-network-capture.md).
+    /// True by default; MCP traffic turns it off like Node's `withoutNetworkCapture`.
+    pub observed: bool,
 }
 
 impl HttpRequest {
@@ -74,6 +77,7 @@ impl HttpRequest {
             headers: Vec::new(),
             body: body.into(),
             timeout: None,
+            observed: true,
         }
     }
 
@@ -84,11 +88,19 @@ impl HttpRequest {
             headers: Vec::new(),
             body: Bytes::new(),
             timeout: None,
+            observed: true,
         }
     }
 
     pub fn header(mut self, name: impl Into<String>, value: impl Into<HeaderValue>) -> Self {
         self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// Fork: hides this request from the egress observer (Node `withoutNetworkCapture`).
+    #[must_use]
+    pub fn unobserved(mut self) -> Self {
+        self.observed = false;
         self
     }
 }

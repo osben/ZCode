@@ -8,6 +8,7 @@ mod child_processes;
 pub(crate) mod commands;
 mod file_summary;
 pub(crate) mod methods;
+pub mod node_helper;
 mod queue;
 mod release_under_directory;
 pub(crate) use queue::settle_running_turn;

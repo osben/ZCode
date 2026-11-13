@@ -4,6 +4,7 @@ pub(crate) mod app_server;
 pub(crate) mod app_workspace;
 pub(crate) mod clipboard;
 pub(crate) mod editor;
+pub(crate) mod node_helper;
 pub(crate) mod print;
 pub(crate) mod tui;
 pub(crate) mod tui_account;
