@@ -9,6 +9,7 @@ mod attachment_share;
 mod attachment_text;
 mod attachments;
 mod child_runs;
+mod cipher;
 mod commands;
 pub mod context;
 mod fork;
@@ -37,6 +38,7 @@ use rust_cli_protocol_core::connection::{self, Options, Peer};
 use serde_json::json;
 use tokio::io::AsyncBufRead;
 
+pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use headers::HostHeaders;
 pub use server::Defaults;

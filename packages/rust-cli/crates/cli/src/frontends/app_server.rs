@@ -16,7 +16,7 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
-use rust_cli_protocol_zcode::{Context, Defaults, HostHeaders, Startup};
+use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
 
 use crate::assemble::{self, Controller};
 use crate::process::{ControllerRun, Start};
@@ -104,7 +104,12 @@ async fn serve(
         model_io,
         ..
     } = run;
-    let spec = Controller::app(Arc::new(HostHeaders::new(context.clone())), desktop_context);
+    // 凭据加解密委托 Host（Main 持有密钥）：standalone 不经这里（specs/fork-rust-credential-cipher.md）。
+    let spec = Controller::app(
+        Arc::new(HostHeaders::new(context.clone())),
+        Arc::new(HostCredentialCipher::new(context.clone())),
+        desktop_context,
+    );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
