@@ -297,7 +297,8 @@ the TUI's `FamilyStatus` carries the same three states.
 
 - `Unreadable` when `credentials.json` cannot be read (`CredentialStore::read` fails), or this family's login or
   manual key read fails with `Unavailable`/`Decrypt`. It is per family: one family's undecryptable value does not
-  mark the other family.
+  mark the other family. Values both families share (the ZCode JWT, `oauth:active_provider`) do not decide a
+  family's sign-in, so they are not read for it.
 - `SignedOut` only when the values are absent (the existing rule).
 - TUI: the family row says "sign-in unreadable"; the family page shows an Account row "Could not read the saved
   sign-in" and offers neither Sign in nor Sign out (a write would abort, product rule 3); the session page's Account
@@ -311,13 +312,17 @@ keeps running in the `default-model` scope (TUI and app-server alike, held by `B
 
 1. It waits for `Platform::credentials_readable()`, which resolves when a registry read
    (`Registry::current`) succeeds after an unreadable one. Recovery is pull-based: the next catalog read does it
-   (a Host model or registry request, a session's endpoint lookup, the TUI model picker or settings).
+   (a Host model or registry request, a session's endpoint lookup, the TUI model picker or settings). The registry
+   publishes that read's snapshot before it signals readable: the woken task's catalog read passes the change gate
+   without reading, so it must find the recovered snapshot.
 2. It runs the same choice again (`--model`, effort) and revises `DefaultModel` (`SettleDefault::settle` may be
    called again; `settled()` returns the latest value).
 3. A non-degraded result is remembered (`memory::remember`); a degraded one waits again.
 
-Only sessions created after the revision take the new default. Existing sessions keep their selection. The
-app-server's `Defaults.selection` becomes the shared `DefaultModel`, read at each session creation.
+Only sessions created after the revision take the new default. Existing sessions keep their stored selection. The
+app-server's `Defaults.selection` becomes the shared `DefaultModel`, read at each session creation. Readers that
+already read the default live keep doing so: a stored session with no model, and side tools (web search, PDF) with
+no model of their own.
 
 A degraded choice that finds no model does not write the model port's permanent "no model" reason
 (`Assembled::late`): it would outlive the recovery. Until then, the endpoint lookup reports that the credentials could
@@ -360,8 +365,10 @@ app-server keeps `HostCredentialCipher` (product rule 1).
   checks the shape (`Decrypt`), then the source and fingerprint (`Unavailable`), then the tag (`Decrypt`).
 - `enc:v1:` values: the legacy candidates are `[secret, secret.trim(), fallback]` with the env secret, or the
   fallback alone with the OS source (Node passes `ZCODE_CREDENTIAL_SECRET: undefined`). Plaintext values are returned
-  as they are. Neither needs the keyring value, so reading them never touches the keyring (Node resolves the key
-  first; the outputs are the same).
+  as they are. Neither needs the keyring value, so reading them never touches the keyring. This is a deliberate
+  difference from Node, which resolves the key first (`getKey(true)`): there a locked or missing OS store fails a
+  plaintext or `enc:v1:` read as `Unavailable`, and a read on a fresh install creates the OS key and pins
+  `credential-source`. Rust returns the value and creates nothing on a read. Successful outputs are the same.
 - Any other `enc:` prefix: `Decrypt`.
 - Cache: one key lookup per cipher; a failure is cached only when the lock was acquired (a denied Keychain
   prompt is not repeated; a lock timeout is retried).
@@ -383,8 +390,8 @@ app-server keeps `HostCredentialCipher` (product rule 1).
 | B5  | Host `wireClient`                                                       | one `process/hostAttached` per client, after `onRequest`        |
 | B6  | Node transport receives `process/hostAttached`                          | dropped, connection unaffected                                  |
 | B7  | Stored values unreadable                                                | those families `Unreadable`, no Sign in / Sign out              |
-| B8  | One family's token undecryptable                                        | that family `Unreadable`, the other unaffected                  |
-| B9  | Default settled degraded, then a registry read succeeds                 | default revised to the full choice and remembered               |
+| B8  | One family's token, or a shared value, undecryptable                    | that family `Unreadable` (none for a shared value)              |
+| B9  | Default settled degraded, then a registry read succeeds                 | recovered snapshot published first; default revised, remembered |
 | B10 | Standalone: Node-encrypted `enc:v2:os` / `enc:v2:env` values            | decrypted; Rust output decrypts in Node                         |
 | B11 | Standalone: fingerprint or source mismatch                              | `Unavailable`                                                   |
 | B12 | Standalone: both env sources / bad secret file / pinned non-`os` source | `Unavailable`                                                   |

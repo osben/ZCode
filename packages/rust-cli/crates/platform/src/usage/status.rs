@@ -3,9 +3,9 @@
 use rust_cli_kernel_api::provider::CatalogConnection;
 use serde_json::Value;
 
-use super::{FAMILIES, Login};
+use super::FAMILIES;
 use crate::account;
-use crate::credentials::Credentials;
+use crate::credentials::{CredentialError, Credentials};
 use crate::{ListedModel, Platform};
 use rust_cli_base::account::Family;
 
@@ -90,10 +90,16 @@ impl Platform {
             let (login, account) = match credentials.as_ref() {
                 None => (FamilyLogin::Unreadable, String::new()),
                 Some(c) => {
-                    let login = match Login::read(c, family).await {
-                        Ok(login) if login.identity.is_some() && login.token.is_some() => {
-                            FamilyLogin::SignedIn
-                        }
+                    // Only this family's own values: an undecryptable shared value (the ZCode JWT, the active
+                    // provider) must not mark every family unreadable (fork spec F2, B8).
+                    let own = async {
+                        Ok::<_, CredentialError>((
+                            account::profile_id(c, family).await?,
+                            c.present(account::oauth_key(family.as_str())).await?,
+                        ))
+                    };
+                    let login = match own.await {
+                        Ok((Some(_), Some(_))) => FamilyLogin::SignedIn,
                         Ok(_) if individual.is_empty() => FamilyLogin::SignedOut,
                         Ok(_) => match account::manual_authorized(c, &individual).await {
                             Ok(true) => FamilyLogin::SignedIn,

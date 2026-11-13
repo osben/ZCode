@@ -150,11 +150,26 @@ impl Registry {
                 return self.published.lock_unpoisoned().current.clone();
             }
         };
+        let unreadable = inputs.unreadable;
+        let current = self.publish(seq, stamps, now, inputs).await;
+        // Only after this read's snapshot is published: a waiter woken by `readable()` reads the catalog next, and
+        // the change gate (already recorded) hands it the published snapshot without reading.
         self.unreadable.send_if_modified(|reason| {
-            let changed = *reason != inputs.unreadable;
-            *reason = inputs.unreadable;
+            let changed = *reason != unreadable;
+            *reason = unreadable;
             changed
         });
+        current
+    }
+
+    /// Publishes the snapshot of one read (the inputs already read), or keeps the published one.
+    async fn publish(
+        &self,
+        seq: u64,
+        stamps: Vec<FileStamp>,
+        now: Instant,
+        inputs: Inputs,
+    ) -> Arc<Current> {
         if inputs.unreadable.is_none() {
             self.credentials.note_ok();
         }

@@ -138,3 +138,22 @@ async fn one_undecryptable_family_does_not_mark_the_other() {
     assert_eq!(families[1].login, FamilyLogin::SignedIn);
     assert_eq!(families[1].account, "Dev");
 }
+
+/// B8: values shared by both families (the ZCode JWT, the active provider) do not decide a family's sign-in, so an
+/// undecryptable shared value marks neither family unreadable.
+#[tokio::test]
+async fn an_undecryptable_shared_value_does_not_mark_the_families() {
+    let (_dir, platform) = platform_with(
+        std::sync::Arc::new(OneBadValue),
+        json!({
+            "zcodejwttoken": "enc:v2:os:0123456789abcdef01234567:x",
+            "oauth:active_provider": "enc:v2:os:0123456789abcdef01234567:y",
+            "oauth:bigmodel:access_token": "at-bm",
+            "oauth:bigmodel:user_info": json!({"id": "1", "username": "dev", "displayName": "Dev"}).to_string(),
+        }),
+    )
+    .await;
+    let families = platform.family_accounts().await;
+    assert_eq!(families[0].login, FamilyLogin::SignedOut, "{families:?}");
+    assert_eq!(families[1].login, FamilyLogin::SignedIn, "{families:?}");
+}
