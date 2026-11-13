@@ -87,7 +87,7 @@ Filled from the Rust E2E run; one row per method family or command group. Status
 
 ### Not ported yet (answer `-32601`, logged as `protocol.method.unsupported`)
 
-- Automations and every legacy `session/*` method they drive (`automation/*`, `session/create`, `session/send`, `session/resume`, `session/stop`, `session/messages`, `session/events`, `session/subscribe`, ...), `offPeak/*`.
+- Automations and off-peak tasks: the run path (`session/create`, `session/resume`, the `sendText` automation fields) and the Cron / OffPeak tools that call the Host's `automation/*` and `offPeak/*` (agent→Host requests, which the agent never answers). Plan, owners and acceptance in [fork-rust-automations.md](fork-rust-automations.md); `session/send`, `session/messages`, `session/events`, `session/subscribe` and `session/stop` stay `-32601` there on purpose.
 - `lsp/*`, `mcp/list`, `mcp/readResource`, `workspace/mcp/trust`, `workspace/hooks/trustGrant`.
 - `workspace/generateText`, `workspace/cancelGenerateText`, `provider/testModelConnectivity`, `subagents/readRuntimeConfig`.
 - `process/childProcesses`, `process/networkCapture`, `session/cancelBackgroundTask`, `topic/resource/*`.

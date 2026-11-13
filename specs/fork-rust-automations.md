@@ -1,0 +1,173 @@
+# Automations and off-peak tasks on the Rust agent (fork)
+
+Part of [fork-rust-agent-parity.md](fork-rust-agent-parity.md). The Rust agent (`packages/rust-cli`, `zcode-rs`,
+selected with `ZCODE_FORK_AGENT_RUNTIME=rust`) must run desktop scheduled automations and off-peak tasks the way the
+Node agent does. The Host, the scheduler and the storage do not change.
+
+## Background: which side owns what
+
+The parity list used to say that `automation/*`, `offPeak/*` and "every legacy `session/*` method they drive" answer
+`-32601` on Rust. That is the wrong direction for half of them:
+
+- `automation/create|update|list|delete|pause|checkTaskBinding` and `offPeak/create|list` are **agent→Host** requests.
+  The Host serves them (`packages/services/src/zcode-agent/zcodeAgentService.ts` around 3556–3912). The agent only
+  sends them, from its Cron and OffPeak tools (Node `bootstrap/src/zcode-protocol/automation-port.ts`,
+  `offpeak-port.ts`). The Rust agent never has to answer them.
+- The **Host→agent** methods on a run's path are the legacy `session/create` and `session/resume`, plus the v4
+  `sendText` fields that mark an automation or off-peak turn.
+
+| Owner                       | Owns                                                                                                                                                                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scheduler process (desktop) | Claiming due rows, the run row (`runId = automationId:scheduledAt`), dispatch requests (`packages/desktop/src/scheduler/index.ts`)                                                                                                                                                      |
+| Host                        | Tables `automations`, `automation_runs`, `off_peak_tasks` in `~/.zcode/v2/tasks-index.sqlite` (not the CLI `db.sqlite`); `dispatchCronRun` / `dispatchManualAutomationRun` (`desktop/src/host/index.ts`); run outcome (`cronRunLifecycle.ts`); manual-claim heartbeat; off-peak tickets |
+| Agent (Node or Rust)        | The session and its turns; the turn-scoped automation identity and tool limits; the Cron / OffPeak tools, which reach the Host only through the agent→Host requests above                                                                                                               |
+
+The agent never reads or writes the automation tables, so an automation created on one runtime is listed, run,
+paused and deleted the same way on the other. Cross-runtime checks are about **sessions**: an automation bound to a
+session (`targetTaskId`) resumes that session on whichever runtime is selected.
+
+## Event order
+
+A scheduled or manual run ("Run now" calls the same `dispatchCronRun` without waiting for the clock):
+
+```mermaid
+sequenceDiagram
+  participant Sch as Scheduler
+  participant H as Host
+  participant A as Agent (Node or Rust)
+  Sch->>H: CronRun {automationId, runId}
+  alt new session (no targetTaskId)
+    H->>A: session/create {workspace, mode, model, thoughtLevel, persistence:"deferred", titleGenerationEnabled:false, mcpServers}
+    A-->>H: legacy snapshot (session not persisted yet)
+  else bound session (targetTaskId)
+    H->>A: session/resume {sessionId, workspace, mcpServers}
+    H->>A: v4/command switchModelConfig (CAS), switchCollaborationMode
+    H->>A: session/resume
+  end
+  H->>A: v4/command sendText {commandId=runId, text, automationId, toolDisallowlist:[CronCreate,CronUpdate,CronDelete], heldQueueDisposition:"keepQueueAndSend"}
+  A->>A: persist the draft, admit the turn (inputId = commandId)
+  A-->>H: v4/conversation/frame sessions-index phase running
+  opt the run calls a Cron tool
+    A->>H: automation/list or automation/pause (CronList, CronPauseSelf)
+  end
+  A-->>H: v4/conversation/frame sessions-index phase completedSuccess | completedInterrupted | error
+  H->>H: markRunOutcome, release manual claim, mark task unread
+  H->>A: session/read {runtimePolicy:"existing-only", contentProfile:"index"}
+```
+
+The Host settles a run only on an **observed non-terminal → terminal** phase change in the
+`sessions-index/<workspaceKey>` topic (`zcodeTaskIndexSyncer.ts` around 844). A run whose session never shows a
+non-terminal phase stays "running" forever. That is the headline acceptance scenario of slice 1.
+
+CronCreate inside an ordinary user turn:
+
+```mermaid
+sequenceDiagram
+  participant A as Agent tool CronCreate
+  participant H as Host
+  A->>A: refuse if the turn carries an automation id
+  A->>H: automation/checkTaskBinding {targetTaskId: own session, workspace}
+  Note over A,H: -32601 only: fall back to automation/list and filter by targetTaskId; any other error fails closed
+  A->>H: automation/create {cronExpr, prompt, title, recurring, modelSelection, mode, targetTaskId, ...}
+  H-->>A: {automation}
+  A->>A: freeze the session title to the automation title
+```
+
+## Slices
+
+### Slice 1: run dispatch (Host→agent)
+
+1. **`session/create`** (Node `server-operations.ts` `createSession`). Params validated by the inbound schema
+   (`zcodeSessionCreateParamsSchema`). The session is created like a v4 `createSession` without a first input: it
+   stays a draft until the first accepted input persists it (the Rust draft is already Node's `persistence:"deferred"`;
+   `"immediate"` persists it at create). `model` and `thoughtLevel` choose the selection, `mode` the permission mode.
+   `titleGenerationEnabled:false` turns off model-generated titles for the session's lifetime in this process (Node
+   `titleGeneration: {enabled:false}`), so the run keeps the prompt as its title. An existing or soft-deleted id is
+   refused with `-32602 "sessionId already exists"`. The answer is the legacy snapshot (`session/read` shape).
+   Fields the Rust agent does not support are accepted and ignored when Node ignores them for desktop
+   (`toolAllowlist`, `importedHistory`, `dynamicWorkflow*`, `parentSessionId`); `toolDenylist` is honoured for the
+   session's lifetime; `offPeakToolEnabled` follows slice 3; an `incognito` profile is refused, as today's Rust
+   createSession refuses an incognito profile it cannot honour.
+2. **`session/resume`** (Node `resumeSession`): opens a stored session (cold) or returns the live one, applies
+   `thoughtLevel` only as a hint for a session without a stored selection, and answers the legacy snapshot. A missing
+   session answers the same error as `session/read`.
+3. **`session/setMode`, `session/setThoughtLevel`, `session/setModel`**: apply the change through the session actor
+   (the same commands as `switchCollaborationMode` / `switchModelConfig`) and answer the legacy snapshot. The Host uses
+   them as fallbacks (`setMode` for `auto`, `setThoughtLevel` after a create schema rejection).
+4. **`sendText` turn identity** (Node `prompt-turn.ts`): `automationId` (trimmed, non-empty) and `toolDisallowlist`
+   ride on the input's execution and apply to that turn only (a queued input keeps its own). The turn's tool list
+   drops every name in the disallowlist, plus CronCreate/CronUpdate/CronDelete when the turn has an automation id.
+   CronPauseSelf is offered only on a turn with an automation id and pauses only that id. A turn's automation id is
+   never derived from `commandId` or `inputId`.
+5. **`session/list`** keeps answering an empty list: the Host's directory lookup treats a missing entry as "no parent
+   chain" and continues.
+
+### Slice 2: Cron tools under the desktop agent (agent→Host)
+
+Under the desktop agent (`node_desktop`), the Cron tools are Node's five, with Node's schemas, descriptions, model
+instructions and permission specs (`core/src/tool/handlers/cron.ts`, `contracts/src/tools/automation.ts`):
+CronCreate, CronUpdate, CronList, CronDelete, CronPauseSelf. They call the Host with the requests above through the
+same peer-request pattern as `protocol-zcode/src/headers.rs`. The local file store (`.zcode/scheduled_tasks.json`,
+`tools/src/cron_durable.rs`) and the Claude-style Cron tools are **not** assembled for a desktop session, so a schedule
+is never fired twice and every schedule shows in the Automations UI. ScheduleWakeup (`/loop`) is not a Cron tool and
+is unchanged. The TUI keeps its local cron.
+
+Port rules (`automation-port.ts`):
+
+- CronCreate, CronUpdate and CronDelete refuse on a turn with an automation id (`... is not allowed while running a
+scheduled automation.`), before any request.
+- CronCreate refuses in a session already bound to an automation (`automation/checkTaskBinding`); `-32601` alone falls
+  back to `automation/list`; any other failure refuses with `AUTOMATION_CREATE_BOUND_SESSION_CHECK_ERROR`.
+- CronCreate sends the session's stable selection as `modelSelection` and its permission mode as `mode` (`auto` →
+  `build`), `targetTaskId` = the session id, the interval carrier or `maxRuns` like Node, and freezes the session title
+  to the automation title after success (a failure to freeze is only logged).
+- Every request carries the session's `workspace` ref (`sessionWorkspaceRouting`).
+- A create limit error from the Host ends the turn's tool recovery like Node `AutomationCreateLimitError`.
+- Remote workspaces (`workspaceIdentity` of a remote kind) get no Cron tools.
+- Incognito `automationTools: false` removes them, as today.
+
+### Slice 3: off-peak
+
+OffPeakCreate / OffPeakList through `offPeak/create|list`, registered only when the Host enabled them
+(`offPeakToolEnabled` on create/resume or `workspace/updateOffPeakToolPolicy`); the `sendText` off-peak fields
+(`offPeakTaskId`, `offPeakRunType`, `modelExecution.offPeak`), the `v4/offPeak/lifecycle` notifications matched on
+`executionId`, and `v4/conversation/offPeakControl` (`replace_ticket`, `cancel`). Until slice 3 lands,
+`workspace/updateOffPeakToolPolicy` answers `enabled: false`, so the Host does not assume the tools exist.
+
+## Not ported (stay `-32601`)
+
+- `session/send`: on the automation path it is only the Host's attachment fallback. Node's legacy `session/send`
+  lets a local path bypass the attachment ref trust boundary
+  ([fork-attachment-ref-trust-boundary.md](fork-attachment-ref-trust-boundary.md)); the Rust agent keeps every input
+  on v4 `sendText`, where the boundary holds.
+- `session/messages`, `session/events` (app-control, bot topic summaries), `session/stop` (the v4 `stop` command
+  covers runs).
+- `session/subscribe` + `session/event`: only the best-effort bot delivery of a run result; bots are not ported.
+
+## Acceptance scenarios
+
+Rust tests (protocol-zcode, tools):
+
+1. `session/create` with `persistence:"deferred"` leaves no stored row; the first `sendText` persists it; the
+   sessions-index topic shows the session `running` and then `completedSuccess` (and `error` for a failing turn).
+2. `session/create` answers the legacy snapshot that validates against `zcodeSessionStateSnapshotSchema` (mode,
+   model, thought level as requested); an existing or deleted id is refused.
+3. `titleGenerationEnabled:false` produces no title request after the first turn; without it a title request runs.
+4. `session/resume` of a stored (cold) session and of a live one answers the snapshot; a missing id is an error.
+5. A `sendText` with `automationId` hides CronCreate/CronUpdate/CronDelete and the disallowlisted tools from that turn
+   only, offers CronPauseSelf, and the next ordinary turn sees the normal tool list without CronPauseSelf.
+6. Desktop session: the tool catalog has Node's five Cron tools and no local cron store; CronCreate sends
+   `automation/checkTaskBinding` then `automation/create` with the session's selection, mode, `targetTaskId` and
+   workspace; a bound session refuses; a non-`-32601` check failure refuses; `-32601` falls back to `automation/list`;
+   success freezes the title. CronPauseSelf sends `automation/pause` with the turn's id.
+
+Desktop E2E in the Linux box, on both runtimes (`packages/desktop/test/e2e`):
+
+- `automations/schedule/automations-create-manage`
+- `conversation-session/automations/conversation-session-automation-cron-create`, `-cron-relative`,
+  `-cron-update`, `-pause-self`, `-run-title-stable`
+- slice 3: `conversation-session-offpeak-create`, `-offpeak-create-existing-session`, `-off-peak-invalid-ticket`,
+  `automations/off-peak/off-peak-create-manage`
+
+Cross-runtime: an automation created by CronCreate on Node lists and runs ("Run now") on Rust in the same bound
+session, and the reverse.
