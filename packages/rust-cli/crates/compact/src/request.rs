@@ -110,6 +110,8 @@ impl SessionOps for CollectSink {
         ))
     }
 
+    async fn freeze_title(&self, _title: String) {}
+
     async fn arm_monitor(
         &self,
         _monitor: rust_cli_kernel_api::monitor::MonitorArmed,

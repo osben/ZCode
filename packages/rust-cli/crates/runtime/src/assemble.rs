@@ -121,6 +121,26 @@ fn bash_settings(
     }
 }
 
+/// Fork: the local cron's store. Under the Host's automation port the Host schedules, so the local cron gets none even
+/// when an embedder passes one: persisted local jobs never fire beside the Host's (specs/fork-rust-automations.md).
+pub(crate) fn cron_store(
+    extensions: &Extensions,
+) -> Option<Arc<dyn rust_cli_kernel_api::cron_store::CronStore>> {
+    match extensions.automation {
+        Some(_) => None,
+        None => extensions.cron_store.clone(),
+    }
+}
+
+/// Fork: the extension config with `host_automations` derived from the automation port, the one place both are known,
+/// so the builtin `/loop` is hidden exactly when the Cron tools are the Host's.
+pub(crate) fn ext_config(extensions: &Extensions) -> rust_cli_ext::ExtConfig {
+    rust_cli_ext::ExtConfig {
+        host_automations: extensions.automation.is_some(),
+        ..extensions.config.clone()
+    }
+}
+
 /// 基础工具的注册表（tools 的工具，ext 与 agents 之前的那一层）。
 pub(crate) fn base_tools(
     ports: &Ports,
@@ -130,13 +150,17 @@ pub(crate) fn base_tools(
 ) -> BaseTools {
     // `ENABLE_TOOL_SEARCH` 为关时 ToolSearch 不启用（工作线 F89，tools-more.md §3.2.1）。
     let catalog = Arc::new(ToolCatalog::new(defaults.limits.request.tool_search));
-    let cron = CronBoard::new(ports.clock.clone(), extensions.cron_store.clone());
+    let cron = CronBoard::new(ports.clock.clone(), cron_store(extensions));
     // Read 整读 PDF 前按会话当前模型的生效配置查 `supports_pdf`（tools-files.md §1.5，修复线 F24）。
     let side_model = || rust_cli_tools::SideModel {
         model: ports.model.clone(),
         selection: defaults.selection.clone(),
     };
-    let builtin = rust_cli_tools::builtin_with(gate.clone(), Some(side_model()));
+    let builtin = rust_cli_tools::builtin_with_code(
+        gate.clone(),
+        Some(side_model()),
+        extensions.code_intelligence.clone(),
+    );
     let read_files: Arc<ReadFileState> = builtin.file_state().cloned().unwrap_or_default();
     let worktrees = Arc::new(WorktreeBoard::default());
     // Monitor（工作线 F83，tools-more.md §19）：单次的 `-p` 上限 10 分钟，其余 30 分钟。
@@ -147,6 +171,11 @@ pub(crate) fn base_tools(
         Vec::new()
     };
     let bash = bash_settings(defaults, extensions, traits);
+    // Fork: under the desktop Host the Cron tools are Node's, scheduling in the Host's store.
+    let cron_tools = match &extensions.automation {
+        Some(port) => rust_cli_tools::automation_tools(port.clone()),
+        None => rust_cli_tools::cron_tools(&cron, extensions.monitor),
+    };
     // Fork: only where a Host serves `topic/resource/read` (specs/fork-rust-topic-resource.md).
     let topic: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> = match &extensions.topic_resources {
         Some(resources) => vec![Arc::new(rust_cli_tools::ReadTopicResourceTool::new(
@@ -168,7 +197,7 @@ pub(crate) fn base_tools(
                 ports.ids.clone(),
             ))
             .with_tools(rust_cli_tools::web_tools(side_model(), ports.clock.clone()))
-            .with_tools(rust_cli_tools::cron_tools(&cron, extensions.monitor))
+            .with_tools(cron_tools)
             // `/loop` 动态模式的自定节奏（L17，tools-more.md §17.2）：默认注册、不延迟。
             .with_tools(vec![Arc::new(rust_cli_tools::ScheduleWakeupTool::new(
                 &cron,
@@ -231,6 +260,7 @@ pub(crate) fn context(
     config: ContextConfig,
     (agent_catalog, tools, ext): (&Arc<AgentCatalog>, &BaseTools, &Ext),
     incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> Arc<PromptAssembler> {
     let machine = ports.environments.primary_machine();
     let assembler = PromptAssembler::new(
@@ -254,7 +284,8 @@ pub(crate) fn context(
             .with_machines(ports.environments.clone()),
     ))
     .with_machines(ports.environments.clone())
-    .with_incognito(incognito.clone());
+    .with_incognito(incognito.clone())
+    .with_code_intelligence(code);
     Arc::new(assembler)
 }
 

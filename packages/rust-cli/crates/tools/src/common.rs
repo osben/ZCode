@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::env::{EnvError, EnvPath};
 use rust_cli_kernel_api::env_files::{FileStat, ListDir, PathStyle, StatFile};
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{Tool, ToolError, ToolUseContext, Validation};
@@ -21,6 +22,8 @@ pub struct FileTools {
     pub(crate) gate: Arc<dyn PermissionGate>,
     /// Read 整读 PDF 前查模型能力用（tools-files.md §1.5，修复线 F24）；没有时按能读处理。
     pub(crate) model: Option<crate::web_fetch::SideModel>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"); only the app-server gives one.
+    pub(crate) code: Option<Arc<dyn CodeIntelligence>>,
 }
 
 impl FileTools {
@@ -29,7 +32,24 @@ impl FileTools {
             state,
             gate,
             model: None,
+            code: None,
         }
+    }
+
+    /// Fork: Read prewarms and Edit / Write publish their mutations to the language-server runtime.
+    #[must_use]
+    pub fn with_code_intelligence(mut self, code: Arc<dyn CodeIntelligence>) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    /// The runtime for this call: Node builds subagent runtimes without it, and it serves only the session's own
+    /// environment.
+    pub(crate) fn code_for(&self, context: &ToolUseContext) -> Option<&Arc<dyn CodeIntelligence>> {
+        if context.agent.is_some() || context.machine.name().remote().is_some() {
+            return None;
+        }
+        self.code.as_ref()
     }
 
     /// 模型端口与没有会话 owner 时的回退选择：Read 按会话当前模型的生效配置判断能否整读 PDF。

@@ -128,6 +128,11 @@ impl Inbound {
         Ok(())
     }
 
+    /// Fork: whether a reply schema exists for `method`; [`Self::reply`] passes a method without one unchecked.
+    pub fn knows_reply(&self, method: &str) -> bool {
+        self.replies.contains_key(method)
+    }
+
     /// 本端发出的请求得到的回复。
     pub fn reply(&self, method: &str, result: &Value) -> Result<(), String> {
         match self.replies.get(method) {

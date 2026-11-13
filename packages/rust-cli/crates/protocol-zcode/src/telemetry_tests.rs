@@ -64,6 +64,7 @@ fn allowed(kind: &str) -> Vec<&'static str> {
             "phase",
             "toolCallId",
             "toolName",
+            "automationId",
             "durationMs",
             "errorCode",
             "errorMessage",
@@ -703,4 +704,57 @@ fn a_child_turn_carries_no_automation() {
     run.automation = Some("auto_1".to_owned());
     run.event(turn_started("turn_1", Some("auto_1:manual:7f1c")));
     assert!(run.facts[0].get("automationId").is_none());
+}
+
+/// The `tool.lifecycle:completed` fact of one `name` call whose output text is `text`.
+fn tool_completed(name: &str, text: &str, is_error: bool) -> Value {
+    let mut run = Run::new("sess_main", Role::Main);
+    run.event(turn_started("turn_1", Some("cmd-1")));
+    run.event(KernelEvent::ToolStarted {
+        tool_use: ToolUseId::new("toolu_1"),
+        name: name.into(),
+        input: json!({}),
+    });
+    run.event(KernelEvent::ToolDone {
+        tool_use: ToolUseId::new("toolu_1"),
+        output: ToolOutput {
+            content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {
+                text: text.to_owned(),
+            }],
+            is_error,
+            display: Value::Null,
+        },
+    });
+    run.assert_schema();
+    run.facts.last().expect("tool fact").clone()
+}
+
+#[test]
+fn a_completed_cron_create_names_the_created_automation() {
+    let created = r#"{"automation":{"automationId":"auto_9","title":"Build"},"message":"Created"}"#;
+    assert_eq!(
+        tool_completed("CronCreate", created, false)["automationId"],
+        "auto_9"
+    );
+    // Node reads it only from a completed CronCreate whose output is the created automation.
+    assert!(
+        tool_completed("CronCreate", created, true)
+            .get("automationId")
+            .is_none()
+    );
+    assert!(
+        tool_completed("CronUpdate", created, false)
+            .get("automationId")
+            .is_none()
+    );
+    assert!(
+        tool_completed("CronCreate", "not json", false)
+            .get("automationId")
+            .is_none()
+    );
+    assert!(
+        tool_completed("CronCreate", r#"{"automation":{"automationId":""}}"#, false)
+            .get("automationId")
+            .is_none()
+    );
 }

@@ -12,6 +12,7 @@
 
 mod ask_user_question;
 mod asking;
+mod automation_tools;
 mod base64;
 mod bash;
 mod bash_mode;
@@ -45,6 +46,7 @@ mod grep;
 mod grep_output;
 mod html_markdown;
 mod line_diff;
+mod lsp_range;
 mod mentions;
 mod monitor;
 mod monitor_input;
@@ -93,6 +95,7 @@ use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::tool::Tool;
 
 pub use ask_user_question::AskUserQuestionTool;
+pub use automation_tools::automation_tools;
 pub use bash::BashTool;
 pub use bash_settings::BashSettings;
 pub use bash_timeouts::BashTimeouts;
@@ -168,10 +171,22 @@ pub fn builtin(gate: Arc<dyn PermissionGate>) -> BuiltinTools {
 
 /// 同 [`builtin`]，另给 Read 查模型能力用的模型端口（整读 PDF 前看 `supports_pdf`，tools-files.md §1.5）。
 pub fn builtin_with(gate: Arc<dyn PermissionGate>, model: Option<SideModel>) -> BuiltinTools {
+    builtin_with_code(gate, model, None)
+}
+
+/// Fork: [`builtin_with`] plus the language-server runtime the file tools report to (specs/fork-rust-lsp.md).
+pub fn builtin_with_code(
+    gate: Arc<dyn PermissionGate>,
+    model: Option<SideModel>,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
+) -> BuiltinTools {
     let state = Arc::new(ReadFileState::default());
     let mut files = FileTools::new(state.clone(), gate);
     if let Some(model) = model {
         files = files.with_model(model);
+    }
+    if let Some(code) = code {
+        files = files.with_code_intelligence(code);
     }
     BuiltinTools::new(file_tools(&files)).with_file_state(state)
 }

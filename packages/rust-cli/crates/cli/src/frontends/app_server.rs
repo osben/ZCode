@@ -17,8 +17,8 @@ use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
-    Context, Defaults, HOST_ATTACH_ACK_ENV, HostCredentialCipher, HostHeaders, HostTopicResources,
-    NetworkCapture, Startup,
+    Context, Defaults, HOST_ATTACH_ACK_ENV, HostAutomations, HostCredentialCipher, HostHeaders,
+    HostTopicResources, NetworkCapture, Startup,
 };
 
 use crate::assemble::{self, Controller};
@@ -139,9 +139,10 @@ async fn serve(
             Options::default(),
         ),
     );
-    let spec = Controller::app(
+    let mut spec = Controller::app(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
+        Arc::new(HostAutomations::new(context.clone())),
         // Fork: every observed request of this process reaches the capture (MCP is built unobserved), from the moment
         // the egress exists.
         Arc::new(CaptureObserver(capture.clone())),
@@ -191,14 +192,21 @@ async fn serve(
         opened.config.storage.dir.as_deref(),
         std::path::Path::new(opened.workspace.root.as_str()),
     );
-    context.set_language_servers(Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
+    let ledger =
+        rust_cli_proc::ledger::Ledger::open(rust_cli_proc::private::user_dir(&facts.process.temp));
+    let language_servers = Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
         files: opened.primary.files().clone(),
         environment: opened.workspace.environment.clone(),
         paths: paths.clone(),
         process_env: facts.process.env.clone(),
         view_host: desktop_context,
         preferences: preferences.as_path().to_path_buf(),
-    })));
+        launcher: Arc::new(crate::lsp::LedgerLauncher::new(ledger)),
+        store: Some(opened.store.clone()),
+    }));
+    context.set_language_servers(language_servers.clone());
+    // The same host is the sessions' code intelligence: Read prewarms, Write and Edit report mutations.
+    spec.code_intelligence = Some(language_servers);
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
     context.set_model_port(ported.ports.model.clone());

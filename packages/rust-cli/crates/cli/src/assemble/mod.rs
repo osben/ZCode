@@ -36,6 +36,7 @@ use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
 use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
@@ -164,8 +165,12 @@ pub(crate) struct Controller {
     /// Fork: Node's "ZCode Desktop Context" system section ([`ContextConfig::desktop`]); only the app-server started
     /// with `--surface desktop` (the Host's rollout decision) turns it on.
     pub(crate) desktop_context: bool,
+    /// Fork: the desktop Host's automation store (app-server only; specs/fork-rust-automations.md, slice 2).
+    pub(crate) automation: Option<Arc<dyn rust_cli_kernel_api::automation::AutomationPort>>,
     /// Fork: the Host's topic resources (`ReadTopicResource`, specs/fork-rust-topic-resource.md); only the app-server.
     pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md); only the app-server sets it, after opening the store.
+    pub(crate) code_intelligence: Option<Arc<dyn CodeIntelligence>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -186,7 +191,9 @@ impl Controller {
             token_budget: true,
             node_desktop: false,
             desktop_context: false,
+            automation: None,
             topic_resources: None,
+            code_intelligence: None,
             cli,
         }
     }
@@ -212,7 +219,9 @@ impl Controller {
             token_budget: true,
             node_desktop: false,
             desktop_context: false,
+            automation: None,
             topic_resources: None,
+            code_intelligence: None,
             cli,
         }
     }
@@ -222,6 +231,7 @@ impl Controller {
     pub(crate) fn app(
         headers: Arc<dyn HeaderSource>,
         credential_cipher: Arc<dyn CredentialCipher>,
+        automation: Arc<dyn rust_cli_kernel_api::automation::AutomationPort>,
         observer: Arc<dyn RequestObserver>,
         topic_resources: Arc<dyn TopicResources>,
         desktop_context: bool,
@@ -240,7 +250,9 @@ impl Controller {
             token_budget: false,
             node_desktop: true,
             desktop_context,
+            automation: Some(automation),
             topic_resources: Some(topic_resources),
+            code_intelligence: None,
             cli: CliInputs::default(),
         }
     }
@@ -661,7 +673,10 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    // The runtime derives `/loop` hiding and the storeless local cron from this port.
+    extensions.automation = spec.automation.clone();
     extensions.topic_resources = spec.topic_resources.clone();
+    extensions.code_intelligence = spec.code_intelligence.clone();
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened
@@ -694,9 +709,12 @@ pub(crate) async fn kernel(
     if let Some(peers) = &peers {
         extensions.peers = peers.deps.clone();
     }
-    // 持久定时任务：启动工作区（项目根）下的 `.zcode/scheduled_tasks.json`（tools-more.md §16）。
-    extensions.cron_store =
-        env_assembly::cron_store(&opened.deployment, &opened.workspace, clock.clone());
+    // 持久定时任务：启动工作区（项目根）下的 `.zcode/scheduled_tasks.json`（tools-more.md §16）。Fork: not opened under
+    // the desktop Host, whose automation store owns schedules; the runtime gives the local cron no store there anyway.
+    if spec.automation.is_none() {
+        extensions.cron_store =
+            env_assembly::cron_store(&opened.deployment, &opened.workspace, clock.clone());
+    }
     // 任务清单（Task v2）放在本地存储：文件是事实源，写后投影到 Node 的 todo 表（agents.md §7）。
     let kernel = LocalKernel::with_extensions(
         ports,

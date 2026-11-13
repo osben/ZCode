@@ -25,6 +25,9 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
     tool_names::ASK_USER_QUESTION,
 ];
 
+/// Fork: the desktop Cron tools (Node registers them for the main session only).
+const MAIN_SESSION_CRON: &[&str] = &tool_names::CRON_TOOLS;
+
 /// 后台子代理只能用的工具（含 SendMessage、TaskStop、Monitor）。
 const ASYNC_ALLOWED: &[&str] = &[
     tool_names::READ,
@@ -63,6 +66,8 @@ pub(crate) struct ToolRule {
     /// Fork (node_desktop): a foreground subagent may ask the user (AskUserQuestion), delegated to
     /// the parent's ask (Node `filterSubagentChildToolNames` only removes the plan tools).
     questions: bool,
+    /// Fork (node_desktop): no Cron tool ([`MAIN_SESSION_CRON`]).
+    without_cron: bool,
 }
 
 impl ToolRule {
@@ -76,6 +81,7 @@ impl ToolRule {
             background,
             depth,
             questions: false,
+            without_cron: false,
         }
     }
 
@@ -86,10 +92,20 @@ impl ToolRule {
         self
     }
 
+    /// Fork: Node registers the Cron tools for the main session only, so a desktop subagent gets none of them.
+    #[must_use]
+    pub(crate) fn without_cron(mut self, without: bool) -> Self {
+        self.without_cron = without;
+        self
+    }
+
     pub(crate) fn allows(&self, name: &str) -> bool {
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
         let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
         if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
+            return false;
+        }
+        if self.without_cron && MAIN_SESSION_CRON.contains(&name) {
             return false;
         }
         // Agent 只看深度，不受异步白名单限制（先判 Agent；后台的 general-purpose 有它）。
@@ -223,6 +239,54 @@ impl ToolRegistry for FilteredTools {
     /// 同上：没有叠在它上面的工具（以前的缺省）。
     fn hides(&self, _name: &str) -> bool {
         false
+    }
+}
+
+/// Fork (node_desktop): a fork child keeps the main thread's registry but loses the Cron tools, which Node registers
+/// for the main session only (every subagent child, fork or not, has none).
+pub(crate) struct WithoutCron {
+    pub(crate) inner: Arc<dyn ToolRegistry>,
+}
+
+fn not_cron(tool: &Arc<dyn Tool>) -> bool {
+    !MAIN_SESSION_CRON.contains(&tool.name())
+}
+
+impl ToolRegistry for WithoutCron {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.inner.tools().into_iter().filter(not_cron).collect()
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find(name).filter(not_cron)
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find_for(session, name).filter(not_cron)
+    }
+
+    fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.withheld(name).filter(not_cron)
+    }
+
+    fn hides(&self, name: &str) -> bool {
+        self.inner.hides(name)
+    }
+
+    fn keeps_order(&self) -> bool {
+        self.inner.keeps_order()
+    }
+
+    fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
+        let snapshot = self.inner.snapshot(session);
+        ToolSnapshot {
+            tools: snapshot.tools.into_iter().filter(not_cron).collect(),
+            mcp: snapshot.mcp,
+        }
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp()
     }
 }
 

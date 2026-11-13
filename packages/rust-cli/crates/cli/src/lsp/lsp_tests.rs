@@ -10,8 +10,9 @@ use rust_cli_kernel_api::env::EnvFacts;
 use rust_cli_kernel_api::testing::MemoryEnvironment;
 use serde_json::json;
 
-use super::installed::{candidates, process_env};
+use super::installed::candidates;
 use super::preferences::{apply, parse, text};
+use super::runtime::pool::tests::{FakeProcess, fake_launcher};
 use super::*;
 
 /// The Node fork Vitest `lsp-preferences-sidecar.test.ts` asserts Node writes the same bytes for the same patches.
@@ -160,27 +161,6 @@ fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 #[test]
-fn the_server_env_overrides_the_process_env() {
-    let base: EnvSnapshot = vars(&[("PATH", "/usr/bin"), ("Path", "/x"), ("HOME", "/h")])
-        .into_iter()
-        .collect();
-    assert_eq!(
-        process_env(&base, &vars(&[("PATH", "/opt/bin"), ("NEW", "1")]), false),
-        vars(&[
-            ("PATH", "/opt/bin"),
-            ("Path", "/x"),
-            ("HOME", "/h"),
-            ("NEW", "1")
-        ])
-    );
-    // Windows: every case variant goes and the server's key is appended.
-    assert_eq!(
-        process_env(&base, &vars(&[("path", "C:\\bin")]), true),
-        vars(&[("HOME", "/h"), ("path", "C:\\bin")])
-    );
-}
-
-#[test]
 fn candidates_follow_node_lookup() {
     let env = vars(&[("PATH", "/a::rel:/b"), ("PATHEXT", ".EXE; .Cmd ;")]);
     let paths = |command: &str, windows: bool| -> Vec<String> {
@@ -232,6 +212,7 @@ struct Fixture {
     _home: tempfile::TempDir,
     host: Host,
     bin: PathBuf,
+    launched: tokio::sync::mpsc::UnboundedReceiver<FakeProcess>,
 }
 
 const KIT: &str = "/Users/dev/kit";
@@ -280,6 +261,7 @@ async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
     let process_env: EnvSnapshot = vars(&[("PATH", &bin.to_string_lossy())])
         .into_iter()
         .collect();
+    let (launcher, launched) = fake_launcher();
     let host = Host::new(HostInputs {
         files: Arc::new(env),
         environment: EnvironmentId::new("local"),
@@ -287,11 +269,14 @@ async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
         process_env,
         view_host: true,
         preferences: preferences.as_path().to_path_buf(),
+        launcher,
+        store: None,
     });
     Fixture {
         _home: home,
         host,
         bin,
+        launched,
     }
 }
 
@@ -467,4 +452,142 @@ async fn a_read_after_a_write_sees_it() {
     let read = store.load().await;
     writer.await.unwrap().unwrap();
     assert!(!read.enabled);
+}
+
+/// The snapshot is published inside the store's turn: a read that started before a write can never publish its older
+/// value after the write published its own.
+#[tokio::test]
+async fn a_read_publishes_its_snapshot_before_a_write_can_run() {
+    let (_dir, _path, store) = store();
+    let mut published = None;
+    let read = store
+        .load_and(|prefs| {
+            // A write waits for the turn this read still holds.
+            assert!(store.turn_held());
+            published = Some(prefs.clone());
+        })
+        .await;
+    assert!(!store.turn_held());
+    assert_eq!(published, Some(read));
+    let mut written = None;
+    let next = store
+        .update_and(&patch(Some(false), &[]), |prefs| {
+            assert!(store.turn_held());
+            written = Some(prefs.clone());
+        })
+        .await
+        .unwrap();
+    assert_eq!(written, Some(next));
+}
+
+fn reference(path: &str) -> WorkspaceRef {
+    WorkspaceRef {
+        environment: EnvironmentId::new("local"),
+        root: EnvPath::new(path),
+    }
+}
+
+async fn state_of(host: &Host, workspace: &LspWorkspace) -> (&'static str, &'static str) {
+    let status = host.status(workspace).await.unwrap();
+    (status.servers[0].state, status.servers[0].diagnostics_mode)
+}
+
+/// Acceptance 4–6 through the host: status overlays the pool entry of the same key, an edit's pull diagnostics reach
+/// the next request, and turning code intelligence off stops the server.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_host_runs_a_server_for_a_session_and_stops_it_when_disabled() {
+    let mut fixture = fixture(&[]).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let here = workspace("/Users/dev/a");
+    let elsewhere = LspWorkspace {
+        path: "/Users/dev/a".to_owned(),
+        identity: Some("remote:other".to_owned()),
+    };
+    // Nothing mutated: no runtime is even created.
+    assert_eq!(fixture.host.edit_diagnostics(&session).await, None);
+    fixture
+        .host
+        .prewarm(&session, &root, "/Users/dev/a/x.ts")
+        .await;
+    let mut process = fixture.launched.recv().await.unwrap();
+    assert_eq!(process.launch.command, "typescript-language-server");
+    assert_eq!(
+        state_of(&fixture.host, &here).await,
+        ("starting", "unknown")
+    );
+    assert_eq!(
+        state_of(&fixture.host, &elsewhere).await,
+        ("stopped", "unknown")
+    );
+    process.initialize(json!({"diagnosticProvider": {}})).await;
+    for _ in 0..500 {
+        if state_of(&fixture.host, &here).await.0 == "ready" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    assert_eq!(state_of(&fixture.host, &here).await, ("ready", "pull"));
+
+    let mutation = FileMutation {
+        path: "/Users/dev/a/x.ts".to_owned(),
+        kind: rust_cli_kernel_api::lsp::FileMutationKind::Created,
+        content: Some("let x: number = 'a'\n".to_owned()),
+        changed_range: Some(rust_cli_kernel_api::lsp::ChangedRange {
+            start_line: 1,
+            end_line: 1,
+        }),
+    };
+    fixture.host.file_mutated(&session, &root, mutation).await;
+    let open = process.expect("textDocument/didOpen").await;
+    assert_eq!(open["params"]["textDocument"]["languageId"], "typescript");
+    let pull = process.expect("textDocument/diagnostic").await;
+    process
+        .reply(
+            &pull,
+            json!({"kind": "full", "items": [{
+                "range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 5}},
+                "severity": 1, "message": "Type 'string' is not assignable to type 'number'.", "code": 2322,
+                "source": "ts",
+            }]}),
+        )
+        .await;
+    assert_eq!(
+        fixture.host.edit_diagnostics(&session).await.as_deref(),
+        Some(
+            "Found 1 new diagnostic issues in 1 files\nx.ts:1:5 error Type 'string' is not assignable to type 'number'. [ts 2322]"
+        )
+    );
+    assert_eq!(fixture.host.edit_diagnostics(&session).await, None);
+
+    // Turning code intelligence off stops the server gracefully.
+    let disable = fixture.host.set_preferences(patch(Some(false), &[]));
+    let server = async {
+        let shutdown = process.expect("shutdown").await;
+        process.reply(&shutdown, serde_json::Value::Null).await;
+        process.expect("exit").await;
+        process.exit("exited (code 0, signal none)");
+    };
+    let (prefs, ()) = tokio::join!(disable, server);
+    assert!(!prefs.unwrap().enabled);
+    assert_eq!(state_of(&fixture.host, &here).await, ("stopped", "unknown"));
+    // Disabled: a mutation is not tracked and starts nothing.
+    fixture
+        .host
+        .file_mutated(
+            &session,
+            &root,
+            FileMutation {
+                path: "/Users/dev/a/y.ts".to_owned(),
+                kind: rust_cli_kernel_api::lsp::FileMutationKind::Created,
+                content: Some(String::new()),
+                changed_range: None,
+            },
+        )
+        .await;
+    assert_eq!(fixture.host.edit_diagnostics(&session).await, None);
+    assert!(fixture.launched.try_recv().is_err());
+    fixture.host.session_closed(&session);
 }

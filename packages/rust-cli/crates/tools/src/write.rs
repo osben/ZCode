@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::env::{EnvError, EnvPath, FileVersion, ReadFile, WritePrecondition};
 use rust_cli_kernel_api::env_files::{FileKind, PutFile};
 use rust_cli_kernel_api::env_path;
+use rust_cli_kernel_api::lsp::{FileMutation, FileMutationKind};
 use rust_cli_kernel_api::machine_param::MachineParam;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation,
@@ -21,7 +22,7 @@ use crate::common::{
 };
 use crate::encoding::{Decoded, Encoding, LineEndings, decode, encode, normalize};
 use crate::file_state::{Baseline, FileState};
-use crate::{checkpoint, texts};
+use crate::{checkpoint, lsp_range, texts};
 use rust_cli_kernel_api::tool::{failed, invalid, parse, text};
 use rust_cli_kernel_api::tool_names;
 use rust_cli_prompts::Definition;
@@ -245,6 +246,24 @@ impl Tool for WriteTool {
                 not_in_context: false,
             },
         );
+        // Fork: Node `publishFileMutation` after the write succeeded (specs/fork-rust-lsp.md "Event order").
+        if let Some(code) = self.files.code_for(&context) {
+            let original = existing
+                .as_ref()
+                .map(|(decoded, _, _)| decoded.content.as_str());
+            let mutation = FileMutation {
+                path: path.clone(),
+                kind: if existing.is_none() {
+                    FileMutationKind::Created
+                } else {
+                    FileMutationKind::Changed
+                },
+                content: Some(input.content.clone()),
+                changed_range: Some(lsp_range::for_write(original, &input.content)),
+            };
+            code.file_mutated(&context.session, &context.workspace, mutation)
+                .await;
+        }
         let created = existing.is_none();
         let message = if created {
             format!(

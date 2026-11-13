@@ -6,7 +6,9 @@ use std::sync::Arc;
 use rust_cli_agents::PluginAgentFile;
 use rust_cli_ext::Plugins;
 use rust_cli_hooks::PluginHooks;
+use rust_cli_kernel_api::automation::AutomationPort;
 use rust_cli_kernel_api::cron_store::CronStore;
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::topic_resource::TopicResources;
 
 pub use rust_cli_ext::ExtConfig;
@@ -31,9 +33,17 @@ pub struct Extensions {
     /// Fork: the Node desktop agent's semantics (plan mode boundary `PolicyGate::with_node_plan_mode`, one queued input per
     /// turn); the app-server turns it on.
     pub node_desktop: bool,
+    /// Fork: the desktop Host's automation store (specs/fork-rust-automations.md, slice 2). When set, the Cron tools
+    /// are Node's five sending to it instead of this process's cron, the local cron gets no store whatever `cron_store`
+    /// says (nothing fires twice), and `/loop` is hidden (`ExtConfig::host_automations` is derived from it);
+    /// ScheduleWakeup is unchanged.
+    pub automation: Option<Arc<dyn AutomationPort>>,
     /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
     /// the app-server gives it.
     pub topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): Read, Edit and Write report to it and the
+    /// context builder asks it for the post-edit diagnostics. Only the app-server gives it.
+    pub code_intelligence: Option<Arc<dyn CodeIntelligence>>,
 }
 
 impl Extensions {
@@ -46,7 +56,9 @@ impl Extensions {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            automation: None,
             topic_resources: None,
+            code_intelligence: None,
         }
     }
 }

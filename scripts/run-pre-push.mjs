@@ -84,6 +84,7 @@ async function main() {
     ["instruction-commands:check"],
     ["db:migrations:check"],
     ["rust-agent:inbound-schema:check"],
+    ["rust-agent:automation-tools:check"],
   ];
   if (!docsOnly)
     stages.push(["test:engineering:affected", ["--", "--scope", "push"]], ["test:node"]);

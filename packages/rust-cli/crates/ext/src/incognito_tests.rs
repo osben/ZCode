@@ -250,3 +250,32 @@ async fn a_session_lookup_skips_a_hidden_server_with_the_same_tool_name() {
         registry.find(NAME).and_then(server)
     );
 }
+
+/// Node's incognito `automationTools` covers all five Cron tools, the desktop's CronUpdate and CronPauseSelf included.
+#[test]
+fn the_automation_switch_covers_every_cron_tool() {
+    let off = IncognitoProfile::LOCKDOWN;
+    let on = IncognitoProfile {
+        automation_tools: true,
+        ..IncognitoProfile::LOCKDOWN
+    };
+    for name in [
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "CronUpdate",
+        "CronPauseSelf",
+    ] {
+        assert_eq!(
+            super::hides_automation_tool(&off, name),
+            Some(true),
+            "{name}"
+        );
+        assert_eq!(
+            super::hides_automation_tool(&on, name),
+            Some(false),
+            "{name}"
+        );
+    }
+    assert_eq!(super::hides_automation_tool(&off, "ScheduleWakeup"), None);
+}

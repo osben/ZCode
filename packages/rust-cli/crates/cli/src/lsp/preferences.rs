@@ -35,23 +35,47 @@ impl PreferencesStore {
 
     /// Node `load`: a missing, unreadable or invalid file reads as the defaults; it never fails. It waits behind a
     /// running update, as Node's `load` runs on the update queue, so a read sent after a write sees it.
+    #[cfg(test)]
     pub(crate) async fn load(&self) -> LspPreferences {
+        self.load_and(|_| {}).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn turn_held(&self) -> bool {
+        self.updates.available_permits() == 0
+    }
+
+    /// [`Self::load`] that hands the result to `publish` before the turn ends, so an older read can never be
+    /// published after a newer write.
+    pub(crate) async fn load_and(&self, publish: impl FnOnce(&LspPreferences)) -> LspPreferences {
         let _turn = self.updates.acquire().await.ok();
-        match rust_cli_fs::read_optional(&self.path).await {
+        let prefs = match rust_cli_fs::read_optional(&self.path).await {
             Ok(Some(bytes)) => parse(&bytes),
             Ok(None) => LspPreferences::default(),
             Err(error) => {
                 tracing::warn!(event = "lsp.preferences.unreadable", %error, "LSP preferences file unreadable; using defaults");
                 LspPreferences::default()
             }
-        }
+        };
+        publish(&prefs);
+        prefs
     }
 
     /// Node `update`: merges onto the file as it is on disk (not found → defaults, invalid → defaults, any other read
     /// error fails the call and leaves the file alone), then writes it.
+    #[cfg(test)]
     pub(crate) async fn update(
         &self,
         patch: &LspPreferencesPatch,
+    ) -> Result<LspPreferences, String> {
+        self.update_and(patch, |_| {}).await
+    }
+
+    /// [`Self::update`] that hands the written result to `publish` before the turn ends.
+    pub(crate) async fn update_and(
+        &self,
+        patch: &LspPreferencesPatch,
+        publish: impl FnOnce(&LspPreferences),
     ) -> Result<LspPreferences, String> {
         let _turn = self
             .updates
@@ -67,6 +91,7 @@ impl PreferencesStore {
         rust_cli_fs::atomic_write(&self.path, text(&next).as_bytes(), WRITE)
             .await
             .map_err(|error| error.to_string())?;
+        publish(&next);
         Ok(next)
     }
 }
