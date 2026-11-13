@@ -380,7 +380,8 @@ async fn run_loop(
             Arc::new(FilteredTools {
                 inner: registry,
                 rule: ToolRule::new(&agent.definition, agent.background, agent.depth)
-                    .with_questions(core.node_desktop),
+                    .with_questions(core.node_desktop)
+                    .without_cron(core.node_desktop),
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use rust_cli_agents::PluginAgentFile;
 use rust_cli_ext::Plugins;
 use rust_cli_hooks::PluginHooks;
+use rust_cli_kernel_api::automation::AutomationPort;
 use rust_cli_kernel_api::cron_store::CronStore;
 
 pub use rust_cli_ext::ExtConfig;
@@ -30,6 +31,10 @@ pub struct Extensions {
     /// Fork: the Node desktop agent's semantics (plan mode boundary `PolicyGate::with_node_plan_mode`, one queued input per
     /// turn); the app-server turns it on.
     pub node_desktop: bool,
+    /// Fork: the desktop Host's automation store (specs/fork-rust-automations.md, slice 2). When set, the Cron tools
+    /// are Node's five sending to it instead of this process's cron (`cron_store` is then None, so nothing fires
+    /// twice); ScheduleWakeup is unchanged.
+    pub automation: Option<Arc<dyn AutomationPort>>,
 }
 
 impl Extensions {
@@ -42,6 +47,7 @@ impl Extensions {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            automation: None,
         }
     }
 }

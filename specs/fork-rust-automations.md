@@ -124,12 +124,16 @@ desktop session, so a schedule is never fired twice and every schedule shows in 
 
 Owners (Node layering):
 
-- **Tools** (`tools/src/automation_tools.rs`, Node `cron.ts`): parse and check the input (Node's zod refinements), refuse
-  on a restricted turn, build the output `{automation, message}` / `{automations}` / `{deleted, id, message}` /
-  `{paused, id, message}` with Node's texts, sent to the model and the UI as that JSON (the chat card parses it).
+- **Tools** (`tools/src/automation_tools.rs`, Node `cron.ts` plus the param mapping of `automation-port.ts`): parse and
+  check the input (Node's zod refinements, strings trimmed like zod), refuse on a restricted turn, run the bound-session
+  check, build each request's params (selection, mode, target, relative delay, interval carrier), and build the output
+  `{automation, message}` / `{automations}` / `{deleted, id, message}` / `{paused, id, message}` with Node's texts,
+  sent to the model and the UI as compact JSON (the chat card parses the row's `output.text`). Each Host request has
+  Node's 30 s limit.
 - **Port** (`kernel-api` `AutomationPort`, implemented by `protocol-zcode/src/automation_port.rs`, Node
-  `automation-port.ts`): the Host requests, the bound-session check, the selection/mode/target fields, the reply
-  validation (inbound schema) and the Host error mapping.
+  `requestClient`): the transport only. It adds the owner session's `workspace` ref (`Context::workspace_ref`, the
+  same construction the account-credential request uses), keeps the Host's JSON-RPC error code, and checks the
+  result against the method's reply schema (inbound schema).
 - **Session** (`SessionOps::freeze_title`, Node `setCustomSessionTitle`): after a successful create the tool asks its
   session to take the automation title as a custom title; a subagent's request goes to its owner session.
 
@@ -153,6 +157,11 @@ Rules:
   therefore not deferred, which matches Node's default request. A Host that turns tool search on is a known gap.
 - Subagents get no Cron tools under `node_desktop` (Node registers them for the main session only).
 - Incognito `automationTools: false` removes all five.
+- On a restricted turn the turn limits already hide CronCreate/CronUpdate/CronDelete, so the tool pipeline refuses a
+  call to them first (`No such tool available`, slice 1); the tools' own refusal is the second line, as in Node.
+- No local schedule runs under the desktop Host: the app-server assembles no `.zcode/scheduled_tasks.json` store (a
+  job left there would fire beside the Host's automations), and the builtin `/loop` skill, which schedules through
+  this process's own cron, is not offered (Node's desktop agent has no `/loop`). ScheduleWakeup stays registered.
 
 Known gaps (no zcode-rs mechanism yet, stated rather than invented): Node's `AutomationCreateLimitError` closes the
 turn's tool recovery after a create limit error, while zcode-rs returns it as an ordinary tool error; remote workspaces
@@ -194,7 +203,7 @@ Rust tests (protocol-zcode, tools):
    success freezes the title. CronPauseSelf sends `automation/pause` with the turn's id.
 7. The generated contracts equal Node's (`automation-tools.mts --check`); the CronCreate contract contains the
    `prompt` field description and the model instructions; the Cron tools are not deferred and subagents do not get
-   them under `node_desktop`.
+   them under `node_desktop`; the builtin `/loop` is not offered under the Host's automations.
 8. Input checks: each Node refinement of `CronCreateInputSchema` / `CronUpdateInputSchema` refuses its case; a
    restricted turn (automation id, or a disallowlist hiding all three mutation tools) refuses CronCreate/Update/Delete
    before any request; CronPauseSelf without an automation id refuses before any request.

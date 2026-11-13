@@ -51,3 +51,17 @@ fn empty_limits_serialize_to_nothing() {
     let back: TurnLimits = serde_json::from_value(serde_json::to_value(&limits).unwrap()).unwrap();
     assert_eq!(back, limits);
 }
+
+#[test]
+fn a_turn_is_restricted_by_its_automation_id_or_a_disallowlist_covering_all_three_mutations() {
+    assert!(!TurnLimits::default().restricts_automation_mutations());
+    assert!(TurnLimits::new(Some("auto-1"), Vec::new()).restricts_automation_mutations());
+    let all = vec![
+        "CronCreate".to_owned(),
+        "CronUpdate".to_owned(),
+        "CronDelete".to_owned(),
+    ];
+    assert!(TurnLimits::new(None, all).restricts_automation_mutations());
+    let some = vec!["CronCreate".to_owned(), "CronDelete".to_owned()];
+    assert!(!TurnLimits::new(None, some).restricts_automation_mutations());
+}

@@ -59,14 +59,13 @@ impl HeaderSource for HostHeaders {
             .ok_or_else(|| failed("account credentials need the requesting session"))?;
         let workspace = self
             .context
-            .workspace_of(session.as_str())
+            .workspace_ref(session.as_str())
             .ok_or_else(|| failed("the requesting session is not open in this agent"))?;
         let request_id = format!(
             "{}:provider-runtime-headers:{}",
             session.as_str(),
             self.context.fresh("auth")
         );
-        let workspace = json!({"workspacePath": workspace, "workspaceKey": workspace});
         let mut params = json!({
             "requestId": request_id,
             "sessionId": session.as_str(),

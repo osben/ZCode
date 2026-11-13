@@ -110,6 +110,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            automation: None,
         },
     );
     kernel.start_extensions().await;
@@ -218,6 +219,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            automation: None,
         },
     );
     kernel.start_extensions().await;
@@ -259,4 +261,87 @@ async fn the_session_catalog_follows_the_incognito_profile() {
     let locked = catalog(without_plugins).await.unwrap();
     assert!(!plugin_skill(&locked), "{locked:?}");
     assert!(!plugin_server(&locked), "{locked:?}");
+}
+
+/// Fork (specs/fork-rust-automations.md, slice 2): with the desktop Host's automation port the Cron tools are Node's
+/// five, not deferred, in place of this process's cron; ScheduleWakeup stays.
+#[test]
+fn the_host_automation_port_replaces_the_local_cron_tools() {
+    struct Unused;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::automation::AutomationPort for Unused {
+        async fn request(
+            &self,
+            _session: &rust_cli_kernel_api::ids::SessionId,
+            _method: &str,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, rust_cli_kernel_api::automation::AutomationError> {
+            Err(rust_cli_kernel_api::automation::AutomationError::new(
+                "unused",
+            ))
+        }
+    }
+    let env = MemoryEnvironment::new(EnvFacts {
+        cwd: EnvPath::new("/Users/dev/work"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    });
+    let store = Arc::new(MemoryStore::default());
+    let ports = Ports {
+        model: Arc::new(ScriptedModel::new(Vec::new())),
+        environments: environments(Arc::new(env)),
+        store: store.clone(),
+        artifacts: store,
+        clock: Arc::new(FixedClock(1_000)),
+        ids: Arc::new(SequentialIds::default()),
+    };
+    let defaults = Defaults {
+        selection: selection().into(),
+        mode: PermissionMode::Default,
+        max_turns: None,
+        search_tools: false,
+        task_tools: None,
+        limits: Default::default(),
+    };
+    let traits = crate::assemble::SurfaceTraits::new(false, false);
+    let gate = crate::assemble::gate(&ports, true);
+    let names = |extensions: &Extensions| {
+        let base = crate::assemble::base_tools(&ports, &defaults, extensions, (traits, &gate));
+        base.registry
+            .tools()
+            .iter()
+            .filter(|tool| tool.name().starts_with("Cron") || tool.name() == "ScheduleWakeup")
+            .map(|tool| (tool.name().to_owned(), tool.should_defer()))
+            .collect::<Vec<_>>()
+    };
+    let local = names(&Extensions::none());
+    assert_eq!(
+        local,
+        [
+            ("CronCreate".to_owned(), true),
+            ("CronDelete".to_owned(), true),
+            ("CronList".to_owned(), true),
+            ("ScheduleWakeup".to_owned(), false),
+        ]
+    );
+    let desktop = Extensions {
+        node_desktop: true,
+        automation: Some(Arc::new(Unused)),
+        ..Extensions::none()
+    };
+    assert_eq!(
+        names(&desktop),
+        [
+            ("CronCreate".to_owned(), false),
+            ("CronList".to_owned(), false),
+            ("CronUpdate".to_owned(), false),
+            ("CronDelete".to_owned(), false),
+            ("CronPauseSelf".to_owned(), false),
+            ("ScheduleWakeup".to_owned(), false),
+        ]
+    );
 }

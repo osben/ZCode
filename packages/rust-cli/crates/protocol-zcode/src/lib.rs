@@ -11,6 +11,7 @@
 mod attachment_share;
 mod attachment_text;
 mod attachments;
+mod automation_port;
 mod child_runs;
 mod cipher;
 mod commands;
@@ -40,6 +41,7 @@ use rust_cli_kernel_api::session_api::Kernel;
 use rust_cli_protocol_core::connection;
 use serde_json::json;
 
+pub use automation_port::HostAutomations;
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use headers::HostHeaders;

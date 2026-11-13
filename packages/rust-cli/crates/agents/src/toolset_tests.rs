@@ -250,3 +250,24 @@ fn a_desktop_foreground_subagent_may_ask_the_user() {
     assert!(asks(false, true));
     assert!(!asks(false, false) && !asks(true, true));
 }
+
+/// Fork (node_desktop, specs/fork-rust-automations.md): Node registers the Cron tools for the main session only.
+#[test]
+fn a_desktop_subagent_gets_no_cron_tool() {
+    let definition = builtins()
+        .into_iter()
+        .find(|definition| definition.agent_type == "general-purpose")
+        .unwrap();
+    let desktop = ToolRule::new(&definition, false, 1).without_cron(true);
+    for name in [
+        "CronCreate",
+        "CronList",
+        "CronUpdate",
+        "CronDelete",
+        "CronPauseSelf",
+    ] {
+        assert!(!desktop.allows(name), "{name}");
+        assert!(ToolRule::new(&definition, false, 1).allows(name), "{name}");
+    }
+    assert!(desktop.allows("Read"));
+}

@@ -348,6 +348,13 @@ impl SessionOps for ChildSink {
         }
     }
 
+    /// Fork: a foreground subagent's title freeze is its parent session's; a background one has no session title.
+    async fn freeze_title(&self, title: String) {
+        if let Some(parent) = &self.parent {
+            parent.ops.freeze_title(title).await;
+        }
+    }
+
     /// 子代理里的 Monitor：状态与送达在 agents（agents.md §5.3，工作线 F83）。
     async fn arm_monitor(
         &self,

@@ -239,6 +239,8 @@ pub(crate) async fn extensions(
             .collect(),
         plugins: config.plugins.clone(),
         workspace: Some(workspace.clone()),
+        // Set by the app-server's assembly when the Host owns schedules.
+        host_automations: false,
     };
     // stream-json 输入（headless.md §6.1）：Bash 后台命令的缺省期限随之不同。
     extensions.streaming_input = prewait.streaming_input;

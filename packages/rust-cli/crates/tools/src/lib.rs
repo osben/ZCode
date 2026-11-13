@@ -12,6 +12,7 @@
 
 mod ask_user_question;
 mod asking;
+mod automation_tools;
 mod base64;
 mod bash;
 mod bash_mode;
@@ -91,6 +92,7 @@ use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::tool::Tool;
 
 pub use ask_user_question::AskUserQuestionTool;
+pub use automation_tools::automation_tools;
 pub use bash::BashTool;
 pub use bash_settings::BashSettings;
 pub use bash_timeouts::BashTimeouts;

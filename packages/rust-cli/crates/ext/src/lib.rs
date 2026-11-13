@@ -80,6 +80,9 @@ pub struct ExtConfig {
     /// 配置里停用的 MCP 服务器（`enabled: false`）：登记为 disabled、不连接，`/mcp enable` 时才连
     /// （docs/specs/rust-cli/tui-manage.md §6.1）。
     pub mcp_disabled: Vec<McpServer>,
+    /// Fork: the desktop Host owns schedules (specs/fork-rust-automations.md, slice 2). The builtin `/loop` skill,
+    /// which schedules through this process's own cron, is not offered, like Node's desktop agent.
+    pub host_automations: bool,
 }
 
 pub struct Ext {
@@ -96,7 +99,10 @@ pub struct Ext {
 impl Ext {
     /// `base` 是基础工具注册表（文件、Bash 等）；Skill 的 `!` 命令用其中的 `Bash`。
     pub fn new(ports: ExtPorts, base: Arc<dyn ToolRegistry>, config: ExtConfig) -> Self {
-        let skills = Arc::new(SkillCatalog::new(ports.info.clone(), ports.files.clone()));
+        let skills = Arc::new(
+            SkillCatalog::new(ports.info.clone(), ports.files.clone())
+                .with_loop(!config.host_automations),
+        );
         let runner = base
             .find(tool_names::BASH)
             .map(|bash| skills::runner(bash, ports.gate.clone(), ports.ids.clone()));

@@ -40,6 +40,15 @@ impl TurnLimits {
         self.automation.is_none() && self.hidden_tools.is_empty()
     }
 
+    /// Whether CronCreate, CronUpdate and CronDelete must refuse on this turn (Node
+    /// `isAutomationMutationRestrictedTurn`): it carries an automation id, or its disallowlist hides all three.
+    pub fn restricts_automation_mutations(&self) -> bool {
+        self.automation.is_some()
+            || AUTOMATION_MUTATION_TOOLS
+                .iter()
+                .all(|tool| self.hidden_tools.iter().any(|hidden| hidden == tool))
+    }
+
     /// Whether the turn hides the tool `name` from the model and refuses a call to it: the input's disallowlist, the
     /// automation mutation tools on an automation turn, and CronPauseSelf on every other turn (Node
     /// `buildTurnDisallowedTools`; ordinary turns have nothing to pause).
