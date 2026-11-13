@@ -7,8 +7,8 @@
  *   reports the reason through `onUnavailable` so the caller can log the downgrade.
  * - forkAgentRuntimeHelloOverrides: capability flags the Host must not claim in Rust mode; spread
  *   after both hello literals (base service and connection scope) so they cannot drift.
- * - forkAgentRuntimeCommandGateError: error code for a command whose fork feature zcode-rs lacks
- *   (ACP agents); undefined in Node mode.
+ * - forkAgentRuntimeCommandGateError: error code for an ACP command when the Rust agent does not report
+ *   `externalAgentTurns`; undefined in Node mode and for every other command.
  */
 export { selectForkAgentRuntimeCommand } from "./command.js";
 export type { ForkAgentRuntimeCommand, ForkRustAgentUnavailableReason } from "./command.js";

@@ -80,6 +80,11 @@ export async function supportsProviderRegistryRefresh(client: CapabilityClient):
   }
 }
 
+/** Fork: the agent runs `acp:<agentId>` selections (specs/fork-agent-runtime-selection.md rule 7). */
+export async function supportsExternalAgentTurns(client: CapabilityClient): Promise<boolean> {
+  return (await readRuntimeCapabilities(client)).externalAgentTurns === true;
+}
+
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
 export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
   let capabilities: ZCodeRuntimeCapabilities;

@@ -188,6 +188,11 @@ export const zcodeRuntimeCapabilitiesSchema = z.object({
    * 旧 services 拒绝新字段，所以 services 只在看到这一位时才要这个字段。
    */
   pluginExtensionSummary: z.boolean().optional(),
+  /**
+   * Fork: the agent runs `acp:<agentId>` selections on the ACP agent (specs/fork-agent-runtime-selection.md rule 7).
+   * In Rust mode the Host refuses ACP commands to an agent without this flag.
+   */
+  externalAgentTurns: z.boolean().optional(),
 });
 export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
 export const zcodeRuntimeCapabilitiesParamsSchema = z

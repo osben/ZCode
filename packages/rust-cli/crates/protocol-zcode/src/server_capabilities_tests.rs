@@ -12,3 +12,12 @@ fn quote_comments_are_reported() {
 fn extension_input_source_is_reported() {
     assert_eq!(capabilities()["extensionInputSource"], true);
 }
+
+/// ACP rule 2 (specs/fork-rust-agent-parity.md): the Host admits `acp:` commands only where the agent reports it.
+#[test]
+fn external_agent_turns_are_reported_on_macos_only() {
+    assert_eq!(
+        capabilities()["externalAgentTurns"],
+        cfg!(target_os = "macos")
+    );
+}

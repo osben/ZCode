@@ -492,6 +492,9 @@ pub(crate) fn capabilities() -> Value {
         // Fork: the App's extension input source (`{kind: "extension"}`) is accepted on sendText and createSession
         // firstInput and kept on the intent, the row and the queue item (specs/fork-rust-agent-parity.md, B4).
         "extensionInputSource": true,
+        // Fork: `acp:<agentId>` selections run on the ACP agent, on macOS only like Node
+        // (specs/fork-rust-agent-parity.md "ACP external agents", rule 2).
+        "externalAgentTurns": cfg!(target_os = "macos"),
     })
 }
 
