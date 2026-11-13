@@ -232,6 +232,25 @@ impl PolicyGate {
     }
 }
 
+impl PolicyGate {
+    /// The tool's own check, with WebSearch's ask turned into an allow under the Node desktop semantics. Node denies
+    /// every call in auto mode and over an auto base (`mode.auto.unimplemented`) before that allow.
+    async fn own_check(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        context: &ToolUseContext,
+    ) -> PermissionDecision {
+        let auto =
+            context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
+        node_needs_no_approval(
+            self.options.node_plan && !auto,
+            tool.name(),
+            tool.check_permissions(input, context).await,
+        )
+    }
+}
+
 /// Fork: under the Node desktop semantics WebSearch needs no approval (Node capability `readOnly`, `needsApproval: false`:
 /// `mode.build.readOnly`, `mode.plan.readOnly`). The tool's own ask becomes an allow, so the inner chain's whole-tool deny
 /// and ask rules still come first, as in Node.
@@ -267,14 +286,7 @@ impl ScopedGate for PolicyGate {
         let paths = self.path_context(&base, context).await;
         let root = context.workspace.root.as_str();
         let name = tool.name();
-        // Node denies every call in auto mode and over an auto base (`mode.auto.unimplemented`) before this allow.
-        let auto =
-            context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
-        let own = node_needs_no_approval(
-            self.options.node_plan && !auto,
-            name,
-            tool.check_permissions(input, context).await,
-        );
+        let own = self.own_check(tool, input, context).await;
         let subject = tool.permission_subject(input);
         let guarded = guarded_command(subject.as_ref());
         let evaluate_with = |mode: PermissionMode, full_access: bool| {
@@ -410,7 +422,8 @@ impl PermissionGate for PolicyGate {
             // 会话本身是 yolo 时 hook 放行后也不再询问（工作线 F76）；别的模式这里按 bypass 跑，但不算完全访问。
             full_access: context.mode == PermissionMode::BypassPermissions,
         };
-        let own = tool.check_permissions(input, context).await;
+        // The same allow as `decide`: a hook's own ask for WebSearch then reaches the user with the hook's reason.
+        let own = self.own_check(tool, input, context).await;
         let (check, updated) = chain::own(subject.as_ref(), own, &inputs);
         match chain::inner(tool.name(), check, updated, &inputs) {
             chain::Inner::Allow { .. } => None,

@@ -519,6 +519,30 @@ async fn web_search_needs_no_approval_under_node_semantics() {
     // Over an auto base Node denies first (`mode.auto.unimplemented`); the test above keeps that denial.
 }
 
+/// After a PreToolUse hook (allow or ask) the rules check has nothing to add for WebSearch, so a hook's ask reaches the
+/// user with the hook's reason instead of being decided (and allowed) by the gate; an ask rule still asks.
+#[tokio::test]
+async fn web_search_leaves_a_hooks_ask_to_the_hook() {
+    let (tool, input) = web_search();
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    for mode in [PermissionMode::Default, PermissionMode::Guarded] {
+        assert_eq!(
+            gate.check_rules(&tool, &input, &context(mode)).await,
+            None,
+            "{mode:?}"
+        );
+    }
+    let ask_rule =
+        PolicyGate::new(rules(&[(RuleBehavior::Ask, "WebSearch")])).with_node_plan_mode(true);
+    let decision = ask_rule
+        .check_rules(&tool, &input, &context(PermissionMode::Default))
+        .await;
+    assert!(
+        matches!(decision, Some(PermissionDecision::Ask { .. })),
+        "{decision:?}"
+    );
+}
+
 /// The standalone CLI keeps the tool's own ask (docs/specs/rust-cli tools-more §5).
 #[tokio::test]
 async fn web_search_still_asks_without_node_semantics() {
