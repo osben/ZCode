@@ -33,11 +33,19 @@ pub enum SideSource {
     GoalSummaryTitle,
     /// Fork (desktop App): the goal completion verifier (Node `target_completion_verification`).
     GoalVerification,
+    /// Fork (desktop App): `workspace/generateText` from a source other than the Git commit message
+    /// (specs/fork-rust-agent-parity.md "Workspace model calls").
+    WorkspaceText,
+    /// Fork (desktop App): `workspace/generateText` for the Git commit message (Node `git_commit_message`).
+    GitCommitMessage,
+    /// Fork (desktop App): `provider/testModelConnectivity`, the model settings probe (Node
+    /// `provider_settings_connectivity`).
+    ConnectivityProbe,
 }
 
 impl SideSource {
     /// 全部来源（`from_wire` 按它查；测试核对它列全了）。
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::SessionTitle,
         Self::Rename,
         Self::HookPrompt,
@@ -45,6 +53,9 @@ impl SideSource {
         Self::WebSearch,
         Self::GoalSummaryTitle,
         Self::GoalVerification,
+        Self::WorkspaceText,
+        Self::GitCommitMessage,
+        Self::ConnectivityProbe,
     ];
 
     /// 本工程的来源名（`QuerySource` 序列化后的 `name`；用量表与请求头另经 [`Self::node_name`]）。
@@ -57,6 +68,9 @@ impl SideSource {
             Self::WebSearch => "web_search_tool",
             Self::GoalSummaryTitle => "goal_summary_title",
             Self::GoalVerification => "target_completion_verification",
+            Self::WorkspaceText => "workspace_generate_text",
+            Self::GitCommitMessage => "git_commit_message",
+            Self::ConnectivityProbe => "provider_settings_connectivity",
         }
     }
 
@@ -76,14 +90,23 @@ impl SideSource {
             | Self::HookPrompt
             | Self::WebSearch
             | Self::GoalSummaryTitle
-            | Self::GoalVerification => self.as_wire(),
+            | Self::GoalVerification
+            | Self::WorkspaceText
+            | Self::GitCommitMessage
+            | Self::ConnectivityProbe => self.as_wire(),
         }
     }
 
     /// 用户在等结果：遇过载照主循环重试（model.md §5.2 第 1 条）；其余旁路请求过载时立即失败。
     pub const fn foreground(self) -> bool {
         match self {
-            Self::HookPrompt | Self::WebFetch | Self::WebSearch | Self::GoalVerification => true,
+            Self::HookPrompt
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::GoalVerification
+            | Self::WorkspaceText
+            | Self::GitCommitMessage
+            | Self::ConnectivityProbe => true,
             Self::SessionTitle | Self::Rename | Self::GoalSummaryTitle => false,
         }
     }
@@ -96,13 +119,34 @@ impl SideSource {
             | Self::Rename
             | Self::WebFetch
             | Self::WebSearch
-            | Self::GoalSummaryTitle => false,
+            | Self::GoalSummaryTitle
+            | Self::WorkspaceText
+            | Self::GitCommitMessage
+            | Self::ConnectivityProbe => false,
         }
     }
 
     /// 自己跑一个代理循环的来源（对照实现的 agent hook）：一方端点写 `diagnostics`（model.md §3.1）。现在没有这种来源。
     pub const fn agentic(self) -> bool {
         match self {
+            Self::SessionTitle
+            | Self::Rename
+            | Self::HookPrompt
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::GoalSummaryTitle
+            | Self::GoalVerification
+            | Self::WorkspaceText
+            | Self::GitCommitMessage
+            | Self::ConnectivityProbe => false,
+        }
+    }
+
+    /// Fork: a workspace-scoped request outside any conversation (Node's `scope: "workspace"` runtime model):
+    /// `x-zcode-session-type` is `other` even though the request names a requester session.
+    pub const fn workspace_scoped(self) -> bool {
+        match self {
+            Self::WorkspaceText | Self::GitCommitMessage | Self::ConnectivityProbe => true,
             Self::SessionTitle
             | Self::Rename
             | Self::HookPrompt
