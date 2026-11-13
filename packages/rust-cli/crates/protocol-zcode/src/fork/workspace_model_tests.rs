@@ -879,7 +879,7 @@ async fn a_call_without_an_operation_times_out_after_sixty_seconds() {
 #[tokio::test]
 async fn output_budgets_respect_known_and_unknown_limits() {
     let ok = || reply(&[text("ok")], StopReason::EndTurn, usage(1, 1));
-    let model = Arc::new(ScriptedModel::new(vec![ok(), ok(), ok(), ok()]));
+    let model = Arc::new(ScriptedModel::new(vec![ok(), ok(), ok(), ok(), ok()]));
     let (_scope, server) = server(model.clone());
     let nolimit = json!({"providerId": "p", "modelId": "nolimit"});
     test_connectivity(
@@ -919,9 +919,22 @@ async fn output_budgets_respect_known_and_unknown_limits() {
         );
         assert_eq!(error.data.unwrap()["code"], "invalid_model_request");
     }
+    // An unknown limit cannot reject a caller budget: it is sent as is.
+    generate_text(
+        &server,
+        &json!({"workspace": workspace(), "selection": nolimit, "prompt": "p", "querySource": "x",
+            "maxOutputTokens": 100_000}),
+    )
+    .await
+    .unwrap();
 
     let requests = model.requests();
-    assert_eq!(requests.len(), 4, "a rejected budget sends no request");
+    assert_eq!(requests.len(), 5, "a rejected budget sends no request");
+    assert_eq!(requests[4].max_tokens, 100_000);
+    assert_eq!(
+        requests[4].options.provider_max_output_tokens,
+        Some(100_000)
+    );
     assert_eq!(requests[0].max_tokens, 512);
     assert_eq!(requests[0].options.provider_max_output_tokens, Some(512));
     assert_eq!(requests[1].max_tokens, 5_000);
