@@ -31,7 +31,7 @@ pub struct Context {
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
     /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
-    attach: crate::attach::HostAttach,
+    pub(crate) attach: crate::attach::HostAttach,
     /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
     mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
 }

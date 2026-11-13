@@ -270,7 +270,11 @@ Contract (`packages/shared/src/zcode-protocol/index.ts`):
   - The acknowledgement is handled by a wrapper in front of `connection::Deferred`, inline in the reader's
     notification task. It must not go through `Deferred`: assembly waits for it, and `Deferred` waits for assembly.
   - Params are validated against `inbound.json` (`methods["process/hostAttached"]`). An invalid acknowledgement is
-    ignored with a `warn`; the bound applies.
+    ignored with a `warn` that names the validation error; the bound applies.
+  - The connection ends before the acknowledgement (the Host closed stdin or died): held requests are released and
+    go out to the closed peer, which fails them at once (`serve_attached` releases them when the reader ends).
+  - The bound ends while the acknowledgement is still awaited: the error says the Host did not acknowledge the
+    attach, and a header request that never went out sends no cancellation.
 - Compatibility: a new Host with an older agent sends a notification the agent ignores. An older Host never
   declares, so a new Rust agent behaves as before.
 
@@ -313,8 +317,10 @@ keeps running in the `default-model` scope (TUI and app-server alike, held by `B
 1. It waits for `Platform::credentials_readable()`, which resolves when a registry read
    (`Registry::current`) succeeds after an unreadable one. Recovery is pull-based: the next catalog read does it
    (a Host model or registry request, a session's endpoint lookup, the TUI model picker or settings). The registry
-   publishes that read's snapshot before it signals readable: the woken task's catalog read passes the change gate
-   without reading, so it must find the recovered snapshot.
+   publishes that read's snapshot before it signals readable, and records the change gate with it: the woken task's
+   catalog read passes the gate without reading, so it must find the recovered snapshot. Like the snapshot, the
+   signal follows read order (a late unreadable read does not overwrite a newer readable one). An unreadable read
+   signals at once.
 2. It runs the same choice again (`--model`, effort) and revises `DefaultModel` (`SettleDefault::settle` may be
    called again; `settled()` returns the latest value).
 3. A non-degraded result is remembered (`memory::remember`); a degraded one waits again.
@@ -322,7 +328,8 @@ keeps running in the `default-model` scope (TUI and app-server alike, held by `B
 Only sessions created after the revision take the new default. Existing sessions keep their stored selection. The
 app-server's `Defaults.selection` becomes the shared `DefaultModel`, read at each session creation. Readers that
 already read the default live keep doing so: a stored session with no model, and side tools (web search, PDF) with
-no model of their own.
+no model of their own. The TUI's new-session draft takes the default once (`settled()`); it does not follow a
+revision in the running process. The remembered default applies at the next start, and `/model` picks one now.
 
 A degraded choice that finds no model does not write the model port's permanent "no model" reason
 (`Assembled::late`): it would outlive the recovery. Until then, the endpoint lookup reports that the credentials could
@@ -357,7 +364,7 @@ app-server keeps `HostCredentialCipher` (product rule 1).
   entry (service `ZCode Credential Encryption`, account = hex sha256 of the resolved `credentials.json` path),
   43 base64url characters → 32 bytes. Creating the key (encrypt only, when nothing pins the OS source and the file
   has no `enc:v2:`) writes a random key, reads it back, and pins `credential-source` to `os\n`.
-- Keyring backend: the same crates `@napi-rs/keyring` 2.1.2 uses (`keyring-core` 1, `apple-native-keyring-store`
+- Keyring backend (versions pinned exactly): the same crates `@napi-rs/keyring` 2.1.2 uses (`keyring-core` 1, `apple-native-keyring-store`
   keychain on macOS, `dbus-secret-service-keyring-store` with `crypto-rust`+`vendored` on Linux,
   `windows-native-keyring-store` on Windows), with `Entry::new(service, account)`: the same item the desktop app
   reads and writes. Calls run on the blocking pool.
@@ -371,7 +378,13 @@ app-server keeps `HostCredentialCipher` (product rule 1).
   `credential-source`. Rust returns the value and creates nothing on a read. Successful outputs are the same.
 - Any other `enc:` prefix: `Decrypt`.
 - Cache: one key lookup per cipher; a failure is cached only when the lock was acquired (a denied Keychain
-  prompt is not repeated; a lock timeout is retried).
+  prompt is not repeated; a lock timeout is retried). The lookup runs as its own task: a caller that gives up does
+  not leave it suspended while it holds the `.keyring` lock. The managed secret for `enc:v1:` values is also
+  resolved once per cipher.
+- The credentials path is resolved as Node's `path.resolve` does (lexically: `.`, `..`, repeated separators) before
+  it names the OS store account, the lock and the secret files.
+- OS store failures are logged once (`credentials.key_store.failed`, the store's error, no value) and reported as
+  `Unavailable`. The OS entry is built once per cipher, like Node's memoized `AsyncEntry`.
 - Not ported: read-time migration of `enc:v1:` values to `enc:v2:` (`migrateCredentialRecord`). Rust rewrites a
   value only when it writes that key. The file is shared with the desktop app, which reads both formats.
 - Tests never construct the OS keyring: the key store is injected (`KeyStore` trait). Parity vectors come from the

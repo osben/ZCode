@@ -228,7 +228,11 @@ fn scripted(
         let calls = calls.clone();
         Arc::new(move || {
             let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let (selection, degraded) = outcomes[n.min(outcomes.len() - 1)].clone();
+            let last = outcomes
+                .len()
+                .checked_sub(1)
+                .expect("at least one scripted outcome");
+            let (selection, degraded) = outcomes[n.min(last)].clone();
             async move {
                 Settled {
                     selection,

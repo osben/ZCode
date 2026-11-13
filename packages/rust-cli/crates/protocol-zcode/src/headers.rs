@@ -22,11 +22,21 @@ const LIMIT: Duration = Duration::from_secs(180);
 /// 经 Host 取账号凭据。
 pub struct HostHeaders {
     context: Arc<Context>,
+    limit: Duration,
 }
 
 impl HostHeaders {
     pub fn new(context: Arc<Context>) -> Self {
-        Self { context }
+        Self {
+            context,
+            limit: LIMIT,
+        }
+    }
+
+    /// Tests: a short bound, to observe the timeout.
+    #[cfg(test)]
+    pub(crate) fn with_limit(context: Arc<Context>, limit: Duration) -> Self {
+        Self { context, limit }
     }
 }
 
@@ -88,12 +98,19 @@ impl HeaderSource for HostHeaders {
             ),
         };
         // Fork: held until the Host's attach acknowledgement, inside the same bound (F1).
-        let answer = tokio::time::timeout(LIMIT, async {
+        let answer = tokio::time::timeout(self.limit, async {
             self.context.host_ready().await;
             self.context.peer.request(REQUEST, &params).await
         })
         .await;
         let result = match answer {
+            // The request never went out: nothing to cancel.
+            Err(_) if self.context.attach.waiting() => {
+                pending.params = None;
+                return Err(failed(
+                    "The host did not acknowledge the attach before the account credentials request",
+                ));
+            }
             // 超时：Pending 的 Drop 发取消。
             Err(_) => return Err(failed("Requesting the account credentials timed out")),
             Ok(result) => {

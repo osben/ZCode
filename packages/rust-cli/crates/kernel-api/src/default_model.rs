@@ -1,5 +1,6 @@
 //! 新会话的缺省模型（docs/specs/rust-cli/performance.md §12.3，工作线 F140）：可以晚到的值。A degraded settlement may be
-//! revised once the credentials are readable (fork spec `fork-rust-credential-cipher.md` F3); readers see the latest.
+//! revised once the credentials are readable (fork spec `fork-rust-credential-cipher.md` F3): [`DefaultModel::current`]
+//! read after the revision sees it; [`DefaultModel::settled`] resolves at the first settlement only.
 //!
 //! 以前入口等模型目录选出缺省模型（每次启动都联网查套餐，约 400 ms）才建内核与 TUI，第一帧跟着等。现在 TUI 模式在后台
 //! 选，内核与 TUI 拿到的是这个值：定下之前 [`DefaultModel::current`] 是暂定值（上次启动的结论，§12.4）或空选择，

@@ -3,6 +3,7 @@
 //! 2026-11-13; the fixed-IV ones are Node's `seal` with IV `000102…0b`, which Node also decrypts.
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
+use std::time::Duration;
 
 use super::*;
 
@@ -42,7 +43,7 @@ impl KeyStore for Memory {
     async fn get(&self) -> Result<Option<String>, KeyStoreError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.broken {
-            return Err(KeyStoreError);
+            return Err(KeyStoreError("broken".to_owned()));
         }
         Ok(self.value.lock().unwrap().clone())
     }
@@ -50,7 +51,7 @@ impl KeyStore for Memory {
     async fn set(&self, value: &str) -> Result<(), KeyStoreError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.broken {
-            return Err(KeyStoreError);
+            return Err(KeyStoreError("broken".to_owned()));
         }
         *self.value.lock().unwrap() = Some(value.to_owned());
         Ok(())
@@ -353,4 +354,92 @@ async fn a_store_failure_is_not_retried() {
     let calls = store.calls();
     assert!(cipher.encrypt("x").await.is_err());
     assert_eq!(store.calls(), calls);
+}
+
+/// The managed secret for `enc:v1:` values is resolved once per cipher, like Node's memoized key lookup: later v1
+/// values neither take the `.keyring` lock again nor read the secret file again.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_legacy_secret_is_resolved_once_per_cipher() {
+    let setup = Setup::new();
+    setup.write("credential-secret", ENV_SECRET).await;
+    chmod(&setup.dir.path().join("credential-secret"), 0o600).await;
+    let key: [u8; KEY_BYTES] = Sha256::digest(ENV_SECRET.as_bytes()).into();
+    let value = format!("{LEGACY_PREFIX}{}", seal("legacy", &key, IV).unwrap());
+    let cipher = setup.cipher(Arc::new(Memory::default()));
+    assert_eq!(cipher.decrypt(&value).await.unwrap(), "legacy");
+    rust_cli_fs::remove_optional(&setup.dir.path().join("credential-secret"))
+        .await
+        .unwrap();
+    assert_eq!(
+        cipher.decrypt(&value).await.unwrap(),
+        "legacy",
+        "the resolved secret is reused"
+    );
+}
+
+/// A key store that answers only once released.
+struct Gated {
+    release: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl KeyStore for Gated {
+    async fn get(&self) -> Result<Option<String>, KeyStoreError> {
+        self.release.notified().await;
+        Ok(Some(OS_KEY.to_owned()))
+    }
+
+    async fn set(&self, _value: &str) -> Result<(), KeyStoreError> {
+        Err(KeyStoreError("broken".to_owned()))
+    }
+}
+
+/// A caller that gives up while the key lookup holds the `.keyring` lock does not park the lookup: it finishes on its
+/// own and releases the lock for other processes.
+#[tokio::test]
+async fn a_cancelled_caller_does_not_park_the_held_lock() {
+    let setup = Setup::new();
+    setup.write("credential-source", "os\n").await;
+    let store = Arc::new(Gated {
+        release: tokio::sync::Notify::new(),
+    });
+    let cipher = setup.cipher(store.clone());
+    let lock = setup.dir.path().join("credentials.json.keyring.lock");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), cipher.decrypt(FIXED_OS))
+            .await
+            .is_err(),
+        "the lookup waits for the store"
+    );
+    assert!(
+        rust_cli_fs::is_dir(&lock).await,
+        "the lookup holds the lock"
+    );
+    store.release.notify_one();
+    let released = async {
+        while rust_cli_fs::is_dir(&lock).await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), released)
+        .await
+        .expect("the lookup finishes without a caller and releases the lock");
+    assert_eq!(cipher.decrypt(FIXED_OS).await.unwrap(), "rust os plaintext");
+}
+
+/// The OS store account hashes the path Node's `path.resolve` gives, so the desktop's entry is found even when the
+/// home directory is spelled with `.`, `..` or repeated separators.
+#[cfg(unix)]
+#[test]
+fn the_account_hashes_the_resolved_path() {
+    let expected = hex(&Sha256::digest(b"/Users/dev/.zcode/v2/credentials.json"));
+    assert_eq!(
+        account_of(Path::new("/Users/dev//./.zcode/v2/../v2/credentials.json")),
+        expected
+    );
+    assert_eq!(
+        account_of(Path::new("/Users/dev/.zcode/v2/credentials.json")),
+        expected
+    );
 }

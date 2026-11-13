@@ -3925,6 +3925,8 @@ export function createZCodeAgentService(
     const attached: ZCodeProcessHostAttachedParams = {
       credentialCipher: Boolean(options?.credentialCipherProvider),
     };
+    // Deferred so a synchronous throw from `notify` (a client without it, or one already closed) becomes the
+    // logged rejection below instead of breaking client registration.
     void Promise.resolve()
       .then(() => client.notify(zcodeProtocolMethods.processHostAttached, attached))
       .catch((error: unknown) => {

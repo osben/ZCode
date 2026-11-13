@@ -94,6 +94,11 @@ impl HostCredentialCipher {
         })
         .await;
         let result = match answer {
+            Err(_) if self.context.attach.waiting() => {
+                return Err(unavailable(
+                    "the host did not acknowledge the attach in time",
+                ));
+            }
             Err(_) => return Err(unavailable("the credential cipher did not reply in time")),
             Ok(result) => result?,
         };

@@ -50,16 +50,16 @@ fn connect(declared: bool) -> (Arc<Context>, Host, TaskScope) {
     let (host_out, agent_in) = duplex(1 << 20);
     let (agent_out, host_in) = duplex(1 << 20);
     let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
-    let context = Arc::new(Context::new(peer.clone(), Arc::new(FixedClock(1))));
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
     if declared {
         context.expect_host_attach();
     }
     drop(scope.spawner().spawn(
         "serve",
-        connection::serve(
+        serve_attached(
             BufReader::new(agent_in),
-            peer,
-            AttachGate::wrap(context.clone(), Arc::new(Nothing)),
+            context.clone(),
+            Arc::new(Nothing),
             scope.spawner(),
             Options::default(),
         ),
@@ -168,4 +168,38 @@ async fn the_ack_is_not_held_behind_a_service_that_is_not_installed() {
         .await
         .expect("the ack arrives while the service is not installed");
     assert_eq!(state, Some(true));
+}
+
+/// A Host that closes the connection before it acknowledges: the held cipher call fails at once, not at its bound.
+#[tokio::test]
+async fn a_host_that_closes_before_the_ack_fails_the_held_call_at_once() {
+    let (context, host, _scope) = connect(true);
+    let cipher = HostCredentialCipher::new(context);
+    let call = tokio::spawn(async move { cipher.decrypt("enc:v2:os:x").await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(host);
+    let error = tokio::time::timeout(Duration::from_secs(5), call)
+        .await
+        .expect("released when the connection ends")
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        matches!(error, CipherError::Unavailable { .. }),
+        "{error:?}"
+    );
+}
+
+/// The bound ends while the acknowledgement is still awaited: the error names the missing acknowledgement.
+#[tokio::test]
+async fn a_missing_ack_is_named_when_the_bound_ends() {
+    let (context, mut host, _scope) = connect(true);
+    let cipher = HostCredentialCipher::with_limit(context, Duration::from_millis(100));
+    let error = cipher.decrypt("enc:v2:os:x").await.unwrap_err();
+    assert_eq!(
+        error,
+        CipherError::Unavailable {
+            reason: "the host did not acknowledge the attach in time"
+        }
+    );
+    assert!(host.next_within(Duration::from_millis(100)).await.is_none());
 }

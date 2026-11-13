@@ -88,10 +88,7 @@ impl CredentialSecret {
     fn derive(&self) -> String {
         match &self.explicit {
             Some(secret) if !secret.expose().trim().is_empty() => secret.expose().trim().to_owned(),
-            _ => format!(
-                "zcode-credential-fallback:{}:{}:{}",
-                self.platform, self.home, self.username
-            ),
+            _ => self.fallback(),
         }
     }
 }

@@ -226,4 +226,19 @@ fn an_unreadable_family_page_offers_neither_sign_in_nor_sign_out() {
         !rows.iter().any(|r| r == "signIn" || r == "signOut"),
         "{rows:?}"
     );
+    let ui = app.settings.clone().expect("settings open");
+    let view = app.settings_view(&ui, 0);
+    let account = view.rows.iter().find_map(|row| match row {
+        Row::Info { label, value } if label == "Account" => {
+            Some(value.iter().map(|p| p.text.as_str()).collect::<String>())
+        }
+        _ => None,
+    });
+    assert_eq!(account.as_deref(), Some("Could not read the saved sign-in"));
+    assert!(
+        view.rows.iter().any(
+            |row| matches!(row, Row::Note(note) if note == "Could not read the saved sign-in.")
+        ),
+        "the models note says the sign-in could not be read"
+    );
 }

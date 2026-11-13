@@ -185,7 +185,7 @@ impl rust_cli_kernel_api::store::StoreQueries for DeletedRow {
 struct DeletedKernel {
     creates: std::sync::Mutex<Vec<String>>,
     /// The model of each created session's selection.
-    models: std::sync::Mutex<Vec<String>>,
+    models: std::sync::Mutex<Vec<rust_cli_kernel_api::model::ModelSelection>>,
 }
 
 #[async_trait::async_trait]
@@ -202,7 +202,7 @@ impl rust_cli_kernel_api::session_api::Kernel for DeletedKernel {
     ) -> Result<SessionId, rust_cli_kernel_api::session_api::KernelError> {
         let id = request.id.unwrap_or_else(|| SessionId::new("generated"));
         self.creates.lock().unwrap().push(id.as_str().to_owned());
-        self.models.lock().unwrap().push(request.selection.model);
+        self.models.lock().unwrap().push(request.selection);
         Ok(id)
     }
 
@@ -353,7 +353,23 @@ async fn a_revised_default_reaches_only_new_sessions() {
         "full",
     ));
     create_session(&server, &create("s3")).await;
-    assert_eq!(*kernel.models.lock().unwrap(), ["degraded", "full"]);
+    let created: Vec<(String, String)> = kernel
+        .models
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|s| (s.provider.clone(), s.model.clone()))
+        .collect();
+    assert_eq!(
+        created,
+        [
+            ("personal:gateway".to_owned(), "degraded".to_owned()),
+            (
+                "account:zai-individual-coding-plan".to_owned(),
+                "full".to_owned()
+            ),
+        ]
+    );
 }
 
 /// Fork: each field of an input's execution state overrides the session's own (Node `resolveExecutionState`): a plan

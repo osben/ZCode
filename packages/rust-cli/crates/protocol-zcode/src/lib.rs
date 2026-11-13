@@ -41,7 +41,7 @@ use rust_cli_kernel_api::session_api::Kernel;
 use rust_cli_protocol_core::connection;
 use serde_json::json;
 
-pub use attach::{AttachGate, HOST_ATTACH_ACK_ENV};
+pub use attach::{HOST_ATTACH_ACK_ENV, serve_attached};
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use headers::HostHeaders;

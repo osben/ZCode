@@ -157,3 +157,14 @@ async fn an_undecryptable_shared_value_does_not_mark_the_families() {
     assert_eq!(families[0].login, FamilyLogin::SignedOut, "{families:?}");
     assert_eq!(families[1].login, FamilyLogin::SignedIn, "{families:?}");
 }
+
+/// F2: a readable manual key wins over an undecryptable OAuth value left behind, as in the account overlay (the
+/// manual branch); the family is signed in, not unreadable.
+#[tokio::test]
+async fn a_readable_manual_key_wins_over_an_undecryptable_oauth_value() {
+    let mut record = manual_login(ZAI, "sk-zai");
+    record["oauth:zai:access_token"] = json!("enc:v2:os:0123456789abcdef01234567:x");
+    let (_dir, platform) = platform_with(std::sync::Arc::new(OneBadValue), record).await;
+    let families = platform.family_accounts().await;
+    assert_eq!(families[0].login, FamilyLogin::SignedIn, "{families:?}");
+}

@@ -101,12 +101,13 @@ impl Platform {
                     let login = match own.await {
                         Ok((Some(_), Some(_))) => FamilyLogin::SignedIn,
                         Ok(_) if individual.is_empty() => FamilyLogin::SignedOut,
-                        Ok(_) => match account::manual_authorized(c, &individual).await {
-                            Ok(true) => FamilyLogin::SignedIn,
-                            Ok(false) => FamilyLogin::SignedOut,
-                            Err(_) => FamilyLogin::Unreadable,
+                        // A readable manual key also wins over an undecryptable OAuth value, as in the account
+                        // overlay; without one the OAuth failure stays unreadable.
+                        own => match (own, account::manual_authorized(c, &individual).await) {
+                            (_, Ok(true)) => FamilyLogin::SignedIn,
+                            (Ok(_), Ok(false)) => FamilyLogin::SignedOut,
+                            _ => FamilyLogin::Unreadable,
                         },
-                        Err(_) => FamilyLogin::Unreadable,
                     };
                     let account = match login {
                         FamilyLogin::Unreadable => String::new(),

@@ -52,9 +52,44 @@ fn invalid() -> CipherError {
     }
 }
 
-/// The OS store failed (locked, denied, missing backend). The cipher reports it as unavailable.
-#[derive(Debug)]
-pub struct KeyStoreError;
+/// The OS store failed (locked, denied, missing backend). The cipher logs the cause and reports it as unavailable.
+/// The cause names no value or key.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct KeyStoreError(pub String);
+
+/// Logs an OS store failure once and reports it as unavailable.
+fn store_failed(error: &KeyStoreError) -> CipherError {
+    tracing::warn!(
+        event = "credentials.key_store.failed",
+        error = %error,
+        "the OS credential store failed"
+    );
+    unavailable()
+}
+
+/// Node `path.resolve` for an absolute path, lexically: `.` and repeated or trailing separators dropped, `..`
+/// applied. The OS store account hashes this form, so it must match the desktop's.
+fn resolved(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The OS store account: hex sha256 of the resolved credentials path (Node `createHash("sha256").update(filePath)`).
+fn account_of(credentials: &Path) -> String {
+    hex(&Sha256::digest(
+        resolved(credentials).to_string_lossy().as_bytes(),
+    ))
+}
 
 /// Where the OS key lives. Injected in tests: they never construct the OS store.
 #[async_trait]
@@ -125,6 +160,8 @@ pub struct SystemCipher {
     /// One key lookup per cipher, shared by concurrent calls. A failure stays cached only when the lock was taken
     /// (a denied prompt is not repeated; a lock timeout is retried).
     key: Mutex<Option<Lookup>>,
+    /// The managed secret for `enc:v1:` values once resolved (Node memoizes the key lookup it comes from).
+    legacy: Mutex<Option<Option<Arc<str>>>>,
 }
 
 struct Inner {
@@ -139,10 +176,15 @@ impl SystemCipher {
     /// With the OS credential store. The store is opened only when a lookup reaches it.
     #[must_use]
     pub fn new(inputs: SystemCipherInputs) -> Self {
-        let account = hex(&Sha256::digest(
-            inputs.credentials.to_string_lossy().as_bytes(),
-        ));
-        Self::with_store(inputs, Arc::new(OsKeyStore { account }))
+        let account = account_of(&inputs.credentials);
+        Self::with_store(
+            inputs,
+            Arc::new(OsKeyStore {
+                account,
+                #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+                entry: Arc::default(),
+            }),
+        )
     }
 
     /// With an injected key store (tests).
@@ -150,13 +192,14 @@ impl SystemCipher {
     pub fn with_store(inputs: SystemCipherInputs, store: Arc<dyn KeyStore>) -> Self {
         Self {
             inner: Arc::new(Inner {
-                file: inputs.credentials,
+                file: resolved(&inputs.credentials),
                 env_secret: inputs.env_secret,
                 env_secret_file: inputs.env_secret_file,
                 fallback: inputs.legacy.fallback(),
                 store,
             }),
             key: Mutex::new(None),
+            legacy: Mutex::new(None),
         }
     }
 
@@ -167,12 +210,15 @@ impl SystemCipher {
                 Some(lookup) => (lookup.clone(), None),
                 None => {
                     let acquired = Arc::new(AtomicBool::new(false));
-                    let lookup = {
+                    // The lookup runs as its own task, owned by the slot: it may hold the `.keyring` lock, and a
+                    // `Shared` future whose only caller gave up would stay suspended with the lock held.
+                    let task = {
                         let (inner, acquired) = (self.inner.clone(), acquired.clone());
-                        async move { inner.lookup(create, &acquired).await }
-                            .boxed()
-                            .shared()
+                        rust_cli_base::owned(async move { inner.lookup(create, &acquired).await })
                     };
+                    let lookup = async move { task.await.unwrap_or_else(|_| Err(unavailable())) }
+                        .boxed()
+                        .shared();
                     *slot = Some(lookup.clone());
                     (lookup, Some(acquired))
                 }
@@ -193,18 +239,24 @@ impl SystemCipher {
 
     /// The managed secret for `enc:v1:` candidates, without the OS store.
     async fn legacy_secret(&self) -> Result<Option<Arc<str>>, CipherError> {
+        if let Some(secret) = self.legacy.lock_unpoisoned().clone() {
+            return Ok(secret);
+        }
         let cached = self.key.lock_unpoisoned().clone();
-        if let Some(Ok(key)) = cached.as_ref().and_then(Shared::peek) {
-            return Ok(key.legacy.clone());
-        }
-        if let Some(key) = self.inner.explicit().await? {
-            return Ok(key.legacy);
-        }
-        let inner = self.inner.clone();
-        inner
-            .locked(async || inner.default_source().await)
-            .await
-            .map(|key| key.and_then(|key| key.legacy))
+        let secret = if let Some(Ok(key)) = cached.as_ref().and_then(Shared::peek) {
+            key.legacy.clone()
+        } else if let Some(key) = self.inner.explicit().await? {
+            key.legacy
+        } else {
+            let inner = self.inner.clone();
+            inner
+                .locked(async || inner.default_source().await)
+                .await?
+                .and_then(|key| key.legacy)
+        };
+        // Only a resolved secret is kept: a lock timeout is retried by the next value.
+        *self.legacy.lock_unpoisoned() = Some(secret.clone());
+        Ok(secret)
     }
 
     async fn decrypt_legacy(&self, value: &str) -> Result<String, CipherError> {
@@ -319,11 +371,15 @@ impl Inner {
             return Ok(key);
         }
         let store = &self.store;
-        let mut encoded = store.get().await.map_err(|_| unavailable())?;
+        let mut encoded = store.get().await.map_err(|error| store_failed(&error))?;
         if encoded.is_none() && create && !use_os && !raw.contains(SYSTEM_PREFIX) {
             let created = random_key()?;
-            store.set(&created).await.map_err(|_| unavailable())?;
-            if store.get().await.map_err(|_| unavailable())?.as_deref() != Some(created.as_str()) {
+            store
+                .set(&created)
+                .await
+                .map_err(|error| store_failed(&error))?;
+            let read_back = store.get().await.map_err(|error| store_failed(&error))?;
+            if read_back.as_deref() != Some(created.as_str()) {
                 return Err(unavailable());
             }
             encoded = Some(created);
@@ -519,14 +575,27 @@ impl CredentialCipher for SystemCipher {
 }
 
 /// The OS store entry `@napi-rs/keyring` 2.1.2 addresses for `new AsyncEntry(service, account, {linux: {store:
-/// "secret-service"}})`: no target, no modifiers. Calls run on the blocking pool.
+/// "secret-service"}})`: no target, no modifiers. Built once per cipher, like Node's memoized entry; calls run on the
+/// blocking pool.
 struct OsKeyStore {
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "linux", target_os = "windows")),
+        expect(dead_code, reason = "no OS store on this platform")
+    )]
     account: String,
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+    entry: Arc<std::sync::OnceLock<keyring_core::Entry>>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-fn os_entry(account: &str) -> Result<keyring_core::Entry, KeyStoreError> {
+fn os_entry<'a>(
+    cell: &'a std::sync::OnceLock<keyring_core::Entry>,
+    account: &str,
+) -> Result<&'a keyring_core::Entry, KeyStoreError> {
     use keyring_core::api::CredentialStoreApi as _;
+    if let Some(entry) = cell.get() {
+        return Ok(entry);
+    }
     let empty = std::collections::HashMap::new();
     #[cfg(target_os = "macos")]
     let store = apple_native_keyring_store::keychain::Store::new_with_configuration(&empty);
@@ -534,53 +603,50 @@ fn os_entry(account: &str) -> Result<keyring_core::Entry, KeyStoreError> {
     let store = dbus_secret_service_keyring_store::Store::new_with_configuration(&empty);
     #[cfg(target_os = "windows")]
     let store = windows_native_keyring_store::Store::new_with_configuration(&empty);
-    store
+    let entry = store
         .and_then(|store| store.build(SYSTEM_SERVICE, account, None))
-        .map_err(|_| KeyStoreError)
+        .map_err(|error| KeyStoreError(error.to_string()))?;
+    Ok(cell.get_or_init(|| entry))
 }
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn os_entry(_: &str) -> Result<NoEntry, KeyStoreError> {
-    Err(KeyStoreError)
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-struct NoEntry;
 
 #[async_trait]
 impl KeyStore for OsKeyStore {
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     async fn get(&self) -> Result<Option<String>, KeyStoreError> {
-        let account = self.account.clone();
-        rust_cli_base::blocking(move || match os_entry(&account)?.get_password() {
+        let (cell, account) = (self.entry.clone(), self.account.clone());
+        rust_cli_base::blocking(move || match os_entry(&cell, &account)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring_core::Error::NoEntry) => Ok(None),
-            Err(_) => Err(KeyStoreError),
+            Err(error) => Err(KeyStoreError(error.to_string())),
         })
         .await
-        .map_err(|_| KeyStoreError)?
+        .map_err(|error| KeyStoreError(error.to_string()))?
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     async fn set(&self, value: &str) -> Result<(), KeyStoreError> {
-        let (account, value) = (self.account.clone(), value.to_owned());
+        let (cell, account, value) = (self.entry.clone(), self.account.clone(), value.to_owned());
         rust_cli_base::blocking(move || {
-            os_entry(&account)?
+            os_entry(&cell, &account)?
                 .set_password(&value)
-                .map_err(|_| KeyStoreError)
+                .map_err(|error| KeyStoreError(error.to_string()))
         })
         .await
-        .map_err(|_| KeyStoreError)?
+        .map_err(|error| KeyStoreError(error.to_string()))?
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     async fn get(&self) -> Result<Option<String>, KeyStoreError> {
-        os_entry(&self.account).map(|_| None)
+        Err(KeyStoreError(
+            "no OS credential store on this platform".to_owned(),
+        ))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     async fn set(&self, _: &str) -> Result<(), KeyStoreError> {
-        os_entry(&self.account).map(|_| ())
+        Err(KeyStoreError(
+            "no OS credential store on this platform".to_owned(),
+        ))
     }
 }
 

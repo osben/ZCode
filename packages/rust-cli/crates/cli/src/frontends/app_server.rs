@@ -17,7 +17,7 @@ use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
-    AttachGate, Context, Defaults, HOST_ATTACH_ACK_ENV, HostCredentialCipher, HostHeaders, Startup,
+    Context, Defaults, HOST_ATTACH_ACK_ENV, HostCredentialCipher, HostHeaders, Startup,
 };
 
 use crate::assemble::{self, Controller};
@@ -117,10 +117,10 @@ async fn serve(
     }
     let reader = spawner.spawn(
         "app-server-reader",
-        rust_cli_protocol_core::connection::serve(
+        rust_cli_protocol_zcode::serve_attached(
             tokio::io::BufReader::new(tokio::io::stdin()),
-            context.peer.clone(),
-            AttachGate::wrap(context.clone(), deferred),
+            context.clone(),
+            deferred,
             spawner.clone(),
             Options::default(),
         ),
