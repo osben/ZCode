@@ -27,6 +27,13 @@ struct SlotState {
 
 type Slot = Arc<SlotState>;
 
+/// A slot taken for one acquire before the acquire runs (in its own task): a release that comes first closes the slot,
+/// so the acquire starts nothing.
+pub(crate) struct Reserved {
+    session: SessionId,
+    slot: Slot,
+}
+
 impl SlotState {
     fn new() -> Self {
         Self {
@@ -56,6 +63,19 @@ impl AcpPool {
         }
     }
 
+    /// Takes the session's slot now, for an acquire that runs later.
+    pub(crate) fn reserve(&self, session: &SessionId) -> Reserved {
+        Reserved {
+            session: session.clone(),
+            slot: self.slot(session),
+        }
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.slots.lock_unpoisoned().is_empty()
+    }
+
     fn slot(&self, session: &SessionId) -> Slot {
         self.slots
             .lock_unpoisoned()
@@ -67,11 +87,12 @@ impl AcpPool {
     /// Node `acquire`, serialized per session.
     pub(crate) async fn acquire(
         &self,
-        session: &SessionId,
+        reserved: Reserved,
         launch: AcpLaunch,
     ) -> Result<AcpRuntime, AcpError> {
+        let Reserved { session, slot } = reserved;
+        let session = &session;
         let launch_key = rust_cli_acp::launch_key(&launch);
-        let slot = self.slot(session);
         let _permit =
             slot.gate.acquire().await.map_err(|_| {
                 AcpError::new(AcpErrorCode::AgentDied, "the ACP session was released")
@@ -185,6 +206,9 @@ impl AcpPool {
             let Ok(_permit) = slot.gate.acquire().await else {
                 return;
             };
+            // Closed: an acquire that reserved this slot and has not run yet fails instead of starting an agent that
+            // nothing would stop.
+            slot.gate.close();
             let resident = slot.resident.lock_unpoisoned().take();
             if let Some(resident) = resident {
                 resident.runtime.stop().await;
@@ -192,3 +216,7 @@ impl AcpPool {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pool_tests.rs"]
+mod tests;

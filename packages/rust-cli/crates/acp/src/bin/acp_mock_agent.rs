@@ -8,7 +8,8 @@
 //! `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
 //! process id is written there at start, so a test can see the process end), `--deaf-after-session` (Rust-only: after
 //! answering `session/new` it stops reading stdin and stays alive, so the client's writes block), `--silent-initialize`
-//! (Rust-only: `initialize` is never answered, so the start hangs).
+//! (Rust-only: `initialize` is never answered, so the start hangs), `--close-stdin-after-session` (Rust-only: after
+//! answering `session/new` it closes its stdin and stays alive with stdout open, so the client's next write fails).
 #![allow(
     clippy::disallowed_methods,
     reason = "a test double binary: it reads its own argv/env and writes its state file directly"
@@ -27,6 +28,7 @@ struct Mock {
     refuse_load: bool,
     deaf_after_session: bool,
     silent_initialize: bool,
+    close_stdin_after_session: bool,
     mode: String,
     model: String,
     current_mode_id: String,
@@ -49,6 +51,16 @@ fn notify(session_id: &str, update: Value) {
 
 fn message(text: &str) -> Value {
     json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
+}
+
+#[allow(
+    unsafe_code,
+    reason = "a test double closes its own stdin; std has no safe way to close fd 0"
+)]
+fn close_stdin() {
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: fd 0 belongs to this process and is never read again: the caller sleeps until it is killed.
+    drop(unsafe { std::os::fd::OwnedFd::from_raw_fd(0) });
 }
 
 fn done(id: &Value, stop_reason: &str) {
@@ -259,6 +271,12 @@ impl Mock {
                 let mut result = self.session_config();
                 result["sessionId"] = json!(SESSION_ID);
                 send(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
+                if self.close_stdin_after_session {
+                    close_stdin();
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                }
                 if self.deaf_after_session {
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(3600));
@@ -350,6 +368,7 @@ fn main() {
         refuse_load: args.iter().any(|arg| arg == "--refuse-load"),
         deaf_after_session: args.iter().any(|arg| arg == "--deaf-after-session"),
         silent_initialize: args.iter().any(|arg| arg == "--silent-initialize"),
+        close_stdin_after_session: args.iter().any(|arg| arg == "--close-stdin-after-session"),
         mode: "agent".to_owned(),
         model: "m1".to_owned(),
         current_mode_id: "build".to_owned(),

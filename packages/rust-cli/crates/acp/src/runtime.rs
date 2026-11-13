@@ -488,8 +488,10 @@ impl AcpRuntime {
 
     async fn connect(&self) -> Result<(), AcpError> {
         let options = &self.inner.options;
-        validate(&options.launch)?;
-        let env = child_env(&options.env_snapshot, options.launch.env.as_ref())?;
+        // Every failure leaves the runtime `Failed` (a restart sets `Starting` before this), so the pool restarts it.
+        let env = validate(&options.launch)
+            .and_then(|()| child_env(&options.env_snapshot, options.launch.env.as_ref()))
+            .inspect_err(|_| self.mark_failed())?;
         let command_name = rust_cli_base::js::string::trim(&options.launch.command).to_owned();
         let mut command = rust_cli_proc::command(&command_name);
         command
@@ -834,12 +836,12 @@ impl Inbound for Link {
                 && core.state == AcpState::Prompting
                 && session_matches;
             let listener = core.listener.clone().filter(|_| live)?;
-            core.next_ask += 1;
+            // Without a `toolCallId` the ACP SDK rejects the request on the Node side; here it answers `cancelled`.
             let tool_call_id = params
                 .get("toolCall")
                 .and_then(|call| call.get("toolCallId"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+                .and_then(Value::as_str)?;
+            core.next_ask += 1;
             let request_id = format!("{generation}:{tool_call_id}:{}", core.next_ask);
             let token = CancellationToken::new();
             core.pending_asks.insert(request_id.clone(), token.clone());

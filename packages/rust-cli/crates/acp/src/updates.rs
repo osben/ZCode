@@ -135,15 +135,16 @@ fn text_of(content: Option<&Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn tool_call_info(update: &Value) -> ToolCallInfo {
+/// `None` without a string `toolCallId`: the ACP SDK rejects such an update on the Node side.
+fn tool_call_info(update: &Value) -> Option<ToolCallInfo> {
     let text = |key: &str| update.get(key).and_then(Value::as_str).map(str::to_owned);
-    ToolCallInfo {
-        tool_call_id: text("toolCallId").unwrap_or_default(),
+    Some(ToolCallInfo {
+        tool_call_id: text("toolCallId")?,
         title: text("title").unwrap_or_default(),
         kind: text("kind"),
         status: text("status"),
         raw: update.clone(),
-    }
+    })
 }
 
 /// `mapSessionUpdate`: the update kinds a turn shows; `None` for anything else (usage, unknown kinds).
@@ -151,8 +152,8 @@ pub(crate) fn map_update(update: &Value) -> Option<RuntimeEvent> {
     match update.get("sessionUpdate").and_then(Value::as_str)? {
         "agent_message_chunk" => text_of(update.get("content")).map(RuntimeEvent::MessageChunk),
         "agent_thought_chunk" => text_of(update.get("content")).map(RuntimeEvent::ThoughtChunk),
-        "tool_call" => Some(RuntimeEvent::ToolCall(tool_call_info(update))),
-        "tool_call_update" => Some(RuntimeEvent::ToolCallUpdate(tool_call_info(update))),
+        "tool_call" => tool_call_info(update).map(RuntimeEvent::ToolCall),
+        "tool_call_update" => tool_call_info(update).map(RuntimeEvent::ToolCallUpdate),
         "plan" => {
             let entries = update.get("entries")?.as_array()?;
             let field = |entry: &Value, key: &str| {

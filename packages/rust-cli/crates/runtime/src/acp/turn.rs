@@ -462,3 +462,7 @@ impl Turn<'_> {
         Ok(QueryStop::Aborted)
     }
 }
+
+#[cfg(test)]
+#[path = "turn_tests.rs"]
+mod tests;

@@ -81,8 +81,10 @@ impl AcpHost {
         launch: AcpLaunch,
     ) -> Task<Result<AcpRuntime, AcpError>> {
         let host = self.clone();
+        // Reserved before the task runs: a session released in between starts no agent.
+        let reserved = self.pool.reserve(&session);
         self.spawner.spawn("acp-acquire", async move {
-            host.pool.acquire(&session, launch).await
+            host.pool.acquire(reserved, launch).await
         })
     }
 

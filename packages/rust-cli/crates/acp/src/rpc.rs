@@ -29,6 +29,59 @@ use crate::error::{AcpError, AcpErrorCode};
 pub(crate) const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 /// `DEFAULT_STDERR_TAIL_CHARS` (bytes here; the tail is only for diagnostics).
 const STDERR_TAIL_BYTES: usize = 64 * 1024;
+/// One stderr line is kept up to this many bytes; the rest of it is dropped (stdout has `MAX_FRAME_BYTES`).
+pub(crate) const STDERR_LINE_BYTES: usize = 8 * 1024;
+const STDERR_TRUNCATED: &str = "… [truncated]";
+
+/// The agent's stderr as lines of at most [`STDERR_LINE_BYTES`], so a runaway agent cannot grow the pump's memory.
+/// The state lives here, so `next` is safe to drop in a `select!` and resume.
+pub(crate) struct StderrLines<R> {
+    reader: R,
+    line: Vec<u8>,
+    truncated: bool,
+}
+
+impl<R: tokio::io::AsyncBufRead + Unpin> StderrLines<R> {
+    pub(crate) fn new(reader: R) -> Self {
+        Self {
+            reader,
+            line: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    /// The next line; `None` at the end of the stream or on a read error.
+    pub(crate) async fn next(&mut self) -> Option<String> {
+        loop {
+            let available = self.reader.fill_buf().await.ok()?;
+            if available.is_empty() {
+                return (!self.line.is_empty() || self.truncated).then(|| self.take());
+            }
+            let (chunk, end) = match available.iter().position(|byte| *byte == b'\n') {
+                Some(position) => (&available[..position], Some(position + 1)),
+                None => (available, None),
+            };
+            let room = STDERR_LINE_BYTES.saturating_sub(self.line.len());
+            if chunk.len() > room {
+                self.truncated = true;
+            }
+            self.line.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            let used = end.unwrap_or(available.len());
+            self.reader.consume(used);
+            if end.is_some() {
+                return Some(self.take());
+            }
+        }
+    }
+
+    fn take(&mut self) -> String {
+        let mut line = String::from_utf8_lossy(&std::mem::take(&mut self.line)).into_owned();
+        if std::mem::take(&mut self.truncated) {
+            line.push_str(STDERR_TRUNCATED);
+        }
+        line
+    }
+}
 /// JSON-RPC "method not found".
 const METHOD_NOT_FOUND: i64 = -32601;
 
@@ -362,10 +415,11 @@ impl Pump {
         } = self;
         // Writes run in their own task: a write to an agent that stopped reading blocks, and the pump must still see
         // shutdown, stdout and the process exit. Aborting the writer drops stdin, which is the EOF of the teardown.
-        let writer = rust_cli_base::owned(write_lines(stdin, inbox));
+        let mut writer = rust_cli_base::owned(write_lines(stdin, inbox));
+        let mut writer_ended = false;
         let mut reader = BufReader::new(stdout);
         let mut buffer = Vec::new();
-        let mut errors = BufReader::new(stderr).lines();
+        let mut errors = StderrLines::new(BufReader::new(stderr));
         let mut reading = true;
         let mut errors_open = true;
         let mut answers: JoinSet<(Value, Value)> = JoinSet::new();
@@ -422,15 +476,24 @@ impl Pump {
                         break Ended::StreamFailed;
                     }
                 },
-                line = errors.next_line(), if errors_open => match line {
-                    Ok(Some(line)) => keep_stderr(&stderr_tail, &line),
-                    Ok(None) | Err(_) => errors_open = false,
+                line = errors.next(), if errors_open => match line {
+                    Some(line) => keep_stderr(&stderr_tail, &line),
+                    None => errors_open = false,
                 },
                 Some(answered) = answers.join_next(), if !answers.is_empty() => {
                     if let Ok((id, result)) = answered {
                         peer.respond(id, result);
                     }
                     // The answer goes through the outbox, which the writer task drains.
+                }
+                // A failed write (the agent closed its stdin): nothing more reaches it, so the stream fails like a
+                // closed stdout instead of leaving requests waiting for answers to messages never sent.
+                _ = &mut writer, if !writer_ended => {
+                    writer_ended = true;
+                    let error = AcpError::new(AcpErrorCode::StreamClosed, "ACP agent stdin closed");
+                    peer.close(&error);
+                    inbound.stream_failed(error);
+                    break Ended::StreamFailed;
                 }
                 () = async { if let Some(sleep) = death.as_mut() { sleep.await } }, if death.is_some() => {
                     inbound.stream_failed(AcpError::stream_closed());
@@ -442,8 +505,10 @@ impl Pump {
         peer.close(&AcpError::stream_closed());
         // Teardown (`planAcpProcessTeardown` / `runAcpProcessTeardown`): EOF on stdin first, so an agent that
         // exits on EOF ends by itself; then TERM, a grace, KILL for the whole process group.
-        writer.abort();
-        let _ = writer.await;
+        if !writer_ended {
+            writer.abort();
+            let _ = writer.await;
+        }
         let shutdown_mode = match ended {
             Ended::Exited => Shutdown::Immediate,
             Ended::Shutdown | Ended::StreamFailed => {
@@ -462,3 +527,7 @@ impl Pump {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "rpc_tests.rs"]
+mod tests;

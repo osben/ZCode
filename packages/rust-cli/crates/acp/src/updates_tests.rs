@@ -69,3 +69,18 @@ fn permission_answers_map_to_the_option_of_that_kind() {
         json!({"outcome": {"outcome": "cancelled"}})
     );
 }
+
+#[test]
+fn tool_updates_without_a_tool_call_id_are_dropped() {
+    // The ACP SDK rejects these on the Node side (`toolCallId` is required), so no row or ask can merge under "".
+    for kind in ["tool_call", "tool_call_update"] {
+        assert!(
+            map_update(&json!({"sessionUpdate": kind, "title": "t"})).is_none(),
+            "{kind}"
+        );
+        assert!(
+            map_update(&json!({"sessionUpdate": kind, "toolCallId": 7, "title": "t"})).is_none(),
+            "{kind}"
+        );
+    }
+}

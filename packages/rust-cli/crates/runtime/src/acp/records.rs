@@ -11,10 +11,7 @@ use serde::Deserialize;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentRecord {
     pub(crate) agent_id: String,
-    #[allow(
-        dead_code,
-        reason = "part of the strict record shape; the turn errors use the registry name"
-    )]
+    /// Validated like Node; the turn errors use the registry name.
     pub(crate) provider_name: String,
     pub(crate) enabled: bool,
     pub(crate) command: String,
@@ -28,6 +25,34 @@ pub(crate) struct AgentRecord {
 struct AgentsFile {
     schema_version: u32,
     agents: Vec<AgentRecord>,
+}
+
+impl AgentsFile {
+    /// The refinements of the Node schema that serde does not express.
+    fn is_valid(&self) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        self.schema_version == 1
+            && self.agents.iter().all(|agent| {
+                // `agentId: /^\S+$/`, `providerName: min(1)`, env keys `ACP_ENV_KEY_PATTERN`, no duplicate ids.
+                !agent.agent_id.is_empty()
+                    && !agent.agent_id.chars().any(char::is_whitespace)
+                    && !agent.provider_name.is_empty()
+                    && agent
+                        .env
+                        .as_ref()
+                        .is_none_or(|env| env.keys().all(|key| is_env_key(key)))
+                    && seen.insert(agent.agent_id.as_str())
+            })
+    }
+}
+
+/// `ACP_ENV_KEY_PATTERN`: `^[A-Za-z_][A-Za-z0-9_]*$`.
+fn is_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
 }
 
 /// The sidecar file.
@@ -48,7 +73,7 @@ impl AgentRecords {
             }
         };
         let file = match serde_json::from_slice::<AgentsFile>(&bytes) {
-            Ok(file) if file.schema_version == 1 => file,
+            Ok(file) if file.is_valid() => file,
             Ok(_) | Err(_) => {
                 tracing::warn!(
                     event = "acp.records_invalid",
@@ -62,3 +87,7 @@ impl AgentRecords {
             .find(|record| record.agent_id == agent_id)
     }
 }
+
+#[cfg(test)]
+#[path = "records_tests.rs"]
+mod tests;

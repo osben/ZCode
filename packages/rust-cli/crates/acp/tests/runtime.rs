@@ -395,6 +395,20 @@ async fn an_answer_written_just_before_exit_settles_the_prompt() {
 }
 
 #[tokio::test]
+async fn a_prompt_fails_when_the_agent_closed_its_stdin() {
+    let fixture = Fixture::new();
+    let runtime = AcpRuntime::start(fixture.options(&["--close-stdin-after-session"], &[]))
+        .await
+        .expect("start");
+    let (result, _) = tokio::time::timeout(Duration::from_secs(10), run(&runtime, "hello", None))
+        .await
+        .expect("a write the agent can no longer read fails the prompt instead of hanging");
+    let error = result.expect_err("stdin closed");
+    assert_ne!(error.code, AcpErrorCode::State, "{error:?}");
+    runtime.stop().await;
+}
+
+#[tokio::test]
 async fn a_stopped_runtime_refuses_prompts() {
     let fixture = Fixture::new();
     let runtime = AcpRuntime::start(fixture.options(&[], &[]))

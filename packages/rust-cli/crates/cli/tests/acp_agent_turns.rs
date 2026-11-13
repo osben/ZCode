@@ -442,6 +442,81 @@ fn stop_while_the_agent_starts_ends_the_turn_at_once() {
     );
 }
 
+/// Runs one turn with `text` and answers its finished frame.
+fn finish_turn(server: &mut Server, session: &str, command: &str, text: &str) -> Value {
+    let ack = server.command(send_text(session, command, text));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    server.wait_for(turn_finished)
+}
+
+#[test]
+fn a_changed_launch_replaces_the_agent_process() {
+    let (dir, home, work) = dirs();
+    let pid_file = dir.path().join("agent.pid");
+    let pid_arg = pid_file.to_str().unwrap();
+    write_agents(&home, &mock_agent(), true, &["--pid-file", pid_arg]);
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    let first = run_turn(&mut server, &session, &pid_file);
+    // The record is read every turn; new args are a new launch key.
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--pid-file", pid_arg, "--config", "options"],
+    );
+    let finished = finish_turn(&mut server, &session, "c-second", "hello again");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    let second = std::fs::read_to_string(&pid_file).unwrap();
+    assert_ne!(first, second, "a changed launch starts a new agent process");
+    assert!(ends(&first), "the replaced agent process is stopped");
+    assert!(alive(&second));
+    server.stop();
+}
+
+#[test]
+fn a_crashed_agent_fails_the_turn_and_the_next_turn_restarts_it() {
+    let (dir, home, work) = dirs();
+    let pid_file = dir.path().join("agent.pid");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--pid-file", pid_file.to_str().unwrap()],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    let finished = finish_turn(&mut server, &session, "c-crash", "please crash");
+    assert!(
+        contains(
+            &finished,
+            "mock stopped during the turn. Send the message again to restart it."
+        ),
+        "{finished}"
+    );
+    let crashed = std::fs::read_to_string(&pid_file).unwrap();
+    assert!(ends(&crashed));
+    let finished = finish_turn(&mut server, &session, "c-after", "hello");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    let restarted = std::fs::read_to_string(&pid_file).unwrap();
+    assert_ne!(
+        crashed, restarted,
+        "the next turn starts a new agent process"
+    );
+    assert_eq!(model.requests(), 0);
+    server.stop();
+}
+
 #[test]
 fn stop_during_a_hang_ends_the_turn_and_the_next_turn_reuses_the_agent() {
     let (dir, home, work) = dirs();

@@ -33,7 +33,7 @@ interface CommandEnvelopeLike {
 }
 
 function isAcpProvider(providerId: unknown): boolean {
-  return typeof providerId === "string" && providerId.trim().startsWith("acp:");
+  return typeof providerId === "string" && providerId.startsWith("acp:");
 }
 
 function isAcpSelection(value: unknown): boolean {
