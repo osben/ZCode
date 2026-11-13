@@ -16,8 +16,9 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
-use rust_cli_protocol_zcode::topic_resource::HostTopicResources;
-use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
+use rust_cli_protocol_zcode::{
+    Context, Defaults, HostCredentialCipher, HostHeaders, HostTopicResources, Startup,
+};
 
 use crate::assemble::{self, Controller};
 use crate::process::{ControllerRun, Start};

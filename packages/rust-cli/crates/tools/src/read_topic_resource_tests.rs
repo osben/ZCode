@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
@@ -87,6 +88,12 @@ impl TopicResources for Port {
 #[derive(Default)]
 struct Files {
     objects: Mutex<HashMap<String, (ArtifactRef, Vec<u8>)>>,
+    /// `find` fails like a broken index.
+    fail_find: AtomicBool,
+    /// `local_path` has nothing to give (a store that keeps no files).
+    no_path: AtomicBool,
+    /// How many times `get` read an artifact's bytes.
+    reads: AtomicUsize,
 }
 
 impl Files {
@@ -132,6 +139,7 @@ impl ArtifactStore for Files {
     }
 
     async fn get(&self, artifact: &ArtifactRef) -> Result<Vec<u8>, StoreError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.bytes(artifact.id.as_str())
             .filter(|(stored, _)| stored.session == artifact.session)
             .map(|(_, bytes)| bytes)
@@ -145,6 +153,11 @@ impl ArtifactStore for Files {
         session: &SessionId,
         id: &rust_cli_kernel_api::ids::ArtifactId,
     ) -> Result<Option<ArtifactRef>, StoreError> {
+        if self.fail_find.load(Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "index unreadable".to_owned(),
+            });
+        }
         Ok(self
             .bytes(id.as_str())
             .map(|(artifact, _)| artifact)
@@ -152,6 +165,9 @@ impl ArtifactStore for Files {
     }
 
     fn local_path(&self, artifact: &ArtifactRef) -> Option<PathBuf> {
+        if self.no_path.load(Ordering::SeqCst) {
+            return None;
+        }
         Some(PathBuf::from(format!(
             "/home/u/.zcode/artifacts/{}/{}.txt",
             artifact.session, artifact.id
@@ -464,6 +480,49 @@ async fn bad_replies_fail() {
         let error = error_text(fixture.call(json!({"messageId": "om_1"})).await);
         assert_eq!(error, format!("Artifact not found: {reference}"));
     }
+    // A store failure reaches the model with its own text, not as a missing capability (Node propagates the store's
+    // error).
+    let fixture = Fixture::new(
+        vec![human("m1", intent("c1", Some(source("a1"))))],
+        Port::default(),
+    )
+    .await;
+    fixture.upload("text/plain", &good, size);
+    fixture.files.fail_find.store(true, Ordering::SeqCst);
+    assert_eq!(
+        error_text(fixture.call(json!({"messageId": "om_1"})).await),
+        StoreError::Storage {
+            message: "index unreadable".to_owned()
+        }
+        .to_string()
+    );
+    // A store that cannot give the written artifact a path.
+    let fixture = Fixture::new(
+        vec![human("m1", intent("c1", Some(source("a1"))))],
+        Port::default(),
+    )
+    .await;
+    fixture.upload("text/plain", &good, size);
+    fixture.files.no_path.store(true, Ordering::SeqCst);
+    assert_eq!(
+        error_text(fixture.call(json!({"messageId": "om_1"})).await),
+        NOT_MATERIALIZED
+    );
+    // An artifact larger than any acceptable data URL is refused before its bytes are read.
+    let fixture = Fixture::new(
+        vec![human("m1", intent("c1", Some(source("a1"))))],
+        Port::default(),
+    )
+    .await;
+    fixture.upload("text/plain", &good, size);
+    if let Some((artifact, _)) = fixture.files.objects.lock_unpoisoned().get_mut("upload-1") {
+        artifact.size = "data:text/plain;base64,".len() as u64 + MAX_BYTES.div_ceil(3) * 4 + 1;
+    }
+    assert_eq!(
+        error_text(fixture.call(json!({"messageId": "om_1"})).await),
+        BAD_ARTIFACT
+    );
+    assert_eq!(fixture.files.reads.load(Ordering::SeqCst), 0);
     // The port's own error reaches the model as is.
     let fixture = Fixture::new(
         vec![human("m1", intent("c1", Some(source("a1"))))],

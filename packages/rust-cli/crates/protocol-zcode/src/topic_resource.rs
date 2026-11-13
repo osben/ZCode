@@ -70,7 +70,7 @@ impl TopicResources for HostTopicResources {
         let answer = tokio::time::timeout(LIMIT, self.context.peer.request(READ, &params)).await;
         pending.params = None;
         let result = answer
-            .map_err(|_| format!("{READ} timed out after 120 seconds"))?
+            .map_err(|_| format!("{READ} timed out after {} seconds", LIMIT.as_secs()))?
             .map_err(|error| error.message)?;
         Inbound::get()
             .reply(READ, &result)

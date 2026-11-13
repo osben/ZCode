@@ -30,7 +30,7 @@ mod server;
 mod subscribe;
 mod telemetry;
 // Fork: specs/fork-rust-topic-resource.md.
-pub mod topic_resource;
+mod topic_resource;
 mod uploads;
 mod wire;
 mod worktree;
@@ -46,6 +46,7 @@ pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use headers::HostHeaders;
 pub use server::Defaults;
+pub use topic_resource::HostTopicResources;
 
 /// 存储的启动状态（`startup/storageState`，`zcodeStorageStartupStateSchema`）：checking → ready / failed。迁移与备份只由
 /// Node 的存储准备 Worker 做，这里只报本进程打开会话库的结果。

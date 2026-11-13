@@ -415,7 +415,8 @@ fn an_app_input_is_admitted_with_nodes_intent() {
         "mode": "default",
         "planEnabled": false,
         "conversationQuotes": [{"text": "E2E selection"}],
-        "botGroupSource": {"botId": "b1", "chatId": "oc_1", "threadId": "omt_1", "authorizationId": "a1"},
+        "botGroupSource": {"botId": "b1", "provider": "feishu", "chatId": "oc_1", "senderId": "ou_1",
+            "senderName": "Ann", "messageId": "om_1", "threadId": "omt_1", "authorizationId": "a1"},
         "attachments": [{"kind": "file", "reference": "r1"}],
     }))
     .unwrap();
@@ -433,7 +434,8 @@ fn an_app_input_is_admitted_with_nodes_intent() {
             "inputOrigin": "desktop",
             "conversationQuotes": [{"text": "E2E selection"}],
             // Fork: the bot source as sent, right after the quotes (Node `inputIntentMetadata`).
-            "botGroupSource": {"botId": "b1", "chatId": "oc_1", "threadId": "omt_1", "authorizationId": "a1"},
+            "botGroupSource": {"botId": "b1", "provider": "feishu", "chatId": "oc_1", "senderId": "ou_1",
+            "senderName": "Ann", "messageId": "om_1", "threadId": "omt_1", "authorizationId": "a1"},
             "sourceCommandId": "c1",
             "queueItemId": "queue_c1",
             "clientId": "desktop-client",

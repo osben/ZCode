@@ -37,7 +37,6 @@ const MAX_ID_CHARS: usize = 256;
 
 const NO_AUTHORIZATION: &str = "No admitted topic authorization is available for this input";
 const NOT_INDEXED: &str = "Resource is not indexed in the selected history snapshot";
-const UNAVAILABLE: &str = "Topic attachment retrieval is unavailable on this runtime";
 const BAD_SIZE: &str = "Invalid topic attachment size";
 const BAD_ARTIFACT: &str = "Invalid topic attachment artifact";
 const MISMATCH: &str = "Topic attachment size or encoding mismatch";
@@ -55,10 +54,11 @@ struct Input {
 
 /// The admitting input of a read: its `sourceCommandId` and `botGroupSource`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Identity {
+pub(crate) struct Identity<'a> {
     pub(crate) input: String,
     pub(crate) authorization: String,
-    source: Value,
+    /// Borrowed from the stored input: it may embed the whole topic context, so no candidate copies it.
+    source: &'a serde_json::Map<String, Value>,
 }
 
 pub struct ReadTopicResourceTool {
@@ -86,7 +86,7 @@ impl ReadTopicResourceTool {
         let identity = authorize(&messages, input.input_id.as_deref())
             .ok_or_else(|| failed(NO_AUTHORIZATION.to_owned()))?;
         let index = input.index.unwrap_or(0);
-        if input.input_id.is_some() && !indexed(&identity.source, &input.message_id, index) {
+        if input.input_id.is_some() && !indexed(identity.source, &input.message_id, index) {
             return Err(failed(NOT_INDEXED.to_owned()));
         }
         let resource = self
@@ -129,7 +129,7 @@ impl ReadTopicResourceTool {
 
 /// Node `readTopicResourceFromSession`'s search: human inputs, newest first. An intent with a valid identity is used
 /// (unless `input` names another one); an intent with a malformed `botGroupSource` ends the search.
-pub(crate) fn authorize(messages: &[&Message], input: Option<&str>) -> Option<Identity> {
+pub(crate) fn authorize<'a>(messages: &[&'a Message], input: Option<&str>) -> Option<Identity<'a>> {
     for message in messages.iter().rev() {
         let Message::User(user) = message else {
             continue;
@@ -151,7 +151,7 @@ pub(crate) fn authorize(messages: &[&Message], input: Option<&str>) -> Option<Id
 }
 
 /// Node `identitySchema` (a non-strict zod object).
-fn identity(intent: &serde_json::Map<String, Value>) -> Option<Identity> {
+fn identity(intent: &serde_json::Map<String, Value>) -> Option<Identity<'_>> {
     let nonempty = |value: Option<&Value>| {
         value
             .and_then(Value::as_str)
@@ -182,13 +182,13 @@ fn identity(intent: &serde_json::Map<String, Value>) -> Option<Identity> {
     Some(Identity {
         input,
         authorization,
-        source: Value::Object(source.clone()),
+        source,
     })
 }
 
 /// Node's snapshot check for an explicit `inputId`: `topicHistory` bounds the index; without it the `topicContext`
 /// message must have a truthy attachment at that index.
-fn indexed(source: &Value, message: &str, index: u64) -> bool {
+fn indexed(source: &serde_json::Map<String, Value>, message: &str, index: u64) -> bool {
     if let Some(history) = source.get("topicHistory") {
         return history
             .get("resourceMessages")
@@ -204,14 +204,18 @@ fn indexed(source: &Value, message: &str, index: u64) -> bool {
             });
     }
     source
-        .pointer("/topicContext/messages")
+        .get("topicContext")
+        .and_then(|context| context.get("messages"))
         .and_then(Value::as_array)
         .and_then(|records| {
             records
                 .iter()
                 .find(|record| record.get("id").and_then(Value::as_str) == Some(message))
         })
-        .and_then(|record| record.get("attachments")?.as_array()?.get(index as usize))
+        .and_then(|record| {
+            let index = usize::try_from(index).ok()?;
+            record.get("attachments")?.as_array()?.get(index)
+        })
         .is_some_and(truthy)
 }
 
@@ -241,8 +245,15 @@ async fn checked_bytes(
     let artifact = match context.artifacts.find(&session, &id).await {
         Ok(Some(artifact)) => artifact,
         Ok(None) => return Err(missing()),
-        Err(_) => return Err(failed(UNAVAILABLE.to_owned())),
+        // Node propagates the store's own error.
+        Err(error) => return Err(failed(error.to_string())),
     };
+    // A stored data URL longer than any acceptable one is refused before its bytes are read: the payload bound below
+    // would reject it anyway.
+    let limit = "data:;base64,".len() as u64 + resource.mime.len() as u64 + payload_limit();
+    if artifact.size > limit {
+        return Err(failed(BAD_ARTIFACT.to_owned()));
+    }
     let stored = context
         .artifacts
         .get(&artifact)
@@ -258,6 +269,11 @@ async fn checked_bytes(
     Ok(bytes)
 }
 
+/// Node `Math.ceil(attachmentMaxBytes / 3) * 4`: the longest base64 payload of an acceptable attachment.
+fn payload_limit() -> u64 {
+    MAX_BYTES.div_ceil(3) * 4
+}
+
 /// Node `^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$` with the reply's mime and the payload length bound.
 fn data_url_payload<'a>(content: &'a str, mime: &str) -> Option<&'a str> {
     let rest = content.strip_prefix("data:")?;
@@ -268,7 +284,7 @@ fn data_url_payload<'a>(content: &'a str, mime: &str) -> Option<&'a str> {
     let body = payload.trim_end_matches('=');
     let padding = payload.len() - body.len();
     let alphabet = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/';
-    let limit = MAX_BYTES.div_ceil(3) * 4;
+    let limit = payload_limit();
     (padding <= 2 && body.bytes().all(alphabet) && payload.len() as u64 <= limit).then_some(payload)
 }
 
@@ -346,7 +362,12 @@ impl Tool for ReadTopicResourceTool {
             () = cancel.cancelled() => return Err(ToolError::Cancelled),
             result = tokio::time::timeout(TIMEOUT, self.read(input, &context)) => result,
         };
-        let value = result.map_err(|_| failed(format!("{NAME} timed out after 300 seconds")))??;
+        let value = result.map_err(|_| {
+            failed(format!(
+                "{NAME} timed out after {} seconds",
+                TIMEOUT.as_secs()
+            ))
+        })??;
         Ok(text(value.to_string()))
     }
 }

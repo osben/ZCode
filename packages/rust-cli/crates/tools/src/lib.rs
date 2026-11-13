@@ -62,7 +62,7 @@ mod read;
 // Fork: specs/fork-rust-topic-resource.md.
 mod read_pdf;
 mod read_support;
-pub mod read_topic_resource;
+mod read_topic_resource;
 mod registry;
 mod report_findings;
 mod schedule_wakeup;

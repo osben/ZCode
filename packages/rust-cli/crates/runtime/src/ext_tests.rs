@@ -344,7 +344,10 @@ async fn read_topic_resource_is_registered_only_with_topic_resources() {
             .await
             .unwrap();
         assert_eq!(
-            catalog.tools.iter().any(|name| name == "ReadTopicResource"),
+            catalog
+                .tools
+                .iter()
+                .any(|name| name == rust_cli_kernel_api::tool_names::READ_TOPIC_RESOURCE),
             expected,
             "{:?}",
             catalog.tools
