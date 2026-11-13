@@ -1,7 +1,8 @@
 //! `plugins` 段、插件存储根与插件候选（docs/specs/rust-cli/config.md §2.1、ext.md §4.1）。
 //!
 //! 合并按 Node `config-merger.ts`：`enabled` 按键覆盖，`dirs` 拼接去重，`enabledPlugins` 按 id 覆盖，
-//! `suppressedBuiltins` 由最后写它的层整体替换；`extraKnownMarketplaces`、`options` 不读。候选目录在同一次
+//! `suppressedBuiltins` 由最后写它的层整体替换；`extraKnownMarketplaces` 不读。Fork: `options` 按 id 浅合并
+//! （Node `mergePluginOptions`），供语言服务器声明的 `${user_config.*}` 用（specs/fork-rust-lsp.md）。候选目录在同一次
 //! 组装里从本机存储的插件清单得出（platform `plugin_inventory`）。
 
 use std::collections::BTreeMap;
@@ -13,7 +14,7 @@ use rust_cli_paths::StoragePath;
 use rust_cli_platform::local::plugin_inventory::{
     installed_plugins, installed_root, official_plugin_roots,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::merge::Layer;
 
@@ -28,6 +29,8 @@ pub(crate) struct PluginSection {
     pub(crate) dirs: Vec<String>,
     pub(crate) enabled_plugins: BTreeMap<String, bool>,
     pub(crate) suppressed_builtins: Vec<String>,
+    /// Fork: `plugins.options`, plugin id → option values (Node `mergePluginOptions`: per id, later keys win).
+    pub(crate) options: BTreeMap<String, Map<String, Value>>,
 }
 
 /// 非空字符串数组里的合格项；坏项记警告（D1）。
@@ -57,6 +60,7 @@ pub(crate) fn merge(layers: &[Layer<'_>], warnings: &mut Vec<String>) -> PluginS
         dirs: Vec::new(),
         enabled_plugins: BTreeMap::new(),
         suppressed_builtins: Vec::new(),
+        options: BTreeMap::new(),
     };
     for layer in layers {
         let Some(section) = layer.object.get("plugins") else {
@@ -107,6 +111,27 @@ pub(crate) fn merge(layers: &[Layer<'_>], warnings: &mut Vec<String>) -> PluginS
             .and_then(|value| strings(layer.path, "suppressedBuiltins", value, warnings))
         {
             merged.suppressed_builtins = suppressed;
+        }
+        match section.get("options").map(Value::as_object) {
+            Some(Some(table)) => {
+                for (id, values) in table {
+                    match values.as_object() {
+                        Some(values) => merged.options.entry(id.clone()).or_default().extend(
+                            values
+                                .iter()
+                                .map(|(key, value)| (key.clone(), value.clone())),
+                        ),
+                        None => warnings.push(format!(
+                            "{}: plugins.options.{id} must be an object",
+                            layer.path
+                        )),
+                    }
+                }
+            }
+            Some(None) => {
+                warnings.push(format!("{}: plugins.options must be an object", layer.path))
+            }
+            None => {}
         }
     }
     merged

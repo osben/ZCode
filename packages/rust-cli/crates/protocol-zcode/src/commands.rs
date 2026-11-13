@@ -466,7 +466,7 @@ pub(crate) async fn create_session_with(
     };
     let chosen = selection(config.model_selection.as_ref())
         .or_else(|| selection(first.model_selection.as_ref()))
-        .unwrap_or_else(|| server.defaults.selection.clone());
+        .unwrap_or_else(|| server.defaults.selection.current());
     let defaults = ExecutionState {
         mode: server.defaults.mode,
         plan: false,
@@ -884,7 +884,7 @@ async fn reserve_submission(
                 id: Some(id.clone()),
                 workspace: server.workspace(workspace),
                 selection: selection(payload.config.model_selection.as_ref())
-                    .unwrap_or_else(|| server.defaults.selection.clone()),
+                    .unwrap_or_else(|| server.defaults.selection.current()),
                 mode: server.defaults.mode,
                 plan: false,
                 incognito,
@@ -1159,7 +1159,7 @@ async fn prepare_worktree(
         envelope,
         workspace,
         request,
-        server.defaults.selection.clone(),
+        server.defaults.selection.current(),
     )
     .await
 }

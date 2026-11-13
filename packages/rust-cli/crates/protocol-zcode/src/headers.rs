@@ -3,6 +3,7 @@
 //! 调用方放弃（模型请求被取消）或超过 180 s 时发 `interaction/providerRuntimeHeadersCancelled`，Host 释放它的队列。
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -30,6 +31,7 @@ const SCOPE_INVALIDATED: &str = "siwc_account_scope_invalidated";
 /// 经 Host 取账号凭据。
 pub struct HostHeaders {
     context: Arc<Context>,
+    limit: Duration,
     /// Fork (specs/fork-rust-chatgpt-plan.md rules 8-9): `sha256(apiKey)` → the Host's `accountScope` for ChatGPT
     /// Plan tokens, so a renewal after a 401 can send the scope the rejected token belonged to.
     scopes: Mutex<VecDeque<(String, String)>>,
@@ -39,7 +41,17 @@ impl HostHeaders {
     pub fn new(context: Arc<Context>) -> Self {
         Self {
             context,
+            limit: LIMIT,
             scopes: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    /// Tests: a short bound, to observe the timeout.
+    #[cfg(test)]
+    pub(crate) fn with_limit(context: Arc<Context>, limit: Duration) -> Self {
+        Self {
+            limit,
+            ..Self::new(context)
         }
     }
 
@@ -132,8 +144,24 @@ impl HeaderSource for HostHeaders {
                 "workspace": workspace}),
             ),
         };
-        let answer = tokio::time::timeout(LIMIT, self.context.peer.request(REQUEST, &params)).await;
+        // Fork: held until the Host's attach acknowledgement, inside the same bound (F1). `sent` records, inside
+        // the bound, that the request was handed to `peer.request`: an acknowledgement that lands just after the timeout
+        // must not make a request that was never handed over look sent.
+        let sent = AtomicBool::new(false);
+        let answer = tokio::time::timeout(self.limit, async {
+            self.context.host_ready().await;
+            sent.store(true, Ordering::SeqCst);
+            self.context.peer.request(REQUEST, &params).await
+        })
+        .await;
         let result = match answer {
+            // The request was never handed to the peer: nothing to cancel.
+            Err(_) if !sent.load(Ordering::SeqCst) => {
+                pending.params = None;
+                return Err(failed(
+                    "The host did not acknowledge the attach before the account credentials request",
+                ));
+            }
             // 超时：Pending 的 Drop 发取消。
             Err(_) => return Err(failed("Requesting the account credentials timed out")),
             Ok(result) => {

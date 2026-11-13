@@ -18,7 +18,9 @@ use rust_cli_base::TaskScope;
 use rust_cli_base::names::DOT_DIR;
 use rust_cli_base::secret::RedactedString;
 use rust_cli_kernel_api::clock::Clock;
-use rust_cli_kernel_api::default_model::{DefaultModel, unselected as unselected_default};
+use rust_cli_kernel_api::default_model::{
+    DefaultModel, SettleDefault, unselected as unselected_default,
+};
 use rust_cli_kernel_api::model::{ModelPort, ModelSelection};
 use rust_cli_kernel_api::model_name::{self, LookupError};
 use rust_cli_kernel_api::provider::{
@@ -197,14 +199,22 @@ pub(crate) struct Settled {
     pub(crate) degraded: bool,
 }
 
+/// Chooses the default from the platform catalog (each call reads it again).
+pub(crate) type Choose = Arc<dyn Fn() -> BoxFuture<'static, Settled> + Send + Sync>;
+
+/// Resolves once a catalog read finds the credentials readable (`Platform::credentials_readable`).
+pub(crate) type Readable = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
+
 /// 新会话的缺省选择：现在就有，或要等平台层的模型目录（工作线 F140，performance.md §12.3）。
 pub(crate) enum Chosen {
     Now(ModelSelection),
-    /// 目录要联网查套餐：TUI 不等它画第一帧（[`default_model`]），`-p` 与 App 模式当场等（[`Chosen::wait`]）。选不出
-    /// 模型时，原因写进模型端口（[`Assembled::late`]）。`flags` 是选模型的参数（上次的结论按它对得上才用，§12.4）。
+    /// 目录要联网查套餐：TUI 不等它画第一帧（[`default_model`]），`-p` 与 App 模式当场等。选不出模型时，原因写进模型端口
+    ///（[`Assembled::late`]）。`flags` 是选模型的参数（上次的结论按它对得上才用，§12.4）。A degraded choice is made
+    /// again once `readable` resolves (fork spec `fork-rust-credential-cipher.md` F3).
     Later {
         flags: memory::Flags,
-        choosing: BoxFuture<'static, Settled>,
+        choose: Choose,
+        readable: Readable,
     },
 }
 
@@ -301,32 +311,48 @@ pub(crate) async fn assemble(
     let limits: Arc<dyn ModelLimits> = platform.clone();
     let late: Arc<OnceLock<String>> = Arc::default();
     let flags = (flag.clone(), effort);
-    let choosing = {
+    let choosing: Choose = {
         let (platform, late) = (platform.clone(), late.clone());
-        async move {
-            let outcome = choose(&platform, flag.as_deref(), effort).await;
-            // `choose` 刚读过目录：这一格是那次读取的结果（读不到时目录里没有账号模型）。
-            let degraded = platform.credentials_unreadable().is_some();
-            match outcome {
-                Ok(selection) => Settled {
-                    selection,
-                    degraded,
-                },
-                Err(reason) => {
-                    let _ = late.set(reason);
-                    Settled {
-                        selection: unselected(flag),
+        Arc::new(move || {
+            let (platform, late, flag) = (platform.clone(), late.clone(), flag.clone());
+            async move {
+                let outcome = choose(&platform, flag.as_deref(), effort).await;
+                // `choose` 刚读过目录：这一格是那次读取的结果（读不到时目录里没有账号模型）。
+                let degraded = platform.credentials_unreadable().is_some();
+                match outcome {
+                    Ok(selection) => Settled {
+                        selection,
                         degraded,
+                    },
+                    Err(reason) => {
+                        // The port reports `late` forever, so only a readable catalog's reason goes there; while
+                        // degraded, the endpoint lookup already says the credentials could not be read.
+                        if !degraded {
+                            let _ = late.set(reason);
+                        }
+                        Settled {
+                            selection: unselected(flag),
+                            degraded,
+                        }
                     }
                 }
             }
-        }
+            .boxed()
+        })
+    };
+    let readable: Readable = {
+        let platform = platform.clone();
+        Arc::new(move || {
+            let platform = platform.clone();
+            async move { platform.credentials_readable().await }.boxed()
+        })
     };
     Assembled {
         endpoints: Ok(platform),
         selection: Chosen::Later {
             flags,
-            choosing: choosing.boxed(),
+            choose: choosing,
+            readable,
         },
         limits,
         assume_first_party: false,
@@ -379,30 +405,78 @@ pub(crate) async fn default_model(
         );
         selection
     };
-    let (flags, choosing) = match chosen {
+    let (flags, choose, readable) = match chosen {
         Chosen::Now(selection) => return (settled(selection, false).into(), scope),
-        Chosen::Later { flags, choosing } => (flags, choosing),
+        Chosen::Later {
+            flags,
+            choose,
+            readable,
+        } => (flags, choose, readable),
+    };
+    let revising = Revising {
+        flags,
+        memory,
+        choose: choose.clone(),
+        readable,
     };
     if wait {
-        let outcome = choosing.await;
+        let outcome = choose().await;
         let selection = settled(outcome.selection, false);
-        if !outcome.degraded {
-            memory::remember(&memory, &flags, &selection).await;
+        let (settle, default) = DefaultModel::pending();
+        settle.settle(selection.clone());
+        let outcome = Settled {
+            selection,
+            degraded: outcome.degraded,
+        };
+        if outcome.degraded {
+            let _task = scope
+                .spawner()
+                .spawn("default-model", revising.run(settle, outcome));
+        } else {
+            revising.run(settle, outcome).await;
         }
-        return (selection.into(), scope);
+        return (default, scope);
     }
-    let guess = memory::recall(&memory, &flags).await;
+    let guess = memory::recall(&revising.memory, &revising.flags).await;
     let guessed = guess.is_some();
     let (settle, default) = DefaultModel::guessed(guess.unwrap_or_else(unselected_default));
     let _task = scope.spawner().spawn("default-model", async move {
-        let outcome = choosing.await;
-        let selection = settled(outcome.selection, guessed);
-        settle.settle(selection.clone());
-        if !outcome.degraded {
-            memory::remember(&memory, &flags, &selection).await;
-        }
+        let outcome = choose().await;
+        let outcome = Settled {
+            selection: settled(outcome.selection, guessed),
+            degraded: outcome.degraded,
+        };
+        settle.settle(outcome.selection.clone());
+        revising.run(settle, outcome).await;
     });
     (default, scope)
+}
+
+/// The default-model task after the first settlement (fork spec `fork-rust-credential-cipher.md` F3): a degraded
+/// default waits for readable credentials, is chosen again and settled again; a readable one is remembered.
+struct Revising {
+    flags: memory::Flags,
+    memory: std::path::PathBuf,
+    choose: Choose,
+    readable: Readable,
+}
+
+impl Revising {
+    /// `outcome` is what `settle` already holds.
+    async fn run(self, settle: SettleDefault, mut outcome: Settled) {
+        while outcome.degraded {
+            (self.readable)().await;
+            outcome = (self.choose)().await;
+            tracing::info!(
+                event = "startup.model.revised",
+                chosen = !outcome.selection.provider.is_empty(),
+                degraded = outcome.degraded,
+                "default model settled again"
+            );
+            settle.settle(outcome.selection.clone());
+        }
+        memory::remember(&self.memory, &self.flags, &outcome.selection).await;
+    }
 }
 
 #[path = "models_memory.rs"]

@@ -157,6 +157,15 @@ fn configured_locations_are_byte_identical_to_the_old_formulas() {
         os(paths.plugin_storage(Some("other"), base).as_path()),
         os(&old_expand("other", home, base).join("cli").join("plugins"))
     );
+    // Fork: the language-server preferences sit beside the plugin store (specs/fork-rust-lsp.md).
+    assert_eq!(
+        os(paths.lsp_preferences(Some("~/x/cli"), base).as_path()),
+        os(&old_expand("~/x/cli", home, base).join("fork_lsp_preferences.json"))
+    );
+    assert_eq!(
+        os(paths.lsp_preferences(None, base).as_path()),
+        os(&home.join(".zcode/cli/fork_lsp_preferences.json"))
+    );
 }
 
 #[test]

@@ -183,9 +183,12 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         }
         model => model,
     };
+    // Read once (v4 `createSession` reads `current()` too): a revision between the level check and the synthesized
+    // model would otherwise check one default and create with another.
+    let default = server.defaults.selection.current();
     let target = match &model {
         Some(model) => crate::commands::selection(Some(model)),
-        None => Some(server.defaults.selection.clone()),
+        None => Some(default.clone()),
     };
     let level = match (params.thought_level.as_deref().map(str::trim), target) {
         (Some(level), Some(target)) if !level.is_empty() => {
@@ -203,10 +206,9 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         _ => None,
     };
     if let Some(level) = level {
-        let model = model.get_or_insert_with(|| {
-            let chosen = &server.defaults.selection;
-            json!({"providerId": chosen.provider, "modelId": chosen.model})
-        });
+        let model = model.get_or_insert_with(
+            || json!({"providerId": default.provider, "modelId": default.model}),
+        );
         if let Some(model) = model.as_object_mut() {
             model.insert("options".to_owned(), json!({"reasoningLevel": level}));
         }

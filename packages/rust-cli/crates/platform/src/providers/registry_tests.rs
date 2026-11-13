@@ -126,3 +126,18 @@ async fn an_explicit_builtin_file_replaces_the_bundled_copy() {
     );
     assert_eq!(registry.current().await.revision, 0);
 }
+
+/// F3: the readable signal follows read order, like the published snapshot: a late unreadable read that started
+/// before a readable one does not overwrite it.
+#[tokio::test]
+async fn a_late_unreadable_read_does_not_overwrite_a_newer_readable_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let (registry, _paths) = registry(dir.path()).await;
+    registry.signal(1, Some("unreadable"));
+    registry.signal(3, None);
+    registry.signal(2, Some("unreadable"));
+    assert_eq!(registry.unreadable_reason(), None);
+    tokio::time::timeout(std::time::Duration::from_secs(1), registry.readable())
+        .await
+        .expect("still readable");
+}

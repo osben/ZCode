@@ -44,3 +44,18 @@ async fn a_guess_shows_until_the_default_settles() {
     assert_eq!(waiting.await.unwrap(), selection("now"));
     assert_eq!(default.current(), selection("now"));
 }
+
+/// Fork spec `fork-rust-credential-cipher.md` F3: a degraded default is settled again once the credentials are
+/// readable. Later readers get the revision; a settled value stays settled after the settling side is dropped.
+#[tokio::test]
+async fn a_settled_default_can_be_revised() {
+    let (settle, default) = DefaultModel::pending();
+    settle.settle(selection("degraded"));
+    assert_eq!(default.settled().await, selection("degraded"));
+    settle.settle(selection("full"));
+    assert!(default.is_settled());
+    assert_eq!(default.current(), selection("full"));
+    assert_eq!(default.settled().await, selection("full"));
+    drop(settle);
+    assert_eq!(default.settled().await, selection("full"));
+}

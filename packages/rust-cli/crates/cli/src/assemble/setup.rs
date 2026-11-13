@@ -5,14 +5,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rust_cli_base::clock::SystemClock;
-use rust_cli_base::secret::EnvSnapshot;
+use rust_cli_base::secret::{EnvSnapshot, RedactedString};
 use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::provider::CredentialCipher;
 use rust_cli_net::Egress;
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::{StoragePaths, StorageSettings};
-use rust_cli_platform::{AccountServices, CredentialSecret, Platform, node_platform};
+use rust_cli_platform::{
+    AccountServices, CredentialSecret, Platform, SystemCipher, SystemCipherInputs, node_platform,
+};
 use rust_cli_runtime::{ExtConfig, Extensions};
 
 use crate::assemble::env_layout::PrimaryPaths;
@@ -59,7 +61,7 @@ pub(crate) fn windows_profile() -> Option<PathBuf> {
 }
 
 /// 平台层：Provider registry、账号（每请求鉴权、登录）与设置。`cipher`：app-server 的凭据委托（Host → Main）；None 时
-/// 用本地 v1 编解码（standalone）。
+/// (standalone) the system `enc:v2` cipher, like the Node CLI (fork spec `fork-rust-credential-cipher.md` F4).
 pub(crate) fn platform(
     facts: &Facts,
     paths: &StoragePaths,
@@ -82,10 +84,20 @@ pub(crate) fn platform(
         origins,
     };
     // `ZCODE_MAX_OUTPUT_TOKENS`：Provider 配置的 `maxOutputTokens.map` 用 min(配置的 max, 它)（cli-args.md §9.1，F42）。
-    let platform = match cipher {
-        Some(cipher) => Platform::with_cipher(paths, cipher, services),
-        None => Platform::new(paths, &secret, services),
-    };
+    let cipher = cipher.unwrap_or_else(|| {
+        let env = &facts.process.env;
+        Arc::new(SystemCipher::new(SystemCipherInputs {
+            credentials: paths.credentials().as_path().to_path_buf(),
+            env_secret: env
+                .raw(rust_cli_base::names::env::ZCODE_CREDENTIAL_SECRET)
+                .map(RedactedString::new),
+            env_secret_file: env
+                .raw(rust_cli_base::names::env::ZCODE_CREDENTIAL_SECRET_FILE)
+                .map(PathBuf::from),
+            legacy: secret,
+        }))
+    });
+    let platform = Platform::with_cipher(paths, cipher, services);
     Ok(platform.with_max_output_tokens(facts.controller.max_output_tokens))
 }
 

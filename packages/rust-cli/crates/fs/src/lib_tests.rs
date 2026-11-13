@@ -300,3 +300,29 @@ async fn folders_and_files_are_told_apart() {
     assert!(!is_dir(&dir.path().join("missing")).await);
     assert!(!is_file(&dir.path().join("missing")).await);
 }
+
+/// Fork: the language-server install probe (specs/fork-rust-lsp.md "Install probe").
+#[tokio::test]
+async fn an_executable_is_a_regular_file_this_process_may_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = dir.path().join("tool");
+    tokio::fs::write(&tool, "#!/bin/sh\n").await.unwrap();
+    assert!(!is_executable_file(dir.path()).await);
+    assert!(!is_executable_file(&dir.path().join("missing")).await);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(!is_executable_file(&tool).await);
+        tokio::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        assert!(is_executable_file(&tool).await);
+        // A directory with the execute bit is still not a file.
+        tokio::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        assert!(!is_executable_file(dir.path()).await);
+    }
+    #[cfg(not(unix))]
+    assert!(is_executable_file(&tool).await);
+}

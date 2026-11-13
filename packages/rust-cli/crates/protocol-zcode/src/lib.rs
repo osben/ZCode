@@ -8,6 +8,7 @@
 //! 内核装好后 [`handler`] 交给 `Deferred` 的安装端，之后 Host 的请求才被处理。Host 关掉输入时读者结束。
 //! （specs/fork-rust-credential-cipher.md，「Startup ordering」）
 
+mod attach;
 mod attachment_share;
 mod attachment_text;
 mod attachments;
@@ -44,6 +45,7 @@ use rust_cli_kernel_api::session_api::Kernel;
 use rust_cli_protocol_core::connection;
 use serde_json::json;
 
+pub use attach::{HOST_ATTACH_ACK_ENV, serve_attached};
 pub use automation_port::HostAutomations;
 pub use cipher::HostCredentialCipher;
 pub use context::Context;

@@ -91,6 +91,7 @@ pub mod incognito;
 pub mod input_intent;
 pub mod interaction;
 pub mod listing;
+pub mod lsp;
 pub mod machine;
 pub mod machine_notices;
 pub mod machine_param;
