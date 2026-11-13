@@ -91,14 +91,14 @@ impl HostAttach {
 
 /// Serves the connection with [`AttachGate`] in front of `inner`. When the input ends, reverse requests still held
 /// for the acknowledgement are released: the closed peer fails them at once instead of at their bound. They are also
-/// released when this future is dropped (the reader task torn down with its scope).
-pub async fn serve_attached<R>(
+/// released when the returned future is dropped, polled or not (the reader task torn down with its scope).
+pub fn serve_attached<R>(
     reader: R,
     context: Arc<Context>,
     inner: Arc<dyn Service>,
     spawner: Spawner,
     options: Options,
-) -> std::io::Result<()>
+) -> impl Future<Output = std::io::Result<()>>
 where
     R: AsyncBufRead + Unpin,
 {
@@ -108,9 +108,13 @@ where
             self.0.attach.detached();
         }
     }
-    let _release = Release(context.clone());
-    let gate = AttachGate::wrap(context.clone(), inner);
-    connection::serve(reader, context.peer.clone(), gate, spawner, options).await
+    // Built before the future so that dropping it unpolled still releases the held requests.
+    let release = Release(context.clone());
+    async move {
+        let _release = release;
+        let gate = AttachGate::wrap(context.clone(), inner);
+        connection::serve(reader, context.peer.clone(), gate, spawner, options).await
+    }
 }
 
 /// Handles the acknowledgement in front of the connection's service. It must not wait for that service: in the

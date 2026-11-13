@@ -9,8 +9,8 @@
 //! `enc:v1:` and plaintext values are read without the OS store.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -154,11 +154,63 @@ impl Key {
 }
 
 type Lookup = Shared<BoxFuture<'static, Result<Key, CipherError>>>;
+type LookupSlot = Mutex<Option<Lookup>>;
 
-/// The cached lookup with the generation its task clears it by.
-struct Slot {
-    generation: u64,
-    lookup: Lookup,
+/// Clears the cached lookup when the lookup ends without a key and without having taken the `.keyring` lock: a lock
+/// timeout or a panic before the lock is retried by the next call. Dropped on every exit of the task body, unwind
+/// included.
+struct Uncache {
+    slot: Weak<LookupSlot>,
+    acquired: Arc<AtomicBool>,
+    succeeded: bool,
+}
+
+impl Drop for Uncache {
+    fn drop(&mut self) {
+        if self.succeeded || self.acquired.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some(slot) = self.slot.upgrade() {
+            // The owning task is the slot's only clearer, and a new lookup is cached only into an empty slot (under
+            // this lock), so the cached lookup is this task's own.
+            *slot.lock_unpoisoned() = None;
+        }
+    }
+}
+
+/// Runs `work` as its own task, owned by the returned lookup: it may hold the `.keyring` lock, and a `Shared` future
+/// whose only caller gave up would stay suspended with the lock held. The task, not a caller, un-caches its retriable
+/// failure, since no caller may be left. Call it with `slot` locked and cache the result before unlocking.
+fn owned_lookup(
+    slot: Weak<LookupSlot>,
+    acquired: Arc<AtomicBool>,
+    work: impl Future<Output = Result<Key, CipherError>> + Send + 'static,
+) -> Lookup {
+    let task = rust_cli_base::owned(async move {
+        let mut uncache = Uncache {
+            slot,
+            acquired,
+            succeeded: false,
+        };
+        let result = work.await;
+        uncache.succeeded = result.is_ok();
+        result
+    });
+    async move {
+        task.await.unwrap_or_else(|error| {
+            tracing::warn!(
+                event = "credentials.key_lookup.failed",
+                reason = match error {
+                    TaskError::Panicked(_) => "panicked",
+                    _ => "aborted",
+                },
+                "credential key lookup ended without a result"
+            );
+            Err(unavailable())
+        })
+    }
+    .boxed()
+    .shared()
 }
 
 /// The standalone `enc:v2` cipher (TUI, `-p`, `zcode login`).
@@ -166,7 +218,7 @@ pub struct SystemCipher {
     inner: Arc<Inner>,
     /// One key lookup per cipher, shared by concurrent calls. A failure stays cached only when the lock was taken
     /// (a denied prompt is not repeated; a lock timeout is retried).
-    key: Arc<Mutex<Option<Slot>>>,
+    key: Arc<LookupSlot>,
     /// The managed secret for `enc:v1:` values once resolved (Node memoizes the key lookup it comes from).
     legacy: Mutex<Option<Option<Arc<str>>>>,
 }
@@ -227,52 +279,14 @@ impl SystemCipher {
         let lookup = {
             let mut slot = self.key.lock_unpoisoned();
             match slot.as_ref() {
-                Some(cached) => cached.lookup.clone(),
+                Some(cached) => cached.clone(),
                 None => {
-                    static GENERATION: AtomicU64 = AtomicU64::new(0);
-                    let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
-                    // The lookup runs as its own task, owned by the slot: it may hold the `.keyring` lock, and a
-                    // `Shared` future whose only caller gave up would stay suspended with the lock held. The task
-                    // also un-caches its own retriable failure, since no caller may be left to do it.
-                    let task = {
-                        let (inner, slot) = (self.inner.clone(), Arc::downgrade(&self.key));
-                        rust_cli_base::owned(async move {
-                            let acquired = AtomicBool::new(false);
-                            let result = inner.lookup(create, &acquired).await;
-                            if result.is_err()
-                                && !acquired.load(Ordering::SeqCst)
-                                && let Some(slot) = slot.upgrade()
-                            {
-                                let mut slot = slot.lock_unpoisoned();
-                                if slot
-                                    .as_ref()
-                                    .is_some_and(|cached| cached.generation == generation)
-                                {
-                                    *slot = None;
-                                }
-                            }
-                            result
-                        })
-                    };
-                    let lookup = async move {
-                        task.await.unwrap_or_else(|error| {
-                            tracing::warn!(
-                                event = "credentials.key_lookup.failed",
-                                reason = match error {
-                                    TaskError::Panicked(_) => "panicked",
-                                    _ => "aborted",
-                                },
-                                "credential key lookup ended without a result"
-                            );
-                            Err(unavailable())
-                        })
-                    }
-                    .boxed()
-                    .shared();
-                    *slot = Some(Slot {
-                        generation,
-                        lookup: lookup.clone(),
+                    let acquired = Arc::new(AtomicBool::new(false));
+                    let lookup = owned_lookup(Arc::downgrade(&self.key), acquired.clone(), {
+                        let inner = self.inner.clone();
+                        async move { inner.lookup(create, &acquired).await }
                     });
+                    *slot = Some(lookup.clone());
                     lookup
                 }
             }
@@ -285,11 +299,7 @@ impl SystemCipher {
         if let Some(secret) = self.legacy.lock_unpoisoned().clone() {
             return Ok(secret);
         }
-        let cached = self
-            .key
-            .lock_unpoisoned()
-            .as_ref()
-            .map(|slot| slot.lookup.clone());
+        let cached = self.key.lock_unpoisoned().clone();
         let secret = if let Some(Ok(key)) = cached.as_ref().and_then(Shared::peek) {
             key.legacy.clone()
         } else if let Some(key) = self.inner.explicit().await? {

@@ -469,6 +469,28 @@ async fn a_lock_timeout_after_the_caller_gave_up_is_retried() {
     assert_eq!(cipher.decrypt(FIXED_OS).await.unwrap(), "rust os plaintext");
 }
 
+/// A lookup that panics before it takes the lock is not cached either: the slot is cleared on the unwind, so the next
+/// call starts a new lookup.
+#[tokio::test]
+async fn a_lookup_that_panics_before_the_lock_is_retried() {
+    let slot: Arc<Mutex<Option<Lookup>>> = Arc::default();
+    {
+        let mut held = slot.lock().unwrap();
+        let lookup = owned_lookup(
+            Arc::downgrade(&slot),
+            Arc::new(AtomicBool::new(false)),
+            async { panic!("before the lock") },
+        );
+        *held = Some(lookup);
+    }
+    let lookup = slot.lock().unwrap().clone().expect("cached while it runs");
+    assert!(lookup.await.is_err());
+    assert!(
+        slot.lock().unwrap().is_none(),
+        "the failed lookup is not cached"
+    );
+}
+
 /// The OS store account hashes the path Node's `path.resolve` gives, so the desktop's entry is found even when the
 /// home directory is spelled with `.`, `..` or repeated separators.
 #[cfg(unix)]

@@ -273,9 +273,9 @@ Contract (`packages/shared/src/zcode-protocol/index.ts`):
     ignored with a `warn` that names the validation error; the bound applies.
   - The connection ends before the acknowledgement (the Host closed stdin or died): held requests are released and
     go out to the closed peer, which fails them at once (`serve_attached` releases them when the reader ends or is
-    torn down).
+    torn down, even before its first poll).
   - The bound ends while the acknowledgement is still awaited: the error says the Host did not acknowledge the
-    attach, and a header request that never went out sends no cancellation. Whether the request went out is recorded
+    attach, and a header request that never went out sends no cancellation. Whether the request was handed to the peer is recorded
     inside the bound, so an acknowledgement that lands just after the timeout does not change this.
 - Compatibility: a new Host with an older agent sends a notification the agent ignores. An older Host never
   declares, so a new Rust agent behaves as before.
@@ -381,9 +381,9 @@ app-server keeps `HostCredentialCipher` (product rule 1).
 - Any other `enc:` prefix: `Decrypt`.
 - Cache: one key lookup per cipher; a failure is cached only when the lock was acquired (a denied Keychain
   prompt is not repeated; a lock timeout is retried). The lookup runs as its own task: a caller that gives up does
-  not leave it suspended while it holds the `.keyring` lock. The task itself un-caches a retriable failure (a lock
-  timeout), so the next call retries even when no caller was left; a lookup that panics is logged
-  (`credentials.key_lookup.failed`) and reported as `Unavailable`. The managed secret for `enc:v1:` values is also
+  not leave it suspended while it holds the `.keyring` lock. The task itself un-caches a failure that did not take the lock
+  (a lock timeout, or a panic before the lock), so the next call retries even when no caller was left; a lookup
+  that panics is logged (`credentials.key_lookup.failed`) and reported as `Unavailable`. The managed secret for `enc:v1:` values is also
   resolved once per cipher.
 - The credentials path is resolved as Node's `path.resolve` does (lexically: `.`, `..`, repeated separators) before
   it names the OS store account, the lock and the secret files.

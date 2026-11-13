@@ -230,3 +230,22 @@ async fn a_torn_down_reader_stops_holding_requests() {
     assert!(!context.attach.waiting(), "held requests are released");
     assert_eq!(context.attach.ready().await, None);
 }
+
+/// A reader task aborted before it ever ran (its future dropped unpolled) also stops holding reverse requests.
+#[tokio::test]
+async fn a_reader_dropped_before_its_first_poll_stops_holding_requests() {
+    let scope = TaskScope::root("test", |_| {});
+    let (agent_out, _host_in) = duplex(1 << 20);
+    let (_host_out, agent_in) = duplex(1 << 20);
+    let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
+    context.expect_host_attach();
+    drop(serve_attached(
+        BufReader::new(agent_in),
+        context.clone(),
+        Arc::new(Nothing),
+        scope.spawner(),
+        Options::default(),
+    ));
+    assert!(!context.attach.waiting(), "held requests are released");
+}

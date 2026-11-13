@@ -81,8 +81,9 @@ impl HostCredentialCipher {
             "operation": operation.name(),
             "value": value,
         });
-        // The wait for the Host's attach acknowledgement is part of the same bound (F1). `ready` is set inside the
-        // bound, so an acknowledgement that lands just after the timeout does not change which bound is named.
+        // The wait for the Host's attach acknowledgement is part of the same bound (F1). `ready` records, inside
+        // the bound, that the wait for the acknowledgement ended, so an acknowledgement that lands just after the timeout
+        // does not change which bound is named.
         let ready = AtomicBool::new(false);
         let answer = tokio::time::timeout(self.limit, async {
             if self.context.host_ready().await == Some(false) {

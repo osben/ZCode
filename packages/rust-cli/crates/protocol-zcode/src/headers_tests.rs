@@ -130,6 +130,60 @@ async fn a_missing_ack_sends_neither_a_request_nor_a_cancellation() {
     );
 }
 
+/// F1: an acknowledgement that arrives after the bound ended does not turn the unsent request into a sent one: no
+/// cancellation and no request reach the Host, and the error still names the missing acknowledgement.
+#[tokio::test]
+async fn an_ack_after_the_bound_sends_no_cancellation() {
+    let scope = TaskScope::root("test", |_| {});
+    let (mut host_out, agent_in) = duplex(1 << 16);
+    let (agent_out, host_in) = duplex(1 << 16);
+    let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
+    context.expect_host_attach();
+    drop(scope.spawner().spawn(
+        "serve",
+        crate::attach::serve_attached(
+            BufReader::new(agent_in),
+            context.clone(),
+            Arc::new(Nothing),
+            scope.spawner(),
+            Options::default(),
+        ),
+    ));
+    context.register("session_1", "/w");
+    let source = HostHeaders::with_limit(context.clone(), Duration::from_millis(100));
+    let error = source
+        .request_auth(request(Some("session_1")))
+        .await
+        .unwrap_err();
+    host_out
+        .write_all(
+            format!(
+                "{}\n",
+                json!({"method": crate::attach::HOST_ATTACHED, "params": {"credentialCipher": true}})
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        context.host_ready().await,
+        Some(true),
+        "the late ack is applied"
+    );
+    assert!(
+        error.to_string().contains("did not acknowledge the attach"),
+        "{error}"
+    );
+    let mut lines = BufReader::new(host_in).lines();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), lines.next_line())
+            .await
+            .is_err(),
+        "nothing reached the Host"
+    );
+}
+
 /// Fork: ChatGPT Plan through the Host (specs/fork-rust-chatgpt-plan.md R6-R8).
 mod chatgpt {
     use super::*;
