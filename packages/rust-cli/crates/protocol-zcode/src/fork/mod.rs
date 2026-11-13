@@ -16,3 +16,5 @@ pub(crate) mod session_tree;
 mod skills;
 mod subagents;
 mod usage;
+pub(crate) mod workspace_trust;
+pub use workspace_trust::{Admission, WorkspaceAdmin, WorkspaceTarget};

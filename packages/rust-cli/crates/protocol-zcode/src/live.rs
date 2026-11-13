@@ -553,6 +553,20 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork: the workspace trust banners (see [`crate::projection::Projection::set_admission`]). In the session's pump
+    /// task, like every other frame of the session.
+    pub async fn set_admission(&self, admission: crate::fork::Admission) {
+        let outgoing = {
+            let mut state = self.state();
+            let Some(delta) = state.projection.set_admission(admission) else {
+                return;
+            };
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
     /// Fork: see [`crate::projection::Projection::readmit`]; publishes the queue when it changed. In the session's pump
     /// task ([`rust_cli_protocol_core::sessions::Bridged::run`]), like every other frame of the session.
     pub async fn readmit(&self, command: &str, admitted: &'static str) {

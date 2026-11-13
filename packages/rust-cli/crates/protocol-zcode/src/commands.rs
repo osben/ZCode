@@ -328,6 +328,13 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             };
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
+                // Fork: Node re-reads the workspace trust banners on each real user input.
+                crate::fork::workspace_trust::refresh_session(
+                    server,
+                    &live,
+                    &SessionId::new(session),
+                )
+                .await;
             }
             ack
         }

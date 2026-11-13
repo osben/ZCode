@@ -11,6 +11,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import {
+  zcodeMcpListParamsSchema,
+  zcodeMcpReadResourceParamsSchema,
   zcodeProviderRefreshRegistryParamsSchema,
   zcodeProviderRuntimeHeadersResponseSchema,
   zcodeProviderUpdateAccountConfigParamsSchema,
@@ -18,6 +20,8 @@ import {
   zcodeSessionCloseParamsSchema,
   zcodeSessionListParamsSchema,
   zcodeSessionReadParamsSchema,
+  zcodeWorkspaceHookTrustGrantParamsSchema,
+  zcodeWorkspaceMcpTrustParamsSchema,
   zcodeWorkspaceReadPresentationParamsSchema,
   zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
   zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,
@@ -42,6 +46,8 @@ import {
 
 // The methods whose params zcode-rs validates; a method not listed here is not checked.
 const METHODS = {
+  "mcp/list": zcodeMcpListParamsSchema,
+  "mcp/readResource": zcodeMcpReadResourceParamsSchema,
   "provider/refreshRegistry": zcodeProviderRefreshRegistryParamsSchema,
   "provider/updateAccountConfig": zcodeProviderUpdateAccountConfigParamsSchema,
   "runtime/capabilities": zcodeRuntimeCapabilitiesParamsSchema,
@@ -55,6 +61,8 @@ const METHODS = {
   "v4/conversation/subscribe": v4ConversationSubscribeParamsSchema,
   "v4/conversation/unsubscribe": v4ConversationUnsubscribeParamsSchema,
   "v4/sessionsIndex/reconcile": sessionsIndexReconcileParamsSchema,
+  "workspace/hooks/trustGrant": zcodeWorkspaceHookTrustGrantParamsSchema,
+  "workspace/mcp/trust": zcodeWorkspaceMcpTrustParamsSchema,
   "workspace/readPresentation": zcodeWorkspaceReadPresentationParamsSchema,
   "workspace/updateDynamicWorkflowPolicy": zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
   "workspace/updateInteractionPreferences": zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,

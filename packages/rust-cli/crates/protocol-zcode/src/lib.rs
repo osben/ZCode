@@ -42,6 +42,7 @@ use serde_json::json;
 
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
+pub use fork::{Admission, WorkspaceAdmin, WorkspaceTarget};
 pub use headers::HostHeaders;
 pub use server::Defaults;
 
