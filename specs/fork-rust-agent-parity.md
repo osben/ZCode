@@ -29,7 +29,8 @@ These are JavaScript by nature or tied to Node-only runtimes. In Rust mode they 
 - Dynamic workflows (`workflows/*`, `v4/conversation/workflowRun*`, `startSavedWorkflow`, `resumeWorkflowRun`, `amendWorkflowRunSettings`).
 - Office runtime, node-repl host.
 - ACP external agents (decision pending with the owner).
-- ChatGPT Plan account access (needs a live account to verify).
+
+ChatGPT Plan account models run in Rust hosted mode: `specs/fork-rust-chatgpt-plan.md` (standalone `zcode-rs` refuses them; the Host owns sign-in and refresh).
 
 ## Parity matrix
 

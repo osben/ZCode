@@ -58,6 +58,7 @@ impl ModelEndpoints for Rotating {
                 ..ModelCapabilities::default()
             },
             renewable: true,
+            compress_body_over: None,
         })
     }
 }

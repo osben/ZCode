@@ -71,6 +71,9 @@ pub struct ModelEndpoint {
     /// 凭据是每次请求现取的（官方账号模型）：服务端回 401 时，适配器带上这个端点再取一次（见
     /// [`EndpointQuery::rejected`]），换到新凭据后重发。
     pub renewable: bool,
+    /// Fork: request bodies longer than this many bytes are sent gzip-compressed with `content-encoding: gzip`
+    /// (ChatGPT Plan, specs/fork-rust-chatgpt-plan.md rule 14); `None` never compresses.
+    pub compress_body_over: Option<usize>,
 }
 
 /// 一次取端点的查询（F129，审查 K1：以前是 `endpoint → endpoint_with_output_limit → endpoint_in` 三层伸缩的方法，
