@@ -531,16 +531,22 @@ pub(super) async fn edit(
     } else {
         RewindScope::Conversation
     };
-    if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref())
-        && live.sink.current_config().0 != chosen
-    {
-        let id = format!("{}:model", envelope.command_id);
-        send(
-            live.handle.as_ref(),
-            &id,
-            Command::SetModel { selection: chosen },
-        )
-        .await;
+    if let Some(chosen) = crate::commands::selection(body.model_selection.as_ref()) {
+        // Inside the switch turn and against the held model, like the other switches (Node `editUserQuery` switches
+        // through `switchModelConfig`).
+        let _turn = match live.sink.config_switch().await {
+            Ok(turn) => turn,
+            Err(reason) => return refused(envelope, EXECUTION_FAILED, reason.to_owned(), revision),
+        };
+        if super::session_config::held_config(live).await.0 != chosen {
+            let id = format!("{}:model", envelope.command_id);
+            send(
+                live.handle.as_ref(),
+                &id,
+                Command::SetModel { selection: chosen },
+            )
+            .await;
+        }
     }
     if let Err(reason) = rewind_to(live, envelope, &target.user_message, scope).await {
         return refused(envelope, EXECUTION_FAILED, reason, revision);

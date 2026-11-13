@@ -114,9 +114,12 @@ found`) before it is opened. `setThoughtLevel` reads the model from the session 
    switches (these three and v4 `switchModelConfig` / `switchCollaborationMode`) take one switch turn at a time
    (`Live::config_switch`, Node `runSessionModelConfigMutation`): each reads the session's config, decides
    `config.unchanged` and sends its command inside its turn, so concurrent requests apply in arrival order,
-   `setThoughtLevel` reads the model once, and neither can revert or mask another switch. Node's lock covers the
-   model and thought level only; its mode switch is synchronous, the Rust one awaits the actor, so it takes the same
-   turn. A failed `"immediate"`
+   `setThoughtLevel` reads the model once, and neither can revert or mask another switch. A draft's config applied at
+   its activation and an `editUserQuery` model switch take the same turn (Node runs `applyRequestedSessionConfig`
+   inside the mutation; the edit compares against the session's model, not the projection). Node's lock covers model
+   and reasoning only, and its `setMode` is not under it; the Rust mode switch awaits the actor, so it also takes the
+   turn, which only orders it and changes no outcome. A `setThoughtLevel` without a `thoughtLevel` is refused as invalid
+   params (`thoughtLevel is required`), as in Node; an empty one is the schema's refusal. A failed `"immediate"`
    persistence drops the draft and the runtime and reports the session `unloaded` before answering a generic error
    (the store's text can name the storage path), so a retry with the same id is not refused as existing.
 4. **`sendText` turn identity** (Node `prompt-turn.ts`): `automationId` (trimmed, non-empty) and `toolDisallowlist`

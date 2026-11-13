@@ -38,6 +38,32 @@ struct TestHandle {
     ids: Log,
     /// The actor cannot answer `view` (it stopped): the switches fall back to the projection.
     blind: std::sync::atomic::AtomicBool,
+    /// The next command signals that it arrived and is applied only once released (an actor busy with it).
+    gate: StdMutex<Option<Gate>>,
+}
+
+/// See [`TestHandle::gate`].
+struct Gate {
+    arrived: tokio::sync::oneshot::Sender<()>,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl TestHandle {
+    /// Holds the next command until the returned sender fires; the receiver answers once that command arrived.
+    fn hold_next(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (arrived, arrival) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        *self.gate.lock().unwrap() = Some(Gate {
+            arrived,
+            release: released,
+        });
+        (arrival, release)
+    }
 }
 
 #[async_trait]
@@ -47,6 +73,11 @@ impl HandleOverride for TestHandle {
     }
 
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
+        let gate = self.gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.arrived.send(());
+            let _ = gate.release.await;
+        }
         self.ids
             .lock()
             .unwrap()
@@ -198,6 +229,7 @@ impl TestKernel {
             log: self.log.clone(),
             ids: self.ids.clone(),
             blind: std::sync::atomic::AtomicBool::new(false),
+            gate: StdMutex::new(None),
         });
         self.handles
             .lock()
@@ -843,48 +875,139 @@ async fn a_thought_level_for_a_model_the_directory_does_not_list_is_skipped() {
     );
 }
 
+/// The session's handle, as the kernel opened it.
+fn handle(kernel: &TestKernel, id: &str) -> Arc<TestHandle> {
+    kernel.handles.lock().unwrap()[&SessionId::new(id)].clone()
+}
+
+/// A request still waiting after a moment: it has not finished while the switch in progress holds the turn.
+async fn still_waiting(task: &mut tokio::task::JoinHandle<()>) {
+    let finished = tokio::time::timeout(std::time::Duration::from_millis(50), &mut *task).await;
+    assert!(
+        finished.is_err(),
+        "the request finished during another switch"
+    );
+}
+
 /// Node `runSessionModelConfigMutation`: a session's switches run one at a time, each deciding "unchanged" and reading
 /// the model inside its turn, so a concurrent switch can neither be reverted nor make another one look unchanged.
+/// The first switch is held inside the actor (its command arrived, not applied) instead of relying on scheduling.
 #[tokio::test]
 async fn switches_wait_for_the_session_s_switch_in_progress() {
     let (_scope, server, kernel) = server();
     kernel.stored("s17");
-    let live = server.live(&SessionId::new("s17")).await.unwrap();
-    let held = live.sink.config_switch().await.unwrap();
-    let switches = [
-        (
-            "session/setModel",
-            json!({"sessionId": "s17", "model": {"providerId": "p", "modelId": "m9"}}),
-        ),
-        (
-            "session/setThoughtLevel",
-            json!({"sessionId": "s17", "thoughtLevel": "low"}),
-        ),
-        (
-            "session/setMode",
-            json!({"sessionId": "s17", "mode": "auto"}),
-        ),
-    ];
-    let mut tasks = Vec::new();
-    for (method, params) in switches {
+    server.live(&SessionId::new("s17")).await.unwrap();
+    let (arrival, release) = handle(&kernel, "s17").hold_next();
+    let spawn = |method: &'static str, params: Value| {
         let server = server.clone();
-        tasks.push(tokio::spawn(async move {
+        tokio::spawn(async move {
             call(&server, method, params).await.unwrap();
-        }));
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-    }
-    assert!(log(&kernel).is_empty(), "{:?}", log(&kernel));
-    drop(held);
-    for task in tasks {
+        })
+    };
+    let first = spawn(
+        "session/setModel",
+        json!({"sessionId": "s17", "model": {"providerId": "p", "modelId": "m9"}}),
+    );
+    arrival.await.unwrap();
+    let mut thought = spawn(
+        "session/setThoughtLevel",
+        json!({"sessionId": "s17", "thoughtLevel": "low"}),
+    );
+    still_waiting(&mut thought).await;
+    let mut mode = spawn(
+        "session/setMode",
+        json!({"sessionId": "s17", "mode": "auto"}),
+    );
+    still_waiting(&mut mode).await;
+    release.send(()).unwrap();
+    for task in [first, thought, mode] {
         task.await.unwrap();
     }
-    // The thought level applies to the model the first switch chose: it was read inside its own turn.
+    // The thought level applies to the model the first switch chose: it was read inside its own turn, after it.
     assert_eq!(
         log(&kernel),
         vec!["SetModel m9 -", "SetModel m9 low", "SetMode auto"]
     );
+}
+
+/// Node runs `applyRequestedSessionConfig` inside the same mutation: a draft's config applied at its activation takes
+/// the switch turn too, so a concurrent `setModel` is applied after it and is the one the session keeps.
+#[tokio::test]
+async fn a_draft_s_config_takes_the_switch_turn() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s19");
+    let live = server.live(&SessionId::new("s19")).await.unwrap();
+    let (arrival, release) = handle(&kernel, "s19").hold_next();
+    let draft = {
+        let server = server.clone();
+        tokio::spawn(async move {
+            let envelope = super::envelope(
+                "activateSubmissionReservation",
+                "c-draft".to_owned(),
+                Some(&SessionId::new("s19")),
+                Value::Null,
+            );
+            let config: crate::commands::SessionConfig = serde_json::from_value(
+                json!({"modelSelection": {"providerId": "p", "modelId": "m9"}}),
+            )
+            .unwrap();
+            crate::commands::apply_draft_config(
+                &server,
+                &live,
+                &envelope,
+                &config,
+                &Default::default(),
+            )
+            .await
+            .unwrap();
+        })
+    };
+    arrival.await.unwrap();
+    let mut switch = {
+        let server = server.clone();
+        tokio::spawn(async move {
+            call(
+                &server,
+                "session/setModel",
+                json!({"sessionId": "s19", "model": {"providerId": "p", "modelId": "m7"}}),
+            )
+            .await
+            .unwrap();
+        })
+    };
+    still_waiting(&mut switch).await;
+    release.send(()).unwrap();
+    draft.await.unwrap();
+    switch.await.unwrap();
+    assert_eq!(log(&kernel), vec!["SetModel m9 -", "SetModel m7 -"]);
+}
+
+/// Node `setThoughtLevel`: the schema allows the level to be absent (`nonEmptyString.optional()`) and the handler then
+/// refuses it (`thoughtLevel is required`) before the session is read; an empty level is the schema's refusal.
+#[tokio::test]
+async fn a_missing_thought_level_is_refused() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s20");
+    let error = call(
+        &server,
+        "session/setThoughtLevel",
+        json!({"sessionId": "s20"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (-32602, "thoughtLevel is required")
+    );
+    let error = call(
+        &server,
+        "session/setThoughtLevel",
+        json!({"sessionId": "s20", "thoughtLevel": ""}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, -32602, "{}", error.message);
+    assert!(log(&kernel).is_empty(), "{:?}", log(&kernel));
 }
 
 /// When the actor cannot answer, the switches compare against the projection (`held_config`'s fallback).
@@ -905,15 +1028,87 @@ async fn a_switch_without_the_session_s_view_compares_against_the_projection() {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     // The projection has not seen `auto` (no event arrived) and still shows `build`: a switch to `build` is unchanged,
     // one to `auto` is sent again. The snapshot answered after the switch needs the actor too, so both answers are
-    // errors; what the switch decided is in the kernel's log.
+    // that read's error (a refused switch would answer its own); what the switch decided is in the kernel's log.
     for mode in ["build", "auto"] {
-        let answer = call(
+        let error = call(
             &server,
             "session/setMode",
             json!({"sessionId": "s18", "mode": mode}),
         )
-        .await;
-        assert!(answer.is_err(), "{answer:?}");
+        .await
+        .unwrap_err();
+        assert!(
+            error.message.contains("the session actor stopped"),
+            "{}",
+            error.message
+        );
     }
     assert_eq!(log(&kernel), vec!["SetMode auto", "SetMode auto"]);
+}
+
+/// The warnings of the current thread, each as field name → value (`Debug` text).
+#[derive(Clone, Default)]
+struct Warnings(Arc<StdMutex<Vec<std::collections::BTreeMap<&'static str, String>>>>);
+
+impl tracing::Subscriber for Warnings {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() != tracing::Level::WARN {
+            return;
+        }
+        let mut fields = std::collections::BTreeMap::new();
+        event.record(
+            &mut |field: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                fields.insert(field.name(), format!("{value:?}"));
+            },
+        );
+        self.0.lock().unwrap().push(fields);
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// A model without a provider and model id (the schema refuses it; the handler does not rely on that) leaves no model
+/// to check a `thoughtLevel` against: the level is skipped and the skip is logged.
+#[tokio::test]
+async fn a_thought_level_for_an_unparseable_model_is_skipped_and_logged() {
+    // A second registered dispatcher keeps tracing-core from caching a callsite's interest from whichever thread
+    // registered it first (a parallel test without this subscriber would cache "never").
+    let _second = tracing::Dispatch::new(Warnings::default());
+    let warnings = Warnings::default();
+    let _guard = tracing::subscriber::set_default(warnings.clone());
+    let (_scope, server, _kernel) = server();
+    let mut params = automation_create("s21");
+    params["model"] = json!({"name": "m2"});
+    let created = server.dispatch("session/create", params).await;
+    assert!(created.is_ok(), "{:?}", created.err());
+    let skipped: Vec<_> = warnings
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|fields| {
+            fields.get("event").map(String::as_str)
+                == Some("\"zcode_protocol.session_create.thought_level_skipped\"")
+        })
+        .cloned()
+        .collect();
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert_eq!(
+        skipped[0].get("level").map(String::as_str),
+        Some("\"high\"")
+    );
 }

@@ -200,9 +200,11 @@ impl Live {
         }
     }
 
-    /// Fork: the session's switch turn (Node `runSessionModelConfigMutation`): a model or mode switch reads the
-    /// session's config and sends its command while holding it, so concurrent requests (each runs on its own task)
-    /// apply in arrival order and none decides "unchanged" or reads the model before the previous one is applied.
+    /// Fork: the session's switch turn (Node `runSessionModelConfigMutation`): a model switch, a draft's config at its
+    /// activation and an edit's model read the session's config and send their commands while holding it, so
+    /// concurrent requests (each runs on its own task) apply in arrival order and none decides "unchanged" or reads
+    /// the model before the previous one is applied. Node's mutation covers model and reasoning only (its `setMode`
+    /// is synchronous); the mode switch here awaits the actor, so it takes the turn too, which is harmless.
     pub(crate) async fn config_switch(
         &self,
     ) -> Result<tokio::sync::SemaphorePermit<'_>, &'static str> {

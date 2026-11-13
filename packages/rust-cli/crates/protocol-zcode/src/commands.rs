@@ -54,7 +54,7 @@ pub(crate) use rust_cli_kernel_api::permission::resolve_execution;
 /// 一次输入（sendText 的 payload、createSession 的 firstInput；只取用到的字段）。
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Input {
+pub(crate) struct Input {
     text: Option<String>,
     model_selection: Option<Value>,
     mode: Option<String>,
@@ -179,7 +179,7 @@ struct SubmissionPreparation {
 /// createSession 的 `config`。
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SessionConfig {
+pub(crate) struct SessionConfig {
     model_selection: Option<Value>,
     mode: Option<String>,
     plan_enabled: Option<bool>,
@@ -1045,7 +1045,10 @@ async fn activate_submission(
 /// A refused step is logged and the session keeps its settings, except when the config or the first input asks for
 /// `guarded`: Node rethrows that failure (`session-mgmt.ts` `runActivation`), since running with the previous, possibly
 /// broader, permission mode is not an option. The `Err` carries the refusal.
-async fn apply_draft_config(
+///
+/// The steps run inside the session's switch turn ([`crate::live::Live::config_switch`]), as Node runs
+/// `applyRequestedSessionConfig` inside `runSessionModelConfigMutation`: a concurrent switch is applied after them.
+pub(crate) async fn apply_draft_config(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,
@@ -1053,6 +1056,7 @@ async fn apply_draft_config(
     first: &Input,
 ) -> Result<(), String> {
     let handle = live.handle.as_ref();
+    let _turn = live.sink.config_switch().await.map_err(str::to_owned)?;
     let mut refusals = Vec::new();
     if let Some(chosen) = selection(config.model_selection.as_ref())
         .or_else(|| selection(first.model_selection.as_ref()))
