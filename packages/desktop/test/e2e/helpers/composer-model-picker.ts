@@ -6,10 +6,20 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
     `[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"][data-composer-combined-model]`,
   );
   if (!(await trigger.isExisting())) return false;
-  await trigger.waitForClickable({ timeout: 30000 });
-  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
   const slider = $('[data-testid="composer-thought-slider"]');
   const toggle = $('[data-testid="composer-thought-switch"]');
+  // Cause: a panel left open by the model pick keeps its backdrop over the trigger; reuse it once its pending ACK clears.
+  await browser.waitUntil(
+    async () => {
+      if ((await trigger.getAttribute("aria-expanded")) !== "true") return trigger.isClickable();
+      const control = (await slider.isExisting()) ? slider : toggle;
+      return (
+        (await control.isExisting()) && (await control.getAttribute("aria-disabled")) !== "true"
+      );
+    },
+    { timeout: 30000, timeoutMsg: "combined model trigger or panel did not settle" },
+  );
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
   if (await toggle.isExisting()) {
     const on = await toggle.getAttribute("data-on-value");
     const off = await toggle.getAttribute("data-off-value");
@@ -52,7 +62,17 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
           levels[expected],
         { timeout: 15000 },
       );
-      await trigger.waitForClickable({ timeout: 30000 });
+      // Cause: an open combined panel keeps its z-[19] backdrop over the trigger, so the trigger is never clickable while expanded; wait on the panel instead.
+      await browser.waitUntil(
+        async () => {
+          if ((await trigger.getAttribute("aria-expanded")) !== "true")
+            return trigger.isClickable();
+          return (
+            (await slider.isExisting()) && (await slider.getAttribute("aria-disabled")) !== "true"
+          );
+        },
+        { timeout: 30000, timeoutMsg: "combined model panel did not settle" },
+      );
     };
     await browser.keys(index === levels.length - 1 ? "End" : "Home");
     await waitForLevel(index === levels.length - 1 ? index : 0);
