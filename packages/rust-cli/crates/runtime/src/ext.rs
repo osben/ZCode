@@ -7,6 +7,7 @@ use rust_cli_agents::PluginAgentFile;
 use rust_cli_ext::Plugins;
 use rust_cli_hooks::PluginHooks;
 use rust_cli_kernel_api::cron_store::CronStore;
+use rust_cli_kernel_api::topic_resource::TopicResources;
 
 pub use rust_cli_ext::ExtConfig;
 
@@ -30,6 +31,9 @@ pub struct Extensions {
     /// Fork: the Node desktop agent's semantics (plan mode boundary `PolicyGate::with_node_plan_mode`, one queued input per
     /// turn); the app-server turns it on.
     pub node_desktop: bool,
+    /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
+    /// the app-server gives it.
+    pub topic_resources: Option<Arc<dyn TopicResources>>,
     /// Fork: ACP external agents (the app-server gives it; specs/fork-rust-agent-parity.md "ACP external agents").
     /// None: an `acp:` selection runs on the query loop like any provider.
     pub acp: Option<crate::acp::AcpSetup>,
@@ -45,6 +49,7 @@ impl Extensions {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            topic_resources: None,
             acp: None,
         }
     }

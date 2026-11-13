@@ -29,6 +29,9 @@ pub(crate) enum Access {
     ApiKey(RedactedString),
     /// 官方账号模型：每次请求向账号层取（`access.accountType` / `access.mode`）。
     Account { account_type: String, mode: String },
+    /// Fork: ChatGPT Plan account (specs/fork-rust-chatgpt-plan.md): the Desktop Host resolves the token per request by
+    /// provider id; standalone `zcode-rs` refuses it.
+    ChatGpt,
 }
 
 /// 一个可执行模型的端点模板（凭据之外的部分）。
@@ -220,6 +223,9 @@ fn access(config: &Value) -> Option<Access> {
             account_type: text(access, "accountType").to_owned(),
             mode: text(access, "mode").to_owned(),
         });
+    }
+    if access["type"] == "chatgpt-account" {
+        return Some(Access::ChatGpt);
     }
     access["apiKey"]
         .as_str()

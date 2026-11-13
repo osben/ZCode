@@ -130,6 +130,7 @@ fn chat_endpoint(base_url: String) -> ModelEndpoint {
             ..ModelCapabilities::default()
         },
         renewable: false,
+        compress_body_over: None,
     }
 }
 
