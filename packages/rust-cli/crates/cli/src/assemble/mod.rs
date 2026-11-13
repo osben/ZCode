@@ -309,6 +309,8 @@ pub(crate) struct Opened {
     /// 时间与 ID 只有一份（README §4，F7）：内核、会话库的记录、模型、定时任务存储与 TUI 共用。
     pub(crate) ids: Arc<NodeIds>,
     pub(crate) store: Arc<NodeStore>,
+    /// Fork: the local MCP transport; `process/childProcesses` lists its live stdio servers.
+    pub(crate) mcp: Arc<LocalMcpTransport>,
 }
 
 /// 开端口的前半。
@@ -359,6 +361,7 @@ pub(crate) async fn open(
     let monitor = options::monitor(&facts.hooks.assume, local.bash.is_some());
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);
+    let mcp = local.mcp.clone();
     let executor_source = machines::artifact_source(facts, &egress);
     let loopback = match spec.primary {
         Primary::Configured => facts
@@ -451,6 +454,7 @@ pub(crate) async fn open(
         paths,
         ids,
         store,
+        mcp,
     })
 }
 

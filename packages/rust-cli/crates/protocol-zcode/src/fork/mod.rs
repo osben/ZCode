@@ -4,6 +4,7 @@
 
 mod background_task;
 mod background_work;
+mod child_processes;
 pub(crate) mod commands;
 mod file_summary;
 pub(crate) mod methods;

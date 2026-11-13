@@ -42,6 +42,8 @@ pub(crate) async fn dispatch(
         }
         // Fork: the legacy background stop (Node `cancelBackgroundTask`).
         "session/cancelBackgroundTask" => super::background_task::cancel(server, &params).await,
+        // Fork: the Host's resource sampler (Node `process/childProcesses`); params are not read.
+        "process/childProcesses" => Ok(super::child_processes::child_processes(server)),
         _ => return None,
     };
     Some(result.map(Reply::new))
