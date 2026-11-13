@@ -36,6 +36,7 @@ use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
 use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
@@ -166,6 +167,8 @@ pub(crate) struct Controller {
     pub(crate) desktop_context: bool,
     /// Fork: the Host's topic resources (`ReadTopicResource`, specs/fork-rust-topic-resource.md); only the app-server.
     pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md); only the app-server sets it, after opening the store.
+    pub(crate) code_intelligence: Option<Arc<dyn CodeIntelligence>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -187,6 +190,7 @@ impl Controller {
             node_desktop: false,
             desktop_context: false,
             topic_resources: None,
+            code_intelligence: None,
             cli,
         }
     }
@@ -213,6 +217,7 @@ impl Controller {
             node_desktop: false,
             desktop_context: false,
             topic_resources: None,
+            code_intelligence: None,
             cli,
         }
     }
@@ -241,6 +246,7 @@ impl Controller {
             node_desktop: true,
             desktop_context,
             topic_resources: Some(topic_resources),
+            code_intelligence: None,
             cli: CliInputs::default(),
         }
     }
@@ -687,6 +693,7 @@ pub(crate) async fn kernel(
             ledger: rust_cli_proc::ledger::Ledger::open(opened.ledger.clone()),
         });
     }
+    extensions.code_intelligence = spec.code_intelligence.clone();
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened

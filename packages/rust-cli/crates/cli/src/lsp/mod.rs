@@ -1,29 +1,41 @@
-//! Fork: the app-server's language-server host (specs/fork-rust-lsp.md), Node bootstrap `app/lsp-runtime-hub.ts`
-//! `protocolHost`. Stage 1 starts no server: status lists the declared servers of the requested workspace as
-//! `stopped` or `not_installed`; preferences live in the sidecar shared with Node.
+//! Fork: the app-server's language-server host (specs/fork-rust-lsp.md), Node bootstrap `app/lsp-runtime-hub.ts`:
+//! the process-wide pool and documents, one [`runtime::session::SessionLsp`] per session, the status overlay and the
+//! preferences sidecar shared with Node.
 
 mod installed;
 mod preferences;
+mod runtime;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rust_cli_base::secret::EnvSnapshot;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::plugins::lsp::{declared, resolve, resolve_conflicts};
 use rust_cli_ext::plugins::template::{VariableContext, sanitize_plugin_id};
 use rust_cli_ext::plugins::{Plugin, load_all};
-use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-use rust_cli_kernel_api::env_files::PathStyle;
-use rust_cli_kernel_api::ids::EnvironmentId;
+use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
+use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
+use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
 use rust_cli_kernel_api::lsp::{
-    LanguageServers, LspPreferences, LspPreferencesPatch, LspServerStatus, LspStatus, LspWorkspace,
+    CodeIntelligence, FileMutation, LanguageServers, LspPreferences, LspPreferencesPatch,
+    LspServerStatus, LspStatus, LspWorkspace,
 };
 use rust_cli_kernel_api::machine::Files;
+use rust_cli_kernel_api::store::StoreQueries;
 use rust_cli_paths::StoragePaths;
 use serde_json::{Map, Value};
+use tokio::sync::OnceCell;
 
 use self::preferences::PreferencesStore;
+use self::runtime::documents::{Disk, Documents, Snapshot};
+use self::runtime::pool::{Limits, Pool, ServerKey, Status, merge_env};
+use self::runtime::process::Launcher;
+pub(crate) use self::runtime::process::LedgerLauncher;
+use self::runtime::server::Registry;
+use self::runtime::session::{SessionLsp, Shared, SharedPreferences};
 use crate::config::{ConfigInputs, plugin_view};
 
 /// What the host needs from the app-server assembly.
@@ -37,20 +49,123 @@ pub(crate) struct HostInputs {
     pub(crate) view_host: bool,
     /// `<cliStorageRoot>/fork_lsp_preferences.json`.
     pub(crate) preferences: PathBuf,
+    /// Starts the server processes (the process ledger in production).
+    pub(crate) launcher: Arc<dyn Launcher>,
+    /// The session's workspace key (the pool identity); without it the workspace root is the identity.
+    pub(crate) store: Option<Arc<dyn StoreQueries>>,
 }
+
+/// A session's runtime, created on its first prewarm or mutation; `None` inside: no server is declared there.
+type SessionSlot = (String, Arc<OnceCell<Option<Arc<SessionLsp>>>>);
 
 pub(crate) struct Host {
     inputs: HostInputs,
     preferences: PreferencesStore,
+    /// The stdio-server projection of the process env: the base of every server's env and of the install probe.
+    base_env: Vec<(String, String)>,
+    shared: Shared,
+    loaded: OnceCell<()>,
+    sessions: Mutex<HashMap<SessionId, SessionSlot>>,
 }
 
 impl Host {
     pub(crate) fn new(inputs: HostInputs) -> Self {
         let preferences = PreferencesStore::new(inputs.preferences.clone());
+        let windows = cfg!(windows);
+        let base_env: Vec<(String, String)> =
+            rust_cli_env_local::stdio_server_env(inputs.process_env.vars())
+                .into_iter()
+                .collect();
+        let shared = Shared {
+            pool: Pool::new(
+                Arc::clone(&inputs.launcher),
+                base_env.clone(),
+                windows,
+                Limits::default(),
+            ),
+            documents: Documents::new(windows),
+            preferences: SharedPreferences::default(),
+        };
         Self {
             inputs,
             preferences,
+            base_env,
+            shared,
+            loaded: OnceCell::new(),
+            sessions: Mutex::default(),
         }
+    }
+
+    /// Node `getPreferences`: the cached preferences, loaded from the sidecar on first use and refreshed by every
+    /// protocol read and write.
+    async fn current(&self) -> LspPreferences {
+        self.loaded
+            .get_or_init(|| async {
+                self.preferences
+                    .load_and(|loaded| self.remember(loaded))
+                    .await;
+            })
+            .await;
+        self.shared.preferences.lock_unpoisoned().clone()
+    }
+
+    fn remember(&self, prefs: &LspPreferences) {
+        *self.shared.preferences.lock_unpoisoned() = prefs.clone();
+    }
+
+    /// The session's runtime for `workspace`; a session that moved to another root gets a new one.
+    async fn session(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+    ) -> Option<Arc<SessionLsp>> {
+        let root = workspace.root.as_str().to_owned();
+        let cell = {
+            let mut sessions = self.sessions.lock_unpoisoned();
+            let slot = sessions
+                .entry(session.clone())
+                .or_insert_with(|| (root.clone(), Arc::default()));
+            if slot.0 != root {
+                *slot = (root.clone(), Arc::default());
+            }
+            Arc::clone(&slot.1)
+        };
+        cell.get_or_init(|| async {
+            let servers = self.servers(&root).await;
+            if servers.is_empty() {
+                return None;
+            }
+            let identity = match &self.inputs.store {
+                Some(store) => match store.session_workspace_key(session).await {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        // The root becomes this session's key; status for an identity would not see its servers.
+                        tracing::warn!(event = "core.lsp.warn", operation = "workspace_key", %error, "LSP operation failed");
+                        None
+                    }
+                },
+                None => None,
+            };
+            let key = ServerKey {
+                identity: identity
+                    .map(|identity| identity.trim().to_owned())
+                    .filter(|identity| !identity.is_empty())
+                    .unwrap_or_else(|| root.clone()),
+                workspace: root.clone(),
+            };
+            let disk = Arc::new(FilesDisk {
+                files: Arc::clone(&self.inputs.files),
+                workspace: workspace.clone(),
+            });
+            Some(SessionLsp::new(
+                self.shared.clone(),
+                Registry::new(servers),
+                key,
+                disk,
+            ))
+        })
+        .await
+        .clone()
     }
 
     /// The servers the enabled plugins declare for `workspace` (Node `resolveZCodePlugins({workingDirectory})
@@ -107,11 +222,12 @@ fn data_path(storage: &rust_cli_paths::StoragePath, plugin: &Plugin) -> String {
         .into_owned()
 }
 
-/// The status entry of a declared server that is not running (Node `toStatusEntry` without a pool entry).
+/// Node `toStatusEntry`: the pool entry of the same server and key, when there is one.
 fn entry(
     server: rust_cli_ext::plugins::lsp::ResolvedLspServer,
     prefs: &LspPreferences,
     installed: bool,
+    running: Option<&Status>,
 ) -> LspServerStatus {
     let diagnostics_after_edit = prefs
         .diagnostics_after_edit
@@ -129,41 +245,160 @@ fn entry(
         server_name: server.server_name,
         command: server.command,
         installed,
-        state: if installed {
-            "stopped"
-        } else {
-            "not_installed"
+        state: match running {
+            Some(running) => running.state.as_str(),
+            None if installed => "stopped",
+            None => "not_installed",
         },
-        diagnostics_mode: "unknown",
+        diagnostics_mode: if running.is_some_and(|running| running.pull) {
+            "pull"
+        } else {
+            "unknown"
+        },
         diagnostics_after_edit,
-        restarts: 0,
-        last_error_code: None,
+        restarts: running.map_or(0, |running| {
+            u32::try_from(running.restarts).unwrap_or(u32::MAX)
+        }),
+        last_error_code: running
+            .and_then(|running| running.last_error_code)
+            .map(str::to_owned),
+    }
+}
+
+/// The workspace's files through the Files port (Node `LspFileSystem`).
+struct FilesDisk {
+    files: Arc<dyn Files>,
+    workspace: WorkspaceRef,
+}
+
+#[async_trait]
+impl Disk for FilesDisk {
+    async fn stat(&self, path: &str) -> Result<Snapshot, String> {
+        let request = StatFile {
+            path: EnvPath::new(path),
+        };
+        match self.files.stat(&self.workspace, request).await {
+            Ok(Some(stat)) => Ok(Snapshot {
+                size: stat.size,
+                mtime_ms: Some(stat.mtime_ms),
+            }),
+            Ok(None) => Err("ENOENT".to_owned()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    async fn read(&self, path: &str) -> Result<String, String> {
+        let request = ReadFile {
+            path: EnvPath::new(path),
+        };
+        let content = self
+            .files
+            .read_file(&self.workspace, request)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(String::from_utf8_lossy(&content.bytes).into_owned())
     }
 }
 
 #[async_trait]
 impl LanguageServers for Host {
     async fn preferences(&self) -> Result<LspPreferences, String> {
-        Ok(self.preferences.load().await)
+        // Remembered inside the store's turn: a read that started before a write cannot overwrite what it published.
+        Ok(self
+            .preferences
+            .load_and(|prefs| self.remember(prefs))
+            .await)
     }
 
+    /// Node `applyPreferences`: turning code intelligence off stops every server.
     async fn set_preferences(&self, patch: LspPreferencesPatch) -> Result<LspPreferences, String> {
-        // Stage 1 has no running servers to apply the result to (Node `applyPreferences`).
-        self.preferences.update(&patch).await
+        // Remembered before `stop_all`: the pool reads the switch under the lock `stop_all` takes.
+        let prefs = self
+            .preferences
+            .update_and(&patch, |prefs| self.remember(prefs))
+            .await?;
+        if !prefs.enabled {
+            self.shared.pool.stop_all().await;
+        }
+        Ok(prefs)
     }
 
     async fn status(&self, workspace: &LspWorkspace) -> Result<LspStatus, String> {
-        let prefs = self.preferences.load().await;
+        let prefs = self
+            .preferences
+            .load_and(|prefs| self.remember(prefs))
+            .await;
+        // The pool key (identity and root), never the path alone.
+        let key = ServerKey {
+            identity: workspace
+                .identity
+                .as_deref()
+                .map(str::trim)
+                .filter(|identity| !identity.is_empty())
+                .unwrap_or(&workspace.path)
+                .to_owned(),
+            workspace: workspace.path.clone(),
+        };
+        let live: Vec<Status> = self
+            .shared
+            .pool
+            .status()
+            .into_iter()
+            .filter(|status| status.key == key)
+            .collect();
         let mut servers = Vec::new();
         for server in self.servers(&workspace.path).await {
-            let env = installed::process_env(&self.inputs.process_env, &server.env, cfg!(windows));
+            let env = merge_env(&self.base_env, &server.env, cfg!(windows));
             let found = installed::installed(&server.command, &env).await;
-            servers.push(entry(server, &prefs, found));
+            let running = live.iter().find(|status| status.server_id == server.id);
+            servers.push(entry(server, &prefs, found, running));
         }
         Ok(LspStatus {
             enabled: prefs.enabled,
             servers,
         })
+    }
+}
+
+#[async_trait]
+impl CodeIntelligence for Host {
+    async fn prewarm(&self, session: &SessionId, workspace: &WorkspaceRef, path: &str) {
+        if !self.current().await.enabled {
+            return;
+        }
+        if let Some(runtime) = self.session(session, workspace).await {
+            runtime.prewarm(path);
+        }
+    }
+
+    async fn file_mutated(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+        mutation: FileMutation,
+    ) {
+        if !self.current().await.enabled {
+            return;
+        }
+        if let Some(runtime) = self.session(session, workspace).await {
+            runtime.file_mutated(mutation);
+        }
+    }
+
+    /// Nothing pending: no plugin is resolved and nothing waits.
+    async fn edit_diagnostics(&self, session: &SessionId) -> Option<String> {
+        let runtime = {
+            let sessions = self.sessions.lock_unpoisoned();
+            sessions.get(session)?.1.get()?.clone()?
+        };
+        if !runtime.has_pending() {
+            return None;
+        }
+        runtime.edit_diagnostics().await
+    }
+
+    fn session_closed(&self, session: &SessionId) {
+        self.sessions.lock_unpoisoned().remove(session);
     }
 }
 
