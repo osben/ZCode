@@ -99,11 +99,12 @@ impl Activity {
         summary: Option<String>,
         now: u64,
     ) {
-        self.tools.retain(|tool| tool.tool_use != tool_use);
+        // Node keeps the summary given at scheduling; the start time is when it really started.
+        let existing = self.take_tool(tool_use);
         self.tools.push(RunningTool {
             tool_use: tool_use.to_owned(),
             name: name.to_owned(),
-            summary,
+            summary: existing.and_then(|tool| tool.summary).or(summary),
             started_ms: now,
         });
         self.progress(now);
@@ -117,13 +118,26 @@ impl Activity {
         summary: Option<String>,
         now: u64,
     ) {
-        self.tools.retain(|tool| tool.tool_use != tool_use);
+        // A repeated scheduled event (a replayed batch) keeps the call's start time and summary
+        // (Node `background-stall.ts`: `existing?.startedAt ?? now`, `summary ?? existing?.summary`).
+        let existing = self.take_tool(tool_use);
+        let (started_ms, kept_summary) = existing
+            .map(|tool| (tool.started_ms, tool.summary))
+            .unwrap_or((now, None));
         self.tools.push(RunningTool {
             tool_use: tool_use.to_owned(),
             name: name.to_owned(),
-            summary,
-            started_ms: now,
+            summary: summary.or(kept_summary),
+            started_ms,
         });
+    }
+
+    fn take_tool(&mut self, tool_use: &str) -> Option<RunningTool> {
+        let index = self
+            .tools
+            .iter()
+            .position(|tool| tool.tool_use == tool_use)?;
+        Some(self.tools.remove(index))
     }
 
     pub(crate) fn tool_finished(&mut self, tool_use: &str, now: u64) {

@@ -324,6 +324,8 @@ Node turns a hook's JSON output into a `HookRunResult` (`processHookOutput`) and
 
 - **PostToolUse.** Node uses only a PostToolUse hook's additional context: `continue: false` does not stop the turn, because `shouldPreventContinuation` covers only PreToolUse, PermissionRequest and UserPromptSubmit. Rust `fold::post_tool_use` used to stop the turn with `Execution stopped by PostToolUse hook`. It now ignores `continue: false` for this event. Blocking output, `updatedToolOutput` and additional context are unchanged.
 
+- **PreToolUse `permissionDecision: "defer"`.** Node's schema (`HookSpecificOutputSchema`) accepts only `allow`, `ask` and `deny`, so a hook answering `defer` fails validation and its output counts as a hook error (`configured-runner-callback.ts`), contributing no decision. Rust used to accept `defer` and rank it above `ask` and `allow` when merging hooks (deny > defer > ask > allow), so `defer` from one hook dropped another hook's `ask` and the permission chain could allow a call that Node prompts for. Rust now refuses `defer` in the PreToolUse schema like any other unknown value (the same `Hook JSON output validation failed` path), and the merge is Node's: deny > ask > last.
+
 Acceptance:
 
 - Hooks fold unit tests cover the following:
@@ -1125,6 +1127,7 @@ Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4
   3. Delivery: the reminder is a lane notice with the raw text, not acknowledged, not counted as background work, and no `BackgroundWork` event (`session/src/agent_signals_tests.rs`).
   4. Persistence: `origin_meta` on the text gives the title and `subagentStall` above (`kernel-api` background_origin tests).
   5. Config: the env rule matches Node (`30s` is refused, `5` becomes 10 000, `0` is ignored).
+- **Repeated tool events.** A repeated `ToolCallScheduled` for a call already listed keeps that call's start time and its summary when the new event has none. `ToolCallStarted` resets the start time to the moment it really started, and also keeps the summary given at scheduling; a call that was never scheduled takes the summary of its own input, where Node shows none (Node `background-stall.ts`: `startedAt: started ? now : existing?.startedAt ?? now`, `summary ?? existing?.summary`). Before, Rust replaced the entry, so a replayed scheduled event made a long-running call look newly started and a started event dropped its summary.
 - **Gaps, kept on purpose until the owner decides.**
   - Node writes a `session_input` admission row (`backgroundNotification`) for each reminder and settles it `discarded` when stale. Rust's notices write no admission row, terminal ones included, so a reminder writes none either.
   - A call that is aborted before it starts emits no finish event, so it can stay listed until its run ends. Node removes it on its result. This only happens while the run is being aborted.

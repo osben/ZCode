@@ -359,3 +359,44 @@ fn a_hook_specific_deny_is_a_decision_not_a_stop() {
         deny_with("Denied by PermissionRequest hook")
     );
 }
+
+/// Node `mergePermissionBehavior`: deny > ask > the last decision, in config order.
+#[test]
+fn pre_tool_use_merge_is_deny_then_ask_then_last() {
+    let ids = SequentialIds::default();
+    let fold = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let ask_after_allow = pre_tool_use(
+        &fold,
+        &[
+            decided(Behavior::Allow, None, None),
+            decided(Behavior::Ask, Some("check"), None),
+        ],
+    );
+    assert!(matches!(
+        ask_after_allow.decision,
+        Some(PermissionDecision::Ask { .. })
+    ));
+    let allow_after_ask = pre_tool_use(
+        &fold,
+        &[
+            decided(Behavior::Ask, Some("check"), None),
+            decided(Behavior::Allow, None, None),
+        ],
+    );
+    assert!(matches!(
+        allow_after_ask.decision,
+        Some(PermissionDecision::Ask { .. })
+    ));
+    let deny_wins = pre_tool_use(
+        &fold,
+        &[
+            decided(Behavior::Ask, None, None),
+            decided(Behavior::Deny, Some("no"), None),
+            decided(Behavior::Allow, None, None),
+        ],
+    );
+    assert!(matches!(
+        deny_wins.decision,
+        Some(PermissionDecision::Deny { .. })
+    ));
+}

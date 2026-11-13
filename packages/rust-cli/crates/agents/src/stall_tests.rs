@@ -488,6 +488,25 @@ fn a_queued_call_is_listed_from_when_it_was_scheduled() {
 }
 
 #[test]
+fn a_repeated_scheduled_event_keeps_the_start_time_and_the_summary() {
+    let mut activity = Activity::default();
+    activity.tool_scheduled("t1", "Bash", Some("sleep 3600".to_owned()), MIN);
+    activity.tool_scheduled("t1", "Bash", None, 9 * MIN);
+    assert_eq!(activity.tools.len(), 1);
+    assert_eq!(activity.tools[0].started_ms, MIN);
+    assert_eq!(activity.tools[0].summary.as_deref(), Some("sleep 3600"));
+}
+
+#[test]
+fn a_started_call_keeps_the_summary_from_scheduling() {
+    let mut activity = Activity::default();
+    activity.tool_scheduled("t1", "Bash", Some("sleep 3600".to_owned()), MIN);
+    activity.tool_started("t1", "Bash", None, 2 * MIN);
+    assert_eq!(activity.tools[0].started_ms, 2 * MIN);
+    assert_eq!(activity.tools[0].summary.as_deref(), Some("sleep 3600"));
+}
+
+#[test]
 fn a_queued_call_that_starts_restarts_its_clock_and_is_progress() {
     let mut activity = Activity::default();
     activity.tool_scheduled("t2", "Write", None, MIN);
