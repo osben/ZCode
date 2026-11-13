@@ -2,6 +2,7 @@
 //! [`ExternalAgentRunner`] wraps the main query loop: a turn whose selection is an `acp:<agentId>` provider runs on
 //! the agent process instead of a model request; every other turn goes to the loop unchanged.
 
+mod guard;
 mod pool;
 mod records;
 mod turn;
@@ -22,6 +23,7 @@ use rust_cli_kernel_api::orchestration::{
 use rust_cli_kernel_api::store::Store;
 use rust_cli_proc::ledger::Ledger;
 
+pub(crate) use guard::ExternalAgentModelGuard;
 pub(crate) use pool::AcpPool;
 use records::AgentRecords;
 
@@ -93,6 +95,14 @@ impl QueryRunner for ExternalAgentRunner {
     ) -> Result<QueryStop, QueryError> {
         match external_agent(&request.selection) {
             Some(agent_id) => {
+                // Node `externalAgentTurnRefusal`: the turns the session opens by itself need a ZCode model.
+                if let Some(what) = rust_cli_session::automatic_turn_subject(&request.messages) {
+                    return Ok(QueryStop::ApiError {
+                        message: format!(
+                            "ACP agent {agent_id} runs only interactive chat turns; {what} need a ZCode model. Switch the model to continue."
+                        ),
+                    });
+                }
                 let agent_id = agent_id.to_owned();
                 turn::run(&self.host, agent_id, request, sink, abort).await
             }

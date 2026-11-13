@@ -217,6 +217,11 @@ impl LocalKernel {
         tasks: Arc<dyn TaskListStore>,
         extensions: Extensions,
     ) -> Self {
+        // Fork: an `acp:` selection never reaches a model provider; side callers fail closed (acp::guard).
+        let ports = Ports {
+            model: Arc::new(acp::ExternalAgentModelGuard { inner: ports.model }),
+            ..ports
+        };
         let scope = TaskScope::root("rust-cli", |panic| {
             tracing::error!(scope = %panic.scope, task = panic.task, message = %panic.message, "task panicked");
         });

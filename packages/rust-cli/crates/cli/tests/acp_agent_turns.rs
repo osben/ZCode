@@ -9,10 +9,12 @@
 )]
 
 mod system_env;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read as _, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use system_env::KeepSystem as _;
 
@@ -40,6 +42,38 @@ fn mock_agent() -> PathBuf {
     path
 }
 
+/// A model endpoint that only counts connections (each answered 500): an ACP turn must not reach it.
+struct ModelStub {
+    url: String,
+    requests: Arc<AtomicUsize>,
+}
+
+impl ModelStub {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counted = requests.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                counted.fetch_add(1, Ordering::SeqCst);
+                let mut buffer = [0u8; 4096];
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            }
+        });
+        Self { url, requests }
+    }
+
+    fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+}
+
 struct Server {
     child: Child,
     stdin: ChildStdin,
@@ -50,7 +84,7 @@ struct Server {
 }
 
 impl Server {
-    fn start(home: &Path, work: &Path) -> Self {
+    fn start(home: &Path, work: &Path, model: &ModelStub) -> Self {
         let mut child = rust_cli_proc::std_command(env!("CARGO_BIN_EXE_zcode-rs"))
             .args(["app-server", "--stdio"])
             .current_dir(work)
@@ -61,7 +95,7 @@ impl Server {
             .env("PATH", "/usr/bin:/bin")
             .env("ZCODE_DATA_BASE_DIR", home)
             // The ACP turn never asks the model; a configured model keeps session creation from waiting.
-            .env("ZCODE_MODEL_BASE_URL", "http://127.0.0.1:9")
+            .env("ZCODE_MODEL_BASE_URL", &model.url)
             .env("ZCODE_API_KEY", "test-key")
             .env("ZCODE_MODEL", GLM_5_3)
             .stdin(Stdio::piped())
@@ -140,12 +174,12 @@ fn turn_finished(frame: &Value) -> bool {
             .any(|phase| contains(frame, &format!("\"phase\":\"{phase}\"")))
 }
 
-fn write_agents(home: &Path, command: &Path, enabled: bool) {
+fn write_agents(home: &Path, command: &Path, enabled: bool, args: &[&str]) {
     let dir = home.join(".zcode/v2");
     std::fs::create_dir_all(&dir).unwrap();
     let file = json!({"schemaVersion": 1, "agents": [{
         "agentId": "mock", "providerName": "Mock Agent", "enabled": enabled,
-        "command": command, "args": [],
+        "command": command, "args": args,
     }]});
     std::fs::write(dir.join("fork_acp_agents.json"), file.to_string()).unwrap();
 }
@@ -171,6 +205,41 @@ fn open_session(server: &mut Server, work: &Path) -> String {
     session
 }
 
+/// Whether a process with this id still exists (signal 0 only checks).
+fn alive(pid: &str) -> bool {
+    std::process::Command::new("/bin/kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Waits until the process is gone; false when it is still there after the deadline.
+fn ends(pid: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if !alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// Runs one "hello" turn to completion and answers the agent's process id.
+fn run_turn(server: &mut Server, session: &str, pid_file: &Path) -> String {
+    let ack = server.command(send_text(session, "c-hello", "hello"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let finished = server.wait_for(turn_finished);
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    let pid = std::fs::read_to_string(pid_file).unwrap();
+    assert!(alive(&pid), "the agent should stay resident after the turn");
+    pid
+}
+
 fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let base = std::fs::canonicalize(dir.path()).unwrap();
@@ -183,8 +252,9 @@ fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
 #[test]
 fn an_acp_selection_runs_the_turn_on_the_agent() {
     let (_dir, home, work) = dirs();
-    write_agents(&home, &mock_agent(), true);
-    let mut server = Server::start(&home, &work);
+    write_agents(&home, &mock_agent(), true, &[]);
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
     let session = open_session(&mut server, &work);
 
     let ack = server.command(send_text(&session, "c-hello", "hello"));
@@ -200,14 +270,63 @@ fn an_acp_selection_runs_the_turn_on_the_agent() {
             .iter()
             .any(|frame| frame.contains("\"append\":\"pong\""))
     );
+    // Side work after the turn (a title, compaction, memory) would ask the model with the ACP selection.
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(model.requests(), 0, "an ACP turn must not reach the model");
     server.stop();
+}
+
+/// The agent process lives as long as the kernel session: `session/close` only detaches the bridge in zcode-rs (the
+/// actor stays), so the process is released when the session itself closes, here by its deletion.
+#[test]
+fn deleting_the_session_stops_the_agent_process() {
+    let (dir, home, work) = dirs();
+    let pid_file = dir.path().join("agent.pid");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--pid-file", pid_file.to_str().unwrap()],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    let pid = run_turn(&mut server, &session, &pid_file);
+
+    let ack = server.command(json!({
+        "commandId": "c-delete", "clientId": "k", "sessionId": session, "type": "deleteSession",
+        "issuedAt": 1, "payload": {},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert!(ends(&pid), "the agent process outlived its session");
+    server.stop();
+}
+
+#[test]
+fn the_agent_process_ends_with_the_app_server() {
+    let (dir, home, work) = dirs();
+    let pid_file = dir.path().join("agent.pid");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--pid-file", pid_file.to_str().unwrap()],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    let pid = run_turn(&mut server, &session, &pid_file);
+
+    server.stop();
+    assert!(ends(&pid), "the agent process outlived the app-server");
 }
 
 #[test]
 fn a_disabled_agent_fails_the_turn_with_the_node_text() {
     let (_dir, home, work) = dirs();
-    write_agents(&home, &mock_agent(), false);
-    let mut server = Server::start(&home, &work);
+    write_agents(&home, &mock_agent(), false, &[]);
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
     let session = open_session(&mut server, &work);
 
     let ack = server.command(send_text(&session, "c-hello", "hello"));

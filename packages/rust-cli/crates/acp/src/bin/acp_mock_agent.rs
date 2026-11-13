@@ -4,7 +4,8 @@
 //! Prompt markers, checked in order: "crash" (exit 3 without answering; Rust-only), "hang" (wait for
 //! `session/cancel`), "tool", "plan", "title", "permission", "remember <word>", "recall", anything else "pong".
 //! Flags: `--state <file>` (memory and method log), `--config options|legacy` (or `ACP_MOCK_CONFIG`),
-//! `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset).
+//! `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
+//! process id is written there at start, so a test can see the process end).
 #![allow(
     clippy::disallowed_methods,
     reason = "a test double binary: it reads its own argv/env and writes its state file directly"
@@ -339,6 +340,9 @@ fn main() {
         asks: HashMap::new(),
         next_request_id: 1000,
     };
+    if let Some(file) = flag("--pid-file") {
+        let _ = std::fs::write(file, std::process::id().to_string());
+    }
     let _ = writeln!(std::io::stderr(), "acp-mock-agent ready");
     mock.record("process-start");
     for line in std::io::stdin().lock().lines() {
