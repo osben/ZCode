@@ -319,6 +319,8 @@ pub(crate) struct Opened {
     pub(crate) store: Arc<NodeStore>,
     /// Fork: the local process tree ledger (see [`LocalEnv::ledger`]).
     pub(crate) ledger: PathBuf,
+    /// Fork: the local MCP transport; `process/childProcesses` lists its live stdio servers.
+    pub(crate) mcp: Arc<LocalMcpTransport>,
 }
 
 /// 开端口的前半。
@@ -370,6 +372,7 @@ pub(crate) async fn open(
     let ledger = local.ledger.clone();
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);
+    let mcp = local.mcp.clone();
     let executor_source = machines::artifact_source(facts, &egress);
     let loopback = match spec.primary {
         Primary::Configured => facts
@@ -463,6 +466,7 @@ pub(crate) async fn open(
         ids,
         store,
         ledger,
+        mcp,
     })
 }
 

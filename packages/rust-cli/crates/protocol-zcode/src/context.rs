@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
+use rust_cli_kernel_api::model::ModelPort;
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
@@ -29,6 +31,11 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
+    /// stay unported.
+    model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
+    /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
+    mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
 }
 
 impl Context {
@@ -43,9 +50,33 @@ impl Context {
         let _ = self.storage_root.set(root);
     }
 
+    /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
+    pub fn set_model_port(&self, model: Arc<dyn ModelPort>) {
+        let _ = self.model_port.set(model);
+    }
+
+    /// Fork: the model port, when the entry point provided one and a model directory resolves selections.
+    pub(crate) fn model_port(&self) -> Option<Arc<dyn ModelPort>> {
+        self.models.get()?;
+        self.model_port.get().cloned()
+    }
+
     /// Fork: the storage root, when the entry point provided one.
     pub fn storage_root(&self) -> Option<&std::path::Path> {
         self.storage_root.get().map(std::path::PathBuf::as_path)
+    }
+
+    /// Fork: the source of `process/childProcesses` (the app-server's local MCP transport).
+    pub fn set_mcp_processes(&self, processes: Arc<dyn McpProcesses>) {
+        let _ = self.mcp_processes.set(processes);
+    }
+
+    /// Fork: the live stdio MCP server processes, empty without a source.
+    pub(crate) fn mcp_processes(&self) -> Vec<McpProcess> {
+        self.mcp_processes
+            .get()
+            .map(|source| source.processes())
+            .unwrap_or_default()
     }
 
     /// Fork: the selectable models, empty without a directory.
@@ -71,6 +102,8 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            model_port: std::sync::OnceLock::new(),
+            mcp_processes: std::sync::OnceLock::new(),
         }
     }
 
@@ -79,6 +112,11 @@ impl Context {
         self.sessions
             .lock_unpoisoned()
             .insert(session.to_owned(), workspace.to_owned());
+    }
+
+    /// Fork: forgets a session registered only for one call (a workspace model call's requester).
+    pub(crate) fn unregister(&self, session: &str) {
+        self.sessions.lock_unpoisoned().remove(session);
     }
 
     pub fn workspace_of(&self, session: &str) -> Option<String> {
