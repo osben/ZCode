@@ -355,6 +355,11 @@ impl Tool for ReadTool {
         if self.unchanged(&context, &path, &input).await {
             return Ok(text(texts::FILE_UNCHANGED.to_owned()));
         }
+        // Fork: Node `lsp.prewarm(path)`, after the unchanged check and before the text read.
+        if let Some(code) = self.files.code_for(&context) {
+            code.prewarm(&context.session, &context.workspace, &path)
+                .await;
+        }
         let offset = input.offset.unwrap_or(1);
         let request = ReadText {
             path: EnvPath::new(path.clone()),

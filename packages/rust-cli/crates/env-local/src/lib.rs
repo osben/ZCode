@@ -71,6 +71,16 @@ pub use crate::hook_http::LocalHookHttp;
 pub use crate::mcp::LocalMcpTransport;
 pub use crate::shell::{EmbeddedSearch, ShellConfig};
 
+/// Fork: the environment a stdio server child gets from the process snapshot (the allow-list projection with
+/// `SHELL` inherited), the one the MCP stdio servers get. The language-server runtime spawns with it too
+/// (specs/fork-rust-lsp.md "Pool").
+#[must_use]
+pub fn stdio_server_env(
+    snapshot: &[(String, String)],
+) -> std::collections::BTreeMap<String, String> {
+    environ::project(snapshot, None)
+}
+
 /// [`LocalEnvironment::busy`] 的结果。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Busy {

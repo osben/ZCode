@@ -112,6 +112,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             monitor: false,
             node_desktop: false,
             topic_resources: None,
+            code_intelligence: None,
         },
     );
     kernel.start_extensions().await;
@@ -221,6 +222,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             monitor: false,
             node_desktop: false,
             topic_resources: None,
+            code_intelligence: None,
         },
     );
     kernel.start_extensions().await;

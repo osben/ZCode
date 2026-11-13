@@ -49,6 +49,7 @@ use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::incognito::{IncognitoKey, IncognitoProfiles};
 use rust_cli_kernel_api::listing::{ListingEntry, ListingSource, Listings};
+use rust_cli_kernel_api::lsp::{CodeIntelligence, DIAGNOSTICS_SOURCE};
 use rust_cli_kernel_api::machine::Git;
 use rust_cli_kernel_api::machine::{EnvInfo, Files, Shell};
 use rust_cli_kernel_api::message::{AttachmentMessage, Message, SystemMessage};
@@ -104,6 +105,8 @@ pub struct PromptAssembler {
     nested: nested::Seen,
     /// 读过的文件在磁盘上被改动（tools-files.md §4.1）：readFileState 的 owner 给出；没有时不查。
     changed: Option<Arc<dyn ChangedFiles>>,
+    /// Fork: the language-server runtime's post-edit diagnostics (specs/fork-rust-lsp.md); the app-server gives it.
+    code: Option<Arc<dyn CodeIntelligence>>,
     /// 任务提醒读的任务清单（agents.md §7.4）：agents 建好之后由 runtime 接上一次（组装的晚绑定，base 的 `late::Late`）；
     /// 没有时不提醒。
     tasks: Late<Arc<dyn TaskReader>>,
@@ -154,6 +157,9 @@ impl PromptAssembler {
     pub fn session_closed(&self, session: &rust_cli_kernel_api::ids::SessionId) {
         self.rules.forget(session);
         self.nested.forget(session);
+        if let Some(code) = &self.code {
+            code.session_closed(session);
+        }
     }
 
     pub fn new(ports: ContextPorts, config: ContextConfig) -> Self {
@@ -163,6 +169,7 @@ impl PromptAssembler {
             rules: Memo::default(),
             nested: nested::Seen::default(),
             changed: None,
+            code: None,
             tasks: Late::new(),
             machines: None,
             incognito: IncognitoProfiles::default(),
@@ -216,6 +223,13 @@ impl PromptAssembler {
     #[must_use]
     pub fn with_changed_files(mut self, changed: Arc<dyn ChangedFiles>) -> Self {
         self.changed = Some(changed);
+        self
+    }
+
+    /// Fork: the language-server runtime asked for the post-edit diagnostics of each main-thread request.
+    #[must_use]
+    pub fn with_code_intelligence(mut self, code: Option<Arc<dyn CodeIntelligence>>) -> Self {
+        self.code = code;
         self
     }
 
@@ -471,6 +485,15 @@ impl PromptAssembler {
                 listings::skills(session, &listings.skills)
                     .map(|found| self.attachment(listings::SKILLS, found)),
             );
+        }
+        // Fork: Node's post-edit diagnostics (specs/fork-rust-lsp.md "Event order"): after the skills listing, before
+        // the plan-mode reminders, main thread only. Waits at most 2 s after the last mutation; a dropped request
+        // leaves the pending edits for the next one.
+        if thread == Thread::Main
+            && let Some(code) = &self.code
+            && let Some(body) = code.edit_diagnostics(&request.session).await
+        {
+            out.push(self.attachment(DIAGNOSTICS_SOURCE, (body, Value::Null)));
         }
         // 计划模式（工作线 L11c，context.md §13）：生产者顺序紧跟 skill_listing。
         out.extend(self.plan_mode(request, history).await);

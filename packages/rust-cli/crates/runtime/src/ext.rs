@@ -7,6 +7,7 @@ use rust_cli_agents::PluginAgentFile;
 use rust_cli_ext::Plugins;
 use rust_cli_hooks::PluginHooks;
 use rust_cli_kernel_api::cron_store::CronStore;
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::topic_resource::TopicResources;
 
 pub use rust_cli_ext::ExtConfig;
@@ -34,6 +35,9 @@ pub struct Extensions {
     /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
     /// the app-server gives it.
     pub topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): Read, Edit and Write report to it and the
+    /// context builder asks it for the post-edit diagnostics. Only the app-server gives it.
+    pub code_intelligence: Option<Arc<dyn CodeIntelligence>>,
 }
 
 impl Extensions {
@@ -47,6 +51,7 @@ impl Extensions {
             monitor: false,
             node_desktop: false,
             topic_resources: None,
+            code_intelligence: None,
         }
     }
 }
