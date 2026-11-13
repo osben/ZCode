@@ -11,16 +11,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rust_cli_base::secret::RedactedString;
-use rust_cli_kernel_api::model::{ModelError, QuerySource};
+use rust_cli_kernel_api::message::ContentBlock;
+use rust_cli_kernel_api::model::{ModelError, ModelEvent, QuerySource};
 use rust_cli_kernel_api::provider::{
     Credential, EndpointQuery, ModelCapabilities, ModelEndpoint, ModelEndpoints, WireProtocol,
 };
 use rust_cli_model::{ProviderModel, RouteOptions};
 use rust_cli_net::{Egress, NetworkPolicy};
 use serde_json::{Value, json};
-
-use rust_cli_kernel_api::message::ContentBlock;
-use rust_cli_kernel_api::model::ModelEvent;
 
 use super::common::{assemble, clock, collect, fast_retry, request};
 use super::fixture::{Fixture, Reply};
@@ -183,7 +181,10 @@ async fn a_usage_limit_at_401_ends_with_the_quota_error_after_one_renewal() {
         matches!(events.as_slice(), [Err(ModelError::QuotaExhausted { message })] if message.starts_with("ChatGPT plan usage limit reached.")),
         "{events:?}"
     );
-    assert_eq!(server.requests().len(), 2);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].header("authorization"), Some("Bearer token-1"));
+    assert_eq!(requests[1].header("authorization"), Some("Bearer token-2"));
     assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
 }
 

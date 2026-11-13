@@ -121,17 +121,23 @@ pub(crate) async fn accounts(
 /// is never published.
 pub(crate) fn derive(builtin: &mut Value, accounts: &[ChatGptAccount]) {
     let template = |rule: &Value| rule["providerId"] == CHATGPT_PLAN_PROVIDER;
+    // A template provider rule whose `config.access` is not an object (a broken operator builtin file) publishes no
+    // account entry and none of the template's model rules: fail-closed, and no panic on the JSON index assignments.
+    let usable = builtin["providerConfigRules"]["providerRules"]
+        .as_array()
+        .is_some_and(|rules| {
+            rules
+                .iter()
+                .filter(|rule| template(rule))
+                .all(|rule| rule["config"]["access"].is_object())
+        });
+    let accounts = if usable { accounts } else { &[] };
     if let Some(rules) = builtin["providerConfigRules"]["providerRules"].as_array_mut() {
         *rules = std::mem::take(rules)
             .into_iter()
             .flat_map(|rule| {
                 if !template(&rule) {
                     return vec![rule];
-                }
-                // A template whose `config.access` is not an object (a broken operator builtin file) publishes no
-                // account entry: fail-closed, and no panic on the JSON index assignment below.
-                if !rule["config"]["access"].is_object() {
-                    return Vec::new();
                 }
                 accounts
                     .iter()

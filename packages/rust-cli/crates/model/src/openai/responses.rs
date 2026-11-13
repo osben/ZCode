@@ -43,11 +43,6 @@ impl Protocol for OpenAiResponses {
     }
 }
 
-/// OpenAI SDK `getOpenAILanguageModelCapabilities` 的推理模型判断（决定 system 用 developer 角色）。
-fn reasoning_model(model: &str) -> bool {
-    rust_cli_base::models::openai_reasoning_model(model)
-}
-
 /// 编码请求体。消费请求：文本移入请求体，不复制历史。
 pub(crate) fn body(
     model: &str,
@@ -63,7 +58,8 @@ pub(crate) fn body(
         temperature,
         ..
     } = request;
-    let system_role = if reasoning_model(model) {
+    // OpenAI SDK `getOpenAILanguageModelCapabilities` 的推理模型判断（决定 system 用 developer 角色）。
+    let system_role = if rust_cli_base::models::openai_reasoning_model(model) {
         "developer"
     } else {
         "system"

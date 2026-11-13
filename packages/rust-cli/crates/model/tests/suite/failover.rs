@@ -63,6 +63,26 @@ impl ModelEndpoints for Rotating {
     }
 }
 
+/// A model on [`Rotating`] endpoints at the fixture.
+async fn rotating(server: &Fixture, retries: u32) -> (Arc<Rotating>, ProviderModel) {
+    let endpoints = Arc::new(Rotating {
+        base_url: server.url(),
+        issued: Mutex::new(0),
+        rejected: Mutex::new(Vec::new()),
+    });
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        endpoints.clone(),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(retries),
+            ..RouteOptions::default()
+        },
+    );
+    (endpoints, model)
+}
+
 fn error(status: u16, kind: &str) -> Reply {
     Reply::new(status)
         .send(json!({"type": "error", "error": {"type": kind, "message": kind}}).to_string())
@@ -75,21 +95,7 @@ async fn a_rejected_account_credential_is_renewed_once_per_failure() {
         Reply::new(200).send(text_response(&["ok"])),
     ])
     .await;
-    let endpoints = Arc::new(Rotating {
-        base_url: server.url(),
-        issued: Mutex::new(0),
-        rejected: Mutex::new(Vec::new()),
-    });
-    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
-    let model = ProviderModel::new(
-        egress,
-        endpoints.clone(),
-        clock(),
-        RouteOptions {
-            retry: fast_retry(2),
-            ..RouteOptions::default()
-        },
-    );
+    let (endpoints, model) = rotating(&server, 2).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert!(events.iter().all(Result::is_ok), "{events:?}");
     let requests = server.requests();
@@ -114,27 +120,16 @@ async fn a_credential_rejected_again_after_the_renewal_ends_the_request() {
         Reply::new(200).send(text_response(&["ok"])),
     ])
     .await;
-    let endpoints = Arc::new(Rotating {
-        base_url: server.url(),
-        issued: Mutex::new(0),
-        rejected: Mutex::new(Vec::new()),
-    });
-    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
-    let model = ProviderModel::new(
-        egress,
-        endpoints.clone(),
-        clock(),
-        RouteOptions {
-            retry: fast_retry(5),
-            ..RouteOptions::default()
-        },
-    );
+    let (endpoints, model) = rotating(&server, 5).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert!(
         matches!(events.as_slice(), [Err(ModelError::Authentication { .. })]),
         "{events:?}"
     );
-    assert_eq!(server.requests().len(), 2);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].header("x-api-key"), Some("token-1"));
+    assert_eq!(requests[1].header("x-api-key"), Some("token-2"));
     assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
 }
 

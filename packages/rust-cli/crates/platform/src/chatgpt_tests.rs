@@ -152,7 +152,7 @@ fn derivation_replaces_the_template_rule_and_clones_its_model_rules() {
 }
 
 /// A broken operator builtin file (the template's `config` or `access` is not an object) publishes no account entry
-/// and does not panic.
+/// and no derived model rule, and does not panic.
 #[test]
 fn a_malformed_template_rule_is_dropped_without_a_panic() {
     let account = ChatGptAccount {
@@ -178,6 +178,10 @@ fn a_malformed_template_rule_is_dropped_without_a_panic() {
         assert_eq!(
             builtin["providerConfigRules"]["providerRules"],
             json!([{"providerId": "other"}])
+        );
+        assert_eq!(
+            builtin["modelConfigRules"]["builtinProviderModelRules"],
+            json!([])
         );
     }
 }
