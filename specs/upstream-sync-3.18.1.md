@@ -68,6 +68,9 @@ the upstream store.
   (`apps/zcode-cli/packages/adapters/tests/memory-diagnostics/recorder.test.ts`,
   `scripts/test/installer-process-helper.test.mjs`, manual-review browser tests); they are not added
   to the fork manifest, following the rule that upstream-retired suites stay out.
+- `scripts/check-test-copy.mjs`: the two new upstream manual-review browser suites
+  (`font-smoothing`, `interaction-origin-badge`) render under both zh-CN and en-US, so they join the
+  per-locale allowlist.
 - uk-UA: the backport's translations of the new keys (`settings.fontSmoothing*`,
   `voiceInput.permission.*`) are re-applied; en-US and uk-UA have the same keys.
 - `fork-upstream-base.json` moves to `c5904686e` / 3.18.1 and `fork-upstream-migrations.json` is
