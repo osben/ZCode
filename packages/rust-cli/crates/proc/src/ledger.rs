@@ -33,6 +33,8 @@ pub enum Purpose {
     Bash,
     Hook,
     Mcp,
+    /// Fork: an external ACP agent process (rust-cli-acp).
+    Acp,
 }
 
 impl Purpose {
@@ -41,12 +43,13 @@ impl Purpose {
             Purpose::Bash => "bash",
             Purpose::Hook => "hook",
             Purpose::Mcp => "mcp",
+            Purpose::Acp => "acp",
         }
     }
 
     #[cfg(unix)]
     fn parse(name: &str) -> Option<Self> {
-        [Purpose::Bash, Purpose::Hook, Purpose::Mcp]
+        [Purpose::Bash, Purpose::Hook, Purpose::Mcp, Purpose::Acp]
             .into_iter()
             .find(|purpose| purpose.as_str() == name)
     }

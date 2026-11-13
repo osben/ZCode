@@ -15,6 +15,7 @@ members = [
   "crates/node-records",
   "crates/model",
   "crates/env-local",
+  "crates/acp",
   "crates/exec-wire",
   "crates/exec-transport",
   "crates/exec-client",
@@ -200,6 +201,7 @@ rust-cli-node-store = { path = "crates/node-store" }
 rust-cli-node-records = { path = "crates/node-records" }
 rust-cli-model = { path = "crates/model" }
 rust-cli-env-local = { path = "crates/env-local" }
+rust-cli-acp = { path = "crates/acp" }
 rust-cli-exec-wire = { path = "crates/exec-wire" }
 rust-cli-exec-transport = { path = "crates/exec-transport" }
 rust-cli-exec-client = { path = "crates/exec-client" }

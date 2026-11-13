@@ -1668,6 +1668,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-cli-acp"
+version = "0.1.0"
+dependencies = [
+ "rust-cli-base",
+ "rust-cli-proc",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "rust-cli-agents"
 version = "0.1.0"
 dependencies = [
