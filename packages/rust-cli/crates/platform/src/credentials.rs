@@ -9,6 +9,10 @@
 //! `zcode-credential-fallback:<platform>:<homedir>:<username>`（Node `resolveCredentialSecret`）。
 //! 不缓存文件内容：每次读取都以磁盘为准。写入在与 Node 同形的目录锁内读改写（[`CredentialStore::mutate`]）。
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use async_trait::async_trait;
 use base64::Engine;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
@@ -16,11 +20,14 @@ use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use rust_cli_base::secret::RedactedString;
 use rust_cli_fs::{FileMode, LockOptions, ParentDir, TempName, WriteOptions};
+use rust_cli_kernel_api::provider::{CipherError, CredentialCipher};
 use rust_cli_paths::StoragePath;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 const ENCRYPTED_VALUE_PREFIX: &str = "enc:v1:";
+/// 桌面（Main 持有密钥）写入的格式。standalone 读不了它：只能报不可用，不能当明文（specs/fork-rust-credential-cipher.md）。
+const DESKTOP_ENCRYPTED_PREFIX: &str = "enc:v2:";
 const TAG_BYTES: usize = 16;
 /// 密文 `iv.tag.data` 的段数。
 const ENCRYPTED_PARTS: usize = 3;
@@ -44,15 +51,13 @@ const BASE64URL: GeneralPurpose = GeneralPurpose::new(
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialError {
-    /// 解密失败（原因文案与 Node 相同：`凭据解密失败：<原因>`）。
-    #[error("凭据解密失败：{0}")]
-    Decrypt(&'static str),
+    /// 加解密失败或存储不可用（[`CipherError`]）：不是登录失效，调用方不能据此清除登录状态。
+    #[error(transparent)]
+    Cipher(#[from] CipherError),
     #[error("ZCode credentials are corrupt: {0}")]
     Corrupt(String),
     #[error("unable to read ZCode credentials: {0}")]
     Io(String),
-    #[error("cannot encrypt the credential: {0}")]
-    Encrypt(&'static str),
     #[error("unable to write ZCode credentials: {0}")]
     Write(String),
 }
@@ -83,22 +88,25 @@ impl CredentialSecret {
     }
 }
 
+/// v1 编解码（`enc:v1:`，Node `credential-cipher.ts`）：standalone 本地用，桌面不用它。
 #[derive(Clone)]
-pub(crate) struct Cipher {
+pub(crate) struct V1Codec {
     key: [u8; 32],
 }
 
-impl Cipher {
+impl V1Codec {
     pub fn new(secret: &CredentialSecret) -> Self {
         Self {
             key: Sha256::digest(secret.derive().as_bytes()).into(),
         }
     }
 
-    fn sealing_key(&self) -> Result<LessSafeKey, CredentialError> {
+    fn sealing_key(&self) -> Result<LessSafeKey, CipherError> {
         UnboundKey::new(&AES_256_GCM, &self.key)
             .map(LessSafeKey::new)
-            .map_err(|_| CredentialError::Encrypt("AES-256 key length"))
+            .map_err(|_| CipherError::Encrypt {
+                reason: "AES-256 key length",
+            })
     }
 
     /// 用随机 IV 加密（Node `randomBytes(12)`）。
@@ -106,25 +114,25 @@ impl Cipher {
         clippy::disallowed_methods,
         reason = "platform 是加密强度随机数的入口：凭据的 IV（README §4 的随机类别，F58）"
     )]
-    pub fn encrypt(&self, value: &str) -> Result<String, CredentialError> {
+    pub fn encrypt(&self, value: &str) -> Result<String, CipherError> {
         let mut iv = [0u8; NONCE_LEN];
         SystemRandom::new()
             .fill(&mut iv)
-            .map_err(|_| CredentialError::Encrypt("random IV"))?;
+            .map_err(|_| CipherError::Encrypt {
+                reason: "random IV",
+            })?;
         self.encrypt_with_iv(value, iv)
     }
 
     /// 指定 IV 的加密：测试用它证明密文格式与 Node 逐字节相同。
-    pub fn encrypt_with_iv(
-        &self,
-        value: &str,
-        iv: [u8; NONCE_LEN],
-    ) -> Result<String, CredentialError> {
+    pub fn encrypt_with_iv(&self, value: &str, iv: [u8; NONCE_LEN]) -> Result<String, CipherError> {
         let mut data = value.as_bytes().to_vec();
         let tag = self
             .sealing_key()?
             .seal_in_place_separate_tag(Nonce::assume_unique_for_key(iv), Aad::empty(), &mut data)
-            .map_err(|_| CredentialError::Encrypt("AES-GCM seal"))?;
+            .map_err(|_| CipherError::Encrypt {
+                reason: "AES-GCM seal",
+            })?;
         Ok(format!(
             "{ENCRYPTED_VALUE_PREFIX}{}.{}.{}",
             BASE64URL.encode(iv),
@@ -133,58 +141,95 @@ impl Cipher {
         ))
     }
 
-    /// 解密；没有 `enc:v1:` 前缀的旧值原样返回（Node 相同）。
-    pub fn decrypt(&self, value: &str) -> Result<String, CredentialError> {
+    /// 解密 `enc:v1:`；没有前缀的旧值原样返回（Node 相同）。
+    pub fn decrypt(&self, value: &str) -> Result<String, CipherError> {
         let Some(payload) = value.strip_prefix(ENCRYPTED_VALUE_PREFIX) else {
             return Ok(value.to_owned());
         };
         let parts: Vec<&str> = payload.split('.').collect();
         if parts.len() != ENCRYPTED_PARTS || parts.iter().any(|part| part.is_empty()) {
-            return Err(CredentialError::Decrypt("密文格式非法"));
+            return Err(CipherError::Decrypt {
+                reason: "密文格式非法",
+            });
         }
         let decode = |raw: &str| BASE64URL.decode(raw).unwrap_or_default();
         let (iv, tag, cipher) = (decode(parts[0]), decode(parts[1]), decode(parts[2]));
-        let iv: [u8; NONCE_LEN] = iv
-            .try_into()
-            .map_err(|_| CredentialError::Decrypt("IV 长度非法"))?;
+        let iv: [u8; NONCE_LEN] = iv.try_into().map_err(|_| CipherError::Decrypt {
+            reason: "IV 长度非法",
+        })?;
         if tag.len() != TAG_BYTES {
-            return Err(CredentialError::Decrypt("AuthTag 长度非法"));
+            return Err(CipherError::Decrypt {
+                reason: "AuthTag 长度非法",
+            });
         }
         let mut data = cipher;
         data.extend_from_slice(&tag);
-        let key = self
-            .sealing_key()
-            .map_err(|_| CredentialError::Decrypt("密钥不匹配或密文已损坏"))?;
+        let key = self.sealing_key().map_err(|_| CipherError::Decrypt {
+            reason: "密钥不匹配或密文已损坏",
+        })?;
         let plain = key
             .open_in_place(Nonce::assume_unique_for_key(iv), Aad::empty(), &mut data)
-            .map_err(|_| CredentialError::Decrypt("密钥不匹配或密文已损坏"))?;
+            .map_err(|_| CipherError::Decrypt {
+                reason: "密钥不匹配或密文已损坏",
+            })?;
         Ok(String::from_utf8_lossy(plain).into_owned())
     }
 }
 
-/// 一次读取的凭据记录：值按需解密。
+/// standalone（TUI、`-p`、`zcode login`）的凭据编解码：本地 v1。不读系统密钥库（specs/fork-rust-credential-cipher.md）。
+pub struct LocalCipher {
+    codec: V1Codec,
+}
+
+impl LocalCipher {
+    pub fn new(secret: &CredentialSecret) -> Self {
+        Self {
+            codec: V1Codec::new(secret),
+        }
+    }
+}
+
+#[async_trait]
+impl CredentialCipher for LocalCipher {
+    async fn encrypt(&self, plaintext: &str) -> Result<String, CipherError> {
+        self.codec.encrypt(plaintext)
+    }
+
+    async fn decrypt(&self, value: &str) -> Result<String, CipherError> {
+        // A2: a desktop-encrypted value is not plaintext; the standalone resolver is an open gap.
+        if value.starts_with(DESKTOP_ENCRYPTED_PREFIX) {
+            return Err(CipherError::Unavailable {
+                reason: "standalone agent cannot read desktop-encrypted (v2) credentials yet",
+            });
+        }
+        // A3: any other `enc:` prefix this build does not understand is an error, never plaintext.
+        if value.starts_with("enc:") && !value.starts_with(ENCRYPTED_VALUE_PREFIX) {
+            return Err(CipherError::Decrypt {
+                reason: "未知的加密格式",
+            });
+        }
+        self.codec.decrypt(value)
+    }
+}
+
+/// 一次读取的凭据记录：值按需解密（每次取值都经 cipher，桌面时经 Host）。
 pub(crate) struct Credentials {
     record: Map<String, Value>,
-    cipher: Cipher,
+    cipher: Arc<dyn CredentialCipher>,
 }
 
 impl Credentials {
-    /// 一个键的明文；没有这个键时为空。
-    pub fn get(&self, key: &str) -> Result<Option<RedactedString>, CredentialError> {
+    /// 一个键的明文；没有这个键时为空。解密失败是错误，不是“没有”。
+    pub async fn get(&self, key: &str) -> Result<Option<RedactedString>, CredentialError> {
         match self.record.get(key).and_then(Value::as_str) {
             None => Ok(None),
-            Some(raw) => self
-                .cipher
-                .decrypt(raw)
-                .map(|plain| Some(RedactedString::new(plain))),
+            Some(raw) => Ok(Some(RedactedString::new(self.cipher.decrypt(raw).await?))),
         }
     }
 
-    /// 写入一个键：值加密后存放（Node `save`）。
-    pub fn set(&mut self, key: &str, value: &str) -> Result<(), CredentialError> {
-        let encrypted = self.cipher.encrypt(value)?;
-        self.record.insert(key.to_owned(), Value::String(encrypted));
-        Ok(())
+    /// 写入一个已经加密好的值（[`CredentialStore::seal`]，在拿文件锁之前加密：Node 的顺序）。
+    pub fn put_sealed(&mut self, key: &str, sealed: String) {
+        self.record.insert(key.to_owned(), Value::String(sealed));
     }
 
     /// 删掉一个键（不需要解密）。
@@ -192,18 +237,12 @@ impl Credentials {
         self.record.shift_remove(key);
     }
 
-    /// 明文去掉首尾空白后非空。解密失败按没有处理（Node：坏密文不能当作已登录）。
-    pub fn present(&self, key: &str) -> Option<RedactedString> {
-        match self.get(key) {
-            Ok(Some(value)) if !value.expose().trim().is_empty() => {
-                Some(RedactedString::new(value.expose().trim()))
-            }
-            Ok(_) => None,
-            Err(error) => {
-                tracing::warn!(%error, "ignoring an undecryptable credential");
-                None
-            }
-        }
+    /// 明文去掉首尾空白后非空才算有。解密失败是错误：调用方不能把它当成未登录。
+    pub async fn present(&self, key: &str) -> Result<Option<RedactedString>, CredentialError> {
+        Ok(self.get(key).await?.and_then(|value| {
+            let trimmed = value.expose().trim().to_owned();
+            (!trimmed.is_empty()).then(|| RedactedString::new(trimmed))
+        }))
     }
 }
 
@@ -211,14 +250,23 @@ impl Credentials {
 #[derive(Clone)]
 pub(crate) struct CredentialStore {
     file: StoragePath,
-    cipher: Cipher,
+    cipher: Arc<dyn CredentialCipher>,
+    /// 上一次读取是否因存储不可用而失败：只在状态变化时写日志（warn 一次、恢复 info 一次）。
+    unreadable: Arc<AtomicBool>,
 }
 
 impl CredentialStore {
+    /// 本地 v1 编解码的存储（standalone 与测试；桌面用 [`Self::with_cipher`]）。
+    #[cfg(test)]
     pub fn new(file: StoragePath, secret: &CredentialSecret) -> Self {
+        Self::with_cipher(file, Arc::new(LocalCipher::new(secret)))
+    }
+
+    pub fn with_cipher(file: StoragePath, cipher: Arc<dyn CredentialCipher>) -> Self {
         Self {
             file,
-            cipher: Cipher::new(secret),
+            cipher,
+            unreadable: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -226,17 +274,22 @@ impl CredentialStore {
         &self.file
     }
 
+    /// 加密一个值（在拿文件锁之前调用，Node `mutateRawCredentialRecord` 的顺序）。
+    pub async fn seal(&self, value: &str) -> Result<String, CredentialError> {
+        Ok(self.cipher.encrypt(value).await?)
+    }
+
     /// 在目录锁内读改写（Node `mutateRawCredentialRecord`）：持锁读文件，`change` 改记录，原子写回
     /// `JSON.stringify(record, null, 2)` 加换行。文件损坏时不写（不能把别的进程的凭据全部抹掉）；`change`
-    /// 失败时也不写。
+    /// 失败（包括存储不可用）时也不写。
     pub async fn mutate<T>(
         &self,
-        change: impl FnOnce(&mut Credentials) -> Result<T, CredentialError>,
+        change: impl AsyncFnOnce(&mut Credentials) -> Result<T, CredentialError>,
     ) -> Result<T, CredentialError> {
         let file = self.file.as_path();
-        rust_cli_fs::with_file_lock(file, &LockOptions::default(), async || {
+        let result = rust_cli_fs::with_file_lock(file, &LockOptions::default(), async || {
             let mut credentials = self.read().await?;
-            let result = change(&mut credentials)?;
+            let result = change(&mut credentials).await?;
             let mut text = serde_json::to_string_pretty(&credentials.record)
                 .map_err(|error| CredentialError::Write(error.to_string()))?;
             text.push('\n');
@@ -245,7 +298,9 @@ impl CredentialStore {
                 .map_err(|error| CredentialError::Write(format!("{}: {error}", file.display())))?;
             Ok(result)
         })
-        .await
+        .await;
+        self.note(&result);
+        result
     }
 
     /// 读整个文件。不存在时是空记录；不是“值全为字符串的对象”时报损坏（Node 拒绝把它当空 store）。
@@ -270,6 +325,53 @@ impl CredentialStore {
             record,
             cipher: self.cipher.clone(),
         })
+    }
+
+    /// 记下一次凭据操作的结果：存储不可用（或解密失败）时写一条 warn，只写状态变化的那一次；恢复时写一条 info。
+    /// 日志只带静态原因，不带值、密钥或 Host 的消息。
+    pub fn note<T>(&self, result: &Result<T, CredentialError>) {
+        match result {
+            Err(error) => self.note_error(error),
+            Ok(_) => self.note_ok(),
+        }
+    }
+
+    /// 一次读取成功：之前不可读的话写一条 info（恢复）。
+    pub fn note_ok(&self) {
+        if self.unreadable.swap(false, Ordering::Relaxed) {
+            tracing::info!("ZCode credentials can be read again");
+        }
+    }
+
+    /// 见 [`Self::note`]：只对存储不可用与解密失败记日志，其他错误（损坏、写入）由调用方记。
+    pub fn note_error(&self, error: &CredentialError) {
+        if let CredentialError::Cipher(error) = error
+            && !self.unreadable.swap(true, Ordering::Relaxed)
+        {
+            tracing::warn!(
+                reason = cipher_reason(error),
+                "ZCode credentials could not be read; logged-in state is kept"
+            );
+        }
+    }
+}
+
+/// 错误的静态原因（日志与用户可见文案用，不含值）。
+pub(crate) fn cipher_reason(error: &CipherError) -> &'static str {
+    match error {
+        CipherError::Decrypt { reason }
+        | CipherError::Encrypt { reason }
+        | CipherError::Unavailable { reason } => reason,
+    }
+}
+
+/// 凭据读取失败的静态原因；损坏与 IO 错误没有 cipher 原因，统一用“凭据文件不可读”。
+pub(crate) fn unreadable_reason(error: &CredentialError) -> &'static str {
+    match error {
+        CredentialError::Cipher(error) => cipher_reason(error),
+        CredentialError::Corrupt(_) | CredentialError::Io(_) | CredentialError::Write(_) => {
+            "credentials file is unreadable"
+        }
     }
 }
 

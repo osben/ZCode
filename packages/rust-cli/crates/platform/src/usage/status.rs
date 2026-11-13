@@ -38,8 +38,11 @@ pub struct FamilyAccount {
 
 /// user_info 里给人看的账号：zai 存后端原始对象（`email`、`name`），bigmodel 存 App 的 profile（`rawProfile` 里有
 /// 原始对象，外面是 `displayName`、`username`）。
-fn account_label(credentials: &Credentials, family: Family) -> Option<String> {
-    let raw = credentials.present(&format!("oauth:{}:user_info", family.as_str()))?;
+async fn account_label(credentials: &Credentials, family: Family) -> Option<String> {
+    let raw = credentials
+        .present(&format!("oauth:{}:user_info", family.as_str()))
+        .await
+        .ok()??;
     let parsed: Value = serde_json::from_str(raw.expose()).ok()?;
     let inner = &parsed["rawProfile"];
     [
@@ -64,9 +67,39 @@ impl Platform {
         let selection = self.default_selection().await;
         let credentials = self.credentials.read().await.ok();
         let current = self.registry.current().await;
+        // 凭据读不出时按没有登录显示（与以前相同；specs/fork-rust-credential-cipher.md 的开放项）。
+        let mut readings = Vec::new();
+        for family in FAMILIES {
+            let individual = view
+                .families
+                .iter()
+                .find(|p| p.family == family)
+                .and_then(|p| p.individual.as_ref())
+                .map(|p| p.provider.clone())
+                .unwrap_or_default();
+            let (signed_in, account) = match credentials.as_ref() {
+                None => (false, String::new()),
+                Some(c) => {
+                    let signed_in = match Login::read(c, family).await {
+                        Ok(login) => {
+                            (login.identity.is_some() && login.token.is_some())
+                                || (!individual.is_empty()
+                                    && account::manual_authorized(c, &individual)
+                                        .await
+                                        .unwrap_or(false))
+                        }
+                        Err(_) => false,
+                    };
+                    let account = account_label(c, family).await.unwrap_or_default();
+                    (signed_in, account)
+                }
+            };
+            readings.push((signed_in, account));
+        }
         FAMILIES
             .into_iter()
-            .map(|family| {
+            .zip(readings)
+            .map(|(family, (signed_in, account))| {
                 let plans = view.families.iter().find(|p| p.family == family);
                 let individual = plans
                     .and_then(|p| p.individual.as_ref())
@@ -77,15 +110,6 @@ impl Platform {
                     .map(|t| (t.provider.clone(), t.teams.clone()))
                     .unwrap_or_default();
                 let start = format!("account:{}-start-plan", family.as_str());
-                let signed_in = credentials.as_ref().is_some_and(|c| {
-                    let login = Login::read(c, family);
-                    (login.identity.is_some() && login.token.is_some())
-                        || (!individual.is_empty() && account::manual_authorized(c, &individual))
-                });
-                let account = credentials
-                    .as_ref()
-                    .and_then(|c| account_label(c, family))
-                    .unwrap_or_default();
                 let (plan, provider) = match &selection {
                     Some(s) if !team.is_empty() && s.provider == team => {
                         let at = s

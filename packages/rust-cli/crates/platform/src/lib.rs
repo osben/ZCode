@@ -45,10 +45,11 @@ use rust_cli_net::Egress;
 use rust_cli_net::header;
 use rust_cli_paths::{StoragePath, StoragePaths};
 
-pub use credentials::{CredentialError, CredentialSecret};
+pub use credentials::{CredentialError, CredentialSecret, LocalCipher};
 pub use login::{LoginError, LoginOutcome, PendingLogin, SetupOutcome};
 /// Node 的平台名（定义在 base，F55）；入口经 platform 取用，路径不变。
 pub use rust_cli_base::js::node_platform;
+pub use rust_cli_kernel_api::provider::{CipherError, CredentialCipher};
 pub use token::{AccountOrigins, TokenError};
 
 use crate::auth::AccountAuth;
@@ -97,7 +98,16 @@ impl Platform {
     /// `paths` 已按入口读到的 `ZCODE_DATA_BASE_DIR`、`ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` 调整过；`secret` 是
     /// 凭据密钥的材料；`services` 给账号服务（项目令牌、登录）用。
     pub fn new(paths: &StoragePaths, secret: &CredentialSecret, services: AccountServices) -> Self {
-        let credentials = CredentialStore::new(paths.credentials(), secret);
+        Self::with_cipher(paths, Arc::new(LocalCipher::new(secret)), services)
+    }
+
+    /// 同 [`Self::new`]，但凭据的加解密走注入的 cipher（桌面 app-server：Host 委托 Main 的密钥库，specs/fork-rust-credential-cipher.md）。
+    pub fn with_cipher(
+        paths: &StoragePaths,
+        cipher: Arc<dyn CredentialCipher>,
+        services: AccountServices,
+    ) -> Self {
+        let credentials = CredentialStore::with_cipher(paths.credentials(), cipher);
         // 项目令牌的缓存由个人订阅查询与请求期共用（F50）：取目录时换到的令牌，第一次请求直接用。
         let tokens = Arc::new(ProjectTokens::new(
             services.egress.clone(),
@@ -278,6 +288,14 @@ impl ModelEndpoints for Platform {
         } = query;
         let current = self.registry.current().await;
         let Some(template) = current.snapshot.find(selection) else {
+            // 凭据读不到时不是“模型不可用”：说明是凭据存储的问题（specs/fork-rust-credential-cipher.md）。
+            if let Some(reason) = self.registry.unreadable_reason() {
+                return Err(ModelError::Authentication {
+                    message: format!(
+                        "ZCode credentials could not be read ({reason}); account models are unavailable until they can be read"
+                    ),
+                });
+            }
             // 这个团队项目已过期 / 未分配：照 App 的文案提示（platform.md §9.2）。
             let team = selection.connection.as_deref();
             if let Some(notice) = self

@@ -134,7 +134,13 @@ async fn team_and_personal_exchanges_match_the_app() {
             "{name}"
         );
         let key = super::location::storage_key(&server.url(), family, "u-1", team.as_ref());
-        let value = harness.credentials().await.present(&key).unwrap();
+        let value = harness
+            .credentials()
+            .await
+            .present(&key)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(value.expose(), saved[1], "{name}");
     }
 }
@@ -188,7 +194,13 @@ async fn team_locations_are_checked_and_re_resolved() {
     let material = tokens.resolve(request(Some(&team)), &store).await.unwrap();
     assert_eq!(material.location.api_key_id, "key-team");
     assert_eq!(server.count("/api/biz/customer"), 1);
-    let saved = harness.credentials().await.present(&key).unwrap();
+    let saved = harness
+        .credentials()
+        .await
+        .present(&key)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         saved.expose(),
         r#"{"organizationId":"org-t","projectId":"p-t","apiKeyId":"key-team"}"#

@@ -33,7 +33,7 @@ pub use status::{AccountPlan, FamilyAccount};
 
 use crate::Platform;
 use crate::account::{self, INDIVIDUAL_CODING_PLAN, TEAM_CODING_PLAN, ZCODE_JWT_KEY};
-use crate::credentials::Credentials;
+use crate::credentials::{CredentialError, Credentials};
 use crate::token::AccountOrigins;
 use crate::token::http::{Http, ORGANIZATION_HEADER, PROJECT_HEADER};
 use rust_cli_base::account::Family;
@@ -121,13 +121,15 @@ struct Login {
 }
 
 impl Login {
-    fn read(credentials: &Credentials, family: Family) -> Self {
-        Self {
-            identity: account::profile_id(credentials, family),
-            token: credentials.present(account::oauth_key(family.as_str())),
-            zcode_jwt: credentials.present(ZCODE_JWT_KEY),
-            active: credentials.present("oauth:active_provider"),
-        }
+    async fn read(credentials: &Credentials, family: Family) -> Result<Self, CredentialError> {
+        Ok(Self {
+            identity: account::profile_id(credentials, family).await?,
+            token: credentials
+                .present(account::oauth_key(family.as_str()))
+                .await?,
+            zcode_jwt: credentials.present(ZCODE_JWT_KEY).await?,
+            active: credentials.present("oauth:active_provider").await?,
+        })
     }
 }
 
@@ -223,7 +225,9 @@ impl Context<'_> {
             .read()
             .await
             .map_err(|error| error.to_string())?;
-        Ok(Login::read(&credentials, family))
+        Login::read(&credentials, family)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// 与模型请求同一份凭据（§5.3、§9.5）：手工 key 或项目令牌。
