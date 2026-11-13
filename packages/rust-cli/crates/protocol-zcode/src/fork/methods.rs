@@ -26,6 +26,14 @@ pub(crate) async fn dispatch(
         "session/treeCounts" => super::session_tree::tree_counts(server, &params).await,
         "session/eraseTree" => super::session_tree::erase_tree(server, &params).await,
         "session/debug" => session_debug(&params),
+        // Fork: the legacy session methods behind the Host's automation runs (specs/fork-rust-automations.md).
+        "session/create" => super::legacy_session::create(server, &params).await,
+        "session/resume" => super::legacy_session::resume(server, &params).await,
+        "session/setMode" => super::legacy_session::set_mode(server, &params).await,
+        "session/setThoughtLevel" => {
+            super::legacy_session::set_thought_level(server, &params).await
+        }
+        "session/setModel" => super::legacy_session::set_model(server, &params).await,
         "skills/referenceCatalog" => super::skills::reference_catalog(server, &params).await,
         // Fork: the App's subagent directory pane (Node `listSessionSubagents`).
         "session/subagents" => super::subagents::subagents(server, &params).await,

@@ -1432,6 +1432,7 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
             plan: true,
         },
         selection: Some(selection()),
+        limits: Default::default(),
     };
     let deltas = feed.apply(KernelEvent::QueueChanged {
         items: vec![

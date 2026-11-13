@@ -138,6 +138,8 @@ pub(crate) struct Running {
     pub(crate) command: Option<CommandId>,
     /// 回合结束那一行的计时（修复线 F118，duration.rs）。
     pub(crate) timing: crate::duration::TurnTiming,
+    /// Fork: the limits the input that opened this turn set (automation id, hidden tools); they end with the turn.
+    pub(crate) limits: rust_cli_kernel_api::turn_limits::TurnLimits,
 }
 
 enum Next {
@@ -212,6 +214,9 @@ pub(crate) struct Actor {
     pub(crate) cron_fires: VecDeque<rust_cli_kernel_api::cron::CronFire>,
     pub(crate) pending: Vec<Pending>,
     pub(crate) running: Option<Running>,
+    /// Fork: the limits of the turn about to launch, set from the starting input's execution and taken by
+    /// [`Self::launch`]; cleared after every start attempt so no other turn inherits them.
+    pub(crate) next_limits: rust_cli_kernel_api::turn_limits::TurnLimits,
     pub(crate) job: Option<Job>,
     /// 没有被代码回退撤销的 checkpoint，按写入顺序（spec §4）。
     pub(crate) checkpoints: Vec<WorkspaceCheckpoint>,
@@ -346,6 +351,7 @@ impl Actor {
             cron_fires: VecDeque::new(),
             pending: Vec::new(),
             running: None,
+            next_limits: Default::default(),
             job: None,
             checkpoints: state.checkpoints,
             turn_files: std::collections::HashMap::new(),
@@ -470,9 +476,14 @@ impl Actor {
                 result: CommandResult::Queued,
             };
         }
+        self.next_limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
         if let Some(execution) = execution
             && let Err(reason) = self.submitted_execution(execution).await
         {
+            self.next_limits = Default::default();
             return rejected(reason);
         }
         if compact {
@@ -496,7 +507,9 @@ impl Actor {
                 intent,
             }
         };
-        match self.start_turn(input).await {
+        let started = self.start_turn(input).await;
+        self.next_limits = Default::default();
+        match started {
             Ok(()) => accepted(),
             Err(reason) => rejected(reason),
         }
@@ -750,6 +763,10 @@ impl Actor {
             Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
             Command::AdoptTitle { title } => {
                 self.adopt_title(title);
+                accepted()
+            }
+            Command::DisableTitleGeneration => {
+                self.titles.disable();
                 accepted()
             }
             Command::Rename { title } => self.rename(id, title, None).await,

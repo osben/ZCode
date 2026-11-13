@@ -453,6 +453,11 @@ impl Inbox {
         if edit.model_selection.is_some() || edit.mode.is_some() || edit.plan_enabled.is_some() {
             let previous = queued.input.execution.clone();
             let base = previous.as_ref().map_or(current, |frozen| frozen.state);
+            // Fork: an edit of the text or config keeps the turn's limits (the automation that dispatched it).
+            let limits = previous
+                .as_ref()
+                .map(|frozen| frozen.limits.clone())
+                .unwrap_or_default();
             let previous_selection = previous.and_then(|frozen| frozen.selection);
             // Node `dropHighspeed`: the frozen Highspeed card belongs to the model it was chosen for. Node compares the
             // payload with the item's own selection, which is the intent's when it has one.
@@ -496,7 +501,11 @@ impl Inbox {
                 base
             };
             let selection = edit.model_selection.clone().or(previous_selection);
-            queued.input.execution = Some(InputExecution { state, selection });
+            queued.input.execution = Some(InputExecution {
+                state,
+                selection,
+                limits,
+            });
         }
         let released = editor.is_some();
         if released {

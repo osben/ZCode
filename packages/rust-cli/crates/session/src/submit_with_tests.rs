@@ -19,6 +19,7 @@ fn submit_with(id: &str, text: &str, mode: PermissionMode, plan: bool) -> Comman
             execution: Some(InputExecution {
                 state: ExecutionState { mode, plan },
                 selection: None,
+                limits: Default::default(),
             }),
             behind_held: false,
             lease: None,

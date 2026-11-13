@@ -78,19 +78,23 @@ sequenceDiagram
 ### Slice 1: run dispatch (Host→agent)
 
 1. **`session/create`** (Node `server-operations.ts` `createSession`). Params validated by the inbound schema
-   (`zcodeSessionCreateParamsSchema`). The session is created like a v4 `createSession` without a first input: it
-   stays a draft until the first accepted input persists it (the Rust draft is already Node's `persistence:"deferred"`;
-   `"immediate"` persists it at create). `model` and `thoughtLevel` choose the selection, `mode` the permission mode.
-   `titleGenerationEnabled:false` turns off model-generated titles for the session's lifetime in this process (Node
-   `titleGeneration: {enabled:false}`), so the run keeps the prompt as its title. An existing or soft-deleted id is
-   refused with `-32602 "sessionId already exists"`. The answer is the legacy snapshot (`session/read` shape).
-   Fields the Rust agent does not support are accepted and ignored when Node ignores them for desktop
-   (`toolAllowlist`, `importedHistory`, `dynamicWorkflow*`, `parentSessionId`); `toolDenylist` is honoured for the
-   session's lifetime; `offPeakToolEnabled` follows slice 3; an `incognito` profile is refused, as today's Rust
-   createSession refuses an incognito profile it cannot honour.
-2. **`session/resume`** (Node `resumeSession`): opens a stored session (cold) or returns the live one, applies
-   `thoughtLevel` only as a hint for a session without a stored selection, and answers the legacy snapshot. A missing
-   session answers the same error as `session/read`.
+   (`zcodeSessionCreateParamsSchema`, strict). The session is created through the v4 `createSession` path without a
+   first input, so it stays a draft until the first accepted input persists it (Node `persistence: "deferred"`);
+   `"immediate"`, Node's default when the field is absent, persists it at create. `model` with `thoughtLevel` as its
+   reasoning level chooses the selection, `mode` the permission mode, `incognito` the profile (validated like v4).
+   `titleGenerationEnabled: false` turns off model-generated titles for the actor's lifetime (Node
+   `titleGeneration: {enabled: false}`, kernel `Command::DisableTitleGeneration`); the first input still names the
+   session. Any id that already exists (live, stored or soft-deleted) is refused with `-32602 "sessionId already
+exists"`. The answer is the legacy snapshot of `session/read` (the Host validates it with
+   `zcodeSessionStateSnapshotSchema`). Fields the Rust agent cannot honour refuse the request with `-32602`
+   `"<field> is not supported by this agent"` instead of being dropped: a non-empty `toolAllowlist` / `toolDenylist`,
+   `importedHistory`, `parentSessionId` and `executionWorktree` (none of them is sent on the automation path; the
+   message names no unrecognized key, so the Host's compatibility retry does not run without them). `mcpServers`,
+   `additionalDirectories`, `offPeakToolEnabled` and `dynamicWorkflow*` are accepted and ignored, as on the v4 path.
+2. **`session/resume`** (Node `resumeSession`): opens a stored session (cold) or returns the live one and answers the
+   legacy snapshot. `thoughtLevel` is Node's hint for a session without a stored selection; every Rust session has
+   one, so it is ignored. A non-empty tool list refuses like create. A missing session answers the same error as
+   `session/read`.
 3. **`session/setMode`, `session/setThoughtLevel`, `session/setModel`**: apply the change through the session actor
    (the same commands as `switchCollaborationMode` / `switchModelConfig`) and answer the legacy snapshot. The Host uses
    them as fallbacks (`setMode` for `auto`, `setThoughtLevel` after a create schema rejection).

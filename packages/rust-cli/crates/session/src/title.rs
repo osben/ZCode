@@ -89,6 +89,12 @@ impl TitleState {
         }
     }
 
+    /// Fork: no more title requests in this actor ([`rust_cli_kernel_api::session_api::Command::DisableTitleGeneration`]);
+    /// a goal summary still runs (it is not the session's title request).
+    pub(crate) fn disable(&mut self) {
+        self.settled = true;
+    }
+
     pub(crate) fn mark_custom(&mut self) {
         self.custom = true;
         self.pending = false;

@@ -1,0 +1,53 @@
+use super::*;
+
+#[test]
+fn an_ordinary_turn_hides_only_cron_pause_self() {
+    let limits = TurnLimits::default();
+    assert!(limits.is_empty());
+    assert!(limits.hides("CronPauseSelf"));
+    for name in ["CronCreate", "CronUpdate", "CronDelete", "CronList", "Bash"] {
+        assert!(!limits.hides(name), "{name}");
+    }
+}
+
+#[test]
+fn an_automation_turn_hides_the_mutation_tools_and_offers_pause_self() {
+    let limits = TurnLimits::new(Some(" auto-1 "), Vec::new());
+    assert_eq!(limits.automation.as_deref(), Some("auto-1"));
+    for name in ["CronCreate", "CronUpdate", "CronDelete"] {
+        assert!(limits.hides(name), "{name}");
+    }
+    assert!(!limits.hides("CronList"));
+    assert!(!limits.hides("CronPauseSelf"));
+    assert!(
+        !limits.hides("OffPeakCreate"),
+        "a cron run may schedule off-peak work"
+    );
+}
+
+#[test]
+fn a_blank_automation_id_is_none() {
+    let limits = TurnLimits::new(Some("  "), Vec::new());
+    assert!(limits.automation.is_none());
+    assert!(limits.hides("CronPauseSelf"));
+}
+
+#[test]
+fn the_disallowlist_hides_its_names() {
+    let limits = TurnLimits::new(None, vec!["OffPeakCreate".to_owned(), "Bash".to_owned()]);
+    assert!(!limits.is_empty());
+    assert!(limits.hides("OffPeakCreate"));
+    assert!(limits.hides("Bash"));
+    assert!(!limits.hides("Read"));
+}
+
+#[test]
+fn empty_limits_serialize_to_nothing() {
+    assert_eq!(
+        serde_json::to_value(TurnLimits::default()).unwrap(),
+        serde_json::json!({})
+    );
+    let limits = TurnLimits::new(Some("a"), vec!["Bash".to_owned()]);
+    let back: TurnLimits = serde_json::from_value(serde_json::to_value(&limits).unwrap()).unwrap();
+    assert_eq!(back, limits);
+}

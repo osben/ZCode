@@ -609,9 +609,14 @@ pub(super) async fn send_queued_now(
             },
             |execution| execution.state,
         );
+        let limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
         execution = Some(rust_cli_kernel_api::session_api::InputExecution {
             state,
             selection: Some(chosen),
+            limits,
         });
     }
     live.sink.remember_input(

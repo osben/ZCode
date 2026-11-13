@@ -751,3 +751,44 @@ async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
     built.session.send(submit("c2", "real question")).await;
     until(&mut events, |event| titled(event, "real question")).await;
 }
+
+/// Fork (specs/fork-rust-automations.md, automation runs): after `DisableTitleGeneration` the first input still names
+/// the session, and no title request runs, even after the turn completed.
+#[tokio::test]
+async fn a_session_with_title_generation_disabled_keeps_its_first_input_title() {
+    let main = Arc::new(ScriptedModel::new(vec![
+        text_response(&["Sure."]),
+        text_response(&["Again."]),
+    ]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = node_titles(title_model.clone());
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    let ack = built
+        .session
+        .send(CommandEnvelope {
+            id: CommandId::new("c0"),
+            command: Command::DisableTitleGeneration,
+        })
+        .await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    let seen = until(&mut events, finished).await;
+    assert!(
+        seen.iter()
+            .any(|event| titled(event, "Explain the hook trust digest"))
+    );
+    built
+        .session
+        .send(submit("c2", "Explain the hook trust digest again"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(title_model.requests().is_empty());
+}

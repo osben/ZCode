@@ -97,6 +97,7 @@ impl Actor {
                 self.deps.clock.now_ms(),
                 !self.pending.is_empty(),
             ),
+            limits: std::mem::take(&mut self.next_limits),
         });
     }
 }

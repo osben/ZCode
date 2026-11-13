@@ -8,6 +8,9 @@ pub const BASH: &str = "Bash";
 pub const CRON_CREATE: &str = "CronCreate";
 pub const CRON_DELETE: &str = "CronDelete";
 pub const CRON_LIST: &str = "CronList";
+/// Fork: the desktop agent's Host-backed Cron tools (specs/fork-rust-automations.md).
+pub const CRON_PAUSE_SELF: &str = "CronPauseSelf";
+pub const CRON_UPDATE: &str = "CronUpdate";
 pub const EDIT: &str = "Edit";
 pub const ENTER_PLAN_MODE: &str = "EnterPlanMode";
 pub const ENTER_WORKTREE: &str = "EnterWorktree";
@@ -21,6 +24,9 @@ pub const MONITOR: &str = "Monitor";
 /// 本工程没有这个工具：界面显示 App 与旧会话记下的调用、工作区信任的授权表按名字认它。
 pub const MULTI_EDIT: &str = "MultiEdit";
 pub const NOTEBOOK_EDIT: &str = "NotebookEdit";
+/// Fork: the desktop agent's off-peak tools (specs/fork-rust-automations.md, slice 3).
+pub const OFF_PEAK_CREATE: &str = "OffPeakCreate";
+pub const OFF_PEAK_LIST: &str = "OffPeakList";
 /// 本工程没有这个工具：子代理的工具表与工作区信任的授权表按名字认它（与 shell 的名字无关）。
 pub const POWER_SHELL: &str = "PowerShell";
 pub const READ: &str = "Read";

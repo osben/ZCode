@@ -352,6 +352,11 @@ impl Actor {
             // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
             goal: self.goal.condition().filter(|_| !self.deps.desktop_goals),
             execution_worktree: self.execution_worktree,
+            turn: self
+                .running
+                .as_ref()
+                .map(|running| running.limits.clone())
+                .unwrap_or_default(),
             ..RunView::new(self.mode(), self.meta.workspace.clone())
         }
     }
@@ -534,6 +539,11 @@ impl Actor {
         } else {
             return;
         };
+        // Fork: the item's turn limits (automation id, hidden tools) belong to the turn it opens.
+        self.next_limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
         // Fork: the item's frozen state becomes the session's through the same facts as `SetModel` /
         // `SetMode` / `SetPlan`, so a cold open sees what the turn ran with.
         if let Some(execution) = execution
@@ -545,7 +555,9 @@ impl Actor {
         }
         // 提交失败时只记日志：排队输入已出队，前端从 QueueChanged 看到它消失；通知没有 ack，
         // 会再次送达。
-        if let Err(reason) = self.start_turn(input).await {
+        let started = self.start_turn(input).await;
+        self.next_limits = Default::default();
+        if let Err(reason) = started {
             tracing::warn!(%reason, "queued input could not start a turn");
         }
     }

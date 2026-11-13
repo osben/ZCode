@@ -12,6 +12,7 @@ use rust_cli_kernel_api::session_api::{
     Ack as KernelAck, Command, CommandEnvelope, CommandResult, CreateSession, Delivery,
     InputExecution, QueuedKind, SessionHandle,
 };
+use rust_cli_kernel_api::turn_limits::TurnLimits;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -73,6 +74,11 @@ struct Input {
     /// B4: the input's structured source (`conversationInputSourceSchema`, e.g. `{kind: "extension", pluginId}`). The
     /// inbound schema checks its shape before this is read; it is copied onto the intent as it is ([`input_intent`]).
     source: Option<Value>,
+    /// Fork: the scheduled automation that dispatched this input (specs/fork-rust-automations.md, slice 1). With
+    /// `toolDisallowlist` it limits the turn the input opens ([`TurnLimits`]), never the session.
+    automation_id: Option<String>,
+    #[serde(default)]
+    tool_disallowlist: Vec<String>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -1362,13 +1368,18 @@ fn input_execution(
     // Each field overrides the session's own (Node `resolveExecutionState(payload, current)`): a plan switch without a
     // mode keeps the session's mode, and the legacy `mode: "plan"` keeps it too.
     let resolved = resolve_execution(input.mode.as_deref(), input.plan_enabled, current);
-    if chosen.is_none() && resolved.is_none() {
+    let limits = TurnLimits::new(
+        input.automation_id.as_deref(),
+        input.tool_disallowlist.clone(),
+    );
+    if chosen.is_none() && resolved.is_none() && limits.is_empty() {
         return None;
     }
     let state = resolved.unwrap_or(current);
     Some(InputExecution {
         state,
         selection: chosen,
+        limits,
     })
 }
 

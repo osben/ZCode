@@ -119,6 +119,12 @@ pub struct InputExecution {
     pub state: crate::permission::ExecutionState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<ModelSelection>,
+    /// Fork: the limits of the turn this input opens (automation id, hidden tools); the session keeps none of them.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::turn_limits::TurnLimits::is_empty"
+    )]
+    pub limits: crate::turn_limits::TurnLimits,
 }
 
 /// 只供显示的系统提示的级别（informational system 消息的 `level`）。

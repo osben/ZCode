@@ -107,8 +107,11 @@ impl Node {
         if let Some(key) = object.keys().find(|k| !SUPPORTED.contains(&k.as_str())) {
             return Err(format!("unsupported schema keyword {key}"));
         }
+        // Fork: `uri` (zod `z.url()`, the legacy `session/create` MCP server URLs) is an annotation here like `uuid`:
+        // the agent does not dereference those URLs (specs/fork-rust-automations.md).
         if let Some(format) = schema.get("format").and_then(Value::as_str)
             && format != "uuid"
+            && format != "uri"
             && !(format == "date-time" && schema["pattern"].is_string())
         {
             return Err(format!("unsupported format {format}"));

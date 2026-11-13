@@ -315,6 +315,7 @@ fn a_full_payload_edit_resolves_against_the_items_own_state() {
                 "provider".to_owned(),
                 "model-2".to_owned()
             )),
+            limits: Default::default(),
         })
     );
     let intent = edited.intent.unwrap();
@@ -410,6 +411,7 @@ fn a_mode_only_edit_keeps_the_intents_plan() {
     queued.execution = Some(InputExecution {
         state: plan_state(),
         selection: None,
+        limits: Default::default(),
     });
     inbox.push_input(queued, InputKind::Text);
     let edit = QueuedEdit {
@@ -447,6 +449,7 @@ fn a_mode_only_edit_with_no_plan_anywhere_turns_plan_off_like_node() {
     queued.execution = Some(InputExecution {
         state: plan_state(),
         selection: None,
+        limits: Default::default(),
     });
     inbox.push_input(queued, InputKind::Text);
     let edit = QueuedEdit {
@@ -643,6 +646,7 @@ fn full_access_rewrites_the_intents_mode() {
     queued.execution = Some(InputExecution {
         state: ExecutionState::default(),
         selection: None,
+        limits: Default::default(),
     });
     inbox.push_input(queued, InputKind::Text);
     assert!(inbox.set_queued_mode(PermissionMode::BypassPermissions));

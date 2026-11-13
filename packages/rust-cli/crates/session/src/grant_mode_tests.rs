@@ -59,6 +59,7 @@ fn queued(id: &str, mode: PermissionMode, plan: bool) -> CommandEnvelope {
             execution: Some(InputExecution {
                 state: ExecutionState { mode, plan },
                 selection: None,
+                limits: Default::default(),
             }),
             behind_held: false,
             lease: None,

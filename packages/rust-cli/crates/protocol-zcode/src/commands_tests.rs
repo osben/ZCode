@@ -336,6 +336,29 @@ fn a_plan_switch_without_a_mode_keeps_the_session_mode() {
     assert!(input_execution(&plain, Some(&view)).is_none());
 }
 
+/// Fork (specs/fork-rust-automations.md, slice 1 item 4): `automationId` and `toolDisallowlist` ride on the input's
+/// execution, so they apply to that turn only, queued or not; the session's state is unchanged.
+#[test]
+fn an_automation_input_carries_its_turn_limits() {
+    let input: Input = serde_json::from_value(serde_json::json!({
+        "text": "run", "automationId": " auto_1 ",
+        "toolDisallowlist": ["CronCreate", "CronUpdate", "CronDelete"],
+    }))
+    .unwrap();
+    let execution = input_execution(&input, None).expect("limits alone make an execution");
+    assert_eq!(execution.state, ExecutionState::default());
+    assert_eq!(execution.selection, None);
+    assert_eq!(execution.limits.automation.as_deref(), Some("auto_1"));
+    assert!(execution.limits.hides("CronCreate"));
+    assert!(!execution.limits.hides("CronPauseSelf"));
+    let blank: Input =
+        serde_json::from_value(serde_json::json!({"text": "x", "automationId": "  "})).unwrap();
+    assert!(
+        input_execution(&blank, None).is_none(),
+        "a blank id is no automation"
+    );
+}
+
 /// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`) case by case.
 #[test]
 fn execution_state_resolves_like_node() {
