@@ -160,10 +160,11 @@ pub struct SessionDeps {
     /// desktop agent (`queueAutoDrain = false` on a turn error; specs/fork-rust-agent-parity.md). The app-server
     /// turns it on.
     pub error_holds_queue: bool,
-    /// Fork: a SessionStart hook's `initial_user_message` is queued as the session's first input (the TUI and `-p`).
-    /// The Node desktop agent has no such output (its SessionStart output reads only `additionalContext`), so the
-    /// app-server turns it off: the hook's input then starts no turn and the prewarm stays without a conversation.
-    pub session_start_input: bool,
+    /// Fork: a SessionStart hook's `session_title` retitles the session and its `initial_user_message` is queued as
+    /// the session's first input (the TUI and `-p`). The Node desktop agent reads neither (its SessionStart output
+    /// reads only `additionalContext`), so the app-server turns this off: the prewarm keeps no conversation and the
+    /// first input titles it.
+    pub session_start_extras: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。

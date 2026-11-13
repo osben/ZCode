@@ -539,30 +539,47 @@ async fn a_changed_session_start_context_is_written_after_the_earlier_one() {
 /// Node's SessionStart output has no `initialUserMessage` (it reads only `additionalContext`), so under the desktop
 /// the hook's input is dropped: the prewarm keeps no queue, no turn and no message, and the first send can adopt it.
 #[tokio::test]
-async fn a_desktop_session_start_input_is_not_run() {
-    let model = Arc::new(ScriptedModel::new(vec![text_response(&["unused"])]));
+async fn a_desktop_session_start_drops_the_title_and_the_input() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
     let mut setup = Setup::new(model.clone());
-    setup.session_start_input = false;
+    setup.session_start_extras = false;
     setup.hooks = Arc::new(ScriptedHooks::with(
         HookEventName::SessionStart,
         HookOutcome {
+            messages: vec![start_context("msg_s1", "start context")],
             initial_user_message: Some("hook input".into()),
             session_title: Some("startup title".into()),
             ..HookOutcome::default()
         },
     ));
     let built = setup.build().await;
-    wait_for_startup_title(&built.session, "startup title").await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "typed")).await;
+    until(&mut events, finished).await;
+
+    // One turn only: the typed input, with the held context and without the hook's input.
+    let requests = model.requests();
+    assert_eq!(requests.len(), 1);
+    let request = serde_json::to_string(&requests[0].messages).unwrap();
+    assert!(request.contains("start context"), "{request}");
+    assert!(!request.contains("hook input"), "{request}");
+    // Node ignores a SessionStart `sessionTitle`: the first input titles the session.
     let view = built.session.view().await.unwrap();
-    assert!(view.queue.is_empty(), "{:?}", view.queue);
-    assert!(!view.running);
-    assert!(view.messages.is_empty(), "{:?}", view.messages);
-    assert!(model.requests().is_empty());
+    assert_ne!(view.meta.title, "startup title");
+    assert!(
+        view.messages
+            .iter()
+            .all(|message| !texts(std::slice::from_ref(message))
+                .iter()
+                .any(|t| t == "hook input")),
+        "{:?}",
+        view.messages
+    );
 }
 
 /// The TUI and `-p` keep the hook's input: it is queued and runs as the session's first turn.
 #[tokio::test]
-async fn a_session_start_input_runs_as_the_first_turn_when_queued() {
+async fn a_session_start_extras_runs_as_the_first_turn_when_queued() {
     let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
     let mut setup = Setup::new(model.clone());
     setup.hooks = Arc::new(ScriptedHooks::with(

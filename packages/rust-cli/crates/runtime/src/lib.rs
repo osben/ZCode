@@ -155,8 +155,8 @@ pub struct LocalKernel {
     fork_while_running: bool,
     /// Fork: a failed turn holds the queue, like the Node desktop agent ([`Extensions::node_desktop`]).
     error_holds_queue: bool,
-    /// Fork: a SessionStart `initial_user_message` is queued only outside the Node desktop agent, which has none.
-    session_start_input: bool,
+    /// Fork: a SessionStart `session_title` and `initial_user_message` apply only outside the Node desktop agent, which reads neither.
+    session_start_extras: bool,
 }
 
 impl LocalKernel {
@@ -332,7 +332,7 @@ impl LocalKernel {
             desktop_goals: extensions.node_desktop,
             fork_while_running: extensions.node_desktop,
             error_holds_queue: extensions.node_desktop,
-            session_start_input: !extensions.node_desktop,
+            session_start_extras: !extensions.node_desktop,
         }
     }
 

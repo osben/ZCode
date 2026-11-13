@@ -140,14 +140,18 @@ impl Actor {
         if !outcome.messages.is_empty() {
             self.pending_session_start = outcome.messages;
         }
-        if let Some(title) = outcome.session_title {
+        // Fork: the Node desktop agent reads only `additionalContext` from SessionStart, so the desktop drops the
+        // title and the initial input. A title would mark the draft Custom and stop the first input from titling it;
+        // an input would start a turn in an unsent draft and the first send's reservation would be refused.
+        if let Some(title) = outcome
+            .session_title
+            .filter(|_| self.deps.session_start_extras)
+        {
             self.retitle(title).await;
         }
-        // Fork: the Node desktop agent has no SessionStart `initialUserMessage` (its output reads only
-        // `additionalContext`), so the desktop drops it: queuing it would start a turn in an unsent draft.
         if let Some(text) = outcome
             .initial_user_message
-            .filter(|_| self.deps.session_start_input)
+            .filter(|_| self.deps.session_start_extras)
         {
             let command = CommandId::new(format!(
                 "{SESSION_START_INPUT}{}",
