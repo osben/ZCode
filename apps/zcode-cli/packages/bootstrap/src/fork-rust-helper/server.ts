@@ -1,5 +1,10 @@
-import type { ZCodeProtocolMessage } from "@zcode/shared";
-import { zcodePluginsCancelOperationParamsSchema, zcodeProtocolMethods } from "@zcode/shared";
+import type { ZCodeProtocolError, ZCodeProtocolMessage, ZCodeProtocolResponse } from "@zcode/shared";
+import {
+  zcodePluginsCancelOperationParamsSchema,
+  zcodePluginsReferenceCatalogParamsSchema,
+  zcodeProtocolErrorCodes,
+  zcodeProtocolMethods,
+} from "@zcode/shared";
 import {
   getPluginReferenceCatalog,
   resolveSuggestedPluginReference,
@@ -35,7 +40,9 @@ import {
   saveSavedWorkflowFromRunOp,
 } from "../zcode-protocol/saved-workflows-run.js";
 import {
+  getPluginOperationId,
   parseParams,
+  PLUGIN_PREPARATION_MUTATION_METHODS,
   ProtocolRequestError,
   toProtocolError,
   type ZCodeProtocolAgentServerContext,
@@ -43,10 +50,9 @@ import {
 import {
   FORK_RUST_HELPER_INITIALIZE,
   FORK_RUST_HELPER_METHODS,
-  FORK_RUST_HELPER_PLUGIN_MUTATIONS,
   FORK_RUST_HELPER_PROTOCOL_VERSION,
 } from "./methods.js";
-import { createWorkflowRunReads } from "./workflow-run-reads.js";
+import type { createWorkflowRunReads } from "./workflow-run-reads.js";
 
 type Handler = (params: unknown) => Promise<unknown> | unknown;
 
@@ -57,27 +63,34 @@ export interface ForkRustHelperServerDeps {
   workflowRuns: ReturnType<typeof createWorkflowRunReads>;
 }
 
-type Outgoing =
-  | { id: string | number; result: unknown }
-  | { id: string | number; error: { code: number; message: string; data?: unknown } };
-
-const SAVED_WORKFLOW_METHODS: ReadonlySet<string> = new Set([
-  zcodeProtocolMethods.workflowsList,
-  zcodeProtocolMethods.workflowsGet,
-  zcodeProtocolMethods.workflowsUpdateMeta,
-  zcodeProtocolMethods.workflowsDelete,
+/**
+ * The saved-workflow methods that read the dwf journal (`listSavedWorkflowRunsOp`, and `runRecordOf`
+ * behind save and forRun). The other five only touch workflow files, so, as in Node, they answer
+ * without a database.
+ */
+const JOURNAL_BACKED_WORKFLOW_METHODS: ReadonlySet<string> = new Set([
   zcodeProtocolMethods.workflowsRuns,
-  zcodeProtocolMethods.workflowsMove,
   zcodeProtocolMethods.workflowsSave,
   zcodeProtocolMethods.workflowsForRun,
 ]);
 
-function operationIdOf(params: unknown): string | undefined {
-  if (!params || typeof params !== "object") return undefined;
-  const operationId = (params as { operationId?: unknown }).operationId;
-  return typeof operationId === "string" && operationId.trim().length > 0
-    ? operationId.trim()
-    : undefined;
+/** Reason code of a session-authority plugin reference catalog request the helper cannot answer. */
+export const FORK_RUST_HELPER_SESSION_CATALOG_UNAVAILABLE =
+  "proto.forkRustAgent.sessionPluginCatalogUnavailable";
+
+/**
+ * Node answers a reference catalog with a `sessionId` from that session's frozen catalog and must not
+ * fall back to workspace authority (plugin-reference-catalog.ts). The session lives in the Rust agent,
+ * so the helper refuses that branch explicitly instead of reporting a missing session.
+ */
+function catalogForDraftsOnly(params: unknown): void {
+  const parsed = parseParams(zcodePluginsReferenceCatalogParamsSchema, params);
+  if (!parsed.sessionId) return;
+  throw new ProtocolRequestError(
+    zcodeProtocolErrorCodes.sessionUnavailable,
+    "The Rust agent's Node helper has no session-owned plugin catalog",
+    { reasonCode: FORK_RUST_HELPER_SESSION_CATALOG_UNAVAILABLE },
+  );
 }
 
 /**
@@ -126,10 +139,14 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.pluginsCancelOperation]: (params) => this.cancelOperation(params),
       [zcodeProtocolMethods.pluginsReadUserOptions]: (params) => readPluginUserOptions(context, params),
       [zcodeProtocolMethods.pluginsListUiSurfaces]: (params) => listPluginUiSurfaces(context, params),
-      [zcodeProtocolMethods.pluginsReferenceCatalog]: (params) =>
-        getPluginReferenceCatalog(context, params),
-      [zcodeProtocolMethods.pluginsReferenceCatalogWithCategory]: (params) =>
-        getPluginReferenceCatalog(context, params, true),
+      [zcodeProtocolMethods.pluginsReferenceCatalog]: (params) => {
+        catalogForDraftsOnly(params);
+        return getPluginReferenceCatalog(context, params);
+      },
+      [zcodeProtocolMethods.pluginsReferenceCatalogWithCategory]: (params) => {
+        catalogForDraftsOnly(params);
+        return getPluginReferenceCatalog(context, params, true);
+      },
       [zcodeProtocolMethods.workflowsList]: (params) => listSavedWorkflowsOp(context, params),
       [zcodeProtocolMethods.workflowsGet]: (params) => getSavedWorkflowOp(context, params),
       [zcodeProtocolMethods.workflowsUpdateMeta]: (params) => updateSavedWorkflowMetaOp(context, params),
@@ -144,7 +161,9 @@ export class ForkRustHelperServer {
   }
 
   /** Answers one inbound message; notifications and stray responses get no answer. */
-  async handleMessage(message: ZCodeProtocolMessage): Promise<Outgoing | undefined> {
+  async handleMessage(
+    message: ZCodeProtocolMessage,
+  ): Promise<ZCodeProtocolResponse | ZCodeProtocolError | undefined> {
     if (!("method" in message) || !("id" in message) || message.id === undefined) return undefined;
     const { id, method, params } = message as { id: string | number; method: string; params?: unknown };
     try {
@@ -164,13 +183,13 @@ export class ForkRustHelperServer {
     if (method === FORK_RUST_HELPER_INITIALIZE) return this.initialize(params);
     const handler = this.handlers.get(method);
     if (!handler) throw new ProtocolRequestError(-32601, `Method not found: ${method}`);
-    if (SAVED_WORKFLOW_METHODS.has(method)) await this.deps.ensureSessionStore();
+    if (JOURNAL_BACKED_WORKFLOW_METHODS.has(method)) await this.deps.ensureSessionStore();
     try {
       return await handler(params);
     } finally {
       // Same order as Node's server: a mutation invalidates only after it settled, so it does not
       // keep interrupting concurrent reads.
-      if (FORK_RUST_HELPER_PLUGIN_MUTATIONS.has(method)) {
+      if (PLUGIN_PREPARATION_MUTATION_METHODS.has(method)) {
         this.deps.context.deps.pluginPreparation?.invalidate();
         this.deps.context.deps.pluginDiscovery?.invalidate?.();
       }
@@ -195,7 +214,7 @@ export class ForkRustHelperServer {
     params: unknown,
     run: (signal?: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    const operationId = operationIdOf(params);
+    const operationId = getPluginOperationId(params);
     if (!operationId) return await run();
     const controller = new AbortController();
     this.operations.set(operationId, controller);

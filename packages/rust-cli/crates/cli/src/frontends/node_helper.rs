@@ -9,20 +9,38 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_base::Spawner;
+use rust_cli_base::names::env::ZCODE_FORK_NODE_HELPER_COMMAND;
 use rust_cli_proc::ledger::{Containment, Isolation, Ledger, Purpose};
-use rust_cli_protocol_zcode::{Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess, Timing};
+use rust_cli_protocol_zcode::{
+    Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess, NodeHelperTiming,
+};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader};
 
 /// The env var the Host sets in Rust mode.
-pub(crate) const COMMAND_ENV: &str = "ZCODE_FORK_NODE_HELPER_COMMAND";
+pub(crate) const COMMAND_ENV: &str = ZCODE_FORK_NODE_HELPER_COMMAND;
 
 /// A parsed helper command. The env is applied on top of the inherited environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Command {
     pub(crate) program: String,
     pub(crate) args: Vec<String>,
     pub(crate) env: Vec<(String, String)>,
+}
+
+/// Names only: the Host may pass credentials in `env`, so a value never reaches a log through `{:?}`.
+impl std::fmt::Debug for Command {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Command")
+            .field("program", &self.program)
+            .field("args", &self.args.len())
+            .field(
+                "env",
+                &self.env.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 /// `Ok(None)` when the variable is unset or blank. A refusal names only the field, never its value.
@@ -35,7 +53,7 @@ pub(crate) fn parse(raw: Option<&str>) -> Result<Option<Command>, &'static str> 
     let program = object
         .get("command")
         .and_then(Value::as_str)
-        .filter(|program| !program.is_empty())
+        .filter(|program| !program.trim().is_empty())
         .ok_or("command must be a non-empty string")?;
     let args = match object.get("args") {
         None | Some(Value::Null) => Vec::new(),
@@ -86,16 +104,29 @@ impl NodeHelperLauncher for ProcessLauncher {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Group isolation, as MCP stdio servers get: the helper's children die with it.
+        // Group isolation, as MCP stdio servers get: the helper's children die with it. Its own Job, unlike MCP
+        // servers: the helper is ended only by dropping its guard (idle reclaim, timeout, crash restart), and on
+        // Windows only an own Job is closed, ending the tree, when the guard drops. The process Job would keep each
+        // dropped helper alive until this process exits.
         let mut tree = self
             .ledger
             .spawn(
                 &mut command,
                 Purpose::Mcp,
                 Isolation::Group,
-                Containment::ProcessJob,
+                Containment::OwnJob,
             )
-            .await?;
+            .await
+            .map_err(|error| {
+                // The file name only: the directory can hold the user's name, and the warning is logged.
+                let program = std::path::Path::new(&self.command.program)
+                    .file_name()
+                    .map_or_else(
+                        || self.command.program.clone(),
+                        |name| name.to_string_lossy().into_owned(),
+                    );
+                io::Error::new(error.kind(), format!("{program}: {error}"))
+            })?;
         let child = tree.child();
         let stdin = child
             .stdin
@@ -120,9 +151,33 @@ impl NodeHelperLauncher for ProcessLauncher {
 }
 
 async fn forward_stderr(stderr: impl AsyncRead + Unpin + Send + 'static) {
-    let mut lines = BufReader::new(stderr).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+    read_lines(BufReader::new(stderr), |line| {
         tracing::debug!(event = "helper.stderr", line = %line, "the node helper wrote to stderr");
+    })
+    .await;
+}
+
+/// Reads lines until end of input or a read error. Bytes that are not UTF-8 are replaced, so one bad byte neither
+/// ends the reader nor closes the pipe on the helper.
+async fn read_lines(mut reader: impl AsyncBufRead + Unpin, mut line: impl FnMut(String)) {
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match reader.read_until(b'\n', &mut buffer).await {
+            Ok(0) => return,
+            Ok(_) => {
+                let text = String::from_utf8_lossy(&buffer);
+                line(text.trim_end_matches(['\n', '\r']).to_owned());
+            }
+            Err(error) => {
+                tracing::debug!(
+                    event = "helper.stderr.closed",
+                    error = %error,
+                    "the node helper's stderr could not be read"
+                );
+                return;
+            }
+        }
     }
 }
 
@@ -155,7 +210,7 @@ pub(crate) fn install(
         Arc::new(launcher),
         spawner.clone(),
         context.peer.clone(),
-        Timing::default(),
+        NodeHelperTiming::default(),
     ));
 }
 

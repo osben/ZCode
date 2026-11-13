@@ -210,6 +210,8 @@ The table lists, for each family, what is delegated to the helper, the Rust-side
   - Answered from the journal and the artifact store directly, with the gateway's limits. The helper never builds the run service (its constructor reconciles orphan runs, a journal write) and never cold-resumes a session.
 - Not forwarded in F1+F2: `plugins/mentionItems` (F3, needs the session), `skills/referenceCatalog` (Rust answers it), `lsp/*` (out of scope).
 - Like Node's server, the helper invalidates its plugin caches after each plugin mutation, and `plugins/cancelOperation` aborts the operation with that `operationId` in the same helper.
+- `plugins/referenceCatalog` and `plugins/referenceCatalogWithCategory` are served for drafts (no `sessionId`, workspace authority). With a `sessionId`, Node answers from that session's frozen catalog and must not fall back to workspace authority. The session belongs to the Rust agent, so until F3 the helper refuses explicitly: `sessionUnavailable` with `data.reasonCode = proto.forkRustAgent.sessionPluginCatalogUnavailable`. It neither reports a missing session nor logs one.
+- The saved-workflow methods open the session database only when they read the dwf journal: `workflows/runs`, `workflows/save` and `workflows/forRun`. The other five only touch workflow files and answer without a database, as in Node.
 - Without a helper command, `v4/conversation/workflowRuns` keeps answering `{runs: []}` and every other method stays `-32601`.
 
 ### Why the helper, not Rust, is the MCP client for Node-hosted servers
@@ -246,11 +248,11 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 
 - **Spawn.**
   - The first allowlisted call starts the helper and sends `helper/initialize`. Concurrent first calls share one start.
-  - `plugins/cancelOperation` with no running helper is answered `{operationId, cancelled: false}` without starting one: no operation can be in flight.
+  - `plugins/cancelOperation` with no helper running or starting is answered `{operationId, cancelled: false}` without starting one: no operation can be in flight. During a start it waits for the helper and is forwarded, since the operation it names may be the call that triggered the start.
   - With a helper configured but unavailable, a forwarded method fails with `proto.forkRustAgent.nodeHelperUnavailable`; `v4/conversation/workflowRuns` too, rather than an empty list that would hide the failure. `{runs: []}` stays the answer only when no helper is configured.
   - No helper command in env: the families answer as today (refused).
 - **Idle reclaim.** After 5 minutes with no in-flight call, no open session that has helper resources, no panel instance and no live MCP child, Rust ends the helper.
-  - F1+F2 (shipped): Rust kills the helper's process group, which takes the helper's children with it. No call is in flight at that point, and the helper holds no state that needs a flush: the session store is SQLite with WAL.
+  - F1+F2 (shipped): Rust kills the helper's process group, which takes the helper's children with it. On Windows the helper gets its own Job (`Containment::OwnJob`), which closes when the guard drops. The process-level Job that MCP servers use would keep each dropped helper alive until the Rust process exits. The guard is always dropped after the state lock is released. No call is in flight at that point, and the helper holds no state that needs a flush: the session store is SQLite with WAL.
   - A call dropped by its caller stops counting as in flight, so it never keeps an idle helper alive.
   - F4 (planned): close stdin first and give the helper a grace period, so live MCP children and panels shut down in order.
 - **Rust exit.** The helper sees stdin EOF and exits, killing its MCP children. Rust also kills the helper's process tree on drop, as the Host does for agents. The helper starts through the Rust process ledger (`rust_cli_proc::ledger`, group isolation, as MCP stdio servers do), so a Rust process that dies without cleanup has the helper reaped by the next one.
@@ -260,9 +262,12 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
   - Open panels receive `pluginUi.instanceClosed`.
   - The next call respawns the helper. After 3 crashes in 60 s it stays down until the Rust process restarts, and every call fails fast with the same code.
 - **Helper hang.** Each forwarded method uses the Host's timeout for that method. Tool calls use the server's tool timeout (node_repl 600 s).
-  - F1+F2 (shipped): every forwarded call has 300 s, the Host's plugin-management timeout. On timeout Rust fails the call as unavailable and drops the helper process; that is not counted as a crash, and the next call starts a new helper. Other calls in flight on that helper fail as unavailable too. A plugin operation is cancelled by the Host itself with `plugins/cancelOperation`.
+  - F1+F2 (shipped): every forwarded call has 300 s, the Host's plugin-management timeout, and `helper/initialize` has 30 s (all calls wait on a start). On timeout Rust fails the call as unavailable.
+    - The process is kept if other calls are in flight on it and it has answered a call since the timed-out call started: it is alive, and only this call is slow (a long install).
+    - Otherwise the process is hung, and Rust drops it. That is not counted as a crash, and the next call starts a new helper. The other calls in flight on it fail as unavailable. Without this rule, a hung helper would never be dropped while overlapping calls keep arriving.
+    - A plugin operation is cancelled by the Host itself with `plugins/cancelOperation`.
   - F4 (planned): per-method timeouts for tool calls, and a cancel message instead of dropping the process.
-- **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash. For 30 s after it, calls fail fast with the same code and start nothing (the run list is polled on every subscribe, so a broken bundle must not cost a Node process per call); the first call after that tries again. One `warn` covers a run of failures. A start runs on its own task, so a caller that gives up mid-start does not strand the launched process.
+- **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash. For 30 s after it, calls fail fast with the same code and start nothing (the run list is polled on every subscribe, so a broken bundle must not cost a Node process per call); the first call after that tries again. One `warn` covers a run of failures; a launch failure names the program file and the OS error. A start runs on its own task, so a caller that gives up mid-start does not strand the launched process. A start that panics or is aborted, and a helper that advertises no methods, count as failed starts with the same cooldown.
 - **Logging.**
   - Rust `info`: `helper.spawned`, `helper.exited`, `helper.reclaimed`. The exit code is not logged: the process ledger's handle does not report it.
   - Rust `warn`: `helper.crashed`, `helper.unavailable`.
@@ -331,6 +336,7 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
     - RSS after `plugins/list`, `plugins/overview`, `workflows/list` and `v4/conversation/workflowRuns`, and still 10 s later: 324 MB.
   - The same bundle under system Node 26: 357 MB and 394 MB.
   - This memory is held only while a forwarded method is in use: the helper starts on the first forwarded call and exits after 5 idle minutes.
+  - **Known cost (parent decision 2026-11-13).** The 324 MB idle figure is over the 150 MB budget. This is accepted as a known cost and does not block. Cheaper options are a later task. A plain system Node binary is not one of them: it measured larger (394 MB) than the Electron binary run as Node.
 
 ## Delivery
 

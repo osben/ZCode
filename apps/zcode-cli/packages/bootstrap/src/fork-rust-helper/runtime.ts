@@ -10,6 +10,7 @@ import {
 } from "@zcode/adapters/storage";
 import { InMemoryWorkspaceHookPolicyProvider } from "@zcode/core";
 import type { ZCodeProtocolMessage } from "@zcode/shared";
+import type { JournalStorePort } from "@zcode/dynamic-workflow";
 import { createOfficialPluginPreparation } from "../app/bundled-plugins.js";
 import { resolveDynamicWorkflowJournalStore } from "../app/dynamic-workflow-run-journal.js";
 import { getCliStorageRoot, getPluginStorageRoot } from "../app/paths.js";
@@ -25,6 +26,8 @@ export interface RunForkRustHelperOptions {
   output: NodeJS.WritableStream;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+  /** The CLI process lifecycle: an abort (signal, stdout closed) closes the connection like stdin EOF. */
+  signal?: AbortSignal;
 }
 
 function refuseSessions(): never {
@@ -92,13 +95,23 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
     return sessionStore;
   };
 
+  // Resolved once per opened store, as Node does when it builds the run service (it logs when absent).
+  let journal: { store: SqliteSessionStore; port: JournalStorePort | undefined } | undefined;
+  const openJournal = async () => {
+    const store = await openSessionStore();
+    if (journal?.store !== store)
+      journal = { store, port: resolveDynamicWorkflowJournalStore(store, logger) };
+    return journal.port;
+  };
+
   const server = new ForkRustHelperServer({
     context,
     ensureSessionStore: async () => {
       await openSessionStore();
     },
     workflowRuns: createWorkflowRunReads({
-      journal: async () => resolveDynamicWorkflowJournalStore(await openSessionStore(), logger),
+      journal: openJournal,
+      logger,
       artifactStore: createNodeToolArtifactStore({
         imageCacheRootDir: join(storageRoot, "cli", "image-cache"),
         pdfCacheRootDir: join(storageRoot, "cli", "pdf-cache"),
@@ -109,11 +122,12 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   });
 
   connection = new ZCodeProtocolNdjsonConnection({
-    handleMessage: (message: ZCodeProtocolMessage) => server.handleMessage(message) as never,
+    handleMessage: (message: ZCodeProtocolMessage) => server.handleMessage(message),
     input: options.input,
     logger,
     onTransportClosed: (error) => server.abortAll(error),
     output: options.output,
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   logger.info("Rust agent Node helper started", { event: "fork_rust_helper.started" });
   connection.start();

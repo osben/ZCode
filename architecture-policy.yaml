@@ -842,6 +842,7 @@ modules:
         packages/shared/src/fork-rust-helper/contract.ts,
       ]
     layers: { domain: "." }
+    owner: agent
   # fork-attachment-ref-trust-shared: the refusal code and edit-list rule the Host and renderer share
   # (specs/fork-attachment-ref-trust-boundary.md).
   - id: fork-attachment-ref-trust-shared
@@ -1367,6 +1368,7 @@ modules:
     publicEntrypoints: [apps/zcode-cli/packages/bootstrap/src/fork-rust-helper/contract.ts]
     layers:
       adapters: .
+    owner: agent
   # web-remote-control：由 architecture:adopt 登记
   - id: web-remote-control
     roots:

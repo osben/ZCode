@@ -73,11 +73,14 @@ async function main(): Promise<void> {
     // not import run.js, which would evaluate the whole agent runtime the helper never uses.
     if (argv[0] === FORK_RUST_HELPER_SUBCOMMAND) {
       const { runForkRustHelper } = await import("@zcode/bootstrap/fork-rust-helper");
+      // Same guard as the run.js path: a signal or EOF may arrive while the import resolves.
+      lifecycle?.signal.throwIfAborted();
       await runForkRustHelper({
         input: lifecycle?.input ?? process.stdin,
         output: process.stdout,
         env: process.env,
         cwd: process.cwd(),
+        ...(lifecycle ? { signal: lifecycle.signal } : {}),
       });
       return;
     }

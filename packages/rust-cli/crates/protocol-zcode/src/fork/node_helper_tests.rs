@@ -3,7 +3,7 @@
 
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::Duration;
 
 use rust_cli_base::Task;
@@ -26,8 +26,13 @@ enum Act {
     Fail(RpcError),
     /// Stops answering and closes its stdout, as a crashed process does.
     Crash,
-    /// Never answers.
+    /// Never answers this request; later requests are still served.
     Hang,
+    /// Answers `result` after `after`, holding the helper's loop meanwhile.
+    Delay {
+        after: Duration,
+        result: Value,
+    },
     /// Sends a request of its own, then answers the forwarded call with `{}`.
     AskHost,
 }
@@ -39,19 +44,39 @@ struct Fake {
     advertised: Vec<String>,
     version: u64,
     fail_launch: bool,
+    /// The first launch panics, as a buggy launcher would.
+    panic_first_launch: bool,
+    /// Each launch takes this long before the process exists.
+    launch_delay: Duration,
+    /// The helper never answers `helper/initialize`.
+    hang_initialize: bool,
     behaviour: Arc<Behaviour>,
     launches: Arc<AtomicUsize>,
     /// Incremented when a launched process's guard is dropped (the process tree is killed).
     stopped: Arc<AtomicUsize>,
     /// Responses the helper received for its own requests.
     answers: Arc<StdMutex<Vec<Value>>>,
+    /// The helper under test, so a guard can check how it is dropped.
+    helper: Arc<OnceLock<Weak<NodeHelper>>>,
+    /// Incremented when a guard is dropped while the helper's state lock is held.
+    dropped_under_lock: Arc<AtomicUsize>,
 }
 
-struct Stop(Arc<AtomicUsize>);
+struct Stop {
+    stopped: Arc<AtomicUsize>,
+    helper: Arc<OnceLock<Weak<NodeHelper>>>,
+    dropped_under_lock: Arc<AtomicUsize>,
+}
 
 impl Drop for Stop {
     fn drop(&mut self) {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+        // A guard comes from an injected launcher and may block, so it must not run under the state lock.
+        if let Some(helper) = self.helper.get().and_then(Weak::upgrade)
+            && helper.state.try_lock().is_err()
+        {
+            self.dropped_under_lock.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -59,6 +84,11 @@ impl Drop for Stop {
 impl NodeHelperLauncher for Fake {
     async fn launch(&self) -> io::Result<NodeHelperProcess> {
         let index = self.launches.fetch_add(1, Ordering::SeqCst);
+        assert!(
+            !(self.panic_first_launch && index == 0),
+            "the launcher panics"
+        );
+        tokio::time::sleep(self.launch_delay).await;
         if self.fail_launch {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such file"));
         }
@@ -68,6 +98,7 @@ impl NodeHelperLauncher for Fake {
             index,
             advertised: self.advertised.clone(),
             version: self.version,
+            hang_initialize: self.hang_initialize,
             behaviour: self.behaviour.clone(),
             answers: self.answers.clone(),
         };
@@ -75,7 +106,11 @@ impl NodeHelperLauncher for Fake {
         Ok(NodeHelperProcess {
             stdin: Box::new(to_helper),
             stdout: Box::new(BufReader::new(from_helper)),
-            guard: Box::new(Stop(self.stopped.clone())),
+            guard: Box::new(Stop {
+                stopped: self.stopped.clone(),
+                helper: self.helper.clone(),
+                dropped_under_lock: self.dropped_under_lock.clone(),
+            }),
         })
     }
 }
@@ -84,6 +119,7 @@ struct Script {
     index: usize,
     advertised: Vec<String>,
     version: u64,
+    hang_initialize: bool,
     behaviour: Arc<Behaviour>,
     answers: Arc<StdMutex<Vec<Value>>>,
 }
@@ -107,6 +143,9 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
         let id = message["id"].clone();
         let params = message["params"].clone();
         if method == "helper/initialize" {
+            if script.hang_initialize {
+                continue;
+            }
             let result = json!({"protocolVersion": script.version, "methods": script.advertised});
             write_line(&mut output, rpc::response(&id, &Ok(result))).await;
             continue;
@@ -120,7 +159,11 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
             }
             Act::Fail(error) => write_line(&mut output, rpc::response(&id, &Err(error))).await,
             Act::Crash => return,
-            Act::Hang => std::future::pending::<()>().await,
+            Act::Hang => {}
+            Act::Delay { after, result } => {
+                tokio::time::sleep(after).await;
+                write_line(&mut output, rpc::response(&id, &Ok(result))).await;
+            }
             Act::AskHost => {
                 write_line(
                     &mut output,
@@ -153,16 +196,22 @@ fn fake(advertised: &[&str], behaviour: Arc<Behaviour>) -> Fake {
             .collect(),
         version: PROTOCOL_VERSION,
         fail_launch: false,
+        panic_first_launch: false,
+        launch_delay: Duration::ZERO,
+        hang_initialize: false,
         behaviour,
         launches: Arc::new(AtomicUsize::new(0)),
         stopped: Arc::new(AtomicUsize::new(0)),
         answers: Arc::new(StdMutex::new(Vec::new())),
+        helper: Arc::new(OnceLock::new()),
+        dropped_under_lock: Arc::new(AtomicUsize::new(0)),
     }
 }
 
 fn timing() -> Timing {
     Timing {
         request: Duration::from_secs(5),
+        initialize: Duration::from_secs(2),
         idle: Duration::from_secs(300),
         crash_window: Duration::from_secs(60),
         crash_limit: 3,
@@ -185,6 +234,9 @@ fn rig(fake: Fake, timing: Timing) -> Rig {
     let (host_peer, writer) = connection::start(host_out, &scope.spawner(), Options::default());
     let fake = Arc::new(fake);
     let helper = NodeHelper::new(fake.clone(), scope.spawner(), host_peer, timing);
+    fake.helper
+        .set(Arc::downgrade(&helper))
+        .expect("one rig per fake");
     Rig {
         helper,
         fake,
@@ -547,4 +599,181 @@ async fn a_request_from_the_helper_is_answered_method_not_found() {
     assert_eq!(answers.len(), 1, "{answers:?}");
     assert_eq!(answers[0]["id"], "h-1");
     assert_eq!(answers[0]["error"]["code"], -32601);
+}
+
+async fn forward_err(helper: &NodeHelper, method: &str, params: Value) -> RpcError {
+    helper
+        .forward(method, &params)
+        .await
+        .expect("the method is forwarded")
+        .expect_err("the call fails")
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_start_that_panics_cools_down_and_then_starts_again() {
+    let mut launcher = fake(&["plugins/list"], echo());
+    launcher.panic_first_launch = true;
+    let rig = rig(launcher, timing());
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    // The interrupted start is a failed start: calls fail fast instead of awaiting a start that never ends.
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    forward_ok(&rig.helper, "plugins/list", json!({})).await;
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_helper_that_advertises_no_methods_is_a_failed_start() {
+    let rig = rig(fake(&[], echo()), timing());
+    // Not `None` (-32601): a helper with an empty method list is a broken helper, reported as unavailable.
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        1,
+        "its process is dropped"
+    );
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    assert_eq!(
+        rig.fake.launches.load(Ordering::SeqCst),
+        1,
+        "the cooldown applies"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_helper_that_never_initializes_fails_at_the_initialize_deadline() {
+    let mut launcher = fake(&["plugins/list"], echo());
+    launcher.hang_initialize = true;
+    let mut slow = timing();
+    slow.request = Duration::from_secs(300);
+    let rig = rig(launcher, slow);
+    let started = Instant::now();
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    // The handshake has its own short deadline, not the 300 s call timeout.
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_timed_out_call_leaves_a_responsive_process_and_its_other_calls_alone() {
+    let behaviour = behaviour(|_, method, _| {
+        if method == "plugins/install" {
+            Act::Hang
+        } else {
+            Act::Delay {
+                after: Duration::from_secs(1),
+                result: json!({"ok": true}),
+            }
+        }
+    });
+    let mut short = timing();
+    short.request = Duration::from_secs(10);
+    let rig = rig(fake(&["plugins/install", "plugins/list"], behaviour), short);
+    let install = forward_err(&rig.helper, "plugins/install", json!({}));
+    let lists = async {
+        // Answered while the install runs: the process is alive.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let first = forward_ok(&rig.helper, "plugins/list", json!({})).await;
+        // Still in flight when the install times out at t = 10 s.
+        tokio::time::sleep(Duration::from_millis(6500)).await;
+        let second = async {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            forward_ok(&rig.helper, "plugins/list", json!({})).await
+        };
+        let held = async {
+            // Holds the helper's loop across t = 10 s so the second list is in flight then.
+            forward_ok(&rig.helper, "plugins/list", json!({})).await
+        };
+        let (second, held) = tokio::join!(second, held);
+        (first, second, held)
+    };
+    let (install, (first, second, held)) = tokio::join!(install, lists);
+    expect_unavailable(&install);
+    assert_eq!(first, json!({"ok": true}));
+    assert_eq!(second, json!({"ok": true}));
+    assert_eq!(held, json!({"ok": true}));
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        0,
+        "the process is kept"
+    );
+    assert_eq!(rig.helper.crash_count(), 0);
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hung_process_is_dropped_even_with_other_calls_in_flight() {
+    let rig = rig(
+        fake(&["plugins/list"], behaviour(|_, _, _| Act::Hang)),
+        timing(),
+    );
+    let first = forward_err(&rig.helper, "plugins/list", json!({}));
+    let second = async {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        forward_err(&rig.helper, "plugins/list", json!({})).await
+    };
+    let (first, second) = tokio::join!(first, second);
+    expect_unavailable(&first);
+    expect_unavailable(&second);
+    // The process answered nothing since the first call started, so its timeout drops it: the second call fails
+    // with the closed connection instead of keeping a hung process alive.
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropped_processes_are_released_outside_the_state_lock() {
+    let behaviour = behaviour(|launch, _, params| match launch {
+        0 => Act::Crash,
+        1 => Act::Hang,
+        _ => Act::Reply {
+            notes: Vec::new(),
+            result: params.clone(),
+        },
+    });
+    let rig = rig(fake(&["plugins/list"], behaviour), timing());
+    // Crash, then a timeout of the only call in flight, then an idle reclaim.
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    forward_ok(&rig.helper, "plugins/list", json!({})).await;
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 3);
+    assert_eq!(rig.fake.dropped_under_lock.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn version_mismatch_releases_the_process_outside_the_state_lock() {
+    let mut launcher = fake(&["plugins/list"], echo());
+    launcher.version = PROTOCOL_VERSION + 1;
+    let rig = rig(launcher, timing());
+    expect_unavailable(&forward_err(&rig.helper, "plugins/list", json!({})).await);
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.fake.dropped_under_lock.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancel_operation_while_the_helper_starts_waits_for_it() {
+    let mut launcher = fake(&["plugins/install", "plugins/cancelOperation"], echo());
+    launcher.launch_delay = Duration::from_secs(1);
+    let rig = rig(launcher, timing());
+    let install = forward_ok(
+        &rig.helper,
+        "plugins/install",
+        json!({"operationId": "op-1"}),
+    );
+    let cancel = async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        forward_ok(
+            &rig.helper,
+            "plugins/cancelOperation",
+            json!({"operationId": "op-1"}),
+        )
+        .await
+    };
+    let (_, cancel) = tokio::join!(install, cancel);
+    // Forwarded to the helper (the fake echoes the params), not answered `cancelled: false` locally.
+    assert_eq!(cancel, json!({"operationId": "op-1"}));
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
 }

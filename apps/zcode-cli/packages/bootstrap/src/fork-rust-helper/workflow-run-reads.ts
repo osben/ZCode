@@ -1,4 +1,4 @@
-import type { ToolArtifactStorePort } from "@zcode/contracts";
+import type { Logger, ToolArtifactStorePort } from "@zcode/contracts";
 import type { JournalStorePort } from "@zcode/dynamic-workflow";
 import {
   WORKFLOW_ARTIFACT_LIMITS,
@@ -21,6 +21,10 @@ import {
   v4ConversationWorkflowRunsResultSchema,
 } from "@zcode/shared/zcode-protocol-v4";
 import { artifactsOf } from "../app/dynamic-workflow-run-artifact-projection.js";
+import {
+  DEFAULT_LIST_RUNS_LIMIT,
+  MAX_LIST_RUNS_LIMIT,
+} from "../app/dynamic-workflow-run-service.js";
 import { listArtifactItemsFrom } from "../app/dynamic-workflow-run-artifact-queries.js";
 import { readWorkflowArtifactBytes } from "../app/dynamic-workflow-run-artifact-read.js";
 import {
@@ -30,28 +34,19 @@ import {
 } from "../app/dynamic-workflow-run-journal.js";
 import { toSessionSummary } from "../app/dynamic-workflow-run-observation.js";
 import { toProtocolEvent } from "../app/dynamic-workflow-run-progress-payload.js";
+import { createArtifactReadCache, type ArtifactReadCacheOptions } from "./artifact-read-cache.js";
 import {
   listWorkspaceNodesFrom,
   readWorkspaceNodeResultFrom,
 } from "../app/dynamic-workflow-run-workspace.js";
 
-/** Same bounds as the run service's `listRunsForSession`. */
-const DEFAULT_LIST_RUNS_LIMIT = 16;
-const MAX_LIST_RUNS_LIMIT = 64;
-/** Whole artifact versions kept for chunked reads (the gateway's binary read cache, smaller). */
-const ARTIFACT_CACHE_ENTRIES = 4;
-const ARTIFACT_CACHE_TTL_MS = 60_000;
 
 export interface WorkflowRunReadDeps {
   /** Opens the journal on first use; `undefined` when the session store has no dwf journal. */
   journal(): Promise<JournalStorePort | undefined>;
   artifactStore: ToolArtifactStorePort | undefined;
-  now?: () => number;
-}
-
-interface CachedArtifact {
-  at: number;
-  payload: Promise<{ bytes: Uint8Array; mediaType: string }>;
+  logger?: Logger;
+  artifactCache?: ArtifactReadCacheOptions;
 }
 
 /**
@@ -65,8 +60,7 @@ interface CachedArtifact {
  * another conversation reads as an unknown run.
  */
 export function createWorkflowRunReads(deps: WorkflowRunReadDeps) {
-  const now = deps.now ?? Date.now;
-  const artifactCache = new Map<string, CachedArtifact>();
+  const artifactCache = createArtifactReadCache(deps.artifactCache);
 
   async function ownedJournal(sessionId: string, runId: string) {
     const journal = await deps.journal();
@@ -80,16 +74,8 @@ export function createWorkflowRunReads(deps: WorkflowRunReadDeps) {
     artifactId: string;
     version: number;
   }) {
-    const at = now();
-    for (const [key, entry] of artifactCache)
-      if (at - entry.at > ARTIFACT_CACHE_TTL_MS) artifactCache.delete(key);
     const key = [params.sessionId, params.runId, params.artifactId, params.version].join("\u0000");
-    const cached = artifactCache.get(key);
-    if (cached) {
-      cached.at = at;
-      return cached.payload;
-    }
-    const payload = (async () => {
+    return artifactCache.read(key, async () => {
       const journal = await deps.journal();
       const artifact = journal
         ? await readWorkflowArtifactBytes(
@@ -109,12 +95,7 @@ export function createWorkflowRunReads(deps: WorkflowRunReadDeps) {
         );
       }
       return { bytes: artifact.bytes, mediaType: artifact.contentType };
-    })();
-    payload.catch(() => artifactCache.delete(key));
-    artifactCache.set(key, { at, payload });
-    while (artifactCache.size > ARTIFACT_CACHE_ENTRIES)
-      artifactCache.delete(artifactCache.keys().next().value!);
-    return payload;
+    });
   }
 
   return {
@@ -124,10 +105,20 @@ export function createWorkflowRunReads(deps: WorkflowRunReadDeps) {
       if (!journal || !supportsRunEnumeration(journal))
         return v4ConversationWorkflowRunsResultSchema.parse({ runs: [] });
       const limit = Math.max(1, Math.min(params.limit ?? DEFAULT_LIST_RUNS_LIMIT, MAX_LIST_RUNS_LIMIT));
+      let rows: ReturnType<typeof journal.listRunsByParentSession>;
+      try {
+        rows = journal.listRunsByParentSession(params.sessionId, limit);
+      } catch (error) {
+        // Same degradation as the run service's `listRunsForSession`.
+        deps.logger?.warn?.("Dynamic workflow run enumeration failed", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+          event: "dynamic_workflow.run.list_failed",
+          module: "bootstrap.app",
+        });
+        return v4ConversationWorkflowRunsResultSchema.parse({ runs: [] });
+      }
       // No live registry entry: the helper runs no workflow, so the journal row is the whole truth.
-      const runs = journal
-        .listRunsByParentSession(params.sessionId, limit)
-        .map((row) => toSessionSummary(row, undefined));
+      const runs = rows.map((row) => toSessionSummary(row, undefined));
       return v4ConversationWorkflowRunsResultSchema.parse({ runs });
     },
 

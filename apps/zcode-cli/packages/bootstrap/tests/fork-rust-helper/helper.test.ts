@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,6 +11,8 @@ import {
   runForkRustHelper,
 } from "../../src/fork-rust-helper/contract.js";
 import { resolveDynamicWorkflowJournalStore } from "../../src/app/dynamic-workflow-run-journal.js";
+import { createArtifactReadCache } from "../../src/fork-rust-helper/artifact-read-cache.js";
+import { createWorkflowRunReads } from "../../src/fork-rust-helper/workflow-run-reads.js";
 
 // Rule 2 of specs/fork-rust-node-helper.md: run history is read from the journal directly. The run
 // service's constructor reconciles orphan runs (a journal write), and the gateway's read path
@@ -67,7 +69,7 @@ async function tempHome() {
 }
 
 /** Drives the helper over its real stdio framing, the way the Rust agent does. */
-function startHelper(env: NodeJS.ProcessEnv, cwd: string) {
+function startHelper(env: NodeJS.ProcessEnv, cwd: string, signal?: AbortSignal) {
   const input = new PassThrough();
   const output = new PassThrough();
   const pending = new Map<string, (frame: Frame) => void>();
@@ -79,7 +81,7 @@ function startHelper(env: NodeJS.ProcessEnv, cwd: string) {
       pending.delete(String(frame.id));
     } else if (frame.method) notifications.push(frame);
   });
-  const done = runForkRustHelper({ input, output, env, cwd });
+  const done = runForkRustHelper({ input, output, env, cwd, ...(signal ? { signal } : {}) });
   let next = 0;
   return {
     notifications,
@@ -234,4 +236,127 @@ describe("fork: Node helper for the Rust agent", () => {
     );
     reopened.close();
   }, 60_000);
+  it("serves the file-only saved workflow methods without opening the session database", async () => {
+    const home = await tempHome();
+    // A regular file where the database directory should be: the store cannot be opened.
+    const blocker = join(home.dir, "not-a-dir");
+    await writeFile(blocker, "");
+    const env = { ...home.env, ZCODE_SESSION_DB_PATH: join(blocker, "db.sqlite") };
+    const helper = startHelper(env, home.workspace);
+    const workspace = { workspacePath: home.workspace, workspaceKey: home.workspace };
+
+    const workflows = await helper.request("workflows/list", { workspace });
+    expect(workflows.error).toBeUndefined();
+    expect(workflows.result?.workflows).toEqual([]);
+    // Only the journal-backed methods need the database, and they report its failure.
+    const runs = await helper.request("workflows/runs", { workspace, workflowId: "nightly" });
+    expect(runs.error).toBeDefined();
+    helper.close();
+    await helper.done;
+  }, 60_000);
+
+  it("refuses a session-authority plugin reference catalog: the conversation belongs to the Rust agent", async () => {
+    const home = await tempHome();
+    const helper = startHelper(home.env, home.workspace);
+    const workspace = { workspacePath: home.workspace, workspaceKey: home.workspace };
+
+    const draft = await helper.request("plugins/referenceCatalogWithCategory", { workspace });
+    expect(draft.error).toBeUndefined();
+    expect(draft.result?.authority).toBe("workspace");
+
+    for (const method of ["plugins/referenceCatalog", "plugins/referenceCatalogWithCategory"]) {
+      const session = await helper.request(method, { workspace, sessionId: "session-rust-owned" });
+      expect(session.result).toBeUndefined();
+      expect(session.error?.data).toEqual({
+        reasonCode: "proto.forkRustAgent.sessionPluginCatalogUnavailable",
+      });
+    }
+    helper.close();
+    await helper.done;
+  }, 60_000);
+
+  it("closes and releases its stores when the process lifecycle aborts, with stdin still open", async () => {
+    const home = await tempHome();
+    const controller = new AbortController();
+    const helper = startHelper(home.env, home.workspace, controller.signal);
+    const reply = await helper.request("helper/initialize", { protocolVersion: 1 });
+    expect(reply.error).toBeUndefined();
+    controller.abort(new Error("Protocol received SIGTERM"));
+    await expect(helper.done).resolves.toBeUndefined();
+  });
+});
+
+describe("fork: Node helper run-history reads", () => {
+  it("degrades a failed run enumeration to an empty list with Node's warning", async () => {
+    const warn = vi.fn();
+    const journal = {
+      getRun: () => undefined,
+      listRunsByParentSession: () => {
+        throw new Error("database is locked");
+      },
+      listOrphanRuns: () => [],
+    };
+    const reads = createWorkflowRunReads({
+      journal: async () => journal as never,
+      artifactStore: undefined,
+      logger: { warn } as never,
+    });
+    const workspace = { workspacePath: "/tmp/project", workspaceKey: "/tmp/project" };
+    await expect(
+      reads["v4/conversation/workflowRuns"]({ workspace, sessionId: "session-1" }),
+    ).resolves.toEqual({ runs: [] });
+    expect(warn).toHaveBeenCalledWith(
+      "Dynamic workflow run enumeration failed",
+      expect.objectContaining({ event: "dynamic_workflow.run.list_failed" }),
+    );
+  });
+});
+
+describe("fork: Node helper artifact read cache", () => {
+  const payload = (size: number) => ({ bytes: new Uint8Array(size), mediaType: "text/plain" });
+
+  it("evicts the least recently read artifact when over its byte budget", async () => {
+    let clock = 0;
+    const cache = createArtifactReadCache({ now: () => clock, maxBytes: 10, ttlMs: 1_000 });
+    const loads: string[] = [];
+    const read = (key: string, size: number) =>
+      cache.read(key, async () => {
+        loads.push(key);
+        return payload(size);
+      });
+    await read("a", 4);
+    clock = 1;
+    await read("b", 4);
+    clock = 2;
+    await read("a", 4); // a is now the hot entry
+    clock = 3;
+    await read("c", 4); // 12 bytes > 10: b, the coldest, goes
+    expect(cache.stats()).toEqual({ entries: 2, bytes: 8 });
+    await read("a", 4);
+    await read("b", 4);
+    expect(loads).toEqual(["a", "b", "c", "b"]);
+    cache.clear();
+  });
+
+  it("releases idle artifacts after the TTL without waiting for another read", async () => {
+    vi.useFakeTimers();
+    try {
+      let clock = 0;
+      const cache = createArtifactReadCache({ now: () => clock, maxBytes: 100, ttlMs: 1_000 });
+      await cache.read("a", async () => payload(8));
+      expect(cache.stats()).toEqual({ entries: 1, bytes: 8 });
+      clock = 1_001;
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(cache.stats()).toEqual({ entries: 0, bytes: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forgets a failed read so the next one retries", async () => {
+    const cache = createArtifactReadCache({ now: () => 0, maxBytes: 100, ttlMs: 1_000 });
+    await expect(cache.read("a", async () => Promise.reject(new Error("gone")))).rejects.toThrow("gone");
+    await expect(cache.read("a", async () => payload(2))).resolves.toEqual(payload(2));
+    cache.clear();
+  });
 });

@@ -25,11 +25,11 @@ use tokio::time::Instant;
 pub const NODE_HELPER_UNAVAILABLE: &str = "proto.forkRustAgent.nodeHelperUnavailable";
 
 /// The helper protocol version, sent in `helper/initialize`.
-pub const PROTOCOL_VERSION: u64 = 1;
+pub(crate) const PROTOCOL_VERSION: u64 = 1;
 
 /// Methods Rust may forward (F1 plugin management, F2 saved workflows and run history). Forwarding also needs the
 /// method in the helper's advertised `methods`.
-pub const FORWARDED_METHODS: &[&str] = &[
+pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "plugins/list",
     "plugins/overview",
     "plugins/describe",
@@ -68,18 +68,22 @@ pub const FORWARDED_METHODS: &[&str] = &[
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.
-pub const RELAYED_NOTIFICATIONS: &[&str] = &["plugins/operationProgress"];
+pub(crate) const RELAYED_NOTIFICATIONS: &[&str] = &["plugins/operationProgress"];
 
-/// Answered without a helper when none is running: no operation can be in flight, and starting one only to answer
-/// `cancelled: false` would cost a Node process.
+/// Answered without a helper when no helper process exists or is starting: no operation can be in flight, and
+/// starting one only to answer `cancelled: false` would cost a Node process. During a start the cancel waits for it,
+/// since the operation it names may be the call that triggered the start.
 const CANCEL_OPERATION: &str = "plugins/cancelOperation";
 
 /// The timing of the client. The defaults are the Host's plugin-management request timeout and the idle reclaim
 /// period; tests shorten them.
 #[derive(Debug, Clone)]
 pub struct Timing {
-    /// Per forwarded call, and for `helper/initialize`.
+    /// Per forwarded call.
     pub request: Duration,
+    /// For `helper/initialize`. Every call waits on a start, so a helper that never answers the handshake must fail
+    /// fast instead of holding them for the call timeout (spawn to answer is about 0.6 s).
+    pub initialize: Duration,
     /// Idle time with no call in flight before the process is reclaimed.
     pub idle: Duration,
     /// The window in which `crash_limit` crashes keep the helper down for the life of the process.
@@ -94,6 +98,7 @@ impl Default for Timing {
     fn default() -> Self {
         Self {
             request: Duration::from_secs(300),
+            initialize: Duration::from_secs(30),
             idle: Duration::from_secs(300),
             crash_window: Duration::from_secs(60),
             crash_limit: 3,
@@ -155,7 +160,10 @@ struct Running {
     methods: HashSet<String>,
     in_flight: usize,
     last_used: Instant,
-    /// Dropped with the slot: kills the process tree.
+    /// When the process last answered a forwarded call: a timed-out call keeps the process only if it answered since.
+    last_answer: Instant,
+    /// Dropped with the slot: kills the process tree. Always dropped after the state lock is released, since it comes
+    /// from an injected launcher.
     _guard: Box<dyn Send>,
 }
 
@@ -189,7 +197,7 @@ impl NodeHelper {
             return None;
         }
         if method == CANCEL_OPERATION
-            && !self.is_running()
+            && !self.has_process()
             && let Some(operation_id) = params.get("operationId").and_then(Value::as_str)
         {
             return Some(Ok(json!({"operationId": operation_id, "cancelled": false})));
@@ -205,17 +213,21 @@ impl NodeHelper {
             helper: self,
             generation,
         };
+        let started = Instant::now();
         let result =
             match tokio::time::timeout(self.timing.request, peer.request(method, params)).await {
                 Err(_elapsed) => {
-                    self.abandon(generation, "timeout");
+                    self.timed_out(generation, started);
                     Err(unavailable("the helper did not answer in time"))
                 }
                 Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
                     self.link_lost(generation);
                     Err(unavailable("the helper connection closed"))
                 }
-                Ok(result) => result,
+                Ok(result) => {
+                    self.answered(generation);
+                    result
+                }
             };
         Some(result)
     }
@@ -224,13 +236,15 @@ impl NodeHelper {
     /// advertise `method`.
     async fn acquire(&self, method: &str) -> Result<Option<(u64, Peer)>, RpcError> {
         loop {
+            // Declared before the lock so a dropped process is released after the lock is.
+            let mut retired = None;
             let starting = {
                 let mut state = self.state.lock_unpoisoned();
                 if let Slot::Running(running) = &state.slot
                     && running.peer.is_closed()
                 {
                     let generation = running.generation;
-                    self.crashed(&mut state, generation);
+                    retired = self.crashed(&mut state, generation);
                 }
                 match &mut state.slot {
                     Slot::Down => {
@@ -251,15 +265,26 @@ impl NodeHelper {
                         let Some(this) = self.myself.upgrade() else {
                             return Err(unavailable("the helper is not running"));
                         };
+                        state.generation += 1;
+                        let generation = state.generation;
                         // A detached task: a caller dropped mid-start must not leave a launched process waiting in
                         // `Starting` for the next call to drive it.
-                        let task = self
-                            .spawner
-                            .spawn("node-helper-start", async move { this.start().await });
+                        let task = self.spawner.spawn("node-helper-start", async move {
+                            this.start(generation).await
+                        });
+                        let weak = self.myself.clone();
                         let starting = async move {
-                            task.await.unwrap_or_else(|_| {
-                                Err(unavailable("the helper start was interrupted"))
-                            })
+                            match task.await {
+                                Ok(result) => result,
+                                Err(_) => {
+                                    // A panicked or aborted start never reached its own failure path; without this
+                                    // the slot would hold this failed start for the life of the process.
+                                    if let Some(helper) = weak.upgrade() {
+                                        helper.start_failed(generation);
+                                    }
+                                    Err(unavailable("the helper start was interrupted"))
+                                }
+                            }
                         }
                         .boxed()
                         .shared();
@@ -268,22 +293,18 @@ impl NodeHelper {
                     }
                 }
             };
+            drop(retired);
             starting.await?;
         }
     }
 
     /// Launches and initializes a helper, then makes it the running slot. Runs once per start, shared by the callers
     /// that were waiting for it. Holds no lock across an await.
-    async fn start(&self) -> Result<(), RpcError> {
-        let generation = {
-            let mut state = self.state.lock_unpoisoned();
-            state.generation += 1;
-            state.generation
-        };
+    async fn start(&self, generation: u64) -> Result<(), RpcError> {
         let process = match self.launcher.launch().await {
             Ok(process) => process,
             Err(error) => {
-                self.warn_once("launch", Some(error.kind()));
+                self.warn_once("launch", Some(error.to_string()));
                 self.start_failed(generation);
                 return Err(unavailable("the helper could not be started"));
             }
@@ -315,7 +336,7 @@ impl NodeHelper {
         }));
 
         let initialized = tokio::time::timeout(
-            self.timing.request,
+            self.timing.initialize,
             peer.request(
                 "helper/initialize",
                 &json!({"protocolVersion": PROTOCOL_VERSION}),
@@ -331,10 +352,9 @@ impl NodeHelper {
                 return Err(unavailable("the helper did not initialize"));
             }
         };
-        let mut state = self.state.lock_unpoisoned();
         if answer["protocolVersion"].as_u64() != Some(PROTOCOL_VERSION) {
             drop(guard);
-            state.slot = Slot::Down;
+            self.state.lock_unpoisoned().slot = Slot::Down;
             tracing::warn!(
                 event = "helper.unavailable",
                 reason = "protocol_version",
@@ -342,7 +362,7 @@ impl NodeHelper {
             );
             return Err(unavailable("the helper speaks another protocol version"));
         }
-        let methods = answer["methods"]
+        let methods: HashSet<String> = answer["methods"]
             .as_array()
             .map(|items| {
                 items
@@ -351,12 +371,26 @@ impl NodeHelper {
                     .collect()
             })
             .unwrap_or_default();
+        if methods.is_empty() {
+            // A helper that advertises nothing is broken (the bundle and this binary disagree): report it as
+            // unavailable instead of answering every method -32601 as if no helper were configured.
+            drop(guard);
+            self.warn_once(
+                "initialize",
+                Some("the helper advertised no methods".to_owned()),
+            );
+            self.start_failed(generation);
+            return Err(unavailable("the helper advertised no methods"));
+        }
+        let now = Instant::now();
+        let mut state = self.state.lock_unpoisoned();
         state.slot = Slot::Running(Running {
             generation,
             peer,
             methods,
             in_flight: 0,
-            last_used: Instant::now(),
+            last_used: now,
+            last_answer: now,
             _guard: guard,
         });
         state.retry_at = None;
@@ -381,9 +415,13 @@ impl NodeHelper {
         }
     }
 
-    /// A helper is running and its connection is open.
-    fn is_running(&self) -> bool {
-        matches!(&self.state.lock_unpoisoned().slot, Slot::Running(running) if !running.peer.is_closed())
+    /// A helper process is starting, or running with its connection open.
+    fn has_process(&self) -> bool {
+        match &self.state.lock_unpoisoned().slot {
+            Slot::Starting(_) => true,
+            Slot::Running(running) => !running.peer.is_closed(),
+            Slot::Idle | Slot::Down => false,
+        }
     }
 
     fn spawn_reclaim(&self, generation: u64) {
@@ -404,24 +442,52 @@ impl NodeHelper {
         }
     }
 
-    /// Drops the process of `generation` without counting a crash (a call timed out).
-    fn abandon(&self, generation: u64, reason: &'static str) {
+    fn answered(&self, generation: u64) {
         let mut state = self.state.lock_unpoisoned();
-        if is_current(&state, generation) {
-            state.slot = Slot::Idle;
-            tracing::warn!(
-                event = "helper.unavailable",
-                reason,
-                "the node helper was dropped"
-            );
+        if let Slot::Running(running) = &mut state.slot
+            && running.generation == generation
+        {
+            running.last_answer = Instant::now();
         }
+    }
+
+    /// A call of `generation` started at `started` timed out. The process is kept when other calls are in flight and
+    /// it answered one since this call started: it is alive and only this call is slow (a long install). Otherwise it
+    /// is hung and is dropped without counting a crash; a hung process with calls arriving all the time would
+    /// otherwise never be dropped.
+    fn timed_out(&self, generation: u64, started: Instant) {
+        let mut state = self.state.lock_unpoisoned();
+        let Slot::Running(running) = &state.slot else {
+            return;
+        };
+        if running.generation != generation {
+            return;
+        }
+        if running.in_flight > 1 && running.last_answer >= started {
+            tracing::warn!(
+                event = "helper.call_timed_out",
+                generation,
+                "a forwarded call timed out; the helper is kept for the calls still in flight"
+            );
+            return;
+        }
+        let retired = std::mem::replace(&mut state.slot, Slot::Idle);
+        drop(state);
+        drop(retired);
+        tracing::warn!(
+            event = "helper.unavailable",
+            reason = "timeout",
+            "the node helper was dropped"
+        );
     }
 
     /// The reader of `generation` ended (the process closed its stdout), or a call saw the connection closed.
     fn link_lost(&self, generation: u64) {
         let mut state = self.state.lock_unpoisoned();
         if is_current(&state, generation) {
-            self.crashed(&mut state, generation);
+            let retired = self.crashed(&mut state, generation);
+            drop(state);
+            drop(retired);
         } else {
             tracing::info!(
                 event = "helper.exited",
@@ -432,12 +498,14 @@ impl NodeHelper {
     }
 
     /// Counts a crash of `generation` and trips the breaker at the limit. Ignored unless `generation` is the running
-    /// process, so a crash is counted once however many callers see it.
-    fn crashed(&self, state: &mut State, generation: u64) {
+    /// process, so a crash is counted once however many callers see it. Returns the crashed slot, for the caller to
+    /// drop after it releases the lock.
+    #[must_use]
+    fn crashed(&self, state: &mut State, generation: u64) -> Option<Slot> {
         if !is_current(state, generation) {
-            return;
+            return None;
         }
-        state.slot = Slot::Idle;
+        let retired = std::mem::replace(&mut state.slot, Slot::Idle);
         let now = Instant::now();
         let window = self.timing.crash_window;
         state
@@ -458,14 +526,15 @@ impl NodeHelper {
                 "the node helper stays down until this process restarts"
             );
         }
+        Some(retired)
     }
 
-    fn warn_once(&self, stage: &'static str, kind: Option<io::ErrorKind>) {
+    fn warn_once(&self, stage: &'static str, detail: Option<String>) {
         if !self.warned.swap(true, Ordering::Relaxed) {
             tracing::warn!(
                 event = "helper.unavailable",
                 stage,
-                kind = ?kind,
+                detail = detail.as_deref().unwrap_or(""),
                 "the node helper is unavailable"
             );
         }
@@ -501,6 +570,7 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
         let Some(helper) = weak.upgrade() else {
             return;
         };
+        // The lock lives in this block only: the guard must not be held, or even live, across the sleep below.
         let wake = {
             let mut state = helper.state.lock_unpoisoned();
             let Slot::Running(running) = &state.slot else {
@@ -510,18 +580,23 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
                 return;
             }
             if running.in_flight > 0 {
-                Instant::now() + idle
+                Some(Instant::now() + idle)
             } else if running.last_used.elapsed() >= idle {
-                state.slot = Slot::Idle;
+                let retired = std::mem::replace(&mut state.slot, Slot::Idle);
+                drop(state);
+                drop(retired);
                 tracing::info!(
                     event = "helper.reclaimed",
                     generation,
                     "the idle node helper was reclaimed"
                 );
-                return;
+                None
             } else {
-                running.last_used + idle
+                Some(running.last_used + idle)
             }
+        };
+        let Some(wake) = wake else {
+            return;
         };
         drop(helper);
         tokio::time::sleep_until(wake).await;
