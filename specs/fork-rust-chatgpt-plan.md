@@ -102,7 +102,8 @@ sequenceDiagram
 
 7. Hosted: `interaction/requestProviderRuntimeHeaders` with `providerId` and `modelSelection`, **without**
    `accountAccess` (the Host routes ChatGPT by provider id; a zhipu-shaped access could send it into the
-   request-verification branch).
+   request-verification branch). The platform marks the request `HeaderAccess::ChatGptPlan` from the provider's
+   `access.type` (`chatgpt-account`); the header source never re-derives the kind from the provider id.
 8. The answer's `requestAuth.accountScope` is remembered against `sha256(apiKey)` (bounded memo, like
    `auth.rs` `issued`).
 9. After a 401 the next call sends `rejectedProjectTokenFingerprint` and `expectedAccountScope` (the remembered scope
@@ -120,8 +121,12 @@ sequenceDiagram
     `top_logprobs`, `top_p`, `truncation`, `user`, `previous_response_id`. Forced: `store: false`, `stream: true`.
 13. `include: ["reasoning.encrypted_content"]` only for models the AI SDK 3.0.65 treats as reasoning models
     (`o1`, `o3`, `o4-mini`, `gpt-5*` except `gpt-5-chat`); otherwise `include` is removed. The system prompt keeps
-    the AI SDK role (`developer` for those models, else `system`); Rust never emits `type: "message"` system items,
-    so Node's remap to `instructions` has nothing to do.
+    the AI SDK role (`developer` for those models, else `system`), as on Node's wire: AI SDK 3.0.65 encodes the
+    system prompt as `{"role": "system", "content": …}` without `type: "message"`, so Node's
+    `remapSystemInputItems` (which matches `type === "message"`) never folds it into `instructions` (checked
+    2026-11-13 by running `siwc-wire.test.ts` with a `system` prompt; that test's `instructions` assertion passes
+    on `String(undefined)`). Both runtimes use one predicate for these models
+    (`rust_cli_base::models::openai_reasoning_model`).
 14. Bodies over 1048576 bytes are gzip-compressed with `content-encoding: gzip` (Node prefers zstd when
     `node:zlib` has it and falls back to gzip; Rust uses gzip, the spec's allowed fallback). Only for ChatGPT plan
     endpoints. The model-io trace records the uncompressed body.
@@ -139,7 +144,9 @@ sequenceDiagram
 | `subscription_sharing_usage_unavailable`, `subscription_sharing_user_unavailable` | ServerError    | yes (backoff)        | "The ChatGPT plan service is temporarily unavailable…"          |
 
 Any of these codes at HTTP 401 is `AuthRejected` first (Node `AccountRequestRetry` renews on the status, not the
-code); its own class applies after that one renewal. Codes are matched in `error.code` or `error.type`, in HTTP error bodies and in stream `error` /
+code); the error is always the code's own, so after that one renewal the request ends with it (a usage limit at
+401 still ends as `QuotaExhausted` with its text). The scope codes are a sign-in error (Node
+`ProviderNotConfigured`) with or without an HTTP status, so a stream error gets the same error as a 403. Codes are matched in `error.code` or `error.type`, in HTTP error bodies and in stream `error` /
 `response.failed` events. `{"detail": "…"}` bodies keep the raw text as the message.
 
 ## Known gap (separate change)
@@ -165,7 +172,7 @@ follow-up; not part of this change.
 | R8  | Host returns another scope after a 401                    | renewal           | `siwc_account_scope_invalidated`, no second request                                 |
 | R9  | Second 401 after the renewal                              | transport         | request fails with the provider message, no third attempt                           |
 | R10 | Request with option-map `max_output_tokens`, temperature  | wire              | body has neither; `store:false`, `stream:true`; `include` per rule 13               |
-| R11 | Body over 1 MiB                                           | wire              | gzip body + `content-encoding: gzip`; ≤ 1 MiB stays plain                           |
+| R11 | Body over 1 MiB                                           | wire              | gzip body + `content-encoding: gzip`; exactly 1 MiB stays plain                     |
 | R12 | 429 `subscription_sharing_usage_limit_exceeded`           | transport         | one request, `QuotaExhausted` with the Node text                                    |
 | R13 | 503 `subscription_sharing_usage_unavailable`              | transport         | retried with backoff                                                                |
 | R14 | Standalone (no Host) request on K                         | endpoint          | `chatgpt_plan_host_required` authentication error                                   |

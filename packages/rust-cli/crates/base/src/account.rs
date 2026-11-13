@@ -40,7 +40,7 @@ impl Family {
 pub const CHATGPT_PLAN_PROVIDER: &str = "account:chatgpt-plan";
 
 /// Fork: Node `isChatGptPlanAccountKey`: 16 lowercase hex characters (a `sha256(sub)` prefix) after trimming.
-pub fn is_chatgpt_account_key(key: &str) -> bool {
+pub fn is_chatgpt_plan_account_key(key: &str) -> bool {
     let key = key.trim();
     key.len() == 16
         && key
@@ -48,8 +48,13 @@ pub fn is_chatgpt_account_key(key: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Fork: Node `buildChatGptPlanAccountProviderId` (the key must already be valid).
-pub fn chatgpt_plan_provider(key: &str) -> String {
+/// Fork: Node `buildChatGptPlanAccountProviderId`: the per-account entry id (not the template id
+/// [`CHATGPT_PLAN_PROVIDER`]). Node throws on an invalid key; callers pass keys already validated.
+pub fn chatgpt_plan_account_provider(key: &str) -> String {
+    debug_assert!(
+        is_chatgpt_plan_account_key(key),
+        "invalid ChatGPT Plan account key"
+    );
     format!("{CHATGPT_PLAN_PROVIDER}:{}", key.trim())
 }
 
@@ -59,8 +64,9 @@ pub fn chatgpt_plan_account(provider: &str) -> Option<&str> {
     let key = provider
         .trim()
         .strip_prefix(CHATGPT_PLAN_PROVIDER)?
-        .strip_prefix(':')?;
-    is_chatgpt_account_key(key).then_some(key)
+        .strip_prefix(':')?
+        .trim();
+    is_chatgpt_plan_account_key(key).then_some(key)
 }
 
 #[cfg(test)]

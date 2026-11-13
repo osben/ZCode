@@ -104,6 +104,40 @@ async fn a_rejected_account_credential_is_renewed_once_per_failure() {
     assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
 }
 
+/// Fork (specs/fork-rust-chatgpt-plan.md rule 10): one renewal per request for every renewable endpoint, like Node
+/// `AccountRequestRetry`; the refreshed credential rejected again ends the request.
+#[tokio::test]
+async fn a_credential_rejected_again_after_the_renewal_ends_the_request() {
+    let server = Fixture::start(vec![
+        error(401, "authentication_error"),
+        error(401, "authentication_error"),
+        Reply::new(200).send(text_response(&["ok"])),
+    ])
+    .await;
+    let endpoints = Arc::new(Rotating {
+        base_url: server.url(),
+        issued: Mutex::new(0),
+        rejected: Mutex::new(Vec::new()),
+    });
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        endpoints.clone(),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(5),
+            ..RouteOptions::default()
+        },
+    );
+    let events = collect(&model, request("hi", QuerySource::MainThread)).await;
+    assert!(
+        matches!(events.as_slice(), [Err(ModelError::Authentication { .. })]),
+        "{events:?}"
+    );
+    assert_eq!(server.requests().len(), 2);
+    assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
+}
+
 #[tokio::test]
 async fn repeated_overload_switches_to_the_fallback_model() {
     let replies = (0..3).map(|_| error(529, "overloaded_error")).collect();

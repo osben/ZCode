@@ -297,7 +297,10 @@ async fn an_injected_header_source_supplies_account_credentials() {
         seen[1].rejected_fingerprint.as_deref(),
         Some(token::fingerprint("sk-host-1").as_str())
     );
-    assert!(!seen[0].account_type.is_empty() && !seen[0].mode.is_empty());
+    assert!(
+        matches!(&seen[0].access, HeaderAccess::Zhipu { account_type, mode }
+        if !account_type.is_empty() && !mode.is_empty())
+    );
     // API key 的 provider 照旧用配置里的 key，不问来源。
     let personal = platform
         .endpoint(EndpointQuery {
@@ -446,7 +449,7 @@ async fn chatgpt_signed_in(paths: &StoragePaths) -> String {
         .to_string(),
     )
     .await;
-    rust_cli_base::account::chatgpt_plan_provider(CHATGPT_KEY)
+    rust_cli_base::account::chatgpt_plan_account_provider(CHATGPT_KEY)
 }
 
 /// R14: standalone `zcode-rs` has no Host to ask, so a ChatGPT Plan request is refused (the token is never read).
@@ -505,7 +508,7 @@ async fn hosted_chatgpt_plan_requests_ask_the_host_and_shape_the_body() {
     let seen = source.0.lock().unwrap().clone();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].selection.provider, provider);
-    assert!(seen[0].account_type.is_empty() && seen[0].mode.is_empty());
+    assert_eq!(seen[0].access, HeaderAccess::ChatGptPlan);
     // The bundled option maps (as Node applies them, before the SIWC shaping): effort, then the output cap.
     assert_eq!(endpoint.body_patches.len(), 3);
     assert_eq!(
@@ -521,12 +524,17 @@ async fn hosted_chatgpt_plan_requests_ask_the_host_and_shape_the_body() {
         "user",
         "previous_response_id",
     ] {
-        assert_eq!(shaping[field], serde_json::Value::Null, "{field}");
+        // An explicit null (RFC 7396 removal), not a missing key (field left untouched).
+        assert_eq!(
+            shaping.get(field),
+            Some(&serde_json::Value::Null),
+            "{field}"
+        );
     }
     assert_eq!(shaping["store"], false);
     assert_eq!(shaping["stream"], true);
     // gpt-6.x is not an AI SDK reasoning model: no `include`. gpt-5.6 is, so `include` stays.
-    assert_eq!(shaping["include"], serde_json::Value::Null);
+    assert_eq!(shaping.get("include"), Some(&serde_json::Value::Null));
     let older = platform
         .endpoint(EndpointQuery::new(&selection(
             &provider,

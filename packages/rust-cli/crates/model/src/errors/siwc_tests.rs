@@ -116,6 +116,21 @@ fn eligibility_scope_and_account_codes_keep_their_classes() {
     ));
 }
 
+/// A plan code at 401 is renewed once (status based, like Node), but the request then ends with the code's own error:
+/// the usage limit stays a quota error with its text, not a sign-in error.
+#[test]
+fn a_401_renews_but_keeps_the_codes_own_error() {
+    let limited = failure(401, "subscription_sharing_usage_limit_exceeded");
+    assert_eq!(limited.class, Class::AuthRejected);
+    assert!(matches!(
+        &limited.error,
+        ModelError::QuotaExhausted { message } if message.starts_with("ChatGPT plan usage limit reached.")
+    ));
+    let unavailable = failure(401, "subscription_sharing_user_unavailable");
+    assert_eq!(unavailable.class, Class::AuthRejected);
+    assert!(matches!(&unavailable.error, ModelError::Server { .. }));
+}
+
 #[test]
 fn stream_errors_and_the_type_field_are_recognised() {
     let value = json!({"type": "error", "error": {"type": "subscription_sharing_usage_limit_exceeded", "message": "x"}});
@@ -126,6 +141,25 @@ fn stream_errors_and_the_type_field_are_recognised() {
         &value.to_string(),
     );
     assert_eq!(verdict.class, Class::QuotaExhausted);
+    // The scope codes in a stream (no HTTP status) are the same sign-in error as at 403.
+    for code in [
+        "chatpass_v2_scope_not_authorized",
+        "chatpass_v2_invalid_authorization_context",
+    ] {
+        let value = json!({"type": "error", "error": {"type": "invalid_request_error", "code": code, "message": "x"}});
+        let verdict = crate::errors::classify_stream_error(
+            Vendor::Generic,
+            WireProtocol::OpenAiResponses,
+            &value,
+            &value.to_string(),
+        );
+        assert_eq!(verdict.class, Class::AccessDenied, "{code}");
+        assert!(
+            matches!(&verdict.error, ModelError::Authentication { message } if message.contains("zcode login chatgpt")),
+            "{code}: {:?}",
+            verdict.error
+        );
+    }
     // Other OpenAI codes are untouched.
     assert_eq!(
         failure(429, "rate_limit_exceeded").class,

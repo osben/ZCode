@@ -19,7 +19,10 @@ use rust_cli_model::{ProviderModel, RouteOptions};
 use rust_cli_net::{Egress, NetworkPolicy};
 use serde_json::{Value, json};
 
-use super::common::{clock, collect, fast_retry, request};
+use rust_cli_kernel_api::message::ContentBlock;
+use rust_cli_kernel_api::model::ModelEvent;
+
+use super::common::{assemble, clock, collect, fast_retry, request};
 use super::fixture::{Fixture, Reply};
 
 const MODEL: &str = "gpt-6.1-sol";
@@ -122,6 +125,15 @@ fn completed() -> Reply {
         .send(text)
 }
 
+/// The stream produced the whole completed turn (not just no error: an empty stream is no error either).
+fn assert_answered(events: &[Result<ModelEvent, ModelError>]) {
+    assert!(events.iter().all(Result::is_ok), "{events:?}");
+    assert!(
+        matches!(assemble(events).as_slice(), [ContentBlock::Text { text, .. }] if text == "ok"),
+        "{events:?}"
+    );
+}
+
 fn plan_error(status: u16, code: &str) -> Reply {
     Reply::new(status).send(
         json!({"error": {"message": "server text", "type": "invalid_request_error", "code": code}})
@@ -155,6 +167,26 @@ async fn a_second_rejection_after_the_renewal_ends_the_request() {
     assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
 }
 
+/// A plan code at 401 is renewed once (status based, like Node); the request then ends with the code's own error.
+#[tokio::test]
+async fn a_usage_limit_at_401_ends_with_the_quota_error_after_one_renewal() {
+    let server = Fixture::start(vec![
+        plan_error(401, "subscription_sharing_usage_limit_exceeded"),
+        plan_error(401, "subscription_sharing_usage_limit_exceeded"),
+        completed(),
+    ])
+    .await;
+    let endpoints = Plan::new(format!("{}/v1", server.url()), None);
+    let model = model(endpoints.clone(), 5).await;
+    let events = collect(&model, request("hi", QuerySource::MainThread)).await;
+    assert!(
+        matches!(events.as_slice(), [Err(ModelError::QuotaExhausted { message })] if message.starts_with("ChatGPT plan usage limit reached.")),
+        "{events:?}"
+    );
+    assert_eq!(server.requests().len(), 2);
+    assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
+}
+
 /// R10 (wire half; the patch itself is checked in the platform): the option-map `max_output_tokens` and the
 /// encoder's `include` are gone, `store: false` and `stream: true` stay.
 #[tokio::test]
@@ -164,8 +196,10 @@ async fn the_shaping_patch_wins_over_the_option_maps() {
     let mut hi = request("hi", QuerySource::MainThread);
     hi.temperature = Some(0.5);
     let events = collect(&model, hi).await;
-    assert!(events.iter().all(Result::is_ok), "{events:?}");
-    let body: Value = serde_json::from_str(&server.requests()[0].body).unwrap();
+    assert_answered(&events);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    let body: Value = serde_json::from_str(&requests[0].body).unwrap();
     for field in ["max_output_tokens", "temperature", "include"] {
         assert!(body.get(field).is_none(), "{field} in {body}");
     }
@@ -174,27 +208,44 @@ async fn the_shaping_patch_wins_over_the_option_maps() {
     assert_eq!(body["model"], MODEL);
 }
 
-/// R11: a body over the threshold goes out gzip-compressed; one at the threshold or below stays plain.
+/// The plain body of one request, captured without compression.
+async fn plain_body(text: &str) -> Vec<u8> {
+    let server = Fixture::start(vec![completed()]).await;
+    let model = model(Plan::new(format!("{}/v1", server.url()), None), 1).await;
+    assert_answered(&collect(&model, request(text, QuerySource::MainThread)).await);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    requests[0].raw.clone()
+}
+
+/// R11: a body over the threshold goes out gzip-compressed; one exactly at the threshold stays plain.
 #[tokio::test]
 async fn bodies_over_the_threshold_are_gzipped() {
-    let server = Fixture::start(vec![completed(), completed()]).await;
-    let model = model(Plan::new(format!("{}/v1", server.url()), Some(2048)), 1).await;
     let long = "x".repeat(4096);
-    let events = collect(&model, request(&long, QuerySource::MainThread)).await;
-    assert!(events.iter().all(Result::is_ok), "{events:?}");
-    let events = collect(&model, request("short", QuerySource::MainThread)).await;
-    assert!(events.iter().all(Result::is_ok), "{events:?}");
-    let requests = server.requests();
-    assert_eq!(requests[0].header("content-encoding"), Some("gzip"));
-    let mut plain = String::new();
-    flate2::read::GzDecoder::new(requests[0].raw.as_slice())
-        .read_to_string(&mut plain)
-        .unwrap();
-    let body: Value = serde_json::from_str(&plain).unwrap();
-    assert!(body.to_string().contains(&long));
-    assert!(requests[0].raw.len() < plain.len());
-    assert_eq!(requests[1].header("content-encoding"), None);
-    assert!(serde_json::from_str::<Value>(&requests[1].body).is_ok());
+    let plain = plain_body(&long).await;
+    for (threshold, gzipped) in [(plain.len() - 1, true), (plain.len(), false)] {
+        let server = Fixture::start(vec![completed()]).await;
+        let model = model(
+            Plan::new(format!("{}/v1", server.url()), Some(threshold)),
+            1,
+        )
+        .await;
+        assert_answered(&collect(&model, request(&long, QuerySource::MainThread)).await);
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        if !gzipped {
+            assert_eq!(requests[0].header("content-encoding"), None);
+            assert_eq!(requests[0].raw, plain);
+            continue;
+        }
+        assert_eq!(requests[0].header("content-encoding"), Some("gzip"));
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(requests[0].raw.as_slice())
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, plain);
+        assert!(requests[0].raw.len() < plain.len());
+    }
 }
 
 /// R12: the plan usage limit is final: one request, the Node text, no retry.
@@ -225,7 +276,7 @@ async fn an_unavailable_plan_service_is_retried() {
     let endpoints = Plan::new(format!("{}/v1", server.url()), None);
     let model = model(endpoints.clone(), 3).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
-    assert!(events.iter().all(Result::is_ok), "{events:?}");
+    assert_answered(&events);
     let requests = server.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[1].header("authorization"), Some("Bearer token-1"));

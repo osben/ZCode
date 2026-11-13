@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use rust_cli_base::hash;
 use rust_cli_base::secret::RedactedString;
 use rust_cli_base::sync::LockUnpoisoned;
-use rust_cli_base::{account, hash};
 use rust_cli_kernel_api::model::ModelError;
-use rust_cli_kernel_api::provider::{HeaderRequest, HeaderSource, SuppliedAuth};
+use rust_cli_kernel_api::provider::{HeaderAccess, HeaderRequest, HeaderSource, SuppliedAuth};
 use serde_json::{Value, json};
 
 use crate::context::Context;
@@ -54,7 +54,7 @@ impl HostHeaders {
     fn remember(&self, fingerprint: String, scope: String) {
         let mut scopes = self.scopes.lock_unpoisoned();
         scopes.retain(|(known, _)| *known != fingerprint);
-        if scopes.len() == SCOPES_KEPT {
+        while scopes.len() >= SCOPES_KEPT {
             scopes.pop_front();
         }
         scopes.push_back((fingerprint, scope));
@@ -100,7 +100,7 @@ impl HeaderSource for HostHeaders {
         let workspace = json!({"workspacePath": workspace, "workspaceKey": workspace});
         // Fork: ChatGPT Plan is routed by provider id and carries no zhipu-shaped access (rule 7). After a 401 it
         // names the scope of the rejected token; without one Node cannot recover the token either (rule 9).
-        let chatgpt = account::chatgpt_plan_account(&request.selection.provider).is_some();
+        let chatgpt = request.access == HeaderAccess::ChatGptPlan;
         let expected = match (chatgpt, &request.rejected_fingerprint) {
             (true, Some(fingerprint)) => Some(
                 self.scope_of(fingerprint)
@@ -116,9 +116,9 @@ impl HeaderSource for HostHeaders {
             "providerId": request.selection.provider,
             "reason": "model-request",
         });
-        if !chatgpt {
+        if let HeaderAccess::Zhipu { account_type, mode } = &request.access {
             params["accountAccess"] = json!({"type": "zhipu-account",
-                "accountType": request.account_type, "mode": request.mode, "entitled": true});
+                "accountType": account_type, "mode": mode, "entitled": true});
         }
         if let Some(scope) = &expected {
             params["expectedAccountScope"] = json!(scope);

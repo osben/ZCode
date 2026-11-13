@@ -28,6 +28,7 @@ pub struct Captured {
     pub method: String,
     pub target: String,
     pub headers: Vec<(String, String)>,
+    /// The body as lossy UTF-8: a compressed body comes out mangled here, so read `raw` for those.
     pub body: String,
     /// The body bytes as received (compressed bodies are not UTF-8).
     pub raw: Vec<u8>,

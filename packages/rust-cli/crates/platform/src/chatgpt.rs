@@ -9,7 +9,7 @@
 //! rule per signed-in account.
 
 use rust_cli_base::account::{
-    CHATGPT_PLAN_PROVIDER, chatgpt_plan_provider, is_chatgpt_account_key,
+    CHATGPT_PLAN_PROVIDER, chatgpt_plan_account_provider, is_chatgpt_plan_account_key,
 };
 use serde_json::{Value, json};
 
@@ -63,7 +63,7 @@ fn slot(key: &str, name: &str) -> String {
 fn record(entry: &Value) -> Option<(String, String)> {
     let key = entry["accountKey"]
         .as_str()
-        .filter(|key| is_chatgpt_account_key(key))?;
+        .filter(|key| is_chatgpt_plan_account_key(key))?;
     entry["sub"].as_str().filter(|sub| !sub.trim().is_empty())?;
     let text = |name: &str| {
         entry[name]
@@ -128,11 +128,16 @@ pub(crate) fn derive(builtin: &mut Value, accounts: &[ChatGptAccount]) {
                 if !template(&rule) {
                     return vec![rule];
                 }
+                // A template whose `config.access` is not an object (a broken operator builtin file) publishes no
+                // account entry: fail-closed, and no panic on the JSON index assignment below.
+                if !rule["config"]["access"].is_object() {
+                    return Vec::new();
+                }
                 accounts
                     .iter()
                     .map(|account| {
                         let mut next = rule.clone();
-                        next["providerId"] = json!(chatgpt_plan_provider(&account.key));
+                        next["providerId"] = json!(chatgpt_plan_account_provider(&account.key));
                         next["providerName"] = json!(account.label);
                         next["config"]["access"]["entitled"] = json!(account.entitled);
                         next
@@ -148,11 +153,12 @@ pub(crate) fn derive(builtin: &mut Value, accounts: &[ChatGptAccount]) {
                 if !template(&rule) {
                     return vec![rule];
                 }
+                // `providerId` matched, so the rule is an object and the assignment below cannot panic.
                 accounts
                     .iter()
                     .map(|account| {
                         let mut next = rule.clone();
-                        next["providerId"] = json!(chatgpt_plan_provider(&account.key));
+                        next["providerId"] = json!(chatgpt_plan_account_provider(&account.key));
                         next
                     })
                     .collect()
@@ -201,13 +207,9 @@ pub(crate) fn request_patch(model: &str) -> Value {
     Value::Object(patch)
 }
 
-/// AI SDK 3.0.65 `getOpenAILanguageModelCapabilities().isReasoningModel` (same rule as the Responses encoder).
+/// AI SDK 3.0.65 `getOpenAILanguageModelCapabilities().isReasoningModel` (the Responses encoder's own predicate).
 fn ai_sdk_reasoning_model(model: &str) -> bool {
-    use rust_cli_base::models::{GPT_5_CHAT, OPENAI_REASONING_PREFIXES};
-    OPENAI_REASONING_PREFIXES
-        .iter()
-        .any(|prefix| model.starts_with(prefix))
-        && !model.starts_with(GPT_5_CHAT)
+    rust_cli_base::models::openai_reasoning_model(model)
 }
 
 #[cfg(test)]

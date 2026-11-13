@@ -100,6 +100,15 @@ pub const GPT_5_CHAT: &str = "gpt-5-chat";
 /// OpenAI SDK 当作推理模型的前缀（system 用 developer 角色，docs/specs/rust-cli/model.md §10.2）。
 pub const OPENAI_REASONING_PREFIXES: [&str; 4] = ["o1", "o3", "o4-mini", GPT_5];
 
+/// OpenAI SDK `getOpenAILanguageModelCapabilities().isReasoningModel`: the Responses encoder (system role) and the
+/// ChatGPT Plan shaping (`include`) must agree on it, so both call this one predicate.
+pub fn openai_reasoning_model(model: &str) -> bool {
+    OPENAI_REASONING_PREFIXES
+        .iter()
+        .any(|prefix| model.starts_with(prefix))
+        && !model.starts_with(GPT_5_CHAT)
+}
+
 // ── 别的厂商 ──
 
 pub const KIMI_K3: &str = "kimi-k3";

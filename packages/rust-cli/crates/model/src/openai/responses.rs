@@ -45,11 +45,7 @@ impl Protocol for OpenAiResponses {
 
 /// OpenAI SDK `getOpenAILanguageModelCapabilities` 的推理模型判断（决定 system 用 developer 角色）。
 fn reasoning_model(model: &str) -> bool {
-    use rust_cli_base::models::{GPT_5_CHAT, OPENAI_REASONING_PREFIXES};
-    OPENAI_REASONING_PREFIXES
-        .iter()
-        .any(|prefix| model.starts_with(prefix))
-        && !model.starts_with(GPT_5_CHAT)
+    rust_cli_base::models::openai_reasoning_model(model)
 }
 
 /// 编码请求体。消费请求：文本移入请求体，不复制历史。

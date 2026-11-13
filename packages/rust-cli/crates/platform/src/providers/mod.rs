@@ -419,7 +419,7 @@ fn signature(inputs: &Inputs) -> Vec<u8> {
 }
 
 fn parse(inputs: &Inputs) -> Result<Snapshot, String> {
-    let builtin: Value = serde_json::from_slice(&inputs.builtin)
+    let mut builtin: Value = serde_json::from_slice(&inputs.builtin)
         .map_err(|error| format!("builtin provider config: {error}"))?;
     let personal: Value = serde_json::from_slice(&inputs.personal)
         .map_err(|error| format!("personal provider config: {error}"))?;
@@ -436,7 +436,8 @@ fn parse(inputs: &Inputs) -> Result<Snapshot, String> {
     let connections: HashMap<String, Vec<CatalogConnection>> =
         serde_json::from_value(inputs.account["connections"].clone()).unwrap_or_default();
     let chatgpt = crate::chatgpt::ChatGptAccount::from_json(&inputs.account["chatgpt"]);
-    let mut builtin_config = builtin["config"].clone();
+    // `builtin` is not read after this point: move the config out instead of deep-cloning up to 8 MiB.
+    let mut builtin_config = builtin["config"].take();
     crate::chatgpt::derive(&mut builtin_config, &chatgpt);
     let resolved = resolve::resolve(&builtin_config, &personal["config"], Some(&layer));
     Ok(catalog::snapshot(&resolved, &connections))

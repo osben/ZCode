@@ -25,7 +25,7 @@ fn secret() -> CredentialSecret {
 }
 
 /// K1 entitled with an email, K2 identity-only with only a name, K3 indexed without tokens.
-fn record() -> Value {
+fn credentials_file() -> Value {
     let index = json!([
         {"accountKey": K1, "sub": "user-1", "email": "one@example.com", "name": "One", "addedAt": "x"},
         {"accountKey": K2, "sub": "user-2", "email": "  ", "name": "Two"},
@@ -51,7 +51,7 @@ async fn store(dir: &std::path::Path, value: &Value) -> (CredentialStore, Storag
 #[tokio::test]
 async fn accounts_follow_the_node_listing() {
     let dir = tempfile::tempdir().unwrap();
-    let (signed_in, _) = store(dir.path(), &record()).await;
+    let (signed_in, _) = store(dir.path(), &credentials_file()).await;
     let credentials = signed_in.read().await.unwrap();
     assert_eq!(
         accounts(&credentials).await.unwrap(),
@@ -151,6 +151,37 @@ fn derivation_replaces_the_template_rule_and_clones_its_model_rules() {
     assert!(!empty.to_string().contains("\"account:chatgpt-plan"));
 }
 
+/// A broken operator builtin file (the template's `config` or `access` is not an object) publishes no account entry
+/// and does not panic.
+#[test]
+fn a_malformed_template_rule_is_dropped_without_a_panic() {
+    let account = ChatGptAccount {
+        key: K1.to_owned(),
+        label: "one".to_owned(),
+        entitled: true,
+    };
+    for config in [
+        json!("text"),
+        json!({"access": "chatgpt-account"}),
+        json!(null),
+    ] {
+        let mut builtin = json!({
+            "providerConfigRules": {"providerRules": [
+                {"providerId": CHATGPT_PLAN_PROVIDER, "config": config},
+                {"providerId": "other"},
+            ]},
+            "modelConfigRules": {"builtinProviderModelRules": [
+                {"providerId": CHATGPT_PLAN_PROVIDER, "modelId": "m"},
+            ]},
+        });
+        derive(&mut builtin, std::slice::from_ref(&account));
+        assert_eq!(
+            builtin["providerConfigRules"]["providerRules"],
+            json!([{"providerId": "other"}])
+        );
+    }
+}
+
 async fn registry(store: CredentialStore, paths: &StoragePaths) -> Registry {
     Registry::new(
         None,
@@ -176,7 +207,11 @@ async fn the_registry_publishes_one_entry_per_signed_in_account() {
     );
 
     // R5: an account signed in while running shows up on the next read.
-    write(paths.credentials().as_path(), record().to_string()).await;
+    write(
+        paths.credentials().as_path(),
+        credentials_file().to_string(),
+    )
+    .await;
     let second = registry.current().await;
     assert_eq!(second.revision, first.revision + 1);
     let k1 = format!("account:chatgpt-plan:{K1}");
@@ -218,7 +253,7 @@ async fn the_registry_publishes_one_entry_per_signed_in_account() {
 #[tokio::test]
 async fn an_unreadable_token_keeps_the_last_snapshot() {
     let dir = tempfile::tempdir().unwrap();
-    let mut value = record();
+    let mut value = credentials_file();
     let (credentials, paths) = store(dir.path(), &value).await;
     let registry = registry(credentials, &paths).await;
     let first = registry.current().await;

@@ -39,8 +39,9 @@ use rust_cli_base::secret::RedactedString;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::model::{ModelError, ModelSelection};
 use rust_cli_kernel_api::provider::{
-    Credential, EndpointQuery, HeaderRequest, HeaderSource, ModelCapabilities, ModelCatalog,
-    ModelDirectory, ModelEndpoint, ModelEndpoints, ModelLimits, TokenLimits, WireProtocol,
+    Credential, EndpointQuery, HeaderAccess, HeaderRequest, HeaderSource, ModelCapabilities,
+    ModelCatalog, ModelDirectory, ModelEndpoint, ModelEndpoints, ModelLimits, TokenLimits,
+    WireProtocol,
 };
 use rust_cli_net::Egress;
 use rust_cli_net::header;
@@ -227,8 +228,10 @@ impl Platform {
             let supplied = source
                 .request_auth(HeaderRequest {
                     selection: selection.clone(),
-                    account_type: account_type.clone(),
-                    mode: mode.clone(),
+                    access: HeaderAccess::Zhipu {
+                        account_type: account_type.clone(),
+                        mode: mode.clone(),
+                    },
                     session: session.cloned(),
                     rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
                 })
@@ -246,8 +249,7 @@ impl Platform {
             let supplied = source
                 .request_auth(HeaderRequest {
                     selection: selection.clone(),
-                    account_type: String::new(),
-                    mode: String::new(),
+                    access: HeaderAccess::ChatGptPlan,
                     session: session.cloned(),
                     rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
                 })

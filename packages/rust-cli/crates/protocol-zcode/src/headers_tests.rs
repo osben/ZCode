@@ -25,8 +25,10 @@ impl Service for Nothing {
 fn request(session: Option<&str>) -> HeaderRequest {
     HeaderRequest {
         selection: ModelSelection::new("account:zai-individual-coding-plan", GLM_5_3_ACCOUNT),
-        account_type: "zai".into(),
-        mode: "individual-coding-plan".into(),
+        access: HeaderAccess::Zhipu {
+            account_type: "zai".into(),
+            mode: "individual-coding-plan".into(),
+        },
         session: session.map(SessionId::new),
         rejected_fingerprint: Some("a".repeat(64)),
     }
@@ -99,8 +101,7 @@ mod chatgpt {
     fn plan(rejected: Option<&str>) -> HeaderRequest {
         HeaderRequest {
             selection: ModelSelection::new(PROVIDER, "gpt-6.1-sol"),
-            account_type: String::new(),
-            mode: String::new(),
+            access: HeaderAccess::ChatGptPlan,
             session: Some(SessionId::new("session_1")),
             rejected_fingerprint: rejected
                 .map(|key| rust_cli_base::hash::sha256_hex(key.as_bytes())),
@@ -219,11 +220,18 @@ mod chatgpt {
             message: "siwc_account_scope_invalidated".to_owned(),
         };
         assert_eq!(asking.await.unwrap().unwrap_err(), invalidated);
-        // A token whose scope was never seen: the Host is not asked at all.
+        // A token whose scope was never seen: the Host is not asked at all (nobody would answer, so a regression
+        // fails on the short timeout instead of hanging for the 180 s limit).
+        let unasked = |rejected: &'static str| {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                source.request_auth(plan(Some(rejected))),
+            )
+        };
         assert_eq!(
-            source
-                .request_auth(plan(Some("unknown")))
+            unasked("unknown")
                 .await
+                .expect("the Host was asked")
                 .unwrap_err(),
             invalidated
         );
@@ -236,7 +244,10 @@ mod chatgpt {
             .await;
         asking.await.unwrap().unwrap();
         assert_eq!(
-            source.request_auth(plan(Some("tok-3"))).await.unwrap_err(),
+            unasked("tok-3")
+                .await
+                .expect("the Host was asked")
+                .unwrap_err(),
             invalidated
         );
     }
