@@ -1,0 +1,36 @@
+[package]
+name = "rust-cli-acp"
+description = "External ACP agents (opencode, cursor, ...) driven over JSON-RPC stdio (specs/acp-agent-runtime.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+# Test double of an ACP agent (port of packages/services/test/fixtures/acp-mock-agent.mjs). Release builds
+# name `--bin zcode-rs`, so this binary is never packaged.
+[[bin]]
+name = "acp-mock-agent"
+path = "src/bin/acp_mock_agent.rs"
+doctest = false
+test = false
+
+[dependencies]
+rust-cli-base.workspace = true
+rust-cli-proc.workspace = true
+serde_json.workspace = true
+# launch_key = sha256(JSON.stringify(launch)), byte-identical to Node.
+sha2.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

@@ -111,6 +111,10 @@ pub struct MemoryStore {
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
     execution: Mutex<HashMap<SessionId, (crate::env::EnvPath, Option<String>)>>,
+    /// Fork: ACP session bindings (`fork_acp_session_binding`).
+    acp_bindings: Mutex<HashMap<SessionId, crate::store::AcpSessionBinding>>,
+    /// Fork: the next `set_acp_binding` fails ([`Self::fail_next_acp_binding_write`]).
+    fail_acp_binding: std::sync::atomic::AtomicBool,
 }
 
 impl MemoryStore {
@@ -127,6 +131,11 @@ impl MemoryStore {
     /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
     pub fn fail_next_execution_worktree(&self) {
         self.fail_execution.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `set_acp_binding` fails (a storage error); later writes work.
+    pub fn fail_next_acp_binding_write(&self) {
+        self.fail_acp_binding.store(true, Ordering::SeqCst);
     }
 
     /// Fork: the next `put_record` of `kind` fails (a storage error); other kinds and later writes work.
@@ -890,6 +899,49 @@ impl StoreQueries for MemoryStore {
         Ok(())
     }
 
+    async fn acp_binding(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::store::AcpSessionBinding>, StoreError> {
+        Ok(self.acp_bindings.lock_unpoisoned().get(session).cloned())
+    }
+
+    async fn set_acp_binding(
+        &self,
+        session: &SessionId,
+        binding: &crate::store::AcpSessionBinding,
+    ) -> Result<(), StoreError> {
+        if self.fail_acp_binding.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "ACP binding write failed".to_owned(),
+            });
+        }
+        self.acp_bindings
+            .lock_unpoisoned()
+            .insert(session.clone(), binding.clone());
+        Ok(())
+    }
+
+    /// The binding's agent; offered options and pending choices are not kept here (S6).
+    async fn acp_config(
+        &self,
+        session: &SessionId,
+    ) -> Result<crate::store::AcpSessionConfig, StoreError> {
+        Ok(crate::store::AcpSessionConfig {
+            agent_id: self
+                .acp_bindings
+                .lock_unpoisoned()
+                .get(session)
+                .map(|binding| binding.agent_id.clone()),
+            ..Default::default()
+        })
+    }
+
+    async fn clear_acp_binding(&self, session: &SessionId) -> Result<(), StoreError> {
+        self.acp_bindings.lock_unpoisoned().remove(session);
+        Ok(())
+    }
+
     /// Fork: the reserved row's profile, set once (the meta's `incognito` while it is `None`).
     async fn set_incognito(
         &self,
@@ -1050,4 +1102,35 @@ fn first_prompt(facts: &[Fact]) -> Option<String> {
         }
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod acp_tests {
+    use super::MemoryStore;
+    use crate::ids::SessionId;
+    use crate::store::{AcpSessionBinding, StoreQueries as _};
+
+    /// The trait contract: a bound session's config names the binding's agent (pending choices follow in S6).
+    #[tokio::test]
+    async fn the_acp_config_names_the_bound_agent() {
+        let store = MemoryStore::default();
+        let session = SessionId::new("s1");
+        assert_eq!(store.acp_config(&session).await.unwrap().agent_id, None);
+        let binding = AcpSessionBinding {
+            agent_id: "mock".to_owned(),
+            acp_session_id: "acp-1".to_owned(),
+            cwd: "/work".to_owned(),
+            launch_key: "key".to_owned(),
+        };
+        store.set_acp_binding(&session, &binding).await.unwrap();
+        assert_eq!(
+            store
+                .acp_config(&session)
+                .await
+                .unwrap()
+                .agent_id
+                .as_deref(),
+            Some("mock")
+        );
+    }
 }

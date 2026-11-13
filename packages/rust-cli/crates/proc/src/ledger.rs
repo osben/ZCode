@@ -33,6 +33,8 @@ pub enum Purpose {
     Bash,
     Hook,
     Mcp,
+    /// Fork: an external ACP agent process (rust-cli-acp).
+    Acp,
     /// Fork: a language server (specs/fork-rust-lsp.md "Pool"). A build without it skips these records.
     Lsp,
 }
@@ -43,15 +45,22 @@ impl Purpose {
             Purpose::Bash => "bash",
             Purpose::Hook => "hook",
             Purpose::Mcp => "mcp",
+            Purpose::Acp => "acp",
             Purpose::Lsp => "lsp",
         }
     }
 
     #[cfg(unix)]
     fn parse(name: &str) -> Option<Self> {
-        [Purpose::Bash, Purpose::Hook, Purpose::Mcp, Purpose::Lsp]
-            .into_iter()
-            .find(|purpose| purpose.as_str() == name)
+        [
+            Purpose::Bash,
+            Purpose::Hook,
+            Purpose::Mcp,
+            Purpose::Acp,
+            Purpose::Lsp,
+        ]
+        .into_iter()
+        .find(|purpose| purpose.as_str() == name)
     }
 }
 

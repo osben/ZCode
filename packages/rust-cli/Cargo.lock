@@ -1919,6 +1919,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-cli-acp"
+version = "0.1.0"
+dependencies = [
+ "rust-cli-base",
+ "rust-cli-proc",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "rust-cli-agents"
 version = "0.1.0"
 dependencies = [
@@ -2444,19 +2458,24 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "rust-cli-acp",
  "rust-cli-agents",
  "rust-cli-base",
  "rust-cli-compact",
  "rust-cli-context",
  "rust-cli-ext",
+ "rust-cli-fs",
  "rust-cli-hooks",
  "rust-cli-kernel-api",
  "rust-cli-policy",
+ "rust-cli-proc",
  "rust-cli-prompts",
  "rust-cli-query",
  "rust-cli-session",
  "rust-cli-tools",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",

@@ -41,6 +41,9 @@ pub struct Extensions {
     /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
     /// the app-server gives it.
     pub topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork: ACP external agents (the app-server gives it; specs/fork-rust-agent-parity.md "ACP external agents").
+    /// None: an `acp:` selection runs on the query loop like any provider.
+    pub acp: Option<crate::acp::AcpSetup>,
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): Read, Edit and Write report to it and the
     /// context builder asks it for the post-edit diagnostics. Only the app-server gives it.
     pub code_intelligence: Option<Arc<dyn CodeIntelligence>>,
@@ -58,6 +61,7 @@ impl Extensions {
             node_desktop: false,
             automation: None,
             topic_resources: None,
+            acp: None,
             code_intelligence: None,
         }
     }

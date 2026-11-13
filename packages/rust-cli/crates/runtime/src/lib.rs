@@ -6,6 +6,7 @@
 //!
 //! 每个会话一个 actor，运行在自己的子任务作用域里；内核释放时根作用域中止全部会话任务。
 
+mod acp;
 mod agents;
 mod assemble;
 mod catalog;
@@ -53,6 +54,7 @@ use table::{Closer, OpenSessions};
 
 use crate::assemble::SurfaceTraits;
 
+pub use acp::{AcpSetup, external_agent};
 pub use ext::{ExtConfig, Extensions};
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
 pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
@@ -215,6 +217,11 @@ impl LocalKernel {
         tasks: Arc<dyn TaskListStore>,
         extensions: Extensions,
     ) -> Self {
+        // Fork: an `acp:` selection never reaches a model provider; side callers fail closed (acp::guard).
+        let ports = Ports {
+            model: Arc::new(acp::ExternalAgentModelGuard { inner: ports.model }),
+            ..ports
+        };
         let scope = TaskScope::root("rust-cli", |panic| {
             tracing::error!(scope = %panic.scope, task = panic.task, message = %panic.message, "task panicked");
         });
@@ -267,6 +274,15 @@ impl LocalKernel {
             (&defaults, traits, extensions.node_desktop),
             &incognito,
         );
+        // Fork: ACP agent processes by session; a session close releases its process.
+        let acp_host = extensions.acp.clone().map(|setup| {
+            Arc::new(acp::AcpHost::new(
+                setup,
+                ports.store.clone(),
+                ports.ids.clone(),
+                scope.spawner(),
+            ))
+        });
         // Fork: built after the agents so a release also reaches them (their notice forwarders).
         let closer = Arc::new(Closer {
             sessions: Arc::downgrade(&sessions),
@@ -277,6 +293,7 @@ impl LocalKernel {
                 gate: gate.clone(),
                 mcp: ext.mcp().clone(),
                 agents: agents.signals(),
+                acp: acp_host.clone().map(|host| acp::AcpRelease { host }),
             },
         });
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
@@ -303,7 +320,16 @@ impl LocalKernel {
         late.bind(compactor.clone());
         let operations = parts.operations.clone();
         let parts = QueryParts { tools, ..parts };
-        let runner = agents.track(Arc::new(QueryLoop::new(parts)));
+        let main_loop: Arc<dyn QueryRunner> = Arc::new(QueryLoop::new(parts));
+        // Fork: ACP selections run on the agent process (specs/fork-rust-agent-parity.md "ACP external agents").
+        let main_loop: Arc<dyn QueryRunner> = match acp_host {
+            Some(host) => Arc::new(acp::ExternalAgentRunner {
+                inner: main_loop,
+                host,
+            }),
+            None => main_loop,
+        };
+        let runner = agents.track(main_loop);
         let detached = Arc::new(rust_cli_session::DetachedAsks::new(
             ports.store.clone(),
             ports.ids.clone(),

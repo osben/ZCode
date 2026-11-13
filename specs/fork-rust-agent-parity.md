@@ -28,7 +28,6 @@ These are JavaScript by nature or tied to Node-only runtimes. In Rust mode they 
 - JS plugin runtimes and plugin UI surfaces (`plugins/*`, `mcp/ui*`) beyond what `zcode-rs` `ext` already serves. Plugin management (the `plugins/*` methods of "F1+F2 forwarded methods" in `specs/fork-rust-node-helper.md`) is forwarded to the Node helper when the Host configures one; `mcp/ui*` and `plugins/mentionItems` are later helper families.
 - Dynamic workflows (`workflows/*`, `v4/conversation/workflowRun*`, `startSavedWorkflow`, `resumeWorkflowRun`, `amendWorkflowRunSettings`). Saved workflows (`workflows/*`) and run-history reads (`v4/conversation/workflowRun*`) are forwarded to the Node helper; running a workflow is the helper's last family (F5).
 - Office runtime, node-repl host.
-- ACP external agents (decision pending with the owner).
 
 ChatGPT Plan account models run in Rust hosted mode: `specs/fork-rust-chatgpt-plan.md` (standalone `zcode-rs` refuses them; the Host owns sign-in and refresh).
 
@@ -1303,6 +1302,224 @@ zcode-rs reads the agent profiles from `~/.zcode/agents` itself (`agents/src/cus
 ## Desktop credential cipher (`enc:v2:` bridge)
 
 See `specs/fork-rust-credential-cipher.md`: desktop `enc:v2:` credentials are decrypted by Main through `interaction/requestCredentialCipher`; standalone keeps the v1 codec and rejects v2.
+
+## ACP external agents (`acp:<agentId>` models)
+
+Decision (owner, 2026-11-13): ACP agents (opencode, cursor, …) run under both runtimes. The product
+contract is `specs/acp-agent-runtime.md`. This section names the owners in `zcode-rs` and the
+mechanics that differ from Node.
+
+ACP is agent-owned. In Node, the CLI worker holds the turn driver, the session pool, the reconcile,
+the config command handler, the binding tables in `db.sqlite` (`9003`–`9005`) and the projection
+fields. The Host holds only the agent records (`fork_acp_agents.json`), the catalog read RPC and
+the command gate. So `zcode-rs` ports the worker side, and the Host side stays as it is.
+
+### Owners in Rust mode
+
+| Fact                                                    | Owner                                                                                    | Stored in                                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Agent records (launch config, enabled)                  | Host Settings (`NodeForkAcpAgentStore`); `zcode-rs` only reads them, once per turn       | `fork_acp_agents.json` next to `provider_config.json`                                 |
+| ACP process, handshake, prompt, cancel, config snapshot | crate `rust-cli-acp` (`AcpRuntime`), one per ZCode session                               | memory                                                                                |
+| Runtime per session (reuse, replace, restart, stop)     | `AcpPool` in `runtime`, app-scoped; a slot is released when the kernel session closes    | memory                                                                                |
+| Binding, chosen values, choice before the first turn    | `node-store` fork methods over Node's tables                                             | `fork_acp_session_binding`, `fork_acp_session_choice` (created by Node `9003`–`9005`) |
+| Per-agent catalog                                       | shared file; writers are Host Settings Test and the agent turn, both under the file lock | `fork_acp_agent_catalog.json`                                                         |
+| Turn messages, tool rows, title, todos                  | session actor (`RunSink`), like any turn                                                 | `message`, `part`, `session`, Task v2 file                                            |
+| Projected selects, stall status, context-reset divider  | `protocol-zcode` projection (not persisted; the selects are seeded from the binding)     | none                                                                                  |
+| Admission of `acp:` commands                            | Host command gate, from runtime capability `externalAgentTurns`                          | none                                                                                  |
+
+### Event order
+
+```text
+sendText (acp:<id> selection) ─▶ Actor::submit_with ─▶ start_turn ─▶ TurnStarted, user message committed
+  ▼
+ExternalAgentRunner::run (runtime)  ── selection.provider starts with "acp:"? no ─▶ QueryLoop::run
+  │ commit prompt hook messages
+  │ read the agent record (missing / disabled ─▶ turn error)
+  │ AcpPool::acquire(session): reuse | replace (launch changed) | restart (failed) | spawn + handshake
+  │   handshake: initialize ─▶ session/load (binding matches) | session/new ─▶ start created|loaded|reset
+  │   binding write (merges the pending choice) ─▶ reconcile stored choices (set_config_option / set_mode)
+  │   catalog write ─▶ KernelEvent::ExternalAgentConfig when the offered snapshot changed
+  │ reset ─▶ KernelEvent::ExternalAgentContextReset (divider row)
+  ▼
+session/prompt(latest user text + current-turn images)        state: ready ─▶ prompting
+  │ agent_message_chunk / agent_thought_chunk ─▶ QueryEvent::Delta (text / thinking)
+  │ tool_call / tool_call_update / plan       ─▶ close the open text segment (commit an assistant message)
+  │                                              ─▶ QueryEvent::ToolStarted / ToolProgress / ToolFinished
+  │                                              ─▶ settled row committed as ContentBlock::ExternalTool
+  │ session/request_permission                ─▶ sink.ask(Permission, once) ─▶ allow_once | reject_once | cancelled
+  │ session_info_update.title                 ─▶ generated title (custom kept)
+  │ usage_update / prompt usage               ─▶ turn usage
+  │ silence ≥ 120 s / next frame              ─▶ KernelEvent::ExternalAgentStatus stalled / resumed
+  ▼
+stopReason ─▶ close open rows ─▶ commit the last segment ─▶ QueryStop::Completed ─▶ TurnFinished
+abort      ─▶ cancel pending asks (cancelled) ─▶ session/cancel ─▶ wait ≤ 10 s ─▶ kill tree
+           ─▶ rows closed "Cancelled" ─▶ interrupt marker ─▶ QueryStop::Aborted
+failure    ─▶ rows closed "The agent turn failed before this tool finished" ─▶ QueryError (Node message)
+```
+
+### Rules
+
+1. **Selection.** An `acp:<agentId>` provider with model id `<agentId>` is an ACP agent. `zcode-rs`
+   never asks the model catalog (`Platform::endpoint`) for it. The record is re-read from
+   `fork_acp_agents.json` at the start of every turn; a missing record fails the turn with
+   "X is no longer configured…", a disabled one with "X is turned off…" (Node driver text).
+2. **Platform.** ACP runs on macOS only, like Node's `acpAgentPlatformSupported`. `zcode-rs`
+   reports `externalAgentTurns: true` in `runtime/capabilities` only on macOS.
+3. **Dispatch.** `ExternalAgentRunner` wraps the main `QueryLoop` (`runtime/src/lib.rs`). Every
+   other path keeps its own runner. `transcript` delegates to the loop.
+4. **Prompt.** The prompt is the newest human input's text and its images from this turn, like Node.
+   Prompt hook messages are committed first, as in `QueryLoop`.
+5. **Rows are record-only.** An ACP tool or plan row is `ContentBlock::ExternalTool`, never
+   `ToolUse`. It is stored as Node's `tool` part (toolName `acp:<kind|other>`, or `TodoWrite` for a
+   plan; `state.title`; `metadata.externalAgent: true`) with a settled status, so the settle path
+   for tool results is not used. Hydration maps every part with `metadata.externalAgent` to
+   `ExternalTool`, including a Node-written session. Model normalization drops `ExternalTool`.
+   Text and reasoning of an ACP turn stay in model history (Node `selectToolPartsForHistory`).
+6. **Segments.** A tool or plan event closes the open text/reasoning segment, which is committed as
+   one assistant message. A row is committed when it settles: completed, failed, or closed at the
+   turn end. Live rows come from `QueryEvent::ToolStarted`/`ToolProgress`/`ToolFinished` keyed by a
+   `ToolUseId` minted per ACP `toolCallId`. Output is capped at 32 KiB plus "\n… [truncated]".
+   A process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
+7. **Plan.** An ACP `plan` is a `TodoWrite` row with input `{todos}` and writes the session todos
+   through the same owner as the `TodoWrite` tool. Status, priority and empty content follow Node.
+8. **Title.** An agent title is a generated title (`Fact::TitleGenerated`, `Source::Generated`); a
+   custom title is kept, an unchanged one is skipped. Title generation by a model is skipped for an
+   ACP session.
+9. **Permissions.** `session/request_permission` goes through `sink.ask` as a user-once permission
+   (`once: true`), never through the permission policy, so no mode answers it. `allow` →
+   `allow_once`, `deny` → `reject_once`; a cancelled or dropped ask answers `cancelled`. Asks that
+   are not live (another generation or session) answer `cancelled` and are never shown.
+10. **Failures.** Start failure, sign-in, agent died and other errors use Node's four texts
+    (`acp-external-agent-host.ts`). They end the turn as `Failed`.
+11. **Side callers.** Compaction, the goal verifier, goal continuation, cron/loop, notice turns and
+    subagent spawn refuse an ACP selection with Node's text "ACP agent X runs only interactive chat
+    turns; … Switch the model to continue.". The title model and memory side calls skip.
+12. **Usage.** ACP usage maps like Node (`thoughtTokens` → reasoning, `cachedRead/WriteTokens` →
+    cache) and is reported on `TurnFinished` only. No `model_usage` row is written, as in Node.
+13. **Config (S6).** `setExternalAgentConfigOption` follows Node's handler: envelope session check,
+    `acp:` model check, offered options from the snapshot or else the catalog, id and value
+    validation, no-op when unchanged, then the choice write, the display copy and the
+    `ExternalAgentConfig` event. The projection writes `config.externalAgentConfig` (Node
+    `externalAgentConfigStateSchema`), seeded from the binding's `config_options` on subscribe, and
+    `control.externalAgentStall` (`{agentId, since, silentMs}`), cleared by `resumed` and by the
+    turn's end. Error codes are Node's `config.invalid`, `config.notExternalAgent`,
+    `config.notAvailable`, `config.unchanged`.
+14. **Resume (S5).** The binding is written after every acquire. A cold start resumes only when the
+    agent, the cwd and the launch key all match. `launch_key` is
+    `sha256(JSON.stringify({agentId, command, args, env, cwd}))` with `env` as sorted `[k, v]` pairs,
+    byte-identical to Node, so a session bound by one runtime resumes under the other.
+15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
+    preparation creates them). Without them there is no binding and no resume, and a config write
+    answers `config.notAvailable`.
+16. **Catalog.** Writes take the Node-compatible directory lock (`fs::with_file_lock`), reread under
+    it, skip when equal, and write the file atomically with private permissions.
+17. **Child process.** Launch rules, the child env filter (credential-like keys dropped, loader keys
+    refused in overrides) and the timeouts are Node's (`packages/shared/src/acp-launch-rules`,
+    `acp-agent-runtime`). The process is spawned through `rust_cli_proc` as its own group and killed
+    as a tree. The client advertises no `fs` or `terminal` capability.
+18. **Gate.** `forkAgentRuntimeCommandGateError` admits `acp:` commands when the runtime reports
+    `externalAgentTurns: true`, and refuses them with
+    `proto.forkRustAgent.externalAgentUnsupported` otherwise.
+
+### Delivery status (2026-11-13)
+
+Delivered: rules 1–4, 9, 10, 12, 17, 18; rule 8 only for its last sentence (no model title for an
+ACP session); rule 14 writes and reads the binding (resume when agent, cwd and launch key match).
+
+Not yet ported, tracked as follow-ups:
+
+- **Rows (S3), rules 5–7.** Tool and plan events only close the open text segment; no
+  `ExternalTool` block, live tool rows, `TodoWrite` plan rows or todos yet. The agent's
+  `session_info_update` title is not applied (rule 8, first part).
+- **Resume and divider (S5).** No context-reset divider (`ExternalAgentContextReset`), no stall
+  status in the projection (a stall is logged only), no second-process `session/load` test.
+- **Config (S6), rules 13, 15, 16.** No `setExternalAgentConfigOption` handler, no pending-choice
+  reconcile, no catalog write and no `config.externalAgentConfig` projection. The Host gate admits
+  the command for a runtime with `externalAgentTurns`; `zcode-rs` answers it as an unknown command.
+
+Divergences from Node, by design of `zcode-rs`:
+
+- **Process lifetime.** The agent process lives as long as the kernel session. `session/close`
+  only drops the protocol bridge, so the process stops on `deleteSession` and on app-server exit
+  (the closer's `released` step), not on the desktop's session close like Node.
+- **Side callers.** Cron, notice/peer and continuation turns refuse with Node's turn text (rule
+  11). Compaction, the goal verifier, subagents and the other model side calls fail through
+  `ExternalAgentModelGuard` with "Model acp:X is an external agent; <caller> cannot run it
+  (external_agent_unsupported)" instead of Node's per-feature text. Bash-mode input is not refused.
+- **Usage.** Usage is stored on the turn's final assistant message, not reported separately on
+  `TurnFinished`. A turn whose last event is a tool or plan has no open segment, so its usage is
+  dropped until S3 commits rows.
+- **Stream close.** A closed stdout fails the prompt as "stopped during the turn" at once; Node does so
+  only when the process exits within the death grace and otherwise keeps the transport error text.
+- **Agent self-cancel.** An agent that answers `cancelled` without a Stop completes the turn; Node
+  (`external-agent-turn.ts`) ends it interrupted for any `cancelled` answer.
+
+Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs`, `runtime/src/acp/runner_tests.rs` and
+`acp_agent_turns.rs`):
+
+- Stop during the agent start ends the turn at once. The start runs in a kernel-scope task (a start
+  or restart is not safe to drop halfway) and finishes for the next turn.
+- The pump writes stdin from its own task, so an agent that stops reading cannot block Stop or the
+  teardown.
+- Lines an agent writes just before it exits are delivered before the exit fails the prompt.
+- An ask that arrives after Stop is withdrawn before its dialog opens.
+- A turn reserves its pool slot before the acquire task runs, and a release closes the slot, so a
+  session deleted in between starts no agent.
+- stderr lines are capped at 8 KiB (stdout frames at 2 MiB), so a runaway agent cannot grow memory.
+- A failed stdin write (the agent closed its stdin) fails the pending requests at once instead of
+  leaving the prompt waiting until Stop. Like a closed stdout, the exit then has the death grace: an
+  agent that exits within it is reported as exited with its code, one that stays alive fails the
+  stream with "ACP agent stdin closed".
+- Agent records are validated like Node's strict schema (agent id without whitespace, non-empty
+  provider name, env key pattern, no duplicate ids); an invalid file reads as empty.
+- Tool updates and permission requests without a `toolCallId` are dropped (an ask answers
+  `cancelled`), as the ACP SDK rejects them in Node.
+- After Stop the turn ends interrupted (interrupt marker, `Aborted`) whatever the agent answers,
+  as in Node (`external-agent-turn.ts`).
+- A text segment whose commit fails mid-turn fails the turn with that store error, like the query
+  loop: the prompt is cancelled as on Stop, asks are withdrawn, later segments are not written.
+- Stop is polled before agent updates, so a flood of updates cannot delay it.
+- A dropped `prompt()` future (its caller went away) marks the runtime `Failed`; the next prompt
+  restarts it instead of finding it `Prompting`.
+- `set_config_option` is refused unless the runtime is `Ready` (Node `runtime.ts`: "Cannot set a
+  config option while …").
+- An automatic turn refused for an ACP selection (rule 11) still commits its prompt hook messages.
+
+Known small gaps and follow-ups:
+
+- A Stop that lands while `prompt()` restarts a runtime that failed between the acquire and the
+  prompt is lost.
+- A write that reaches the pipe before the agent closes its stdin succeeds, and the agent never reads
+  it. With stdout open and the process alive, neither the exit nor a later write fails, and
+  `session/prompt` has no timeout, so the prompt waits until Stop. Node has the same window: its
+  stdin stream errors only on a failed write (`transport.ts`), and its stall watch only emits a
+  `stalled` status (`runtime-helpers.ts` `StallWatch`, `external-agent-turn.ts`); nothing fails the
+  prompt. No timeout is added on either side.
+- No idle reaping: an agent process stays resident until `deleteSession` or app exit (Node stops it
+  on the desktop's session close). Follow-up: an idle timeout that stops the runtime through the slot
+  gate; the binding lets the next turn resume.
+- Images stored as artifacts (large attachments) are not sent to the agent; only inline base64
+  images are.
+
+### Acceptance
+
+- Mock agent (`acp-mock-agent` test bin, integration tests over `zcode-rs app-server --stdio`):
+  "pong" streams and the turn completes; Stop during a hang ends the turn interrupted and the next
+  turn reuses or restarts the runtime; a tool, a plan and a title produce rows, todos and a
+  generated title; allow and deny reach the agent as `allow_once`/`reject_once`, and Stop during an
+  ask answers `cancelled`; a config choice before the first turn is applied by
+  `session/set_config_option`; a second app-server process resumes with `session/load`.
+- After an ACP turn with text, a tool, a plan and more text, switching to a ZCode model sends a
+  request without any `tool_use`/`tool_result` for those rows; the same holds for a Node-written
+  ACP session fixture.
+- `launch_key` of a fixed launch equals the digest Node computes.
+- The Host gate admits `acp:` commands for a runtime that reports `externalAgentTurns`, and refuses
+  them otherwise.
+- Live check (macOS, headless `zcode-rs app-server --stdio` with a temporary data dir): opencode and
+  cursor-agent answer a prompt (2026-11-13: both complete; opencode also ran a shell tool). Setting a
+  config option waits for S6.
+- Desktop E2E: the ACP desktop specs run only on macOS (`acp-agent-e2e.ts` skips elsewhere), so the
+  Linux E2E box does not cover them.
 
 ## Open gaps (not yet ported)
 

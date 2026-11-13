@@ -20,3 +20,15 @@ fn plugin_extension_summary_follows_the_node_helper() {
     assert_eq!(capabilities(false)["pluginExtensionSummary"], false);
     assert!(capabilities(true).get("pluginDiscoveryUi").is_none());
 }
+
+/// ACP rule 2 (specs/fork-rust-agent-parity.md): the Host admits `acp:` commands only where the agent reports it.
+#[test]
+fn external_agent_turns_are_reported_on_macos_only() {
+    // Independent of the Node helper: ACP runs in zcode-rs itself.
+    for node_helper in [false, true] {
+        assert_eq!(
+            capabilities(node_helper)["externalAgentTurns"],
+            cfg!(target_os = "macos")
+        );
+    }
+}

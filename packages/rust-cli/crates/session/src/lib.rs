@@ -10,6 +10,7 @@
 mod actor;
 mod agent_signals;
 mod append;
+mod automatic_turn;
 mod bash;
 mod checkpoints;
 mod child_live;
@@ -88,6 +89,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::actor::{Actor, Request};
+pub use crate::automatic_turn::automatic_turn_subject;
 pub use crate::detached::DetachedAsks;
 use crate::log::EventLog;
 pub use crate::peers::PeerDeps;

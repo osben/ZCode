@@ -70,6 +70,7 @@ import {
   supportsPluginDiscoveryUi,
   supportsPluginExtensionSummary,
   supportsHighspeedCardOwner,
+  supportsExternalAgentTurns,
 } from "./runtimeCapabilitySupport.js";
 import {
   forkAgentRuntimeCommandGateError,
@@ -7249,7 +7250,9 @@ export function createZCodeAgentService(
         }
       };
       const client = await measure("host.runtime", () => getClient(params));
-      const forkRuntimeGateError = forkAgentRuntimeCommandGateError(params.envelope);
+      const forkRuntimeGateError = await forkAgentRuntimeCommandGateError(params.envelope, {
+        externalAgentTurns: () => supportsExternalAgentTurns(client),
+      });
       if (forkRuntimeGateError) throw new Error(forkRuntimeGateError);
       // A new Host may connect to an old CLI; check the execution end first, so z.object does not silently drop state and then execute user input anyway.
       const genUiContext = (params.envelope.payload as { genUiContext?: unknown } | null)
