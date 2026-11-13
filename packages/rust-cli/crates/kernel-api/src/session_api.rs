@@ -226,6 +226,10 @@ pub enum Command {
     AdoptTitle {
         title: String,
     },
+    /// Fork: no model-generated title for this actor's lifetime (Node `titleGeneration: {enabled: false}`, the legacy
+    /// `session/create` field `titleGenerationEnabled: false` the desktop Host sends for automation runs,
+    /// specs/fork-rust-automations.md). The first input still names the session. Always `Accepted`.
+    DisableTitleGeneration,
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
         title: String,

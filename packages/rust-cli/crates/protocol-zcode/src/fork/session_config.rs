@@ -86,6 +86,27 @@ pub(super) async fn rename(live: &Bridged<Live>, envelope: &Envelope, revision: 
     kernel_ack(envelope, revision, "proto.invalidPayload", kernel)
 }
 
+/// The session's model, permission mode and plan switch as the session holds them. The projection learns of a switch
+/// only when its event arrives, so a switch back sent before that would compare against the stale value and answer
+/// `config.unchanged` while the session stays switched; the projection is the fallback when the actor cannot answer.
+pub(crate) async fn held_config(live: &Bridged<Live>) -> (ModelSelection, PermissionMode, bool) {
+    match live.handle.view().await {
+        Ok(view) => (view.selection, view.mode, view.plan),
+        Err(_) => live.sink.current_config(),
+    }
+}
+
+/// The switch gate never closes; were it closed, the switch is refused rather than run unserialized.
+fn switch_refused(envelope: &Envelope, revision: u64, reason: &str) -> Ack {
+    Ack::refused(
+        &envelope.command_id,
+        Status::Rejected,
+        "fault.command.inputRejected",
+        reason.to_owned(),
+        revision,
+    )
+}
+
 /// Same rule as Node `switchModelConfig`: a different model switches model and reasoning; the same
 /// model switches only an explicit, different reasoning level; anything else is `config.unchanged`.
 pub(super) async fn switch_model(live: &Bridged<Live>, envelope: &Envelope, revision: u64) -> Ack {
@@ -93,7 +114,43 @@ pub(super) async fn switch_model(live: &Bridged<Live>, envelope: &Envelope, revi
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let (current, _, _) = live.sink.current_config();
+    let _turn = match live.sink.config_switch().await {
+        Ok(turn) => turn,
+        Err(reason) => return switch_refused(envelope, revision, reason),
+    };
+    let (current, _, _) = held_config(live).await;
+    apply_model(live, envelope, revision, &current, body).await
+}
+
+/// Node `setThoughtLevel`: the reasoning level of the session's current model, read once inside the switch turn, so a
+/// concurrent model switch is neither reverted nor compared against a second read.
+pub(crate) async fn switch_thought(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    revision: u64,
+    thought: &str,
+) -> Ack {
+    let _turn = match live.sink.config_switch().await {
+        Ok(turn) => turn,
+        Err(reason) => return switch_refused(envelope, revision, reason),
+    };
+    let (current, _, _) = held_config(live).await;
+    let body = SwitchModelPayload {
+        provider: current.provider.clone(),
+        model: current.model.clone(),
+        thought: thought.to_owned(),
+    };
+    apply_model(live, envelope, revision, &current, body).await
+}
+
+/// The `switchModelConfig` decision against the config held when the switch turn started.
+async fn apply_model(
+    live: &Bridged<Live>,
+    envelope: &Envelope,
+    revision: u64,
+    current: &ModelSelection,
+    body: SwitchModelPayload,
+) -> Ack {
     let thought = body.thought.trim();
     let identity_changed = current.provider != body.provider || current.model != body.model;
     let thought_changed = !thought.is_empty() && current.reasoning.as_deref() != Some(thought);
@@ -118,7 +175,11 @@ pub(super) async fn switch_mode(live: &Bridged<Live>, envelope: &Envelope, revis
         Err(ack) => return *ack,
     };
     let handle = live.handle.as_ref();
-    let (_, current_mode, plan) = live.sink.current_config();
+    let _turn = match live.sink.config_switch().await {
+        Ok(turn) => turn,
+        Err(reason) => return switch_refused(envelope, revision, reason),
+    };
+    let (_, current_mode, plan) = held_config(live).await;
     if body.mode == "plan" {
         if plan {
             return unchanged(envelope, revision);
@@ -189,6 +250,7 @@ pub(super) async fn compact(
             requested: "queue",
             admitted,
             attachments: Vec::new(),
+            automation: None,
         },
     );
     // The App pins the Composer selection on the compaction (`payload.modelSelection`); a queued
@@ -207,6 +269,8 @@ pub(super) async fn compact(
             Some(rust_cli_kernel_api::session_api::InputExecution {
                 state: rust_cli_kernel_api::permission::ExecutionState { mode, plan },
                 selection: Some(chosen),
+                limits: Default::default(),
+                keeps_session_state: false,
             })
         }
         None => None,

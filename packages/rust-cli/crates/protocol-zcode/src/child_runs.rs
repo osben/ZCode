@@ -239,6 +239,7 @@ impl ChildRuns {
                 seq: reading.seq,
                 now,
                 provider: &reading.provider,
+                automation: None,
             },
         );
         if finished {
@@ -337,6 +338,7 @@ impl ChildRuns {
                 seq: nested_seq.unwrap_or_default(),
                 now: at.now,
                 provider: at.provider,
+                automation: None,
             };
             owner.telemetry.subagents(&[link], &at, out);
         }

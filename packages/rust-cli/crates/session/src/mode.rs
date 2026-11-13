@@ -77,8 +77,9 @@ impl Actor {
         {
             self.select_model(None, selection).await?;
         }
+        // Fork: an input that named no mode or plan only recorded the state it was submitted under.
         let next = execution.state;
-        if next != self.execution {
+        if !execution.keeps_session_state && next != self.execution {
             let save = next.mode != self.execution.mode;
             self.apply_with(None, next, save, false).await?;
         }

@@ -484,6 +484,14 @@ impl Pipeline {
     }
 }
 
+/// The answer to a tool the session does not offer (the incognito gate and the turn limits), the text an unregistered
+/// tool gets.
+fn no_such_tool(name: &str) -> ToolOutput {
+    error(format!(
+        "<tool_use_error>Error: No such tool available: {name}</tool_use_error>"
+    ))
+}
+
 #[async_trait]
 impl ToolExecutor for Pipeline {
     async fn execute(
@@ -499,10 +507,18 @@ impl ToolExecutor for Pipeline {
             .is_some_and(|gate| gate.hides(&context.session, tool.as_ref()))
         {
             // Same answer as a tool that is not registered: the session never had it.
-            return ToolExecution::output(error(format!(
-                "<tool_use_error>Error: No such tool available: {}</tool_use_error>",
-                tool.name()
-            )));
+            return ToolExecution::output(no_such_tool(tool.name()));
+        }
+        // Fork: a tool the running turn hides (an automation turn's mutation tools, the Host's disallowlist,
+        // CronPauseSelf outside an automation turn) answers like an unregistered one when the model names it anyway
+        // (specs/fork-rust-automations.md). Without a session view the turn's limits are unknown: the automation
+        // tools fail closed.
+        let hidden = match context.session_ops.view().await {
+            Some(view) => view.turn.hides(tool.name()),
+            None => rust_cli_kernel_api::turn_limits::TurnLimits::hides_without_view(tool.name()),
+        };
+        if hidden {
+            return ToolExecution::output(no_such_tool(tool.name()));
         }
         let mut messages = HookMessages::default();
         let (input, call) = match self

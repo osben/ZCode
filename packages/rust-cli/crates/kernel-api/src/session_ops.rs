@@ -39,6 +39,12 @@ pub struct RunView {
     /// Fork: the workspace is the session's execution worktree (a subagent: its parent's), so a root that is gone
     /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then).
     pub execution_worktree: bool,
+    /// Fork: the limits of the running turn (automation id, hidden tools; specs/fork-rust-automations.md). Default
+    /// outside a turn the Host dispatched, and always for a subagent: like Node, a child run takes the session's tool
+    /// config, not the turn's. Node registers no Cron tool for a subagent child (`runtime-tools.ts`
+    /// `mainAutomationToolsIncluded`); slice 2 (#449: `agents/src/spawn.rs` `WithoutCron`, `ToolSet::without_cron`)
+    /// does the same for desktop subagents and forks. Until it lands, the local Cron tools stay offered to subagents.
+    pub turn: crate::turn_limits::TurnLimits,
 }
 
 impl RunView {
@@ -53,6 +59,7 @@ impl RunView {
             selection: None,
             goal: None,
             execution_worktree: false,
+            turn: Default::default(),
         }
     }
 }
