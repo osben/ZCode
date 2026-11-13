@@ -127,8 +127,7 @@ found`) before it is opened. `setThoughtLevel` reads the model from the session 
    Known boundary: subagents take the session's tool config, not the turn's (Node child runtimes read
    `config.toolDisallowlist`). Node registers no Cron tool for a `subagent_child` (`runtime-tools.ts`
    `mainAutomationToolsIncluded`); slice 2 (#449) does the same for desktop subagents and forks (`agents/src/spawn.rs`
-   `WithoutCron` and `ToolSet::without_cron`), so until it lands a subagent of a run can still see the local Cron
-   tools.
+   `WithoutCron` and `ToolSet::without_cron`), so a subagent of a run sees no Cron tool.
    Telemetry (Node `automationAdmission`): the run's `turn.started` fact carries `automationId`, and `taskTrigger`
    (`manual` / `schedule` plus `scheduledAt`) when its `sourceCommandId` is that automation's run id
    (`parseAutomationRunId`). A run gets no renderer send acknowledgement, so the Host seeds the run's `agent_step` /

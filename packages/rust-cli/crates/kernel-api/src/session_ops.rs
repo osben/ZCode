@@ -43,7 +43,7 @@ pub struct RunView {
     /// outside a turn the Host dispatched, and always for a subagent: like Node, a child run takes the session's tool
     /// config, not the turn's. Node registers no Cron tool for a subagent child (`runtime-tools.ts`
     /// `mainAutomationToolsIncluded`); slice 2 (#449: `agents/src/spawn.rs` `WithoutCron`, `ToolSet::without_cron`)
-    /// does the same for desktop subagents and forks. Until it lands, the local Cron tools stay offered to subagents.
+    /// does the same for desktop subagents and forks, so a subagent of an automation run has no Cron tool.
     pub turn: crate::turn_limits::TurnLimits,
 }
 
