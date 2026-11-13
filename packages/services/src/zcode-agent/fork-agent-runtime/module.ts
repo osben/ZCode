@@ -4,7 +4,7 @@
  */
 export const servicesForkAgentRuntimeModule = {
   id: "services-fork-agent-runtime",
-  requires: ["shared"],
+  requires: ["shared", "fork-rust-helper-shared"],
   provides: ["services-fork-agent-runtime"],
   publicEntrypoints: ["contract.ts"],
 } as const;

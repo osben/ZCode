@@ -19,6 +19,7 @@ import {
   zcodeAutomationUpdateResultSchema,
   zcodeProviderRefreshRegistryParamsSchema,
   zcodeProviderRuntimeHeadersResponseSchema,
+  zcodeProviderTestModelConnectivityParamsSchema,
   zcodeProviderUpdateAccountConfigParamsSchema,
   zcodeRuntimeCapabilitiesParamsSchema,
   zcodeSessionCancelBackgroundTaskParamsSchema,
@@ -30,6 +31,10 @@ import {
   zcodeSessionSetModeParamsSchema,
   zcodeSessionSetModelParamsSchema,
   zcodeSessionSetThoughtLevelParamsSchema,
+  zcodeTopicResourceCancelResultSchema,
+  zcodeTopicResourceReadResultSchema,
+  zcodeWorkspaceCancelGenerateTextParamsSchema,
+  zcodeWorkspaceGenerateTextParamsSchema,
   zcodeWorkspaceReadPresentationParamsSchema,
   zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
   zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,
@@ -55,6 +60,7 @@ import {
 // The methods whose params zcode-rs validates; a method not listed here is not checked.
 const METHODS = {
   "provider/refreshRegistry": zcodeProviderRefreshRegistryParamsSchema,
+  "provider/testModelConnectivity": zcodeProviderTestModelConnectivityParamsSchema,
   "provider/updateAccountConfig": zcodeProviderUpdateAccountConfigParamsSchema,
   "runtime/capabilities": zcodeRuntimeCapabilitiesParamsSchema,
   "session/cancelBackgroundTask": zcodeSessionCancelBackgroundTaskParamsSchema,
@@ -74,6 +80,9 @@ const METHODS = {
   "v4/conversation/subscribe": v4ConversationSubscribeParamsSchema,
   "v4/conversation/unsubscribe": v4ConversationUnsubscribeParamsSchema,
   "v4/sessionsIndex/reconcile": sessionsIndexReconcileParamsSchema,
+  "workspace/cancelGenerateText": zcodeWorkspaceCancelGenerateTextParamsSchema,
+  // The `prompt`-or-`messages` refine is not representable; zcode-rs checks it by hand (fork/workspace_model.rs).
+  "workspace/generateText": zcodeWorkspaceGenerateTextParamsSchema,
   "workspace/readPresentation": zcodeWorkspaceReadPresentationParamsSchema,
   "workspace/updateDynamicWorkflowPolicy": zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
   "workspace/updateInteractionPreferences": zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,
@@ -92,6 +101,9 @@ const REPLIES = {
   "interaction/requestProviderRuntimeHeaders": zcodeProviderRuntimeHeadersResponseSchema,
   // Desktop credentials: the Host's answer to the Rust agent's encrypt/decrypt request (specs/fork-rust-credential-cipher.md).
   "interaction/requestCredentialCipher": credentialCipherReplySchema,
+  // Topic resources: the Host's answers to ReadTopicResource's read and cancel (specs/fork-rust-topic-resource.md).
+  "topic/resource/read": zcodeTopicResourceReadResultSchema,
+  "topic/resource/cancel": zcodeTopicResourceCancelResultSchema,
 };
 
 const schemaPath = fileURLToPath(

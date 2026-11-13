@@ -60,8 +60,10 @@ mod pipeline_machine;
 mod plan_mode;
 mod policy_filter;
 mod read;
+// Fork: specs/fork-rust-topic-resource.md.
 mod read_pdf;
 mod read_support;
+mod read_topic_resource;
 mod registry;
 mod report_findings;
 mod schedule_wakeup;
@@ -111,6 +113,7 @@ pub use pipeline::Pipeline;
 pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use policy_filter::PolicyFiltered;
 pub use read::ReadTool;
+pub use read_topic_resource::ReadTopicResourceTool;
 pub use registry::BuiltinTools;
 pub use report_findings::ReportFindingsTool;
 pub use schedule_wakeup::ScheduleWakeupTool;

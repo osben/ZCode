@@ -227,6 +227,12 @@ impl Credentials {
         }
     }
 
+    /// Fork: whether a key holds a string value, without decrypting it (ChatGPT Plan token presence,
+    /// specs/fork-rust-chatgpt-plan.md rule 2: the agent never needs the token itself to list an account).
+    pub fn has(&self, key: &str) -> bool {
+        self.record.get(key).is_some_and(Value::is_string)
+    }
+
     /// 写入一个已经加密好的值（[`CredentialStore::seal`]，在拿文件锁之前加密：Node 的顺序）。
     pub fn put_sealed(&mut self, key: &str, sealed: String) {
         self.record.insert(key.to_owned(), Value::String(sealed));

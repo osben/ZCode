@@ -19,6 +19,7 @@ fn endpoint(protocol: WireProtocol) -> ModelEndpoint {
         body_patches: Vec::new(),
         capabilities: ModelCapabilities::default(),
         renewable: false,
+        compress_body_over: None,
     }
 }
 

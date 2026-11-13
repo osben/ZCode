@@ -297,7 +297,10 @@ async fn an_injected_header_source_supplies_account_credentials() {
         seen[1].rejected_fingerprint.as_deref(),
         Some(token::fingerprint("sk-host-1").as_str())
     );
-    assert!(!seen[0].account_type.is_empty() && !seen[0].mode.is_empty());
+    assert!(
+        matches!(&seen[0].access, HeaderAccess::Zhipu { account_type, mode }
+        if !account_type.is_empty() && !mode.is_empty())
+    );
     // API key 的 provider 照旧用配置里的 key，不问来源。
     let personal = platform
         .endpoint(EndpointQuery {
@@ -429,4 +432,116 @@ async fn a_first_read_that_is_unreadable_keeps_the_api_key_models() {
             .unwrap(),
         record
     );
+}
+
+/// Fork: one entitled ChatGPT Plan account (specs/fork-rust-chatgpt-plan.md).
+const CHATGPT_KEY: &str = "0123456789abcdef";
+
+async fn chatgpt_signed_in(paths: &StoragePaths) -> String {
+    let index = json!([{"accountKey": CHATGPT_KEY, "sub": "user-1", "email": "one@example.com"}]);
+    write(
+        paths.credentials().as_path(),
+        json!({
+            "oauth:chatgpt:accounts": index.to_string(),
+            format!("oauth:chatgpt:{CHATGPT_KEY}:access_token"): "at-1",
+            format!("oauth:chatgpt:{CHATGPT_KEY}:scopes"): "openid chatgpt.tokens.use.direct",
+        })
+        .to_string(),
+    )
+    .await;
+    rust_cli_base::account::chatgpt_plan_account_provider(CHATGPT_KEY)
+}
+
+/// R14: standalone `zcode-rs` has no Host to ask, so a ChatGPT Plan request is refused (the token is never read).
+#[tokio::test]
+async fn standalone_refuses_chatgpt_plan_models() {
+    let dir = tempfile::tempdir().unwrap();
+    let (platform, paths) = platform(dir.path()).await;
+    let provider = chatgpt_signed_in(&paths).await;
+    assert!(
+        platform
+            .catalog()
+            .await
+            .models
+            .iter()
+            .any(|model| model.provider == provider && model.model == "gpt-6.1-sol")
+    );
+    let error = platform
+        .endpoint(EndpointQuery::new(&selection(
+            &provider,
+            "gpt-6.1-sol",
+            Some("high"),
+        )))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ModelError::Authentication {
+            message:
+                "chatgpt_plan_host_required: ChatGPT Plan models need the ZCode app in Rust mode"
+                    .to_owned(),
+        }
+    );
+}
+
+/// R6 (platform half) and R10: hosted, the token comes from the Host by provider id (no zhipu account fields); the
+/// endpoint is renewable, compresses over 1 MiB, and its last patch is the SIWC shaping.
+#[tokio::test]
+async fn hosted_chatgpt_plan_requests_ask_the_host_and_shape_the_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let (platform, paths) = platform(dir.path()).await;
+    let source = Arc::new(Supplied(std::sync::Mutex::new(Vec::new())));
+    let platform = platform.with_header_source(source.clone());
+    let provider = chatgpt_signed_in(&paths).await;
+    let select = selection(&provider, "gpt-6.1-sol", Some("high"));
+    let endpoint = platform
+        .endpoint(EndpointQuery::new(&select))
+        .await
+        .unwrap();
+    assert_eq!(
+        endpoint.credential,
+        Credential::ApiKey(RedactedString::new("sk-host-1"))
+    );
+    assert!(endpoint.renewable);
+    assert_eq!(endpoint.compress_body_over, Some(1_048_576));
+    assert_eq!(endpoint.protocol, WireProtocol::OpenAiResponses);
+    let seen = source.0.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].selection.provider, provider);
+    assert_eq!(seen[0].access, HeaderAccess::ChatGptPlan);
+    // The bundled option maps (as Node applies them, before the SIWC shaping): effort, then the output cap.
+    assert_eq!(endpoint.body_patches.len(), 3);
+    assert_eq!(
+        endpoint.body_patches[0],
+        json!({"reasoning": {"effort": "high"}})
+    );
+    assert!(endpoint.body_patches[1]["max_output_tokens"].is_u64());
+    let shaping = endpoint.body_patches.last().unwrap();
+    for field in [
+        "max_output_tokens",
+        "temperature",
+        "metadata",
+        "user",
+        "previous_response_id",
+    ] {
+        // An explicit null (RFC 7396 removal), not a missing key (field left untouched).
+        assert_eq!(
+            shaping.get(field),
+            Some(&serde_json::Value::Null),
+            "{field}"
+        );
+    }
+    assert_eq!(shaping["store"], false);
+    assert_eq!(shaping["stream"], true);
+    // gpt-6.x is not an AI SDK reasoning model: no `include`. gpt-5.6 is, so `include` stays.
+    assert_eq!(shaping.get("include"), Some(&serde_json::Value::Null));
+    let older = platform
+        .endpoint(EndpointQuery::new(&selection(
+            &provider,
+            "gpt-5.6-sol",
+            None,
+        )))
+        .await
+        .unwrap();
+    assert!(older.body_patches.last().unwrap().get("include").is_none());
 }

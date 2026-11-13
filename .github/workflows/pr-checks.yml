@@ -196,8 +196,9 @@ jobs:
       - name: Build workspace packages needed by unit tests
         # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
         # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
+        # The fork Rust helper test imports the run-launch chain, whose entry is dynamic-workflow-runtime's dist.
         run: >
-          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters --filter @zcode/e2e-report build
+          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/dynamic-workflow-runtime --filter @zcode/adapters --filter @zcode/e2e-report build
 
       - name: Build official plugin runtimes needed by unit tests
         # bootstrap official-plugin-definitions.ts requires built artifacts that are not committed:

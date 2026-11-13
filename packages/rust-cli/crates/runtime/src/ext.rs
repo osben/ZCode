@@ -8,6 +8,7 @@ use rust_cli_ext::Plugins;
 use rust_cli_hooks::PluginHooks;
 use rust_cli_kernel_api::automation::AutomationPort;
 use rust_cli_kernel_api::cron_store::CronStore;
+use rust_cli_kernel_api::topic_resource::TopicResources;
 
 pub use rust_cli_ext::ExtConfig;
 
@@ -35,6 +36,9 @@ pub struct Extensions {
     /// are Node's five sending to it instead of this process's cron (`cron_store` is then None, so nothing fires
     /// twice); ScheduleWakeup is unchanged.
     pub automation: Option<Arc<dyn AutomationPort>>,
+    /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
+    /// the app-server gives it.
+    pub topic_resources: Option<Arc<dyn TopicResources>>,
 }
 
 impl Extensions {
@@ -48,6 +52,7 @@ impl Extensions {
             monitor: false,
             node_desktop: false,
             automation: None,
+            topic_resources: None,
         }
     }
 }

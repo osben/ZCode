@@ -17,10 +17,12 @@ use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
-    Context, Defaults, HostAutomations, HostCredentialCipher, HostHeaders, Startup,
+    Context, Defaults, HostAutomations, HostCredentialCipher, HostHeaders, HostTopicResources,
+    NetworkCapture, Startup,
 };
 
 use crate::assemble::{self, Controller};
+use crate::frontends::node_helper;
 use crate::process::{ControllerRun, Start};
 
 /// 退出时等进程级任务收尾的上限（存活的上限，不用来同步状态）。
@@ -84,8 +86,17 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
     let (peer, writer) =
         connection::start(tokio::io::stdout(), &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, run.clock.clone()));
+    // Fork: the Network panel capture exists before the reader starts (specs/fork-rust-network-capture.md).
+    let capture = Arc::new(NetworkCapture::new(
+        context.peer.clone(),
+        run.clock.clone(),
+        scope.spawner(),
+        std::process::id(),
+    ));
     let desktop_context = parsed.surface.as_deref() == Some("desktop");
-    let result = serve(&run, context, scope.spawner(), desktop_context).await;
+    let result = serve(&run, context, &capture, scope.spawner(), desktop_context).await;
+    // Node `disconnectClient`: the capture stops with the connection.
+    capture.set(None);
     // 写者写完队列里剩下的帧再退出。
     drop(writer);
     let _ = scope.close(SCOPE_CLOSE_GRACE).await;
@@ -95,6 +106,7 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
 async fn serve(
     run: &ControllerRun,
     context: Arc<Context>,
+    capture: &Arc<NetworkCapture>,
     spawner: rust_cli_base::Spawner,
     desktop_context: bool,
 ) -> Result<()> {
@@ -115,7 +127,8 @@ async fn serve(
         rust_cli_protocol_core::connection::serve(
             tokio::io::BufReader::new(tokio::io::stdin()),
             context.peer.clone(),
-            deferred,
+            // Fork: the capture control is applied in arrival order while the kernel is still being assembled.
+            rust_cli_protocol_zcode::with_network_capture(deferred, capture.clone()),
             spawner.clone(),
             Options::default(),
         ),
@@ -124,6 +137,10 @@ async fn serve(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
         Arc::new(HostAutomations::new(context.clone())),
+        // Fork: every observed request of this process reaches the capture (MCP is built unobserved), from the moment
+        // the egress exists.
+        Arc::new(CaptureObserver(capture.clone())),
+        Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
@@ -154,9 +171,18 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
+    // Fork: the Node helper for the JS-only method families, when the Host set its command (Rust mode only).
+    node_helper::install(
+        &context,
+        facts.process.env.raw(node_helper::COMMAND_ENV),
+        &facts.process.temp,
+        &spawner,
+    );
     // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
     context.set_mcp_processes(opened.mcp.clone());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
+    // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
+    context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
     let defaults = Defaults {
@@ -179,6 +205,15 @@ async fn serve(
         () = stop.token.cancelled() => {}
     }
     Ok(())
+}
+
+/// Fork: the egress observer that feeds the Network panel capture.
+struct CaptureObserver(Arc<NetworkCapture>);
+
+impl rust_cli_net::RequestObserver for CaptureObserver {
+    fn request(&self, method: &str, url: &str) {
+        self.0.record(method, url);
+    }
 }
 
 #[cfg(test)]

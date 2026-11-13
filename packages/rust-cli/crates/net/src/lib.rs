@@ -32,7 +32,7 @@ pub mod uds;
 pub mod websocket;
 
 pub use bytes::Bytes;
-pub use egress::{Egress, NetworkPolicy};
+pub use egress::{Egress, NetworkPolicy, RequestObserver};
 pub use error::NetError;
 pub use http::{ERROR_BODY_LIMIT, HeaderValue, HttpRequest, HttpResponse, Method, ResponseHeaders};
 pub use no_proxy::NoProxy;

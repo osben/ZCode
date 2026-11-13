@@ -16,7 +16,7 @@ pub const TEXT: &str = "text";
 pub const QUOTES: &str = "conversationQuotes";
 /// The Highspeed card frozen on a queued input; dropped when the model changes (Node `dropHighspeed`).
 pub const HIGHSPEED: &str = "highspeed";
-/// A bot-group input's source; kept as stored, never produced here.
+/// A bot-group input's source, as the Host sent it with `sendText`; never produced here.
 pub const BOT_GROUP_SOURCE: &str = "botGroupSource";
 /// The App's model selection, as sent.
 pub const MODEL_SELECTION: &str = "modelSelection";
@@ -87,6 +87,11 @@ impl InputIntent {
     /// The input's structured source, as stored; absent when the user typed it.
     pub fn source(&self) -> Option<&Value> {
         self.get(SOURCE)
+    }
+
+    /// A bot-group input's source, as stored (specs/fork-rust-topic-resource.md).
+    pub fn bot_group_source(&self) -> Option<&Value> {
+        self.get(BOT_GROUP_SOURCE)
     }
 
     /// Node's rows show `intent.text` instead of the message text when the intent has quotes or a bot source
