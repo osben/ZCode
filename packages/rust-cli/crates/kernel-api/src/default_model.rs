@@ -1,4 +1,5 @@
-//! 新会话的缺省模型（docs/specs/rust-cli/performance.md §12.3，工作线 F140）：可以晚到的值，只定一次。
+//! 新会话的缺省模型（docs/specs/rust-cli/performance.md §12.3，工作线 F140）：可以晚到的值。A degraded settlement may be
+//! revised once the credentials are readable (fork spec `fork-rust-credential-cipher.md` F3); readers see the latest.
 //!
 //! 以前入口等模型目录选出缺省模型（每次启动都联网查套餐，约 400 ms）才建内核与 TUI，第一帧跟着等。现在 TUI 模式在后台
 //! 选，内核与 TUI 拿到的是这个值：定下之前 [`DefaultModel::current`] 是暂定值（上次启动的结论，§12.4）或空选择，
@@ -21,7 +22,7 @@ pub fn unselected() -> ModelSelection {
 #[derive(Clone)]
 pub struct DefaultModel(watch::Receiver<State>);
 
-/// 定下缺省模型的一方：只能定一次；没定就释放时，等的一方按空选择返回。
+/// 定下缺省模型的一方：没定就释放时，等的一方按空选择返回。Settling again revises the value for later readers.
 pub struct SettleDefault(watch::Sender<State>);
 
 /// 现在的选择（定下之前是暂定值或空选择）与定下了没有。
@@ -96,8 +97,8 @@ impl fmt::Debug for DefaultModel {
 }
 
 impl SettleDefault {
-    /// 定下缺省模型。
-    pub fn settle(self, selection: ModelSelection) {
+    /// 定下缺省模型（or revise a settled one: only readers after this call see the new value）。
+    pub fn settle(&self, selection: ModelSelection) {
         self.0.send_replace(State {
             selection,
             settled: true,

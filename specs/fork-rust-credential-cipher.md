@@ -319,6 +319,10 @@ keeps running in the `default-model` scope (TUI and app-server alike, held by `B
 Only sessions created after the revision take the new default. Existing sessions keep their selection. The
 app-server's `Defaults.selection` becomes the shared `DefaultModel`, read at each session creation.
 
+A degraded choice that finds no model does not write the model port's permanent "no model" reason
+(`Assembled::late`): it would outlive the recovery. Until then, the endpoint lookup reports that the credentials could
+not be read.
+
 ```mermaid
 sequenceDiagram
   participant T as default-model task

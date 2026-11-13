@@ -216,6 +216,55 @@ fn the_effort_flag_sets_the_new_session_level() {
     );
 }
 
+/// A chooser that answers with `outcomes` in turn (the last one repeats); `readable` resolves when the test opens
+/// the gate.
+fn scripted(
+    flags: &memory::Flags,
+    outcomes: Vec<(ModelSelection, bool)>,
+    gate: &Arc<tokio::sync::Notify>,
+) -> (Chosen, Arc<std::sync::atomic::AtomicUsize>) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let choose: Choose = {
+        let calls = calls.clone();
+        Arc::new(move || {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (selection, degraded) = outcomes[n.min(outcomes.len() - 1)].clone();
+            async move {
+                Settled {
+                    selection,
+                    degraded,
+                }
+            }
+            .boxed()
+        })
+    };
+    let readable: Readable = {
+        let gate = gate.clone();
+        Arc::new(move || {
+            let gate = gate.clone();
+            async move { gate.notified().await }.boxed()
+        })
+    };
+    (
+        Chosen::Later {
+            flags: flags.clone(),
+            choose,
+            readable,
+        },
+        calls,
+    )
+}
+
+async fn revised_to(default: &DefaultModel, want: &ModelSelection) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while &default.current() != want {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the default is revised");
+}
+
 /// A default settled while the credentials are unreadable (no account models in the catalog) is not remembered:
 /// the remembered account model stays the remembered one, and a readable settlement does remember.
 #[tokio::test]
@@ -231,18 +280,8 @@ async fn a_default_settled_while_credentials_are_unreadable_is_not_remembered() 
     memory::remember(path.as_path(), &flags, &remembered).await;
 
     let gateway = ModelSelection::new("personal:gateway", "custom-chat");
-    let degraded = Chosen::Later {
-        flags: flags.clone(),
-        choosing: Box::pin({
-            let gateway = gateway.clone();
-            async move {
-                Settled {
-                    selection: gateway,
-                    degraded: true,
-                }
-            }
-        }),
-    };
+    let never = Arc::new(tokio::sync::Notify::new());
+    let (degraded, _) = scripted(&flags, vec![(gateway.clone(), true)], &never);
     let (chosen, _scope) = default_model(degraded, path.clone(), true, Instant::now()).await;
     assert_eq!(
         chosen.current(),
@@ -255,18 +294,72 @@ async fn a_default_settled_while_credentials_are_unreadable_is_not_remembered() 
         "the degraded settlement must not replace the remembered account model"
     );
 
-    let readable = Chosen::Later {
-        flags: flags.clone(),
-        choosing: Box::pin({
-            let gateway = gateway.clone();
-            async move {
-                Settled {
-                    selection: gateway,
-                    degraded: false,
-                }
-            }
-        }),
-    };
+    let (readable, _) = scripted(&flags, vec![(gateway.clone(), false)], &never);
     let _ = default_model(readable, path.clone(), true, Instant::now()).await;
     assert_eq!(memory::recall(path.as_path(), &flags).await, Some(gateway));
+}
+
+/// B9 (fork spec F3): a degraded default is settled again once the credentials are readable, then remembered. Both
+/// the waiting entry (`-p`, app-server) and the background one (TUI) keep the task in the returned scope.
+#[tokio::test]
+async fn a_degraded_default_is_settled_again_once_credentials_are_readable() {
+    for wait in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let paths =
+            rust_cli_paths::StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+        let path = paths.default_model();
+        let flags: memory::Flags = (None, None);
+        let gateway = ModelSelection::new("personal:gateway", "custom-chat");
+        let account = ModelSelection::new(
+            "account:zai-individual-coding-plan",
+            rust_cli_base::models::GLM_5_3_ACCOUNT,
+        );
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let (chosen, calls) = scripted(
+            &flags,
+            vec![(gateway.clone(), true), (account.clone(), false)],
+            &gate,
+        );
+        let (default, scope) = default_model(chosen, path.clone(), wait, Instant::now()).await;
+        assert_eq!(default.settled().await, gateway, "wait={wait}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(memory::recall(path.as_path(), &flags).await, None);
+        gate.notify_one();
+        revised_to(&default, &account).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while memory::recall(path.as_path(), &flags).await.as_ref() != Some(&account) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the full choice is remembered");
+        drop(scope);
+    }
+}
+
+/// A choice made again while the credentials are still unreadable is settled but not remembered, and the task
+/// waits again.
+#[tokio::test]
+async fn a_choice_still_degraded_waits_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = rust_cli_paths::StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    let path = paths.default_model();
+    let flags: memory::Flags = (None, None);
+    let first = ModelSelection::new("personal:gateway", "a");
+    let second = ModelSelection::new("personal:gateway", "b");
+    let full = ModelSelection::new("account:zai-individual-coding-plan", "c");
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let (chosen, calls) = scripted(
+        &flags,
+        vec![(first, true), (second.clone(), true), (full.clone(), false)],
+        &gate,
+    );
+    let (default, _scope) = default_model(chosen, path.clone(), true, Instant::now()).await;
+    gate.notify_one();
+    revised_to(&default, &second).await;
+    assert_eq!(memory::recall(path.as_path(), &flags).await, None);
+    gate.notify_one();
+    revised_to(&default, &full).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
 }

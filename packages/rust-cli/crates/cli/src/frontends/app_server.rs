@@ -162,8 +162,9 @@ async fn serve(
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
     let defaults = Defaults {
-        // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。
-        selection: built.selection.current(),
+        // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。Shared, so
+        // a degraded default revised later reaches new sessions (fork spec `fork-rust-credential-cipher.md` F3).
+        selection: built.selection.clone(),
         mode: built.mode,
         environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
     };

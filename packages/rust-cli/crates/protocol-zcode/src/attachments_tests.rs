@@ -756,7 +756,7 @@ fn upload_server(store: Arc<Uploaded>) -> (Server, Box<dyn std::any::Any>) {
         Arc::new(UploadKernel(store)),
         scope.spawner(),
         crate::server::Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: rust_cli_kernel_api::permission::PermissionMode::Default,
             environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
         },

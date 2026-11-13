@@ -78,8 +78,9 @@ pub(crate) struct Registry {
     gate: Mutex<ChangeGate>,
     published: Mutex<Published>,
     next_seq: AtomicU64,
-    /// 最近一次读取的不可读原因（没有时为空）：模型端点查不到模型时据此报“凭据读不到”，而不是“不可用”。
-    unreadable: Mutex<Option<&'static str>>,
+    /// 最近一次读取的不可读原因（没有时为空）：模型端点查不到模型时据此报“凭据读不到”，而不是“不可用”。A watch so the
+    /// default-model task can wait for a readable read (fork spec `fork-rust-credential-cipher.md` F3).
+    unreadable: tokio::sync::watch::Sender<Option<&'static str>>,
 }
 
 /// 读到的三份输入。
@@ -109,13 +110,21 @@ impl Registry {
                 current: Arc::new(Current::default()),
             }),
             next_seq: AtomicU64::new(1),
-            unreadable: Mutex::new(None),
+            unreadable: tokio::sync::watch::Sender::new(None),
         }
     }
 
     /// 最近一次读取凭据失败的静态原因（读得到时为空）。
     pub fn unreadable_reason(&self) -> Option<&'static str> {
-        *self.unreadable.lock_unpoisoned()
+        *self.unreadable.borrow()
+    }
+
+    /// Resolves once the latest read had readable credentials (at once when it already had). Pull-based: a later
+    /// [`Self::current`] read does it.
+    pub async fn readable(&self) {
+        let mut receiver = self.unreadable.subscribe();
+        // The sender lives in `self`, so the channel cannot close while this borrow is held.
+        let _ = receiver.wait_for(Option::is_none).await;
     }
 
     /// 当前快照；文件有变化时先重新读取。
@@ -141,7 +150,11 @@ impl Registry {
                 return self.published.lock_unpoisoned().current.clone();
             }
         };
-        *self.unreadable.lock_unpoisoned() = inputs.unreadable;
+        self.unreadable.send_if_modified(|reason| {
+            let changed = *reason != inputs.unreadable;
+            *reason = inputs.unreadable;
+            changed
+        });
         if inputs.unreadable.is_none() {
             self.credentials.note_ok();
         }

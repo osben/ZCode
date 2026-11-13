@@ -177,6 +177,12 @@ impl Platform {
         self.registry.unreadable_reason()
     }
 
+    /// Resolves once a catalog read finds the credentials readable (at once when the latest one did). The
+    /// default-model task waits on it to settle the default again (fork spec `fork-rust-credential-cipher.md` F3).
+    pub async fn credentials_readable(&self) {
+        self.registry.readable().await;
+    }
+
     /// 凭据文件 `credentials.json` 的位置。
     pub fn credentials_file(&self) -> &StoragePath {
         self.credentials.file()
