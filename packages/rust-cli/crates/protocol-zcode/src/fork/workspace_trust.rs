@@ -209,8 +209,33 @@ async fn refresh_workspace(
     }
 }
 
-/// A session's banners after an accepted input, including a new session's first input, and after a stored session is
-/// opened again (Node `refreshWorkspaceTrustAdmission` on each real user input and after `resumeFromStore`).
+/// A session's banners after an accepted input, including a new session's first input (Node
+/// `refreshWorkspaceTrustAdmission` on each real user input). Node runs that refresh inside the turn, after the input's
+/// acknowledgement, so the read runs in the background here: the ack never waits on the configuration and store reads.
+/// The ticket is taken now, so a later revalidation that settles first is not overwritten by this older read.
+pub(crate) fn refresh_after_input(server: &Server, session: &SessionId) {
+    let Some(admin) = admin(server) else {
+        return;
+    };
+    let Some(path) = server.context.workspace_of(session.as_str()) else {
+        return;
+    };
+    let Some(live) = server.bridge.get(session) else {
+        return;
+    };
+    let ticket = live.sink.admission_ticket();
+    drop(
+        server
+            .spawner
+            .spawn("workspace-trust-input-refresh", async move {
+                let admission = admin.admission(&WorkspaceTarget::local(&path)).await;
+                publish(&live, admission, ticket);
+            }),
+    );
+}
+
+/// A stored session's banners when it is opened again; awaited, as Node awaits `refreshWorkspaceTrustAdmission` before
+/// `resumeFromStore` completes.
 pub(crate) async fn refresh_session(server: &Server, live: &Bridged<Live>, session: &SessionId) {
     let Some(admin) = admin(server) else {
         return;

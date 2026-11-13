@@ -64,6 +64,8 @@ struct Lane {
     key: String,
     manager: McpManager,
     blocked: BTreeMap<String, Value>,
+    /// The admitted servers until [`AppWorkspace::settle`] starts them.
+    pending: StdMutex<Vec<McpServer>>,
 }
 
 /// One read of a workspace: its ref, the configured servers and the MCP trust state.
@@ -236,16 +238,28 @@ impl AppWorkspace {
     }
 
     /// Replaces the settings lane with one for `key` holding `servers` (Node connects with replace semantics and
-    /// revalidates on every Settings refresh). A connect that arrived before the stored lane's does nothing, so an
-    /// older server set (read before a revoke, say) never displaces a newer one. The new lane is stored before it
-    /// settles, so a status read meanwhile reports `connecting`; the displaced lane is closed first.
+    /// revalidates on every Settings refresh): [`Self::install`], then [`Self::settle`].
     async fn connect(
         &self,
         arrival: u64,
         key: &str,
         workspace: WorkspaceRef,
-        (servers, blocked): (Vec<McpServer>, BTreeMap<String, Value>),
+        admitted: (Vec<McpServer>, BTreeMap<String, Value>),
     ) {
+        if let Some((fresh, displaced)) = self.install(arrival, key, admitted) {
+            self.settle(fresh, displaced, workspace).await;
+        }
+    }
+
+    /// Stores a lane for `key` whose servers wait to start (a status read meanwhile reports them `connecting`), and
+    /// hands back the lane it displaced. A connect that arrived before the stored lane's does nothing, so an older
+    /// server set (read before a revoke, say) never displaces a newer one.
+    fn install(
+        &self,
+        arrival: u64,
+        key: &str,
+        (servers, blocked): (Vec<McpServer>, BTreeMap<String, Value>),
+    ) -> Option<(Arc<Lane>, Option<Arc<Lane>>)> {
         let manager = McpManager::new(
             self.transport.clone(),
             self.spawner.clone(),
@@ -257,21 +271,42 @@ impl AppWorkspace {
             key: key.to_owned(),
             manager,
             blocked,
+            pending: StdMutex::new(servers),
         });
-        let displaced = {
-            let mut lane = self.lane.lock_unpoisoned();
-            if lane
-                .as_ref()
-                .is_some_and(|current| current.arrival > arrival)
-            {
-                return;
-            }
-            lane.replace(fresh.clone())
-        };
+        let mut lane = self.lane.lock_unpoisoned();
+        if lane
+            .as_ref()
+            .is_some_and(|current| current.arrival > arrival)
+        {
+            return None;
+        }
+        let displaced = lane.replace(fresh.clone());
+        Some((fresh, displaced))
+    }
+
+    /// Closes the displaced lane, then starts `fresh`'s servers only while it is still the stored lane: a connect
+    /// displaced during the close starts nothing, so no server runs without a lane that owns it. The start happens
+    /// under the lane lock, so a later displacement always sees the started servers and closes them.
+    async fn settle(
+        &self,
+        fresh: Arc<Lane>,
+        displaced: Option<Arc<Lane>>,
+        workspace: WorkspaceRef,
+    ) {
         if let Some(displaced) = displaced {
             close(&displaced).await;
         }
-        fresh.manager.start(workspace, servers);
+        {
+            let lane = self.lane.lock_unpoisoned();
+            if !lane
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &fresh))
+            {
+                return;
+            }
+            let servers = std::mem::take(&mut *fresh.pending.lock_unpoisoned());
+            fresh.manager.start(workspace, servers);
+        }
         fresh.manager.wait_ready().await;
     }
 
@@ -308,11 +343,22 @@ impl AppWorkspace {
             .into_iter()
             .map(|info| (info.name.clone(), info))
             .collect();
+        let pending: BTreeSet<String> = current
+            .map(|lane| {
+                lane.pending
+                    .lock_unpoisoned()
+                    .iter()
+                    .map(|server| server.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut statuses = Map::new();
         for (name, config) in &configured {
             let kind = transport(config);
             let status = if let Some(info) = infos.get(name) {
                 self.live(info, kind)
+            } else if pending.contains(name) {
+                self.idle("connecting", kind)
             } else if let Some(blocked) = current.and_then(|lane| lane.blocked.get(name)) {
                 blocked.clone()
             } else if config.get("enabled") == Some(&Value::Bool(false)) {

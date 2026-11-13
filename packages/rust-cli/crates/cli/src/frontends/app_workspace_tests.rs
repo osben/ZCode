@@ -14,6 +14,8 @@ use rust_cli_kernel_api::env::EnvFacts;
 use rust_cli_kernel_api::mcp::{McpConnect, McpConnectionId, McpError, McpTransportEvent};
 use rust_cli_kernel_api::testing::{FixedClock, MemoryEnvironment};
 
+use std::collections::BTreeSet;
+
 use super::*;
 
 const ROOT: &str = "/Users/dev/repo";
@@ -444,6 +446,46 @@ async fn a_revoke_with_a_stale_digest_keeps_the_grant() {
     );
     let statuses = list(&fixture, "k", false).await;
     assert_eq!(statuses["alpha"]["workspaceTrust"]["trusted"], true);
+}
+
+/// A connect displaced while it still closes the previous lane never starts its servers (the newer lane owns the
+/// workspace), and until a lane starts, its admitted servers show `connecting`, not `disconnected`.
+#[tokio::test]
+async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting() {
+    let fixture = fixture(
+        json!({}),
+        json!({"mcp": {"servers": {"mine": {"command": "user-tool"}}}}),
+    );
+    let admitted = |key: &'static str| {
+        let admin = &fixture.admin;
+        async move {
+            let read = admin.read(&target(key)).await;
+            let configured = AppWorkspace::configured(&read, None);
+            (
+                read.workspace.clone(),
+                admin.admit(&read, &configured, &BTreeSet::new()),
+            )
+        }
+    };
+    let (workspace, servers) = admitted("k").await;
+    let older = fixture.admin.arrival();
+    let (first, displaced) = fixture.admin.install(older, "k", servers).unwrap();
+    assert!(displaced.is_none());
+    assert_eq!(
+        list(&fixture, "k", false).await["mine"]["status"],
+        "connecting"
+    );
+
+    let (newer_workspace, newer_servers) = admitted("k").await;
+    let newer = fixture.admin.arrival();
+    let (second, displaced) = fixture.admin.install(newer, "k", newer_servers).unwrap();
+    fixture
+        .admin
+        .settle(second, displaced, newer_workspace)
+        .await;
+    // The older connect resumes after its close and finds itself displaced.
+    fixture.admin.settle(first, None, workspace).await;
+    assert_eq!(fixture.transport.started(), ["mine"]);
 }
 
 #[tokio::test]

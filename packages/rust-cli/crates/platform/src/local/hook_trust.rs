@@ -241,7 +241,9 @@ impl TrustRecord {
 fn parse_store(bytes: &[u8]) -> Option<Vec<TrustRecord>> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     let object = value.as_object()?;
-    if object.len() != STORE_KEY_COUNT || object.get("schemaVersion") != Some(&json!(1)) {
+    if object.len() != STORE_KEY_COUNT
+        || object.get("schemaVersion").and_then(Value::as_f64) != Some(1.0)
+    {
         return None;
     }
     let records: Vec<TrustRecord> = object

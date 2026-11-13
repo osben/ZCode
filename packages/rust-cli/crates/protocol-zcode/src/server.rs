@@ -49,7 +49,7 @@ pub struct Server {
     pub(crate) kernel: Arc<dyn Kernel>,
     pub(crate) bridge: SessionBridge<Live>,
     /// Fork: spawns the per-session subagent table watchers.
-    spawner: rust_cli_base::Spawner,
+    pub(crate) spawner: rust_cli_base::Spawner,
     pub(crate) topics: Arc<Topics>,
     pub(crate) remembered: Mutex<Remembered>,
     pub(crate) followups: Mutex<HashMap<SessionId, Followup>>,

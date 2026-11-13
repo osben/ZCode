@@ -332,12 +332,7 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             if ack.status == Status::Accepted {
                 complete_first_submission(server, &live, envelope).await;
                 // Fork: Node re-reads the workspace trust banners on each real user input.
-                crate::fork::workspace_trust::refresh_session(
-                    server,
-                    &live,
-                    &SessionId::new(session),
-                )
-                .await;
+                crate::fork::workspace_trust::refresh_after_input(server, &SessionId::new(session));
             }
             ack
         }
@@ -678,7 +673,7 @@ async fn submit_first(
         match send(live.handle.as_ref(), &envelope.command_id, submit).await {
             KernelAck::Accepted { .. } => {
                 // Fork: the first input is a real user input; Node re-reads the trust banners for it too.
-                crate::fork::workspace_trust::refresh_session(server, live, live.handle.id()).await;
+                crate::fork::workspace_trust::refresh_after_input(server, live.handle.id());
                 Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
             }
             _ => None,

@@ -470,6 +470,8 @@ async fn a_create_with_its_first_input_admits_the_text() {
 #[derive(Default)]
 struct BannerAdmin {
     reads: StdMutex<Vec<String>>,
+    /// Holds each read until the test releases it.
+    release: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
@@ -507,6 +509,7 @@ impl crate::fork::workspace_trust::WorkspaceAdmin for BannerAdmin {
         target: &crate::fork::workspace_trust::WorkspaceTarget,
     ) -> crate::fork::workspace_trust::Admission {
         self.reads.lock_unpoisoned().push(target.path.clone());
+        self.release.notified().await;
         crate::fork::workspace_trust::Admission {
             mcp: None,
             hook: Some(json!({"pendingCount": 1, "bundleDigest": "b1"})),
@@ -514,7 +517,8 @@ impl crate::fork::workspace_trust::WorkspaceAdmin for BannerAdmin {
     }
 }
 
-/// Node refreshes the trust banners on every real user input, a new session's first input included.
+/// Node refreshes the trust banners on every real user input, a new session's first input included, inside the turn
+/// after the input's acknowledgement: the ack never waits on the banner read.
 #[tokio::test]
 async fn a_create_with_its_first_input_shows_the_trust_banners() {
     let (_scope, server, handle, _queries) = open(true).await;
@@ -523,21 +527,39 @@ async fn a_create_with_its_first_input_shows_the_trust_banners() {
         .store(true, std::sync::atomic::Ordering::Relaxed);
     let admin = Arc::new(BannerAdmin::default());
     server.context.set_workspace_admin(admin.clone());
-    let ack = crate::commands::command(&server, create_with_input("c1"))
-        .await
-        .unwrap();
+    let ack = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::commands::command(&server, create_with_input("c1")),
+    )
+    .await
+    .expect("the ack does not wait on the banner read")
+    .unwrap();
     assert_eq!(ack["status"], "accepted", "{ack}");
-    assert_eq!(*admin.reads.lock_unpoisoned(), vec!["/w".to_owned()]);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
-    let (done, wait) = tokio::sync::oneshot::channel();
-    live.run(Box::pin(async move {
-        let _ = done.send(());
-    }));
-    wait.await.unwrap();
-    assert_eq!(
-        live.sink.snapshot()["workspaceHookAdmission"],
-        json!({"pendingCount": 1, "bundleDigest": "b1"})
-    );
+    let bound = std::time::Duration::from_secs(5);
+    tokio::time::timeout(bound, async {
+        while admin.reads.lock_unpoisoned().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the banner read starts after the ack");
+    assert_eq!(*admin.reads.lock_unpoisoned(), vec!["/w".to_owned()]);
+    assert!(live.sink.snapshot()["workspaceHookAdmission"].is_null());
+    admin.release.notify_one();
+    let banner = json!({"pendingCount": 1, "bundleDigest": "b1"});
+    tokio::time::timeout(bound, async {
+        while live.sink.snapshot()["workspaceHookAdmission"] != banner {
+            let (done, wait) = tokio::sync::oneshot::channel();
+            live.run(Box::pin(async move {
+                let _ = done.send(());
+            }));
+            wait.await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the banner is published");
 }
 
 /// Fork: a session renamed while closed (stored `custom`) is opened again; the live sessions-index row, which
