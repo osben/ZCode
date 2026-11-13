@@ -192,8 +192,8 @@ export function useBrowserDesignMode({
   const runtimeActive = pluginEnabled && (toolsVisible || (probeEnabled && mode !== "off"));
 
   // 异步回调（注入完成、截图回来、写回完成）读最新值，不依赖闭包里的旧 state
-  const latest = useRef({ mode, selections, variablePreview, variant, pageKey, toolsVisible });
-  latest.current = { mode, selections, variablePreview, variant, pageKey, toolsVisible };
+  const latest = useRef({ mode, selections, variablePreview, variant, pageKey });
+  latest.current = { mode, selections, variablePreview, variant, pageKey };
   const runRef = useRef<((command: DesignRuntimeCommand) => Promise<unknown>) | null>(null);
   const runLatest = useCallback(
     (command: DesignRuntimeCommand) => runRef.current?.(command) ?? Promise.resolve(null),
@@ -393,8 +393,8 @@ export function useBrowserDesignMode({
     (items: readonly DesignSelectedElement[]) => {
       latest.current.selections = items;
       setSelections(items);
-      // 点中元素就打开属性面板显示它（关过面板也一样，11-05 反馈）；只在设计工具可见时（设计稿页面）才自动打开
-      if (items.length > 0 && latest.current.toolsVisible) setPanelOpen(true);
+      // 点中元素就打开属性面板显示它（关过面板也一样，11-05 反馈）
+      if (items.length > 0) setPanelOpen(true);
       refreshWritable(items);
       reconcileChips();
     },

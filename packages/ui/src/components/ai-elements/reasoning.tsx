@@ -206,7 +206,7 @@ export const Reasoning = memo(
     return (
       <ReasoningContext.Provider value={contextValue}>
         <Collapsible
-          className={cn("not-prose min-w-0 flex flex-col", className)}
+          className={cn("not-prose flex flex-col", className)}
           onOpenChange={handleOpenChange}
           open={isOpen}
           {...props}
@@ -290,8 +290,10 @@ export const ReasoningTrigger = memo(
       }
 
       const syncSummaryViewport = () => {
-        const next = isReasoningSummaryOverflowing(viewport);
-        if (next !== isStreamingSummaryOverflowing) setIsStreamingSummaryOverflowing(next);
+        setIsStreamingSummaryOverflowing((current) => {
+          const next = isReasoningSummaryOverflowing(viewport);
+          return current === next ? current : next;
+        });
         // When a streaming summary exceeds available width, ordinary overflow-hidden keeps showing the old prefix
         // and clips the latest token on the right. After content grows, move the single-line viewport to the end so old content shifts left.
         scrollReasoningSummaryToEnd(viewport);
@@ -307,7 +309,7 @@ export const ReasoningTrigger = memo(
         resizeObserver.observe(streamingSummaryTextRef.current);
       }
       return () => resizeObserver.disconnect();
-    }, [streamingSummary?.text, isStreamingSummaryOverflowing]);
+    }, [streamingSummary?.text]);
 
     // 末尾思考完成后，未闭合的收起组头仍需扫光；保留真实完成文案和耗时。
     const thoughtLabelClassName = cn(

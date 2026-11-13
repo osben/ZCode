@@ -4,15 +4,7 @@ import { arch, platform, release } from "node:os";
 import { join, posix } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
-import {
-  CLI_MEMORY_DIAGNOSTIC_FILE_NAME_PATTERN,
-  CLI_MEMORY_DIAGNOSTIC_MAX_FILE_BYTES,
-  CLI_MEMORY_DIAGNOSTIC_MAX_FILES,
-  redactFeedbackText,
-  sanitizeCliMemoryDiagnostic,
-  ZCODE_UPSTREAM_BASE_VERSION,
-  ZCODE_COMMIT,
-} from "@zcode/shared";
+import { redactFeedbackText, ZCODE_UPSTREAM_BASE_VERSION, ZCODE_COMMIT } from "@zcode/shared";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -26,7 +18,7 @@ export interface FeedbackLogSource {
   /** By default collect only files modified locally today; config files can disable this limit. */
   onlyCurrentDay?: boolean;
   /** Config files use a structured safe projection to avoid uploading sensitive plugin-custom entries. */
-  contentPolicy?: "diagnostic" | "cli-config" | "cli-memory";
+  contentPolicy?: "diagnostic" | "cli-config";
 }
 
 function decodeDiagnosticLog(buffer: Buffer): string | null {
@@ -81,19 +73,6 @@ function pickSafeSection(
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
-}
-
-/**
- * CLI profile files hold one JSON record each. The whole file is parsed, reduced to the fixed schema, and
- * re-serialized; anything that does not parse or does not match the schema is rejected.
- */
-function sanitizeCliMemoryRecord(text: string): string | null {
-  try {
-    const record = sanitizeCliMemoryDiagnostic(JSON.parse(text));
-    return record ? `${JSON.stringify(record)}\n` : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Project only nonsensitive CLI config; unknown fields such as plugin options, MCP, network, and hooks are all dropped. */
@@ -205,8 +184,6 @@ export async function createFeedbackDiagnosticArchive(options: {
       // Do not follow a link at the diagnostic root itself; normalize system directory aliases (such as macOS /var).
       const root = await realpath(source.directory).catch(() => null);
       if (!root || !(await lstat(source.directory).catch(() => null))?.isDirectory()) continue;
-      // Accepted CLI profile files from this source; the cap is per source so one source cannot exhaust the others.
-      let acceptedCliMemoryFiles = 0;
       const walk = async (directory: string, prefix: string, depth: number): Promise<void> => {
         if (depth > 4 || visited >= 2000) return;
         const names = await readdir(directory, { withFileTypes: true }).catch(() => []);
@@ -216,13 +193,7 @@ export async function createFeedbackDiagnosticArchive(options: {
           const absolutePath = join(directory, entry.name);
           const name = posix.join(prefix, entry.name);
           const isExplicitFileSource = source.includeFileNames !== undefined;
-          const isCliMemorySource = source.contentPolicy === "cli-memory";
-          if (
-            entry.isDirectory() &&
-            !source.exitLogsOnly &&
-            !isExplicitFileSource &&
-            !isCliMemorySource
-          ) {
+          if (entry.isDirectory() && !source.exitLogsOnly && !isExplicitFileSource) {
             await walk(absolutePath, name, depth + 1);
             continue;
           }
@@ -232,15 +203,9 @@ export async function createFeedbackDiagnosticArchive(options: {
               ? !source.includeFileNames!.includes(entry.name)
               : !(source.exitLogsOnly
                   ? entry.name.endsWith(".exit.log")
-                  : /(?:\.log(?:\.\d+)?|\.jsonl|\.ndjson)$/i.test(entry.name))) ||
-            (isCliMemorySource &&
-              (!CLI_MEMORY_DIAGNOSTIC_FILE_NAME_PATTERN.test(entry.name) ||
-                acceptedCliMemoryFiles >= CLI_MEMORY_DIAGNOSTIC_MAX_FILES))
+                  : /(?:\.log(?:\.\d+)?|\.jsonl|\.ndjson)$/i.test(entry.name)))
           )
             continue;
-          const maxSourceFileBytes = isCliMemorySource
-            ? CLI_MEMORY_DIAGNOSTIC_MAX_FILE_BYTES
-            : MAX_FILE_BYTES;
           if ((await realpath(absolutePath).catch(() => null)) !== absolutePath) {
             skipLogFile("unsafe-path");
             continue;
@@ -249,7 +214,7 @@ export async function createFeedbackDiagnosticArchive(options: {
           if (
             !info?.isFile() ||
             info.nlink !== 1 ||
-            info.size > maxSourceFileBytes ||
+            info.size > MAX_FILE_BYTES ||
             totalBytes + info.size > budget ||
             (source.onlyCurrentDay !== false && !isToday(info.mtimeMs))
           ) {
@@ -273,7 +238,7 @@ export async function createFeedbackDiagnosticArchive(options: {
               opened.ino !== info.ino ||
               opened.dev !== info.dev ||
               (source.onlyCurrentDay !== false && !isToday(opened.mtimeMs)) ||
-              opened.size > maxSourceFileBytes ||
+              opened.size > MAX_FILE_BYTES ||
               totalBytes + opened.size > budget
             ) {
               skipLogFile("opened-file-policy");
@@ -300,14 +265,11 @@ export async function createFeedbackDiagnosticArchive(options: {
             const sanitizedText =
               source.contentPolicy === "cli-config"
                 ? sanitizeCliConfig(text)
-                : isCliMemorySource
-                  ? sanitizeCliMemoryRecord(text)
-                  : redactFeedbackText(text, { diagnostic: true });
+                : redactFeedbackText(text, { diagnostic: true });
             if (sanitizedText === null) {
-              skipLogFile(isCliMemorySource ? "invalid-memory-diagnostic" : "invalid-config");
+              skipLogFile("invalid-config");
               continue;
             }
-            if (isCliMemorySource) acceptedCliMemoryFiles += 1;
             const data = Buffer.from(sanitizedText);
             if (data.length > MAX_FILE_BYTES || totalBytes + data.length > budget) {
               skipLogFile("redacted-size-limit");
@@ -339,7 +301,7 @@ export async function createFeedbackDiagnosticArchive(options: {
           `includedLogFiles: ${entries.length}`,
           `skippedLogFiles: ${Object.values(skippedLogFilesByReason).reduce((sum, count) => sum + count, 0)}`,
           `skippedLogFilesByReason: ${JSON.stringify(skippedLogFilesByReason)}`,
-          "Scope: diagnostic text logs modified today, bounded CLI memory evidence and a non-sensitive CLI config projection; credentials and payloads redacted.",
+          "Scope: diagnostic text log files modified today (local time), plus an explicit non-sensitive CLI config projection; credentials and structured payloads redacted.",
         ].join("\n"),
       ),
       "about.txt",

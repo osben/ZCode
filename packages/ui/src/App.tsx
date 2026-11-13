@@ -11,7 +11,11 @@ import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useGitRepository } from "@/hooks/useGitRepository.js";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard.js";
-import { useSidePaneFullView } from "@/side-pane-full-view/index.js";
+import {
+  setSidePaneFullViewActive,
+  SIDE_PANE_FULL_VIEW_ENTER_REQUEST_EVENT,
+  useSidePaneFullView,
+} from "@/side-pane-full-view/index.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWorkspaceProviderConfigFile } from "@/hooks/useWorkspaceProviderConfigFile.js";
 import { useWorkspaceActiveTaskState } from "@/hooks/useWorkspaceActiveTaskState.js";
@@ -687,6 +691,18 @@ export function App({
     },
     [markSidePaneDraftPromotion, workspaceAbsPath, workspaceIdentity],
   );
+  // 面板里的内容（设计稿点选打开设计面板）请求铺满：只在面板开着、还不在完整视图时进，enter 自己也会兜住
+  const enterSidePaneFullView = sidePaneFullView.enter;
+  const isSidePaneFullViewActive = sidePaneFullView.fullView !== null;
+  useEffect(() => {
+    setSidePaneFullViewActive(isSidePaneFullViewActive);
+  }, [isSidePaneFullViewActive]);
+  useEffect(() => {
+    if (!supportsSidePaneFullView || !isSidePaneOpen) return;
+    window.addEventListener(SIDE_PANE_FULL_VIEW_ENTER_REQUEST_EVENT, enterSidePaneFullView);
+    return () =>
+      window.removeEventListener(SIDE_PANE_FULL_VIEW_ENTER_REQUEST_EVENT, enterSidePaneFullView);
+  }, [enterSidePaneFullView, isSidePaneOpen, supportsSidePaneFullView]);
   const handleToggleSidePaneFullView = useCallback(() => {
     // When the panel is closed, the shortcut opens the panel then enters full view; the record is written first so it takes effect once the panel expands.
     if (!sidePaneFullView.fullView && !isSidePaneOpen) {

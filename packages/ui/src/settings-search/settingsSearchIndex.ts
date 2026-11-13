@@ -7,7 +7,6 @@ export interface SettingsSearchAvailability {
   notWindows: boolean;
   workflow: boolean;
   computerUse: boolean;
-  macDesktop: boolean;
 }
 
 // 翻译 key 同时作为稳定定位 id；索引只描述入口，不持有任何配置值。
@@ -197,12 +196,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     section: "appearance",
     description: "settings.themeModeDescription",
     visibility: "all",
-  },
-  {
-    id: "settings.fontSmoothing",
-    section: "appearance",
-    description: "settings.fontSmoothingDescription",
-    visibility: "macDesktop",
   },
   {
     id: "settings.uiFontSize",

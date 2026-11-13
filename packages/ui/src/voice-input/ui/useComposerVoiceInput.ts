@@ -31,7 +31,6 @@ import type {
   VoiceInputStopReason,
 } from "@/voice-input/contract.js";
 import { startPcmCapture, type PcmCapture } from "@/voice-input/adapters/pcmCapture.js";
-import { useVoicePermissionGuide } from "@/voice-input/ui/useVoicePermissionGuide.js";
 import {
   classifyCapturedAudio,
   classifyGetUserMediaError,
@@ -65,8 +64,6 @@ export function useComposerVoiceInput(options: {
   const isLoggedIn = useZCodeStore((state) => state.user !== null);
   const { intl, locale } = useZCodeIntl();
   const available = Boolean(options.enabled && microphone && voiceInputService && isLoggedIn);
-  const permissionGuide = useVoicePermissionGuide();
-  const showPermissionGuide = permissionGuide.show;
 
   const [state, setState] = useState<VoiceInputState>("idle");
   const attemptRef = useRef<Attempt | null>(null);
@@ -97,10 +94,6 @@ export function useComposerVoiceInput(options: {
         failure,
         resolveVoiceInputOs(typeof navigator === "undefined" ? "" : navigator.userAgent),
       );
-      if (notice.permissionGuide) {
-        showPermissionGuide();
-        return;
-      }
       if (!notice.messageId) return;
       const target = notice.settingsTarget;
       toast(intl.formatMessage({ id: notice.messageId }), {
@@ -120,7 +113,7 @@ export function useComposerVoiceInput(options: {
           : {}),
       });
     },
-    [intl, microphone, showPermissionGuide],
+    [intl, microphone],
   );
 
   const fail = useCallback(
@@ -323,5 +316,5 @@ export function useComposerVoiceInput(options: {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [stopAttempt, state]);
 
-  return { available, state, toggle, settle, subscribeLevel, permissionGuide };
+  return { available, state, toggle, settle, subscribeLevel };
 }

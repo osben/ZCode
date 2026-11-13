@@ -76,7 +76,6 @@ import type {
   SaveFileResult,
   PrintPageToPdfResult,
   MicrophoneAccessResult,
-  MicrophoneResetResult,
   MicrophoneSettingsTarget,
   CaptureBrowserGuestPageRequest,
   CaptureBrowserGuestPageResult,
@@ -272,8 +271,6 @@ export const PlatformChannels = {
   MicrophoneAccess: "zcode:microphone-access",
   /** Renderer → Main: open the system microphone permission / sound input settings page */
   OpenMicrophoneSettings: "zcode:open-microphone-settings",
-  /** Renderer → Main: clear the macOS microphone decision and request it again */
-  ResetMicrophoneAccess: "zcode:reset-microphone-access",
   /** Renderer → Main: capture the current viewport of the built-in browser guest as PNG in main (capturePage on the renderer side crashes) */
   CaptureBrowserGuestPage: "zcode:capture-browser-guest-page",
   /** Main → Renderer: forward remote connection progress logs */
@@ -935,10 +932,6 @@ export interface PlatformChannelMap {
   [PlatformChannels.MicrophoneAccess]: {
     request: void;
     response: MicrophoneAccessResult;
-  };
-  [PlatformChannels.ResetMicrophoneAccess]: {
-    request: void;
-    response: MicrophoneResetResult;
   };
   [PlatformChannels.OpenMicrophoneSettings]: {
     request: MicrophoneSettingsTarget;

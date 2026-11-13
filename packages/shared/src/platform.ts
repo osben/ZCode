@@ -384,15 +384,6 @@ export interface PrintPageToPdfResult {
  */
 export type MicrophoneAccessResult = "granted" | "denied" | "unsupported";
 
-/**
- * 重置麦克风授权的结果（macOS，docs/chat/composer-voice-input.md「麦克风权限」）。
- * - granted：已授权，可直接录音
- * - denied：系统仍未授权（用户在系统弹框中拒绝）
- * - restart-required：已清除旧授权，需要重启应用后再请求
- * - failed：无法重置（非 macOS、受限、tccutil 失败），应打开系统设置
- */
-export type MicrophoneResetResult = "granted" | "denied" | "restart-required" | "failed";
-
 /** privacy：系统麦克风隐私页；sound：系统声音输入设备页 */
 export type MicrophoneSettingsTarget = "privacy" | "sound";
 
@@ -875,8 +866,6 @@ export interface IPlatformService {
    */
   microphone?: {
     ensureAccess(): Promise<MicrophoneAccessResult>;
-    /** Clears the app's previous microphone decision (macOS packaged builds) and re-requests it. */
-    resetAccess(): Promise<MicrophoneResetResult>;
     openSettings(target: MicrophoneSettingsTarget): Promise<boolean>;
   };
 

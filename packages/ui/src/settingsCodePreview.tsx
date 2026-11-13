@@ -89,9 +89,6 @@ export function AppearanceSectionContent({
   setPalette,
   uiFontSizePx,
   setUiFontSizePx,
-  isMacDesktop,
-  fontSmoothingEnabled,
-  setFontSmoothingEnabled,
   uiFontFamily,
   setUiFontFamily,
   monoFontFamily,
@@ -105,9 +102,6 @@ export function AppearanceSectionContent({
   setPalette: (palette: ThemePalette) => void;
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
-  isMacDesktop: boolean;
-  fontSmoothingEnabled: boolean;
-  setFontSmoothingEnabled: (enabled: boolean) => void;
   uiFontFamily: string | null;
   setUiFontFamily: (value: string | null) => void;
   monoFontFamily: string | null;
@@ -197,23 +191,6 @@ export function AppearanceSectionContent({
                 />
               }
             />
-            {isMacDesktop ? (
-              <SettingsRow
-                searchId="settings.fontSmoothing"
-                label={intl.formatMessage({ id: "settings.fontSmoothing" })}
-                description={intl.formatMessage({
-                  id: "settings.fontSmoothingDescription",
-                })}
-                control={
-                  <Switch
-                    data-testid="font-smoothing-switch"
-                    aria-label={intl.formatMessage({ id: "settings.fontSmoothing" })}
-                    checked={fontSmoothingEnabled}
-                    onCheckedChange={setFontSmoothingEnabled}
-                  />
-                }
-              />
-            ) : null}
             <SettingsRow
               label={intl.formatMessage({ id: "settings.uiFont" })}
               description={intl.formatMessage({

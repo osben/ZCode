@@ -2635,9 +2635,6 @@ const ukUA: Record<string, string> = {
   "settings.uiFontSize": "Розмір шрифту інтерфейсу",
   "settings.uiFontSizeDescription":
     "Змінює розмір тексту інтерфейсу, не впливаючи на значки й розміри елементів макета.",
-  "settings.fontSmoothing": "Згладжування шрифту",
-  "settings.fontSmoothingDescription":
-    "Використовувати згладжування у відтінках сірого. Текст може виглядати тоншим; результат залежить від дисплея.",
   "settings.agentBehavior.title": "Поведінка та інструменти",
   "settings.uiFont": "Шрифт інтерфейсу",
   "settings.uiFontDescription":
@@ -10483,18 +10480,10 @@ const ukUA: Record<string, string> = {
   "voiceInput.button.recognizing": "Розпізнавання…",
   "voiceInput.action.openPrivacySettings": "Відкрити системні налаштування",
   "voiceInput.action.openSoundSettings": "Відкрити налаштування звуку",
-  "voiceInput.permission.title": "Потрібен доступ до мікрофона",
-  "voiceInput.permission.description.mac":
-    "Натисніть «Запитати знову», а потім виберіть «Дозволити» в системному вікні. Також можна ввімкнути ZCode в Системних параметрах › Приватність і безпека › Мікрофон.",
-  "voiceInput.permission.description.windows":
-    "У Параметрах › Конфіденційність і захист › Мікрофон увімкніть «Доступ до мікрофона» та «Дозволити класичним програмам доступ до мікрофона».",
-  "voiceInput.permission.reauthorize": "Запитати знову",
-  "voiceInput.permission.relaunch": "Перезапустити ZCode",
-  "voiceInput.permission.restartTitle": "Перезапустіть ZCode",
-  "voiceInput.permission.restartDescription":
-    "Дозвіл на мікрофон скинуто. Перезапустіть ZCode, натисніть мікрофон і виберіть «Дозволити» в системному вікні.",
-  "voiceInput.permission.granted":
-    "Доступ до мікрофона ввімкнено. Натисніть мікрофон, щоб почати голосове введення.",
+  "voiceInput.error.permissionDenied.mac":
+    "ZCode не може використовувати мікрофон. Дозвольте ZCode в Системних налаштуваннях › Конфіденційність і безпека › Мікрофон. У деяких версіях macOS після зміни потрібно перезапустити застосунок.",
+  "voiceInput.error.permissionDenied.windows":
+    "ZCode не може використовувати мікрофон. У параметрах «Конфіденційність і безпека › Мікрофон» увімкніть і «Доступ до мікрофона», і «Дозволити настільним програмам доступ до мікрофона».",
   "voiceInput.error.permissionDenied.linux":
     "Немає доступу до мікрофона. Перевірте системний дозвіл на мікрофон і вхідний пристрій PulseAudio / PipeWire.",
   "voiceInput.error.silent":

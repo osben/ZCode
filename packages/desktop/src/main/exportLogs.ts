@@ -19,10 +19,6 @@ import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
 
 import {
-  CLI_MEMORY_DIAGNOSTICS_DIR_NAME,
-  CLI_MEMORY_DIAGNOSTIC_FILE_NAME_PATTERN,
-} from "@zcode/shared";
-import {
   createFeedbackDiagnosticArchive,
   getAppConfigDir,
   getExportLogDir as getDefaultExportLogDir,
@@ -55,15 +51,6 @@ function getCuaHelperRunDir() {
 
 function isCuaHelperDiagnosticFileName(fileName: string): boolean {
   return fileName.endsWith(".exit.log");
-}
-
-/** Agent CLI heap-profile records written by the protocol recorder (memory-<ms>-<instanceId>.jsonl). */
-function getZCodeCliMemoryDiagnosticsDir(): string {
-  return join(getZCodeCliDir(), CLI_MEMORY_DIAGNOSTICS_DIR_NAME);
-}
-
-function isCliMemoryDiagnosticFileName(fileName: string): boolean {
-  return CLI_MEMORY_DIAGNOSTIC_FILE_NAME_PATTERN.test(fileName);
 }
 
 interface LogArchiveFileEntry {
@@ -1276,14 +1263,6 @@ export async function createLogArchiveArtifacts(
     files,
   );
 
-  // Agent CLI heap-profile records: flat directory, file-name allowlist only, no lookback window (see memory-diagnostics-log.md).
-  await collectLogArchiveFilesByName(
-    getZCodeCliMemoryDiagnosticsDir(),
-    posix.join(".zcode", "cli", CLI_MEMORY_DIAGNOSTICS_DIR_NAME),
-    isCliMemoryDiagnosticFileName,
-    files,
-  );
-
   const zcodeCliDir = getZCodeCliDir();
   // Troubleshooting agent CLI also requires its runtime configuration and model I/O traces.
   // config.json is the active configuration and rollout contains model-I/O call traces; neither is under ~/.zcode/cli/log,
@@ -1456,12 +1435,6 @@ export async function createFeedbackLogArchiveFromExportLogs(
 ): Promise<{ path: string; size: number }> {
   return createFeedbackDiagnosticArchive({
     sources: [
-      {
-        directory: getZCodeCliMemoryDiagnosticsDir(),
-        archivePrefix: ".zcode/cli/memory-diagnostics",
-        contentPolicy: "cli-memory",
-        onlyCurrentDay: false,
-      },
       { directory: join(sourceDir, "logs"), archivePrefix: "logs" },
       { directory: getZCodeCliLogDir(), archivePrefix: ".zcode/cli/log" },
       {

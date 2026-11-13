@@ -100,10 +100,6 @@ body,
 body {
   margin: 0;
   overflow: hidden;
-}
-
-/* macOS font smoothing is user-controlled (Settings > Appearance); the class is set on <html> by applyFontSmoothingEnabled. */
-:root.platform-mac-desktop.font-smoothing-enabled {
   -webkit-font-smoothing: antialiased;
 }
 
