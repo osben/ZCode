@@ -70,6 +70,9 @@ struct Input {
     /// Fork: selections quoted from the conversation, as sent (absent, `[]` or quotes); they travel in the input
     /// intent ([`input_intent`]).
     conversation_quotes: Option<Vec<rust_cli_kernel_api::conversation_quote::Quote>>,
+    /// Fork: a bot-group input's source (`botGroupSourceSchema`, checked by the inbound schema), stored on the intent as
+    /// sent (specs/fork-rust-topic-resource.md): `ReadTopicResource` reads its authorization and rows show it.
+    bot_group_source: Option<Value>,
     /// B4: the input's structured source (`conversationInputSourceSchema`, e.g. `{kind: "extension", pluginId}`). The
     /// inbound schema checks its shape before this is read; it is copied onto the intent as it is ([`input_intent`]).
     source: Option<Value>,
@@ -1218,6 +1221,12 @@ fn input_intent(
         fields.insert(
             rust_cli_kernel_api::input_intent::QUOTES.into(),
             json!(quotes),
+        );
+    }
+    if let Some(source) = input.bot_group_source.as_ref().filter(|v| !v.is_null()) {
+        fields.insert(
+            rust_cli_kernel_api::input_intent::BOT_GROUP_SOURCE.into(),
+            source.clone(),
         );
     }
     let command = envelope.command_id.as_str();

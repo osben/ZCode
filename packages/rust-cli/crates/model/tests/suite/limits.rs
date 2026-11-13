@@ -86,6 +86,7 @@ impl ModelEndpoints for Patching {
                 ..ModelCapabilities::default()
             },
             renewable: false,
+            compress_body_over: None,
         })
     }
 }

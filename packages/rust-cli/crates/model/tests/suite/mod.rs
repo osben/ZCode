@@ -1,4 +1,5 @@
 mod anthropic;
+mod chatgpt;
 mod common;
 mod failover;
 mod fixture;
