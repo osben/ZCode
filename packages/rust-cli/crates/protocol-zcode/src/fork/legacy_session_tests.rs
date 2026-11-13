@@ -36,6 +36,8 @@ struct TestHandle {
     log: Log,
     /// The command ids, in order (the session actor dedupes by id for its whole lifetime).
     ids: Log,
+    /// The actor cannot answer `view` (it stopped): the switches fall back to the projection.
+    blind: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait]
@@ -76,6 +78,11 @@ impl HandleOverride for TestHandle {
     }
 
     async fn view(&self) -> Result<SessionView, KernelError> {
+        if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(KernelError::Failed {
+                message: "the session actor stopped".to_owned(),
+            });
+        }
         Ok(self.view.lock().unwrap().clone())
     }
 
@@ -190,6 +197,7 @@ impl TestKernel {
             view: StdMutex::new(SessionView::new(meta, Vec::new(), chosen, mode)),
             log: self.log.clone(),
             ids: self.ids.clone(),
+            blind: std::sync::atomic::AtomicBool::new(false),
         });
         self.handles
             .lock()
@@ -279,7 +287,15 @@ impl Kernel for TestKernel {
     }
 }
 
+/// The server with the [`Levels`] model directory (the Host always has one).
 fn server() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
+    let (scope, server, kernel) = server_without_directory();
+    server.context.set_models(Arc::new(Levels));
+    (scope, server, kernel)
+}
+
+/// The server before any model directory is known: the catalog is empty.
+fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
@@ -682,7 +698,7 @@ async fn a_thought_level_without_a_model_applies_to_the_default_model() {
     );
 }
 
-/// The model directory of the level tests: the default model offers `off`/`high`, `p/m2` only `low`.
+/// The model directory of the tests: the default model offers `off`/`high`, `p/m2` `low`/`high`, `p/m3` only `low`.
 struct Levels;
 
 #[async_trait]
@@ -707,7 +723,8 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Levels {
             revision: 1,
             models: vec![
                 entry(&main.provider, &main.model, &["off", "high"]),
-                entry("p", "m2", &["low"]),
+                entry("p", "m2", &["low", "high"]),
+                entry("p", "m3", &["low"]),
             ],
             default: None,
         }
@@ -719,7 +736,6 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Levels {
 #[tokio::test]
 async fn an_unsupported_thought_level_is_skipped() {
     let (_scope, server, kernel) = server();
-    server.context.set_models(Arc::new(Levels));
     let mut without_model = automation_create("s12");
     without_model.as_object_mut().unwrap().remove("model");
     without_model["thoughtLevel"] = json!("max");
@@ -730,10 +746,10 @@ async fn an_unsupported_thought_level_is_skipped() {
     supported.as_object_mut().unwrap().remove("model");
     supported["thoughtLevel"] = json!(" high ");
     call(&server, "session/create", supported).await.unwrap();
-    // The explicit model `p/m2` offers only `low`: `high` is skipped, the selection's own `low` stays.
-    call(&server, "session/create", automation_create("s14"))
-        .await
-        .unwrap();
+    // The explicit model `p/m3` offers only `low`: `high` is skipped, the selection's own `low` stays.
+    let mut narrow = automation_create("s14");
+    narrow["model"]["modelId"] = json!("m3");
+    call(&server, "session/create", narrow).await.unwrap();
     let creates: Vec<String> = log(&kernel)
         .into_iter()
         .filter(|line| line.starts_with("create"))
@@ -744,7 +760,7 @@ async fn an_unsupported_thought_level_is_skipped() {
         vec![
             format!("create s12 {main} - edit"),
             format!("create s13 {main} high edit"),
-            "create s14 m2 low edit".to_owned(),
+            "create s14 m3 low edit".to_owned(),
         ]
     );
 }
@@ -806,4 +822,98 @@ async fn switches_on_a_session_before_its_worktree_activation_are_refused() {
         server.bridge.get(&SessionId::new("s11")).is_none(),
         "not opened"
     );
+}
+
+/// Node `resolveSupportedAppThoughtLevel` keeps a level only when the model's own list offers it, and a model the
+/// registry does not own lists none: a model the directory does not list, or an empty directory, skips the level.
+#[tokio::test]
+async fn a_thought_level_for_a_model_the_directory_does_not_list_is_skipped() {
+    let (_scope, server, kernel) = server();
+    let mut unlisted = automation_create("s15");
+    unlisted["model"]["modelId"] = json!("m9");
+    call(&server, "session/create", unlisted).await.unwrap();
+    let (_scope, empty, empty_kernel) = server_without_directory();
+    let mut without_model = automation_create("s16");
+    without_model.as_object_mut().unwrap().remove("model");
+    call(&empty, "session/create", without_model).await.unwrap();
+    assert_eq!(log(&kernel)[0], "create s15 m9 low edit");
+    assert_eq!(
+        log(&empty_kernel)[0],
+        format!("create s16 {} - edit", selection().model)
+    );
+}
+
+/// Node `runSessionModelConfigMutation`: a session's switches run one at a time, each deciding "unchanged" and reading
+/// the model inside its turn, so a concurrent switch can neither be reverted nor make another one look unchanged.
+#[tokio::test]
+async fn switches_wait_for_the_session_s_switch_in_progress() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s17");
+    let live = server.live(&SessionId::new("s17")).await.unwrap();
+    let held = live.sink.config_switch().await.unwrap();
+    let switches = [
+        (
+            "session/setModel",
+            json!({"sessionId": "s17", "model": {"providerId": "p", "modelId": "m9"}}),
+        ),
+        (
+            "session/setThoughtLevel",
+            json!({"sessionId": "s17", "thoughtLevel": "low"}),
+        ),
+        (
+            "session/setMode",
+            json!({"sessionId": "s17", "mode": "auto"}),
+        ),
+    ];
+    let mut tasks = Vec::new();
+    for (method, params) in switches {
+        let server = server.clone();
+        tasks.push(tokio::spawn(async move {
+            call(&server, method, params).await.unwrap();
+        }));
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    }
+    assert!(log(&kernel).is_empty(), "{:?}", log(&kernel));
+    drop(held);
+    for task in tasks {
+        task.await.unwrap();
+    }
+    // The thought level applies to the model the first switch chose: it was read inside its own turn.
+    assert_eq!(
+        log(&kernel),
+        vec!["SetModel m9 -", "SetModel m9 low", "SetMode auto"]
+    );
+}
+
+/// When the actor cannot answer, the switches compare against the projection (`held_config`'s fallback).
+#[tokio::test]
+async fn a_switch_without_the_session_s_view_compares_against_the_projection() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s18");
+    call(
+        &server,
+        "session/setMode",
+        json!({"sessionId": "s18", "mode": "auto"}),
+    )
+    .await
+    .unwrap();
+    let handle = kernel.handles.lock().unwrap()[&SessionId::new("s18")].clone();
+    handle
+        .blind
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    // The projection has not seen `auto` (no event arrived) and still shows `build`: a switch to `build` is unchanged,
+    // one to `auto` is sent again. The snapshot answered after the switch needs the actor too, so both answers are
+    // errors; what the switch decided is in the kernel's log.
+    for mode in ["build", "auto"] {
+        let answer = call(
+            &server,
+            "session/setMode",
+            json!({"sessionId": "s18", "mode": mode}),
+        )
+        .await;
+        assert!(answer.is_err(), "{answer:?}");
+    }
+    assert_eq!(log(&kernel), vec!["SetMode auto", "SetMode auto"]);
 }

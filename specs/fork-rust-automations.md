@@ -85,7 +85,9 @@ sequenceDiagram
    create picks; a `model` that is not an object is refused), `mode` the permission mode, `incognito` the profile
    (validated like v4). Like Node `resolveSupportedAppThoughtLevel`, a trimmed `thoughtLevel` the target model does
    not offer in the model directory is skipped with a warning (the workspace default may come from a previous model)
-   and the model keeps its own level; a model the directory does not list keeps the level.
+   and the model keeps its own level. A model the directory does not list, or an empty directory, offers no level, so
+   the level is skipped too (Node lists `[]` for a model its registry does not own, `session-facade.ts`), and so is a
+   level whose `model` names no provider and model id (logged).
    `titleGenerationEnabled: false` turns off model-generated titles for the actor's lifetime (Node
    `titleGeneration: {enabled: false}`, kernel `Command::DisableTitleGeneration`); the first input still names the
    session. Any id that already exists (live, stored or soft-deleted) is refused with `-32602 "sessionId already
@@ -108,7 +110,13 @@ exists"`; the check runs with the create under the reservation gate (`Existing::
    the actor dedupes ids for its lifetime), and a refusal without a message names its status and reason code. The v4
    route guard runs first: a session whose prepared worktree is not active refuses like v4 (`v4 command session not
 found`) before it is opened. `setThoughtLevel` reads the model from the session (its view), not from the
-   projection, which learns of a `setModel` just applied only when its event arrives. A failed `"immediate"`
+   projection, which learns of a `setModel` just applied only when its event arrives. A session's model and mode
+   switches (these three and v4 `switchModelConfig` / `switchCollaborationMode`) take one switch turn at a time
+   (`Live::config_switch`, Node `runSessionModelConfigMutation`): each reads the session's config, decides
+   `config.unchanged` and sends its command inside its turn, so concurrent requests apply in arrival order,
+   `setThoughtLevel` reads the model once, and neither can revert or mask another switch. Node's lock covers the
+   model and thought level only; its mode switch is synchronous, the Rust one awaits the actor, so it takes the same
+   turn. A failed `"immediate"`
    persistence drops the draft and the runtime and reports the session `unloaded` before answering a generic error
    (the store's text can name the storage path), so a retry with the same id is not refused as existing.
 4. **`sendText` turn identity** (Node `prompt-turn.ts`): `automationId` (trimmed, non-empty) and `toolDisallowlist`
@@ -119,6 +127,9 @@ found`) before it is opened. `setThoughtLevel` reads the model from the session 
    (`No such tool available`) before any hook runs; Node only refuses there in the Cron handlers, so the Rust side is
    stricter (fail-closed): without the session's view (its actor stopped) the turn may be an automation run, so the
    gate refuses CronCreate/CronUpdate/CronDelete and CronPauseSelf; the Host's disallowlist cannot be known then.
+   The tool listing keeps default limits in that state, so it may still offer CronCreate/CronUpdate/CronDelete that
+   the gate then refuses (`No such tool available`): fail-closed, and only once the session's actor or the child's
+   agent is gone (the sinks' `view` answers `None` only then).
    The limits travel with their own input end to end: the actor starts the turn with the limits of the input it
    starts (no pending slot), a queued input with limits is never merged into a batch with other inputs, and an input
    with limits is never steered into a running turn (it queues and opens its own turn). An input that named no mode

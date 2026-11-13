@@ -111,6 +111,9 @@ pub struct Live {
     /// Fork: the queue items a `sendQueuedNow` is promoting (Node `reserveQueueItem`): a second promotion of the
     /// same item is refused instead of preempting the turn the first one started.
     promotions: crate::reservations::Reservations,
+    /// Fork: one model or mode switch at a time ([`Self::config_switch`]). A semaphore, not a Mutex: the lint policy
+    /// forbids holding a tokio MutexGuard across an await.
+    config_switches: tokio::sync::Semaphore,
     /// Fork: see [`ChildWatch`].
     child_watch: std::sync::OnceLock<Box<ChildWatch>>,
     /// Fork: the summary goes to the sessions index ([`listed_in_sessions_index`]).
@@ -185,6 +188,7 @@ impl Live {
             topics,
             rebuilds: tokio::sync::watch::Sender::new(0),
             promotions: crate::reservations::Reservations::default(),
+            config_switches: tokio::sync::Semaphore::new(1),
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
             admissions: std::sync::atomic::AtomicU64::new(0),
@@ -194,6 +198,18 @@ impl Live {
                 .incognito
                 .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
         }
+    }
+
+    /// Fork: the session's switch turn (Node `runSessionModelConfigMutation`): a model or mode switch reads the
+    /// session's config and sends its command while holding it, so concurrent requests (each runs on its own task)
+    /// apply in arrival order and none decides "unchanged" or reads the model before the previous one is applied.
+    pub(crate) async fn config_switch(
+        &self,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, &'static str> {
+        self.config_switches
+            .acquire()
+            .await
+            .map_err(|_| "the session's switch gate is closed")
     }
 
     /// Fork: admits one App input: its `admissionSeq` and `admittedAt` (ms) for the input intent.

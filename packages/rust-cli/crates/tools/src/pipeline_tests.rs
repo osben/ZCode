@@ -661,7 +661,8 @@ async fn a_tool_the_turn_hides_is_refused_before_any_hook() {
 }
 
 /// Fork: an ordinary turn (default limits) refuses CronPauseSelf and runs the mutation tools; without a session view
-/// the gate uses the same default limits as the tool listing (fail closed: CronPauseSelf stays refused).
+/// the turn may be an automation run, so the gate fails closed and refuses CronCreate/CronUpdate/CronDelete and
+/// CronPauseSelf (`TurnLimits::hides_without_view`), although the tool listing falls back to default limits.
 #[tokio::test]
 async fn a_missing_view_refuses_every_automation_tool_an_ordinary_turn_only_pause_self() {
     struct Ordinary;
