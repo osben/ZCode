@@ -487,6 +487,8 @@ impl Actor {
             return rejected(reason);
         }
         if compact {
+            // A compaction runs no turn: drop the limits so no later turn start takes them.
+            self.next_limits = Default::default();
             return match self.start_compaction(id, None) {
                 Ok(()) => accepted(),
                 Err(reason) => rejected(reason),

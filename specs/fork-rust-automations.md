@@ -97,12 +97,17 @@ exists"`. The answer is the legacy snapshot of `session/read` (the Host validate
    `session/read`.
 3. **`session/setMode`, `session/setThoughtLevel`, `session/setModel`**: apply the change through the session actor
    (the same commands as `switchCollaborationMode` / `switchModelConfig`) and answer the legacy snapshot. The Host uses
-   them as fallbacks (`setMode` for `auto`, `setThoughtLevel` after a create schema rejection).
+   them as fallbacks (`setMode` for `auto`, `setThoughtLevel` after a create schema rejection). Divergence:
+   `persistAsWorkspaceLastUsed` is ignored (the switch only changes the session); the Host's automation path never
+   relies on it, it switches models through v4 `switchModelConfig`. A failed `"immediate"` persistence drops the draft
+   and the runtime before answering the error, so a retry with the same id is not refused as existing.
 4. **`sendText` turn identity** (Node `prompt-turn.ts`): `automationId` (trimmed, non-empty) and `toolDisallowlist`
    ride on the input's execution and apply to that turn only (a queued input keeps its own). The turn's tool list
    drops every name in the disallowlist, plus CronCreate/CronUpdate/CronDelete when the turn has an automation id.
    CronPauseSelf is offered only on a turn with an automation id and pauses only that id. A turn's automation id is
-   never derived from `commandId` or `inputId`.
+   never derived from `commandId` or `inputId`. A hidden tool the model calls anyway is refused at the tool pipeline
+   (`No such tool available`) before any hook runs; Node only refuses there in the Cron handlers, so the Rust side is
+   stricter (fail-closed). A compaction input drops the pending limits, so they never reach a later turn.
 5. **`session/list`** keeps answering an empty list: the Host's directory lookup treats a missing entry as "no parent
    chain" and continues.
 
