@@ -4,15 +4,18 @@
 //! Notification 是可取消的计时任务，SessionEnd 在调用方的任务里跑。actor 只按 `HookOutcome`
 //! 提交消息、改标题、决定流程，所以 hook 跑多久都不会挡住中断与 `view`。
 
-use rust_cli_kernel_api::hooks::{HookContext, HookEvent, HookEventName, HookOutcome};
+use rust_cli_kernel_api::hooks::{
+    HookContext, HookEvent, HookEventName, HookOutcome, is_session_start_context,
+};
 use rust_cli_kernel_api::ids::CommandId;
 // 权限询问多久没回答才发 Notification（6000 ms）：只定义在 kernel-api，TUI 的终端通知用同一个值（F58：
 // 以前这里与 tui 各写一份）。
 use rust_cli_kernel_api::interaction::NOTIFY_AFTER as PERMISSION_NOTIFY_DELAY;
+use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::session_api::{Delivery, EndReason, QueuedInput, StartSource};
-use rust_cli_kernel_api::store::{Fact, SessionMeta};
+use rust_cli_kernel_api::store::{Fact, SessionMeta, StoreError};
 use serde_json::{Map, Value, json};
 use tokio_util::sync::{CancellationToken, DropGuard};
 
@@ -101,6 +104,13 @@ pub(crate) async fn session_end(
 /// SessionStart 给的首条输入的命令 ID 前缀。
 pub(crate) const SESSION_START_INPUT: &str = rust_cli_kernel_api::session_api::SESSION_START_INPUT;
 
+fn attachment_text(message: &Message) -> Option<&str> {
+    match message {
+        Message::Attachment(attachment) => Some(attachment.text.as_str()),
+        _ => None,
+    }
+}
+
 impl Actor {
     /// actor 启动时：有 SessionStart hook 才进入"启动"后台工作（没有时不改变行为，无竞态）。
     pub(crate) fn start_session(&mut self, source: StartSource) {
@@ -120,21 +130,29 @@ impl Actor {
         });
     }
 
-    /// SessionStart 的结果：一个事务提交 hook 消息，改标题，`initial_user_message` 排到队首（命令 ID 以
+    /// SessionStart 的结果：hook 消息进待写槽（不写库，第一个回合写入，见 [`Self::commit_pending_session_start`]），
+    /// 改标题，`initial_user_message` 排到队首（命令 ID 以
     /// [`SESSION_START_INPUT`] 开头：回合结束后单独一个回合，不与排队输入成批，lane.rs）。
+    ///
+    /// 只保留最新一次非空的结果（Node `stageSessionStartContext`）。以前这里写库：会话刚建的预热会话就有消息，
+    /// 发第一条时 `createSession` 的预留被拒（`it already has a conversation`）。
     pub(crate) async fn finish_startup(&mut self, outcome: HookOutcome) {
         if !outcome.messages.is_empty() {
-            match self.append(None, outcome.messages, Vec::new()).await {
-                Ok(appended) => self.after_commit(appended).await,
-                Err(reason) => {
-                    tracing::warn!(%reason, "SessionStart hook messages were not stored")
-                }
-            }
+            self.pending_session_start = outcome.messages;
         }
-        if let Some(title) = outcome.session_title {
+        // Fork: the Node desktop agent reads only `additionalContext` from SessionStart, so the desktop drops the
+        // title and the initial input. A title would mark the draft Custom and stop the first input from titling it;
+        // an input would start a turn in an unsent draft and the first send's reservation would be refused.
+        if let Some(title) = outcome
+            .session_title
+            .filter(|_| self.deps.session_start_extras)
+        {
             self.retitle(title).await;
         }
-        if let Some(text) = outcome.initial_user_message {
+        if let Some(text) = outcome
+            .initial_user_message
+            .filter(|_| self.deps.session_start_extras)
+        {
             let command = CommandId::new(format!(
                 "{SESSION_START_INPUT}{}",
                 self.deps.ids.operation()
@@ -152,6 +170,34 @@ impl Actor {
             self.emit_queue();
         }
         self.start_next().await;
+    }
+
+    /// Node `commitPendingSessionStartContext`: writes the held SessionStart result before a turn's input. It runs
+    /// at the top of `start_turn`, which is Node's `session_persistence` phase: before the turn's `TurnStarted`, the
+    /// UserPromptSubmit hook and the input, and before the model request is built, so the first request holds the
+    /// context. A context equal to the latest SessionStart context in the history is a duplicate, and the whole group
+    /// goes with it (a reopen with unchanged output adds nothing). The slot is cleared only after the write succeeds.
+    pub(crate) async fn commit_pending_session_start(&mut self) -> Result<(), StoreError> {
+        if self.pending_session_start.is_empty() {
+            return Ok(());
+        }
+        let latest = self
+            .messages
+            .iter()
+            .rev()
+            .find(|message| is_session_start_context(message))
+            .and_then(attachment_text);
+        let duplicate = self
+            .pending_session_start
+            .iter()
+            .any(|message| is_session_start_context(message) && attachment_text(message) == latest);
+        if !duplicate {
+            let messages = self.pending_session_start.clone();
+            let appended = self.append(None, messages, Vec::new()).await?;
+            self.after_commit(appended).await;
+        }
+        self.pending_session_start.clear();
+        Ok(())
     }
 
     /// 改标题：先提交，再改内存、发事件。

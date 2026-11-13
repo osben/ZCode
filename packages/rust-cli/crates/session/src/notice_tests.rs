@@ -138,6 +138,7 @@ async fn session_as(
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_extras: true,
         },
         SessionState {
             commands: Default::default(),

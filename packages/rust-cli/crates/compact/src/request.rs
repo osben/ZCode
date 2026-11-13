@@ -135,6 +135,14 @@ impl RunSink for CollectSink {
         Ok(())
     }
 
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        _session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.commit_messages(messages).await
+    }
+
     /// 摘要请求没有存储：只收集消息，丢弃计量（计量由压缩器在别处记）。
     async fn commit_metered(
         &self,

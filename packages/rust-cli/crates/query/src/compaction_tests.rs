@@ -68,6 +68,7 @@ impl FakeCompactor {
 
 fn result(trigger: CompactTrigger) -> CompactResult {
     CompactResult {
+        session_start_context: false,
         boundary: CompactBoundary {
             id: MessageId::new("msg_boundary"),
             trigger,
@@ -433,4 +434,26 @@ async fn a_failed_reactive_compaction_is_said() {
             "failed Reactive: Error during compaction: overloaded"
         ]
     );
+}
+
+/// The in-turn compaction passes the SessionStart flag of its result to `RunSink::commit_compaction`, so the sink
+/// clears the held startup result (session `turn.rs` `SinkRequest::Compaction`). A plain `commit_messages` would
+/// record no flag at all.
+#[tokio::test]
+async fn a_compaction_with_a_session_start_context_commits_with_the_flag() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let held = CompactResult {
+        session_start_context: true,
+        ..result(CompactTrigger::Auto)
+    };
+    let compactor = FakeCompactor::new(vec![AutoCompactOutcome::Compacted {
+        result: Box::new(held),
+    }]);
+    let mut parts = parts(model.clone(), Vec::new());
+    parts.compactor = compactor.clone();
+    let request = request("old question");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    let stop = crate::run::run(scope, request).await.unwrap();
+    assert_eq!(stop, QueryStop::Completed);
+    assert_eq!(sink.compaction_flags(), [true]);
 }

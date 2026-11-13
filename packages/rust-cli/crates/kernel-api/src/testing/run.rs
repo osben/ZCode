@@ -26,6 +26,8 @@ pub struct RecordingSink {
     steering: Mutex<Vec<String>>,
     /// `commit_metered` 的计量，按提交顺序，带同批消息的 id（usage.md §2.5）。
     metered: Mutex<Vec<(Option<crate::ids::MessageId>, crate::metering::Metered)>>,
+    /// The `session_start_context` flag of each `commit_compaction`, in commit order.
+    compaction_flags: Mutex<Vec<bool>>,
 }
 
 impl RecordingSink {
@@ -44,6 +46,11 @@ impl RecordingSink {
 
     pub fn metered(&self) -> Vec<(Option<crate::ids::MessageId>, crate::metering::Metered)> {
         self.metered.lock_unpoisoned().clone()
+    }
+
+    /// The `session_start_context` flag of each compaction commit, in order. A plain `commit_messages` records none.
+    pub fn compaction_flags(&self) -> Vec<bool> {
+        self.compaction_flags.lock_unpoisoned().clone()
     }
 }
 
@@ -93,6 +100,17 @@ impl RunSink for RecordingSink {
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         self.messages.lock_unpoisoned().extend(messages);
         Ok(())
+    }
+
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.compaction_flags
+            .lock_unpoisoned()
+            .push(session_start_context);
+        self.commit_messages(messages).await
     }
 
     async fn compact_started(&self, _trigger: crate::message::CompactTrigger) {}

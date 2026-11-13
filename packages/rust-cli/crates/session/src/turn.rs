@@ -81,6 +81,12 @@ pub(crate) enum TurnInput {
 
 impl Actor {
     pub(crate) async fn start_turn(&mut self, input: TurnInput) -> Result<(), StoreError> {
+        // The held SessionStart result is written first: Node's `session_persistence` phase runs before the
+        // turn's `TurnStarted`, the UserPromptSubmit hook and the input. Bash and compaction are not turns in Node
+        // (`turn.ts` returns before that phase for `/compact`), so they do not write it.
+        if !matches!(input, TurnInput::Bash { .. } | TurnInput::Compact { .. }) {
+            self.commit_pending_session_start().await?;
+        }
         let meta = |source: &str| UserOrigin::Meta {
             source: source.to_owned(),
         };
@@ -286,6 +292,19 @@ impl Actor {
             }
             SinkRequest::Messages { messages, reply } => {
                 let _ = reply.send(self.record(messages, Vec::new()).await);
+            }
+            SinkRequest::Compaction {
+                messages,
+                session_start_context,
+                reply,
+            } => {
+                // A compaction whose SessionStart run gave a context replaces the held result, once the batch has
+                // committed (Node `discardPendingSessionStartContext` after `compactSessionStart.hasContext`).
+                let result = self.record(messages, Vec::new()).await;
+                if session_start_context && result.is_ok() {
+                    self.pending_session_start.clear();
+                }
+                let _ = reply.send(result);
             }
             SinkRequest::CompactStarted(trigger) => crate::compact::compact_started(self, trigger),
             SinkRequest::CompactFailed(trigger, message) => {

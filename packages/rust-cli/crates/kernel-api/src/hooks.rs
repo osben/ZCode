@@ -475,6 +475,20 @@ impl Absorbed {
     }
 }
 
+/// Fork: the SessionStart additional-context attachment (source `hook_additional_context`, `data.hookEvent`
+/// `SessionStart`). The session's pending slot and the compactor's kept-context check both compare these by their full
+/// text (Node `latestSessionStartContext`).
+pub fn is_session_start_context(message: &Message) -> bool {
+    match message {
+        Message::Attachment(attachment) => {
+            attachment.source == "hook_additional_context"
+                && attachment.data.get("hookEvent").and_then(Value::as_str)
+                    == Some(HookEventName::SessionStart.as_str())
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 #[path = "hooks_tests.rs"]
 mod tests;
