@@ -1215,7 +1215,9 @@ fn input_meta(
         requested,
         admitted,
         attachments: input.attachments.clone(),
-        automation: TurnLimits::new(input.automation_id.as_deref(), Vec::new()).automation,
+        automation: TurnLimits::new(input.automation_id.as_deref(), Vec::new())
+            .automation()
+            .map(str::to_owned),
     }
 }
 
@@ -1403,11 +1405,15 @@ fn input_execution(
     if chosen.is_none() && resolved.is_none() && limits.is_empty() {
         return None;
     }
+    // Fork: limits alone name no state (Node gives none): the session's is recorded, never applied, so a missing view
+    // or a mode switched while the input waits is not overwritten.
+    let keeps_session_state = chosen.is_none() && resolved.is_none();
     let state = resolved.unwrap_or(current);
     Some(InputExecution {
         state,
         selection: chosen,
         limits,
+        keeps_session_state,
     })
 }
 
@@ -1420,10 +1426,10 @@ fn admission(
     followup: Followup,
     phase: Phase,
     turn_running: bool,
-    with_attachments: bool,
+    unsteerable_input: bool,
 ) -> (Delivery, &'static str) {
     let running = phase == Phase::Running;
-    let steerable = running && turn_running && !with_attachments;
+    let steerable = running && turn_running && !unsteerable_input;
     match (requested, running) {
         (Some(Requested::Guide), true) if steerable => (Delivery::Steer, "guide"),
         (None, true) if steerable && followup == Followup::Guide => (Delivery::Steer, "guide"),
@@ -1451,6 +1457,13 @@ fn acked_delivery(
         KernelAck::Accepted { .. } => "startNow",
         KernelAck::Rejected { .. } | KernelAck::Duplicate => predicted,
     }
+}
+
+/// Fork: an input that cannot be steered into a running turn: content blocks (attachments) wait for the turn to end,
+/// and turn limits (an automation run's id and hidden tools) belong to a turn of the input's own, which a steered input
+/// would not have.
+fn unsteerable(with_attachments: bool, execution: Option<&InputExecution>) -> bool {
+    with_attachments || execution.is_some_and(|execution| !execution.limits.is_empty())
 }
 
 /// Fork: `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode).
@@ -1646,7 +1659,7 @@ async fn send_text(
         live.followup(),
         admission_phase,
         view.as_ref().is_none_or(|view| view.running),
-        !content.is_empty(),
+        unsteerable(!content.is_empty(), execution.as_ref()),
     );
     let text = input.text.clone().unwrap_or_default();
     if let Err(ack) = admit_input(server, handle, &text, command, revision).await {

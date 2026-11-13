@@ -14,10 +14,14 @@ pub const AUTOMATION_MUTATION_TOOLS: [&str; 3] = [CRON_CREATE, CRON_UPDATE, CRON
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnLimits {
-    /// The automation that dispatched the turn (the Host's explicit `automationId`, trimmed and non-empty). It is the
-    /// only target CronPauseSelf can pause; it is never derived from a command or input id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub automation: Option<String>,
+    /// The automation that dispatched the turn (the Host's explicit `automationId`, trimmed and non-empty, also when
+    /// decoded). It is the only target CronPauseSelf can pause; it is never derived from a command or input id.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "trimmed_id"
+    )]
+    automation: Option<String>,
     /// Tool names the input hides from its turn (`toolDisallowlist`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_tools: Vec<String>,
@@ -36,6 +40,11 @@ impl TurnLimits {
         }
     }
 
+    /// The automation that dispatched the turn, if any.
+    pub fn automation(&self) -> Option<&str> {
+        self.automation.as_deref()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.automation.is_none() && self.hidden_tools.is_empty()
     }
@@ -52,6 +61,18 @@ impl TurnLimits {
             None => name == CRON_PAUSE_SELF,
         }
     }
+}
+
+/// The `new` rule for a decoded id: trimmed, a blank one is none.
+fn trimmed_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let raw = Option::<String>::deserialize(deserializer)?;
+    Ok(raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned))
 }
 
 #[cfg(test)]

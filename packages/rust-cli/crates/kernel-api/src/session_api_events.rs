@@ -125,6 +125,11 @@ pub struct InputExecution {
         skip_serializing_if = "crate::turn_limits::TurnLimits::is_empty"
     )]
     pub limits: crate::turn_limits::TurnLimits,
+    /// Fork: the input named no mode and no plan switch (an automation run's limits alone; Node
+    /// `resolveSubmittedExecutionState` gives no state then). `state` only records the session's state at submission:
+    /// the session's state is left alone when the input starts, and a queue row shows no mode for it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeps_session_state: bool,
 }
 
 /// 只供显示的系统提示的级别（informational system 消息的 `level`）。

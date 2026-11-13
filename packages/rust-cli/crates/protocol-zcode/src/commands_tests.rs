@@ -23,6 +23,26 @@ fn a_guide_steers_only_into_a_running_turn() {
     );
 }
 
+/// Fork: an input with turn limits (an automation run) is never steered into a running turn: steered, its limits would
+/// not reach the turn it joins. It queues and opens its own turn (specs/fork-rust-automations.md).
+#[test]
+fn an_input_with_turn_limits_or_attachments_is_not_steered() {
+    let limits = InputExecution {
+        state: ExecutionState::default(),
+        selection: None,
+        limits: TurnLimits::new(Some("auto_1"), Vec::new()),
+        keeps_session_state: true,
+    };
+    assert!(unsteerable(false, Some(&limits)));
+    assert!(unsteerable(true, None));
+    let plain = InputExecution {
+        limits: TurnLimits::default(),
+        ..limits
+    };
+    assert!(!unsteerable(false, Some(&plain)));
+    assert!(!unsteerable(false, None));
+}
+
 #[test]
 fn attachments_queue_and_an_idle_session_starts_now() {
     assert_eq!(
@@ -346,9 +366,12 @@ fn an_automation_input_carries_its_turn_limits() {
     }))
     .unwrap();
     let execution = input_execution(&input, None).expect("limits alone make an execution");
-    assert_eq!(execution.state, ExecutionState::default());
+    assert!(
+        execution.keeps_session_state,
+        "no mode or plan named: the session's state is left alone (Node gives no state)"
+    );
     assert_eq!(execution.selection, None);
-    assert_eq!(execution.limits.automation.as_deref(), Some("auto_1"));
+    assert_eq!(execution.limits.automation(), Some("auto_1"));
     assert!(execution.limits.hides("CronCreate"));
     assert!(!execution.limits.hides("CronPauseSelf"));
     let blank: Input =
@@ -357,6 +380,12 @@ fn an_automation_input_carries_its_turn_limits() {
         input_execution(&blank, None).is_none(),
         "a blank id is no automation"
     );
+    // A mode named with the limits is frozen like any other input's.
+    let moded: Input = serde_json::from_value(
+        serde_json::json!({"text": "run", "automationId": "auto_1", "mode": "auto"}),
+    )
+    .unwrap();
+    assert!(!input_execution(&moded, None).unwrap().keeps_session_state);
 }
 
 /// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`) case by case.

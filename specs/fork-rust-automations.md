@@ -115,7 +115,15 @@ found`) before it is opened. `setThoughtLevel` reads the model from the session 
    CronPauseSelf is offered only on a turn with an automation id and pauses only that id. A turn's automation id is
    never derived from `commandId` or `inputId`. A hidden tool the model calls anyway is refused at the tool pipeline
    (`No such tool available`) before any hook runs; Node only refuses there in the Cron handlers, so the Rust side is
-   stricter (fail-closed). A compaction input drops the pending limits, so they never reach a later turn.
+   stricter (fail-closed): without the session's view the gate refuses Cron tools that need an automation turn.
+   The limits travel with their own input end to end: the actor starts the turn with the limits of the input it
+   starts (no pending slot), a queued input with limits is never merged into a batch with other inputs, and an input
+   with limits is never steered into a running turn (it queues and opens its own turn). An input that named no mode
+   or plan (an automation run) records `keepsSessionState`: it leaves the session's mode and plan alone when it
+   starts, and the queue projection shows no mode for it. Bash, compaction, cron and goal turns carry no limits.
+   Known boundary: subagents take the session's tool config, not the turn's (Node child runtimes read
+   `config.toolDisallowlist`); slice 2 keeps Cron tools main-session only, so until it lands a subagent of a run can
+   still see the local Cron tools.
    Telemetry (Node `automationAdmission`): the run's `turn.started` fact carries `automationId`, and `taskTrigger`
    (`manual` / `schedule` plus `scheduledAt`) when its `sourceCommandId` is that automation's run id
    (`parseAutomationRunId`). A run gets no renderer send acknowledgement, so the Host seeds the run's `agent_step` /

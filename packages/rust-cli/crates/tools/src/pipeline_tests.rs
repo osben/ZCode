@@ -656,5 +656,63 @@ async fn a_tool_the_turn_hides_is_refused_before_any_hook() {
         )
         .await
         .output;
+    assert!(!output.is_error);
     assert_eq!(text(&output), "paused");
+}
+
+/// Fork: an ordinary turn (default limits) refuses CronPauseSelf and runs the mutation tools; without a session view
+/// the gate uses the same default limits as the tool listing (fail closed: CronPauseSelf stays refused).
+#[tokio::test]
+async fn an_ordinary_turn_and_a_missing_view_refuse_cron_pause_self() {
+    struct Ordinary;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::testing::OpsOverride for Ordinary {
+        async fn view(&self) -> Option<rust_cli_kernel_api::session_ops::RunView> {
+            Some(rust_cli_kernel_api::session_ops::RunView::new(
+                rust_cli_kernel_api::permission::PermissionMode::Default,
+                WorkspaceRef {
+                    environment: EnvironmentId::new("local"),
+                    root: EnvPath::new("/work"),
+                },
+            ))
+        }
+    }
+    struct NoView;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::testing::OpsOverride for NoView {
+        async fn view(&self) -> Option<rust_cli_kernel_api::session_ops::RunView> {
+            None
+        }
+    }
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let ops: [Arc<dyn rust_cli_kernel_api::session_ops::SessionOps>; 2] =
+        [Arc::new(Ordinary), Arc::new(NoView)];
+    for (case, ops) in ops.into_iter().enumerate() {
+        let run = |name: &str| {
+            pipeline.execute(
+                Arc::new(FakeTool::new(name, false, "ran")),
+                json!({}),
+                ToolUseContext {
+                    session_ops: ops.clone(),
+                    ..context(allow())
+                },
+                progress.clone(),
+            )
+        };
+        let output = run("CronPauseSelf").await.output;
+        assert!(output.is_error, "case {case}");
+        assert_eq!(
+            text(&output),
+            "<tool_use_error>Error: No such tool available: CronPauseSelf</tool_use_error>"
+        );
+        let output = run("CronDelete").await.output;
+        assert!(!output.is_error, "case {case}");
+        assert_eq!(text(&output), "ran");
+    }
 }

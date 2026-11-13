@@ -209,6 +209,7 @@ pub(super) async fn compact(
                 state: rust_cli_kernel_api::permission::ExecutionState { mode, plan },
                 selection: Some(chosen),
                 limits: Default::default(),
+                keeps_session_state: false,
             })
         }
         None => None,

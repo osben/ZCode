@@ -151,6 +151,7 @@ impl Actor {
         // drain (`applyRuntimeExecutionState` with the last intent), so later tool calls in this turn run under them. Its
         // model is not switched mid-run (see specs/fork-rust-agent-parity.md).
         if let Some(execution) = execution
+            && !execution.keeps_session_state
             && let Err(reason) = self.absorbed_execution(execution.state).await
         {
             tracing::warn!(%reason, "an absorbed guide's execution state could not be applied");

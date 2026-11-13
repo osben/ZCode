@@ -266,7 +266,7 @@ async fn asking_session_input(
 pub(super) async fn tool_session(
     scope: &TaskScope,
     hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
-    model: Arc<ScriptedModel>,
+    model: Arc<dyn rust_cli_kernel_api::model::ModelPort>,
     tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>>,
 ) -> (Arc<MemoryStore>, Session) {
     let store = Arc::new(MemoryStore::default());
