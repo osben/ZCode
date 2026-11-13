@@ -577,11 +577,15 @@ fn finished_notice(summary: &str) -> String {
     )
 }
 
-/// A no-progress reminder block (Node `subagentStall`); it carries no `backgroundSource` of its own.
+/// The real stall reminder text: Node's golden output of `formatBackgroundSubagentStallNotification` (the agents
+/// crate's fixture). The reminder is not wrapped in `<task-notification>`, so it has no notification meta at all
+/// (review of #420, finding D).
 fn stall_notice() -> String {
-    "<task-notification>\n<background-agent-stall>\n  <task-id>agent_2</task-id>\n  \
-     <description>Silent job</description>\n  <no-progress-for-ms>900000</no-progress-for-ms>\n  \
-     <last-progress-at>2026-11-12T10:00:00.000Z</last-progress-at>\n</background-agent-stall>"
+    let golden: Value = serde_json::from_str(include_str!("../../agents/src/stall_golden.json"))
+        .expect("golden fixture is JSON");
+    golden["basic"]
+        .as_str()
+        .expect("basic golden text")
         .to_owned()
 }
 
@@ -629,6 +633,7 @@ fn results_from_different_sources_have_no_background_source() {
 
 #[test]
 fn a_stall_reminder_is_not_a_consumed_subagent_result() {
+    assert!(notification_metas([stall_notice().as_str()]).is_empty());
     assert!(!subagent_result_consumed(&notification_metas([
         stall_notice().as_str()
     ])));
