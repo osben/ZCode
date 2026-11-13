@@ -33,8 +33,9 @@ pub struct Extensions {
     /// turn); the app-server turns it on.
     pub node_desktop: bool,
     /// Fork: the desktop Host's automation store (specs/fork-rust-automations.md, slice 2). When set, the Cron tools
-    /// are Node's five sending to it instead of this process's cron (`cron_store` is then None, so nothing fires
-    /// twice); ScheduleWakeup is unchanged.
+    /// are Node's five sending to it instead of this process's cron, the local cron gets no store whatever `cron_store`
+    /// says (nothing fires twice), and `/loop` is hidden (`ExtConfig::host_automations` is derived from it);
+    /// ScheduleWakeup is unchanged.
     pub automation: Option<Arc<dyn AutomationPort>>,
     /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
     /// the app-server gives it.

@@ -145,3 +145,35 @@ async fn a_request_carries_the_owner_session_s_workspace_and_checks_the_reply() 
         "{message}"
     );
 }
+
+/// No line reaches the Host within a moment.
+async fn nothing_sent(lines: &mut tokio::io::Lines<BufReader<tokio::io::DuplexStream>>) {
+    let sent = tokio::time::timeout(Duration::from_millis(100), lines.next_line()).await;
+    assert!(sent.is_err(), "{sent:?}");
+}
+
+/// Params that are not an object, or a method without a reply schema, fail as an `AutomationError` before anything is
+/// sent: never a panic, never an unchecked reply.
+#[tokio::test]
+async fn malformed_params_and_unknown_methods_fail_before_any_request() {
+    let (_scope, context, mut lines, _host_out) = connected();
+    let port = HostAutomations::new(context.clone());
+    context.register("sess_1", "/w");
+    let session = SessionId::new("sess_1");
+    for params in [json!([1]), json!("x"), json!(3), json!(true)] {
+        let error = port
+            .request(&session, "automation/list", params.clone())
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{params} was sent"));
+        assert_eq!(error.code, None);
+        assert!(error.message.contains("automation/list"), "{error:?}");
+    }
+    let error = port
+        .request(&session, "automation/lsit", json!({}))
+        .await
+        .err()
+        .unwrap_or_else(|| panic!("an unknown method was sent"));
+    assert!(error.message.contains("automation/lsit"), "{error:?}");
+    nothing_sent(&mut lines).await;
+}

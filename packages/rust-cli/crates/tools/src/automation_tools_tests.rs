@@ -71,6 +71,8 @@ struct Session {
     limits: TurnLimits,
     /// The actor is gone: `view` answers nothing.
     gone: bool,
+    /// The actor answers only this many views, then nothing (it stops mid-call).
+    views_left: Option<std::sync::atomic::AtomicUsize>,
     frozen: Mutex<Vec<String>>,
 }
 
@@ -79,6 +81,16 @@ impl OpsOverride for Session {
     async fn view(&self) -> Option<RunView> {
         if self.gone {
             return None;
+        }
+        if let Some(left) = &self.views_left {
+            let answered = left.fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            );
+            if answered.is_err() {
+                return None;
+            }
         }
         let mut view = RunView::new(
             PermissionMode::Default,
@@ -819,5 +831,33 @@ fn null_is_refused_where_node_s_schema_has_no_null() {
             &json!({"id": "auto_1", "title": "Build", "recurring": true, "maxRuns": null})
         )
         .is_ok()
+    );
+}
+
+/// The selection comes from the same view as the turn's limits (Node reads the runtime selection once): a session that
+/// stops answering after that read still creates on the session's model, never silently on the Host's default.
+#[tokio::test]
+async fn create_takes_the_selection_from_the_view_it_checked_the_turn_with() {
+    let host = Host::answering(vec![
+        Ok(json!({"bound": false})),
+        Ok(json!({"automation": automation("auto_1", "t")})),
+    ]);
+    let session = Arc::new(Session {
+        views_left: Some(std::sync::atomic::AtomicUsize::new(1)),
+        ..Session::default()
+    });
+    let input = json!({"cron": "0 9 * * *", "prompt": "p", "title": "t"});
+    call(
+        &tool(&host, "CronCreate"),
+        input,
+        context(session, PermissionMode::Default),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{e}"));
+    let requests = host.requests();
+    assert_eq!(requests[1].1, "automation/create");
+    assert_eq!(
+        requests[1].2["modelSelection"],
+        json!({"providerId": "zai", "modelId": "glm-5", "options": {"reasoningLevel": "high"}})
     );
 }

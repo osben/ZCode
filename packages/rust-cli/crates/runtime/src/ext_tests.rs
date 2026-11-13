@@ -330,8 +330,15 @@ fn the_host_automation_port_replaces_the_local_cron_tools() {
             ("ScheduleWakeup".to_owned(), false),
         ]
     );
+    // The swap keys on the port alone: without `node_desktop`, and `node_desktop` without a port keeps the local tools.
+    assert_eq!(
+        names(&Extensions {
+            node_desktop: true,
+            ..Extensions::none()
+        }),
+        local
+    );
     let desktop = Extensions {
-        node_desktop: true,
         automation: Some(Arc::new(Unused)),
         ..Extensions::none()
     };
@@ -438,4 +445,53 @@ async fn read_topic_resource_is_registered_only_with_topic_resources() {
             catalog.tools
         );
     }
+}
+
+struct NoAutomations;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::automation::AutomationPort for NoAutomations {
+    async fn request(
+        &self,
+        _session: &rust_cli_kernel_api::ids::SessionId,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, rust_cli_kernel_api::automation::AutomationError> {
+        Err(rust_cli_kernel_api::automation::AutomationError::new(
+            "unused",
+        ))
+    }
+}
+
+/// Fork (specs/fork-rust-automations.md, slice 2): with the Host's automation port the local cron gets no store, even
+/// when an embedder passes one too, so persisted local jobs never fire beside the Host's scheduler.
+#[test]
+fn the_host_automation_port_leaves_the_local_cron_without_a_store() {
+    let store: Arc<dyn rust_cli_kernel_api::cron_store::CronStore> =
+        Arc::new(rust_cli_kernel_api::testing::MemoryCronStore::default());
+    let local = Extensions {
+        cron_store: Some(store.clone()),
+        ..Extensions::none()
+    };
+    assert!(crate::assemble::cron_store(&local).is_some());
+    let desktop = Extensions {
+        cron_store: Some(store),
+        automation: Some(Arc::new(NoAutomations)),
+        ..Extensions::none()
+    };
+    assert!(crate::assemble::cron_store(&desktop).is_none());
+}
+
+/// Fork: `/loop` is hidden exactly when the Cron tools are the Host's: the runtime derives the flag from the port, so a
+/// caller cannot set one without the other.
+#[test]
+fn host_automations_follow_the_automation_port() {
+    let mut stale = Extensions::none();
+    stale.config.host_automations = true;
+    assert!(!crate::assemble::ext_config(&stale).host_automations);
+    let desktop = Extensions {
+        automation: Some(Arc::new(NoAutomations)),
+        ..Extensions::none()
+    };
+    assert!(crate::assemble::ext_config(&desktop).host_automations);
 }

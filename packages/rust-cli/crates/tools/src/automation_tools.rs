@@ -504,22 +504,20 @@ impl AutomationTool {
         })
     }
 
+    /// `selection` is the session's model from the view `dispatch` read the turn's limits from (Node reads the runtime
+    /// selection once).
     async fn create(
         &self,
         input: &Value,
         context: &ToolUseContext,
         owner: &SessionId,
+        selection: Option<&ModelSelection>,
     ) -> Result<ToolOutput, ToolError> {
         let input = create_input(input).map_err(|message| ToolError::InvalidInput { message })?;
         if self.bound(owner).await? {
             return Err(failed(CREATE_IN_BOUND_SESSION.to_owned()));
         }
-        let selection = context
-            .session_ops
-            .view()
-            .await
-            .and_then(|view| view.selection);
-        let params = create_params(&input, selection.as_ref(), context.base_mode, owner);
+        let params = create_params(&input, selection, context.base_mode, owner);
         let result = self
             .request(owner, port::CREATE, params)
             .await
@@ -619,10 +617,10 @@ impl AutomationTool {
         let mutates = matches!(self.kind, Kind::Create | Kind::Update | Kind::Delete);
         // A mutation needs the turn's limits: without the session view it cannot tell an automation turn apart, so it
         // fails closed.
-        let limits = match context.session_ops.view().await {
-            Some(view) => view.turn,
+        let (limits, selection) = match context.session_ops.view().await {
+            Some(view) => (view.turn, view.selection),
             None if mutates => return Err(failed("Session state is unavailable.".to_owned())),
-            None => TurnLimits::default(),
+            None => (TurnLimits::default(), None),
         };
         // The turn's tool list already hides these; a call that still arrives is refused before any request.
         if mutates && limits.restricts_automation_mutations() {
@@ -630,7 +628,10 @@ impl AutomationTool {
         }
         let owner = context.session_ops.owner_session(&context.session).await;
         match self.kind {
-            Kind::Create => self.create(input, context, &owner).await,
+            Kind::Create => {
+                self.create(input, context, &owner, selection.as_ref())
+                    .await
+            }
             Kind::Update => self.update(input, &owner).await,
             Kind::List => self.list(&owner).await,
             Kind::Delete => self.delete(input, &owner).await,

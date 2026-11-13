@@ -667,8 +667,8 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    // The runtime derives `/loop` hiding and the storeless local cron from this port.
     extensions.automation = spec.automation.clone();
-    extensions.config.host_automations = spec.automation.is_some();
     extensions.topic_resources = spec.topic_resources.clone();
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
@@ -702,8 +702,8 @@ pub(crate) async fn kernel(
     if let Some(peers) = &peers {
         extensions.peers = peers.deps.clone();
     }
-    // 持久定时任务：启动工作区（项目根）下的 `.zcode/scheduled_tasks.json`（tools-more.md §16）。Fork: not under the
-    // desktop Host, whose automation store owns schedules (a job left in the file would fire beside it).
+    // 持久定时任务：启动工作区（项目根）下的 `.zcode/scheduled_tasks.json`（tools-more.md §16）。Fork: not opened under
+    // the desktop Host, whose automation store owns schedules; the runtime gives the local cron no store there anyway.
     if spec.automation.is_none() {
         extensions.cron_store =
             env_assembly::cron_store(&opened.deployment, &opened.workspace, clock.clone());

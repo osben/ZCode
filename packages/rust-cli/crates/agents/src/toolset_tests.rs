@@ -298,3 +298,48 @@ fn a_desktop_fork_keeps_the_main_registry_without_the_cron_tools() {
     // The fork still sees the main thread's other tools, Workflow and ScheduleWakeup included.
     assert!(fork.find("Workflow").is_some());
 }
+
+/// Every Cron tool name (`tool_names::CRON_TOOLS`), not only the one the main fixture lists, is gone from every lookup of
+/// a desktop fork, the withheld (deferred) lookup included; other withheld tools stay reachable.
+#[test]
+fn a_desktop_fork_withholds_none_of_the_five_cron_tools() {
+    struct Withholding(Vec<Arc<dyn Tool>>);
+    impl rust_cli_kernel_api::testing::RegistryOverride for Withholding {
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            self.0.clone()
+        }
+        fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+            self.0.iter().find(|tool| tool.name() == name).cloned()
+        }
+        fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+            rust_cli_kernel_api::testing::RegistryOverride::find(self, name)
+        }
+    }
+    let cron = rust_cli_kernel_api::tool_names::CRON_TOOLS;
+    let names: Vec<&str> = cron
+        .iter()
+        .copied()
+        .chain(["Read", "ScheduleWakeup"])
+        .collect();
+    let tools = names
+        .iter()
+        .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
+        .collect();
+    let fork = super::WithoutCron {
+        inner: Arc::new(Withholding(tools)),
+    };
+    let session = rust_cli_kernel_api::ids::SessionId::new("s");
+    for name in cron {
+        assert!(fork.find(name).is_none(), "{name}");
+        assert!(fork.find_for(&session, name).is_none(), "{name}");
+        assert!(fork.withheld(name).is_none(), "{name}");
+    }
+    let listed: Vec<String> = fork
+        .snapshot(&session)
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(listed, ["Read", "ScheduleWakeup"]);
+    assert!(fork.withheld("Read").is_some());
+}

@@ -31,11 +31,23 @@ impl AutomationPort for HostAutomations {
         method: &str,
         mut params: Value,
     ) -> Result<Value, AutomationError> {
+        // Fail closed before anything is sent: a method without a reply schema would answer unchecked data, and
+        // params that are not an object cannot carry the workspace.
+        if !Inbound::get().knows_reply(method) {
+            return Err(AutomationError::new(format!(
+                "{method} is not an automation method"
+            )));
+        }
+        let Some(fields) = params.as_object_mut() else {
+            return Err(AutomationError::new(format!(
+                "{method} params must be an object"
+            )));
+        };
         let workspace = self
             .context
             .workspace_ref(session.as_str())
             .ok_or_else(|| AutomationError::new("Session workspace is unavailable"))?;
-        params["workspace"] = workspace;
+        fields.insert("workspace".to_owned(), workspace);
         let result = self
             .context
             .peer

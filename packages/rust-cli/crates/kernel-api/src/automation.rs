@@ -18,8 +18,10 @@ pub const CHECK_TASK_BINDING: &str = "automation/checkTaskBinding";
 /// `automation/checkTaskBinding`).
 pub const METHOD_NOT_FOUND: i64 = -32601;
 
-/// A failed Host request: the JSON-RPC code when the Host answered with an error, None for a transport failure,
-/// a timeout or an invalid reply.
+/// A failed Host request. `code` is the JSON-RPC code the peer reported: a Host error reply, or the connection's own
+/// error code for a transport failure (-32000 for a closed connection). `None` when no code applies: the reply failed
+/// its schema, the request was refused before it was sent, or the session has no workspace. A timeout is not an
+/// `AutomationError`: the Cron tools bound the call themselves.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
 pub struct AutomationError {

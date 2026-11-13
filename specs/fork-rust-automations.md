@@ -173,7 +173,8 @@ Owners (Node layering):
 - **Port** (`kernel-api` `AutomationPort`, implemented by `protocol-zcode/src/automation_port.rs`, Node
   `requestClient`): the transport only. It adds the owner session's `workspace` ref (`Context::workspace_ref`, the
   same construction the account-credential request uses), keeps the Host's JSON-RPC error code, and checks the
-  result against the method's reply schema (inbound schema).
+  result against the method's reply schema (inbound schema). It fails closed before sending: a method without a reply
+  schema, or params that are not an object, answer an `AutomationError` (no code) instead of an unchecked request.
 - **Session** (`SessionOps::freeze_title`, Node `setCustomSessionTitle`): after a successful create the tool asks its
   session to take the automation title as a custom title; a subagent's request goes to its owner session.
 - **Telemetry** (`protocol-zcode` telemetry observer, Node `cronCreateAutomationId`): a successful CronCreate's
@@ -195,7 +196,8 @@ Rules:
   keeps an automation run's mutations out of its subagents.
 - CronCreate refuses in a session already bound to an automation (`automation/checkTaskBinding`); `-32601` alone falls
   back to `automation/list`; any other failure refuses with the bound-session check error.
-- CronCreate sends the session's selection as `modelSelection` and its base permission mode as `mode` (Node
+- CronCreate sends the session's selection as `modelSelection`, read from the same view as the turn's limits (Node
+  reads the runtime selection once), and its base permission mode as `mode` (Node
   `getMode()`: plan is a separate switch, so a task created in plan mode keeps the base mode; Node names, `auto` →
   `build`), `targetTaskId` = the owner session id, `relativeDelayMinutes` / the interval carrier / `maxRuns` and
   `recurring` exactly as `automation-port.ts`. CronUpdate sends `recurring: true, maxRuns: null` with an interval
@@ -215,6 +217,8 @@ Rules:
 - No local schedule runs under the desktop Host: the app-server assembles no `.zcode/scheduled_tasks.json` store (a
   job left there would fire beside the Host's automations), and the builtin `/loop` skill, which schedules through
   this process's own cron, is not offered (Node's desktop agent has no `/loop`). ScheduleWakeup stays registered.
+  The runtime owns both rules: with `Extensions::automation` set the local cron gets no store whatever `cron_store`
+  holds, and `ExtConfig::host_automations` is derived from the port, so no entry point can set one without the other.
 
 Known gaps (no zcode-rs mechanism yet, stated rather than invented): Node's `AutomationCreateLimitError` closes the
 turn's tool recovery after a create limit error, while zcode-rs returns it as an ordinary tool error; remote workspaces

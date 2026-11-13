@@ -81,7 +81,8 @@ pub struct ExtConfig {
     /// （docs/specs/rust-cli/tui-manage.md §6.1）。
     pub mcp_disabled: Vec<McpServer>,
     /// Fork: the desktop Host owns schedules (specs/fork-rust-automations.md, slice 2). The builtin `/loop` skill,
-    /// which schedules through this process's own cron, is not offered, like Node's desktop agent.
+    /// which schedules through this process's own cron, is not offered, like Node's desktop agent. The runtime sets it
+    /// from `Extensions::automation`; a value set elsewhere is overwritten.
     pub host_automations: bool,
 }
 

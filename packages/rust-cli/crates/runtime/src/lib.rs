@@ -237,7 +237,7 @@ impl LocalKernel {
             &ports,
             (&gate, scope.spawner()),
             base.registry.clone(),
-            (extensions.config.clone(), traits),
+            (assemble::ext_config(&extensions), traits),
             &incognito,
         );
         // agent 清单（context）与 Agent 工具共用一个目录：插件 agent 设置一次，两处同时看到（L12）。
