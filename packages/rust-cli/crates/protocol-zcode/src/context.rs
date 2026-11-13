@@ -29,6 +29,9 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
+    /// configured a helper command (specs/fork-rust-node-helper.md).
+    node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
 }
 
 impl Context {
@@ -36,6 +39,16 @@ impl Context {
     /// selected reasoning level).
     pub fn set_models(&self, models: Arc<dyn ModelDirectory>) {
         let _ = self.models.set(models);
+    }
+
+    /// Fork: the Node helper (set once; without it the forwarded families answer as before).
+    pub fn set_node_helper(&self, helper: Arc<crate::fork::node_helper::NodeHelper>) {
+        let _ = self.node_helper.set(helper);
+    }
+
+    /// Fork: the Node helper, when one is configured.
+    pub fn node_helper(&self) -> Option<&Arc<crate::fork::node_helper::NodeHelper>> {
+        self.node_helper.get()
     }
 
     /// Fork: the storage root (Node `context.deps.storageRoot`).
@@ -71,6 +84,7 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            node_helper: std::sync::OnceLock::new(),
         }
     }
 

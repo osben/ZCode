@@ -42,6 +42,9 @@ use serde_json::json;
 
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
+pub use fork::node_helper::{
+    NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess, Timing,
+};
 pub use headers::HostHeaders;
 pub use server::Defaults;
 

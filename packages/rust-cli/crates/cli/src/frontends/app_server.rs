@@ -19,6 +19,7 @@ use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
 
 use crate::assemble::{self, Controller};
+use crate::frontends::node_helper;
 use crate::process::{ControllerRun, Start};
 
 /// 退出时等进程级任务收尾的上限（存活的上限，不用来同步状态）。
@@ -151,6 +152,13 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
+    // Fork: the Node helper for the JS-only method families, when the Host set its command (Rust mode only).
+    node_helper::install(
+        &context,
+        facts.process.env.raw(node_helper::COMMAND_ENV),
+        &facts.process.temp,
+        &spawner,
+    );
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;

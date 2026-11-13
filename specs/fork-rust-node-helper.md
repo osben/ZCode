@@ -247,17 +247,22 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 - **Spawn.**
   - The first allowlisted call starts the helper and sends `helper/initialize`. Concurrent first calls share one start.
   - No helper command in env: the families answer as today (refused).
-- **Idle reclaim.** After 5 minutes with no in-flight call, no open session that has helper resources, no panel instance and no live MCP child, Rust closes the helper's stdin. The helper exits and kills its children.
-- **Rust exit.** The helper sees stdin EOF and exits, killing its MCP children. Rust also kills the helper's process tree on drop, as the Host does for agents.
+- **Idle reclaim.** After 5 minutes with no in-flight call, no open session that has helper resources, no panel instance and no live MCP child, Rust ends the helper.
+  - F1+F2 (shipped): Rust kills the helper's process group, which takes the helper's children with it. No call is in flight at that point, and the helper holds no state that needs a flush: the session store is SQLite with WAL.
+  - A call dropped by its caller stops counting as in flight, so it never keeps an idle helper alive.
+  - F4 (planned): close stdin first and give the helper a grace period, so live MCP children and panels shut down in order.
+- **Rust exit.** The helper sees stdin EOF and exits, killing its MCP children. Rust also kills the helper's process tree on drop, as the Host does for agents. The helper starts through the Rust process ledger (`rust_cli_proc::ledger`, group isolation, as MCP stdio servers do), so a Rust process that dies without cleanup has the helper reaped by the next one.
 - **Helper crash.**
   - In-flight forwarded calls fail with `proto.forkRustAgent.nodeHelperUnavailable`.
   - An in-flight tool call returns a tool error to the model, and the turn continues.
   - Open panels receive `pluginUi.instanceClosed`.
   - The next call respawns the helper. After 3 crashes in 60 s it stays down until the Rust process restarts, and every call fails fast with the same code.
-- **Helper hang.** Each forwarded method uses the Host's timeout for that method. Tool calls use the server's tool timeout (node_repl 600 s). On timeout Rust sends a cancel and fails the call.
-- **Version mismatch** in `helper/initialize`: the helper is treated as unavailable, with a single `warn`.
+- **Helper hang.** Each forwarded method uses the Host's timeout for that method. Tool calls use the server's tool timeout (node_repl 600 s).
+  - F1+F2 (shipped): every forwarded call has 300 s, the Host's plugin-management timeout. On timeout Rust fails the call as unavailable and drops the helper process; that is not counted as a crash, and the next call starts a new helper. Other calls in flight on that helper fail as unavailable too. A plugin operation is cancelled by the Host itself with `plugins/cancelOperation`.
+  - F4 (planned): per-method timeouts for tool calls, and a cancel message instead of dropping the process.
+- **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash: the next call tries again, and one `warn` covers a run of failures.
 - **Logging.**
-  - Rust `info`: `helper.spawned`, `helper.exited` (code), `helper.reclaimed`.
+  - Rust `info`: `helper.spawned`, `helper.exited`, `helper.reclaimed`. The exit code is not logged: the process ledger's handle does not report it.
   - Rust `warn`: `helper.crashed`, `helper.unavailable`.
   - No params, paths or secrets are logged.
   - The helper logs to stderr, which Rust forwards at `debug`.
