@@ -25,10 +25,15 @@ fn info_status(status: &str) -> &'static str {
 }
 
 /// The terminal status in the kernel's refusal `Task <id> is not running (status: <status>)`; `None` for any other
-/// refusal (an unknown task).
+/// refusal.
 fn not_running_status(reason: &str) -> Option<&str> {
     let (_, rest) = reason.split_once(" is not running (status: ")?;
     rest.strip_suffix(')')
+}
+
+/// The kernel's refusal for an unknown task (`agents` `task_stop.rs`, `session` `tasks.rs`).
+fn is_not_found(reason: &str) -> bool {
+    reason.starts_with("No task found with ID: ")
 }
 
 /// The task as the session listed it before the stop (`zcodeBackgroundTaskInfoSchema`), now cancelled.
@@ -52,33 +57,41 @@ fn snapshot(entry: &BackgroundEntry) -> Value {
     info
 }
 
-/// The result for the kernel's answer to the stop.
-fn result(task: &str, kernel: KernelAck, listed: Option<&BackgroundEntry>) -> Value {
+/// The result for the kernel's answer to the stop. Node answers only an unknown or ended task leniently; any other
+/// failure of the stop (the environment could not reach the process) throws, so it is an RPC error here.
+fn result(
+    task: &str,
+    kernel: KernelAck,
+    listed: Option<&BackgroundEntry>,
+) -> Result<Value, RpcError> {
     match kernel {
         KernelAck::Accepted { .. } | KernelAck::Duplicate => {
             let mut value = json!({"cancelled": true, "status": "cancelled", "taskId": task});
             if let Some(entry) = listed {
                 value["snapshot"] = snapshot(entry);
             }
-            value
+            Ok(value)
         }
-        KernelAck::Rejected { reason } => match not_running_status(&reason) {
-            Some(status) => {
+        KernelAck::Rejected { reason } => {
+            if let Some(status) = not_running_status(&reason) {
                 let status = info_status(status);
-                json!({
+                return Ok(json!({
                     "cancelled": status == "cancelled",
                     "reason": "background_task_not_running",
                     "status": status,
                     "taskId": task,
-                })
+                }));
             }
-            None => json!({
-                "cancelled": false,
-                "reason": "background_task_not_found",
-                "status": "lost",
-                "taskId": task,
-            }),
-        },
+            if is_not_found(&reason) {
+                return Ok(json!({
+                    "cancelled": false,
+                    "reason": "background_task_not_found",
+                    "status": "lost",
+                    "taskId": task,
+                }));
+            }
+            Err(RpcError::internal(reason))
+        }
     }
 }
 
@@ -113,7 +126,7 @@ pub(super) async fn cancel(server: &Server, params: &Value) -> Result<Value, Rpc
     // `cancelBackgroundWork`).
     let sink = live.sink.clone();
     live.run(Box::pin(async move { sink.shells_changed().await }));
-    Ok(result(task, kernel, listed.as_ref()))
+    result(task, kernel, listed.as_ref())
 }
 
 /// Node `requireSession` (`sessionUnavailable`).

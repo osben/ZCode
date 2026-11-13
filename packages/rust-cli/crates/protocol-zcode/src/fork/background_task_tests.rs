@@ -63,6 +63,9 @@ impl HandleOverride for TestHandle {
             "odd_1" => KernelAck::Rejected {
                 reason: "Task odd_1 is not running (status: unknown)".to_owned(),
             },
+            "broken_1" => KernelAck::Rejected {
+                reason: "environment unavailable: machine m1 is disconnected".to_owned(),
+            },
             other => KernelAck::Rejected {
                 reason: format!("No task found with ID: {other}"),
             },
@@ -309,6 +312,24 @@ async fn an_unknown_task_answers_not_found() {
             "status": "lost",
             "taskId": "nope",
         })
+    );
+}
+
+/// A stop that fails for another reason (the environment could not reach the process) is not "not found": Node
+/// throws, so the call fails.
+#[tokio::test]
+async fn a_failed_stop_is_an_error_not_a_missing_task() {
+    let fixture = fixture().await;
+    let error = cancel(
+        &fixture,
+        json!({"sessionId": RESIDENT, "taskId": "broken_1"}),
+    )
+    .await
+    .expect_err("the stop failed");
+    assert_eq!(error.code, -32603);
+    assert_eq!(
+        error.message,
+        "environment unavailable: machine m1 is disconnected"
     );
 }
 
