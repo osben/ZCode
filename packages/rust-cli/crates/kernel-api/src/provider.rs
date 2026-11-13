@@ -71,6 +71,9 @@ pub struct ModelEndpoint {
     /// 凭据是每次请求现取的（官方账号模型）：服务端回 401 时，适配器带上这个端点再取一次（见
     /// [`EndpointQuery::rejected`]），换到新凭据后重发。
     pub renewable: bool,
+    /// Fork: request bodies longer than this many bytes are sent gzip-compressed with `content-encoding: gzip`
+    /// (ChatGPT Plan, specs/fork-rust-chatgpt-plan.md rule 14); `None` never compresses.
+    pub compress_body_over: Option<usize>,
 }
 
 /// 一次取端点的查询（F129，审查 K1：以前是 `endpoint → endpoint_with_output_limit → endpoint_in` 三层伸缩的方法，
@@ -242,14 +245,22 @@ pub struct ModelCatalog {
 pub struct HeaderRequest {
     /// 这次模型请求的选择。
     pub selection: ModelSelection,
-    /// 账号的类别（Provider 配置的 `access.accountType`）。
-    pub account_type: String,
-    /// 账号的模式（Provider 配置的 `access.mode`）。
-    pub mode: String,
+    /// Fork: which account kind asks (specs/fork-rust-chatgpt-plan.md rule 7). The platform decides it from the
+    /// provider's `access`, so the source never re-derives it from the provider id.
+    pub access: HeaderAccess,
     /// 发请求的会话（[`EndpointQuery::session`]）；没有时来源可以拒绝。
     pub session: Option<crate::ids::SessionId>,
     /// 刚被模型服务拒绝（401）的凭据的 sha256（小写十六进制）；第一次请求为 None。
     pub rejected_fingerprint: Option<String>,
+}
+
+/// Fork: the account kind of a [`HeaderRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderAccess {
+    /// A zhipu account provider: 账号的类别与模式（Provider 配置的 `access.accountType` / `access.mode`）。
+    Zhipu { account_type: String, mode: String },
+    /// A ChatGPT Plan account entry (`access.type: "chatgpt-account"`): routed by provider id, no zhipu access.
+    ChatGptPlan,
 }
 
 /// 来源给出的凭据：key 写进 `Authorization: Bearer`（Anthropic 协议）或适配器的鉴权位置；`headers` 原样加在请求上。

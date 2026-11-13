@@ -147,6 +147,14 @@ pub(crate) fn base_tools(
         Vec::new()
     };
     let bash = bash_settings(defaults, extensions, traits);
+    // Fork: only where a Host serves `topic/resource/read` (specs/fork-rust-topic-resource.md).
+    let topic: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> = match &extensions.topic_resources {
+        Some(resources) => vec![Arc::new(rust_cli_tools::ReadTopicResourceTool::new(
+            ports.store.clone(),
+            resources.clone(),
+        ))],
+        None => Vec::new(),
+    };
     let registry: Arc<dyn ToolRegistry> = Arc::new(
         builtin
             .with_search_opt_in(defaults.search_tools)
@@ -167,6 +175,7 @@ pub(crate) fn base_tools(
             ))])
             .with_tools(monitor)
             .with_tools(vec![Arc::new(rust_cli_tools::ReportFindingsTool::new())])
+            .with_tools(topic)
             .with_tools(rust_cli_tools::worktree_tools(&worktrees)),
     );
     // 用户输入的提及与 bash 模式用基础注册表里的 Read 与 Bash（与模型的调用共用 readFileState 与 shell 状态）。

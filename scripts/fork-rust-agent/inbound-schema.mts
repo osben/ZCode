@@ -23,6 +23,8 @@ import {
   zcodeSessionCloseParamsSchema,
   zcodeSessionListParamsSchema,
   zcodeSessionReadParamsSchema,
+  zcodeTopicResourceCancelResultSchema,
+  zcodeTopicResourceReadResultSchema,
   zcodeWorkspaceCancelGenerateTextParamsSchema,
   zcodeWorkspaceGenerateTextParamsSchema,
   zcodeWorkspaceReadPresentationParamsSchema,
@@ -82,6 +84,9 @@ const REPLIES = {
   "interaction/requestProviderRuntimeHeaders": zcodeProviderRuntimeHeadersResponseSchema,
   // Desktop credentials: the Host's answer to the Rust agent's encrypt/decrypt request (specs/fork-rust-credential-cipher.md).
   "interaction/requestCredentialCipher": credentialCipherReplySchema,
+  // Topic resources: the Host's answers to ReadTopicResource's read and cancel (specs/fork-rust-topic-resource.md).
+  "topic/resource/read": zcodeTopicResourceReadResultSchema,
+  "topic/resource/cancel": zcodeTopicResourceCancelResultSchema,
 };
 
 const schemaPath = fileURLToPath(

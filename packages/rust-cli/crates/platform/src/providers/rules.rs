@@ -238,7 +238,8 @@ pub(crate) fn provider_issues(config: &Value, missing_template: bool) -> Vec<&'s
         issues.push("group");
     }
     match config["access"]["type"].as_str() {
-        Some("zhipu-account") => {}
+        // Fork: ChatGPT Plan (specs/fork-rust-chatgpt-plan.md): the Host supplies the token per request.
+        Some("zhipu-account" | "chatgpt-account") => {}
         Some("api-key" | "zhipu-coding-plan-api-key") => {
             if config["access"]["apiKey"]
                 .as_str()

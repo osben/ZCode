@@ -26,6 +26,8 @@ pub const POWER_SHELL: &str = "PowerShell";
 pub const READ: &str = "Read";
 pub const READ_MCP_RESOURCE: &str = "ReadMcpResourceTool";
 pub const READ_MCP_RESOURCE_DIR: &str = "ReadMcpResourceDirTool";
+/// Fork: a bot-group topic's resource (specs/fork-rust-topic-resource.md); app-server only.
+pub const READ_TOPIC_RESOURCE: &str = "ReadTopicResource";
 pub const REPORT_FINDINGS: &str = "ReportFindings";
 pub const SCHEDULE_WAKEUP: &str = "ScheduleWakeup";
 pub const SEND_MESSAGE: &str = "SendMessage";

@@ -8,7 +8,7 @@ use rust_cli_base::proto::http;
 use rust_cli_kernel_api::model::ModelError;
 use serde_json::Value;
 
-use super::{Class, OVERLOADED_STATUS, Shape, Verdict, by_status, message_text, vocab};
+use super::{Class, OVERLOADED_STATUS, Shape, Verdict, by_status, message_text, siwc, vocab};
 
 struct ApiError {
     kind: Option<String>,
@@ -78,10 +78,17 @@ pub(super) fn stream(value: &Value, raw: &str) -> Verdict {
             _ => http::INTERNAL_SERVER_ERROR,
         }
     };
+    if let Some(verdict) = siwc::classify(None, &api.codes(), None) {
+        return verdict;
+    }
     classify(status, &api, raw, None)
 }
 
 fn classify(status: u16, api: &ApiError, raw: &str, retry_after_ms: Option<u64>) -> Verdict {
+    // Fork: ChatGPT Plan codes first (specs/fork-rust-chatgpt-plan.md, Errors).
+    if let Some(verdict) = siwc::classify(Some(status), &api.codes(), retry_after_ms) {
+        return verdict;
+    }
     let message = message_text(status, api.message.as_deref(), raw);
     // 修改（F108）：以前是这里自己的四项，现在与 Anthropic 一侧共用词表（码在正文里，按子串一样认得出）。
     if vocab::context_exceeded(raw) {
