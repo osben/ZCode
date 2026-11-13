@@ -261,10 +261,11 @@ impl Admission<'_> {
         if self.session.contains(&name) {
             return reject(SkipReason::ShadowedBySession);
         }
-        if loaded
+        let clash = loaded
             .iter()
-            .any(|plugin| plugin.name == name && takes_name(plugin))
-        {
+            .any(|plugin| plugin.name == name && takes_name(plugin));
+        // An official candidate may turn out to claim no name (see `takes_name`); that needs its components.
+        if clash && candidate.marketplace != OFFICIAL {
             return reject(SkipReason::DuplicateName);
         }
         let tables = self.reader.mcp_tables(dir, &manifest).await;
@@ -276,16 +277,21 @@ impl Admission<'_> {
         ) {
             return reject(SkipReason::NodeRuntime(dependency));
         }
-        Ok(self
+        let plugin = self
             .reader
-            .components(dir, id, name, manifest, &tables)
-            .await)
+            .components(dir, id.clone(), name, manifest, &tables)
+            .await;
+        if clash && takes_name(&plugin) {
+            return reject(SkipReason::DuplicateName);
+        }
+        Ok(plugin)
     }
 }
 
 /// Whether a loaded plugin keeps a later plugin of the same name out. Fork (specs/fork-rust-lsp.md): an official plugin
 /// with no skill, MCP server, agent or hook (the default-enabled `typescript-lsp` declares only a language server)
-/// claims no name-keyed namespace, so an installed plugin of the same name still loads, as both do in Node.
+/// claims no name-keyed namespace, so it neither keeps out nor is kept out by a plugin of the same name; Node dedupes
+/// by full id only, so both load there too.
 fn takes_name(plugin: &Plugin) -> bool {
     let official = plugin
         .id

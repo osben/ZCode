@@ -347,3 +347,61 @@ async fn visualize_loads_with_the_desktop_view_host() {
         )]
     );
 }
+
+#[tokio::test]
+async fn a_component_less_official_plugin_loads_after_a_same_named_one() {
+    let lsp = r#", "lspServers": {"typescript": {"command": "tsls", "extensionToLanguage": {".ts": "typescript"}}}"#;
+    let skill = "---\nname: s\ndescription: d\n---\n".to_owned();
+    let files = [
+        manifest("/Users/dev/cfg-ts", r#"{"name": "typescript-lsp"}"#),
+        (
+            "/Users/dev/cfg-ts/skills/s/SKILL.md".to_owned(),
+            skill.clone(),
+        ),
+        manifest("/Users/dev/cfg-review", r#"{"name": "review"}"#),
+        (
+            "/Users/dev/cfg-review/skills/s/SKILL.md".to_owned(),
+            skill.clone(),
+        ),
+        official_manifest("typescript-lsp", lsp),
+        official_manifest("review", ""),
+        (
+            format!("{CACHE}/{OFFICIAL}/review/1.0.0/skills/s/SKILL.md"),
+            skill,
+        ),
+    ];
+    let sources = PluginSources {
+        candidates: vec![
+            candidate("/Users/dev/cfg-ts", "inline", PluginOrigin::ConfigDir),
+            candidate("/Users/dev/cfg-review", "inline", PluginOrigin::ConfigDir),
+            official("typescript-lsp"),
+            official("review"),
+        ],
+        enabled_plugins: enabled(&[("review@zcode-plugins-official", true)]),
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+    let ids: Vec<&str> = loaded
+        .plugins
+        .0
+        .iter()
+        .map(|plugin| plugin.id.as_str())
+        .collect();
+    // Node dedupes by full id only, so the built-in language server still loads next to a config-dir plugin of
+    // the same name. An official plugin with a skill does claim the name and stays out.
+    assert_eq!(
+        ids,
+        [
+            "typescript-lsp@inline",
+            "review@inline",
+            "typescript-lsp@zcode-plugins-official"
+        ]
+    );
+    assert_eq!(
+        reasons(&loaded),
+        [(
+            Some("review@zcode-plugins-official"),
+            &SkipReason::DuplicateName
+        )]
+    );
+}

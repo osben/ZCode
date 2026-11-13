@@ -438,3 +438,11 @@ fn the_first_server_keeps_a_shared_extension() {
         ]
     );
 }
+
+#[test]
+fn plugin_ids_are_sanitized_per_utf16_unit_like_node() {
+    // Node `id.replace(/[^a-zA-Z0-9_.@-]/g, "-")` sees a UTF-16 string: an astral character is two units.
+    assert_eq!(sanitize_plugin_id("a b@m"), "a-b@m");
+    assert_eq!(sanitize_plugin_id("é😀x@m"), "---x@m");
+    assert_eq!(sanitize_plugin_id("ts-lsp_1.0@zcode"), "ts-lsp_1.0@zcode");
+}

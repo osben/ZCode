@@ -139,15 +139,15 @@ fn environment_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Node `sanitizePluginId`: `[^a-zA-Z0-9_.@-]` becomes `-`.
+/// Node `sanitizePluginId`: `[^a-zA-Z0-9_.@-]` becomes `-` per UTF-16 unit, so an astral character gives `--`.
 pub fn sanitize_plugin_id(id: &str) -> String {
-    id.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '@' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
+    let mut out = String::with_capacity(id.len());
+    for c in id.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '@' | '-') {
+            out.push(c);
+        } else {
+            out.extend(std::iter::repeat_n('-', c.len_utf16()));
+        }
+    }
+    out
 }

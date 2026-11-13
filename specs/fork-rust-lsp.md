@@ -80,8 +80,12 @@ This is a port of adapters `plugins/lsp.ts` and `plugins/template.ts`.
   - a second plugin with an already-loaded name (`DuplicateName`).
 
   Node keeps both kinds. No official plugin of either kind declares a language server today. An official plugin with no
-  skill, MCP server, agent or hook (such as `typescript-lsp`) claims no name, so it does not push out an installed
-  plugin of the same name; both load, as in Node.
+  skill, MCP server, agent or hook (such as `typescript-lsp`) claims no name: it neither pushes out a plugin of the
+  same name nor is pushed out by one loaded before it (a config-dir copy, for example); both load, as in Node, which
+  dedupes by full id only.
+
+- **Plugin data path.** `${CLAUDE_PLUGIN_DATA}` is `<storage>/data/<sanitized id>`, where every character outside
+  `[A-Za-z0-9_.@-]` becomes `-` per UTF-16 unit like Node's regex, so an astral character gives `--`.
 
 - **Default-enabled official plugins.** Node enables `typescript-lsp` and `zcode-site` without config. Rust's default list gains `typescript-lsp` here. That plugin has only a language server (no skills, commands, MCP servers or hooks), so the only visible effect is its status entry. `zcode-site` stays a follow-up.
 - **Plugin id.** `<manifest name>@<marketplace>`, the same as Node. `--plugin-dir` plugins exist only in Rust and get `<name>@inline`. The server id is `<pluginId>/<serverName>`.
