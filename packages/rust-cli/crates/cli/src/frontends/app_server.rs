@@ -155,6 +155,8 @@ async fn serve(
     // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
     context.set_mcp_processes(opened.mcp.clone());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
+    // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
+    context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
     // handler is installed, so the first request already sees it.

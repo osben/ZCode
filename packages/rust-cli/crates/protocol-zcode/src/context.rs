@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
+use rust_cli_kernel_api::model::ModelPort;
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
@@ -32,6 +33,9 @@ pub struct Context {
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
     /// Fork: workspace trust from the App (`fork/workspace_trust.rs`); set once by the app-server.
     workspace_admin: std::sync::OnceLock<Arc<dyn crate::fork::WorkspaceAdmin>>,
+    /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
+    /// stay unported.
+    model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
     /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
     mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
 }
@@ -55,6 +59,17 @@ impl Context {
 
     pub(crate) fn workspace_admin(&self) -> Option<Arc<dyn crate::fork::WorkspaceAdmin>> {
         self.workspace_admin.get().cloned()
+    }
+
+    /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
+    pub fn set_model_port(&self, model: Arc<dyn ModelPort>) {
+        let _ = self.model_port.set(model);
+    }
+
+    /// Fork: the model port, when the entry point provided one and a model directory resolves selections.
+    pub(crate) fn model_port(&self) -> Option<Arc<dyn ModelPort>> {
+        self.models.get()?;
+        self.model_port.get().cloned()
     }
 
     /// Fork: the storage root, when the entry point provided one.
@@ -99,6 +114,7 @@ impl Context {
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
             workspace_admin: std::sync::OnceLock::new(),
+            model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
         }
     }
@@ -108,6 +124,11 @@ impl Context {
         self.sessions
             .lock_unpoisoned()
             .insert(session.to_owned(), workspace.to_owned());
+    }
+
+    /// Fork: forgets a session registered only for one call (a workspace model call's requester).
+    pub(crate) fn unregister(&self, session: &str) {
+        self.sessions.lock_unpoisoned().remove(session);
     }
 
     pub fn workspace_of(&self, session: &str) -> Option<String> {

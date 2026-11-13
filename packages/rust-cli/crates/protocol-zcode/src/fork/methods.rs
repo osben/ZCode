@@ -57,6 +57,19 @@ pub(crate) async fn dispatch(
                 .map(|r| r.map(Reply::new));
         }
         "mcp/readResource" => super::workspace_trust::read_resource(server, &params).await,
+        // Fork: workspace model calls (Node `workspace-generate-text.ts`); unported without the entry's model port.
+        "workspace/generateText"
+        | "workspace/cancelGenerateText"
+        | "provider/testModelConnectivity"
+            if server.context.model_port().is_none() =>
+        {
+            return None;
+        }
+        "workspace/generateText" => super::workspace_model::generate_text(server, &params).await,
+        "workspace/cancelGenerateText" => super::workspace_model::cancel(server, &params),
+        "provider/testModelConnectivity" => {
+            super::workspace_model::test_connectivity(server, &params).await
+        }
         // Fork: the legacy background stop (Node `cancelBackgroundTask`).
         "session/cancelBackgroundTask" => super::background_task::cancel(server, &params).await,
         // Fork: the Host's resource sampler (Node `process/childProcesses`); params are not read.
