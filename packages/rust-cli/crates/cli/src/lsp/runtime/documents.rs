@@ -560,4 +560,4 @@ impl Drop for UriLock {
 
 #[cfg(test)]
 #[path = "documents_tests.rs"]
-mod tests;
+pub(crate) mod tests;

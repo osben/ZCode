@@ -7,6 +7,7 @@ pub(crate) mod pool;
 pub(crate) mod process;
 pub(crate) mod rpc;
 pub(crate) mod server;
+pub(crate) mod session;
 pub(crate) mod uri;
 
 use std::time::Duration;

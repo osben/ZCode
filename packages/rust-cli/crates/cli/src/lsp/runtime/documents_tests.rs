@@ -15,10 +15,10 @@ use crate::lsp::runtime::pool::{Acquired, Pool, ServerConnection};
 use crate::lsp::runtime::test_server;
 
 #[derive(Default)]
-struct MemoryDisk(Mutex<HashMap<String, (String, Snapshot)>>);
+pub(crate) struct MemoryDisk(Mutex<HashMap<String, (String, Snapshot)>>);
 
 impl MemoryDisk {
-    fn put(&self, path: &str, text: &str, mtime_ms: u64) {
+    pub(crate) fn put(&self, path: &str, text: &str, mtime_ms: u64) {
         self.0.lock_unpoisoned().insert(
             path.to_owned(),
             (
