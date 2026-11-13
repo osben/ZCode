@@ -2225,6 +2225,7 @@ name = "rust-cli-model"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "flate2",
  "futures-util",
  "regress",
  "rust-cli-base",
@@ -2410,12 +2411,15 @@ dependencies = [
  "rust-cli-fs",
  "rust-cli-image",
  "rust-cli-kernel-api",
+ "rust-cli-prompts",
  "rust-cli-protocol-core",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]

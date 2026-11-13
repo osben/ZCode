@@ -28,14 +28,21 @@ futures-util.workspace = true
 rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
 rust-cli-protocol-core.workspace = true
+# Fork: the unknown-model output limit of workspace model calls.
+rust-cli-prompts.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }
+# Fork: cancels workspace model calls (the model port's cancellation token).
+tokio-util.workspace = true
 tracing.workspace = true
+# Fork: the Network panel sanitizes request URLs like Node's WHATWG `URL` (network_capture.rs).
+url.workspace = true
 
 [dev-dependencies]
 # Builds the test images of attachment preparation.
 image.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }
+# test-util: the 60 s bound of workspace model calls is tested on a paused clock.
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "time", "test-util"] }

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
+use rust_cli_kernel_api::model::ModelPort;
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
@@ -32,6 +33,12 @@ pub struct Context {
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
     /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
     pub(crate) attach: crate::attach::HostAttach,
+    /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
+    /// configured a helper command (specs/fork-rust-node-helper.md).
+    node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
+    /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
+    /// stay unported.
+    model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
     /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
     mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
 }
@@ -41,6 +48,16 @@ impl Context {
     /// selected reasoning level).
     pub fn set_models(&self, models: Arc<dyn ModelDirectory>) {
         let _ = self.models.set(models);
+    }
+
+    /// Fork: the Node helper (set once; without it the forwarded families answer as before).
+    pub fn set_node_helper(&self, helper: Arc<crate::fork::node_helper::NodeHelper>) {
+        let _ = self.node_helper.set(helper);
+    }
+
+    /// Fork: the Node helper, when one is configured.
+    pub fn node_helper(&self) -> Option<&Arc<crate::fork::node_helper::NodeHelper>> {
+        self.node_helper.get()
     }
 
     /// Fork: the storage root (Node `context.deps.storageRoot`).
@@ -62,6 +79,17 @@ impl Context {
     /// the Host answers credential cipher requests.
     pub(crate) async fn host_ready(&self) -> Option<bool> {
         self.attach.ready().await
+    }
+
+    /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
+    pub fn set_model_port(&self, model: Arc<dyn ModelPort>) {
+        let _ = self.model_port.set(model);
+    }
+
+    /// Fork: the model port, when the entry point provided one and a model directory resolves selections.
+    pub(crate) fn model_port(&self) -> Option<Arc<dyn ModelPort>> {
+        self.models.get()?;
+        self.model_port.get().cloned()
     }
 
     /// Fork: the storage root, when the entry point provided one.
@@ -106,6 +134,8 @@ impl Context {
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
             attach: crate::attach::HostAttach::new(),
+            node_helper: std::sync::OnceLock::new(),
+            model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
         }
     }
@@ -115,6 +145,11 @@ impl Context {
         self.sessions
             .lock_unpoisoned()
             .insert(session.to_owned(), workspace.to_owned());
+    }
+
+    /// Fork: forgets a session registered only for one call (a workspace model call's requester).
+    pub(crate) fn unregister(&self, session: &str) {
+        self.sessions.lock_unpoisoned().remove(session);
     }
 
     pub fn workspace_of(&self, session: &str) -> Option<String> {

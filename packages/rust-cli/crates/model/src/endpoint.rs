@@ -42,6 +42,7 @@ impl From<AnthropicEndpoint> for ModelEndpoint {
                 ..ModelCapabilities::default()
             },
             renewable: false,
+            compress_body_over: None,
         }
     }
 }

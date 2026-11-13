@@ -25,8 +25,10 @@ impl Service for Nothing {
 fn request(session: Option<&str>) -> HeaderRequest {
     HeaderRequest {
         selection: ModelSelection::new("account:zai-individual-coding-plan", GLM_5_3_ACCOUNT),
-        account_type: "zai".into(),
-        mode: "individual-coding-plan".into(),
+        access: HeaderAccess::Zhipu {
+            account_type: "zai".into(),
+            mode: "individual-coding-plan".into(),
+        },
         session: session.map(SessionId::new),
         rejected_fingerprint: Some("a".repeat(64)),
     }
@@ -126,4 +128,166 @@ async fn a_missing_ack_sends_neither_a_request_nor_a_cancellation() {
             .is_err(),
         "nothing reached the Host"
     );
+}
+
+/// Fork: ChatGPT Plan through the Host (specs/fork-rust-chatgpt-plan.md R6-R8).
+mod chatgpt {
+    use super::*;
+    use tokio::io::{DuplexStream, Lines};
+
+    const PROVIDER: &str = "account:chatgpt-plan:0123456789abcdef";
+
+    fn plan(rejected: Option<&str>) -> HeaderRequest {
+        HeaderRequest {
+            selection: ModelSelection::new(PROVIDER, "gpt-6.1-sol"),
+            access: HeaderAccess::ChatGptPlan,
+            session: Some(SessionId::new("session_1")),
+            rejected_fingerprint: rejected
+                .map(|key| rust_cli_base::hash::sha256_hex(key.as_bytes())),
+        }
+    }
+
+    struct Host {
+        out: DuplexStream,
+        lines: Lines<BufReader<DuplexStream>>,
+        _scope: TaskScope,
+    }
+
+    impl Host {
+        /// The next reverse request's params; answers it with `result`.
+        async fn answer(&mut self, result: Value) -> Value {
+            let line = tokio::time::timeout(Duration::from_secs(5), self.lines.next_line())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let asked: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(asked["method"], REQUEST);
+            let reply = json!({"id": asked["id"], "result": result});
+            self.out
+                .write_all(format!("{reply}\n").as_bytes())
+                .await
+                .unwrap();
+            asked["params"].clone()
+        }
+    }
+
+    fn start() -> (Arc<HostHeaders>, Host) {
+        let scope = TaskScope::root("test", |_| {});
+        let (host_out, agent_in) = duplex(1 << 16);
+        let (agent_out, host_in) = duplex(1 << 16);
+        let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
+        drop(scope.spawner().spawn(
+            "serve",
+            connection::serve(
+                BufReader::new(agent_in),
+                peer.clone(),
+                Arc::new(Nothing),
+                scope.spawner(),
+                Options::default(),
+            ),
+        ));
+        let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
+        context.register("session_1", "/w");
+        let host = Host {
+            out: host_out,
+            lines: BufReader::new(host_in).lines(),
+            _scope: scope,
+        };
+        (Arc::new(HostHeaders::new(context)), host)
+    }
+
+    fn granted(key: &str, scope: char) -> Value {
+        json!({"headersApplied": true, "requestAuth": {"apiKey": key, "accountScope": scope.to_string().repeat(64)}})
+    }
+
+    /// R6 and R7: no zhipu access on the wire; a renewal names the rejected token and its remembered scope.
+    #[tokio::test]
+    async fn renewals_name_the_scope_of_the_rejected_token() {
+        let (source, mut host) = start();
+        let asking = {
+            let source = source.clone();
+            tokio::spawn(async move { source.request_auth(plan(None)).await })
+        };
+        let params = host.answer(granted("tok-1", 'b')).await;
+        assert_eq!(params["providerId"], PROVIDER);
+        assert_eq!(params["modelSelection"]["providerId"], PROVIDER);
+        for absent in [
+            "accountAccess",
+            "expectedAccountScope",
+            "rejectedProjectTokenFingerprint",
+        ] {
+            assert!(params.get(absent).is_none(), "{absent} in {params}");
+        }
+        assert_eq!(
+            asking.await.unwrap().unwrap().api_key.unwrap().expose(),
+            "tok-1"
+        );
+
+        let asking = {
+            let source = source.clone();
+            tokio::spawn(async move { source.request_auth(plan(Some("tok-1"))).await })
+        };
+        let params = host.answer(granted("tok-2", 'b')).await;
+        assert_eq!(params["expectedAccountScope"], "b".repeat(64));
+        assert_eq!(
+            params["rejectedProjectTokenFingerprint"],
+            rust_cli_base::hash::sha256_hex(b"tok-1")
+        );
+        assert_eq!(
+            asking.await.unwrap().unwrap().api_key.unwrap().expose(),
+            "tok-2"
+        );
+    }
+
+    /// R8: another scope after the renewal, or no remembered scope, is `siwc_account_scope_invalidated`.
+    #[tokio::test]
+    async fn a_changed_or_unknown_scope_is_not_recovered() {
+        let (source, mut host) = start();
+        let asking = {
+            let source = source.clone();
+            tokio::spawn(async move { source.request_auth(plan(None)).await })
+        };
+        host.answer(granted("tok-1", 'b')).await;
+        asking.await.unwrap().unwrap();
+        let asking = {
+            let source = source.clone();
+            tokio::spawn(async move { source.request_auth(plan(Some("tok-1"))).await })
+        };
+        host.answer(granted("tok-2", 'c')).await;
+        let invalidated = ModelError::Authentication {
+            message: "siwc_account_scope_invalidated".to_owned(),
+        };
+        assert_eq!(asking.await.unwrap().unwrap_err(), invalidated);
+        // A token whose scope was never seen: the Host is not asked at all (nobody would answer, so a regression
+        // fails on the short timeout instead of hanging for the 180 s limit).
+        let unasked = |rejected: &'static str| {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                source.request_auth(plan(Some(rejected))),
+            )
+        };
+        assert_eq!(
+            unasked("unknown")
+                .await
+                .expect("the Host was asked")
+                .unwrap_err(),
+            invalidated
+        );
+        // A grant without a scope is not remembered either.
+        let asking = {
+            let source = source.clone();
+            tokio::spawn(async move { source.request_auth(plan(None)).await })
+        };
+        host.answer(json!({"headersApplied": true, "requestAuth": {"apiKey": "tok-3"}}))
+            .await;
+        asking.await.unwrap().unwrap();
+        assert_eq!(
+            unasked("tok-3")
+                .await
+                .expect("the Host was asked")
+                .unwrap_err(),
+            invalidated
+        );
+    }
 }

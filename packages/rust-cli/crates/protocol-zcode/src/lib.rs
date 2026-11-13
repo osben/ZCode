@@ -24,12 +24,15 @@ mod index;
 mod legacy;
 mod lifecycle;
 mod live;
+mod network_capture;
 mod preparation;
 mod projection;
 mod reservations;
 mod server;
 mod subscribe;
 mod telemetry;
+// Fork: specs/fork-rust-topic-resource.md.
+mod topic_resource;
 mod uploads;
 mod wire;
 mod worktree;
@@ -44,8 +47,14 @@ use serde_json::json;
 pub use attach::{HOST_ATTACH_ACK_ENV, serve_attached};
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
+pub use fork::node_helper::{
+    NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
+    Timing as NodeHelperTiming,
+};
 pub use headers::HostHeaders;
+pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
+pub use topic_resource::HostTopicResources;
 
 /// 存储的启动状态（`startup/storageState`，`zcodeStorageStartupStateSchema`）：checking → ready / failed。迁移与备份只由
 /// Node 的存储准备 Worker 做，这里只报本进程打开会话库的结果。

@@ -124,6 +124,8 @@ pub mod env {
     pub const ZCODE_ENABLE_TODO_TOOLS: &str = "ZCODE_ENABLE_TODO_TOOLS";
     /// Fork: the Host's Gen UI output root (shared `GEN_UI_OUTPUT_ROOT_ENV`), named in the desktop prompt section.
     pub const ZCODE_GEN_UI_OUTPUT_ROOT: &str = "ZCODE_GEN_UI_OUTPUT_ROOT";
+    /// Fork: the Host's Node helper command for the Rust agent (shared `FORK_NODE_HELPER_COMMAND_ENV`).
+    pub const ZCODE_FORK_NODE_HELPER_COMMAND: &str = "ZCODE_FORK_NODE_HELPER_COMMAND";
 
     // 压缩与记忆（compact.md §2、memory.md）。
     pub const DISABLE_COMPACT: &str = "DISABLE_COMPACT";

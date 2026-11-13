@@ -75,6 +75,8 @@ pub struct Server {
         Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
+    /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
+    pub(crate) workspace_operations: crate::fork::WorkspaceOperations,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -142,6 +144,7 @@ impl Server {
             unreceipted: Mutex::new(std::collections::HashSet::new()),
             prepared_incognito: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
+            workspace_operations: crate::fork::WorkspaceOperations::default(),
         }
     }
 
@@ -382,7 +385,7 @@ impl Server {
     async fn dispatch(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
         let reply = |value: Value| Ok(Reply::new(value));
         match method {
-            "runtime/capabilities" => reply(capabilities()),
+            "runtime/capabilities" => reply(capabilities(self.context.node_helper().is_some())),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({
                 "receivedRevision": params["revision"],
@@ -472,9 +475,12 @@ impl Service for Handler {
     }
 }
 
-/// `runtime/capabilities`: an unsupported capability is false (app-protocol.md §4.3).
-pub(crate) fn capabilities() -> Value {
+/// `runtime/capabilities`: an unsupported capability is false (app-protocol.md §4.3). `node_helper` says whether the
+/// Host configured a Node helper (specs/fork-rust-node-helper.md).
+pub(crate) fn capabilities(node_helper: bool) -> Value {
     json!({
+        // Fork: the plugin summary is served through the Node helper (F1); `pluginDiscoveryUi` stays off.
+        "pluginExtensionSummary": node_helper,
         // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
         "durableFirstSubmission": true,
         // Fork: plan is a switch beside the permission mode, frozen per queued input

@@ -5,6 +5,7 @@
   "apps/zcode-cli/packages/adapters/tests/usage-retention.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/host-attach-ack.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/official-plugin-seed.test.ts",
+  "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/helper.test.ts",
   "packages/acp-agent-runtime/test/config-options.test.ts",
   "packages/acp-agent-runtime/test/frames.test.ts",
   "packages/acp-agent-runtime/test/fs.test.ts",
