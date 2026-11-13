@@ -914,3 +914,25 @@ fn only_a_normal_ask_offers_always_allow() {
     assert!(!always(ask(true, false)));
     assert!(!always(ask(false, true)));
 }
+
+#[test]
+fn the_remembered_input_keeps_the_host_automation_for_the_telemetry_facts() {
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "auto_1:manual:7f1c",
+        "clientId": "host",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {},
+    }))
+    .unwrap();
+    let meta = |payload: serde_json::Value| {
+        let input: Input = serde_json::from_value(payload).unwrap();
+        input_meta(&envelope, &input, "startNow", "startNow").automation
+    };
+    assert_eq!(
+        meta(json!({"text": "run", "automationId": " auto_1 "})).as_deref(),
+        Some("auto_1")
+    );
+    assert_eq!(meta(json!({"text": "run", "automationId": "  "})), None);
+    assert_eq!(meta(json!({"text": "run"})), None);
+}

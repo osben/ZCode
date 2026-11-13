@@ -366,6 +366,7 @@ async fn resubmit(
             requested: "startNow",
             admitted: "startNow",
             attachments: Vec::new(),
+            automation: None,
         },
     );
     let only_text = content

@@ -1188,6 +1188,7 @@ fn input_meta(
         requested,
         admitted,
         attachments: input.attachments.clone(),
+        automation: TurnLimits::new(input.automation_id.as_deref(), Vec::new()).automation,
     }
 }
 

@@ -629,6 +629,9 @@ pub(super) async fn send_queued_now(
             requested: "queue",
             admitted: "startNow",
             attachments: chips,
+            automation: execution
+                .as_ref()
+                .and_then(|execution| execution.limits.automation.clone()),
         },
     );
     let submitted = send(

@@ -619,6 +619,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
             requested: "startNow",
             admitted: "startNow",
             attachments: Vec::new(),
+            automation: None,
         },
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
@@ -678,6 +679,7 @@ fn the_remembered_admission_follows_the_kernel() {
         requested: "startNow",
         admitted,
         attachments: Vec::new(),
+        automation: None,
     };
     let queued = || KernelEvent::QueueChanged {
         items: vec![QueuedInput {
@@ -1255,6 +1257,7 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
             requested: "queue",
             admitted: "queue",
             attachments: Vec::new(),
+            automation: None,
         },
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
@@ -2139,6 +2142,7 @@ fn a_queue_item_shows_its_edit_lock_and_its_attachment_chips() {
             requested: "queue",
             admitted: "queue",
             attachments: vec![json!({"ref": "old"})],
+            automation: None,
         },
     );
     let patch = feed

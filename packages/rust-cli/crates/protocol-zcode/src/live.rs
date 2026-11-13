@@ -309,6 +309,7 @@ impl Live {
                 seq,
                 now,
                 provider: &provider,
+                automation: None,
             },
             &mut facts,
         );
@@ -659,6 +660,7 @@ impl Live {
                         seq,
                         now,
                         provider: &provider,
+                        automation: None,
                     },
                     &mut facts,
                 )
@@ -1026,6 +1028,14 @@ impl SessionSink for Live {
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
         let provider = provider_of(&state.projection);
+        // The automation the Host sent with the input this turn starts (remembered by sendText, the only writer).
+        let automation = match &event.event {
+            KernelEvent::TurnStarted {
+                command: Some(command),
+                ..
+            } => state.projection.input_automation(command.as_str()),
+            _ => None,
+        };
         if let Some(telemetry) = &mut state.telemetry {
             let facts = telemetry.observe(
                 &event.event,
@@ -1034,6 +1044,7 @@ impl SessionSink for Live {
                     seq: event.seq,
                     now,
                     provider: &provider,
+                    automation: automation.as_deref(),
                 },
             );
             state.facts.extend(facts);

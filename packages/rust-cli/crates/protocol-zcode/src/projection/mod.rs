@@ -50,6 +50,9 @@ pub struct InputMeta {
     /// Fork: the `attachments` refs sent with the input; only the queue shows them (a stored input's row reads its
     /// file parts).
     pub attachments: Vec<Value>,
+    /// Fork: the `automationId` the Host sent with the input (trimmed, non-empty); the telemetry facts read it when the
+    /// input's turn starts.
+    pub automation: Option<String>,
 }
 
 /// Fork: a turn's file changes merged across the turn's `KernelEvent::FileChanges` batches (Node derives the
@@ -462,6 +465,11 @@ impl Projection {
         let meta = self.inputs.get_mut(command)?;
         meta.attachments = attachments;
         Some(self.queue_patch())
+    }
+
+    /// Fork: the automation the Host sent with a remembered input (see [`InputMeta::automation`]).
+    pub fn input_automation(&self, command: &str) -> Option<String> {
+        self.inputs.get(command)?.automation.clone()
     }
 
     /// 记下 sendText 的事实（行与队列项要用）。
