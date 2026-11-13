@@ -40,7 +40,7 @@ use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
 use rust_cli_kernel_api::topic_resource::TopicResources;
-use rust_cli_net::Egress;
+use rust_cli_net::{Egress, RequestObserver};
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::Platform;
@@ -149,6 +149,9 @@ pub(crate) struct Controller {
     pub(crate) headers: Option<Arc<dyn HeaderSource>>,
     /// 凭据加解密（app-server 经 Host 委托 Main 的密钥库，specs/fork-rust-credential-cipher.md）；None 时用本地 v1 编解码。
     pub(crate) credential_cipher: Option<Arc<dyn CredentialCipher>>,
+    /// Fork: the Network panel capture (specs/fork-rust-network-capture.md), installed on the egress as soon as it
+    /// exists so requests made while assembling are reported too; only the app-server has one.
+    pub(crate) observer: Option<Arc<dyn RequestObserver>>,
     pub(crate) root_bypass: RootBypass,
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
@@ -177,6 +180,7 @@ impl Controller {
             primary: Primary::Configured,
             headers: None,
             credential_cipher: None,
+            observer: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
             token_budget: true,
@@ -202,6 +206,7 @@ impl Controller {
             primary: Primary::Configured,
             headers: None,
             credential_cipher: None,
+            observer: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
             token_budget: true,
@@ -217,6 +222,7 @@ impl Controller {
     pub(crate) fn app(
         headers: Arc<dyn HeaderSource>,
         credential_cipher: Arc<dyn CredentialCipher>,
+        observer: Arc<dyn RequestObserver>,
         topic_resources: Arc<dyn TopicResources>,
         desktop_context: bool,
     ) -> Self {
@@ -228,6 +234,7 @@ impl Controller {
             primary: Primary::LocalOnly,
             headers: Some(headers),
             credential_cipher: Some(credential_cipher),
+            observer: Some(observer),
             root_bypass: RootBypass::Allow,
             wait_model: true,
             token_budget: false,
@@ -345,6 +352,9 @@ pub(crate) async fn open(
         );
     }
     let egress = setup::egress(&facts.process).await?;
+    if let Some(observer) = &spec.observer {
+        egress.set_observer(observer.clone());
+    }
     let platform = setup::platform(
         facts,
         paths,

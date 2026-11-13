@@ -61,6 +61,14 @@ pub trait Service: Send + Sync + 'static {
     async fn notification(&self, method: &str, params: Value) {
         let _ = (method, params);
     }
+
+    /// Fork: a control notification handled in the read loop, in arrival order, before any task starts (Node handles
+    /// `process/networkCapture` this way, outside the command inbox). True when handled: the notification then does not
+    /// reach [`Service::notification`]. It must not block. Default: handles nothing.
+    fn control(&self, method: &str, params: &Value) -> bool {
+        let _ = (method, params);
+        false
+    }
 }
 
 /// 启动期的服务占位（specs/fork-rust-credential-cipher.md，启动死锁）：读者在组装内核之前就开始读对端的输入，所以
@@ -105,6 +113,13 @@ impl Service for Deferred {
         if let Ok(service) = self.ready().await {
             service.notification(method, params).await;
         }
+    }
+
+    /// Fork: the installed service's control, read without waiting. Before installation nothing handles it, so the
+    /// reader passes it on as a notification, which waits for the service.
+    fn control(&self, method: &str, params: &Value) -> bool {
+        let service = self.0.borrow().clone();
+        service.is_some_and(|service| service.control(method, params))
     }
 }
 
@@ -370,6 +385,9 @@ where
                 }));
             }
             Ok(Incoming::Notification { method, params }) => {
+                if service.control(&method, &params) {
+                    continue;
+                }
                 let service = service.clone();
                 drop(spawner.spawn("protocol-notification", async move {
                     service.notification(&method, params).await;

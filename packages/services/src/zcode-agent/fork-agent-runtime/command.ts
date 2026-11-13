@@ -1,4 +1,8 @@
 import { FORK_AGENT_RUNTIME_ENV, FORK_RUST_AGENT_PATH_ENV } from "@zcode/shared";
+import {
+  FORK_NODE_HELPER_COMMAND_ENV,
+  FORK_RUST_HELPER_SUBCOMMAND,
+} from "@zcode/shared/fork-rust-helper";
 
 /** Structural subset of the process manager's ZCodeAgentCommand this selection reads and returns. */
 export interface ForkAgentRuntimeCommand {
@@ -39,14 +43,23 @@ export function selectForkAgentRuntimeCommand<T extends ForkAgentRuntimeCommand>
   // The dev source-tree command (tsx) and a missing bundle carry no storage entry: Main cannot see
   // which Node command the Host resolves, so the Host reports the downgrade instead.
   const storagePreparationEntry = nodeCommand?.storagePreparationEntry;
-  if (!storagePreparationEntry) {
+  if (!nodeCommand || !storagePreparationEntry) {
     onUnavailable?.("no_node_bundle");
     return nodeCommand;
   }
+  // The Rust agent forwards JS-only methods to a Node helper (specs/fork-rust-node-helper.md). It
+  // runs the same bundled entry the storage preparation uses, so both runtimes share one plugin
+  // store and one database; the Rust agent spawns it lazily and owns its lifecycle.
+  const nodeHelperCommand = {
+    command: nodeCommand.command,
+    args: [storagePreparationEntry, FORK_RUST_HELPER_SUBCOMMAND, "--stdio"],
+    env: nodeCommand.env ?? {},
+  };
   return {
     command: rustAgentPath,
     args: ["app-server", "--stdio"],
     cwd: context.workspacePath,
+    env: { [FORK_NODE_HELPER_COMMAND_ENV]: JSON.stringify(nodeHelperCommand) },
     storagePreparationEntry,
   };
 }

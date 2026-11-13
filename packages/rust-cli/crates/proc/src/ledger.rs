@@ -244,6 +244,19 @@ impl Tracked {
         self.pid
     }
 
+    /// 丢弃这个句柄时整棵树都会结束：Unix 上向进程组发 KILL；Windows 上只有树在自己的 Job 里时才成立
+    /// （[`Containment::OwnJob`] 建 Job 或加入失败、退回进程级 Job 时为 false）。
+    pub fn ends_with_drop(&self) -> bool {
+        #[cfg(unix)]
+        {
+            true
+        }
+        #[cfg(windows)]
+        {
+            self.job.is_some()
+        }
+    }
+
     /// 结束整棵树并回收根进程；错误表示无法确认回收，记录保留。Unix：[`crate::tree::terminate`]，
     /// 成功后删除记录。Windows：没有 TERM 阶段（`shutdown` 不起作用），有自己的 Job 时结束 Job，
     /// 否则 `taskkill /T /F`。
