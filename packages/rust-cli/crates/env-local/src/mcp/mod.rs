@@ -26,7 +26,8 @@ use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_command::EnvOverrides;
 use rust_cli_kernel_api::mcp::{
-    McpConnect, McpConnectionId, McpError, McpTransport, McpTransportConfig, McpTransportEvent,
+    McpConnect, McpConnectionId, McpError, McpProcess, McpProcesses, McpTransport,
+    McpTransportConfig, McpTransportEvent,
 };
 use rust_cli_net::Egress;
 use rust_cli_proc::ledger::Ledger;
@@ -62,6 +63,8 @@ pub struct LocalMcpTransport {
     env: EnvSnapshot,
     connections: Mutex<HashMap<String, Connection>>,
     next: AtomicU64,
+    /// Fork: the stdio server processes alive now (`process/childProcesses`).
+    processes: Arc<stdio::ProcessTable>,
     /// 连接前用 `env` 展开配置里的 `${VAR}`（远端的执行器打开，remote-exec.md §22.7；控制面的不打开：本机的服务器
     /// 由入口按来源的规则处理）。
     expand_vars: bool,
@@ -76,6 +79,7 @@ impl LocalMcpTransport {
             env,
             connections: Mutex::default(),
             next: AtomicU64::new(0),
+            processes: Arc::default(),
             expand_vars: false,
         }
     }
@@ -140,7 +144,8 @@ impl LocalMcpTransport {
                     cwd: &cwd.to_string_lossy(),
                     snapshot: self.env.vars(),
                 };
-                let (outbox, task) = stdio::start(&self.ledger, launch, sender).await?;
+                let (outbox, task) =
+                    stdio::start(&self.ledger, &self.processes, launch, sender).await?;
                 (Outbox::Stdio(outbox), task)
             }
             McpTransportConfig::Http { url, headers } => {
@@ -234,6 +239,13 @@ impl McpTransport for LocalMcpTransport {
     }
 }
 
+/// Fork: the stdio servers this transport started whose process tree has not ended yet, in start order.
+impl McpProcesses for LocalMcpTransport {
+    fn processes(&self) -> Vec<McpProcess> {
+        self.processes.processes()
+    }
+}
+
 /// 事件的接收端换成流（`events` 只能取一次）。
 fn tokio_stream_from(
     mut events: mpsc::Receiver<McpTransportEvent>,
@@ -244,6 +256,10 @@ fn tokio_stream_from(
 #[cfg(test)]
 #[path = "mcp_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "processes_tests.rs"]
+mod processes_tests;
 
 #[cfg(test)]
 #[path = "bounds_tests.rs"]

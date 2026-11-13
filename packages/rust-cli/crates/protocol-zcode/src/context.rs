@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
@@ -29,6 +30,8 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
+    mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
     /// Fork: the language-server host behind `lsp/*` (specs/fork-rust-lsp.md); without it they answer -32000.
     language_servers: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>>,
 }
@@ -62,6 +65,19 @@ impl Context {
         self.storage_root.get().map(std::path::PathBuf::as_path)
     }
 
+    /// Fork: the source of `process/childProcesses` (the app-server's local MCP transport).
+    pub fn set_mcp_processes(&self, processes: Arc<dyn McpProcesses>) {
+        let _ = self.mcp_processes.set(processes);
+    }
+
+    /// Fork: the live stdio MCP server processes, empty without a source.
+    pub(crate) fn mcp_processes(&self) -> Vec<McpProcess> {
+        self.mcp_processes
+            .get()
+            .map(|source| source.processes())
+            .unwrap_or_default()
+    }
+
     /// Fork: the selectable models, empty without a directory.
     pub(crate) async fn catalog(&self) -> Arc<[CatalogModel]> {
         match self.models.get() {
@@ -85,6 +101,7 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            mcp_processes: std::sync::OnceLock::new(),
             language_servers: std::sync::OnceLock::new(),
         }
     }

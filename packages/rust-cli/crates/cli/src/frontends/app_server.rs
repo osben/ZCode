@@ -151,6 +151,8 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
+    // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
+    context.set_mcp_processes(opened.mcp.clone());
     // Fork: one language-server host per process, shared by all workspaces (specs/fork-rust-lsp.md "Owners"). The
     // sidecar's root follows the startup config's `storage.dir`, as Node's protocol entry resolves it once.
     let preferences = paths.lsp_preferences(
