@@ -7,6 +7,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::plugins::lsp::ResolvedLspServer;
 use rust_cli_kernel_api::lsp::{FileMutation, FileMutationKind, LspPreferences};
 use serde_json::Value;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
@@ -36,8 +37,14 @@ pub(crate) struct SessionLsp {
     tracker: Mutex<Tracker>,
     /// Background syncs and replays; dropping the session aborts them.
     tasks: Mutex<JoinSet<()>>,
+    /// Mutations in publish order: Node starts each sync synchronously, so two quick edits of one file reach its
+    /// per-URI lock in order; spawned tasks would not.
+    mutations: mpsc::UnboundedSender<Queued>,
     listener: u64,
 }
+
+/// One published mutation, its server and whether its diagnostics are tracked.
+type Queued = (Match, FileMutation, bool);
 
 impl SessionLsp {
     pub(crate) fn new(
@@ -47,6 +54,17 @@ impl SessionLsp {
         disk: Arc<dyn Disk>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak: &Weak<Self>| {
+            let (mutations, mut queued) = mpsc::unbounded_channel::<Queued>();
+            let mut tasks = JoinSet::new();
+            let worker = weak.clone();
+            tasks.spawn(async move {
+                while let Some((found, mutation, track)) = queued.recv().await {
+                    let Some(session) = worker.upgrade() else {
+                        return;
+                    };
+                    session.sync(&found, &mutation, track).await;
+                }
+            });
             let weak = weak.clone();
             let listener = shared.pool.subscribe(Arc::new(move |event: &Event| {
                 if let (
@@ -67,7 +85,8 @@ impl SessionLsp {
                 key,
                 disk,
                 tracker: Mutex::default(),
-                tasks: Mutex::default(),
+                tasks: Mutex::new(tasks),
+                mutations,
                 listener,
             }
         })
@@ -131,19 +150,18 @@ impl SessionLsp {
                 );
             }
         }
-        let session = Arc::downgrade(self);
-        self.spawn(async move {
-            let Some(session) = session.upgrade() else {
-                return;
-            };
-            let track = diagnostics && !deleted;
-            if let Err(error) = session.run_mutation(&found, &mutation, track).await {
-                // A failed sync must not leave the edit "syncing", or every later request would wait the full bound.
-                session.tracker.lock_unpoisoned().remove(&mutation.path);
-                tracing::warn!(event = "core.lsp.warn", operation = "mutation", server_id = %found.server.id, %error, "LSP operation failed");
-            }
-            session.shared.documents.wake();
-        });
+        let _ = self
+            .mutations
+            .send((found, mutation, diagnostics && !deleted));
+    }
+
+    async fn sync(&self, found: &Match, mutation: &FileMutation, track: bool) {
+        if let Err(error) = self.run_mutation(found, mutation, track).await {
+            // A failed sync must not leave the edit "syncing", or every later request would wait the full bound.
+            self.tracker.lock_unpoisoned().remove(&mutation.path);
+            tracing::warn!(event = "core.lsp.warn", operation = "mutation", server_id = %found.server.id, %error, "LSP operation failed");
+        }
+        self.shared.documents.wake();
     }
 
     /// Node `runMutation`.
@@ -153,21 +171,24 @@ impl SessionLsp {
         mutation: &FileMutation,
         track: bool,
     ) -> Result<(), String> {
-        let connection = match self.shared.pool.acquire(&found.server, &self.key) {
-            // A failed server never publishes; keeping the edit would only report "pending" for the carry rounds.
-            Acquired::Failed(_) => {
-                self.tracker.lock_unpoisoned().remove(&mutation.path);
-                return Ok(());
-            }
-            Acquired::Starting => {
-                if track {
-                    self.tracker
-                        .lock_unpoisoned()
-                        .mark_needs_sync(&mutation.path);
+        let connection = {
+            // Acquire and mark under the tracker lock: the ready listener takes it too, so a server that becomes ready
+            // right after `Starting` still finds the edit marked (Node does both in one synchronous step).
+            let mut tracker = self.tracker.lock_unpoisoned();
+            match self.shared.pool.acquire(&found.server, &self.key) {
+                // A failed server never publishes; keeping the edit would only report "pending" for the carry rounds.
+                Acquired::Failed(_) => {
+                    tracker.remove(&mutation.path);
+                    return Ok(());
                 }
-                return Ok(());
+                Acquired::Starting => {
+                    if track {
+                        tracker.mark_needs_sync(&mutation.path);
+                    }
+                    return Ok(());
+                }
+                Acquired::Ready(connection) => connection,
             }
-            Acquired::Ready(connection) => connection,
         };
         let context = SyncContext {
             key: &self.key,
@@ -285,19 +306,19 @@ impl SessionLsp {
             }
         }
 
-        let entries = self.tracker.lock_unpoisoned().entries().to_vec();
+        // One tracker lock for the whole step: a mutation published meanwhile must not be consumed or dropped as the
+        // entry it replaced (Node's consume step is synchronous).
         let mut resolved = Vec::new();
         let mut pending_count = 0;
-        for entry in entries {
-            if let Some(current) = self.fresh_items(&entry) {
-                self.tracker.lock_unpoisoned().remove(&entry.path);
-                resolved.push(Resolved { entry, current });
-            } else if self
-                .tracker
-                .lock_unpoisoned()
-                .carry(&entry.path, EDIT_DIAGNOSTICS_MAX_CARRY_ROUNDS)
-            {
-                pending_count += 1;
+        {
+            let mut tracker = self.tracker.lock_unpoisoned();
+            for entry in tracker.entries().to_vec() {
+                if let Some(current) = self.fresh_items(&entry) {
+                    tracker.remove(&entry.path);
+                    resolved.push(Resolved { entry, current });
+                } else if tracker.carry(&entry.path, EDIT_DIAGNOSTICS_MAX_CARRY_ROUNDS) {
+                    pending_count += 1;
+                }
             }
         }
         let report = report(

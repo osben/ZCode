@@ -279,3 +279,25 @@ async fn turning_code_intelligence_off_drops_pending_edits() {
         .file_mutated(changed("/w/a.ts", "b\n", (1, 1)));
     assert!(!harness.session.has_pending());
 }
+
+/// Quick edits of one file reach the server in publish order, even on a multi-threaded runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn quick_edits_of_one_file_are_synced_in_order() {
+    let mut harness = harness();
+    let mut process = harness.start().await;
+    for index in 0..20 {
+        harness
+            .session
+            .file_mutated(changed("/w/a.ts", &format!("v{index}\n"), (1, 1)));
+    }
+    let open = process.expect("textDocument/didOpen").await;
+    assert_eq!(open["params"]["textDocument"]["text"], "v0\n");
+    for index in 1..20 {
+        let change = process.expect("textDocument/didChange").await;
+        assert_eq!(change["params"]["textDocument"]["version"], index + 1);
+        assert_eq!(
+            change["params"]["contentChanges"][0]["text"],
+            format!("v{index}\n")
+        );
+    }
+}
