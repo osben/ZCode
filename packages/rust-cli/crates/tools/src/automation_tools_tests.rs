@@ -69,12 +69,17 @@ impl AutomationPort for Host {
 #[derive(Default)]
 struct Session {
     limits: TurnLimits,
+    /// The actor is gone: `view` answers nothing.
+    gone: bool,
     frozen: Mutex<Vec<String>>,
 }
 
 #[async_trait]
 impl OpsOverride for Session {
     async fn view(&self) -> Option<RunView> {
+        if self.gone {
+            return None;
+        }
         let mut view = RunView::new(
             PermissionMode::Default,
             WorkspaceRef {
@@ -609,4 +614,131 @@ async fn list_update_and_delete_answer_node_s_shapes() {
         .await,
     );
     assert_eq!(message, "Automation not found");
+}
+
+/// A Host that answers every request after `delay`.
+struct SlowHost {
+    delay: std::time::Duration,
+    requests: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl AutomationPort for SlowHost {
+    async fn request(&self, _session: &SessionId, method: &str, _params: Value) -> Answer {
+        self.requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(method.to_owned());
+        tokio::time::sleep(self.delay).await;
+        Ok(json!({"bound": false}))
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_binding_check_and_the_create_share_one_deadline() {
+    // Each request fits in the 30 s budget, both together do not (Node times the whole handler).
+    let host = Arc::new(SlowHost {
+        delay: std::time::Duration::from_secs(20),
+        requests: Mutex::default(),
+    });
+    let port: Arc<dyn AutomationPort> = host.clone();
+    let create = automation_tools(port)
+        .into_iter()
+        .find(|tool| tool.name() == "CronCreate")
+        .unwrap_or_else(|| panic!("CronCreate"));
+    let session = Arc::new(Session::default());
+    let input = json!({"cron": "0 9 * * *", "prompt": "check the build", "title": "Build"});
+    let message = failure(
+        call(
+            &create,
+            input,
+            context(session.clone(), PermissionMode::Default),
+        )
+        .await,
+    );
+    assert!(
+        message.contains("Tool execution timed out after 30000ms"),
+        "{message}"
+    );
+    let sent = host
+        .requests
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(sent, ["automation/checkTaskBinding", "automation/create"]);
+    assert!(
+        session
+            .frozen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_mutation_without_the_session_view_fails_closed() {
+    let session = Arc::new(Session {
+        gone: true,
+        ..Session::default()
+    });
+    for (name, input) in [
+        (
+            "CronCreate",
+            json!({"cron": "0 9 * * *", "prompt": "check the build", "title": "Build"}),
+        ),
+        ("CronUpdate", json!({"id": "auto_1", "title": "Build"})),
+        ("CronDelete", json!({"id": "auto_1"})),
+    ] {
+        let host = Host::answering(Vec::new());
+        let message = failure(
+            call(
+                &tool(&host, name),
+                input,
+                context(session.clone(), PermissionMode::Default),
+            )
+            .await,
+        );
+        assert!(
+            message.contains("Session state is unavailable."),
+            "{name}: {message}"
+        );
+        assert!(host.requests().is_empty(), "{name}");
+    }
+    // Reads do not need the turn's limits.
+    let host = Host::answering(vec![Ok(json!({"automations": []}))]);
+    call(
+        &tool(&host, "CronList"),
+        json!({}),
+        context(session, PermissionMode::Default),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(host.methods(), ["automation/list"]);
+}
+
+#[test]
+fn null_is_refused_where_node_s_schema_has_no_null() {
+    let base = json!({"cron": "0 9 * * *", "prompt": "check the build", "title": "Build"});
+    for field in ["cron", "recurring", "maxRuns", "intervalUnit", "interval"] {
+        let mut input = base.clone();
+        input[field] = Value::Null;
+        assert!(create_input(&input).is_err(), "create {field}");
+    }
+    let mut relative = base;
+    relative["delayMinutes"] = Value::Null;
+    assert!(
+        create_input(&relative).is_ok(),
+        "create delayMinutes: null is absent"
+    );
+    for field in ["cron", "prompt", "recurring", "intervalUnit", "interval"] {
+        let mut input = json!({"id": "auto_1", "title": "Build"});
+        input[field] = Value::Null;
+        assert!(update_input(&input).is_err(), "update {field}");
+    }
+    assert!(
+        update_input(
+            &json!({"id": "auto_1", "title": "Build", "recurring": true, "maxRuns": null})
+        )
+        .is_ok()
+    );
 }

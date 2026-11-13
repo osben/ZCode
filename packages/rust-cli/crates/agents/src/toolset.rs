@@ -248,6 +248,54 @@ impl ToolRegistry for FilteredTools {
     }
 }
 
+/// Fork (node_desktop): a fork child keeps the main thread's registry but loses the Cron tools, which Node registers
+/// for the main session only (every subagent child, fork or not, has none).
+pub(crate) struct WithoutCron {
+    pub(crate) inner: Arc<dyn ToolRegistry>,
+}
+
+fn not_cron(tool: &Arc<dyn Tool>) -> bool {
+    !MAIN_SESSION_CRON.contains(&tool.name())
+}
+
+impl ToolRegistry for WithoutCron {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.inner.tools().into_iter().filter(not_cron).collect()
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find(name).filter(not_cron)
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find_for(session, name).filter(not_cron)
+    }
+
+    fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.withheld(name).filter(not_cron)
+    }
+
+    fn hides(&self, name: &str) -> bool {
+        self.inner.hides(name)
+    }
+
+    fn keeps_order(&self) -> bool {
+        self.inner.keeps_order()
+    }
+
+    fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
+        let snapshot = self.inner.snapshot(session);
+        ToolSnapshot {
+            tools: snapshot.tools.into_iter().filter(not_cron).collect(),
+            mcp: snapshot.mcp,
+        }
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp()
+    }
+}
+
 #[cfg(test)]
 #[path = "toolset_tests.rs"]
 mod tests;

@@ -271,3 +271,30 @@ fn a_desktop_subagent_gets_no_cron_tool() {
     }
     assert!(desktop.allows("Read"));
 }
+
+#[test]
+fn a_desktop_fork_keeps_the_main_registry_without_the_cron_tools() {
+    let fork = super::WithoutCron { inner: registry() };
+    let listed: Vec<String> = fork
+        .tools()
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    let expected: Vec<&str> = MAIN
+        .iter()
+        .copied()
+        .filter(|name| *name != "CronCreate")
+        .collect();
+    assert_eq!(listed, expected);
+    assert!(fork.find("CronCreate").is_none());
+    let session = rust_cli_kernel_api::ids::SessionId::new("s");
+    assert!(fork.find_for(&session, "CronCreate").is_none());
+    assert!(
+        fork.snapshot(&session)
+            .tools
+            .iter()
+            .all(|tool| tool.name() != "CronCreate")
+    );
+    // The fork still sees the main thread's other tools, Workflow and ScheduleWakeup included.
+    assert!(fork.find("Workflow").is_some());
+}

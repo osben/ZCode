@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 
 const CONTRACTS: &str = rust_cli_base::include_lf!("../assets/node_automation_tools.json");
 
-/// Node `CRON_TOOL_TIMEOUT_MS`: one Host request may take this long.
+/// Node `CRON_TOOL_TIMEOUT_MS`: the whole tool call (every Host request it sends) may take this long.
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Node `CRON_MODEL_BYTES`.
 const RESULT_CHARS: usize = 32_000;
@@ -128,17 +128,29 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
+/// An optional field that may be absent but not `null` (zod `.optional()` without `.nullable()`).
+fn not_null<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateInput {
+    #[serde(default, deserialize_with = "not_null")]
     cron: Option<String>,
     /// `null` is the same as absent (Node `hasRelativeDelayMinutes`: only a number is a relative delay).
     delay_minutes: Option<i64>,
     prompt: String,
     title: String,
+    #[serde(default, deserialize_with = "not_null")]
     recurring: Option<bool>,
+    #[serde(default, deserialize_with = "not_null")]
     max_runs: Option<i64>,
+    #[serde(default, deserialize_with = "not_null")]
     interval_unit: Option<String>,
+    #[serde(default, deserialize_with = "not_null")]
     interval: Option<i64>,
 }
 
@@ -146,13 +158,18 @@ struct CreateInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UpdateInput {
     id: String,
+    #[serde(default, deserialize_with = "not_null")]
     cron: Option<String>,
+    #[serde(default, deserialize_with = "not_null")]
     prompt: Option<String>,
     title: String,
+    #[serde(default, deserialize_with = "not_null")]
     recurring: Option<bool>,
     #[serde(default, deserialize_with = "present")]
     max_runs: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "not_null")]
     interval_unit: Option<String>,
+    #[serde(default, deserialize_with = "not_null")]
     interval: Option<i64>,
 }
 
@@ -450,14 +467,7 @@ impl AutomationTool {
         method: &str,
         params: Value,
     ) -> Result<Value, AutomationError> {
-        match tokio::time::timeout(TIMEOUT, self.port.request(owner, method, params)).await {
-            Ok(answer) => answer,
-            Err(_) => Err(AutomationError::new(format!(
-                "{} timed out after {} ms",
-                self.contract.name,
-                TIMEOUT.as_millis()
-            ))),
-        }
+        self.port.request(owner, method, params).await
     }
 
     /// Whether `owner` already belongs to an automation (Node: `automation/checkTaskBinding`; only `-32601` falls
@@ -600,6 +610,33 @@ impl AutomationTool {
             &json!({"paused": paused, "id": id, "message": message}),
         ))
     }
+
+    async fn dispatch(
+        &self,
+        input: &Value,
+        context: &ToolUseContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let mutates = matches!(self.kind, Kind::Create | Kind::Update | Kind::Delete);
+        // A mutation needs the turn's limits: without the session view it cannot tell an automation turn apart, so it
+        // fails closed.
+        let limits = match context.session_ops.view().await {
+            Some(view) => view.turn,
+            None if mutates => return Err(failed("Session state is unavailable.".to_owned())),
+            None => TurnLimits::default(),
+        };
+        // The turn's tool list already hides these; a call that still arrives is refused before any request.
+        if mutates && limits.restricts_automation_mutations() {
+            return Err(not_allowed(&self.contract.name));
+        }
+        let owner = context.session_ops.owner_session(&context.session).await;
+        match self.kind {
+            Kind::Create => self.create(input, context, &owner).await,
+            Kind::Update => self.update(input, &owner).await,
+            Kind::List => self.list(&owner).await,
+            Kind::Delete => self.delete(input, &owner).await,
+            Kind::PauseSelf => self.pause_self(&limits, &owner).await,
+        }
+    }
 }
 
 #[async_trait]
@@ -675,26 +712,16 @@ impl Tool for AutomationTool {
         context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
-        let limits = context
-            .session_ops
-            .view()
+        // Node runs the whole handler under one deadline (`timeoutMs`), so CronCreate's binding check and its create
+        // share it.
+        tokio::time::timeout(TIMEOUT, self.dispatch(&input, &context))
             .await
-            .map(|view| view.turn)
-            .unwrap_or_default();
-        // The turn's tool list already hides these; a call that still arrives is refused before any request.
-        if matches!(self.kind, Kind::Create | Kind::Update | Kind::Delete)
-            && limits.restricts_automation_mutations()
-        {
-            return Err(not_allowed(&self.contract.name));
-        }
-        let owner = context.session_ops.owner_session(&context.session).await;
-        match self.kind {
-            Kind::Create => self.create(&input, &context, &owner).await,
-            Kind::Update => self.update(&input, &owner).await,
-            Kind::List => self.list(&owner).await,
-            Kind::Delete => self.delete(&input, &owner).await,
-            Kind::PauseSelf => self.pause_self(&limits, &owner).await,
-        }
+            .unwrap_or_else(|_| {
+                Err(failed(format!(
+                    "Tool execution timed out after {}ms",
+                    TIMEOUT.as_millis()
+                )))
+            })
     }
 }
 

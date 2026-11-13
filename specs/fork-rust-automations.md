@@ -128,8 +128,10 @@ Owners (Node layering):
   check the input (Node's zod refinements, strings trimmed like zod), refuse on a restricted turn, run the bound-session
   check, build each request's params (selection, mode, target, relative delay, interval carrier), and build the output
   `{automation, message}` / `{automations}` / `{deleted, id, message}` / `{paused, id, message}` with Node's texts,
-  sent to the model and the UI as compact JSON (the chat card parses the row's `output.text`). Each Host request has
-  Node's 30 s limit.
+  sent to the model and the UI as compact JSON (the chat card parses the row's `output.text`). The whole call (the
+  binding check and the create included) has Node's one 30 s deadline (`Tool execution timed out after 30000ms`).
+  Optional fields refuse `null` except where Node's schema allows it (CronCreate `delayMinutes`, CronUpdate
+  `maxRuns`).
 - **Port** (`kernel-api` `AutomationPort`, implemented by `protocol-zcode/src/automation_port.rs`, Node
   `requestClient`): the transport only. It adds the owner session's `workspace` ref (`Context::workspace_ref`, the
   same construction the account-credential request uses), keeps the Host's JSON-RPC error code, and checks the
@@ -143,6 +145,11 @@ Rules:
   (Node `isAutomationMutationRestrictedTurn`). CronCreate, CronUpdate and CronDelete refuse on it
   (`<Tool> is not allowed while running a scheduled automation.`) before any request. CronPauseSelf refuses without an
   automation id (`CronPauseSelf is only available while running a scheduled automation.`) and pauses only that id.
+- A mutation that cannot read the session's view (the actor is gone) cannot tell a restricted turn apart and refuses
+  (`Session state is unavailable.`) before any request.
+- No subagent child has a Cron tool under the desktop, a fork included (Node registers them for the main session only;
+  a fork keeps the main thread's registry otherwise). A child turn carries no automation limits, so this is also what
+  keeps an automation run's mutations out of its subagents.
 - CronCreate refuses in a session already bound to an automation (`automation/checkTaskBinding`); `-32601` alone falls
   back to `automation/list`; any other failure refuses with the bound-session check error.
 - CronCreate sends the session's selection as `modelSelection` and its permission mode as `mode` (Node names, `auto` →
@@ -202,8 +209,8 @@ Rust tests (protocol-zcode, tools):
    workspace; a bound session refuses; a non-`-32601` check failure refuses; `-32601` falls back to `automation/list`;
    success freezes the title. CronPauseSelf sends `automation/pause` with the turn's id.
 7. The generated contracts equal Node's (`automation-tools.mts --check`); the CronCreate contract contains the
-   `prompt` field description and the model instructions; the Cron tools are not deferred and subagents do not get
-   them under `node_desktop`; the builtin `/loop` is not offered under the Host's automations.
+   `prompt` field description and the model instructions; the Cron tools are not deferred and subagents (forks
+   included) do not get them under `node_desktop`; the builtin `/loop` is not offered under the Host's automations.
 8. Input checks: each Node refinement of `CronCreateInputSchema` / `CronUpdateInputSchema` refuses its case; a
    restricted turn (automation id, or a disallowlist hiding all three mutation tools) refuses CronCreate/Update/Delete
    before any request; CronPauseSelf without an automation id refuses before any request.
