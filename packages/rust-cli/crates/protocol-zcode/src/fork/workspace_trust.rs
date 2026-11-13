@@ -185,8 +185,9 @@ async fn refresh_workspace(
         if server.context.workspace_of(id.as_str()).as_deref() != Some(target.path.as_str()) {
             continue;
         }
+        let ticket = live.sink.admission_ticket();
         let admission = admin.admission(&WorkspaceTarget::local(&target.path)).await;
-        publish(&live, admission);
+        publish(&live, admission, ticket);
     }
 }
 
@@ -202,13 +203,16 @@ pub(crate) async fn refresh_session(
     let Some(path) = server.context.workspace_of(session.as_str()) else {
         return;
     };
+    let ticket = live.sink.admission_ticket();
     let admission = admin.admission(&WorkspaceTarget::local(&path)).await;
-    publish(live, admission);
+    publish(live, admission, ticket);
 }
 
-fn publish(live: &Arc<Bridged<Live>>, admission: Admission) {
+fn publish(live: &Arc<Bridged<Live>>, admission: Admission, ticket: u64) {
     let sink = live.sink.clone();
-    live.run(Box::pin(async move { sink.set_admission(admission).await }));
+    live.run(Box::pin(async move {
+        sink.set_admission(admission, ticket).await;
+    }));
 }
 
 #[cfg(test)]

@@ -405,6 +405,24 @@ async fn an_accepted_decision_refreshes_the_banners_of_the_workspaces_sessions()
 }
 
 #[tokio::test]
+async fn a_banner_read_older_than_the_applied_one_is_dropped() {
+    let (_scope, server) = fixture(None);
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    // An input's read starts, then a decision's read starts and lands first.
+    let input = live.sink.admission_ticket();
+    let decision = live.sink.admission_ticket();
+    live.sink
+        .set_admission(admission(Some(mcp(2)), Some(hook(1))), decision)
+        .await;
+    live.sink
+        .set_admission(admission(Some(mcp(3)), Some(hook(2))), input)
+        .await;
+    let snapshot = live.sink.snapshot();
+    assert_eq!(snapshot["workspaceMcpAdmission"], mcp(2));
+    assert_eq!(snapshot["workspaceHookAdmission"], hook(1));
+}
+
+#[tokio::test]
 async fn a_refused_decision_refreshes_nothing() {
     let admin = Arc::new(FakeAdmin::default());
     *admin.banners.lock_unpoisoned() = admission(Some(mcp(1)), None);

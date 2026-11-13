@@ -63,6 +63,10 @@ struct Fixture {
 }
 
 fn fixture(project: Value, user: Value) -> Fixture {
+    fixture_text(&project.to_string(), user)
+}
+
+fn fixture_text(project: &str, user: Value) -> Fixture {
     let facts = EnvFacts {
         cwd: EnvPath::new(ROOT),
         platform: "linux".to_owned(),
@@ -74,7 +78,7 @@ fn fixture(project: Value, user: Value) -> Fixture {
     };
     let env = MemoryEnvironment::new(facts)
         .with_file("/Users/dev/repo/.git/HEAD", "ref")
-        .with_file("/Users/dev/repo/.zcode/config.json", &project.to_string());
+        .with_file("/Users/dev/repo/.zcode/config.json", project);
     let home = tempfile::tempdir().unwrap();
     let file = home.path().join(".zcode/cli/config.json");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -274,4 +278,17 @@ async fn a_hook_grant_is_persisted_and_rebuilds_the_process_hooks() {
     assert_eq!(answer, json!({"accepted": true}));
     assert_eq!(fixture.hooks.lock().unwrap().len(), 1);
     assert_eq!(fixture.admin.admission(&target(ROOT)).await.hook, None);
+}
+
+#[tokio::test]
+async fn an_unreadable_config_makes_a_decision_unavailable_not_changed() {
+    let fixture = fixture_text("{ not json", json!({}));
+    let answer = fixture
+        .admin
+        .mcp_trust(&target("k"), "alpha", &"0".repeat(64), true)
+        .await;
+    assert_eq!(
+        answer,
+        json!({"accepted": false, "reasonCode": "workspace_mcp_trust_unavailable"})
+    );
 }

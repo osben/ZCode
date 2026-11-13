@@ -7,6 +7,7 @@
 //! `protocol-settings` lease): connecting there never changes what a running session has.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
@@ -364,13 +365,20 @@ impl WorkspaceAdmin for AppWorkspace {
             granted_at: self.now(),
         };
         // Node rediscovers inside the store lock: the decision is about the declaration shown, not a newer one.
+        // An unreadable config is not a changed declaration: Node's `discover` throws and the answer is
+        // `workspace_mcp_trust_unavailable`.
+        let unreadable = AtomicBool::new(false);
         let still_declared = async || {
-            self.read(target)
-                .await
-                .inspection
-                .reviews()
-                .iter()
-                .any(|review| review.name == server && review.digest == digest)
+            let current = self.read(target).await;
+            match current.inspection.discovery() {
+                Ok(discovery) => discovery
+                    .get(server)
+                    .is_some_and(|declaration| declaration.digest == digest),
+                Err(_) => {
+                    unreadable.store(true, Ordering::Relaxed);
+                    false
+                }
+            }
         };
         match read
             .inspection
@@ -379,7 +387,7 @@ impl WorkspaceAdmin for AppWorkspace {
             .await
         {
             Ok(()) => json!({"accepted": true}),
-            Err(McpTrustError::Changed) => {
+            Err(McpTrustError::Changed) if !unreadable.load(Ordering::Relaxed) => {
                 json!({"accepted": false, "reasonCode": "workspace_mcp_declaration_changed"})
             }
             Err(error) => {
