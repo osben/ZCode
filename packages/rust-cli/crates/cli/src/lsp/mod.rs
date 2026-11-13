@@ -4,6 +4,8 @@
 
 mod installed;
 mod preferences;
+#[allow(dead_code)]
+mod runtime;
 
 use std::path::PathBuf;
 use std::sync::Arc;

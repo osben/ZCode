@@ -1,6 +1,6 @@
 # Fork: language servers in the Rust agent
 
-Status: stage 1 (this spec's "Protocol surface") is implemented. Stage 2 ("Runtime") is the next PR in the same series.
+Status: stage 1 ("Protocol surface") is implemented. Stage 2 is split the way Node shipped it (design §11, decision 4: diagnostics before navigation): D1 ("Runtime", this PR) runs the servers and reports diagnostics after edits; D2 (the `LSP` agent tool) is the next PR.
 
 Node references: bootstrap `zcode-protocol/lsp.ts`, `app/lsp-preferences.ts`, `app/lsp-runtime-hub.ts`, `zcode-protocol-entrypoint.ts` (the LSP hub); adapters `plugins/lsp.ts`, `plugins/template.ts`, `lsp/command-resolution.ts`; contracts `lsp/index.ts`; design `apps/zcode-cli/docs/design/v2/tool/19-lsp.md`.
 
@@ -8,7 +8,7 @@ Node references: bootstrap `zcode-protocol/lsp.ts`, `app/lsp-preferences.ts`, `a
 
 - The plugin page's language-server section lists the servers that the enabled plugins declare for the workspace it shows. For each server it shows its state, its extensions, and a diagnostics-after-edit toggle. A global switch turns language servers off.
 - The switch and the toggles are user preferences. Both runtimes keep them in one sidecar, `<cliStorageRoot>/fork_lsp_preferences.json`. A change made under one runtime is what the other one reads. They are never stored in `setting.json` (AGENTS.md).
-- Stage 1 starts no server. A declared server is `not_installed` when its command cannot be found, and `stopped` otherwise. Stage 2 adds the running states (`starting`, `ready`, `crashed`, `unavailable`), the `LSP` agent tool, document sync and diagnostics after edits.
+- Stage 1 starts no server. A declared server is `not_installed` when its command cannot be found, and `stopped` otherwise. D1 adds the running states (`starting`, `ready`, `crashed`, `unavailable`), document sync and diagnostics after edits. D2 adds the `LSP` agent tool.
 
 ## Protocol surface (stage 1)
 
@@ -27,10 +27,12 @@ The methods are `lsp/preferences/get`, `lsp/preferences/set` and `lsp/status`.
     - `extensions`: the keys of the conflict-resolved `extensionToLanguage`, in declaration order;
     - `installed`;
     - `state`: `installed ? "stopped" : "not_installed"`;
-    - `diagnosticsMode: "unknown"` (the protocol allows `pull`, `versioned`, `attributed` or `unknown`; stage 2 reports the real mode of a running server);
+    - `diagnosticsMode: "unknown"` (the protocol allows `pull`, `versioned`, `attributed` or `unknown`; with a running server D1 reports `pull` or `unknown`, see "Runtime");
     - `diagnosticsAfterEdit`: `prefs[id] ?? config.diagnostics ?? true`;
     - `restarts: 0`;
     - no `lastErrorCode`.
+
+  D1 overlays the live pool entry whose key matches the request (see "Runtime", status).
 
 ## Owners
 
@@ -57,7 +59,7 @@ App ── lsp/preferences/set ──▶ protocol (Inbound::method: strict param
                                    │  merge patch (null deletes an override)
                                    │  write temp file in the same directory, rename over the sidecar
                                    │  unlock
-                                   │  apply to the runtime (stage 1: nothing; stage 2: stop all servers when disabled)
+                                   │  apply to the runtime (D1: the in-memory copy, then stop all servers when disabled)
                                    ▼
 App ◀── {enabled, diagnosticsAfterEdit}
 ```
@@ -118,7 +120,7 @@ This is a port of adapters `plugins/lsp.ts` and `plugins/template.ts`.
   - `CLAUDE_/ZCODE_PLUGIN_DATA` is `<plugin storage>/data/<id with [^a-zA-Z0-9_.@-] → ->`.
   - `CLAUDE_/ZCODE_PROJECT_DIR` is the requested workspace path.
   - The session and skill variables are errors.
-  - `user_config.<k>` comes from the merged config `plugins.options[id][k]`, else from the manifest `userConfig[k].default`. A missing value is an error, and so is a `sensitive` option outside `env`. Values are written the way JS `String(v)` writes them. Stage 1 does not read the sensitive values Node keeps in `<cliStorageRoot>/plugin-secrets.json`; a server whose template needs one is skipped with a warning. Stage 2 reads that file, since a running server needs those values in its `env`.
+  - `user_config.<k>` comes from the merged config `plugins.options[id][k]`, else from the manifest `userConfig[k].default`. A missing value is an error, and so is a `sensitive` option outside `env`. Values are written the way JS `String(v)` writes them. Rust does not read the sensitive values Node keeps in `<cliStorageRoot>/plugin-secrets.json`; a server whose template needs one is skipped with a warning. The Rust MCP loader does not read that file either, so reading it is one follow-up for both (sensitive plugin options), not part of the LSP runtime.
   - `ZCODE_*` names come from the process environment; a missing one is an error.
   - Any other name is taken from the environment only in `env`. Outside `env` it is left as written.
 
@@ -129,19 +131,129 @@ This is a port of adapters `plugins/lsp.ts` and `plugins/template.ts`.
 
 ## Install probe
 
-- **Env.** The process environment with the server's resolved `env` on top. On Windows, keys are compared case-insensitively.
+- **Env.** The spawn env (see "Runtime", start): the stdio-server projection with the server's resolved `env` on top. On Windows, keys are compared case-insensitively.
 - **Command with a directory part**, meaning it contains `/` or `\`, or is absolute: the command itself, resolved against the agent process's current directory, not the workspace.
 - **Bare name:** each non-empty `PATH` entry joined with the name.
 - **Windows:** `PATHEXT` candidates are tried as well (default `.COM;.EXE;.BAT;.CMD`), and quoted `PATH` entries are unquoted.
 - **Test:** the candidate must be a regular file. Outside Windows it must also be executable.
 
-## Differences kept on purpose
+## Runtime (D1)
+
+This is a port of adapters `lsp/*` (JSON-RPC, pool, lifecycle, server requests) and core `lsp/*` (document sync, freshness, edit diagnostics, service) with the bootstrap hub and per-session wiring (`app/lsp-runtime-hub.ts`, `app/lsp-session.ts`) and the runtime call sites (`runtime/methods/lsp.ts`, `turn-loop.ts` `collectInputAttachments`, `tool/file-mutation.ts`, Read's prewarm). The design doc is `apps/zcode-cli/docs/design/v2/tool/19-lsp.md` §4–§6.
+
+### Where it runs
+
+- Only the app-server builds the runtime, as for stage 1. The TUI and `-p` have none (Node gives a plain CLI run a private hub; that stays a follow-up).
+- Only the main thread of a session uses it. Node builds subagent runtimes without the LSP service, so a subagent's Read starts nothing, its Edit and Write publish nothing, and its requests carry no diagnostics.
+- Only sessions on the local environment use it (the app-server serves local workspaces only).
+
+### Owners
+
+| Fact                                             | Owner                                                                                              | Notes                                                                                                                                                      |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server processes, states, restarts, capabilities | cli `lsp::runtime::Pool`, one per process                                                          | Node `createLanguageServerPool`. Entries are keyed by `(serverId, identity, workspacePath)`.                                                               |
+| One server's JSON-RPC stream                     | `lsp::runtime::rpc::Connection`                                                                    | Request ids, timeouts, `$/cancelRequest`, server-request answers. It knows nothing about lifecycle.                                                        |
+| Open documents, versions, freshness              | `lsp::runtime::Documents`, one per process                                                         | Node `LspDocumentSync`: one store per `(serverId, identity, workspacePath)` and connection, 50 documents per store.                                        |
+| Edits waiting for a report                       | `lsp::runtime::Tracker`, one per session                                                           | Node `EditDiagnosticsTracker`. Released when the session closes (`SessionScoped::released`).                                                               |
+| The servers a session can use                    | the session's `SessionLsp`, resolved once on first use                                             | Node resolves `servers` when the session runtime is built. A plugin change reaches the next session, as in Node.                                           |
+| The session's identity key                       | the session store's workspace key (`workspaceID ?? directory`), falling back to the workspace root | The existing key, the same one `listed_key` and the App's `workspaceIdentity?.trim() \|\| workspacePath` produce.                                          |
+| Preferences in memory                            | `lsp::PreferencesStore`                                                                            | Its `current()` is the last record it read or wrote. Every `load` and `update` refreshes it; the host loads once at startup. Node `hub.preferences.get()`. |
+| Hook points                                      | kernel-api `lsp::CodeIntelligence`, set on `Extensions`                                            | Read, Edit and Write call it; the context builder asks it for the report. The host implements it.                                                          |
+
+### Event order
+
+```
+Read (main thread, text file, after the unchanged check)
+  └─ CodeIntelligence::prewarm(session, workspace, path) ── acquire only, never waits
+
+Edit / Write (main thread, after put_file succeeded)
+  └─ CodeIntelligence::file_mutated(session, workspace, {path, kind, content, changedRange})
+        │ synchronously: tracker.record_syncing (when diagnostics after edit is on for that server)
+        └─ background task ── pool.acquire
+              ├─ failed   → tracker.remove(path)
+              ├─ starting → tracker.mark_needs_sync(path)  (replayed on the server's ready event)
+              └─ ready    → didChangeWatchedFiles, then documents.apply_mutation (didOpen | didChange | didClose)
+                             → tracker.settle(path, baseline)   then wake waiters
+
+Server ──publishDiagnostics──▶ documents.handle_publish ──fresh──▶ wake waiters
+Server ◀──textDocument/diagnostic── documents.request_pull (after each didOpen/didChange when pull is supported)
+
+Model request (main thread, collected after the skills listing, before the plan-mode reminders)
+  └─ CodeIntelligence::edit_diagnostics(session) ── no pending edit → None at once
+        │ wait until every pending edit is fresh, at most until last mutation + 2000 ms (woken, never polled)
+        │ consume: fresh → report; still pending → carried (dropped after 3 rounds)
+        └─ attachment, source "diagnostics", committed to history like Node's `commitTurnRequestEntries`
+```
+
+If the request is cancelled while waiting, its future is dropped before anything is consumed, so the pending edits stay for the next request (Node leaves the tracker untouched on abort).
+
+### Pool
+
+- **Acquire.** Never waits for a start. By state: `ready` gives the connection; `starting`, or a stop in progress, gives `starting`; `stopped` starts; `not_installed` starts again only 30 s after it was recorded; `crashed` restarts while `restartOnCrash && restarts < maxRestarts` (and counts the restart), otherwise it becomes `unavailable`; `unavailable` makes one more start per 30 s window, unless `restartOnCrash` is false (then it is final). A failed result carries `lsp_server_unavailable` "`{id} is unavailable after {n} restarts (last error: {code})`", or the entry's last code and message.
+- **Capacity.** At most 4 live processes. Before a start, the least recently used servers with no request in flight are stopped to make room. When every candidate is busy the cap is exceeded and `lsp.cap_exceeded` is logged.
+- **Idle.** A server with no use for 10 minutes and no request in flight is stopped gracefully. The idle timer is a task on the process scope.
+- **Start.**
+  - Env: the Rust stdio-server projection of the process environment (the same projection the Rust MCP stdio servers get) with the server's `env` on top (case-insensitive replacement on Windows). The install probe uses the same env.
+  - cwd is the workspace path. The child gets its own process group, is recorded in the process ledger as `lsp`, and on Windows lives in the process job, like an MCP stdio server.
+  - `initialize` with `startupTimeout`. Params: `processId`, `clientInfo {name: "zcode"}`, `rootUri`, `rootPath`, `workspaceFolders` (the workspace, plus the server's `workspaceFolder` when it differs; names are base names), `initializationOptions`, and the client capabilities below.
+  - On success: `initialized`, then `workspace/didChangeConfiguration {settings}` when the server has `settings`; `restarts` returns to 0; the ready event goes out.
+  - A spawn error with `NotFound` is `not_installed` (`lsp_server_not_installed`, "`command "{command}" was not found`"); any other spawn error is `crashed` with `lsp_server_start_failed`.
+  - Exit or an invalid frame before `initialize` answered is `lsp_server_start_failed`; the message gets the last 2048 characters of stderr ("`; stderr tail: …`"). Exit after that is `lsp_server_crashed`. Neither the stderr tail nor a server's error text is logged; only codes are.
+- **Client capabilities** (Node `LSP_CLIENT_CAPABILITIES`): `general.positionEncodings ["utf-16"]`; text document sync without dynamic registration and without `didSave`; `publishDiagnostics.versionSupport`; `diagnostic.dynamicRegistration`; `definition`, `references`, `implementation`; `hover.contentFormat ["markdown", "plaintext"]`; hierarchical `documentSymbol`; workspace `configuration`, `workspaceFolders`, `didChangeWatchedFiles` without dynamic registration, `symbol`.
+- **Server requests.** `workspace/configuration` answers each item's dot-path lookup in `settings` (missing → null; no section → all settings); `client/registerCapability` and `client/unregisterCapability` (both `unregisterations` and `unregistrations`) keep the dynamic registrations; `window/workDoneProgress/create` answers null; `workspace/workspaceFolders` answers the folders; anything else answers `-32601` "`client does not implement {method}`".
+- **Stop.** `shutdown` (with `shutdownTimeout`), then `exit`, then wait up to `shutdownTimeout`, then terminate the tree. Concurrent stops share one. Disabling code intelligence stops every server.
+- **URIs.** `rootUri` and workspace folders encode each path segment like `encodeURIComponent` (on Windows the drive letter is lowercased and the colon kept). Document URIs follow `pathToFileURL`. A URI the server sends is matched after decoding it to a path and encoding it again, never as the raw string.
+
+### JSON-RPC
+
+- Frames are `Content-Length: N\r\n\r\n` plus N bytes of UTF-8 JSON. A header block longer than 8192 bytes without a terminator, a header line without `:`, a non-numeric or missing `Content-Length`, or a body that is not a JSON object is a protocol error: the server is treated as crashed (or failed to start).
+- A request has a timeout (the server's `requestTimeout`, or the caller's shorter one) and the caller's cancellation. On either, `$/cancelRequest {id}` goes to the server and the request fails with `lsp_request_timeout` or `lsp_cancelled`.
+- Error answers map: `-32800` → `lsp_cancelled`; `-32601` → `lsp_operation_unsupported` "`{id} does not support {method} (code c): {message}`"; others → `lsp_request_failed` "`{id} rejected {method} (code c): {message}`".
+- Only the envelope (direction, method, id, error code) is logged, at `debug`. Params and results hold file contents.
+
+### Documents and freshness
+
+- First use of a file sends `didOpen` with version 1. A later edit sends a full-text `didChange` with version + 1. Before reusing an open document, its mtime and size are compared with the disk; drift re-reads it and sends a `didChange`. Deleting a file sends `didClose`. Each mutation also sends `workspace/didChangeWatchedFiles` with type 1 (created), 2 (changed) or 3 (deleted).
+- Edits of one file are serialized (a per-URI lock that holds no guard across an await).
+- A pull (`textDocument/diagnostic`) follows each `didOpen` and `didChange` when the server has `diagnosticProvider` or registered it dynamically. A `kind: "unchanged"` answer changes nothing.
+- A result is fresh for the current version when it is a pull for that version, a publish with `version` ≥ the current one, or a versionless publish while exactly one change is in flight. With two or more changes in flight a versionless publish is ambiguous. Every publish resets the in-flight count.
+- Diagnostics are converted to 1-based lines and code-point columns; a missing or unknown severity is an error.
+
+### Diagnostics after edits
+
+- An edit is tracked when diagnostics after edit is on for its server: the preference override, else the server's `diagnostics` (default true).
+- **Report.** New issues are the multiset difference against the baseline (the last fresh result before the edit) on `(severity, code, message)`. Without a baseline, only issues whose lines overlap the changed range count. Info and hint are dropped. Errors come first, then path, line and column. The text is `Found N new diagnostic issues in M files`, then up to 20 lines of `path:line:col severity message [source code]` (the path relative to the workspace with `/`), then `... and K more`, then `Diagnostics pending for N files` when some files are still pending.
+- **Changed range.** Write: a new file is lines 1..max(1, n); an overwrite is the lines between the common prefix and suffix. Edit: the union of the new-side hunks of its structured patch. Edits of one file merge their ranges.
+- **Ready replay.** When a server becomes ready, the edits marked "needs sync" for that server and the same key are opened and settled without a baseline.
+- **Log.** `lsp.edit_diagnostics` with server ids, error and warning counts, latency and whether a baseline was missing. Never paths or messages.
+
+### Status
+
+`lsp/status` overlays, for each declared server, the pool entry with the same server id, identity key (`workspaceIdentity?.trim() || workspacePath`) and workspace path: its `state`, `restarts`, `lastErrorCode`, and `diagnosticsMode` (`pull` when the server has `diagnosticProvider` or registered `textDocument/diagnostic`, else `unknown`).
+
+### Differences kept on purpose
+
+- The spawn env is the Rust stdio-server projection (an allow-list), not Node's full environment minus ZCode's own variables. It is the projection Rust MCP stdio servers already get.
+- No Windows `.cmd` shim routing through `ComSpec` yet: the command is spawned directly. Node routes `.cmd`/`.bat` shims through `ComSpec`.
+
+### Acceptance (D1)
+
+1. JSON-RPC: frames split anywhere, several frames per chunk and multi-byte bodies decode; an oversized header and a malformed one fail the stream; timeout and cancellation send `$/cancelRequest`; error codes map as above; server requests get the answers above.
+2. Pool on a paused clock: start → ready; crash → restart within the budget, `unavailable` after it, one more start after 30 s, final with `restartOnCrash: false`; `not_installed` retries after 30 s; idle stop after 10 minutes; the fifth start stops the least recently used idle server; a start failure carries the stderr tail.
+3. Freshness: a versionless publish after one change is fresh; after two quick changes it is ambiguous and the edit stays pending; a versioned stale publish is ignored; a pull for the current version is fresh.
+4. Diagnostics after edits: an edit followed by a fresh publish reports only new issues; a pre-existing issue that shifted lines is not new; without a baseline only the changed lines count; a still-pending edit reports `Diagnostics pending for 1 files` and is dropped after 3 rounds; an edit while the server starts is replayed on ready; cancellation leaves the pending edits; diagnostics after edit turned off for a server tracks nothing.
+5. Status shows `starting`, `ready`, `crashed` and `unavailable` for the matching key only, and `pull` for a pull server.
+6. Disabling code intelligence stops every running server.
+7. One real-process test drives a small fake server binary through start, an edit and its diagnostics.
+8. No desktop E2E spec covers language servers, and the E2E box has no language server installed, so this stage has no E2E run.
+
+## Differences kept on purpose (stage 1)
 
 - Node's MCP stdio env puts the running Node binary's directory in front of `PATH` when the agent itself is a `node` process. The Rust agent is not, so it adds nothing.
 - Node creates each enabled plugin's data directory while resolving. Rust's status call writes nothing except the sidecar on `set`.
 - Rust has no plugin diagnostics list. Skipped servers and plugins are logged (`warn`) instead.
 
-## Acceptance
+## Acceptance (stage 1)
 
 1. `lsp/preferences/get` with no sidecar answers `{enabled: true, diagnosticsAfterEdit: {}}` and creates no file.
 2. A Node-written sidecar is read back unchanged. A Rust-written sidecar parses under Node's `LspPreferencesSchema` and matches Node's text byte for byte. Both runtimes check this against one golden file, `packages/rust-cli/crates/cli/src/lsp/fixtures/fork_lsp_preferences.json`: the Rust test `the_patch_sequence_writes_the_golden_sidecar` and the fork Vitest `lsp-preferences-sidecar.test.ts` apply the same three patches (including a removal, a key that needs escaping and a non-ASCII key) and compare the bytes.

@@ -247,7 +247,13 @@ impl LocalKernel {
         ));
         agent_catalog.set_incognito(incognito.clone());
         let assembler =
-            assemble::context(&ports, context, (&agent_catalog, &base, &ext), &incognito);
+            assemble::context(
+                &ports,
+                context,
+                (&agent_catalog, &base, &ext),
+                &incognito,
+                extensions.code_intelligence.clone(),
+            );
         let sessions = OpenSessions::default();
         let parts = assemble::query_parts(
             &ports,

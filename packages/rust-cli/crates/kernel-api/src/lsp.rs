@@ -70,3 +70,51 @@ pub trait LanguageServers: Send + Sync {
     /// The declared servers of the workspace with their state. Starts nothing.
     async fn status(&self, workspace: &LspWorkspace) -> Result<LspStatus, String>;
 }
+
+/// What a tool did to a file (Node `FileMutatedEvent.kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileMutationKind {
+    Created,
+    Changed,
+    Deleted,
+}
+
+/// Lines a mutation touched, 1-based and inclusive (Node `changedRange`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangedRange {
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+/// A successful Write or Edit (Node `FileMutatedEvent`). `content` is the text written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileMutation {
+    pub path: String,
+    pub kind: FileMutationKind,
+    pub content: Option<String>,
+    pub changed_range: Option<ChangedRange>,
+}
+
+/// Fork: the language-server runtime as the session sees it (specs/fork-rust-lsp.md "Runtime"): Read prewarms, Write
+/// and Edit publish mutations, and the context builder asks for the post-edit report. Only the main thread calls it.
+#[async_trait]
+pub trait CodeIntelligence: Send + Sync {
+    /// Starts the server for the file's type in the background (acquire only, never waits for the start).
+    async fn prewarm(&self, session: &crate::ids::SessionId, workspace: &crate::env::WorkspaceRef, path: &str);
+    /// Records the mutation before it returns (so the next request sees it), then syncs it in the background.
+    async fn file_mutated(
+        &self,
+        session: &crate::ids::SessionId,
+        workspace: &crate::env::WorkspaceRef,
+        mutation: FileMutation,
+    );
+    /// The post-edit diagnostics body for the next model request, or None. Returns at once when nothing was mutated
+    /// since the previous request; otherwise waits at most until 2 s after the last mutation. Dropping the future
+    /// before it returns leaves the pending edits for the next request.
+    async fn edit_diagnostics(&self, session: &crate::ids::SessionId) -> Option<String>;
+    /// The session closed: its pending edits are dropped.
+    fn session_closed(&self, session: &crate::ids::SessionId);
+}
+
+/// The attachment source of the post-edit report (Node `LSP_DIAGNOSTICS_ATTACHMENT_SOURCE`).
+pub const DIAGNOSTICS_SOURCE: &str = "diagnostics";

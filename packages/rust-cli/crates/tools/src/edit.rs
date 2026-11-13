@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use rust_cli_kernel_api::env::{EnvError, EnvPath, FileVersion, ReadFile, WritePrecondition};
 use rust_cli_kernel_api::env_files::PutFile;
+use rust_cli_kernel_api::lsp::{FileMutation, FileMutationKind};
 use rust_cli_kernel_api::machine_param::MachineParam;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation,
@@ -21,7 +22,7 @@ use crate::common::{
 use crate::edit_match::{adapt_new, applies, apply, find_actual, wants_escape_hint};
 use crate::encoding::{Decoded, encode};
 use crate::file_state::{Baseline, FileState};
-use crate::{checkpoint, notebook_edit, texts};
+use crate::{checkpoint, lsp_range, notebook_edit, texts};
 use rust_cli_kernel_api::tool::{failed, invalid, parse, text};
 use rust_cli_kernel_api::tool_names;
 use rust_cli_prompts::Definition;
@@ -328,6 +329,20 @@ impl Tool for EditTool {
                 not_in_context,
             },
         );
+        // Fork: Node `publishFileMutation` after the write succeeded (specs/fork-rust-lsp.md "Event order").
+        if let Some(code) = self.files.code_for(&context) {
+            let after = updated.strip_prefix('\u{feff}').unwrap_or(&updated);
+            let before = content.strip_prefix('\u{feff}').unwrap_or(&content);
+            let (hunks, _, _) = checkpoint::structured_patch(before, after);
+            let mutation = FileMutation {
+                path: path.clone(),
+                kind: FileMutationKind::Changed,
+                content: Some(after.to_owned()),
+                changed_range: lsp_range::from_hunks(&hunks),
+            };
+            code.file_mutated(&context.session, &context.workspace, mutation)
+                .await;
+        }
         let notice = if recovered {
             texts::STALE_RECOVERED
         } else if not_in_context {

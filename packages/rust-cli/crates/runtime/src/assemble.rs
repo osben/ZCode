@@ -136,7 +136,11 @@ pub(crate) fn base_tools(
         model: ports.model.clone(),
         selection: defaults.selection.clone(),
     };
-    let builtin = rust_cli_tools::builtin_with(gate.clone(), Some(side_model()));
+    let builtin = rust_cli_tools::builtin_with_code(
+        gate.clone(),
+        Some(side_model()),
+        extensions.code_intelligence.clone(),
+    );
     let read_files: Arc<ReadFileState> = builtin.file_state().cloned().unwrap_or_default();
     let worktrees = Arc::new(WorktreeBoard::default());
     // Monitor（工作线 F83，tools-more.md §19）：单次的 `-p` 上限 10 分钟，其余 30 分钟。
@@ -231,6 +235,7 @@ pub(crate) fn context(
     config: ContextConfig,
     (agent_catalog, tools, ext): (&Arc<AgentCatalog>, &BaseTools, &Ext),
     incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> Arc<PromptAssembler> {
     let machine = ports.environments.primary_machine();
     let assembler = PromptAssembler::new(
@@ -254,7 +259,8 @@ pub(crate) fn context(
             .with_machines(ports.environments.clone()),
     ))
     .with_machines(ports.environments.clone())
-    .with_incognito(incognito.clone());
+    .with_incognito(incognito.clone())
+    .with_code_intelligence(code);
     Arc::new(assembler)
 }
 
