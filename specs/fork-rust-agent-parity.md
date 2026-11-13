@@ -1400,8 +1400,11 @@ Divergences from Node, by design of `zcode-rs`:
   dropped until S3 commits rows.
 - **Stream close.** A closed stdout fails the prompt as "stopped during the turn" at once; Node does so
   only when the process exits within the death grace and otherwise keeps the transport error text.
+- **Agent self-cancel.** An agent that answers `cancelled` without a Stop completes the turn; Node
+  (`external-agent-turn.ts`) ends it interrupted for any `cancelled` answer.
 
-Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs` and `acp_agent_turns.rs`):
+Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs`, `runtime/src/acp/runner_tests.rs` and
+`acp_agent_turns.rs`):
 
 - Stop during the agent start ends the turn at once. The start runs in a kernel-scope task (a start
   or restart is not safe to drop halfway) and finishes for the next turn.
@@ -1420,6 +1423,16 @@ Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs` and `acp_agent
   provider name, env key pattern, no duplicate ids); an invalid file reads as empty.
 - Tool updates and permission requests without a `toolCallId` are dropped (an ask answers
   `cancelled`), as the ACP SDK rejects them in Node.
+- After Stop the turn ends interrupted (interrupt marker, `Aborted`) whatever the agent answers,
+  as in Node (`external-agent-turn.ts`).
+- A text segment whose commit fails mid-turn fails the turn with that store error, like the query
+  loop: the prompt is cancelled as on Stop, asks are withdrawn, later segments are not written.
+- Stop is polled before agent updates, so a flood of updates cannot delay it.
+- A dropped `prompt()` future (its caller went away) marks the runtime `Failed`; the next prompt
+  restarts it instead of finding it `Prompting`.
+- `set_config_option` is refused unless the runtime is `Ready` (Node `runtime.ts`: "Cannot set a
+  config option while …").
+- An automatic turn refused for an ACP selection (rule 11) still commits its prompt hook messages.
 
 Known small gaps and follow-ups:
 

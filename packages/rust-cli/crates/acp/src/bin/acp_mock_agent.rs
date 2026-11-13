@@ -2,7 +2,8 @@
 //! flags, session id and method log), so Rust tests drive the runtime the way the Node tests drive theirs.
 //!
 //! Prompt markers, checked in order: "crash" (exit 3 without answering; Rust-only), "last words" (answer "end_turn",
-//! then exit 0 at once; Rust-only), "hang" (wait for
+//! then exit 0 at once; Rust-only), "slow" (answer "end_turn" after 300 ms without reading stdin; Rust-only),
+//! "narrate" (text, a tool call, more text; Rust-only), "hang" (wait for
 //! `session/cancel`), "tool", "plan", "title", "permission", "remember <word>", "recall", anything else "pong".
 //! Flags: `--state <file>` (memory and method log), `--config options|legacy` (or `ACP_MOCK_CONFIG`),
 //! `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
@@ -53,6 +54,7 @@ fn message(text: &str) -> Value {
     json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
 }
 
+#[cfg(unix)]
 #[allow(
     unsafe_code,
     reason = "a test double closes its own stdin; std has no safe way to close fd 0"
@@ -61,6 +63,11 @@ fn close_stdin() {
     use std::os::fd::FromRawFd as _;
     // SAFETY: fd 0 belongs to this process and is never read again: the caller sleeps until it is killed.
     drop(unsafe { std::os::fd::OwnedFd::from_raw_fd(0) });
+}
+
+#[cfg(not(unix))]
+fn close_stdin() {
+    panic!("--close-stdin-after-session is supported on unix only");
 }
 
 fn done(id: &Value, stop_reason: &str) {
@@ -140,6 +147,21 @@ impl Mock {
         if text.contains("last words") {
             done(&id, "end_turn");
             std::process::exit(0);
+        }
+        if text.contains("slow") {
+            // Answers after a pause without reading stdin, so a `session/cancel` sent meanwhile is read too late.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            return done(&id, "end_turn");
+        }
+        if text.contains("narrate") {
+            notify(&session_id, message("let me look"));
+            notify(
+                &session_id,
+                json!({"sessionUpdate": "tool_call", "toolCallId": "tool-1",
+                "title": "Read a.txt", "kind": "read", "status": "in_progress"}),
+            );
+            notify(&session_id, message("done looking"));
+            return done(&id, "end_turn");
         }
         if text.contains("hang") {
             self.hang_id = Some(id);

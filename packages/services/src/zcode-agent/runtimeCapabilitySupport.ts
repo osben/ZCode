@@ -80,9 +80,16 @@ export async function supportsProviderRegistryRefresh(client: CapabilityClient):
   }
 }
 
-/** Fork: the agent runs `acp:<agentId>` selections (specs/fork-agent-runtime-selection.md rule 7). */
+/**
+ * Fork: the agent runs `acp:<agentId>` selections (specs/fork-agent-runtime-selection.md rule 7). A failed read
+ * answers false.
+ */
 export async function supportsExternalAgentTurns(client: CapabilityClient): Promise<boolean> {
-  return (await readRuntimeCapabilities(client)).externalAgentTurns === true;
+  try {
+    return (await readRuntimeCapabilities(client)).externalAgentTurns === true;
+  } catch {
+    return false;
+  }
 }
 
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */

@@ -147,6 +147,38 @@ struct Inner {
     stderr_tail: Arc<Mutex<String>>,
 }
 
+/// Armed while a prompt runs. A prompt future dropped before it settles (an aborted turn task) leaves no runtime stuck
+/// in `Prompting`: the runtime is marked failed, so the next prompt restarts it (the agent may still hold the prompt).
+struct PromptGuard {
+    inner: Weak<Inner>,
+    prompt_id: u64,
+}
+
+impl Drop for PromptGuard {
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        let mut core = inner.core.lock_unpoisoned();
+        if core
+            .active
+            .as_ref()
+            .is_none_or(|active| active.id != self.prompt_id)
+        {
+            return;
+        }
+        core.active = None;
+        core.cancel_asks();
+        if core.state == AcpState::Prompting {
+            tracing::warn!(
+                event = "acp.prompt_abandoned",
+                "ACP prompt dropped before it settled"
+            );
+            core.state = AcpState::Failed;
+        }
+    }
+}
+
 /// A resident ACP agent. Cloning shares the same process.
 #[derive(Clone)]
 pub struct AcpRuntime {
@@ -288,6 +320,10 @@ impl AcpRuntime {
             });
             core.state = AcpState::Prompting;
             (peer, session_id, id, rejected)
+        };
+        let _abandoned = PromptGuard {
+            inner: Arc::downgrade(&self.inner),
+            prompt_id,
         };
         let request = peer.request(
             "session/prompt",
@@ -458,6 +494,12 @@ impl AcpRuntime {
     ) -> Result<Vec<ConfigOption>, AcpError> {
         let (peer, session_id, generation, request) = {
             let core = self.inner.core.lock_unpoisoned();
+            if core.state != AcpState::Ready {
+                return Err(AcpError::state(format!(
+                    "Cannot set a config option while \"{}\"",
+                    state_name(core.state)
+                )));
+            }
             let request = core.config.plan_set(config_id, value)?;
             let (Some(peer), Some(session_id)) = (core.peer.clone(), core.session_id.clone())
             else {

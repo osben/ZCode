@@ -1,6 +1,8 @@
 //! Fork: ACP external agent turns through a real `zcode-rs app-server --stdio` process
 //! (specs/fork-rust-agent-parity.md "ACP external agents"). The agent is the `acp-mock-agent` test double of the
 //! `rust-cli-acp` crate, configured in `fork_acp_agents.json` like the Host writes it.
+// Unix-only like the sibling process tests: liveness is read with `/bin/kill` and the server's PATH is unix.
+#![cfg(unix)]
 #![allow(
     clippy::disallowed_methods,
     clippy::unwrap_used,
@@ -35,12 +37,21 @@ fn mock_agent() -> PathBuf {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
         let status = std::process::Command::new(cargo)
             .args(["build", "-p", "rust-cli-acp", "--bin", "acp-mock-agent"])
+            .args(profile_args(server.parent().unwrap()))
             .status()
             .unwrap();
         assert!(status.success(), "building acp-mock-agent failed");
     });
     assert!(path.exists(), "{} is missing", path.display());
     path
+}
+
+/// The cargo profile flag that builds into `dir` (`target/<dir>`), the directory of the running test's binaries.
+fn profile_args(dir: &Path) -> Vec<String> {
+    match dir.file_name().and_then(|name| name.to_str()) {
+        Some("debug") | None => Vec::new(),
+        Some(profile) => vec!["--profile".to_owned(), profile.to_owned()],
+    }
 }
 
 /// A model endpoint that only counts connections (each answered 500): an ACP turn must not reach it.
@@ -157,9 +168,18 @@ impl Server {
         }
     }
 
+    /// The server exits on stdin EOF; one that does not within `WAIT` is killed and fails the test.
     fn stop(mut self) {
         drop(self.stdin);
-        self.child.wait().unwrap();
+        let deadline = Instant::now() + WAIT;
+        while self.child.try_wait().unwrap().is_none() {
+            if Instant::now() > deadline {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                panic!("the app-server did not exit on stdin EOF");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 

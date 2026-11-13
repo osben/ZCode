@@ -7,6 +7,9 @@ mod pool;
 mod records;
 mod turn;
 
+#[cfg(test)]
+mod test_support;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -28,9 +31,6 @@ use rust_cli_proc::ledger::Ledger;
 pub(crate) use guard::ExternalAgentModelGuard;
 pub(crate) use pool::AcpPool;
 use records::AgentRecords;
-
-/// The provider prefix of an ACP agent selection (Node `ACP_PROVIDER_ID_PREFIX`).
-pub const ACP_PROVIDER_PREFIX: &str = "acp:";
 
 /// The agent id of an ACP selection.
 pub fn external_agent(selection: &ModelSelection) -> Option<&str> {
@@ -128,8 +128,12 @@ impl QueryRunner for ExternalAgentRunner {
     ) -> Result<QueryStop, QueryError> {
         match external_agent(&request.selection) {
             Some(agent_id) => {
-                // Node `externalAgentTurnRefusal`: the turns the session opens by itself need a ZCode model.
+                // Node `externalAgentTurnRefusal`: the turns the session opens by itself need a ZCode model. The
+                // prompt hook messages are still committed, as before any turn outcome.
                 if let Some(what) = rust_cli_session::automatic_turn_subject(&request.messages) {
+                    if !request.prompt_hook_messages.is_empty() {
+                        sink.commit_messages(request.prompt_hook_messages).await?;
+                    }
                     return Ok(QueryStop::ApiError {
                         message: format!(
                             "ACP agent {agent_id} runs only interactive chat turns; {what} need a ZCode model. Switch the model to continue."
@@ -152,3 +156,7 @@ impl QueryRunner for ExternalAgentRunner {
         self.inner.transcript(history, selection, mid_system)
     }
 }
+
+#[cfg(test)]
+#[path = "runner_tests.rs"]
+mod runner_tests;

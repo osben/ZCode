@@ -54,7 +54,7 @@ use table::{Closer, OpenSessions};
 
 use crate::assemble::SurfaceTraits;
 
-pub use acp::{ACP_PROVIDER_PREFIX, AcpSetup, external_agent};
+pub use acp::{AcpSetup, external_agent};
 pub use ext::{ExtConfig, Extensions};
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
 pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};

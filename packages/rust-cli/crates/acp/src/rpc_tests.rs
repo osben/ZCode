@@ -1,3 +1,6 @@
+// The pump tests run a `sh -c` script as the agent.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -82,6 +85,7 @@ impl Inbound for Recorder {
 }
 
 /// Starts a pump over `sh -c script`; the script closes its stdin and says so on stderr before anything else.
+#[cfg(unix)]
 async fn pump_over(
     script: &str,
     death_grace: Duration,
@@ -137,6 +141,7 @@ async fn pump_over(
 }
 
 /// Waits until the script reported on stderr that its stdin is closed, so the next write cannot land in the pipe.
+#[cfg(unix)]
 async fn wait_for_closed_stdin(tail: &Mutex<String>) {
     tokio::time::timeout(Duration::from_secs(5), async {
         while !tail.lock_unpoisoned().contains("stdin closed") {
@@ -147,6 +152,7 @@ async fn wait_for_closed_stdin(tail: &Mutex<String>) {
     .expect("the script closes its stdin");
 }
 
+#[cfg(unix)]
 async fn wait_until_done(handle: &super::PumpHandle) {
     let mut done = handle.done.clone();
     tokio::time::timeout(Duration::from_secs(10), done.wait_for(|finished| *finished))
@@ -155,6 +161,7 @@ async fn wait_until_done(handle: &super::PumpHandle) {
         .expect("pump state");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_write_after_the_agent_closed_its_stdin_fails_the_request_at_once() {
     let (peer, recorder, handle, tail, _dir) = pump_over(
@@ -180,6 +187,7 @@ async fn a_write_after_the_agent_closed_its_stdin_fails_the_request_at_once() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn an_agent_that_exits_after_closing_its_stdin_is_reported_as_exited() {
     let (peer, recorder, handle, tail, _dir) = pump_over(

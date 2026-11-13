@@ -47,6 +47,8 @@ pub(super) async fn run(
         response: 0,
         segment: Vec::new(),
         tools: HashMap::new(),
+        halt: abort.token().child_token(),
+        failed: None,
     };
     let launch = match read_launch(host, &agent_id, &request).await {
         Ok(launch) => launch,
@@ -80,54 +82,63 @@ pub(super) async fn run(
     let (mut events, guard) = runtime.bind();
     let prompt = runtime.prompt(prompt_blocks(&request.messages));
     tokio::pin!(prompt);
-    // Stop is a bounded `session/cancel`; the prompt then settles as cancelled. This future never completes.
+    // Stop, or a lost segment commit, is a bounded `session/cancel`; the prompt then settles. This future never
+    // completes.
+    let halt = turn.halt.clone();
     let canceller = runtime.clone();
-    let token = abort.token().clone();
-    let cancelling = async move {
-        token.cancelled().await;
-        canceller.cancel().await;
-        std::future::pending::<()>().await;
+    let cancelling = {
+        let halt = halt.clone();
+        async move {
+            halt.cancelled().await;
+            canceller.cancel().await;
+            std::future::pending::<()>().await;
+        }
     };
     tokio::pin!(cancelling);
     // Permission asks wait for the user beside the event stream; a stop drops them (the agent hears `cancelled`).
     let mut asks: FuturesUnordered<BoxFuture<'static, ()>> = FuturesUnordered::new();
+    let mut halted = false;
     let outcome = loop {
         tokio::select! {
             biased;
+            // The halt branches come first so a flood of agent updates cannot starve Stop. After the first fire the
+            // withdraw branch is armed only by an ask the agent sends after Stop, withdrawn before its dialog opens.
+            () = halt.cancelled(), if !halted || !asks.is_empty() => {
+                halted = true;
+                turn.withdraw_asks(&mut asks).await;
+            }
+            () = &mut cancelling => {}
             Some(event) = events.recv() => {
                 if let Some(ask) = turn.on_event(event).await {
                     asks.push(ask);
                 }
             }
-            // Before the asks: an ask the agent sends after Stop is withdrawn before its dialog opens.
-            () = abort.token().cancelled(), if !asks.is_empty() => {
-                turn.withdraw_asks(&mut asks).await;
-            }
             Some(()) = asks.next(), if !asks.is_empty() => {}
             outcome = &mut prompt => break outcome,
-            () = &mut cancelling => {}
         }
     };
-    // Updates the agent sent before its answer are already queued.
-    while let Ok(event) = events.try_recv() {
+    // Updates the agent sent before its answer are already queued; later ones belong to no turn.
+    for _ in 0..events.len() {
+        let Ok(event) = events.try_recv() else { break };
         if let Some(ask) = turn.on_event(event).await {
             asks.push(ask);
         }
     }
     turn.withdraw_asks(&mut asks).await;
     drop(guard);
+    // A lost segment fails the turn like a failed commit in the query loop.
+    if let Some(error) = turn.failed.take() {
+        return Err(error);
+    }
     match outcome {
-        Ok(response) if !abort.is_aborted() || response.stop_reason != "cancelled" => {
+        // Node `external-agent-turn.ts`: after Stop the turn ends interrupted whatever the agent answered.
+        _ if abort.is_aborted() => {
+            turn.close_segment(None).await?;
+            turn.aborted(&abort).await
+        }
+        Ok(response) => {
             turn.close_segment(usage_of(&response)).await?;
             Ok(QueryStop::Completed)
-        }
-        Ok(_) => {
-            turn.close_segment(None).await?;
-            turn.aborted(&abort).await
-        }
-        Err(_) if abort.is_aborted() => {
-            turn.close_segment(None).await?;
-            turn.aborted(&abort).await
         }
         Err(error) => {
             turn.close_segment(None).await?;
@@ -278,6 +289,10 @@ struct Turn<'a> {
     segment: Vec<(Kind, String)>,
     /// ACP `toolCallId` → its row id and kind, minted on first sight (rows and asks share it).
     tools: HashMap<String, (ToolUseId, Option<String>)>,
+    /// Stop or a lost segment: cancels the prompt and withdraws the asks.
+    halt: tokio_util::sync::CancellationToken,
+    /// The first segment commit that failed mid-turn; later segments are not written after it.
+    failed: Option<QueryError>,
 }
 
 impl Turn<'_> {
@@ -315,10 +330,17 @@ impl Turn<'_> {
         None
     }
 
-    /// A tool or plan event closes the open text segment (rows follow in S3).
+    /// A tool or plan event closes the open text segment (rows follow in S3). A failed commit halts the turn, which
+    /// then fails with that error.
     async fn close_segment_logged(&mut self) {
+        if self.failed.is_some() {
+            self.segment.clear();
+            return;
+        }
         if let Err(error) = self.close_segment(None).await {
             tracing::warn!(event = "acp.segment_commit_failed", %error, "ACP text segment could not be committed");
+            self.failed = Some(error);
+            self.halt.cancel();
         }
     }
 

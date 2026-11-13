@@ -394,6 +394,8 @@ async fn an_answer_written_just_before_exit_settles_the_prompt() {
     runtime.stop().await;
 }
 
+// The mock closes fd 0 only on unix.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_prompt_fails_when_the_agent_closed_its_stdin() {
     let fixture = Fixture::new();
@@ -422,4 +424,66 @@ async fn a_stopped_runtime_refuses_prompts() {
     runtime.stop().await;
     let error = runtime.prompt(text("hello")).await.expect_err("stopped");
     assert_eq!(error.code, AcpErrorCode::State);
+}
+
+/// Waits until the mock logged `method` in its state file.
+async fn wait_for_method(fixture: &Fixture, method: &str) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !fixture.methods().iter().any(|seen| seen == method) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the agent never got {method}"));
+}
+
+#[tokio::test]
+async fn a_dropped_prompt_fails_the_runtime_and_the_next_prompt_restarts_it() {
+    let fixture = Fixture::new();
+    let runtime = AcpRuntime::start(fixture.options(&[], &[]))
+        .await
+        .expect("start");
+    {
+        let request = runtime.prompt(text("please hang"));
+        tokio::pin!(request);
+        tokio::select! {
+            result = &mut request => panic!("settled early: {result:?}"),
+            () = wait_for_method(&fixture, "session/prompt") => {}
+        }
+        // The future is dropped here, as an aborted turn task drops it.
+    }
+    assert_eq!(
+        runtime.state(),
+        AcpState::Failed,
+        "an abandoned prompt must not leave the runtime prompting"
+    );
+    let (result, _) = run(&runtime, "hello", None).await;
+    assert_eq!(result.expect("the restart answers").stop_reason, "end_turn");
+    runtime.stop().await;
+}
+
+#[tokio::test]
+async fn a_config_option_is_refused_while_a_prompt_runs() {
+    let fixture = Fixture::new();
+    let runtime = AcpRuntime::start(fixture.options(&["--config", "options"], &[]))
+        .await
+        .expect("start");
+    let request = runtime.prompt(text("please hang"));
+    tokio::pin!(request);
+    tokio::select! {
+        result = &mut request => panic!("settled early: {result:?}"),
+        () = wait_for_method(&fixture, "session/prompt") => {}
+    }
+    let error = runtime
+        .set_config_option("mode", "plan")
+        .await
+        .expect_err("Node refuses a config change unless ready");
+    assert_eq!(error.code, AcpErrorCode::State);
+    assert_eq!(
+        error.message,
+        "Cannot set a config option while \"prompting\""
+    );
+    runtime.cancel().await;
+    assert_eq!(request.await.expect("prompt").stop_reason, "cancelled");
+    runtime.stop().await;
 }

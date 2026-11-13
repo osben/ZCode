@@ -1,9 +1,9 @@
 #![allow(
     clippy::disallowed_methods,
-    reason = "tests build the mock agent with cargo and read its pid file directly"
+    reason = "tests read the mock agent's pid file directly"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +14,7 @@ use rust_cli_kernel_api::testing::MemoryStore;
 use rust_cli_proc::ledger::Ledger;
 
 use super::AcpPool;
+use crate::acp::test_support::mock_agent;
 
 fn pool_with(dir: &tempfile::TempDir, store: Arc<MemoryStore>) -> AcpPool {
     AcpPool::new(
@@ -36,28 +37,6 @@ fn missing_agent(dir: &tempfile::TempDir) -> AcpLaunch {
         env: None,
         cwd: dir.path().display().to_string(),
     }
-}
-
-/// The mock agent of `rust-cli-acp`, built once per test process (a no-op when it is current).
-fn mock_agent() -> PathBuf {
-    static BUILT: std::sync::Once = std::sync::Once::new();
-    let exe = std::env::current_exe().expect("test binary");
-    // target/<profile>/deps/<test> → target/<profile>/acp-mock-agent
-    let path = exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("target dir")
-        .join(format!("acp-mock-agent{}", std::env::consts::EXE_SUFFIX));
-    BUILT.call_once(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-        let status = std::process::Command::new(cargo)
-            .args(["build", "-p", "rust-cli-acp", "--bin", "acp-mock-agent"])
-            .status()
-            .expect("cargo");
-        assert!(status.success(), "building acp-mock-agent failed");
-    });
-    assert!(path.exists(), "{} is missing", path.display());
-    path
 }
 
 /// A working mock agent that writes its process id to `pid_file` at start.
