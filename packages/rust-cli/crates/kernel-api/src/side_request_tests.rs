@@ -108,12 +108,19 @@ fn the_rules_match_the_previous_lists() {
 #[test]
 fn only_the_workspace_model_calls_are_workspace_scoped() {
     for source in SideSource::ALL {
-        let expected = matches!(
-            source,
+        // Exhaustive: a new source must decide its scope.
+        let expected = match source {
             SideSource::WorkspaceText
-                | SideSource::GitCommitMessage
-                | SideSource::ConnectivityProbe
-        );
+            | SideSource::GitCommitMessage
+            | SideSource::ConnectivityProbe => true,
+            SideSource::SessionTitle
+            | SideSource::Rename
+            | SideSource::HookPrompt
+            | SideSource::WebFetch
+            | SideSource::WebSearch
+            | SideSource::GoalSummaryTitle
+            | SideSource::GoalVerification => false,
+        };
         assert_eq!(source.workspace_scoped(), expected, "{source:?}");
     }
 }

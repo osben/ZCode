@@ -32,7 +32,7 @@ pub struct Context {
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
     /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
     /// stay unported.
-    model: std::sync::OnceLock<Arc<dyn ModelPort>>,
+    model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
 }
 
 impl Context {
@@ -49,13 +49,13 @@ impl Context {
 
     /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
     pub fn set_model_port(&self, model: Arc<dyn ModelPort>) {
-        let _ = self.model.set(model);
+        let _ = self.model_port.set(model);
     }
 
     /// Fork: the model port, when the entry point provided one and a model directory resolves selections.
     pub(crate) fn model_port(&self) -> Option<Arc<dyn ModelPort>> {
         self.models.get()?;
-        self.model.get().cloned()
+        self.model_port.get().cloned()
     }
 
     /// Fork: the storage root, when the entry point provided one.
@@ -86,7 +86,7 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
-            model: std::sync::OnceLock::new(),
+            model_port: std::sync::OnceLock::new(),
         }
     }
 
@@ -98,7 +98,7 @@ impl Context {
     }
 
     /// Fork: forgets a session registered only for one call (a workspace model call's requester).
-    pub fn unregister(&self, session: &str) {
+    pub(crate) fn unregister(&self, session: &str) {
         self.sessions.lock_unpoisoned().remove(session);
     }
 

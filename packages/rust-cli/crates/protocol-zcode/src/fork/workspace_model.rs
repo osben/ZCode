@@ -34,6 +34,8 @@ const PROBE_USER: &str = "hi";
 const PROBE_MAX_OUTPUT: u64 = 512;
 /// Node `auxiliaryModelOptions`: the output budget of auxiliary calls.
 const AUXILIARY_MAX_OUTPUT: u64 = 5_000;
+/// The output limit of a model whose configuration declares none (`rust_cli_prompts::UNKNOWN_MAX_OUTPUT_TOKENS`).
+const UNKNOWN_MAX_OUTPUT: u64 = 32_000;
 const PROBE_UNFINISHED: &str = "模型连通性测试流在 finish 事件前结束";
 /// The params refine of `zcodeWorkspaceGenerateTextParamsSchema` (not expressible in the generated JSON schema).
 const NEEDS_INPUT: &str = "prompt 或 messages 至少需要提供一个";
@@ -126,7 +128,7 @@ fn protocol_error(code: &str, message: impl Into<String>) -> RpcError {
 }
 
 /// Node `classifyModelFailure` for each model port failure: the classified message and its stable code.
-pub(super) fn model_failure(error: &ModelError) -> RpcError {
+fn model_failure(error: &ModelError) -> RpcError {
     let (code, message) = match error {
         ModelError::Cancelled => ("model_request_cancelled", "Model request was cancelled."),
         ModelError::Authentication { .. } => {
@@ -257,6 +259,17 @@ fn selection(entry: &CatalogModel, reasoning: Option<String>) -> ModelSelection 
     }
 }
 
+/// The model's output limit; the catalog reports 0 when the configuration declares no
+/// `optionSpecs.maxOutputTokens.max`, which is unknown, not zero.
+fn limit(entry: &CatalogModel) -> Option<u64> {
+    (entry.max_output_tokens > 0).then_some(entry.max_output_tokens)
+}
+
+/// `budget` capped by the model's known limit.
+fn capped(entry: &CatalogModel, budget: u64) -> u64 {
+    limit(entry).map_or(budget, |max| budget.min(max))
+}
+
 /// `max_tokens` is a `u32` on the wire.
 fn tokens(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
@@ -357,14 +370,15 @@ impl Collected {
             .collect()
     }
 
-    /// The AI SDK `finishReason` (same mapping as the stored assistant rows).
+    /// The AI SDK `finishReason` (same mapping as the stored assistant rows): no stop reason is `unknown`.
     fn finish_reason(&self) -> &'static str {
         match self.stop {
             Some(StopReason::EndTurn | StopReason::StopSequence | StopReason::PauseTurn) => "stop",
             Some(StopReason::MaxTokens | StopReason::ModelContextWindowExceeded) => "length",
             Some(StopReason::ToolUse) => "tool-calls",
             Some(StopReason::Refusal) => "content-filter",
-            Some(StopReason::Unknown) | None => "other",
+            Some(StopReason::Unknown) => "other",
+            None => "unknown",
         }
     }
 
@@ -393,7 +407,7 @@ async fn run(
     let port = server
         .context
         .model_port()
-        .ok_or_else(|| RpcError::method_not_found("model port"))?;
+        .ok_or_else(|| protocol_error("model_request_failed", "Model request failed."))?;
     let token = operation.map_or_else(CancellationToken::new, |operation| operation.token.clone());
     if token.is_cancelled() {
         return Err(model_failure(&ModelError::Cancelled));
@@ -451,7 +465,7 @@ pub(super) async fn test_connectivity(server: &Server, params: &Value) -> Result
             agent: None,
         },
     );
-    let request = budgeted(request, Some(PROBE_MAX_OUTPUT.min(entry.max_output_tokens)));
+    let request = budgeted(request, Some(capped(&entry, PROBE_MAX_OUTPUT)));
     let collected = run(server, request, None).await?;
     if !collected.finished {
         return Err(RpcError::new(codes::INTERNAL_ERROR, PROBE_UNFINISHED)
@@ -504,14 +518,17 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
     let auxiliary = query_source == GIT_COMMIT_MESSAGE || query_source == INPUT_PREDICTION;
     let (level, budget) = if auxiliary {
         // Node `auxiliaryModelOptions`; the Git call ignores a caller budget.
-        let budget = AUXILIARY_MAX_OUTPUT.min(entry.max_output_tokens);
         let budget = match params["maxOutputTokens"].as_u64() {
             Some(caller) if query_source != GIT_COMMIT_MESSAGE => caller,
-            _ => budget,
+            _ => AUXILIARY_MAX_OUTPUT,
         };
-        (entry.reasoning_levels.first().cloned(), Some(budget))
+        (
+            entry.reasoning_levels.first().cloned(),
+            Some(capped(&entry, budget)),
+        )
     } else {
-        (level, params["maxOutputTokens"].as_u64())
+        let budget = params["maxOutputTokens"].as_u64();
+        (level, budget.map(|budget| capped(&entry, budget)))
     };
     let source = if query_source == GIT_COMMIT_MESSAGE {
         SideSource::GitCommitMessage
@@ -525,7 +542,7 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
         source,
         system,
         messages,
-        tokens(entry.max_output_tokens),
+        tokens(limit(&entry).unwrap_or(UNKNOWN_MAX_OUTPUT)),
         Requester {
             session: registered.session.clone(),
             run: None,
@@ -535,6 +552,13 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
     request.tools = tools;
     let request = budgeted(request, budget);
     let collected = run(server, request, operation.as_ref()).await?;
+    // A stream that ended without `message_stop` and without an error is a truncated reply, not a result.
+    if !collected.finished {
+        return Err(protocol_error(
+            "invalid_model_response",
+            "Model returned an invalid response.",
+        ));
+    }
 
     let mut result = json!({
         "text": collected.text(),

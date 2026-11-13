@@ -106,6 +106,8 @@ fn catalog() -> Vec<CatalogModel> {
     vec![
         entry("p", "small", &[], 256),
         entry("p", "big", &["low", "medium", "high"], 128_000),
+        // No `optionSpecs.maxOutputTokens.max`: the catalog reports 0, an unknown limit.
+        entry("p", "nolimit", &[], 0),
     ]
 }
 
@@ -423,8 +425,13 @@ async fn unknown_selections_answer_nodes_registry_errors() {
 
     // Node normalizes an unlisted level away before the strict factory, so an unlisted and a missing level both
     // answer "required".
-    for options in [json!({"reasoningLevel": "max"}), json!({})] {
-        let generate = json!({"workspace": workspace(), "querySource": "x", "prompt": "hi",
+    // The auxiliary sources too: Node's strict factory checks the level before the auxiliary options are bound.
+    for (options, source) in [
+        (json!({"reasoningLevel": "max"}), "x"),
+        (json!({}), "x"),
+        (json!({}), "git_commit_message"),
+    ] {
+        let generate = json!({"workspace": workspace(), "querySource": source, "prompt": "hi",
             "selection": {"providerId": "p", "modelId": "big", "options": options}});
         let error = generate_text(&server, &generate).await.unwrap_err();
         assert_eq!(error.message, "Reasoning level is required for p/big");
@@ -865,4 +872,83 @@ async fn a_call_without_an_operation_times_out_after_sixty_seconds() {
     assert_eq!(error.message, "Model request timed out.");
     assert_eq!(error.data.unwrap()["code"], "model_request_timeout");
     assert_eq!(started.elapsed(), std::time::Duration::from_secs(60));
+}
+
+/// A model without a declared output limit (catalog 0) keeps the fixed budgets and falls back to the unknown-model
+/// limit; a caller budget is capped by a known limit.
+#[tokio::test]
+async fn output_budgets_respect_known_and_unknown_limits() {
+    let ok = || reply(&[text("ok")], StopReason::EndTurn, usage(1, 1));
+    let model = Arc::new(ScriptedModel::new(vec![ok(), ok(), ok(), ok()]));
+    let (_scope, server) = server(model.clone());
+    let nolimit = json!({"providerId": "p", "modelId": "nolimit"});
+    test_connectivity(
+        &server,
+        &json!({"workspace": workspace(), "selection": nolimit}),
+    )
+    .await
+    .unwrap();
+    for source in ["git_commit_message", "x"] {
+        generate_text(
+            &server,
+            &json!({"workspace": workspace(), "selection": nolimit, "prompt": "p", "querySource": source}),
+        )
+        .await
+        .unwrap();
+    }
+    generate_text(
+        &server,
+        &json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"},
+            "prompt": "p", "querySource": "x", "maxOutputTokens": 10_000_000_000_u64}),
+    )
+    .await
+    .unwrap();
+
+    let requests = model.requests();
+    assert_eq!(requests[0].max_tokens, 512);
+    assert_eq!(requests[0].options.provider_max_output_tokens, Some(512));
+    assert_eq!(requests[1].max_tokens, 5_000);
+    assert_eq!(requests[1].options.provider_max_output_tokens, Some(5_000));
+    assert_eq!(requests[2].max_tokens, 32_000);
+    assert_eq!(requests[2].options.provider_max_output_tokens, None);
+    assert_eq!(requests[3].max_tokens, 256);
+    assert_eq!(requests[3].options.provider_max_output_tokens, Some(256));
+}
+
+/// A reply without a stop reason reads `unknown` (the stored rows' and the AI SDK's name), `StopReason::Unknown`
+/// reads `other`; a stream that ends before `message_stop` is an invalid response, not a truncated success.
+#[tokio::test]
+async fn finish_reasons_and_unfinished_streams() {
+    let mut no_stop = reply(&[text("a")], StopReason::EndTurn, usage(1, 1));
+    no_stop.retain(|event| !matches!(event, Ok(ModelEvent::MessageDelta { .. })));
+    let unfinished = vec![
+        Ok(ModelEvent::MessageStart {
+            id: "m".to_owned(),
+            model: "small".to_owned(),
+            usage: Usage::default(),
+        }),
+        Ok(ModelEvent::BlockStart {
+            index: 0,
+            block: text("partial"),
+        }),
+    ];
+    let model = Arc::new(ScriptedModel::new(vec![
+        no_stop,
+        reply(&[text("b")], StopReason::Unknown, usage(1, 1)),
+        unfinished,
+    ]));
+    let (_scope, server) = server(model);
+    let params = json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"},
+        "prompt": "p", "querySource": "x"});
+    assert_eq!(
+        generate_text(&server, &params).await.unwrap()["finishReason"],
+        "unknown"
+    );
+    assert_eq!(
+        generate_text(&server, &params).await.unwrap()["finishReason"],
+        "other"
+    );
+    let error = generate_text(&server, &params).await.unwrap_err();
+    assert_eq!(error.code, -32603);
+    assert_eq!(error.data.unwrap()["code"], "invalid_model_response");
 }
