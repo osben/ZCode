@@ -294,7 +294,7 @@ fn fixture_with(admin: Option<Arc<FakeAdmin>>, resumed: bool) -> (TaskScope, Arc
         }),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

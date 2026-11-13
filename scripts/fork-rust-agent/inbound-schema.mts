@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import {
   zcodeMcpListParamsSchema,
   zcodeMcpReadResourceParamsSchema,
+  zcodeProcessHostAttachedParamsSchema,
   zcodeLspPreferencesGetParamsSchema,
   zcodeLspPreferencesSetParamsSchema,
   zcodeLspStatusParamsSchema,
@@ -57,6 +58,8 @@ import {
 const METHODS = {
   "mcp/list": zcodeMcpListParamsSchema,
   "mcp/readResource": zcodeMcpReadResourceParamsSchema,
+  // Fork: the Host's attach acknowledgement, a notification (specs/fork-rust-credential-cipher.md F1).
+  "process/hostAttached": zcodeProcessHostAttachedParamsSchema,
   // Answered with Node's no-LSP-host error after this check (specs/fork-rust-agent-parity.md, "Language servers").
   "lsp/preferences/get": zcodeLspPreferencesGetParamsSchema,
   "lsp/preferences/set": zcodeLspPreferencesSetParamsSchema,

@@ -106,13 +106,23 @@ pub trait Account: Send + Sync {
     }
 }
 
+/// Whether a family is signed in (platform `FamilyLogin`, fork spec `fork-rust-credential-cipher.md` F2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyLogin {
+    SignedIn,
+    SignedOut,
+    /// The saved sign-in could not be read (locked keyring, undecryptable value). Not signed out: the UI offers
+    /// neither sign-in nor sign-out over it.
+    Unreadable,
+}
+
 /// 一个内置家族的登录状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FamilyStatus {
     pub family: Family,
     /// 家族的名字（`Z.ai`）。
     pub name: String,
-    pub signed_in: bool,
+    pub login: FamilyLogin,
     /// 登录的账号（邮箱或名字）；不知道时为 ""。
     pub account: String,
     pub connection: PlanConnection,
@@ -124,6 +134,13 @@ pub struct FamilyStatus {
     pub provider: String,
     /// 这个 provider 列出的全部内置模型，关着的也在（platform `family_accounts`，与 Puffin 的 host 同一份）。
     pub models: Vec<FamilyModel>,
+}
+
+impl FamilyStatus {
+    #[must_use]
+    pub fn signed_in(&self) -> bool {
+        self.login == FamilyLogin::SignedIn
+    }
 }
 
 /// 家族页上的一个模型（Puffin `ModelSettings` 的这几项）。

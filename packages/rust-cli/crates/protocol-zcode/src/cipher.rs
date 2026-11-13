@@ -2,6 +2,7 @@
 //! 密钥在 Electron Main。限制与回复形状照 Node `validation.ts` 与 `bridge.ts`；失败只映射成静态原因，不带 Host 的消息。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -80,13 +81,31 @@ impl HostCredentialCipher {
             "operation": operation.name(),
             "value": value,
         });
-        let answer =
-            tokio::time::timeout(self.limit, self.context.peer.request(REQUEST, &params)).await;
-        let result = match answer {
-            Err(_) => return Err(unavailable("the credential cipher did not reply in time")),
+        // The wait for the Host's attach acknowledgement is part of the same bound (F1). `ready` records, inside
+        // the bound, that the wait for the acknowledgement ended, so an acknowledgement that lands just after the timeout
+        // does not change which bound is named.
+        let ready = AtomicBool::new(false);
+        let answer = tokio::time::timeout(self.limit, async {
+            if self.context.host_ready().await == Some(false) {
+                return Err(unavailable("the host has no credential cipher"));
+            }
+            ready.store(true, Ordering::SeqCst);
             // JSON-RPC 错误（例如 -32602）与连接关闭都是传输失败；原始消息不向上传。
-            Ok(Err(_)) => return Err(unavailable("the credential cipher request failed")),
-            Ok(Ok(result)) => result,
+            self.context
+                .peer
+                .request(REQUEST, &params)
+                .await
+                .map_err(|_| unavailable("the credential cipher request failed"))
+        })
+        .await;
+        let result = match answer {
+            Err(_) if !ready.load(Ordering::SeqCst) => {
+                return Err(unavailable(
+                    "the host did not acknowledge the attach in time",
+                ));
+            }
+            Err(_) => return Err(unavailable("the credential cipher did not reply in time")),
+            Ok(result) => result?,
         };
         Inbound::get()
             .reply(REQUEST, &result)

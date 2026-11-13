@@ -492,6 +492,19 @@
       ],
       "additionalProperties": false
     },
+    "process/hostAttached": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "credentialCipher": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "credentialCipher"
+      ],
+      "additionalProperties": false
+    },
     "provider/refreshRegistry": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

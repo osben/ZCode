@@ -33,6 +33,8 @@ pub struct Context {
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
     /// Fork: workspace trust from the App (`fork/workspace_trust.rs`); set once by the app-server.
     workspace_admin: std::sync::OnceLock<Arc<dyn crate::fork::WorkspaceAdmin>>,
+    /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
+    pub(crate) attach: crate::attach::HostAttach,
     /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
     /// configured a helper command (specs/fork-rust-node-helper.md).
     node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
@@ -74,6 +76,22 @@ impl Context {
 
     pub(crate) fn workspace_admin(&self) -> Option<Arc<dyn crate::fork::WorkspaceAdmin>> {
         self.workspace_admin.get().cloned()
+    }
+
+    /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.
+    pub fn expect_host_attach(&self) {
+        self.attach.expect();
+    }
+
+    /// Fork: the Host's attach acknowledgement arrived.
+    pub(crate) fn host_attached(&self, credential_cipher: bool) {
+        self.attach.attached(credential_cipher);
+    }
+
+    /// Fork: waits until reverse requests may be sent. `None` when no acknowledgement was promised; otherwise whether
+    /// the Host answers credential cipher requests.
+    pub(crate) async fn host_ready(&self) -> Option<bool> {
+        self.attach.ready().await
     }
 
     /// Fork: the language-server host (the app-server sets it once at startup).
@@ -141,6 +159,7 @@ impl Context {
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
             workspace_admin: std::sync::OnceLock::new(),
+            attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
