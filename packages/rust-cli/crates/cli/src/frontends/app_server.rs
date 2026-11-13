@@ -16,7 +16,9 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
-use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
+use rust_cli_protocol_zcode::{
+    Context, Defaults, HostCredentialCipher, HostHeaders, NetworkCapture, Startup,
+};
 
 use crate::assemble::{self, Controller};
 use crate::process::{ControllerRun, Start};
@@ -82,8 +84,17 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
     let (peer, writer) =
         connection::start(tokio::io::stdout(), &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, run.clock.clone()));
+    // Fork: the Network panel capture exists before the reader starts (specs/fork-rust-network-capture.md).
+    let capture = Arc::new(NetworkCapture::new(
+        context.peer.clone(),
+        run.clock.clone(),
+        scope.spawner(),
+        std::process::id(),
+    ));
     let desktop_context = parsed.surface.as_deref() == Some("desktop");
-    let result = serve(&run, context, scope.spawner(), desktop_context).await;
+    let result = serve(&run, context, &capture, scope.spawner(), desktop_context).await;
+    // Node `disconnectClient`: the capture stops with the connection.
+    capture.set(None);
     // 写者写完队列里剩下的帧再退出。
     drop(writer);
     let _ = scope.close(SCOPE_CLOSE_GRACE).await;
@@ -93,6 +104,7 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
 async fn serve(
     run: &ControllerRun,
     context: Arc<Context>,
+    capture: &Arc<NetworkCapture>,
     spawner: rust_cli_base::Spawner,
     desktop_context: bool,
 ) -> Result<()> {
@@ -113,7 +125,8 @@ async fn serve(
         rust_cli_protocol_core::connection::serve(
             tokio::io::BufReader::new(tokio::io::stdin()),
             context.peer.clone(),
-            deferred,
+            // Fork: the capture control is applied in arrival order while the kernel is still being assembled.
+            rust_cli_protocol_zcode::with_network_capture(deferred, capture.clone()),
             spawner.clone(),
             Options::default(),
         ),
@@ -124,6 +137,10 @@ async fn serve(
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
+    // Fork: every observed request of this process reaches the capture (MCP is built unobserved).
+    opened
+        .egress
+        .set_observer(Arc::new(CaptureObserver(capture.clone())));
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
     // §4.2），所以首帧等库的位置定了再发：ID 取会话库所用的同一份存储位置。
@@ -174,6 +191,15 @@ async fn serve(
         () = stop.token.cancelled() => {}
     }
     Ok(())
+}
+
+/// Fork: the egress observer that feeds the Network panel capture.
+struct CaptureObserver(Arc<NetworkCapture>);
+
+impl rust_cli_net::RequestObserver for CaptureObserver {
+    fn request(&self, method: &str, url: &str) {
+        self.0.record(method, url);
+    }
 }
 
 #[cfg(test)]

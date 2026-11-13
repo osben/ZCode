@@ -23,6 +23,7 @@ mod index;
 mod legacy;
 mod lifecycle;
 mod live;
+pub mod network_capture;
 mod preparation;
 mod projection;
 mod reservations;
@@ -43,6 +44,7 @@ use serde_json::json;
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use headers::HostHeaders;
+pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
 
 /// 存储的启动状态（`startup/storageState`，`zcodeStorageStartupStateSchema`）：checking → ready / failed。迁移与备份只由
