@@ -246,6 +246,8 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 
 - **Spawn.**
   - The first allowlisted call starts the helper and sends `helper/initialize`. Concurrent first calls share one start.
+  - `plugins/cancelOperation` with no running helper is answered `{operationId, cancelled: false}` without starting one: no operation can be in flight.
+  - With a helper configured but unavailable, a forwarded method fails with `proto.forkRustAgent.nodeHelperUnavailable`; `v4/conversation/workflowRuns` too, rather than an empty list that would hide the failure. `{runs: []}` stays the answer only when no helper is configured.
   - No helper command in env: the families answer as today (refused).
 - **Idle reclaim.** After 5 minutes with no in-flight call, no open session that has helper resources, no panel instance and no live MCP child, Rust ends the helper.
   - F1+F2 (shipped): Rust kills the helper's process group, which takes the helper's children with it. No call is in flight at that point, and the helper holds no state that needs a flush: the session store is SQLite with WAL.
@@ -260,7 +262,7 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 - **Helper hang.** Each forwarded method uses the Host's timeout for that method. Tool calls use the server's tool timeout (node_repl 600 s).
   - F1+F2 (shipped): every forwarded call has 300 s, the Host's plugin-management timeout. On timeout Rust fails the call as unavailable and drops the helper process; that is not counted as a crash, and the next call starts a new helper. Other calls in flight on that helper fail as unavailable too. A plugin operation is cancelled by the Host itself with `plugins/cancelOperation`.
   - F4 (planned): per-method timeouts for tool calls, and a cancel message instead of dropping the process.
-- **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash: the next call tries again, and one `warn` covers a run of failures.
+- **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash. For 30 s after it, calls fail fast with the same code and start nothing (the run list is polled on every subscribe, so a broken bundle must not cost a Node process per call); the first call after that tries again. One `warn` covers a run of failures. A start runs on its own task, so a caller that gives up mid-start does not strand the launched process.
 - **Logging.**
   - Rust `info`: `helper.spawned`, `helper.exited`, `helper.reclaimed`. The exit code is not logged: the process ledger's handle does not report it.
   - Rust `warn`: `helper.crashed`, `helper.unavailable`.

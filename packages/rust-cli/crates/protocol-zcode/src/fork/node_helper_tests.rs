@@ -166,6 +166,7 @@ fn timing() -> Timing {
         idle: Duration::from_secs(300),
         crash_window: Duration::from_secs(60),
         crash_limit: 3,
+        start_cooldown: Duration::from_secs(30),
     }
 }
 
@@ -298,6 +299,68 @@ async fn launch_failure_is_unavailable() {
         .expect("forwarded")
         .expect_err("the launch failed");
     expect_unavailable(&error);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_start_fails_fast_until_the_cooldown_ends() {
+    let mut launcher = fake(&["plugins/list"], echo());
+    launcher.fail_launch = true;
+    let rig = rig(launcher, timing());
+    for _ in 0..3 {
+        let error = rig
+            .helper
+            .forward("plugins/list", &json!({}))
+            .await
+            .expect("forwarded")
+            .expect_err("no helper");
+        expect_unavailable(&error);
+    }
+    // A broken bundle is launched once per cooldown, not once per call.
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.helper.crash_count(), 0);
+
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    let error = rig
+        .helper
+        .forward("plugins/list", &json!({}))
+        .await
+        .expect("forwarded")
+        .expect_err("still no helper");
+    expect_unavailable(&error);
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cancel_operation_without_a_running_helper_starts_none() {
+    let rig = rig(fake(&["plugins/cancelOperation"], echo()), timing());
+    assert_eq!(
+        forward_ok(
+            &rig.helper,
+            "plugins/cancelOperation",
+            json!({"operationId": "op-1"})
+        )
+        .await,
+        json!({"operationId": "op-1", "cancelled": false})
+    );
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_start_whose_caller_is_dropped_still_completes() {
+    let rig = rig(fake(&["plugins/list"], echo()), timing());
+    // The caller gives up while the helper is still starting.
+    let dropped = tokio::time::timeout(
+        Duration::ZERO,
+        rig.helper.forward("plugins/list", &json!({})),
+    )
+    .await;
+    assert!(dropped.is_err(), "the call was still starting");
+
+    // The start ran on its own: the helper became the running process and its idle timer reclaims it.
+    tokio::time::sleep(Duration::from_secs(302)).await;
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.helper.crash_count(), 0);
 }
 
 #[tokio::test]

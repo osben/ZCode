@@ -70,6 +70,10 @@ pub const FORWARDED_METHODS: &[&str] = &[
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.
 pub const RELAYED_NOTIFICATIONS: &[&str] = &["plugins/operationProgress"];
 
+/// Answered without a helper when none is running: no operation can be in flight, and starting one only to answer
+/// `cancelled: false` would cost a Node process.
+const CANCEL_OPERATION: &str = "plugins/cancelOperation";
+
 /// The timing of the client. The defaults are the Host's plugin-management request timeout and the idle reclaim
 /// period; tests shorten them.
 #[derive(Debug, Clone)]
@@ -81,6 +85,9 @@ pub struct Timing {
     /// The window in which `crash_limit` crashes keep the helper down for the life of the process.
     pub crash_window: Duration,
     pub crash_limit: usize,
+    /// After a failed launch or `helper/initialize`, calls fail fast for this long instead of each starting a Node
+    /// process (the run list is polled on every subscribe).
+    pub start_cooldown: Duration,
 }
 
 impl Default for Timing {
@@ -90,6 +97,7 @@ impl Default for Timing {
             idle: Duration::from_secs(300),
             crash_window: Duration::from_secs(60),
             crash_limit: 3,
+            start_cooldown: Duration::from_secs(30),
         }
     }
 }
@@ -128,6 +136,8 @@ struct State {
     generation: u64,
     /// Instants of crashes inside the breaker window.
     crashes: Vec<Instant>,
+    /// Set by a failed start: until then a call fails fast and starts nothing.
+    retry_at: Option<Instant>,
 }
 
 enum Slot {
@@ -166,6 +176,7 @@ impl NodeHelper {
                 slot: Slot::Idle,
                 generation: 0,
                 crashes: Vec::new(),
+                retry_at: None,
             }),
             warned: AtomicBool::new(false),
         })
@@ -176,6 +187,12 @@ impl NodeHelper {
     pub async fn forward(&self, method: &str, params: &Value) -> Option<Result<Value, RpcError>> {
         if !FORWARDED_METHODS.contains(&method) {
             return None;
+        }
+        if method == CANCEL_OPERATION
+            && !self.is_running()
+            && let Some(operation_id) = params.get("operationId").and_then(Value::as_str)
+        {
+            return Some(Ok(json!({"operationId": operation_id, "cancelled": false})));
         }
         let (generation, peer) = match self.acquire(method).await {
             Ok(Some(link)) => link,
@@ -228,10 +245,24 @@ impl NodeHelper {
                     }
                     Slot::Starting(starting) => starting.clone(),
                     Slot::Idle => {
+                        if state.retry_at.is_some_and(|at| Instant::now() < at) {
+                            return Err(unavailable("the helper failed to start; retrying later"));
+                        }
                         let Some(this) = self.myself.upgrade() else {
                             return Err(unavailable("the helper is not running"));
                         };
-                        let starting = async move { this.start().await }.boxed().shared();
+                        // A detached task: a caller dropped mid-start must not leave a launched process waiting in
+                        // `Starting` for the next call to drive it.
+                        let task = self
+                            .spawner
+                            .spawn("node-helper-start", async move { this.start().await });
+                        let starting = async move {
+                            task.await.unwrap_or_else(|_| {
+                                Err(unavailable("the helper start was interrupted"))
+                            })
+                        }
+                        .boxed()
+                        .shared();
                         state.slot = Slot::Starting(starting.clone());
                         starting
                     }
@@ -253,7 +284,7 @@ impl NodeHelper {
             Ok(process) => process,
             Err(error) => {
                 self.warn_once("launch", Some(error.kind()));
-                self.reset_to_idle(generation);
+                self.start_failed(generation);
                 return Err(unavailable("the helper could not be started"));
             }
         };
@@ -296,7 +327,7 @@ impl NodeHelper {
             Ok(Err(_)) | Err(_) => {
                 drop(guard);
                 self.warn_once("initialize", None);
-                self.reset_to_idle(generation);
+                self.start_failed(generation);
                 return Err(unavailable("the helper did not initialize"));
             }
         };
@@ -328,6 +359,7 @@ impl NodeHelper {
             last_used: Instant::now(),
             _guard: guard,
         });
+        state.retry_at = None;
         drop(state);
         self.warned.store(false, Ordering::Relaxed);
         tracing::info!(
@@ -339,12 +371,19 @@ impl NodeHelper {
         Ok(())
     }
 
-    /// Returns a failed start to idle, so the next call starts again. Only the start of `generation` does this.
-    fn reset_to_idle(&self, generation: u64) {
+    /// Returns a failed start to idle; the next call starts again once the cooldown has passed. Only the start of
+    /// `generation` does this.
+    fn start_failed(&self, generation: u64) {
         let mut state = self.state.lock_unpoisoned();
         if matches!(&state.slot, Slot::Starting(_)) && state.generation == generation {
             state.slot = Slot::Idle;
+            state.retry_at = Some(Instant::now() + self.timing.start_cooldown);
         }
+    }
+
+    /// A helper is running and its connection is open.
+    fn is_running(&self) -> bool {
+        matches!(&self.state.lock_unpoisoned().slot, Slot::Running(running) if !running.peer.is_closed())
     }
 
     fn spawn_reclaim(&self, generation: u64) {
