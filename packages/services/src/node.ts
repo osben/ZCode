@@ -3486,10 +3486,8 @@ export function createLocalServices(options: {
   if (options?.serviceAuthorityMode === "desktop-local") {
     services.register(
       IExternalSessionsService,
-      createExternalSessionsService({
-        adapters: createDefaultExternalSessionAdapters(),
-        extraHomeDirs: [process.env.HOME?.trim() ?? "", getDataBaseDir()].filter(Boolean),
-      }),
+      // Scans the OS home directory only: other CLIs keep their stores there, and ZCode's own data dir is never one.
+      createExternalSessionsService({ adapters: createDefaultExternalSessionAdapters() }),
     );
   }
 

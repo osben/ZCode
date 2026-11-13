@@ -181,6 +181,8 @@ export function createExternalSessionsService(
         statuses[source] = entry.status;
         scannedAt = Math.max(scannedAt, entry.scannedAt);
         for (const summary of entry.summaries) {
+          // No cwd means no workspace to match against, so the session is never listed for any workspace.
+          if (!summary.workspacePath) continue;
           if (
             workspaceKey !== null &&
             normalizePathForComparison(summary.workspacePath) !== workspaceKey

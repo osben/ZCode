@@ -26,6 +26,12 @@ import type {
 type DbRow = Record<string, SQLOutputValue>;
 
 /**
+ * Most recently updated root sessions listed per store. The listing runs synchronously on the Host event loop,
+ * so one scan is bounded by this page instead of the whole store (specs/external-sessions.md "Scan cost").
+ */
+const OPENCODE_LIST_LIMIT = 500;
+
+/**
  * OpenCode (specs/external-sessions.md "Sources"). One SQLite store per home at
  * `<home>/.local/share/opencode/opencode.db`, opened strictly read-only. Two schemas:
  * the current `session_v2` + `session_message` store, and the legacy
@@ -49,7 +55,7 @@ async function listOpencodeSessions(
     const dbPath = opencodeDbPath(home);
     if (!(await pathExists(dbPath))) continue;
     // The store exists; an open failure means the source is unavailable and must throw.
-    const summaries = withReadOnlySqlite(dbPath, (db) => listFromDatabase(ctx, db, dbPath));
+    const summaries = await withReadOnlySqlite(dbPath, (db) => listFromDatabase(ctx, db, dbPath));
     // The sqlite callback is synchronous, so the cwd existence probe runs after it closes.
     for (const summary of summaries) {
       summary.workspaceMissing = !(await pathExists(summary.workspacePath));
@@ -126,11 +132,17 @@ function listV2Sessions(
       `select s.id as id, s.directory as directory, s.title as title, s.model as model,
               s.time_created as time_created, s.time_updated as time_updated, p.worktree as worktree
        from session_v2 s left join project p on p.id = s.project_id
-       where s.parent_id is null`,
+       where s.parent_id is null
+       order by s.time_updated desc limit ?`,
     )
-    .all();
-  // One grouped query keeps listing O(1) per session instead of O(sessions) count queries.
-  const counts = messageCounts(db, "session_message", "type");
+    .all(OPENCODE_LIST_LIMIT);
+  // One indexed query for the page's counts; the listing never scans the whole message table.
+  const counts = messageCounts(
+    db,
+    "session_message",
+    "type",
+    rows.map((row) => String(row.id)),
+  );
   const summaries: ExternalSessionSummary[] = [];
   for (const row of rows) {
     const sessionId = rowString(row, "id");
@@ -208,10 +220,16 @@ function listLegacySessions(
     .prepare(
       `select s.id as id, s.directory as directory, s.title as title, ${modelSelect},
               s.time_created as time_created, s.time_updated as time_updated, ${worktreeSelect}
-       from session s ${projectJoin} ${whereClause}`,
+       from session s ${projectJoin} ${whereClause}
+       order by s.time_updated desc limit ?`,
     )
-    .all() as DbRow[];
-  const counts = messageCounts(db, "message", "json_extract(data, '$.role')");
+    .all(OPENCODE_LIST_LIMIT) as DbRow[];
+  const counts = messageCounts(
+    db,
+    "message",
+    "json_extract(data, '$.role')",
+    rows.map((row) => String(row.id)),
+  );
   const summaries: ExternalSessionSummary[] = [];
   for (const row of rows) {
     const sessionId = rowString(row, "id");
@@ -262,13 +280,25 @@ function legacyTitleFromFirstUserMessage(db: DatabaseSync, sessionId: string): s
   return titleFromPrompt(row ? readString(parseDataRecord(row.part_data)?.text) : undefined);
 }
 
-function messageCounts(db: DatabaseSync, table: string, typeColumn: string): Map<string, number> {
+/**
+ * Counts user/assistant messages for the given sessions only (the listed page), so the cost follows the
+ * page size instead of the size of the whole message table.
+ */
+function messageCounts(
+  db: DatabaseSync,
+  table: string,
+  typeColumn: string,
+  sessionIds: readonly string[],
+): Map<string, number> {
+  if (sessionIds.length === 0) return new Map();
+  const placeholders = sessionIds.map(() => "?").join(",");
   const rows: DbRow[] = db
     .prepare(
       `select session_id, count(*) as count
-       from ${table} where ${typeColumn} in ('user','assistant') group by session_id`,
+       from ${table} where ${typeColumn} in ('user','assistant') and session_id in (${placeholders})
+       group by session_id`,
     )
-    .all();
+    .all(...sessionIds);
   return new Map(rows.map((row) => [String(row.session_id), Number(row.count)]));
 }
 
@@ -281,7 +311,7 @@ async function readOpencodeTranscript(
   // The summary may be stale; re-locate the store from its own sourcePath.
   const dbPath = summary.sourcePath || opencodeDbPath(ctx.homeDir);
   if (!(await pathExists(dbPath))) return null;
-  return withReadOnlySqlite(dbPath, (db) => {
+  return withReadOnlySqlite(dbPath, (db): ExternalSessionTranscriptRead | null => {
     const tables = tableNames(db);
     if (tables.has("session_v2")) return v2Transcript(db, summary.sessionId);
     if (tables.has("session") && tables.has("message") && tables.has("part")) {

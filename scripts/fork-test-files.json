@@ -95,6 +95,7 @@
   "packages/services/test/externalSessions.codex.test.ts",
   "packages/services/test/externalSessions.cursor.test.ts",
   "packages/services/test/externalSessions.gemini.test.ts",
+  "packages/services/test/externalSessions.hardening.test.ts",
   "packages/services/test/externalSessions.opencode.test.ts",
   "packages/services/test/externalSessions.service.test.ts",
   "packages/services/test/feedbackLogArchive.cliMemory.test.ts",

@@ -1,6 +1,8 @@
 # External sessions: sessions recorded by other AI coding CLIs
 
-Status: v1 implemented on `feat/sessions-other-programs` (2026-11-07).
+Status: v1 implemented on `feat/sessions-other-programs` (2026-11-07). Hardened 2026-11-12 (PR #383
+review): read-only store access that writes nothing beside a store, bounded SQLite listing, streamed
+transcript replay, id and cwd rules. See "Storage access and bounds".
 
 ZCode shows, in the existing Manage sessions settings section, the sessions that other AI coding
 tools recorded on this machine for the same workspaces — Claude Code, Codex, OpenCode, Cursor and
@@ -20,10 +22,11 @@ source, and it cannot hand the session back to the native tool.
 
 ## Product rules
 
-- **Read-only by construction.** The scanner never writes under another tool's directory. SQLite
-  stores are opened `readOnly`; JSONL files are read with bounded head/tail reads. Nothing from
-  another tool is written into `tasks-index.sqlite` or any ZCode store: external rows exist only
-  in a per-Host in-memory cache and are rebuilt on demand.
+- **Read-only by construction.** The scanner never writes under another tool's directory: SQLite
+  stores are opened without creating sidecar files (see "Read-only stores"), and JSONL files are
+  read with bounded head/tail reads or streamed line by line. Nothing from another tool is written
+  into `tasks-index.sqlite` or any ZCode store: external rows exist only in a per-Host in-memory
+  cache and are rebuilt on demand.
 - **Desktop and local only.** External sessions live on the machine that runs the Host. The service
   is registered only when `createLocalServices` runs with `serviceAuthorityMode === "desktop-local"`
   (the same gate as voice dictation), which only the desktop local Host sets; the HTTP and stdio
@@ -42,7 +45,8 @@ source, and it cannot hand the session back to the native tool.
   in Claude Code and Cursor). Matching is a normalized-path equality against the ZCode workspace
   path (case-insensitive on win32), the same rule as the upstream Claude import. Sessions whose
   cwd no longer exists are still listed (the user may want the transcript), flagged
-  `workspaceMissing`.
+  `workspaceMissing`. A session with no cwd at all (Codex threads and rollouts) matches no
+  workspace and is not listed.
 - **Subagent and sidechain records are excluded** from listing and counts (Claude `isSidechain`
   and `subagents/` files; Codex `thread_source` ≠ main; Cursor `subagents/`).
 - **Privacy.** Logs name sources, counts and file paths only; never titles or message text.
@@ -154,8 +158,8 @@ there is no shared state to reconcile.
 `openExternalSessionInTerminal` reuses the ACP login terminal helper (`acpAgentLogin.ts`): a
 temporary `.command` script run by `open -a Terminal`. The script is
 `cd <quoted cwd> && <resumeCommand>` and the same launch-rule check rejects NUL/CR/LF in any
-argument. Session ids are validated against `^[A-Za-z0-9._:-]{1,128}$` before they reach a command
-line; anything else is `transcript`-only. When the workspace directory is missing the command runs
+argument. Session ids are validated against `^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$` before they reach a
+command line (see "Session ids"); anything else is `transcript`-only. When the workspace directory is missing the command runs
 from `$HOME` and the UI says so. Non-macOS: `{ opened: false, command }` and the panel copies the
 command to the clipboard instead.
 
@@ -175,7 +179,7 @@ command to the clipboard instead.
 - Header: source chips (one per catalog source with its count; unavailable sources are shown
   disabled with the reason in a tooltip) and Refresh. An empty stored selection means "every
   source"; toggling a chip expands that sentinel first, so a click always flips that chip alone.
-- Rows (virtualised list, same row height as the ZCode table): source mark + label, title, cwd leaf
+- Rows (a plain list, not virtualised; one request returns at most `limit` rows, default 200): source mark + label, title, cwd leaf
   (hidden when scoped), model, message count, updated (relative), and a `⋯` menu:
   - **Open transcript** (disabled with hint when `transcriptAvailable` is false)
   - **Resume in <tool>** → `openExternalSessionInTerminal`; on `{opened:false}` falls back to copy +
@@ -185,7 +189,7 @@ command to the clipboard instead.
     "Open folder" performs; `targetWorkspace.workspacePath` alone would let `prepareSession` allocate
     an unrelated managed directory) and calls `onCreateTask({ initialPrompt, projectId, hostId:
 "local", targetWorkspace })`; nothing is sent automatically, the user reviews the draft. A session
-    whose folder is missing gets a toast instead, and so does a folder that is only a secondary root
+    whose folder is missing gets a toast naming that folder path instead, and so does a folder that is only a secondary root
     of an existing project (`prepareSession` starts drafts in the primary root, which would silently
     change the cwd). The pack is: a one-line header naming the source and
     title, then the last `CONTEXT_PACK_MESSAGES` (12) user/assistant messages, each trimmed to
@@ -206,6 +210,65 @@ command to the clipboard instead.
   source with `reason` shows it inline when every source is unavailable.
 - i18n: all strings in `en-US`, `zh-CN`, `uk-UA` (`externalSessions.*`); catalog labels are product
   names and stay untranslated.
+
+## Storage access and bounds
+
+### Read-only stores
+
+A plain `readOnly` open still creates `-shm` next to a WAL database and can replay its `-wal`, so
+`withReadOnlySqlite` (`adapters/shared.ts`) never opens another tool's store in place:
+
+- a store with a non-empty `-wal` (Codex keeps recent threads there) is copied together with its
+  wal into a private temp directory, and the copy is opened; the temp directory is removed before
+  the call returns;
+- any other store is opened with `immutable=1` (a `file:` URI), which takes no locks and creates no
+  sidecar files.
+
+Rule: a scan leaves the other tool's directory byte-identical. `externalSessions.hardening.test.ts`
+checks the directory tree before and after a scan of a WAL-backed Codex store and a closed OpenCode
+store. Trade-off: a store that is written while it is copied can yield an inconsistent snapshot;
+that surfaces as a source `unavailable` on that scan and is retried on the next one.
+
+### Scan cost
+
+`node:sqlite` is synchronous, so SQLite work runs on the Host event loop during a scan. Decision
+(this change): keep it on the loop and bound it instead of moving it to a worker thread.
+
+- OpenCode lists the 500 most recently updated root sessions per store (`OPENCODE_LIST_LIMIT`), and
+  message counts are one indexed query over only those sessions. The earlier whole-table GROUP BY
+  is gone.
+- The OpenCode title fallback (first user message) is one query per listed session without a stored
+  title; it is bounded by the 500-row page.
+- Codex reads the `threads` table in one query, then stats each rollout and cwd (no per-row SQL).
+- Claude Code and Gemini list from bounded head and tail reads of each session file (upstream helper
+  and `readJsonLinesHead` / `readJsonLinesTail`); Cursor reads small metadata files.
+
+Follow-up if a scan still blocks the Host noticeably: move the SQLite listing into a `worker_thread`
+owned by the external-sessions service. Not done here; the measured full scan before the bounds was
+about 350 ms on the development Mac, and no re-measurement is recorded in this spec.
+
+### Transcript bounds
+
+- The final transcript keeps the last `MAX_TRANSCRIPT_MESSAGES` (200) user/assistant messages, each
+  cut at `MAX_TRANSCRIPT_CHARS_PER_MESSAGE` (8000) characters with `…`; `truncated` is set when
+  either cap applied.
+- Codex and Gemini JSONL rollouts are streamed line by line (`forEachJsonRecord`). Codex keeps a
+  window of at most 400 messages while it replays records in file order, so memory does not grow with
+  the file. A `thread_rolled_back` that removes more turns than the window holds is approximated: the
+  window's messages are dropped, and the messages before the window are not recovered. Transcripts
+  longer than the window are already truncated, so the banner still shows.
+- Gemini keeps every record of a session file, because its journal patches and rewinds address
+  earlier messages by id; a bounded window would change its replay result. Streaming avoids holding
+  the raw file text, not the parsed records.
+- Claude Code transcripts use the upstream parser `parseClaudeNativeSessionFile`, which reads the
+  whole file on open. Known limitation: the fork does not stream it, and upstream files are not
+  changed for this. Only the user-opened transcript pays this cost, never the listing.
+- OpenCode reads all rows of the one session being opened, and caps them afterwards.
+
+### Session ids
+
+An id reaches a command line only when it matches `^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$`. A leading
+`-` is rejected: the target CLI would otherwise read the id as an option (`codex resume --...`).
 
 ## Non-goals (v1) and follow-ups
 
@@ -238,16 +301,28 @@ command to the clipboard instead.
 6. Import to ZCode on a Claude row creates the task through the upstream import and opens it; the
    row keeps showing in the panel (the panel is a view of the external store, not of imports).
 7. Web / web-remote / remote workspace: the panel is absent; no RPC call is made.
+8. Desktop E2E (`packages/desktop/test/e2e/external-sessions-settings.test.ts`, run in the Linux
+   container, never on the developer's Mac): with one Claude Code session and one Codex rollout
+   written into the isolated E2E home, Settings → Sessions lists both with their source marks; the
+   Codex chip hides its rows and a second click restores them; a Claude row opens the read-only
+   transcript dialog showing the user and assistant text, and Escape closes it. Not covered: Resume
+   (macOS Terminal), Import, and Continue.
 
 ## Tests
 
 Fork Vitest (`scripts/fork-test-files.json`):
 
-- `packages/services/test/externalSessions.adapters.test.ts`: fixture directories under a temp
-  `homeDir` for every source (JSONL heads, a tiny OpenCode/Codex SQLite built in the test), asserting
-  listing fields, exclusions (sidechain, worktree cwd, missing rollout), transcript extraction and
-  truncation.
+- `packages/services/test/externalSessions.{claude,codex,cursor,gemini,opencode}.test.ts`: one file
+  per adapter. Fixture directories under a temp `homeDir` (JSONL heads, a tiny OpenCode/Codex SQLite
+  built in the test) assert listing fields, exclusions (sidechain, worktree cwd, missing rollout),
+  transcript extraction and truncation.
+- `packages/services/test/externalSessions.hardening.test.ts`: read-only store access (directory tree
+  unchanged across a scan, WAL rows still listed), `titleFromPrompt` on a 920 KB prompt, the Codex
+  transcript window and rollback order, a missing cwd is not listed, and the id pattern.
 - `packages/services/test/externalSessions.service.test.ts`: per-source isolation
   (`allSettled`), cache TTL / refresh, filters, zod rejection, resume command quoting and the
   id pattern, `.command` script content.
 - `packages/ui/test/externalSessionsContextPack.test.ts`: context pack composition and limits.
+
+- `packages/desktop/test/e2e/external-sessions-settings.test.ts`: desktop E2E for scenario 8, run only
+  in the Linux container (`~/Dev/zcode-qa/e2e-box/run-e2e-box.sh`).

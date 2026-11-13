@@ -28,12 +28,14 @@ import {
   type ExternalSessionSummary,
 } from "./contract.js";
 
+// Source marks use the DESIGN.md neutral surface and text tokens; the source label carries the identity, so no
+// per-tool hex palette is hard-coded (DESIGN.md "Color Palette").
 const SOURCE_MARK_CLASS: Record<ExternalSessionSource, string> = {
-  claude: "bg-[#FAECE7] text-[#712B13] dark:bg-[#4A1B0C] dark:text-[#F5C4B3]",
-  codex: "bg-[#E1F5EE] text-[#085041] dark:bg-[#04342C] dark:text-[#9FE1CB]",
-  opencode: "bg-[#F1EFE8] text-[#444441] dark:bg-[#2C2C2A] dark:text-[#D3D1C7]",
-  cursor: "bg-[#E6F1FB] text-[#0C447C] dark:bg-[#042C53] dark:text-[#B5D4F4]",
-  gemini: "bg-[#EEEDFE] text-[#3C3489] dark:bg-[#26215C] dark:text-[#CECBF6]",
+  claude: "bg-surface text-foreground-subtle border border-border",
+  codex: "bg-surface text-foreground-subtle border border-border",
+  opencode: "bg-surface text-foreground-subtle border border-border",
+  cursor: "bg-surface text-foreground-subtle border border-border",
+  gemini: "bg-surface text-foreground-subtle border border-border",
 };
 
 export function ExternalSessionRow({

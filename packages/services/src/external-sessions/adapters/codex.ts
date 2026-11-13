@@ -7,8 +7,9 @@ import {
   capTranscript,
   homeDirs,
   isRecord,
+  forEachJsonRecord,
   pathExists,
-  readJsonLinesAll,
+  pushTranscriptMessage,
   readJsonLinesHead,
   readString,
   statOrNull,
@@ -117,7 +118,7 @@ async function listFromStateDb(
   codexRoot: string,
   dbPath: string,
 ): Promise<ExternalSessionSummary[]> {
-  const rows = withReadOnlySqlite(dbPath, (db) => {
+  const rows = await withReadOnlySqlite(dbPath, (db) => {
     const query = buildThreadsQuery(db);
     if (!query) throw new Error(`codex: threads table without id/rollout_path in ${dbPath}`);
     return (db.prepare(query).all() as unknown[]).filter(isRecord);
@@ -131,9 +132,12 @@ async function listFromStateDb(
       continue;
     }
     if (isSubagentThread(row)) continue;
+    const workspacePath = readString(row.cwd);
+    // A session without a cwd cannot be matched to any workspace; it is skipped, not listed as "missing".
+    if (!workspacePath) continue;
     candidates.push({
       sessionId,
-      workspacePath: readString(row.cwd) ?? "",
+      workspacePath,
       rolloutPath: resolve(codexRoot, rolloutPathRaw),
       row,
     });
@@ -141,7 +145,7 @@ async function listFromStateDb(
   const details = await mapWithConcurrency(candidates, STAT_CONCURRENCY, async (candidate) => ({
     // Stale rows (rollout deleted, e.g. after .zst cleanup) are a normal state: drop silently.
     rolloutIsFile: (await statOrNull(candidate.rolloutPath))?.isFile() ?? false,
-    workspaceMissing: candidate.workspacePath ? !(await pathExists(candidate.workspacePath)) : true,
+    workspaceMissing: !(await pathExists(candidate.workspacePath)),
   }));
   const summaries: ExternalSessionSummary[] = [];
   for (const [index, candidate] of candidates.entries()) {
@@ -213,7 +217,9 @@ async function listFromRolloutFiles(
       }
       // The index path drops subagent threads; the rollout path must apply the same predicate to session_meta.
       if (isSubagentThread(payload)) continue;
-      const workspacePath = readString(payload.cwd) ?? "";
+      const workspacePath = readString(payload.cwd);
+      // Same rule as the state-db path: no cwd, no workspace match, no listing.
+      if (!workspacePath) continue;
       // session_meta holds the creation time only; a resumed rollout keeps growing, so its mtime is the activity time.
       const mtimeMs = Math.trunc((await statOrNull(filePath))?.mtimeMs ?? 0);
       const createdAt = toMs(payload.timestamp) ?? mtimeMs;
@@ -222,7 +228,7 @@ async function listFromRolloutFiles(
           source: "codex",
           sessionId,
           workspacePath,
-          workspaceMissing: workspacePath ? !(await pathExists(workspacePath)) : true,
+          workspaceMissing: !(await pathExists(workspacePath)),
           createdAt,
           updatedAt: Math.max(createdAt, mtimeMs),
           gitBranch: isRecord(payload.git) ? readString(payload.git.branch) : undefined,
@@ -281,14 +287,16 @@ async function readTranscript(
     ? summary.sourcePath
     : await relocateRollout(ctx, summary.sessionId);
   if (!rolloutPath || rolloutPath.endsWith(".zst") || !(await pathExists(rolloutPath))) return null;
-  let records: JsonRecord[];
+  const replay: RolloutReplay = { messages: [], model: undefined };
   try {
-    records = await readJsonLinesAll(rolloutPath);
+    // Streamed record by record: rollbacks are replayed in file order against a bounded window (see
+    // pushTranscriptMessage), so the whole rollout is never held in memory.
+    await forEachJsonRecord(rolloutPath, (record) => applyRolloutRecord(replay, record));
   } catch (error) {
     ctx.warn(`codex rollout ${rolloutPath} could not be read`, error);
     return null;
   }
-  return capTranscript(parseRolloutTranscript(records));
+  return capTranscript(replay.messages);
 }
 
 /** The summary may be stale; re-resolve the rollout through the state db before giving up. */
@@ -300,7 +308,9 @@ async function relocateRollout(
     const dbPath = join(homeDir, CODEX_DIR, STATE_DB_FILE);
     if (!(await pathExists(dbPath))) continue;
     try {
-      const row = withReadOnlySqlite(dbPath, (db) => db.prepare(RELOCATE_QUERY).get(sessionId));
+      const row = await withReadOnlySqlite(dbPath, (db) =>
+        db.prepare(RELOCATE_QUERY).get(sessionId),
+      );
       const rolloutPath = isRecord(row) ? readString(row.rollout_path) : undefined;
       if (!rolloutPath) continue;
       const resolved = resolve(join(homeDir, CODEX_DIR), rolloutPath);
@@ -312,40 +322,39 @@ async function relocateRollout(
   return null;
 }
 
-function parseRolloutTranscript(
-  records: readonly JsonRecord[],
-): ExternalSessionTranscriptMessage[] {
-  const messages: ExternalSessionTranscriptMessage[] = [];
-  let model: string | undefined;
-  for (const record of records) {
-    const payload = isRecord(record.payload) ? record.payload : null;
-    if (!payload) continue;
-    const type = record.type;
-    if (type === "turn_context") {
-      model = readString(payload.model) ?? model;
-      continue;
-    }
-    // `thread_rolled_back` (codex-rs protocol ThreadRolledBackEvent) removes the last `num_turns` user turns
-    // from context; the rollout keeps the removed records, so replay the rollback before extracting text.
-    if (type === "event_msg" && payload.type === "thread_rolled_back") {
-      rollBackUserTurns(messages, Number(payload.num_turns));
-      continue;
-    }
-    if (type !== "response_item" || payload.type !== "message") continue;
-    const role = payload.role;
-    if (role !== "user" && role !== "assistant") continue; // developer and system never render
-    const text = concatTextParts(payload.content);
-    if (!text) continue;
-    if (role === "user" && isInjectedContext(text)) continue;
-    const timestamp = toTimestampMs(record.timestamp);
-    messages.push({
-      role,
-      text,
-      ...(timestamp !== undefined ? { timestamp } : {}),
-      ...(model !== undefined ? { model } : {}),
-    });
+interface RolloutReplay {
+  messages: ExternalSessionTranscriptMessage[];
+  model: string | undefined;
+}
+
+/** Applies one rollout record in file order; the caller streams records through this. */
+function applyRolloutRecord(replay: RolloutReplay, record: JsonRecord): void {
+  const payload = isRecord(record.payload) ? record.payload : null;
+  if (!payload) return;
+  const type = record.type;
+  if (type === "turn_context") {
+    replay.model = readString(payload.model) ?? replay.model;
+    return;
   }
-  return messages;
+  // `thread_rolled_back` (codex-rs protocol ThreadRolledBackEvent) removes the last `num_turns` user turns
+  // from context; the rollout keeps the removed records, so replay the rollback before extracting text.
+  if (type === "event_msg" && payload.type === "thread_rolled_back") {
+    rollBackUserTurns(replay.messages, Number(payload.num_turns));
+    return;
+  }
+  if (type !== "response_item" || payload.type !== "message") return;
+  const role = payload.role;
+  if (role !== "user" && role !== "assistant") return; // developer and system never render
+  const text = concatTextParts(payload.content);
+  if (!text) return;
+  if (role === "user" && isInjectedContext(text)) return;
+  const timestamp = toTimestampMs(record.timestamp);
+  pushTranscriptMessage(replay.messages, {
+    role,
+    text,
+    ...(timestamp !== undefined ? { timestamp } : {}),
+    ...(replay.model !== undefined ? { model: replay.model } : {}),
+  });
 }
 
 /** Drops the last `numTurns` user messages and everything after each of them (a turn = one user prompt). */

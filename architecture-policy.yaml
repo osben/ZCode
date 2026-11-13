@@ -1397,6 +1397,7 @@ modules:
     layers:
       contract: contract.ts
       ui: .
+    owner: conversation
   # external-sessions: sessions recorded by other AI coding CLIs (specs/external-sessions.md)
   - id: external-sessions
     roots:

@@ -5,8 +5,9 @@ import {
   capTranscript,
   homeDirs,
   isRecord,
+  forEachJsonRecord,
   pathExists,
-  readJsonLinesAll,
+  pushTranscriptMessage,
   readJsonLinesHead,
   readJsonLinesTail,
   readString,
@@ -209,9 +210,13 @@ async function readGeminiTranscript(
 ): Promise<ExternalSessionTranscriptRead | null> {
   const file = summary.sourcePath;
   if (!(await pathExists(file))) return null;
-  let records: JsonRecord[];
+  // Gemini keeps every record: its journal patches and rewinds address earlier messages by id, so a bounded
+  // window would change the replay result. Streaming still avoids holding the raw file text in memory.
+  const records: JsonRecord[] = [];
   try {
-    records = await readJsonLinesAll(file);
+    await forEachJsonRecord(file, (record) => {
+      records.push(record);
+    });
   } catch (error) {
     ctx.warn(`gemini: cannot read transcript ${file}`, error);
     return null;
@@ -228,7 +233,7 @@ async function readGeminiTranscript(
     if (!text.trim()) continue;
     const timestamp = toTimestampMs(record.timestamp);
     const model = type === "gemini" ? readString(record.model) : undefined;
-    messages.push({
+    pushTranscriptMessage(messages, {
       role: type === "user" ? "user" : "assistant",
       text,
       ...(timestamp !== undefined ? { timestamp } : {}),

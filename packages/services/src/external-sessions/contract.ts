@@ -131,8 +131,11 @@ export const EXTERNAL_SESSIONS_CACHE_TTL_MS = 15_000;
 export const MAX_TRANSCRIPT_MESSAGES = 200;
 export const MAX_TRANSCRIPT_CHARS_PER_MESSAGE = 8000;
 
-/** Ids that may appear on a command line; anything else gets no resume command. */
-export const EXTERNAL_SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+/**
+ * Ids that may appear on a command line; anything else gets no resume command. A leading `-` is rejected
+ * because the id would otherwise be parsed by the target CLI as an option (`codex resume --foo`).
+ */
+export const EXTERNAL_SESSION_ID_PATTERN = /^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$/;
 
 export function isSafeExternalSessionId(sessionId: string): boolean {
   return EXTERNAL_SESSION_ID_PATTERN.test(sessionId);
