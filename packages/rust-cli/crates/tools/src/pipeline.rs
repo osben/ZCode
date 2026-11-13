@@ -511,15 +511,13 @@ impl ToolExecutor for Pipeline {
         }
         // Fork: a tool the running turn hides (an automation turn's mutation tools, the Host's disallowlist,
         // CronPauseSelf outside an automation turn) answers like an unregistered one when the model names it anyway
-        // (specs/fork-rust-automations.md). Without a session view the limits are the default ones, the same the tool
-        // listing uses (`RunScope::view`), so a tool hidden from the list is never run.
-        let limits = context
-            .session_ops
-            .view()
-            .await
-            .map(|view| view.turn)
-            .unwrap_or_default();
-        if limits.hides(tool.name()) {
+        // (specs/fork-rust-automations.md). Without a session view the turn's limits are unknown: the automation
+        // tools fail closed.
+        let hidden = match context.session_ops.view().await {
+            Some(view) => view.turn.hides(tool.name()),
+            None => rust_cli_kernel_api::turn_limits::TurnLimits::hides_without_view(tool.name()),
+        };
+        if hidden {
             return ToolExecution::output(no_such_tool(tool.name()));
         }
         let mut messages = HookMessages::default();

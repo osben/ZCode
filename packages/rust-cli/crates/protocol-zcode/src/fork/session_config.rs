@@ -86,6 +86,16 @@ pub(super) async fn rename(live: &Bridged<Live>, envelope: &Envelope, revision: 
     kernel_ack(envelope, revision, "proto.invalidPayload", kernel)
 }
 
+/// The session's model, permission mode and plan switch as the session holds them. The projection learns of a switch
+/// only when its event arrives, so a switch back sent before that would compare against the stale value and answer
+/// `config.unchanged` while the session stays switched; the projection is the fallback when the actor cannot answer.
+pub(crate) async fn held_config(live: &Bridged<Live>) -> (ModelSelection, PermissionMode, bool) {
+    match live.handle.view().await {
+        Ok(view) => (view.selection, view.mode, view.plan),
+        Err(_) => live.sink.current_config(),
+    }
+}
+
 /// Same rule as Node `switchModelConfig`: a different model switches model and reasoning; the same
 /// model switches only an explicit, different reasoning level; anything else is `config.unchanged`.
 pub(super) async fn switch_model(live: &Bridged<Live>, envelope: &Envelope, revision: u64) -> Ack {
@@ -93,7 +103,7 @@ pub(super) async fn switch_model(live: &Bridged<Live>, envelope: &Envelope, revi
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    let (current, _, _) = live.sink.current_config();
+    let (current, _, _) = held_config(live).await;
     let thought = body.thought.trim();
     let identity_changed = current.provider != body.provider || current.model != body.model;
     let thought_changed = !thought.is_empty() && current.reasoning.as_deref() != Some(thought);
@@ -118,7 +128,7 @@ pub(super) async fn switch_mode(live: &Bridged<Live>, envelope: &Envelope, revis
         Err(ack) => return *ack,
     };
     let handle = live.handle.as_ref();
-    let (_, current_mode, plan) = live.sink.current_config();
+    let (_, current_mode, plan) = held_config(live).await;
     if body.mode == "plan" {
         if plan {
             return unchanged(envelope, revision);

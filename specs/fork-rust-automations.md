@@ -83,7 +83,9 @@ sequenceDiagram
    `"immediate"`, Node's default when the field is absent, persists it at create. `model` with `thoughtLevel` as its
    reasoning level chooses the selection (`thoughtLevel` without `model` is the level of the default model, the one the
    create picks; a `model` that is not an object is refused), `mode` the permission mode, `incognito` the profile
-   (validated like v4).
+   (validated like v4). Like Node `resolveSupportedAppThoughtLevel`, a trimmed `thoughtLevel` the target model does
+   not offer in the model directory is skipped with a warning (the workspace default may come from a previous model)
+   and the model keeps its own level; a model the directory does not list keeps the level.
    `titleGenerationEnabled: false` turns off model-generated titles for the actor's lifetime (Node
    `titleGeneration: {enabled: false}`, kernel `Command::DisableTitleGeneration`); the first input still names the
    session. Any id that already exists (live, stored or soft-deleted) is refused with `-32602 "sessionId already
@@ -95,8 +97,8 @@ exists"`; the check runs with the create under the reservation gate (`Existing::
    message names no unrecognized key, so the Host's compatibility retry does not run without them). `mcpServers`,
    `additionalDirectories`, `offPeakToolEnabled` and `dynamicWorkflow*` are accepted and ignored, as on the v4 path.
 2. **`session/resume`** (Node `resumeSession`): opens a stored session (cold) or returns the live one and answers the
-   legacy snapshot. `thoughtLevel` is Node's hint for a session without a stored selection; every Rust session has
-   one, so it is ignored. A non-empty tool list refuses like create. A missing session answers the same error as
+   legacy snapshot. `thoughtLevel` is ignored, as in Node (its resume path never reads it; `server-operations.ts`
+   reads `thoughtLevel` only in create and `setThoughtLevel`). A non-empty tool list refuses like create. A missing session answers the same error as
    `session/read`.
 3. **`session/setMode`, `session/setThoughtLevel`, `session/setModel`**: apply the change through the session actor
    (the same commands as `switchCollaborationMode` / `switchModelConfig`) and answer the legacy snapshot. The Host uses
@@ -115,15 +117,18 @@ found`) before it is opened. `setThoughtLevel` reads the model from the session 
    CronPauseSelf is offered only on a turn with an automation id and pauses only that id. A turn's automation id is
    never derived from `commandId` or `inputId`. A hidden tool the model calls anyway is refused at the tool pipeline
    (`No such tool available`) before any hook runs; Node only refuses there in the Cron handlers, so the Rust side is
-   stricter (fail-closed): without the session's view the gate refuses Cron tools that need an automation turn.
+   stricter (fail-closed): without the session's view (its actor stopped) the turn may be an automation run, so the
+   gate refuses CronCreate/CronUpdate/CronDelete and CronPauseSelf; the Host's disallowlist cannot be known then.
    The limits travel with their own input end to end: the actor starts the turn with the limits of the input it
    starts (no pending slot), a queued input with limits is never merged into a batch with other inputs, and an input
    with limits is never steered into a running turn (it queues and opens its own turn). An input that named no mode
    or plan (an automation run) records `keepsSessionState`: it leaves the session's mode and plan alone when it
    starts, and the queue projection shows no mode for it. Bash, compaction, cron and goal turns carry no limits.
    Known boundary: subagents take the session's tool config, not the turn's (Node child runtimes read
-   `config.toolDisallowlist`); slice 2 keeps Cron tools main-session only, so until it lands a subagent of a run can
-   still see the local Cron tools.
+   `config.toolDisallowlist`). Node registers no Cron tool for a `subagent_child` (`runtime-tools.ts`
+   `mainAutomationToolsIncluded`); slice 2 (#449) does the same for desktop subagents and forks (`agents/src/spawn.rs`
+   `WithoutCron` and `ToolSet::without_cron`), so until it lands a subagent of a run can still see the local Cron
+   tools.
    Telemetry (Node `automationAdmission`): the run's `turn.started` fact carries `automationId`, and `taskTrigger`
    (`manual` / `schedule` plus `scheduledAt`) when its `sourceCommandId` is that automation's run id
    (`parseAutomationRunId`). A run gets no renderer send acknowledgement, so the Host seeds the run's `agent_step` /
