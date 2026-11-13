@@ -127,6 +127,8 @@ pub struct SkillCatalog {
     cache: Mutex<Cache>,
     /// 单次的 `-p`（`singleShotPrintSession`）：内置 `/loop` 的 Monitor 超时随它（tools-more.md §17.1）。
     print: AtomicBool,
+    /// Fork: whether the builtin `/loop` is offered (not under the desktop Host's automations).
+    looping: bool,
     /// Fork: the sessions' incognito profiles; a session without plugins discovers no plugin skills.
     incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
 }
@@ -139,6 +141,7 @@ impl SkillCatalog {
             plugins: Mutex::default(),
             cache: Mutex::default(),
             print: AtomicBool::new(false),
+            looping: true,
             incognito: std::sync::OnceLock::new(),
         }
     }
@@ -162,6 +165,12 @@ impl SkillCatalog {
                 )
             });
         !excluded
+    }
+
+    /// Fork: offer the builtin `/loop` or not ([`crate::ExtConfig::host_automations`]).
+    pub fn with_loop(mut self, looping: bool) -> Self {
+        self.looping = looping;
+        self
     }
 
     /// 内核按形态设置：`-p` 是单次的打印会话。
@@ -231,7 +240,11 @@ impl SkillCatalog {
         };
         let mut found = load::discover(self, workspace, facts, &roots).await;
         // 内置 skill 排在文件与插件 skill 之后，同名时前面的生效。
-        found.extend(builtin::skills());
+        found.extend(
+            builtin::skills()
+                .into_iter()
+                .filter(|skill| self.looping || skill.name != builtin::LOOP),
+        );
         let mut seen = HashSet::new();
         found
             .into_iter()
