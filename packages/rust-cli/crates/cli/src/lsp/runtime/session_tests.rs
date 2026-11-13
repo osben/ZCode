@@ -391,3 +391,13 @@ async fn a_failed_older_sync_keeps_the_newer_pending_edit() {
         Some("Found 1 new diagnostic issues in 1 files\na.ts:1:1 error newer")
     );
 }
+
+/// Prewarm with code intelligence off starts nothing.
+#[tokio::test(start_paused = true)]
+async fn prewarm_starts_nothing_when_code_intelligence_is_off() {
+    let mut harness = harness();
+    harness.preferences.lock().unwrap().enabled = false;
+    harness.session.prewarm("/w/a.ts");
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    assert!(harness.launched.try_recv().is_err());
+}

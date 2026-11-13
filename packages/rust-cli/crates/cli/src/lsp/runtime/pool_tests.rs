@@ -511,3 +511,57 @@ fn stderr_keeps_a_character_split_between_reads() {
     assert_eq!(finish_stderr(&pending), "\u{fffd}");
     assert_eq!(finish_stderr(&[]), "");
 }
+
+/// The enabled gate is read under the entries lock, so a concurrent `stop_all` either runs first (the gate then reads
+/// closed and nothing starts) or runs after the start and stops it. A gate read outside the lock left a window where a
+/// server started after code intelligence was turned off and lived until the idle stop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_gate_is_read_under_the_lock_that_stop_all_takes() {
+    let (pool, _launcher, mut launched) = fake_pool();
+    let enabled = Arc::new(AtomicBool::new(true));
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let acquiring = {
+        let pool = pool.clone();
+        let runtime = tokio::runtime::Handle::current();
+        std::thread::spawn(move || {
+            let _runtime = runtime.enter();
+            // The gate reads "on", then stalls inside the lock as a preempted check would.
+            pool.acquire_when(&server("ts"), &key(), || {
+                entered.send(()).unwrap();
+                release_rx.recv().unwrap();
+                true
+            })
+        })
+    };
+    entered_rx.recv().unwrap();
+    // Turned off while the gate is stalled: stop_all must wait for the lock.
+    enabled.store(false, Ordering::SeqCst);
+    let stop = tokio::spawn({
+        let pool = pool.clone();
+        async move { pool.stop_all().await }
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !stop.is_finished(),
+        "stop_all passed the lock the gate holds"
+    );
+    release.send(()).unwrap();
+    assert!(matches!(
+        acquiring.join().unwrap(),
+        Some(Acquired::Starting)
+    ));
+    let _process = launched.recv().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), stop)
+        .await
+        .expect("stop_all ends the server that started")
+        .unwrap();
+    assert_eq!(state_of(&pool, "p/ts"), State::Stopped);
+    // After the switch the gate reads closed: nothing starts and no entry is made.
+    let gate = Arc::clone(&enabled);
+    assert!(
+        pool.acquire_when(&server("ts"), &key(), || gate.load(Ordering::SeqCst))
+            .is_none()
+    );
+    assert!(launched.try_recv().is_err());
+}

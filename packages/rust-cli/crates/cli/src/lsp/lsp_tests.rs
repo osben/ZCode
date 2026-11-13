@@ -454,6 +454,32 @@ async fn a_read_after_a_write_sees_it() {
     assert!(!read.enabled);
 }
 
+/// The snapshot is published inside the store's turn: a read that started before a write can never publish its older
+/// value after the write published its own.
+#[tokio::test]
+async fn a_read_publishes_its_snapshot_before_a_write_can_run() {
+    let (_dir, _path, store) = store();
+    let mut published = None;
+    let read = store
+        .load_and(|prefs| {
+            // A write waits for the turn this read still holds.
+            assert!(store.turn_held());
+            published = Some(prefs.clone());
+        })
+        .await;
+    assert!(!store.turn_held());
+    assert_eq!(published, Some(read));
+    let mut written = None;
+    let next = store
+        .update_and(&patch(Some(false), &[]), |prefs| {
+            assert!(store.turn_held());
+            written = Some(prefs.clone());
+        })
+        .await
+        .unwrap();
+    assert_eq!(written, Some(next));
+}
+
 fn reference(path: &str) -> WorkspaceRef {
     WorkspaceRef {
         environment: EnvironmentId::new("local"),

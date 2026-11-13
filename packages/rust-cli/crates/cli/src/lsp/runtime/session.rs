@@ -127,7 +127,10 @@ impl SessionLsp {
             return;
         }
         if let Some(found) = self.registry.for_file(path) {
-            let _ = self.shared.pool.acquire(&found.server, &self.key);
+            let _ = self
+                .shared
+                .pool
+                .acquire_when(&found.server, &self.key, || self.enabled());
         }
     }
 
@@ -184,12 +187,16 @@ impl SessionLsp {
             // right after `Starting` still finds the edit marked (Node does both in one synchronous step).
             let mut tracker = self.tracker.lock_unpoisoned();
             // Node checks and acquires when the mutation is published; a queued one must not start a server after
-            // code intelligence was turned off.
-            if !self.enabled() {
+            // code intelligence was turned off, so the pool reads the switch under the lock `stop_all` takes.
+            let Some(acquired) = self
+                .shared
+                .pool
+                .acquire_when(&found.server, &self.key, || self.enabled())
+            else {
                 tracker.remove_up_to(&mutation.path, ordinal);
                 return Ok(());
-            }
-            match self.shared.pool.acquire(&found.server, &self.key) {
+            };
+            match acquired {
                 // A failed server never publishes; keeping the edit would only report "pending" for the carry rounds.
                 Acquired::Failed(_) => {
                     tracker.remove_up_to(&mutation.path, ordinal);

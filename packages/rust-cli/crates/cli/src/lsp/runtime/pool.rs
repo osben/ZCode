@@ -304,9 +304,36 @@ impl Pool {
             .retain(|(known, _)| *known != id);
     }
 
-    /// Node `acquire`: never waits for a start.
-    pub(crate) fn acquire(&self, server: &Arc<ResolvedLspServer>, key: &ServerKey) -> Acquired {
+    /// Node `acquire` behind the caller's enabled check: never waits for a start, and `None` when `enabled` reads off.
+    /// The check runs under the entries lock that `stop_all` takes, and the switch is written before `stop_all`, so
+    /// a start either happens before `stop_all` (which then stops it) or sees the switch off (Node checks and acquires
+    /// in one synchronous step).
+    pub(crate) fn acquire_when(
+        &self,
+        server: &Arc<ResolvedLspServer>,
+        key: &ServerKey,
+        enabled: impl FnOnce() -> bool,
+    ) -> Option<Acquired> {
         let mut entries = self.0.entries.lock_unpoisoned();
+        if !enabled() {
+            return None;
+        }
+        Some(self.acquire_locked(&mut entries, server, key))
+    }
+
+    /// Node `acquire` with nothing gating it.
+    #[cfg(test)]
+    pub(crate) fn acquire(&self, server: &Arc<ResolvedLspServer>, key: &ServerKey) -> Acquired {
+        self.acquire_when(server, key, || true)
+            .expect("an open gate always acquires")
+    }
+
+    fn acquire_locked(
+        &self,
+        entries: &mut HashMap<PoolKey, Entry>,
+        server: &Arc<ResolvedLspServer>,
+        key: &ServerKey,
+    ) -> Acquired {
         let pool_key = (server.id.clone(), key.clone());
         let entry = entries.entry(pool_key.clone()).or_insert_with(|| Entry {
             server: Arc::clone(server),
@@ -334,7 +361,7 @@ impl Pool {
                 .clone()
                 .map_or(Acquired::Starting, Acquired::Ready),
             State::Starting => Acquired::Starting,
-            State::Stopped => self.start_fresh(&mut entries, &pool_key),
+            State::Stopped => self.start_fresh(entries, &pool_key),
             State::NotInstalled => {
                 if entry
                     .not_installed_at
@@ -342,13 +369,13 @@ impl Pool {
                 {
                     return Acquired::Failed(entry.failed(&server.id));
                 }
-                self.start_fresh(&mut entries, &pool_key)
+                self.start_fresh(entries, &pool_key)
             }
             State::Crashed => {
                 if server.restart_on_crash && entry.restarts < server.max_restarts {
                     entry.restarts += 1;
                     tracing::info!(event = "adapters.lsp.restart", server_id = %server.id, restarts = entry.restarts, "LSP server restarting");
-                    return self.start_fresh(&mut entries, &pool_key);
+                    return self.start_fresh(entries, &pool_key);
                 }
                 entry.state = State::Unavailable;
                 entry.unavailable_at = server.restart_on_crash.then_some(now);
@@ -370,7 +397,7 @@ impl Pool {
                 }
                 entry.unavailable_at = None;
                 tracing::info!(event = "adapters.lsp.retry", server_id = %server.id, restarts = entry.restarts, "LSP server retrying after unavailable window");
-                self.start_fresh(&mut entries, &pool_key)
+                self.start_fresh(entries, &pool_key)
             }
         }
     }

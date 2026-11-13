@@ -101,8 +101,9 @@ impl Host {
     async fn current(&self) -> LspPreferences {
         self.loaded
             .get_or_init(|| async {
-                let loaded = self.preferences.load().await;
-                *self.shared.preferences.lock_unpoisoned() = loaded;
+                self.preferences
+                    .load_and(|loaded| self.remember(loaded))
+                    .await;
             })
             .await;
         self.shared.preferences.lock_unpoisoned().clone()
@@ -302,15 +303,20 @@ impl Disk for FilesDisk {
 #[async_trait]
 impl LanguageServers for Host {
     async fn preferences(&self) -> Result<LspPreferences, String> {
-        let prefs = self.preferences.load().await;
-        self.remember(&prefs);
-        Ok(prefs)
+        // Remembered inside the store's turn: a read that started before a write cannot overwrite what it published.
+        Ok(self
+            .preferences
+            .load_and(|prefs| self.remember(prefs))
+            .await)
     }
 
     /// Node `applyPreferences`: turning code intelligence off stops every server.
     async fn set_preferences(&self, patch: LspPreferencesPatch) -> Result<LspPreferences, String> {
-        let prefs = self.preferences.update(&patch).await?;
-        self.remember(&prefs);
+        // Remembered before `stop_all`: the pool reads the switch under the lock `stop_all` takes.
+        let prefs = self
+            .preferences
+            .update_and(&patch, |prefs| self.remember(prefs))
+            .await?;
         if !prefs.enabled {
             self.shared.pool.stop_all().await;
         }
@@ -318,8 +324,10 @@ impl LanguageServers for Host {
     }
 
     async fn status(&self, workspace: &LspWorkspace) -> Result<LspStatus, String> {
-        let prefs = self.preferences.load().await;
-        self.remember(&prefs);
+        let prefs = self
+            .preferences
+            .load_and(|prefs| self.remember(prefs))
+            .await;
         // The pool key (identity and root), never the path alone.
         let key = ServerKey {
             identity: workspace
