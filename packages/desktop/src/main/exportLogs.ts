@@ -17,6 +17,7 @@ import { dirname, join, posix } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
+import { CLI_MEMORY_DIAGNOSTIC_DIRECTORY, CLI_MEMORY_FILE_PATTERN } from "@zcode/shared";
 
 import {
   createFeedbackDiagnosticArchive,
@@ -1264,6 +1265,12 @@ export async function createLogArchiveArtifacts(
   );
 
   const zcodeCliDir = getZCodeCliDir();
+  await collectLogArchiveFilesByName(
+    join(zcodeCliDir, CLI_MEMORY_DIAGNOSTIC_DIRECTORY),
+    posix.join(".zcode", "cli", CLI_MEMORY_DIAGNOSTIC_DIRECTORY),
+    (name) => CLI_MEMORY_FILE_PATTERN.test(name),
+    files,
+  );
   // Troubleshooting agent CLI also requires its runtime configuration and model I/O traces.
   // config.json is the active configuration and rollout contains model-I/O call traces; neither is under ~/.zcode/cli/log,
   // so collect them separately to reconstruct the full situation.
@@ -1435,6 +1442,12 @@ export async function createFeedbackLogArchiveFromExportLogs(
 ): Promise<{ path: string; size: number }> {
   return createFeedbackDiagnosticArchive({
     sources: [
+      {
+        directory: join(getZCodeCliDir(), CLI_MEMORY_DIAGNOSTIC_DIRECTORY),
+        archivePrefix: ".zcode/cli/memory-diagnostics",
+        contentPolicy: "cli-memory",
+        onlyCurrentDay: false,
+      },
       { directory: join(sourceDir, "logs"), archivePrefix: "logs" },
       { directory: getZCodeCliLogDir(), archivePrefix: ".zcode/cli/log" },
       {

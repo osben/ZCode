@@ -206,7 +206,8 @@ export const Reasoning = memo(
     return (
       <ReasoningContext.Provider value={contextValue}>
         <Collapsible
-          className={cn("not-prose flex flex-col", className)}
+          // 分组预览把思考块放进 flex 摘要，默认 min-width:auto 会撑开视口，令溢出测量失效。
+          className={cn("not-prose min-w-0 flex flex-col", className)}
           onOpenChange={handleOpenChange}
           open={isOpen}
           {...props}
@@ -282,18 +283,21 @@ export const ReasoningTrigger = memo(
     const streamingSummaryRef = useRef<HTMLSpanElement | null>(null);
     const streamingSummaryTextRef = useRef<HTMLSpanElement | null>(null);
     const [isStreamingSummaryOverflowing, setIsStreamingSummaryOverflowing] = useState(false);
+    const streamingSummaryText = streamingSummary?.text;
 
     useEffect(() => {
       const viewport = streamingSummaryRef.current;
-      if (!viewport || !streamingSummary) {
+      if (!viewport || !streamingSummaryText) {
         return;
       }
 
       const syncSummaryViewport = () => {
-        setIsStreamingSummaryOverflowing((current) => {
-          const next = isReasoningSummaryOverflowing(viewport);
-          return current === next ? current : next;
-        });
+        const next = isReasoningSummaryOverflowing(viewport);
+        // #185: during consecutive synchronous updates a functional updater can leave a pending update even when it
+        // returns the old value. Dispatch only when the overflow mask actually flips.
+        if (next !== isStreamingSummaryOverflowing) {
+          setIsStreamingSummaryOverflowing(next);
+        }
         // When a streaming summary exceeds available width, ordinary overflow-hidden keeps showing the old prefix
         // and clips the latest token on the right. After content grows, move the single-line viewport to the end so old content shifts left.
         scrollReasoningSummaryToEnd(viewport);
@@ -309,7 +313,7 @@ export const ReasoningTrigger = memo(
         resizeObserver.observe(streamingSummaryTextRef.current);
       }
       return () => resizeObserver.disconnect();
-    }, [streamingSummary?.text]);
+    }, [streamingSummaryText, isStreamingSummaryOverflowing]);
 
     // 末尾思考完成后，未闭合的收起组头仍需扫光；保留真实完成文案和耗时。
     const thoughtLabelClassName = cn(

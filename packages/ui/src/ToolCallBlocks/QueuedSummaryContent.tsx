@@ -48,16 +48,6 @@ interface SummaryContentSnapshot {
   trailingText?: ReactNode;
 }
 
-export function shouldRefreshQueuedSummaryContent(
-  current: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
-  next: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
-) {
-  return (
-    current.key === next.key &&
-    (current.trailingText !== next.trailingText || current.refreshVersion !== next.refreshVersion)
-  );
-}
-
 function usePrefersReducedMotion() {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
@@ -111,22 +101,37 @@ export function QueuedSummaryContent({
     disableAnimation,
     reducedMotion,
   });
-  const createSnapshot = (): SummaryContentSnapshot => ({
-    key: contentKey,
-    refreshVersion: contentRefreshVersion,
-    primaryText,
-    secondaryText,
-    trailingText,
-  });
-  const [displayedContent, setDisplayedContent] = useState(createSnapshot);
-  const displayedContentRef = useRef(displayedContent);
+  if (!shouldAnimate) {
+    // #185：禁用动画时逐 token 在 effect 里复制 state，会在连续同步提交中积累嵌套更新。
+    // 静态路径直接显示输入；卸载播放 owner 同时释放旧队列，重新启用从当前内容开始。
+    return (
+      <>
+        {primaryText}
+        {secondaryText}
+        {trailingText}
+      </>
+    );
+  }
+
+  return (
+    <AnimatedSummaryContent
+      content={{
+        key: contentKey,
+        refreshVersion: contentRefreshVersion,
+        primaryText,
+        secondaryText,
+        trailingText,
+      }}
+    />
+  );
+}
+
+function AnimatedSummaryContent({ content }: { content: SummaryContentSnapshot }) {
+  const [displayedContent, setDisplayedContent] = useState(content);
+  const displayedContentRef = useRef(content);
   const queuedContentRef = useRef<SummaryContentSnapshot[]>([]);
   const animationTimerRef = useRef<number | null>(null);
   const isAnimatingRef = useRef(false);
-
-  useEffect(() => {
-    displayedContentRef.current = displayedContent;
-  }, [displayedContent]);
 
   useEffect(() => {
     const clearAnimationTimer = () => {
@@ -179,24 +184,12 @@ export function QueuedSummaryContent({
         promote(nextQueued);
       }, SUMMARY_ROLL_TOTAL_MS);
     };
-    const nextContent = createSnapshot();
-
-    if (!shouldAnimate) {
-      clearAnimationTimer();
-      isAnimatingRef.current = false;
-      queuedContentRef.current = [];
-      displayedContentRef.current = nextContent;
-      setDisplayedContent(nextContent);
-      return;
-    }
-
+    const nextContent = content;
     if (displayedContentRef.current.key === nextContent.key) {
-      // Do not replay the full summary for diffs in the same Changes child or updates to the same streaming Assistant message;
-      // the former updates trailing counts, and the latter refreshes body text in place using an explicit version.
-      if (shouldRefreshQueuedSummaryContent(displayedContentRef.current, nextContent)) {
-        displayedContentRef.current = nextContent;
-        setDisplayedContent(nextContent);
-      }
+      // Body text and counts of the same summary derive straight from the input, so no setState here; the outer group
+      // header also updates per token. Only keep the last displayed snapshot after commit, so the current item's latest
+      // content still freezes when the next item queues.
+      displayedContentRef.current = nextContent;
       return;
     }
 
@@ -211,7 +204,7 @@ export function QueuedSummaryContent({
     }
 
     promote(nextContent);
-  }, [contentKey, contentRefreshVersion, shouldAnimate, trailingText]);
+  }, [content]);
 
   useEffect(() => {
     return () => {
@@ -221,34 +214,28 @@ export function QueuedSummaryContent({
     };
   }, []);
 
-  if (!shouldAnimate) {
-    return (
-      <>
-        {primaryText}
-        {secondaryText}
-        {trailingText}
-      </>
-    );
-  }
+  // state 只推进播放项；ref 保存该项的最新已提交输入，不在 render 中写入。
+  const renderedContent =
+    content.key === displayedContent.key ? content : displayedContentRef.current;
 
   return (
     <span className="relative inline-flex min-w-0 items-center gap-2 overflow-hidden align-middle">
       <AnimatePresence initial={false} mode="popLayout">
         <motion.span
-          key={displayedContent.key}
+          key={renderedContent.key}
           className="inline-flex min-w-0 items-center gap-2"
           initial={{ y: "0.8em", opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: "-0.8em", opacity: 0 }}
           transition={SUMMARY_ROLL_TRANSITION}
         >
-          {displayedContent.primaryText}
-          {displayedContent.secondaryText}
+          {renderedContent.primaryText}
+          {renderedContent.secondaryText}
         </motion.span>
       </AnimatePresence>
       {/* Reason for the fix: The Changes diff count must come from the same queued snapshot as the file summary,
           but the number should keep animating independently with FlipMetricValue rather than scrolling vertically with the whole summary. */}
-      {displayedContent.trailingText}
+      {renderedContent.trailingText}
     </span>
   );
 }

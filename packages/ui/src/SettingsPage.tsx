@@ -471,6 +471,8 @@ export function SettingsPage({
   const setTerminalWebglEnabled = useZCodeStore((state) => state.setTerminalWebglEnabled);
   const codePreviewSettings = useZCodeStore((state) => state.codePreviewSettings);
   const setCodePreviewSettings = useZCodeStore((state) => state.setCodePreviewSettings);
+  const fontSmoothingEnabled = useZCodeStore((state) => state.fontSmoothingEnabled);
+  const setFontSmoothingEnabled = useZCodeStore((state) => state.setFontSmoothingEnabled);
   const uiFontSizePx = useZCodeStore((state) => state.uiFontSizePx);
   const setUiFontSizePx = useZCodeStore((state) => state.setUiFontSizePx);
   const uiFontFamily = useZCodeStore((state) => state.uiFontFamily);
@@ -1733,6 +1735,7 @@ export function SettingsPage({
                     windowsHost: hostPlatform === "win32",
                     tray: Boolean(isWindowsDesktop || isLinuxDesktop),
                     notWindows: !isWindowsDesktop,
+                    macDesktop: Boolean(isDesktop && isMacDesktop),
                     computerUse: resolveComputerUseAvailability({
                       isDesktop: Boolean(isDesktop),
                       isMacDesktop: Boolean(isMacDesktop),
@@ -2241,6 +2244,9 @@ export function SettingsPage({
                             )
                           ) : activeSection === "appearance" ? (
                             <AppearanceSectionContent
+                              isMacDesktop={Boolean(isDesktop && isMacDesktop)}
+                              fontSmoothingEnabled={fontSmoothingEnabled}
+                              setFontSmoothingEnabled={setFontSmoothingEnabled}
                               codePreviewSettings={codePreviewSettings}
                               setCodePreviewSettings={handleCodePreviewSettingsChange}
                               theme={theme}

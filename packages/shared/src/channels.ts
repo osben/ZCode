@@ -75,6 +75,7 @@ import type {
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
+  MicrophoneAccessResetResult,
   MicrophoneAccessResult,
   MicrophoneSettingsTarget,
   CaptureBrowserGuestPageRequest,
@@ -269,6 +270,8 @@ export const PlatformChannels = {
   PrintToPdf: "zcode:print-to-pdf",
   /** Renderer → Main: check and request the system microphone permission on demand */
   MicrophoneAccess: "zcode:microphone-access",
+  /** Renderer → Main: on macOS, reset this app's microphone authorization record and ask again */
+  ResetMicrophoneAccess: "zcode:reset-microphone-access",
   /** Renderer → Main: open the system microphone permission / sound input settings page */
   OpenMicrophoneSettings: "zcode:open-microphone-settings",
   /** Renderer → Main: capture the current viewport of the built-in browser guest as PNG in main (capturePage on the renderer side crashes) */
@@ -932,6 +935,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.MicrophoneAccess]: {
     request: void;
     response: MicrophoneAccessResult;
+  };
+  [PlatformChannels.ResetMicrophoneAccess]: {
+    request: void;
+    response: MicrophoneAccessResetResult;
   };
   [PlatformChannels.OpenMicrophoneSettings]: {
     request: MicrophoneSettingsTarget;

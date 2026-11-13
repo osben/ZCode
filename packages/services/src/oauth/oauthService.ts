@@ -816,10 +816,13 @@ export class OAuthService implements IOAuthService {
       // The BigModel CLI callback failure page interrupts the existing Desktop deep-link callback experience.
       // Host still polls the flow, but browser callbacks return to the official-site relay page and are forwarded to zcode://oauth/callback.
       authorizeUrl.searchParams.set("redirect", buildDesktopOAuthRedirectUriFromEnv(this.env));
-    } else if (provider === ZAI_PROVIDER_ID) {
-      // The Z.AI backend init may still return a provider-specific callback, causing redirect behavior to differ from BigModel.
-      // Desktop rewrites it to the official-site relay page, which forwards to zcode://oauth/callback.
-      authorizeUrl.searchParams.set("redirect_uri", buildDesktopOAuthRedirectUriFromEnv(this.env));
+    } else if (isZaiOAuthProvider(provider)) {
+      // The China channel once skipped the relay rewrite; pass the channel explicitly so the official site never sends a
+      // China authorization code to the overseas callback. Only the callback changes; the authorize host, client_id and
+      // state stay with the server.
+      const redirectUri = new URL(buildDesktopOAuthRedirectUriFromEnv(this.env));
+      if (provider === ZAI_CN_PROVIDER_ID) redirectUri.searchParams.set("provider", provider);
+      authorizeUrl.searchParams.set("redirect_uri", redirectUri.toString());
     }
     const state = authorizeUrl.searchParams.get("state")?.trim();
     const remainingLifetimeMs = expiresAt - this.now();
@@ -1139,6 +1142,27 @@ export class OAuthService implements IOAuthService {
         provider: pending.provider,
         attribution,
       };
+    }
+
+    if (pending.provider === ZAI_CN_PROVIDER_ID && pending.polling) {
+      // 官网已把国内授权码交给后端；客户端再次兑换会争抢一次性 code。
+      // 唤起只补归因，登录仍由同一 flow 的 polling 提交；旧回调不能写入新会话。
+      const generation = this.oauthFlowStartGeneration;
+      return this.runSessionMutation(async () => {
+        const completed = this.recentlyCompletedPollingState;
+        const sameFlow =
+          this.oauthFlowStartGeneration === generation &&
+          (this.pendingState === pending ||
+            (!this.pendingState &&
+              completed?.state === pending.state &&
+              completed.generation === generation &&
+              this.now() < completed.expiresAt));
+        if (sameFlow && attribution) {
+          const save = () => this.repo.saveLoginAttribution(attribution);
+          await (pending.credentialGuard ? pending.credentialGuard(save) : save());
+        }
+        return null;
+      });
     }
 
     const adapter = this.getAdapter(pending.provider);

@@ -1,7 +1,6 @@
 # Upstream 3.18.1 backport (reconstructed from the binary)
 
-Status: in progress (2026-11-11). Lands as extra commits in the upstream 3.18.0 sync PR #402
-(`sync/upstream-3.18.0`), on top of the 3.18.0 merge.
+Status: superseded (2026-11-13). Upstream published the 3.18.1 source (`c5904686e`); the reconstruction was reverted and replaced by the upstream files in `specs/upstream-sync-3.18.1.md`. Kept as history.
 
 ## Why reconstructed
 

@@ -30,6 +30,22 @@ describe("Composer project picker", () => {
     const menu = $('[data-testid="composer-project-menu"]');
     await menu.waitForDisplayed();
     expect(await menu.$('input[placeholder="Search projects or devices"]').isExisting()).toBe(true);
+    // Native drag hit-testing ignores the DOM hierarchy while a CDP click bypasses it, so also check the menu's no-drag.
+    expect(
+      await browser.execute(() =>
+        getComputedStyle(
+          document.querySelector('[data-testid="composer-project-menu"]')!,
+        ).getPropertyValue("-webkit-app-region"),
+      ),
+    ).toBe("no-drag");
+    await menu.$("input").click();
+    expect(
+      await browser.execute(
+        () =>
+          document.activeElement ===
+          document.querySelector('[data-testid="composer-project-menu"] input'),
+      ),
+    ).toBe(true);
     const menuNames = () =>
       browser.execute(() =>
         [
