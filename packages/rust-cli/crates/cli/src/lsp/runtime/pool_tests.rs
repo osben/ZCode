@@ -9,7 +9,9 @@ use serde_json::{Map, Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tokio::sync::{mpsc, watch};
 
-use super::{Acquired, Event, Limits, Pool, ServerKey, State, decode_stderr, merge_env};
+use super::{
+    Acquired, Event, Limits, Pool, ServerKey, State, decode_stderr, finish_stderr, merge_env,
+};
 use crate::lsp::runtime::process::{Launch, LaunchError, Launched, Launcher, Process};
 use crate::lsp::runtime::rpc::{Decoder, encode};
 use crate::lsp::runtime::test_server;
@@ -504,4 +506,8 @@ fn stderr_keeps_a_character_split_between_reads() {
     assert!(pending.is_empty());
     // Invalid bytes are replaced, and only they are.
     assert_eq!(decode_stderr(&mut pending, b"x\xffy"), "x\u{fffd}y");
+    // An incomplete character at the end is one replacement character.
+    assert_eq!(decode_stderr(&mut pending, b"a\xc3"), "a");
+    assert_eq!(finish_stderr(&pending), "\u{fffd}");
+    assert_eq!(finish_stderr(&[]), "");
 }

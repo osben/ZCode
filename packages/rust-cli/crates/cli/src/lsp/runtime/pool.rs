@@ -728,27 +728,28 @@ async fn read_stderr(mut stderr: Box<dyn AsyncRead + Send + Unpin>, tail: Arc<Mu
     let mut buffer = [0_u8; 4_096];
     let mut pending = Vec::new();
     loop {
-        match stderr.read(&mut buffer).await {
-            Ok(0) | Err(_) => return,
-            Ok(read) => {
-                let text = decode_stderr(&mut pending, &buffer[..read]);
-                let mut tail = tail.lock_unpoisoned();
-                tail.push_str(&text);
-                let extra = tail.chars().count().saturating_sub(STDERR_TAIL_MAX_CHARS);
-                if extra > 0 {
-                    let cut = tail
-                        .char_indices()
-                        .nth(extra)
-                        .map_or(tail.len(), |(at, _)| at);
-                    tail.drain(..cut);
-                }
-            }
+        let (text, ended) = match stderr.read(&mut buffer).await {
+            Ok(0) | Err(_) => (finish_stderr(&pending), true),
+            Ok(read) => (decode_stderr(&mut pending, &buffer[..read]), false),
+        };
+        let mut tail = tail.lock_unpoisoned();
+        tail.push_str(&text);
+        let extra = tail.chars().count().saturating_sub(STDERR_TAIL_MAX_CHARS);
+        if extra > 0 {
+            let cut = tail
+                .char_indices()
+                .nth(extra)
+                .map_or(tail.len(), |(at, _)| at);
+            tail.drain(..cut);
+        }
+        if ended {
+            return;
         }
     }
 }
 
-/// Decodes one stderr read; an incomplete character at its end waits in `pending` for the next read, as Node's
-/// incremental stream decoder does, instead of becoming two replacement characters.
+/// Decodes one stderr read; an incomplete character at its end waits in `pending` for the next read. Node decodes each
+/// chunk alone, but its chunk boundaries differ from these reads anyway, so a character split only here stays whole.
 fn decode_stderr(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     pending.extend_from_slice(chunk);
     let mut text = String::new();
@@ -779,6 +780,15 @@ fn decode_stderr(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     let keep = rest.len();
     pending.drain(..pending.len() - keep);
     text
+}
+
+/// The end of stderr: an incomplete character left over decodes as one replacement character, as Node's `toString`.
+fn finish_stderr(pending: &[u8]) -> String {
+    if pending.is_empty() {
+        String::new()
+    } else {
+        char::REPLACEMENT_CHARACTER.to_string()
+    }
 }
 
 /// The driver's reports into the pool; each applies only while the entry still holds this process.
