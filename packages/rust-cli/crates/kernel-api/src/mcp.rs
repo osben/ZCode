@@ -28,7 +28,8 @@ pub enum McpTransportConfig {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         env: BTreeMap<String, String>,
         /// 进程的工作目录（Node 配置的 `cwd`）：相对路径相对工作区根，绝对路径原样；None 是工作区根
-        /// （docs/specs/rust-cli/ext.md §3.1、§3.2）。
+        /// （docs/specs/rust-cli/ext.md §3.1、§3.2）。Fork: a project server on the main env arrives already resolved
+        /// against its config file's base directory (Node `normalizeProjectMcpServer`, cli `resolve_project_cwds`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
     },

@@ -120,6 +120,11 @@ pub struct Live {
     indexed: bool,
     /// Fork: the last App input's `admissionSeq` (Node `CommandInbox`, per session from 1, in memory).
     admissions: std::sync::atomic::AtomicU64,
+    /// Fork: workspace trust banner reads. A read takes a ticket before it touches the stores, and the pump applies
+    /// a result only if no later read was applied first, so an input's read that started before a trust decision
+    /// cannot overwrite the decision's banners.
+    admission_tickets: std::sync::atomic::AtomicU64,
+    admission_applied: std::sync::atomic::AtomicU64,
     /// Fork: set while the store may still hold the session as a draft (specs/fork-agent-runtime-selection.md
     /// "Draft prewarm in Rust mode"). The store owns that fact; a draft never becomes one again, so the probe is
     /// dropped the first time the store says the session has its row.
@@ -192,6 +197,8 @@ impl Live {
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
             admissions: std::sync::atomic::AtomicU64::new(0),
+            admission_tickets: std::sync::atomic::AtomicU64::new(0),
+            admission_applied: std::sync::atomic::AtomicU64::new(0),
             draft_probe: Mutex::new(None),
             incognito: view
                 .meta
@@ -566,6 +573,33 @@ impl Live {
         let outgoing = {
             let mut state = self.state();
             let delta = state.projection.set_followup(followup);
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: a ticket for a banner read, taken before the read (see [`Self::set_admission`]).
+    pub fn admission_ticket(&self) -> u64 {
+        self.admission_tickets
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
+    }
+
+    /// Fork: the workspace trust banners (see [`crate::projection::Projection::set_admission`]) read under `ticket`.
+    /// In the session's pump task, like every other frame of the session; a result older than one already applied
+    /// is dropped.
+    pub async fn set_admission(&self, admission: crate::fork::Admission, ticket: u64) {
+        use std::sync::atomic::Ordering;
+        if ticket < self.admission_applied.load(Ordering::Relaxed) {
+            return;
+        }
+        self.admission_applied.store(ticket, Ordering::Relaxed);
+        let outgoing = {
+            let mut state = self.state();
+            let Some(delta) = state.projection.set_admission(admission) else {
+                return;
+            };
             state.log.record(vec![delta]);
             self.collect(&mut state)
         };

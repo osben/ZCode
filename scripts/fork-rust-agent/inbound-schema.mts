@@ -11,6 +11,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import {
+  zcodeMcpListParamsSchema,
+  zcodeMcpReadResourceParamsSchema,
   zcodeAutomationCheckTaskBindingResultSchema,
   zcodeAutomationCreateResultSchema,
   zcodeAutomationDeleteResultSchema,
@@ -39,6 +41,8 @@ import {
   zcodeTopicResourceReadResultSchema,
   zcodeWorkspaceCancelGenerateTextParamsSchema,
   zcodeWorkspaceGenerateTextParamsSchema,
+  zcodeWorkspaceHookTrustGrantParamsSchema,
+  zcodeWorkspaceMcpTrustParamsSchema,
   zcodeWorkspaceReadPresentationParamsSchema,
   zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
   zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,
@@ -63,6 +67,8 @@ import {
 
 // The methods whose params zcode-rs validates; a method not listed here is not checked.
 const METHODS = {
+  "mcp/list": zcodeMcpListParamsSchema,
+  "mcp/readResource": zcodeMcpReadResourceParamsSchema,
   // Fork: the Host's attach acknowledgement, a notification (specs/fork-rust-credential-cipher.md F1).
   "process/hostAttached": zcodeProcessHostAttachedParamsSchema,
   // Answered with Node's no-LSP-host error after this check (specs/fork-rust-agent-parity.md, "Language servers").
@@ -93,6 +99,8 @@ const METHODS = {
   "workspace/cancelGenerateText": zcodeWorkspaceCancelGenerateTextParamsSchema,
   // The `prompt`-or-`messages` refine is not representable; zcode-rs checks it by hand (fork/workspace_model.rs).
   "workspace/generateText": zcodeWorkspaceGenerateTextParamsSchema,
+  "workspace/hooks/trustGrant": zcodeWorkspaceHookTrustGrantParamsSchema,
+  "workspace/mcp/trust": zcodeWorkspaceMcpTrustParamsSchema,
   "workspace/readPresentation": zcodeWorkspaceReadPresentationParamsSchema,
   "workspace/updateDynamicWorkflowPolicy": zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
   "workspace/updateInteractionPreferences": zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,

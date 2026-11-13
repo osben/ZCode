@@ -23,3 +23,5 @@ mod subagents;
 mod usage;
 mod workspace_model;
 pub(crate) use workspace_model::Operations as WorkspaceOperations;
+pub(crate) mod workspace_trust;
+pub use workspace_trust::{Admission, WorkspaceAdmin, WorkspaceTarget};

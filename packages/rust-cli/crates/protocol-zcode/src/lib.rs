@@ -53,6 +53,7 @@ pub use fork::node_helper::{
     NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
     Timing as NodeHelperTiming,
 };
+pub use fork::{Admission, WorkspaceAdmin, WorkspaceTarget};
 pub use headers::HostHeaders;
 pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;

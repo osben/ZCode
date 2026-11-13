@@ -98,9 +98,20 @@ struct Turn {
     rejected: Vec<String>,
 }
 
+/// Fork: the workspace trust banners (`fork/workspace_trust.rs`): the last published payloads, so a snapshot shows
+/// what the deltas showed.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Banners {
+    mcp: Option<Value>,
+    /// Node publishes the MCP banner only once something was pending; after that a clear is published too.
+    mcp_published: bool,
+    hook: Option<Value>,
+}
+
 /// 一个会话的投影。
 #[derive(Debug, Clone)]
 pub struct Projection {
+    banners: Banners,
     session: String,
     rows: Vec<Map<String, Value>>,
     index: HashMap<String, usize>,
@@ -258,6 +269,7 @@ impl Projection {
         projection.auto_drain = self.auto_drain;
         projection.pause_reason = self.pause_reason;
         projection.plan_transition.clone_from(&self.plan_transition);
+        projection.banners.clone_from(&self.banners);
         // Fork (B2): the runs going now were not spawned in this projection's sight, so they get no Stop.
         projection.subagents.recovering = true;
         projection
@@ -270,6 +282,7 @@ impl Projection {
         first_row: u64,
     ) -> Self {
         let mut projection = Self {
+            banners: Banners::default(),
             session: view.meta.id.as_str().to_owned(),
             rows: Vec::new(),
             index: HashMap::new(),
@@ -484,6 +497,37 @@ impl Projection {
             "config": self.config(),
             "inputRouting": self.input_routing(),
         }})
+    }
+
+    /// Fork: the workspace trust banners now (Node `onWorkspaceMcpAdmissionUpdated` and
+    /// `onWorkspaceHookAdmissionUpdated`): a `state.updated` with the banners that changed, `None` when none did.
+    pub fn set_admission(&mut self, admission: crate::fork::Admission) -> Option<Value> {
+        let mut patch = Map::new();
+        if let Some(payload) = admission.mcp {
+            let pending = payload["pendingCount"].as_u64().unwrap_or(0);
+            if self.banners.mcp_published || pending > 0 {
+                self.banners.mcp_published = true;
+                let next = (pending > 0).then_some(payload);
+                if next != self.banners.mcp {
+                    patch.insert(
+                        "workspaceMcpAdmission".into(),
+                        next.clone().unwrap_or(Value::Null),
+                    );
+                    self.banners.mcp = next;
+                }
+            }
+        }
+        let hook = admission
+            .hook
+            .filter(|payload| payload["pendingCount"].as_u64().unwrap_or(0) > 0);
+        if hook != self.banners.hook {
+            patch.insert(
+                "workspaceHookAdmission".into(),
+                hook.clone().unwrap_or(Value::Null),
+            );
+            self.banners.hook = hook;
+        }
+        (!patch.is_empty()).then(|| json!({"op": "state.updated", "patch": patch}))
     }
 
     /// Fork: the kernel's real admission of a remembered input (its `SubmitWith` answered `Queued` or started it), which
@@ -1446,7 +1490,7 @@ impl Projection {
     /// 快照（`conversationSnapshotSchema`）：`seq` 是主题的序号，`epoch` 是主题的代际标识。
     pub fn snapshot(&self, seq: u64, epoch: &str) -> Value {
         let start = self.rows.len().saturating_sub(WINDOW_ROWS);
-        json!({
+        let mut snapshot = json!({
             "protocolVersion": 1,
             "sessionId": self.session,
             "logEpoch": epoch,
@@ -1466,13 +1510,18 @@ impl Projection {
             "subagents": self.subagents.manifest.to_value(),
             "goal": self.goal_json(),
             "plan": null,
-            "workspaceHookAdmission": null,
+            "workspaceHookAdmission": self.banners.hook,
             "rows": {
                 "window": &self.rows[start..],
                 "totalCount": self.rows.len(),
                 "firstRowId": self.rows.first().map(|row| row["rowId"].clone()),
             },
-        })
+        });
+        // Fork: optional in the schema; absent and null both mean no MCP banner.
+        if let Some(mcp) = &self.banners.mcp {
+            snapshot["workspaceMcpAdmission"] = mcp.clone();
+        }
+        snapshot
     }
 }
 

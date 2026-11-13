@@ -55,6 +55,23 @@ pub(crate) async fn dispatch(
         "v4/conversation/backgroundBashOutput" => {
             super::background_work::bash_output(server, &params).await
         }
+        // Fork: workspace trust from the App (fork/workspace_trust.rs); not ported without the entry point's admin.
+        "mcp/list" => {
+            return super::workspace_trust::mcp_list(server, &params)
+                .await
+                .map(|r| r.map(Reply::new));
+        }
+        "workspace/mcp/trust" => {
+            return super::workspace_trust::mcp_trust(server, &params)
+                .await
+                .map(|r| r.map(Reply::new));
+        }
+        "workspace/hooks/trustGrant" => {
+            return super::workspace_trust::hook_trust_grant(server, &params)
+                .await
+                .map(|r| r.map(Reply::new));
+        }
+        "mcp/readResource" => super::workspace_trust::read_resource(server, &params).await,
         // Fork: workspace model calls (Node `workspace-generate-text.ts`); unported without the entry's model port.
         "workspace/generateText"
         | "workspace/cancelGenerateText"

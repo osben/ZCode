@@ -6,13 +6,15 @@
 //! 候选目录在同一次组装里从本机存储的插件清单得出（`plugins`，config.md §2.1）。
 
 mod files;
+pub(crate) mod mcp_trust;
+mod mcp_trust_display;
 pub(crate) mod merge;
 mod plugins;
 mod storage;
 pub(crate) mod trust;
 
 use rust_cli_ext::PluginSources;
-use rust_cli_ext::mcp::McpServer;
+use rust_cli_ext::mcp::{McpScope, McpServer};
 use rust_cli_hooks::node_config::NodeHooks;
 use rust_cli_hooks::{HookSource, HooksConfig};
 use rust_cli_kernel_api::env::WorkspaceRef;
@@ -290,6 +292,32 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         disabled: mcp_disabled,
         origins: mcp_origins,
     } = merge::mcp_layers(&layers, &mut warnings);
+    // Fork: project MCP servers connect only with a workspace trust grant for their current declaration
+    // (specs/fork-rust-agent-parity.md, "Workspace MCP trust"), like Node's guarded session MCP port.
+    let trust = mcp_trust::Inspection::read(
+        inputs.files,
+        inputs.workspace,
+        mcp_trust::Target::new(inputs.workspace.root.as_str(), None),
+        (user_object, projects),
+        inputs.paths,
+    )
+    .await;
+    let (admitted, granted) = (trust.admitted(), trust.granted());
+    let untrusted = |server: &McpServer, allowed: &std::collections::BTreeSet<String>| {
+        server.scope == McpScope::Project && !allowed.contains(&server.name)
+    };
+    let skipped: Vec<&str> = mcp_servers
+        .iter()
+        .filter(|server| untrusted(server, &admitted))
+        .map(|server| server.name.as_str())
+        .collect();
+    if !skipped.is_empty() {
+        tracing::info!(servers = ?skipped, "workspace MCP servers wait for a trust grant");
+    }
+    let mut mcp_servers = mcp_servers;
+    mcp_servers.retain(|server| !untrusted(server, &admitted));
+    let mut mcp_disabled = mcp_disabled;
+    mcp_disabled.retain(|server| !untrusted(server, &granted));
     let mcp_enabled = merge::mcp_enabled(&layers);
     let locale = merge::locale(&layers, &mut warnings);
     let check_for_update = merge::check_for_update(&layers, &mut warnings);

@@ -164,7 +164,10 @@ fn human(status: &Status, action: Action) -> String {
 }
 
 /// Node `selectGrantEntries`：返回选中的声明在 `entries()` 里的下标。
-fn select(hooks: &WorkspaceHooks, options: &Options) -> Result<Vec<usize>, &'static str> {
+pub(super) fn select(
+    hooks: &WorkspaceHooks,
+    options: &Options,
+) -> Result<Vec<usize>, &'static str> {
     let digests = unique(&options.digests);
     if options.all_current != digests.is_empty() {
         return Err("Specify exactly one of --all-current or --hook-digest.");

@@ -219,7 +219,7 @@ pub(crate) async fn extensions(
     let path = bindings.as_path().to_string_lossy();
     let bindings =
         &crate::assemble::mcp_machines::McpBindings::load(controller, workspace, &path).await;
-    let settings = mcp::settings(
+    let mut settings = mcp::settings(
         primary.files().as_ref(),
         workspace,
         (flags, allowed, prewait),
@@ -242,6 +242,9 @@ pub(crate) async fn extensions(
     };
     // `/mcp enable` 之后它也连在绑定的机器上（R5，remote-exec.md §22.2）。
     bindings.bind(&mut mcp_disabled);
+    // Fork: project stdio servers on the main env run from their file's base directory (Node).
+    config::merge::resolve_project_cwds(&mut settings.servers, &config.mcp_origins);
+    config::merge::resolve_project_cwds(&mut mcp_disabled, &config.mcp_origins);
     extensions.config = ExtConfig {
         mcp_disabled,
         mcp: settings,

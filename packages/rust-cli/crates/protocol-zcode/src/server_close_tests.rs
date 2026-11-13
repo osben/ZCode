@@ -129,6 +129,8 @@ struct TestHandle {
     view: SessionView,
     closes: StdMutex<Vec<EndReason>>,
     log: Log,
+    /// Accept submits instead of answering `Duplicate`.
+    accepts: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait]
@@ -143,6 +145,11 @@ impl HandleOverride for TestHandle {
             _ => "send",
         };
         self.log.lock_unpoisoned().push(entry);
+        if entry == "send" && self.accepts.load(std::sync::atomic::Ordering::Relaxed) {
+            return KernelAck::Accepted {
+                result: rust_cli_kernel_api::session_api::CommandResult::Done,
+            };
+        }
         KernelAck::Duplicate
     }
 
@@ -268,6 +275,7 @@ async fn open_view(
         view,
         closes: StdMutex::new(Vec::new()),
         log: log.clone(),
+        accepts: std::sync::atomic::AtomicBool::new(false),
     });
     let queries = Arc::new(DraftQueries {
         log,
@@ -456,6 +464,102 @@ async fn a_create_with_its_first_input_admits_the_text() {
         .unwrap();
     assert_eq!(ack["status"], "accepted", "{ack}");
     assert_eq!(*queries.inputs.lock_unpoisoned(), vec!["hi".to_owned()]);
+}
+
+/// Banners for [`a_create_with_its_first_input_shows_the_trust_banners`]; counts the reads.
+#[derive(Default)]
+struct BannerAdmin {
+    reads: StdMutex<Vec<String>>,
+    /// Holds each read until the test releases it.
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl crate::fork::workspace_trust::WorkspaceAdmin for BannerAdmin {
+    async fn mcp_list(
+        &self,
+        _target: &crate::fork::workspace_trust::WorkspaceTarget,
+        _servers: Option<&[Value]>,
+        _connect: bool,
+    ) -> Result<Value, String> {
+        Err("unused".to_owned())
+    }
+
+    async fn mcp_trust(
+        &self,
+        _target: &crate::fork::workspace_trust::WorkspaceTarget,
+        _server: &str,
+        _digest: &str,
+        _trusted: bool,
+    ) -> Value {
+        Value::Null
+    }
+
+    async fn hook_trust_grant(
+        &self,
+        _target: &crate::fork::workspace_trust::WorkspaceTarget,
+        _bundle_digest: &str,
+        _declaration_digest: &str,
+    ) -> Value {
+        Value::Null
+    }
+
+    async fn admission(
+        &self,
+        target: &crate::fork::workspace_trust::WorkspaceTarget,
+    ) -> crate::fork::workspace_trust::Admission {
+        self.reads.lock_unpoisoned().push(target.path.clone());
+        self.release.notified().await;
+        crate::fork::workspace_trust::Admission {
+            mcp: None,
+            hook: Some(json!({"pendingCount": 1, "bundleDigest": "b1"})),
+        }
+    }
+}
+
+/// Node refreshes the trust banners on every real user input, a new session's first input included, inside the turn
+/// after the input's acknowledgement: the ack never waits on the banner read.
+#[tokio::test]
+async fn a_create_with_its_first_input_shows_the_trust_banners() {
+    let (_scope, server, handle, _queries) = open(true).await;
+    handle
+        .accepts
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let admin = Arc::new(BannerAdmin::default());
+    server.context.set_workspace_admin(admin.clone());
+    let ack = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::commands::command(&server, create_with_input("c1")),
+    )
+    .await
+    .expect("the ack does not wait on the banner read")
+    .unwrap();
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let bound = std::time::Duration::from_secs(5);
+    tokio::time::timeout(bound, async {
+        while admin.reads.lock_unpoisoned().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the banner read starts after the ack");
+    assert_eq!(*admin.reads.lock_unpoisoned(), vec!["/w".to_owned()]);
+    assert!(live.sink.snapshot()["workspaceHookAdmission"].is_null());
+    admin.release.notify_one();
+    let banner = json!({"pendingCount": 1, "bundleDigest": "b1"});
+    tokio::time::timeout(bound, async {
+        while live.sink.snapshot()["workspaceHookAdmission"] != banner {
+            let (done, wait) = tokio::sync::oneshot::channel();
+            live.run(Box::pin(async move {
+                let _ = done.send(());
+            }));
+            wait.await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the banner is published");
 }
 
 /// Fork: a session renamed while closed (stored `custom`) is opened again; the live sessions-index row, which

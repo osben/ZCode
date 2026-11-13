@@ -130,4 +130,11 @@ async fn invalid_files_fail_closed_and_are_not_overwritten() {
     }]});
     write(&file, &minimal.to_string()).await;
     assert_eq!(store.load().await.trusted("/w"), [A]);
+    // Node parses the file with `JSON.parse`, where `1.0` is the number 1.
+    let float = minimal
+        .to_string()
+        .replace("\"schemaVersion\":1", "\"schemaVersion\":1.0");
+    assert!(float.contains("1.0"));
+    write(&file, &float).await;
+    assert_eq!(store.load().await.trusted("/w"), [A]);
 }

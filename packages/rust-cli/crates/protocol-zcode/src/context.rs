@@ -31,6 +31,8 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: workspace trust from the App (`fork/workspace_trust.rs`); set once by the app-server.
+    workspace_admin: std::sync::OnceLock<Arc<dyn crate::fork::WorkspaceAdmin>>,
     /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
     pub(crate) attach: crate::attach::HostAttach,
     /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
@@ -65,6 +67,15 @@ impl Context {
     /// Fork: the storage root (Node `context.deps.storageRoot`).
     pub fn set_storage_root(&self, root: std::path::PathBuf) {
         let _ = self.storage_root.set(root);
+    }
+
+    /// Fork: the workspace trust admin (Node's MCP list, MCP trust and hook trust grant).
+    pub fn set_workspace_admin(&self, admin: Arc<dyn crate::fork::WorkspaceAdmin>) {
+        let _ = self.workspace_admin.set(admin);
+    }
+
+    pub(crate) fn workspace_admin(&self) -> Option<Arc<dyn crate::fork::WorkspaceAdmin>> {
+        self.workspace_admin.get().cloned()
     }
 
     /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.
@@ -147,6 +158,7 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            workspace_admin: std::sync::OnceLock::new(),
             attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
