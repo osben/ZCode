@@ -134,13 +134,12 @@ async fn serve(
     let spec = Controller::app(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
+        // Fork: every observed request of this process reaches the capture (MCP is built unobserved), from the moment
+        // the egress exists.
+        Arc::new(CaptureObserver(capture.clone())),
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
-    // Fork: every observed request of this process reaches the capture (MCP is built unobserved).
-    opened
-        .egress
-        .set_observer(Arc::new(CaptureObserver(capture.clone())));
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
     // §4.2），所以首帧等库的位置定了再发：ID 取会话库所用的同一份存储位置。

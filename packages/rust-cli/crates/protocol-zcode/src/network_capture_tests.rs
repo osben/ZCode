@@ -249,3 +249,35 @@ async fn the_wrapper_handles_only_the_capture_control_inline() {
     assert!(!service.control("other", &json!({})));
     assert_eq!(h.capture.current().as_deref(), Some("c1"));
 }
+
+/// The app-server wiring: the Host's control arrives right after spawn, while the kernel behind `Deferred` is still
+/// being assembled; the reader applies it anyway, in arrival order.
+#[tokio::test]
+async fn controls_reach_the_capture_before_the_kernel_is_installed() {
+    use tokio::io::AsyncWriteExt;
+    let h = harness(SHORT);
+    let (deferred, _install) = connection::Deferred::new();
+    let (mut host_out, agent_in) = duplex(1 << 16);
+    let scope = TaskScope::root("reader", |_| {});
+    let (peer, _writer) =
+        connection::start(tokio::io::sink(), &scope.spawner(), Options::default());
+    let reader = tokio::spawn(connection::serve(
+        BufReader::new(agent_in),
+        peer,
+        with_network_capture(deferred, h.capture.clone()),
+        scope.spawner(),
+        Options::default(),
+    ));
+    let line = |id: Value| {
+        format!(
+            "{}\n",
+            json!({"jsonrpc": "2.0", "method": CONTROL, "params": {"captureId": id}})
+        )
+    };
+    for id in [json!("c1"), json!(null), json!("c2")] {
+        host_out.write_all(line(id).as_bytes()).await.unwrap();
+    }
+    drop(host_out);
+    reader.await.unwrap().unwrap();
+    assert_eq!(h.capture.current().as_deref(), Some("c2"));
+}

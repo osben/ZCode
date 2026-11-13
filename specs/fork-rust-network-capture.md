@@ -39,8 +39,18 @@ control notification and reported none, so the panel showed no `cli` rows in Rus
 | Ordering of control notifications                     | `protocol-core` `serve` offers each notification to `Service::control` in the reader loop before spawning the ordinary notification task                                       |
 
 `net` knows nothing about the protocol: it exposes the `RequestObserver` trait and `Egress::set_observer`. The
-app-server installs the capture as the egress observer and wraps the deferred service so the control reaches the
-capture while the kernel is still being assembled (the Host sends the control right after spawn).
+app-server passes the capture to the assembly (`Controller::app`), which installs it on the egress as soon as the
+egress exists, so requests made while assembling are reported too. It also wraps the deferred service so the control
+reaches the capture while the kernel is still being assembled (the Host sends the control right after spawn). The
+wrapper owns `Service::control`: `Deferred` handles no notification inline and does not forward `control` to the
+installed kernel.
+
+Differences kept on purpose:
+
+- A redirect followed inside one `Egress::send` is reported once, with the first URL; undici may report each hop.
+- The Monitor tool's WebSocket source is an agent request and is reported (only MCP is excluded, as in Node).
+- A batch whose flush already passed its generation check is still written if the Host stops and restarts the same
+  `captureId` in that instant; the records are real requests made before the stop.
 
 ## Event order
 
@@ -82,6 +92,8 @@ Unit tests (`protocol-zcode/src/network_capture_tests.rs`, `net` egress tests, `
    `ws:`/`wss:` URL), and not for a request built with `observed = false`; MCP HTTP requests are built that way.
 9. `protocol-core` `serve`: a notification the service handles in `control` is not passed to `notification`; two
    control notifications are applied in arrival order; `Deferred` handles none inline.
+10. Through `serve` with the capture wrapped around an uninstalled `Deferred`, controls are applied in order before the
+    kernel exists.
 
 E2E: `resource-manager/network/resource-manager-network.test.ts` asserts only Main and Renderer rows, so it cannot tell
 the runtimes apart; it is run on both runtimes as a regression check of the panel, and the Rust behaviour is covered by
