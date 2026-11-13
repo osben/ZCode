@@ -132,10 +132,10 @@ async fn an_unavailable_cipher_aborts_the_write_and_keeps_the_file() {
     let original = r#"{"a":"enc:v2:os:0123456789abcdef01234567:AAAA.AAAA.AAAA"}"#;
     write(&file, original).await;
     // A13: the closure reads through the unavailable cipher; nothing may be written.
+    // The closure reads a stored value first; the read must fail, so nothing after it runs and nothing is written.
     let result = store
         .mutate(async |credentials| {
-            let current = credentials.get("a").await?;
-            assert!(current.is_none());
+            credentials.get("a").await?;
             credentials.remove("other");
             Ok(())
         })

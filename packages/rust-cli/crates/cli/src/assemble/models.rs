@@ -191,6 +191,12 @@ pub(crate) fn with_effort(
     selection
 }
 
+/// 缺省选择的结论。`degraded`：凭据读不到时选的，目录里没有账号模型，所以它不写进上次的结论（[`default_model`]）。
+pub(crate) struct Settled {
+    pub(crate) selection: ModelSelection,
+    pub(crate) degraded: bool,
+}
+
 /// 新会话的缺省选择：现在就有，或要等平台层的模型目录（工作线 F140，performance.md §12.3）。
 pub(crate) enum Chosen {
     Now(ModelSelection),
@@ -198,7 +204,7 @@ pub(crate) enum Chosen {
     /// 模型时，原因写进模型端口（[`Assembled::late`]）。`flags` 是选模型的参数（上次的结论按它对得上才用，§12.4）。
     Later {
         flags: memory::Flags,
-        choosing: BoxFuture<'static, ModelSelection>,
+        choosing: BoxFuture<'static, Settled>,
     },
 }
 
@@ -298,11 +304,20 @@ pub(crate) async fn assemble(
     let choosing = {
         let (platform, late) = (platform.clone(), late.clone());
         async move {
-            match choose(&platform, flag.as_deref(), effort).await {
-                Ok(selection) => selection,
+            let outcome = choose(&platform, flag.as_deref(), effort).await;
+            // `choose` 刚读过目录：这一格是那次读取的结果（读不到时目录里没有账号模型）。
+            let degraded = platform.credentials_unreadable().is_some();
+            match outcome {
+                Ok(selection) => Settled {
+                    selection,
+                    degraded,
+                },
                 Err(reason) => {
                     let _ = late.set(reason);
-                    unselected(flag)
+                    Settled {
+                        selection: unselected(flag),
+                        degraded,
+                    }
                 }
             }
         }
@@ -369,17 +384,23 @@ pub(crate) async fn default_model(
         Chosen::Later { flags, choosing } => (flags, choosing),
     };
     if wait {
-        let selection = settled(choosing.await, false);
-        memory::remember(&memory, &flags, &selection).await;
+        let outcome = choosing.await;
+        let selection = settled(outcome.selection, false);
+        if !outcome.degraded {
+            memory::remember(&memory, &flags, &selection).await;
+        }
         return (selection.into(), scope);
     }
     let guess = memory::recall(&memory, &flags).await;
     let guessed = guess.is_some();
     let (settle, default) = DefaultModel::guessed(guess.unwrap_or_else(unselected_default));
     let _task = scope.spawner().spawn("default-model", async move {
-        let selection = settled(choosing.await, guessed);
+        let outcome = choosing.await;
+        let selection = settled(outcome.selection, guessed);
         settle.settle(selection.clone());
-        memory::remember(&memory, &flags, &selection).await;
+        if !outcome.degraded {
+            memory::remember(&memory, &flags, &selection).await;
+        }
     });
     (default, scope)
 }

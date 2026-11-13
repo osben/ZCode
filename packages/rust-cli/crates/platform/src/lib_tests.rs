@@ -372,3 +372,61 @@ fn account_providers_drop_static_auth_headers() {
         [header("X-Team", "dev"), header("x-api-key-id", "kept")]
     );
 }
+
+/// A15: the first read is already unreadable (nothing published yet). API-key models stay listed, the account
+/// model's error says the credentials could not be read, and the credentials file is not rewritten.
+#[tokio::test]
+async fn a_first_read_that_is_unreadable_keeps_the_api_key_models() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    write(paths.provider_config().as_path(), PERSONAL).await;
+    let record = r#"{"oauth:zai:access_token":"enc:v2:os:0123456789abcdef01234567:x"}"#;
+    write(paths.credentials().as_path(), record).await;
+    let services = crate::test_support::offline_services().await;
+    let platform = Platform::with_cipher(
+        &paths,
+        std::sync::Arc::new(crate::test_support::UnavailableCipher),
+        services,
+    );
+    let catalog = platform.catalog().await;
+    assert!(
+        catalog
+            .models
+            .iter()
+            .any(|model| model.provider == "personal:gateway"),
+        "API-key models stay listed"
+    );
+    assert!(
+        !catalog.models.iter().any(|model| model.provider == ZAI),
+        "no account model is listed without readable credentials"
+    );
+    let error = platform
+        .endpoint(EndpointQuery::new(&selection(
+            ZAI,
+            models::GLM_5_3_ACCOUNT,
+            None,
+        )))
+        .await
+        .unwrap_err();
+    match error {
+        ModelError::Authentication { message } => {
+            assert!(message.contains("could not be read"), "{message}");
+            assert!(!message.contains("not available"), "{message}");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    platform
+        .endpoint(EndpointQuery::new(&selection(
+            "personal:gateway",
+            "custom-chat",
+            None,
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::test_support::read_text(paths.credentials().as_path())
+            .await
+            .unwrap(),
+        record
+    );
+}

@@ -2,8 +2,11 @@
 //! 还在调用的旧方法。与 tui、headless 同层：只经内核的会话 API 与平台层，协议的机制在 protocol-core。
 //!
 //! 入口（cli 的 `app-server --stdio`）的顺序：[`connection::start`](rust_cli_protocol_core::connection::start) 起写者，
-//! [`Context::new`]；马上 [`Startup::checking`]（Host 要求 30 s 内有首帧）；用 [`HostHeaders`] 组装平台层与内核；
-//! [`Startup::ready`] 或 [`Startup::failed`]；最后 [`serve`] 读到 Host 关掉输入。
+//! [`Context::new`]；[`connection::serve`](rust_cli_protocol_core::connection::serve) 配 [`connection::Deferred`] 在组装
+//! 之前就开始读 Host 的输入（自己请求的回复要在组装期间送达，例如凭据加解密）；马上 [`Startup::checking`]（Host 要求 30 s
+//! 内有首帧）；用 [`HostHeaders`] 与 [`HostCredentialCipher`] 组装平台层与内核；[`Startup::ready`] 或 [`Startup::failed`]；
+//! 内核装好后 [`handler`] 交给 `Deferred` 的安装端，之后 Host 的请求才被处理。Host 关掉输入时读者结束。
+//! （specs/fork-rust-credential-cipher.md，「Startup ordering」）
 
 mod attachment_share;
 mod attachment_text;
@@ -34,9 +37,8 @@ use std::sync::Arc;
 
 use rust_cli_base::Spawner;
 use rust_cli_kernel_api::session_api::Kernel;
-use rust_cli_protocol_core::connection::{self, Options, Peer};
+use rust_cli_protocol_core::connection;
 use serde_json::json;
-use tokio::io::AsyncBufRead;
 
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
@@ -99,23 +101,6 @@ impl Startup {
     pub async fn failed(&self, code: &str) {
         self.send("failed", Some(code)).await;
     }
-}
-
-/// 读循环：处理 Host 的请求直到它关掉输入。
-pub async fn serve<R>(
-    reader: R,
-    context: Arc<Context>,
-    kernel: Arc<dyn Kernel>,
-    defaults: Defaults,
-    spawner: Spawner,
-    options: Options,
-) -> std::io::Result<()>
-where
-    R: AsyncBufRead + Unpin,
-{
-    let peer: Peer = context.peer.clone();
-    let service = handler(context, kernel, defaults, spawner.clone());
-    connection::serve(reader, peer, service, spawner, options).await
 }
 
 /// 协议的处理方（不读输入）：启动时可以先开读者（[`connection::Deferred`]），内核装好后再交给它。

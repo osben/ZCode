@@ -273,3 +273,35 @@ async fn a_closed_connection_is_unavailable() {
         Err(CipherError::Unavailable { .. })
     ));
 }
+
+/// 存储值的上限数的是 UTF-16 码元（zod `.max`，Node `CREDENTIAL_CIPHERTEXT_MAX_CHARS`）：多字节字符的值字节数超过上限、
+/// 码元数在上限之内，照常发给 Host；码元数超限的值不发。按字节数判断会把前一种误拒（specs，Bridge wire contract）。
+#[tokio::test]
+async fn the_stored_value_limit_counts_utf16_units_not_bytes() {
+    let (cipher, mut host, _scope) = connect(LIMIT);
+    // 500,000 码元，1,500,000 UTF-8 字节。
+    let multi_byte = "国".repeat(500_000);
+    assert!(
+        multi_byte.len() > 1_398_232,
+        "the case must exceed the byte limit"
+    );
+    let asking = tokio::spawn(async move { cipher.decrypt(&multi_byte).await });
+    let request = host.next().await;
+    assert_eq!(request["params"]["operation"], "decrypt");
+    let id = request["params"]["requestId"].clone();
+    host.answer(
+        &request,
+        json!({"requestId": id, "result": {"ok": true, "value": "plain"}}),
+    )
+    .await;
+    assert_eq!(asking.await.unwrap().unwrap(), "plain");
+
+    let (cipher, mut host, _scope) = connect(LIMIT);
+    let too_long = "a".repeat(1_398_233);
+    assert!(matches!(
+        cipher.decrypt(&too_long).await,
+        Err(CipherError::Decrypt { .. })
+    ));
+    let nothing = tokio::time::timeout(Duration::from_millis(200), host.lines.next_line()).await;
+    assert!(nothing.is_err(), "an over-limit stored value is not sent");
+}

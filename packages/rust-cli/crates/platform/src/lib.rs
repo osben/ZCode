@@ -172,6 +172,11 @@ impl Platform {
             .clone()
     }
 
+    /// 最近一次读取凭据失败的静态原因（读得到时为空）。缺省选择据此不把降级的结论写进记忆（cli `default_model`）。
+    pub fn credentials_unreadable(&self) -> Option<&'static str> {
+        self.registry.unreadable_reason()
+    }
+
     /// 凭据文件 `credentials.json` 的位置。
     pub fn credentials_file(&self) -> &StoragePath {
         self.credentials.file()

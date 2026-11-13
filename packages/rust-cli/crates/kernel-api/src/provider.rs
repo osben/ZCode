@@ -266,7 +266,6 @@ pub trait HeaderSource: Send + Sync {
     async fn request_auth(&self, request: HeaderRequest) -> Result<SuppliedAuth, ModelError>;
 }
 
-/// 读取模型目录。
 /// 凭据加解密的失败（specs/fork-rust-credential-cipher.md）。每个变体只带静态原因，不带值、密钥或 Host 的消息。
 /// `Unavailable` 不是登录失效：调用方不能清除令牌、不能报 `login_required`、不能写凭据文件。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -290,6 +289,7 @@ pub trait CredentialCipher: Send + Sync {
     async fn decrypt(&self, value: &str) -> Result<String, CipherError>;
 }
 
+/// 读取模型目录。
 #[async_trait]
 pub trait ModelDirectory: Send + Sync {
     /// 当前的目录快照（实现方在这里发现配置文件的变化）。

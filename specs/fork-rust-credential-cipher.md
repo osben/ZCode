@@ -223,8 +223,22 @@ after `getClient` returns (chat lane, `zcodeAgentService.ts`). The agent sends i
 after its own process start, argument parsing, config and store open, which is tens of milliseconds after
 spawn. The Host sends no acknowledgement, so this ordering is not formal; see the open gap below.
 
+## Degraded default (not remembered)
+
+If the credentials are unreadable when the default is settled (locked keyring, or the Host attach race), the
+catalog has no account models and the default is picked from what is left. That settlement is marked degraded
+(`Settled { degraded: true }`, cli `assemble/models.rs`), and `default_model` does not call `memory::remember`
+for it. The remembered choice therefore stays the remembered one, and the next startup with readable
+credentials settles from the full catalog again. Test: `a_default_settled_while_credentials_are_unreadable_is_not_remembered`.
+
+The session keeps the degraded default: it is not re-settled when the store becomes readable later in the same
+session (see open gaps).
+
 ## Open gaps
 
+- Degraded session default is not re-settled within the session when the credentials become readable later
+  (see "Degraded default"). The session keeps the degraded choice until the next startup. Follow-up: re-run the
+  choice when the registry next reads successfully.
 - Standalone resolver for `enc:v2:` (keyring file, `credential-secret` file, `credential-source`): a follow-up.
   Until then standalone Rust cannot use desktop-written credentials. Standalone `zcode login` still works.
 - Startup attach race (see "Startup ordering"): the Host attaches `onRequest` after `getClient` returns
