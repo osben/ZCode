@@ -1522,8 +1522,11 @@ export async function switchV4Model(provider: string, model: string, thought: st
   await browser.waitUntil(
     async () => {
       // 已有会话切 Provider 需等待配置 ACK；保持原面板，仅在已收起时重新打开。
-      await modelTrigger.waitForClickable({ timeout: 30000 });
-      if ((await modelTrigger.getAttribute("aria-expanded")) !== "true") await modelTrigger.click();
+      // Cause: an open model panel keeps its z-[19] backdrop over the trigger, so only a collapsed trigger can be clicked.
+      if ((await modelTrigger.getAttribute("aria-expanded")) !== "true") {
+        await modelTrigger.waitForClickable({ timeout: 30000 });
+        await modelTrigger.click();
+      }
       return browser.execute(
         (itemTestId, groupTestIds) => {
           const item = document.querySelector<HTMLElement>(`[data-testid="${itemTestId}"]`);
