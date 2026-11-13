@@ -1333,7 +1333,23 @@ Divergences from Node, by design of `zcode-rs`:
   `ExternalAgentModelGuard` with "Model acp:X is an external agent; <caller> cannot run it
   (external_agent_unsupported)" instead of Node's per-feature text. Bash-mode input is not refused.
 - **Usage.** Usage is stored on the turn's final assistant message, not reported separately on
-  `TurnFinished`.
+  `TurnFinished`. A turn whose last event is a tool or plan has no open segment, so its usage is
+  dropped until S3 commits rows.
+- **Stream close.** A closed stdout fails the prompt as "stopped during the turn" at once; Node does so
+  only when the process exits within the death grace and otherwise keeps the transport error text.
+
+Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs` and `acp_agent_turns.rs`):
+
+- Stop during the agent start ends the turn at once. The start runs in a kernel-scope task (a start
+  or restart is not safe to drop halfway) and finishes for the next turn.
+- The pump writes stdin from its own task, so an agent that stops reading cannot block Stop or the
+  teardown.
+- Lines an agent writes just before it exits are delivered before the exit fails the prompt.
+- An ask that arrives after Stop is withdrawn before its dialog opens.
+
+Known small gaps: a Stop that lands while `prompt()` restarts a runtime that failed between the
+acquire and the prompt is lost; a turn that acquires after its session was released starts a
+process that lives until app exit.
 
 ### Acceptance
 

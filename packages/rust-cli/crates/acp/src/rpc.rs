@@ -333,6 +333,19 @@ enum Ended {
     StreamFailed,
 }
 
+/// Writes the outbox lines to the agent's stdin until the outbox closes or a write fails.
+async fn write_lines(mut stdin: ChildStdin, mut inbox: mpsc::UnboundedReceiver<String>) {
+    while let Some(line) = inbox.recv().await {
+        let written = async {
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await
+        };
+        if written.await.is_err() {
+            return;
+        }
+    }
+}
+
 impl Pump {
     async fn run(self) {
         let Pump {
@@ -341,13 +354,15 @@ impl Pump {
             stdout,
             stderr,
             peer,
-            mut inbox,
+            inbox,
             inbound,
             shutdown,
             timings,
             stderr_tail,
         } = self;
-        let mut stdin = Some(stdin);
+        // Writes run in their own task: a write to an agent that stopped reading blocks, and the pump must still see
+        // shutdown, stdout and the process exit. Aborting the writer drops stdin, which is the EOF of the teardown.
+        let writer = rust_cli_base::owned(write_lines(stdin, inbox));
         let mut reader = BufReader::new(stdout);
         let mut buffer = Vec::new();
         let mut errors = BufReader::new(stderr).lines();
@@ -364,6 +379,17 @@ impl Pump {
                 biased;
                 () = shutdown.cancelled() => break Ended::Shutdown,
                 status = tracked.child().wait() => {
+                    // Lines written before the exit are still in the pipe: deliver them first, so an answer sent just
+                    // before exiting settles its prompt (bounded: a grandchild may keep stdout open).
+                    if reading {
+                        let drain = async {
+                            while let Frame::Line = read_frame(&mut reader, &mut buffer, &activity).await {
+                                dispatch(&peer, inbound.as_ref(), &buffer, &mut answers);
+                                buffer.clear();
+                            }
+                        };
+                        let _ = tokio::time::timeout(timings.death_grace, drain).await;
+                    }
                     let (code, signal) = match &status {
                         Ok(status) => (status.code(), signal_name(*status)),
                         Err(_) => (None, None),
@@ -400,23 +426,11 @@ impl Pump {
                     Ok(Some(line)) => keep_stderr(&stderr_tail, &line),
                     Ok(None) | Err(_) => errors_open = false,
                 },
-                message = inbox.recv(), if stdin.is_some() => match (message, stdin.as_mut()) {
-                    (Some(line), Some(pipe)) => {
-                        let written = async {
-                            pipe.write_all(line.as_bytes()).await?;
-                            pipe.flush().await
-                        };
-                        if written.await.is_err() {
-                            stdin = None;
-                        }
-                    }
-                    _ => stdin = None,
-                },
                 Some(answered) = answers.join_next(), if !answers.is_empty() => {
                     if let Ok((id, result)) = answered {
                         peer.respond(id, result);
                     }
-                    // Flush the answer right away (the outbox branch writes it on the next turn).
+                    // The answer goes through the outbox, which the writer task drains.
                 }
                 () = async { if let Some(sleep) = death.as_mut() { sleep.await } }, if death.is_some() => {
                     inbound.stream_failed(AcpError::stream_closed());
@@ -428,7 +442,8 @@ impl Pump {
         peer.close(&AcpError::stream_closed());
         // Teardown (`planAcpProcessTeardown` / `runAcpProcessTeardown`): EOF on stdin first, so an agent that
         // exits on EOF ends by itself; then TERM, a grace, KILL for the whole process group.
-        drop(stdin);
+        writer.abort();
+        let _ = writer.await;
         let shutdown_mode = match ended {
             Ended::Exited => Shutdown::Immediate,
             Ended::Shutdown | Ended::StreamFailed => {

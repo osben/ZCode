@@ -347,6 +347,54 @@ async fn a_missing_command_fails_to_spawn() {
 }
 
 #[tokio::test]
+async fn stop_ends_a_runtime_whose_agent_stopped_reading() {
+    let fixture = Fixture::new();
+    let runtime = AcpRuntime::start(fixture.options(&["--deaf-after-session"], &[]))
+        .await
+        .expect("start");
+    // Larger than any pipe buffer: the write blocks while the agent does not read.
+    let prompt = runtime.prompt(text(&"x".repeat(4 << 20)));
+    tokio::pin!(prompt);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut prompt)
+            .await
+            .is_err(),
+        "the prompt cannot settle while the agent does not read"
+    );
+    tokio::time::timeout(Duration::from_secs(10), runtime.stop())
+        .await
+        .expect("stop ends even while a write to the agent is blocked");
+    let error = tokio::time::timeout(Duration::from_secs(5), prompt)
+        .await
+        .expect("the prompt settles after stop")
+        .expect_err("stopped");
+    assert_ne!(error.code, AcpErrorCode::State);
+}
+
+#[tokio::test]
+async fn an_answer_written_just_before_exit_settles_the_prompt() {
+    let fixture = Fixture::new();
+    let runtime = AcpRuntime::start(fixture.options(&[], &[]))
+        .await
+        .expect("start");
+    // Each round the agent answers and exits at once; the next prompt restarts it.
+    for round in 0..20 {
+        let (result, _) = run(&runtime, "last words", None).await;
+        let response = result.unwrap_or_else(|error| panic!("round {round}: {error:?}"));
+        assert_eq!(response.stop_reason, "end_turn");
+        // The exit is seen after the answer; the next prompt restarts the failed runtime.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while runtime.state() != AcpState::Failed {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the exit marks the runtime failed");
+    }
+    runtime.stop().await;
+}
+
+#[tokio::test]
 async fn a_stopped_runtime_refuses_prompts() {
     let fixture = Fixture::new();
     let runtime = AcpRuntime::start(fixture.options(&[], &[]))

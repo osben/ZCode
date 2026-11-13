@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use super::AcpHost;
 
 pub(super) async fn run(
-    host: &AcpHost,
+    host: &Arc<AcpHost>,
     agent_id: String,
     request: QueryRequest,
     sink: Arc<dyn RunSink>,
@@ -55,7 +55,14 @@ pub(super) async fn run(
     if abort.is_aborted() {
         return turn.aborted(&abort).await;
     }
-    let runtime = match host.pool.acquire(&request.session, launch).await {
+    // Node: "Stop can arrive at any await of the spawn".
+    let acquiring = host.acquire(request.session.clone(), launch);
+    let acquired = tokio::select! {
+        biased;
+        () = abort.token().cancelled() => return turn.aborted(&abort).await,
+        acquired = AcpHost::acquired(acquiring) => acquired,
+    };
+    let runtime = match acquired {
         Ok(runtime) => runtime,
         Err(_) if abort.is_aborted() => return turn.aborted(&abort).await,
         Err(error) => {
@@ -92,10 +99,11 @@ pub(super) async fn run(
                     asks.push(ask);
                 }
             }
-            Some(()) = asks.next(), if !asks.is_empty() => {}
+            // Before the asks: an ask the agent sends after Stop is withdrawn before its dialog opens.
             () = abort.token().cancelled(), if !asks.is_empty() => {
                 turn.withdraw_asks(&mut asks).await;
             }
+            Some(()) = asks.next(), if !asks.is_empty() => {}
             outcome = &mut prompt => break outcome,
             () = &mut cancelling => {}
         }

@@ -275,6 +275,7 @@ impl LocalKernel {
                 setup,
                 ports.store.clone(),
                 ports.ids.clone(),
+                scope.spawner(),
             ))
         });
         // Fork: built after the agents so a release also reaches them (their notice forwarders).
@@ -287,10 +288,7 @@ impl LocalKernel {
                 gate: gate.clone(),
                 mcp: ext.mcp().clone(),
                 agents: agents.signals(),
-                acp: acp_host.clone().map(|host| acp::AcpRelease {
-                    host,
-                    spawner: scope.spawner(),
-                }),
+                acp: acp_host.clone().map(|host| acp::AcpRelease { host }),
             },
         });
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。

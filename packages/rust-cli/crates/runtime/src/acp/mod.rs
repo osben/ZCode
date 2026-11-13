@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rust_cli_acp::{AcpError, AcpErrorCode, AcpLaunch, AcpRuntime};
 use rust_cli_base::Spawner;
+use rust_cli_base::Task;
 use rust_cli_kernel_api::abort::Abort;
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::SessionId;
@@ -50,17 +52,47 @@ pub(crate) struct AcpHost {
     records: AgentRecords,
     pub(crate) pool: AcpPool,
     ids: Arc<dyn Ids>,
+    /// The kernel scope: agent starts and stops run there, so a turn that stops early never drops one halfway.
+    spawner: Spawner,
 }
 
 impl AcpHost {
-    pub(crate) fn new(setup: AcpSetup, store: Arc<dyn Store>, ids: Arc<dyn Ids>) -> Self {
+    pub(crate) fn new(
+        setup: AcpSetup,
+        store: Arc<dyn Store>,
+        ids: Arc<dyn Ids>,
+        spawner: Spawner,
+    ) -> Self {
         Self {
             records: AgentRecords {
                 file: setup.records_file,
             },
             pool: AcpPool::new(setup.env, setup.ledger, store),
             ids,
+            spawner,
         }
+    }
+
+    /// Starts or reuses the session's runtime in a task of its own. A start or restart is not safe to drop halfway (the
+    /// runtime would stay `Starting`), so a turn that is stopped stops waiting and the start finishes for the next turn.
+    fn acquire(
+        self: &Arc<Self>,
+        session: SessionId,
+        launch: AcpLaunch,
+    ) -> Task<Result<AcpRuntime, AcpError>> {
+        let host = self.clone();
+        self.spawner.spawn("acp-acquire", async move {
+            host.pool.acquire(&session, launch).await
+        })
+    }
+
+    async fn acquired(task: Task<Result<AcpRuntime, AcpError>>) -> Result<AcpRuntime, AcpError> {
+        task.await.unwrap_or_else(|error| {
+            Err(AcpError::new(
+                AcpErrorCode::AgentDied,
+                format!("the agent start did not finish: {error}"),
+            ))
+        })
     }
 }
 
@@ -69,13 +101,12 @@ impl AcpHost {
 #[derive(Clone)]
 pub(crate) struct AcpRelease {
     pub(crate) host: Arc<AcpHost>,
-    pub(crate) spawner: Spawner,
 }
 
 impl AcpRelease {
     pub(crate) fn released(&self, session: &SessionId) {
         let stopping = self.host.pool.release(session);
-        drop(self.spawner.spawn("acp-release", stopping));
+        drop(self.host.spawner.spawn("acp-release", stopping));
     }
 }
 

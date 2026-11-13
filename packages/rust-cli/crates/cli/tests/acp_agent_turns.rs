@@ -24,20 +24,21 @@ use serde_json::{Value, json};
 /// How long to wait for one reply or one awaited frame (normally well under a second).
 const WAIT: Duration = Duration::from_secs(60);
 
-/// The mock agent binary. `cargo test --workspace` builds it with the `rust-cli-acp` tests; a narrower run builds it
-/// here.
+/// The mock agent binary of `rust-cli-acp`, built once per test process (a no-op when it is current), so a binary left
+/// by an earlier build never runs with flags it does not know.
 fn mock_agent() -> PathBuf {
+    static BUILT: std::sync::Once = std::sync::Once::new();
     let server = Path::new(env!("CARGO_BIN_EXE_zcode-rs"));
     let name = format!("acp-mock-agent{}", std::env::consts::EXE_SUFFIX);
     let path = server.with_file_name(&name);
-    if !path.exists() {
+    BUILT.call_once(|| {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
         let status = std::process::Command::new(cargo)
             .args(["build", "-p", "rust-cli-acp", "--bin", "acp-mock-agent"])
             .status()
             .unwrap();
         assert!(status.success(), "building acp-mock-agent failed");
-    }
+    });
     assert!(path.exists(), "{} is missing", path.display());
     path
 }
@@ -389,14 +390,73 @@ fn a_denied_ask_reaches_the_agent_as_reject_once() {
 }
 
 #[test]
-fn stop_during_a_hang_ends_the_turn_and_the_next_turn_reuses_the_agent() {
+fn stop_while_the_agent_starts_ends_the_turn_at_once() {
     let (dir, home, work) = dirs();
     let pid_file = dir.path().join("agent.pid");
     write_agents(
         &home,
         &mock_agent(),
         true,
-        &["--pid-file", pid_file.to_str().unwrap()],
+        &[
+            "--silent-initialize",
+            "--pid-file",
+            pid_file.to_str().unwrap(),
+        ],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    let ack = server.command(send_text(&session, "c-start", "hello"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !pid_file.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the agent never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let stopped_at = std::time::Instant::now();
+    let ack = server.command(json!({
+        "commandId": "c-stop", "clientId": "k", "sessionId": session, "type": "stop",
+        "issuedAt": 1, "payload": {},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let finished = server.wait_for(turn_finished);
+    assert!(
+        contains(&finished, "\"phase\":\"completedInterrupted\""),
+        "{finished}"
+    );
+    // The handshake timeout is 30 s; Stop must not wait for it.
+    assert!(
+        stopped_at.elapsed() < std::time::Duration::from_secs(10),
+        "Stop waited {:?} for the agent start",
+        stopped_at.elapsed()
+    );
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    server.stop();
+    assert!(
+        ends(&pid),
+        "the starting agent process ends with the app server"
+    );
+}
+
+#[test]
+fn stop_during_a_hang_ends_the_turn_and_the_next_turn_reuses_the_agent() {
+    let (dir, home, work) = dirs();
+    let pid_file = dir.path().join("agent.pid");
+    let state_file = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &[
+            "--pid-file",
+            pid_file.to_str().unwrap(),
+            "--state",
+            state_file.to_str().unwrap(),
+        ],
     );
     let model = ModelStub::start();
     let mut server = Server::start(&home, &work, &model);
@@ -404,7 +464,16 @@ fn stop_during_a_hang_ends_the_turn_and_the_next_turn_reuses_the_agent() {
 
     let ack = server.command(send_text(&session, "c-hang", "hang"));
     assert_eq!(ack["status"], "accepted", "{ack}");
-    server.wait_for(|frame| contains(frame, "\"phase\":\"running\""));
+    // Stop while the agent holds the prompt (a Stop during the start ends the turn before any prompt).
+    let deadline = std::time::Instant::now() + WAIT;
+    while !std::fs::read_to_string(&state_file).is_ok_and(|state| state.contains("session/prompt"))
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the agent never got the prompt"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let ack = server.command(json!({
         "commandId": "c-stop", "clientId": "k", "sessionId": session, "type": "stop",
         "issuedAt": 1, "payload": {},
