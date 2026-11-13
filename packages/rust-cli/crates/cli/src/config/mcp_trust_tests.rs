@@ -67,7 +67,7 @@ fn run(case: &Case, store: &McpTrustLoad) -> (Result<Discovery, Unreadable>, Vec
 fn reviews_match_the_node_golden() {
     let golden = golden();
     let cases = golden["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 6);
+    assert_eq!(cases.len(), 7);
     for value in cases {
         let name = value["name"].as_str().unwrap();
         let case = case(value);
@@ -188,4 +188,32 @@ fn the_digest_sorts_keys_by_utf16_and_prints_index_keys_first() {
     let value = json!({"b": 1, "a": {"2": true, "10": false, "x": [{"z": 1, "y": 2}]}});
     let text = stringify(&sorted(&value));
     assert_eq!(text, r#"{"a":{"2":true,"10":false,"x":[{"y":2,"z":1}]},"b":1}"#);
+}
+
+#[test]
+fn host_dtos_are_converted_and_admitted_like_node() {
+    let golden = golden();
+    let project = case(&golden["cases"][0]);
+    let (discovery, reviews) = run(&project, &McpTrustLoad::Missing);
+    let discovery = discovery.unwrap();
+    let grant = |name: &str| rust_cli_platform::local::McpTrustRecord {
+        workspace_identity: project.target.identity.clone(),
+        server_name: name.into(),
+        declaration_digest: reviews.iter().find(|r| r.name == name).unwrap().digest.clone(),
+        granted_at: "2026-11-13T00:00:00.000Z".into(),
+    };
+    let load = McpTrustLoad::Records(vec![grant("gamma"), grant("alpha")]);
+    let cases = golden["dtoAllows"].as_array().unwrap();
+    assert_eq!(cases.len(), 6);
+    for item in cases {
+        let (name, converted) = dto_config(&item["dto"]).unwrap();
+        assert_eq!(Value::Object(converted.clone()), item["converted"], "{name}");
+        let keys: Vec<&String> = converted.keys().collect();
+        let node: Vec<&String> = item["converted"].as_object().unwrap().keys().collect();
+        assert_eq!(keys, node, "{name}: key order");
+        let admitted = allows(&project.target, Ok(&discovery), &load, &name, &converted);
+        assert_eq!(json!(admitted), item["allows"], "{name}");
+    }
+    let unreadable = allows(&project.target, Err(Unreadable), &load, "outside", &Map::new());
+    assert!(!unreadable);
 }

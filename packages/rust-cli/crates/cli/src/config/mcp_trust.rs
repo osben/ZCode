@@ -259,6 +259,17 @@ fn base_dir(path: &str) -> String {
     }
 }
 
+/// Node `isAbsolute(cwd) ? cwd : resolve(base, cwd)`: an absolute path is kept byte for byte (the digest covers
+/// it), a relative one is resolved and normalized.
+fn absolute_or_resolved(base: &str, cwd: &str) -> String {
+    let style = PathStyle::infer(base);
+    if style.is_absolute(cwd) {
+        cwd.to_owned()
+    } else {
+        style.resolve(base, cwd, None)
+    }
+}
+
 /// Node `normalizeProjectMcpServer`: a stdio server's `cwd` is resolved against the file's base directory
 /// (default `.`).
 fn project_cwd(mut config: Map<String, Value>, base: &str) -> Map<String, Value> {
@@ -266,7 +277,7 @@ fn project_cwd(mut config: Map<String, Value>, base: &str) -> Map<String, Value>
         return config;
     }
     let cwd = config.get("cwd").and_then(Value::as_str).unwrap_or(".");
-    let resolved = PathStyle::infer(base).resolve(base, cwd, None);
+    let resolved = absolute_or_resolved(base, cwd);
     config.insert("cwd".into(), Value::String(resolved));
     config
 }
@@ -400,9 +411,7 @@ fn execution_config(config: &Map<String, Value>, working_directory: &str) -> Val
         let env = config.get("env").cloned().unwrap_or_else(|| json!({}));
         execution.insert("env".into(), env);
         let cwd = match config.get("cwd").and_then(Value::as_str) {
-            Some(cwd) if !cwd.is_empty() => {
-                PathStyle::infer(working_directory).resolve(working_directory, cwd, None)
-            }
+            Some(cwd) if !cwd.is_empty() => absolute_or_resolved(working_directory, cwd),
             _ => working_directory.to_owned(),
         };
         execution.insert("cwd".into(), Value::String(cwd));
@@ -551,6 +560,85 @@ pub(crate) fn admitted(
         })
         .map(|(name, _)| name.clone())
         .collect()
+}
+
+/// Node `protocolMcpServersToRuntimeMcpConfig` for one `ZCodeProtocolMcpServer` (already schema-checked by the
+/// inbound params): `scope` becomes `source.kind`, `env` / `headers` name-value lists become records.
+pub(crate) fn dto_config(dto: &Value) -> Option<(String, Map<String, Value>)> {
+    let object = dto.as_object()?;
+    let name = object.get("name")?.as_str()?.to_owned();
+    let pairs = |key: &str| -> Value {
+        let mut record = Map::new();
+        for pair in object.get(key).and_then(Value::as_array).into_iter().flatten() {
+            if let (Some(name), Some(value)) = (pair.get("name"), pair.get("value"))
+                && let Some(name) = name.as_str()
+            {
+                record.insert(name.to_owned(), value.clone());
+            }
+        }
+        Value::Object(record)
+    };
+    let mut config = Map::new();
+    let copy = |config: &mut Map<String, Value>, key: &str| {
+        if let Some(value) = object.get(key) {
+            config.insert(key.to_owned(), value.clone());
+        }
+    };
+    let stdio = object.contains_key("command");
+    if stdio {
+        config.insert("type".into(), json!("stdio"));
+    } else {
+        copy(&mut config, "type");
+    }
+    if let Some(scope) = object.get("scope").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        config.insert("source".into(), json!({"kind": scope}));
+    }
+    if stdio {
+        if object.get("cwd").and_then(Value::as_str).is_some_and(|cwd| !cwd.is_empty()) {
+            copy(&mut config, "cwd");
+        }
+        copy(&mut config, "command");
+        copy(&mut config, "args");
+        config.insert("env".into(), pairs("env"));
+    } else {
+        copy(&mut config, "url");
+        config.insert("headers".into(), pairs("headers"));
+        copy(&mut config, "oauth");
+    }
+    for key in ["alwaysLoad", "timeoutMs", "isolation", "protocolVersion"] {
+        copy(&mut config, key);
+    }
+    Some((name, config))
+}
+
+/// The source kind a configured server carries (`source.kind`).
+pub(crate) fn source_kind(config: &Map<String, Value>) -> Option<&str> {
+    config.get("source")?.get("kind")?.as_str()
+}
+
+/// Node `allows(name, config)`: user, plugin and builtin servers pass; a workspace or source-less server needs an
+/// enabled declaration whose digest equals the digest of the config being connected, and a grant for it. A
+/// source-less name the workspace does not claim passes.
+pub(crate) fn allows(
+    target: &Target,
+    discovery: Result<&Discovery, Unreadable>,
+    store: &McpTrustLoad,
+    name: &str,
+    config: &Map<String, Value>,
+) -> bool {
+    let kind = source_kind(config);
+    if matches!(kind, Some("user" | "plugin" | "builtin")) {
+        return true;
+    }
+    let Ok(discovery) = discovery else {
+        return false;
+    };
+    let Some(declaration) = discovery.get(name) else {
+        return kind != Some("workspace") && !discovery.required.contains(name);
+    };
+    declaration.enabled()
+        && target.digest(name, config, &declaration.source_paths) == declaration.digest
+        && store.trusts(&target.identity, name, &declaration.digest)
 }
 
 #[cfg(test)]

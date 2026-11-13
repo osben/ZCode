@@ -76,6 +76,20 @@ const cases: Array<{ name: string; files: Files; user?: unknown; identity?: stri
     },
   },
   {
+    // Absolute cwd values are kept verbatim by Node (no normalization), relative ones are resolved.
+    name: "absolute-cwd",
+    files: {
+      "zcode.json": {
+        mcp: {
+          servers: {
+            abs: { command: "node", cwd: "/tmp/x/../y/" },
+            rel: { command: "node", cwd: "./a/../b/" },
+          },
+        },
+      },
+    },
+  },
+  {
     name: "identity",
     files: {
       ".zcode/config.json": { mcp: { servers: { one: { command: "node", args: ["a.js"] } } } },
@@ -169,6 +183,52 @@ async function main(): Promise<void> {
     } catch (error) {
       changed = error instanceof Error ? error.message : String(error);
     }
+    // What `mcp/list` admits from a Host DTO: Node converts it and re-digests it against the declaration.
+    const { protocolMcpServersToRuntimeMcpConfig } = await import(
+      join(root, "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/protocol-mcp-config.ts")
+    );
+    await authority.decide("alpha", project.reviews.alpha!.declarationDigest, true);
+    const dtos = [
+      {
+        name: "alpha",
+        scope: "workspace",
+        command: "node",
+        args: ["server.js", "--api-key", "sk-123", "--flag"],
+        env: [
+          { name: "Z_KEY", value: "ü✓\u0001" },
+          { name: "A_TOKEN", value: "secret value" },
+        ],
+        cwd: "tools",
+      },
+      {
+        name: "gamma",
+        scope: "workspace",
+        type: "http",
+        url: "https://user:pass@example.com/mcp?token=abc#frag",
+        headers: [{ name: "Authorization", value: "Bearer x" }],
+      },
+      {
+        name: "gamma",
+        type: "http",
+        url: "https://user:pass@example.com/mcp?token=abc#frag",
+        headers: [{ name: "Authorization", value: "Bearer changed" }],
+      },
+      {
+        name: "delta",
+        scope: "workspace",
+        type: "sse",
+        url: "http://localhost:9/sse",
+        headers: [],
+      },
+      { name: "outside", command: "node", args: [], env: [] },
+      { name: "mine", scope: "user", command: "node", args: [], env: [] },
+    ];
+    const dtoAllows = [];
+    for (const dto of dtos) {
+      const converted = protocolMcpServersToRuntimeMcpConfig([dto])!.servers[dto.name]!;
+      dtoAllows.push({ dto, converted, allows: await authority.allows(dto.name, converted) });
+    }
+    await authority.decide("alpha", project.reviews.alpha!.declarationDigest, false);
     const store = await readFile(
       join(home, ".zcode", "security", "workspace-mcp-trust-v1.json"),
       "utf8",
@@ -180,6 +240,7 @@ async function main(): Promise<void> {
         {
           cases: results,
           store: { text: store, gammaTrusted: after.gamma?.trusted ?? null, staleDigest: changed },
+          dtoAllows,
         },
         null,
         2,

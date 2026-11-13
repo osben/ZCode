@@ -92,72 +92,72 @@
         }
       },
       "identity": null,
-      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws",
       "reviews": {
         "alpha": {
-          "declarationDigest": "12cfc9a259d5de1dfa724d8bcef747b740d0b2a0782a7e8b3ea7e8445da79cd0",
+          "declarationDigest": "51f911dfe49dfceafc05f44d431aff71a6be5f27970787b89172d7bc33993bcb",
           "configuredEnabled": true,
           "transport": "stdio",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/.zcode/config.json"
           ],
-          "display": "{\n  \"command\": \"node server.js --api-key •••• --flag\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/tools\",\n  \"env\": [\n    \"Z_KEY\",\n    \"A_TOKEN\"\n  ]\n}",
+          "display": "{\n  \"command\": \"node server.js --api-key •••• --flag\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/tools\",\n  \"env\": [\n    \"Z_KEY\",\n    \"A_TOKEN\"\n  ]\n}",
           "trusted": false
         },
         "beta": {
-          "declarationDigest": "62082450c04b124e48bc30a4480c9b8f2962bdb96520583090a9e2cbc1e9e555",
+          "declarationDigest": "8fcda441f9f5933be0dbe2d2bf76de97d6e948df12837ba452dbcfc432f5c4df",
           "configuredEnabled": false,
           "transport": "stdio",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/.zcode/config.json"
           ],
-          "display": "{\n  \"command\": \"python\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws\",\n  \"env\": [\n    \"X\"\n  ]\n}",
+          "display": "{\n  \"command\": \"python\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws\",\n  \"env\": [\n    \"X\"\n  ]\n}",
           "trusted": false
         },
         "gamma": {
-          "declarationDigest": "177736e2ee5a13cc08c0576241bdf310a4068df9827856e0f9b9559e7d5a4051",
+          "declarationDigest": "b8667b330cbcfb733617ba0db9e7c7eb1e530badaa9958863681178834eb9fa5",
           "configuredEnabled": true,
           "transport": "http",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/.zcode/config.json"
           ],
           "display": "{\n  \"type\": \"http\",\n  \"url\": \"https://example.com/mcp\",\n  \"headers\": [\n    \"Authorization\"\n  ]\n}",
           "trusted": false
         },
         "delta": {
-          "declarationDigest": "31dcdae1cf156755451b8104657e49d09bb5b385d8903692b796343ec41611bf",
+          "declarationDigest": "efa436ba6ec04929cefd6c2c4cf98aaefdeb9e6db0ea18c2aa068533b5e1541e",
           "configuredEnabled": true,
           "transport": "sse",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/.zcode/config.json"
           ],
           "display": "{\n  \"type\": \"sse\",\n  \"url\": \"http://localhost:9/sse\",\n  \"headers\": [],\n  \"oauth\": \"client_credentials\"\n}",
           "trusted": false
         },
         "eps": {
-          "declarationDigest": "9623471cbe5d5796146aaf15af173b67f6de3ded527a4ce6e3a88a1552816153",
+          "declarationDigest": "89bd5151c18d768f8573365f3ce321ddbb3994a69f0713df56f18b39203edd2c",
           "configuredEnabled": true,
           "transport": "http",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/.zcode/config.json"
           ],
           "display": "{\n  \"type\": \"http\",\n  \"url\": \"https://x.test/mcp\",\n  \"headers\": []\n}",
           "trusted": false
         },
         "zeta": {
-          "declarationDigest": "730d320ff00cee83b38ff169fe345c5c4fb27884982a4803202efc70f947a8d5",
+          "declarationDigest": "1ebd04817f398c47dd93f0ccecdb51cb761deda02c1e19aeb7d668e437982287",
           "configuredEnabled": true,
           "transport": "stdio",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws/.zcode/config.json"
           ],
-          "display": "{\n  \"command\": \"/usr/bin/env TOKEN=•••• run\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws\",\n  \"env\": []\n}",
+          "display": "{\n  \"command\": \"/usr/bin/env TOKEN=•••• run\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws\",\n  \"env\": []\n}",
           "trusted": false
         }
       }
@@ -183,17 +183,61 @@
       },
       "user": {},
       "identity": null,
-      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/first-file-only/ws",
       "reviews": {
         "early": {
-          "declarationDigest": "b9d91b69f6628b28daad7f8f88b5666bcdb82136ad34ec2c23bbec3587c5d358",
+          "declarationDigest": "7218c158cb18d5a53aac79240f42041aea326671e2f7f4477630198d0ff4d94b",
           "configuredEnabled": true,
           "transport": "stdio",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws/zcode.json",
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/first-file-only/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/first-file-only/ws/.zcode/config.json"
           ],
-          "display": "{\n  \"command\": \"node\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws/bin\",\n  \"env\": []\n}",
+          "display": "{\n  \"command\": \"node\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/first-file-only/ws/bin\",\n  \"env\": []\n}",
+          "trusted": false
+        }
+      }
+    },
+    {
+      "name": "absolute-cwd",
+      "files": {
+        "zcode.json": {
+          "mcp": {
+            "servers": {
+              "abs": {
+                "command": "node",
+                "cwd": "/tmp/x/../y/"
+              },
+              "rel": {
+                "command": "node",
+                "cwd": "./a/../b/"
+              }
+            }
+          }
+        }
+      },
+      "user": {},
+      "identity": null,
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/absolute-cwd/ws",
+      "reviews": {
+        "abs": {
+          "declarationDigest": "1902018faf10233e90e958157156a10e29d1e4d1ac8b69dfdbe998893cb0da89",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/absolute-cwd/ws/zcode.json"
+          ],
+          "display": "{\n  \"command\": \"node\",\n  \"cwd\": \"/tmp/x/../y/\",\n  \"env\": []\n}",
+          "trusted": false
+        },
+        "rel": {
+          "declarationDigest": "8d4def966d113b1f3729135363a2ca52dad52b9ac3d25e3cb846a8bc4893fab6",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/absolute-cwd/ws/zcode.json"
+          ],
+          "display": "{\n  \"command\": \"node\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/absolute-cwd/ws/b\",\n  \"env\": []\n}",
           "trusted": false
         }
       }
@@ -216,16 +260,16 @@
       },
       "user": {},
       "identity": "remote:golden-host",
-      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/identity/ws",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/identity/ws",
       "reviews": {
         "one": {
-          "declarationDigest": "d4a44629f64d1a8ec87037c8173dc07dff34cffe21722aeaf0efa6b6b76d45f7",
+          "declarationDigest": "ab9ee9e3aa44bf5611564fa3041312d80d0b1740f2d075f3fca63996b8df3785",
           "configuredEnabled": true,
           "transport": "stdio",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/identity/ws/.zcode/config.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/identity/ws/.zcode/config.json"
           ],
-          "display": "{\n  \"command\": \"node a.js\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/identity/ws\",\n  \"env\": []\n}",
+          "display": "{\n  \"command\": \"node a.js\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/identity/ws\",\n  \"env\": []\n}",
           "trusted": false
         }
       }
@@ -263,24 +307,24 @@
       },
       "user": {},
       "identity": null,
-      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/fallback/ws",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/fallback/ws",
       "reviews": {
         "fb": {
-          "declarationDigest": "cd6a8abddc4c7924007afe3acefaea53b449c28cf2fbf403cca317a56af49ab1",
+          "declarationDigest": "ddfd98d0cf01b015b7e12ec03ad64223fbbdebfde49d5d31b5fea28d42b4c8d6",
           "configuredEnabled": true,
           "transport": "stdio",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/fallback/ws/.agents/mcp.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/fallback/ws/.agents/mcp.json"
           ],
           "display": "{\n  \"command\": \"npx -y pkg\",\n  \"cwd\": \"sub\",\n  \"env\": []\n}",
           "trusted": false
         },
         "remote": {
-          "declarationDigest": "9c6cd55372a4cc48bf0d8f363e3a9883d506465c9f76096be12dbd30a1ff3bef",
+          "declarationDigest": "0b098110a71ebeef0fb1794994aad041277abacc3acc6835aefb64f816a350b5",
           "configuredEnabled": true,
           "transport": "http",
           "sourcePaths": [
-            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/fallback/ws/.agents/mcp.json"
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/fallback/ws/.agents/mcp.json"
           ],
           "display": "{\n  \"type\": \"http\",\n  \"url\": \"https://fb.test/mcp\",\n  \"headers\": [\n    \"X-Api-Key\"\n  ]\n}",
           "trusted": false
@@ -309,7 +353,7 @@
       },
       "user": {},
       "identity": null,
-      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/invalid-blocks-fallback/ws",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/invalid-blocks-fallback/ws",
       "reviews": {}
     },
     {
@@ -326,13 +370,156 @@
       },
       "user": {},
       "identity": null,
-      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/unreadable/ws",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/unreadable/ws",
       "reviews": {}
     }
   ],
   "store": {
-    "text": "{\"schemaVersion\":1,\"records\":[{\"workspaceIdentity\":\"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws\",\"serverName\":\"gamma\",\"declarationDigest\":\"177736e2ee5a13cc08c0576241bdf310a4068df9827856e0f9b9559e7d5a4051\",\"grantedAt\":\"2026-11-13T17:12:31.379Z\"}]}",
+    "text": "{\"schemaVersion\":1,\"records\":[{\"workspaceIdentity\":\"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-5jPkci/project/ws\",\"serverName\":\"gamma\",\"declarationDigest\":\"b8667b330cbcfb733617ba0db9e7c7eb1e530badaa9958863681178834eb9fa5\",\"grantedAt\":\"2026-11-13T17:28:18.912Z\"}]}",
     "gammaTrusted": true,
     "staleDigest": "workspace_mcp_declaration_changed"
-  }
+  },
+  "dtoAllows": [
+    {
+      "dto": {
+        "name": "alpha",
+        "scope": "workspace",
+        "command": "node",
+        "args": [
+          "server.js",
+          "--api-key",
+          "sk-123",
+          "--flag"
+        ],
+        "env": [
+          {
+            "name": "Z_KEY",
+            "value": "ü✓\u0001"
+          },
+          {
+            "name": "A_TOKEN",
+            "value": "secret value"
+          }
+        ],
+        "cwd": "tools"
+      },
+      "converted": {
+        "type": "stdio",
+        "source": {
+          "kind": "workspace"
+        },
+        "cwd": "tools",
+        "command": "node",
+        "args": [
+          "server.js",
+          "--api-key",
+          "sk-123",
+          "--flag"
+        ],
+        "env": {
+          "Z_KEY": "ü✓\u0001",
+          "A_TOKEN": "secret value"
+        }
+      },
+      "allows": true
+    },
+    {
+      "dto": {
+        "name": "gamma",
+        "scope": "workspace",
+        "type": "http",
+        "url": "https://user:pass@example.com/mcp?token=abc#frag",
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer x"
+          }
+        ]
+      },
+      "converted": {
+        "type": "http",
+        "source": {
+          "kind": "workspace"
+        },
+        "url": "https://user:pass@example.com/mcp?token=abc#frag",
+        "headers": {
+          "Authorization": "Bearer x"
+        }
+      },
+      "allows": true
+    },
+    {
+      "dto": {
+        "name": "gamma",
+        "type": "http",
+        "url": "https://user:pass@example.com/mcp?token=abc#frag",
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer changed"
+          }
+        ]
+      },
+      "converted": {
+        "type": "http",
+        "url": "https://user:pass@example.com/mcp?token=abc#frag",
+        "headers": {
+          "Authorization": "Bearer changed"
+        }
+      },
+      "allows": false
+    },
+    {
+      "dto": {
+        "name": "delta",
+        "scope": "workspace",
+        "type": "sse",
+        "url": "http://localhost:9/sse",
+        "headers": []
+      },
+      "converted": {
+        "type": "sse",
+        "source": {
+          "kind": "workspace"
+        },
+        "url": "http://localhost:9/sse",
+        "headers": {}
+      },
+      "allows": false
+    },
+    {
+      "dto": {
+        "name": "outside",
+        "command": "node",
+        "args": [],
+        "env": []
+      },
+      "converted": {
+        "type": "stdio",
+        "command": "node",
+        "args": [],
+        "env": {}
+      },
+      "allows": true
+    },
+    {
+      "dto": {
+        "name": "mine",
+        "scope": "user",
+        "command": "node",
+        "args": [],
+        "env": []
+      },
+      "converted": {
+        "type": "stdio",
+        "source": {
+          "kind": "user"
+        },
+        "command": "node",
+        "args": [],
+        "env": {}
+      },
+      "allows": true
+    }
+  ]
 }
