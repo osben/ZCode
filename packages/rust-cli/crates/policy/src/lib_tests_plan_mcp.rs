@@ -373,7 +373,12 @@ async fn plan_over_a_bypass_base_allows_built_in_read_only_tools() {
 #[tokio::test]
 async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
     let [web_fetch, _] = web_tools();
-    let web_fetch = || [(ReadOnly(web_fetch.0.0, web_fetch.0.1.clone()), web_fetch.1.clone())];
+    let web_fetch = || {
+        [(
+            ReadOnly(web_fetch.0.0, web_fetch.0.1.clone()),
+            web_fetch.1.clone(),
+        )]
+    };
     for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
         for (tool, input) in web_fetch() {
             let gate = PolicyGate::default().with_node_plan_mode(true);
@@ -475,7 +480,11 @@ async fn web_search_needs_no_approval_under_node_semantics() {
     ];
     let gate = PolicyGate::default().with_node_plan_mode(true);
     for mode in modes {
-        assert_eq!(gate.decide(&tool, &input, &context(mode)).await, allow(), "{mode:?}");
+        assert_eq!(
+            gate.decide(&tool, &input, &context(mode)).await,
+            allow(),
+            "{mode:?}"
+        );
     }
     for base in modes.into_iter().chain([PermissionMode::Plan]) {
         assert_eq!(
@@ -504,9 +513,8 @@ async fn web_search_needs_no_approval_under_node_semantics() {
             "plan over {base:?}"
         );
     }
-    let (once, independent, _) = asked(
-        &read_only_over(&ask_rule, &tool, &input, PermissionMode::Default).await,
-    );
+    let (once, independent, _) =
+        asked(&read_only_over(&ask_rule, &tool, &input, PermissionMode::Default).await);
     assert!(!once && !independent);
     // Over an auto base Node denies first (`mode.auto.unimplemented`); the test above keeps that denial.
 }
@@ -518,5 +526,8 @@ async fn web_search_still_asks_without_node_semantics() {
     let decision = PolicyGate::default()
         .decide(&tool, &input, &context(PermissionMode::Default))
         .await;
-    assert!(matches!(decision, PermissionDecision::Ask { .. }), "{decision:?}");
+    assert!(
+        matches!(decision, PermissionDecision::Ask { .. }),
+        "{decision:?}"
+    );
 }

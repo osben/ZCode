@@ -1181,6 +1181,31 @@ Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4
   - `subagentStall.executionId` on a stall reminder that is absorbed at a tool boundary (an attachment, not a turn-opening user message) is not written: the execution rides on the kernel `UserMessage` only (`stall_execution`), and an attachment has no such field. The turn-opening case writes it in the store and the projection (`node-store/src/notices.rs`, `protocol-zcode/src/projection/background_result.rs`), in Node's order (`noProgressForMs`, `lastProgressAt`, `executionId`).
   - Compaction does not report progress. `compact/src/request.rs` `CollectSink` does not forward `request_started` to the child sink. This was checked and it is not a local fix: `Compactor::compact` has no sink, and `request::run` is called from `compact/src/engine.rs` (about line 220) without one. A compaction request therefore does not reset a subagent's stall clock. Node's compaction path is not checked here.
 
+## Legacy `session/cancelBackgroundTask` (Node `server-operations.ts` `cancelBackgroundTask`)
+
+The App drives background stops through v4 `cancelBackgroundWork` (ported above); nothing in the Host, the renderer or the desktop calls `session/cancelBackgroundTask` today. Rust answers it with Node's result shape so a Host that does call it gets the same answers.
+
+- Params: `zcodeSessionCancelBackgroundTaskParamsSchema` (strict `{sessionId, taskId}`), checked by the inbound schema (`-32602`).
+- The session must be resident (Node `requireSession` reads only active runtimes): otherwise `-32004` `Session is not active: <id>`. A cold session is not opened.
+- The stop is the user's `Command::StopTask`, the same path as `cancelBackgroundWork`; afterwards the background-command list is re-read (`shells_changed`), as there. Node emits a legacy `state.updated` after the stop; Rust has no legacy session stream, so the v4 projection refresh is the only effect.
+- Result (`zcodeSessionCancelBackgroundTaskResultSchema`):
+  - stopped: `{cancelled: true, status: "cancelled", taskId, snapshot}`. `snapshot` is the task as the session listed it before the stop: `taskId`, `taskKind` (`bash` for a command, `subagent` for an agent, none for a Monitor), `command` (a command or a Monitor) or `description` (an agent), `status: "cancelled"`, `cancellable: false`. A task the list did not hold has no snapshot.
+  - already ended (Node's lenient path, `alreadyTerminal`): `{cancelled: status == "cancelled", reason: "background_task_not_running", status, taskId}`. The status is the kernel's terminal status, mapped like Node's `toBackgroundTaskInfoStatus`: `killed` is `cancelled`; `completed`, `failed` stay; anything else is `lost`. The kernel reports it only in its refusal text `Task <id> is not running (status: <status>)` (the same text `cancelBackgroundWork` reads for its reason code), so that is where it is read.
+  - unknown task: `{cancelled: false, reason: "background_task_not_found", status: "lost", taskId}`.
+
+Acceptance: protocol-zcode unit tests with a kernel double: a running command is stopped (`StopTask` sent, snapshot `bash`); an agent's snapshot is `subagent`; an ended task answers `background_task_not_running` with the mapped status (`killed` → `cancelled` with `cancelled: true`, `completed` with `cancelled: false`); an unknown task answers `background_task_not_found`; a session that is not resident answers `-32004` and is not opened; missing or extra params answer `-32602`. No desktop E2E spec covers this method (the App does not call it).
+
+## `process/childProcesses` (Node `process-child-processes.ts`)
+
+The Host's resource sampler (`processResourceSampler.ts`) asks each agent for its MCP server processes and assigns them to plugins; on a failure every descendant counts as the agent's own. Node answers from the process-wide MCP registry: one row per live stdio server process, `{pid, serverName, mcpSource, pluginName?}`, no I/O.
+
+- Owner in Rust: the app-server's local MCP transport (env-local `LocalMcpTransport`), which spawns every stdio server of the primary machine in this process. It records `(pid, server name)` when a stdio server starts and drops the row when the process tree has ended (the connection task ends) or the connection is closed. The entry point hands it to the protocol context (`Context::set_mcp_processes`); without it (another front end) the list is empty.
+- Not listed, as in Node: HTTP and SSE servers (no process); servers on another machine (an SSH primary or an extra machine) run under that machine's executor, not under this agent.
+- `mcpSource`: Node `resolveMcpSource`: `builtin` for the server name `node_repl`, `plugin` for a name that starts with `plugin:`, `custom` otherwise. `pluginName`: for `plugin:<name>:<key>` the trimmed `<name>` when not empty (Node `resolvePluginName`); for `node_repl` the official plugin that names it as a host MCP server, `browser-use` (Node `resolveOfficialPluginNameByHostMcpServerName`, the first definition listing it); otherwise absent.
+- Params are not checked (Node does not parse them). Order: the order the processes started in.
+
+Acceptance: env-local unit test: a started stdio server is listed with its real pid and server name and leaves the list when it is closed, and when it exits on its own; protocol-zcode unit tests: the source and plugin-name mapping, and the method answering `{processes: [...]}` (empty without a source). No desktop E2E spec covers the sampler.
+
 ## Known differences kept on purpose
 
 - **Background agents that still hold background commands.** Rust parks such an agent and wakes it when the command finishes (agents.md §5.2 rule 5, user decision 2026-11-05). Node seals the child, and the upstream case "background subagent 内部 background Bash 完成后只做 child cleanup" expects no wake, so it fails on Rust by design.

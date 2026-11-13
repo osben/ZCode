@@ -40,6 +40,8 @@ pub(crate) async fn dispatch(
         "v4/conversation/backgroundBashOutput" => {
             super::background_work::bash_output(server, &params).await
         }
+        // Fork: the legacy background stop (Node `cancelBackgroundTask`).
+        "session/cancelBackgroundTask" => super::background_task::cancel(server, &params).await,
         _ => return None,
     };
     Some(result.map(Reply::new))

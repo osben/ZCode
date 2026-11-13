@@ -268,7 +268,8 @@ impl ScopedGate for PolicyGate {
         let root = context.workspace.root.as_str();
         let name = tool.name();
         // Node denies every call in auto mode and over an auto base (`mode.auto.unimplemented`) before this allow.
-        let auto = context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
+        let auto =
+            context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
         let own = node_needs_no_approval(
             self.options.node_plan && !auto,
             name,
