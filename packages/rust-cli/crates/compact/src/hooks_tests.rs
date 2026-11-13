@@ -79,7 +79,8 @@ async fn session_start_runs_inside_every_compaction_before_post_compact() {
     }
 }
 
-/// Hook runner whose SessionStart run gives one additional-context attachment with `text`, or nothing for `None`.
+/// Hook runner whose SessionStart run gives a hook group with `text`, or nothing for `None`: the `hook_success`
+/// attachment first, then the additional-context attachment, as the hook fold orders them.
 struct StartContext(Option<&'static str>);
 
 #[async_trait]
@@ -87,7 +88,10 @@ impl HookRunner for StartContext {
     async fn run(&self, event: HookEvent, _cancel: CancellationToken) -> HookOutcome {
         match (event.name, self.0) {
             (HookEventName::SessionStart, Some(text)) => HookOutcome {
-                messages: vec![context_attachment("hook_ctx", text)],
+                messages: vec![
+                    success_attachment("hook_ok", text),
+                    context_attachment("hook_ctx", text),
+                ],
                 ..HookOutcome::default()
             },
             _ => HookOutcome::default(),
@@ -104,6 +108,16 @@ fn context_attachment(id: &str, text: &str) -> Message {
             "<system-reminder>\nSessionStart hook additional context: {text}\n</system-reminder>"
         ),
         data: json!({"hookName": "SessionStart", "hookEvent": "SessionStart", "content": [text]}),
+    })
+}
+
+/// A `hook_success` attachment as the hook fold writes it for the SessionStart run.
+fn success_attachment(id: &str, text: &str) -> Message {
+    Message::Attachment(AttachmentMessage {
+        id: MessageId::new(id),
+        source: "hook_success".to_owned(),
+        text: format!("SessionStart hook success: {text}"),
+        data: json!({"hookName": "SessionStart", "hookEvent": "SessionStart"}),
     })
 }
 
@@ -138,6 +152,23 @@ async fn compact_with_hook(
         .unwrap()
 }
 
+/// The restored attachments with `source`, as their full text.
+fn restored_sources(
+    result: &rust_cli_kernel_api::compaction::CompactResult,
+    source: &str,
+) -> Vec<String> {
+    result
+        .restored
+        .iter()
+        .filter_map(|message| match message {
+            Message::Attachment(attachment) if attachment.source == source => {
+                Some(attachment.text.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// The restored SessionStart context attachments, as their full text.
 fn restored_contexts(result: &rust_cli_kernel_api::compaction::CompactResult) -> Vec<String> {
     result
@@ -163,6 +194,45 @@ async fn a_compact_context_equal_to_the_kept_one_is_not_restored() {
         "{:?}",
         restored_contexts(&result)
     );
+    assert!(result.session_start_context);
+}
+
+/// Node drops the whole hook group of a duplicate context, so the `hook_success` row does not pile up on every
+/// compaction: neither attachment of the SessionStart(`compact`) run is restored, and the flag is still set.
+#[tokio::test]
+async fn a_duplicate_compact_group_drops_its_hook_success() {
+    let result = compact_with_hook(Some("same"), history_keeping_context("same")).await;
+    assert!(
+        restored_sources(&result, "hook_success").is_empty(),
+        "{:?}",
+        restored_sources(&result, "hook_success")
+    );
+    assert!(restored_contexts(&result).is_empty());
+    assert!(result.session_start_context);
+}
+
+/// A changed context restores its whole hook group: the `hook_success` attachment and the context, in that order.
+#[tokio::test]
+async fn a_changed_compact_group_restores_its_hook_success() {
+    let result = compact_with_hook(Some("newer"), history_keeping_context("same")).await;
+    assert_eq!(restored_sources(&result, "hook_success").len(), 1);
+    assert_eq!(restored_contexts(&result).len(), 1);
+    let group: Vec<&str> = result
+        .restored
+        .iter()
+        .filter_map(|message| match message {
+            Message::Attachment(attachment)
+                if matches!(
+                    attachment.source.as_str(),
+                    "hook_success" | "hook_additional_context"
+                ) =>
+            {
+                Some(attachment.source.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(group, ["hook_success", "hook_additional_context"]);
     assert!(result.session_start_context);
 }
 

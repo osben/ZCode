@@ -314,7 +314,8 @@ pub(crate) fn process(
             serde_json::to_string_pretty(json).unwrap_or_default()
         ));
     }
-    let context = string(output, "additionalContext");
+    // Node `hooks/output.ts` pushes `additionalContext` only when truthy: an empty string is no context.
+    let context = string(output, "additionalContext").filter(|text| !text.is_empty());
     match name {
         "PreToolUse" => {
             if let Some(decision) = decision {

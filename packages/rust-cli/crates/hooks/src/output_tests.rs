@@ -172,3 +172,29 @@ fn a_stop_without_stop_reason_uses_the_reason() {
     let stop_event = process(&json(stop), "c", "Stop").unwrap();
     assert_eq!(stop_event.stop_reason, None);
 }
+
+/// Node `hooks/output.ts` pushes `additionalContext` only when it is truthy, so an empty string is no context
+/// for any event: no attachment, and nothing for the compaction flag to see.
+#[test]
+fn an_empty_additional_context_is_no_context() {
+    let start = process(
+        &json(
+            json!({"hookSpecificOutput": {"hookEventName": "SessionStart",
+            "additionalContext": ""}}),
+        ),
+        "c",
+        "SessionStart",
+    )
+    .unwrap();
+    assert_eq!(start.additional_context, None);
+    let post = process(
+        &json(
+            json!({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+            "additionalContext": ""}}),
+        ),
+        "c",
+        "PostToolUse",
+    )
+    .unwrap();
+    assert_eq!(post.additional_context, None);
+}
