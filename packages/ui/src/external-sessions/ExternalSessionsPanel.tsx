@@ -243,9 +243,20 @@ export function ExternalSessionsPanel({
     [platform],
   );
 
+  // Only selected sources were scanned for this view; deselected ones carry a cached or
+  // `not scanned` status that must not drive the counts or the "every source unavailable" message.
+  const selectedStatuses = useMemo(
+    () =>
+      statuses
+        ? EXTERNAL_SESSION_SOURCE_CATALOG.filter(
+            (item) => view.sources.length === 0 || view.sources.includes(item.source),
+          ).map((item) => statuses[item.source])
+        : [],
+    [statuses, view.sources],
+  );
   const totalCount = useMemo(
-    () => (statuses ? Object.values(statuses).reduce((sum, item) => sum + item.count, 0) : 0),
-    [statuses],
+    () => selectedStatuses.reduce((sum, item) => sum + item.count, 0),
+    [selectedStatuses],
   );
 
   if (!state.supported) return null;
@@ -253,7 +264,7 @@ export function ExternalSessionsPanel({
   const canImport = actions.canImport && Boolean(onOpenSession);
   const canContinue = Boolean(onCreateTask) && actions.canResolveProject;
   const everySourceUnavailable =
-    statuses !== undefined && Object.values(statuses).every((item) => !item.available);
+    selectedStatuses.length > 0 && selectedStatuses.every((item) => !item.available);
 
   return (
     <section
@@ -284,7 +295,7 @@ export function ExternalSessionsPanel({
             {EXTERNAL_SESSION_SOURCE_CATALOG.map((item) => {
               const status = statuses?.[item.source];
               const active = view.sources.length === 0 || view.sources.includes(item.source);
-              const unavailable = status !== undefined && !status.available;
+              const unavailable = active && status !== undefined && !status.available;
               return (
                 <button
                   key={item.source}
@@ -301,7 +312,7 @@ export function ExternalSessionsPanel({
                   )}
                 >
                   {item.label}
-                  {status ? (
+                  {status && (active || status.available) ? (
                     <span className="ml-1 text-foreground-subtlest">{status.count}</span>
                   ) : null}
                 </button>

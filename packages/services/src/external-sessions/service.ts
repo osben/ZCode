@@ -165,10 +165,13 @@ export function createExternalSessionsService(
     ): Promise<ExternalSessionsListResult> {
       const params = listParamsSchema.parse(rawParams ?? {});
       const requested = params.sources?.length
-        ? params.sources.filter((source) => adaptersBySource.has(source))
+        ? [...new Set(params.sources)].filter((source) => adaptersBySource.has(source))
         : [...adaptersBySource.keys()];
       await ensureFresh(requested, params.refresh === true);
       const statuses = emptyStatuses();
+      // Sources outside this request keep their last scanned status so a deselected chip is not
+      // reported as unavailable; only never-scanned sources stay `not scanned`.
+      for (const [source, entry] of cache) statuses[source] = entry.status;
       const workspaceKey = params.workspacePath
         ? normalizePathForComparison(params.workspacePath)
         : null;

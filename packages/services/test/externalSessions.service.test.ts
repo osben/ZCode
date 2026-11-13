@@ -89,6 +89,37 @@ describe("createExternalSessionsService", () => {
     expect(limited.sessions.map((item) => item.key)).toEqual(["claude:b"]);
   });
 
+  it("ignores duplicate requested sources and scans each source once", async () => {
+    const list = vi.fn(async () => [summary({ source: "claude", sessionId: "a" })]);
+    const service = createExternalSessionsService({
+      adapters: [adapter("claude", list)],
+      homeDir: "/tmp",
+    });
+    const result = await service.listExternalSessions({ sources: ["claude", "claude"] });
+    expect(result.sessions.map((item) => item.key)).toEqual(["claude:a"]);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports sources outside the request by their last cached status, not as unavailable", async () => {
+    const service = createExternalSessionsService({
+      adapters: [
+        adapter("claude", async () => [summary({ source: "claude", sessionId: "a" })]),
+        adapter("gemini", async () => [summary({ source: "gemini", sessionId: "g" })]),
+      ],
+      homeDir: "/tmp",
+    });
+    const neverScanned = await service.listExternalSessions({ sources: ["claude"] });
+    expect(neverScanned.sources.gemini).toEqual({
+      available: false,
+      count: 0,
+      reason: "not scanned",
+    });
+    await service.listExternalSessions({});
+    const claudeOnly = await service.listExternalSessions({ sources: ["claude"] });
+    expect(claudeOnly.sources.gemini).toEqual({ available: true, count: 1 });
+    expect(claudeOnly.sessions.map((item) => item.key)).toEqual(["claude:a"]);
+  });
+
   it("serves repeated lists from the cache until the TTL passes or refresh is requested", async () => {
     let clock = 1_000;
     const list = vi.fn(async () => [summary({ source: "gemini", sessionId: "g" })]);
@@ -164,13 +195,13 @@ describe("createExternalSessionsService", () => {
     });
     expect(opened).toEqual({
       opened: true,
-      command: `cd ${quoteShellArgument(home)} && claude --resume s1`,
+      command: `cd -- ${quoteShellArgument(home)} && claude --resume s1`,
     });
     const fallback = await service.openExternalSessionInTerminal({
       source: "claude",
       sessionId: "s2",
     });
-    expect(fallback.command).toBe(`cd ${quoteShellArgument(home)} && claude --resume s2`);
+    expect(fallback.command).toBe(`cd -- ${quoteShellArgument(home)} && claude --resume s2`);
     expect(openTerminal).toHaveBeenCalledTimes(2);
 
     const linux = createExternalSessionsService({
@@ -205,7 +236,10 @@ describe("resume command helpers", () => {
     expect(quoteShellArgument("/Users/me/My Repo")).toBe("'/Users/me/My Repo'");
     expect(quoteShellArgument("/Users/me/it's")).toBe("'/Users/me/it'\\''s'");
     expect(buildResumeCommandLine({ cwd: "/a b", resumeCommand: "claude --resume s" })).toBe(
-      "cd '/a b' && claude --resume s",
+      "cd -- '/a b' && claude --resume s",
+    );
+    expect(buildResumeCommandLine({ cwd: "-P", resumeCommand: "claude --resume s" })).toBe(
+      "cd -- -P && claude --resume s",
     );
     expect(() =>
       buildResumeCommandLine({ cwd: "/a\nb", resumeCommand: "claude --resume s" }),
