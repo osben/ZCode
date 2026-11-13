@@ -49,10 +49,8 @@ const MAX_SHOWN_BODY_CHARS: usize = 200;
 fn specific(event: &str) -> Option<&'static [(&'static str, Kind)]> {
     Some(match event {
         "PreToolUse" => &[
-            (
-                "permissionDecision",
-                Kind::OneOf(&["allow", "deny", "ask", "defer"]),
-            ),
+            // Node's schema has no `defer`: such an output fails validation (a hook error).
+            ("permissionDecision", Kind::OneOf(&["allow", "deny", "ask"])),
             ("permissionDecisionReason", Kind::Str),
             ("updatedInput", Kind::Object),
             ("additionalContext", Kind::Str),
@@ -240,7 +238,6 @@ fn behavior(text: &str) -> Option<Behavior> {
         "allow" => Some(Behavior::Allow),
         "deny" => Some(Behavior::Deny),
         "ask" => Some(Behavior::Ask),
-        "defer" => Some(Behavior::Defer),
         _ => None,
     }
 }

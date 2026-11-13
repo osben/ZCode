@@ -17,8 +17,6 @@ pub(crate) enum Behavior {
     Allow,
     Deny,
     Ask,
-    /// 只在 print 模式生效；这里按没有决定处理（D11）。
-    Defer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

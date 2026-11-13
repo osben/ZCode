@@ -38,11 +38,10 @@ pub(crate) fn notices(results: &[HookResult]) -> Vec<String> {
         .collect()
 }
 
-/// `ZA` 的权限聚合：deny > defer > ask > allow。
+/// Node `mergePermissionBehavior`: deny > ask > the last decision.
 fn aggregate(current: Option<Behavior>, next: Behavior) -> Option<Behavior> {
     Some(match (current, next) {
         (_, Behavior::Deny) | (Some(Behavior::Deny), _) => Behavior::Deny,
-        (_, Behavior::Defer) | (Some(Behavior::Defer), _) => Behavior::Defer,
         (_, Behavior::Ask) | (Some(Behavior::Ask), _) => Behavior::Ask,
         (_, Behavior::Allow) => Behavior::Allow,
     })
@@ -99,7 +98,6 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
                         decision = Some(PermissionDecision::Deny { message });
                         decision_input = None;
                     }
-                    Behavior::Defer => {}
                 }
             }
         } else if result.updated_input.is_some() {

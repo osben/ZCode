@@ -27,6 +27,11 @@ fn classifies_stdout() {
         parse("{\"hookSpecificOutput\": {\"hookEventName\": \"Nope\"}}"),
         Parsed::Invalid(_)
     ));
+    // Node's PreToolUse schema has no `defer`: the output is a validation error, not a decision.
+    assert!(matches!(
+        parse("{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"defer\"}}"),
+        Parsed::Invalid(text) if text.contains("permissionDecision")
+    ));
     // 以 { 开头但不以 } 结尾：纯文本；多行空对象：纯文本；像 JSON 但不合法：校验错误。
     assert_eq!(parse("{ not json"), Parsed::Plain);
     assert_eq!(parse("{}\n{}"), Parsed::Plain);
