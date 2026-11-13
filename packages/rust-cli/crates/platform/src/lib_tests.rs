@@ -434,6 +434,95 @@ async fn a_first_read_that_is_unreadable_keeps_the_api_key_models() {
     );
 }
 
+/// F3: `credentials_readable` resolves once a registry read succeeds after an unreadable one (pull-based: the next
+/// catalog read does it), and not before.
+#[tokio::test]
+async fn credentials_become_readable_on_the_next_successful_read() {
+    use rust_cli_kernel_api::provider::CredentialCipher as _;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    let token = crate::test_support::ReversedCipher
+        .encrypt("login-token")
+        .await
+        .unwrap();
+    write(
+        paths.credentials().as_path(),
+        json!({ "oauth:zai:access_token": token }).to_string(),
+    )
+    .await;
+    let cipher = std::sync::Arc::new(crate::test_support::SwitchCipher {
+        down: std::sync::atomic::AtomicBool::new(true),
+    });
+    let services = crate::test_support::offline_services().await;
+    let platform = std::sync::Arc::new(Platform::with_cipher(&paths, cipher.clone(), services));
+    let _ = platform.catalog().await;
+    assert!(platform.credentials_unreadable().is_some());
+    let waiter = tokio::spawn({
+        let platform = platform.clone();
+        async move { platform.credentials_readable().await }
+    });
+    let _ = platform.catalog().await;
+    tokio::task::yield_now().await;
+    assert!(
+        !waiter.is_finished(),
+        "still unreadable: the waiter keeps waiting"
+    );
+    cipher
+        .down
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let _ = platform.catalog().await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+        .await
+        .expect("the waiter resolves after a readable read")
+        .unwrap();
+    assert!(platform.credentials_unreadable().is_none());
+}
+
+/// F3: a waiter woken by `credentials_readable` reads the catalog next, and the change gate hands it the published
+/// snapshot without reading. So the recovered snapshot must be published before the waiter wakes, or the waiter
+/// chooses the default again from the degraded one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_recovered_snapshot_is_published_before_waiters_wake() {
+    use rust_cli_kernel_api::provider::CredentialCipher as _;
+    for _ in 0..20 {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+        let token = crate::test_support::ReversedCipher
+            .encrypt("login-token")
+            .await
+            .unwrap();
+        write(
+            paths.credentials().as_path(),
+            json!({ "oauth:zai:access_token": token }).to_string(),
+        )
+        .await;
+        let cipher = std::sync::Arc::new(crate::test_support::SwitchCipher {
+            down: std::sync::atomic::AtomicBool::new(true),
+        });
+        let services = crate::test_support::offline_services().await;
+        let platform = std::sync::Arc::new(Platform::with_cipher(&paths, cipher.clone(), services));
+        let _ = platform.catalog().await;
+        let degraded = platform.registry.published().revision;
+        let waiter = tokio::spawn({
+            let platform = platform.clone();
+            async move {
+                platform.credentials_readable().await;
+                platform.registry.published().revision
+            }
+        });
+        tokio::task::yield_now().await;
+        cipher
+            .down
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let _ = platform.catalog().await;
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiter resolves after a readable read")
+            .unwrap();
+        assert!(seen > degraded, "the waiter saw the degraded snapshot");
+    }
+}
+
 /// Fork: one entitled ChatGPT Plan account (specs/fork-rust-chatgpt-plan.md).
 const CHATGPT_KEY: &str = "0123456789abcdef";
 

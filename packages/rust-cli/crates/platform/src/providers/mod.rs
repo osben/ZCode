@@ -78,8 +78,16 @@ pub(crate) struct Registry {
     gate: Mutex<ChangeGate>,
     published: Mutex<Published>,
     next_seq: AtomicU64,
-    /// 最近一次读取的不可读原因（没有时为空）：模型端点查不到模型时据此报“凭据读不到”，而不是“不可用”。
-    unreadable: Mutex<Option<&'static str>>,
+    /// 最近一次读取的不可读原因（没有时为空）：模型端点查不到模型时据此报“凭据读不到”，而不是“不可用”。A watch so the
+    /// default-model task can wait for a readable read (fork spec `fork-rust-credential-cipher.md` F3).
+    unreadable: tokio::sync::watch::Sender<Signal>,
+}
+
+/// The credentials state of the latest read that signalled it.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Signal {
+    seq: u64,
+    reason: Option<&'static str>,
 }
 
 /// 读到的三份输入。
@@ -109,13 +117,35 @@ impl Registry {
                 current: Arc::new(Current::default()),
             }),
             next_seq: AtomicU64::new(1),
-            unreadable: Mutex::new(None),
+            unreadable: tokio::sync::watch::Sender::new(Signal::default()),
         }
     }
 
     /// 最近一次读取凭据失败的静态原因（读得到时为空）。
     pub fn unreadable_reason(&self) -> Option<&'static str> {
-        *self.unreadable.lock_unpoisoned()
+        self.unreadable.borrow().reason
+    }
+
+    /// Records the credentials state of read `seq`. Like the published snapshot, a read older than the last one
+    /// signalled does not overwrite it.
+    fn signal(&self, seq: u64, reason: Option<&'static str>) {
+        self.unreadable.send_if_modified(|signal| {
+            if seq < signal.seq {
+                return false;
+            }
+            let changed = signal.reason != reason;
+            *signal = Signal { seq, reason };
+            changed
+        });
+    }
+
+    /// Resolves once the latest read had readable credentials; at once when it had, or when nothing was read yet.
+    /// Pull-based: a later [`Self::current`] read does it (a catalog read, a session's endpoint lookup, the Host's
+    /// model requests); nothing reads on a timer.
+    pub async fn readable(&self) {
+        let mut receiver = self.unreadable.subscribe();
+        // The sender lives in `self`, so the channel cannot close while this borrow is held.
+        let _ = receiver.wait_for(|signal| signal.reason.is_none()).await;
     }
 
     /// 当前快照；文件有变化时先重新读取。
@@ -141,18 +171,32 @@ impl Registry {
                 return self.published.lock_unpoisoned().current.clone();
             }
         };
-        *self.unreadable.lock_unpoisoned() = inputs.unreadable;
+        let unreadable = inputs.unreadable;
+        if unreadable.is_some() {
+            // Wakes no one: signalled at once, so a cancelled read cannot lose it.
+            self.signal(seq, unreadable);
+        }
+        let current = self.publish(seq, inputs).await;
+        if unreadable.is_none() {
+            // Only after this read's snapshot is published: a waiter woken by `readable()` reads the catalog next,
+            // and the change gate hands it the published snapshot without reading. The gate is recorded here too, so
+            // a read cancelled before this point records neither and the next read reads again.
+            self.gate.lock_unpoisoned().record(stamps, now);
+            self.signal(seq, None);
+        }
+        current
+    }
+
+    /// Publishes the snapshot of one read (the inputs already read), or keeps the published one.
+    async fn publish(&self, seq: u64, inputs: Inputs) -> Arc<Current> {
         if inputs.unreadable.is_none() {
             self.credentials.note_ok();
-        }
-        if inputs.unreadable.is_some() {
+        } else {
             // 凭据不可读：保留上一次发布的结果（它的账号授权是已知的），且不记录文件的印记，下一次照常重读。
             let published = self.published.lock_unpoisoned();
             if published.current.revision > 0 {
                 return published.current.clone();
             }
-        } else {
-            self.gate.lock_unpoisoned().record(stamps, now);
         }
         let signature = signature(&inputs);
         if self.published.lock_unpoisoned().current.signature == signature {

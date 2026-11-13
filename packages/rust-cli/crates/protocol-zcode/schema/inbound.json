@@ -1,5 +1,149 @@
 {
   "methods": {
+    "lsp/preferences/get": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "workspacePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceIdentity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remoteSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspacePath",
+            "workspaceKey"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    },
+    "lsp/preferences/set": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "workspacePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceIdentity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remoteSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspacePath",
+            "workspaceKey"
+          ],
+          "additionalProperties": false
+        },
+        "patch": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "diagnosticsAfterEdit": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "minLength": 1
+              },
+              "additionalProperties": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace",
+        "patch"
+      ],
+      "additionalProperties": false
+    },
+    "lsp/status": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "workspacePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceIdentity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remoteSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspacePath",
+            "workspaceKey"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    },
+    "process/hostAttached": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "credentialCipher": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "credentialCipher"
+      ],
+      "additionalProperties": false
+    },
     "provider/refreshRegistry": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

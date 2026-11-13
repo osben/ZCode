@@ -404,6 +404,41 @@ pub async fn is_file(path: &Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file())
 }
 
+/// Fork: a regular file (following symlinks) this process may execute: Node `stat().isFile()` plus `access(X_OK)`
+/// (the language-server install probe, specs/fork-rust-lsp.md "Install probe"). Windows checks only the file.
+pub async fn is_executable_file(path: &Path) -> bool {
+    if !is_file(path).await {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let path = path.to_path_buf();
+        rust_cli_base::blocking(move || may_execute(&path))
+            .await
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[cfg(unix)]
+fn may_execute(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    #[expect(
+        unsafe_code,
+        reason = "access(2) is libc FFI; the pointer is a valid NUL-terminated string"
+    )]
+    // SAFETY: `path` is a live `CString`, so the pointer is valid and NUL-terminated for the whole call, and
+    // access(2) only reads it.
+    let result = unsafe { libc::access(path.as_ptr(), libc::X_OK) };
+    result == 0
+}
+
 /// What [`stat`] found at a path (following symlinks).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stat {
@@ -412,6 +447,9 @@ pub struct Stat {
     pub len: u64,
     /// Milliseconds since the Unix epoch, when the platform reports it.
     pub modified_ms: Option<u64>,
+    /// No group or other permission bits (`mode & 0o077 == 0`); always true off Unix (Node checks the mode only off
+    /// Windows). Fork: the default `credential-secret` must be private (specs/fork-rust-credential-cipher.md F4).
+    pub owner_only: bool,
 }
 
 /// The path's metadata, following symlinks; `None` when it does not exist (Fork: a shared attachment's size probe,
@@ -426,10 +464,22 @@ pub async fn stat(path: &Path) -> io::Result<Option<Stat>> {
                 .ok()
                 .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
                 .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok()),
+            owner_only: owner_only(&metadata),
         })),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+#[cfg(unix)]
+fn owner_only(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+fn owner_only(_: &std::fs::Metadata) -> bool {
+    true
 }
 
 /// 文件的修改时间；不存在时为 `None`（模型轨迹按修改时间从旧到新淘汰文件，docs/specs/rust-cli/model-io.md §3.3）。

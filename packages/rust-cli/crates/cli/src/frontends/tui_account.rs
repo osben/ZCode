@@ -10,8 +10,8 @@ use rust_cli_platform::usage::AccountPlan;
 use rust_cli_platform::{LoginError, Platform};
 use rust_cli_tui_ports::services::CancellationToken;
 use rust_cli_tui_ports::services::{
-    Account, Authorize, Configured, FamilyModel, FamilyStatus, LoginFailure, PlanConnection,
-    TeamStatus,
+    Account, Authorize, Configured, FamilyLogin, FamilyModel, FamilyStatus, LoginFailure,
+    PlanConnection, TeamStatus,
 };
 use tokio::sync::oneshot;
 
@@ -108,7 +108,13 @@ impl Account for PlatformAccount {
                         Family::Bigmodel => "BigModel",
                     }
                     .to_owned(),
-                    signed_in: f.signed_in,
+                    login: match f.login {
+                        rust_cli_platform::usage::FamilyLogin::SignedIn => FamilyLogin::SignedIn,
+                        rust_cli_platform::usage::FamilyLogin::SignedOut => FamilyLogin::SignedOut,
+                        rust_cli_platform::usage::FamilyLogin::Unreadable => {
+                            FamilyLogin::Unreadable
+                        }
+                    },
                     account: f.account,
                     connection: match f.plan {
                         AccountPlan::Start => PlanConnection::Start,

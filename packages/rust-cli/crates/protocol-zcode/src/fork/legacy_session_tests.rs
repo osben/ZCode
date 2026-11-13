@@ -313,7 +313,7 @@ fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
         kernel.clone(),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

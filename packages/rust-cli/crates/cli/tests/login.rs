@@ -78,7 +78,8 @@ fn api_key_login_and_logout() {
         credentials[identity]
             .as_str()
             .unwrap()
-            .starts_with("enc:v1:")
+            // Fork spec `fork-rust-credential-cipher.md` F4: standalone writes `enc:v2:`, keyed by the env secret.
+            .starts_with("enc:v2:env:")
     );
     assert!(
         !std::fs::read_to_string(config.join("credentials.json"))
