@@ -395,6 +395,9 @@ async fn run(
         .model_port()
         .ok_or_else(|| RpcError::method_not_found("model port"))?;
     let token = operation.map_or_else(CancellationToken::new, |operation| operation.token.clone());
+    if token.is_cancelled() {
+        return Err(model_failure(&ModelError::Cancelled));
+    }
     let mut stream = port.stream(request, token.clone());
     let collect = async {
         let mut collected = Collected::default();
@@ -471,9 +474,15 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
     let operation_id = trimmed(params, "operationId")?;
     let wanted = Wanted::parse(params)?;
     let workspace = workspace_path(params)?;
-    let (system, messages) = match prompt {
-        Some(prompt) => (Vec::new(), vec![ApiMessage::user_text(prompt.to_owned())]),
-        None => conversation(params["messages"].as_array().map_or(&[][..], Vec::as_slice)),
+    // Node registers the operation before any await, so a cancel sent right after the call is never missed.
+    let operation = operation_id
+        .map(|id| server.workspace_operations.start(id))
+        .transpose()?;
+    // Node prefers `messages` when both are given.
+    let (system, messages) = match (params["messages"].as_array(), prompt) {
+        (Some(items), _) => conversation(items),
+        (None, Some(prompt)) => (Vec::new(), vec![ApiMessage::user_text(prompt.to_owned())]),
+        (None, None) => (Vec::new(), Vec::new()),
     };
     let tools = tools(&params["tools"]);
 
@@ -510,9 +519,6 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
         SideSource::WorkspaceText
     };
 
-    let operation = operation_id
-        .map(|id| server.workspace_operations.start(id))
-        .transpose()?;
     let registered = Registered::new(&server.context, workspace);
     let mut request = ModelRequest::side(
         selection(&entry, level),

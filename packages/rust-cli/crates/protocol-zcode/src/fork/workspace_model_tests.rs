@@ -76,6 +76,17 @@ impl ModelDirectory for Directory {
     }
 }
 
+/// A directory whose catalog waits for one permit of its gate.
+struct GatedDirectory(Arc<Notify>);
+
+#[async_trait]
+impl ModelDirectory for GatedDirectory {
+    async fn catalog(&self) -> ModelCatalog {
+        self.0.notified().await;
+        Directory(catalog()).catalog().await
+    }
+}
+
 fn entry(provider: &str, model: &str, levels: &[&str], max_output: u64) -> CatalogModel {
     CatalogModel {
         provider: provider.to_owned(),
@@ -102,11 +113,18 @@ fn server_with(
     model: Option<Arc<ScriptedModel>>,
     models: Vec<CatalogModel>,
 ) -> (TaskScope, Arc<Server>) {
+    server_on(model, Arc::new(Directory(models)))
+}
+
+fn server_on(
+    model: Option<Arc<ScriptedModel>>,
+    directory: Arc<dyn ModelDirectory>,
+) -> (TaskScope, Arc<Server>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
-    context.set_models(Arc::new(Directory(models)));
+    context.set_models(directory);
     if let Some(model) = model {
         context.set_model_port(model);
     }
@@ -777,4 +795,74 @@ async fn without_a_model_port_the_methods_are_not_served() {
             "{method}"
         );
     }
+}
+
+/// The operation is registered before the catalog is read (Node registers it before any await): a cancel that arrives
+/// meanwhile answers `cancelled: true` and no model request is sent.
+#[tokio::test]
+async fn a_cancel_before_the_model_request_is_not_missed() {
+    let gate = Arc::new(Notify::new());
+    let model = Arc::new(ScriptedModel::new(vec![reply(
+        &[text("late")],
+        StopReason::EndTurn,
+        usage(1, 1),
+    )]));
+    let (_scope, server) = server_on(Some(model.clone()), Arc::new(GatedDirectory(gate.clone())));
+    let params = json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"},
+        "prompt": "p", "querySource": "x", "operationId": "op-early"});
+    let running = tokio::spawn({
+        let server = server.clone();
+        async move { generate_text(&server, &params).await }
+    });
+    loop {
+        let answer = cancel(&server, &json!({"operationId": "op-early"})).unwrap();
+        if answer["cancelled"] == json!(true) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    gate.notify_one();
+    let error = running.await.unwrap().unwrap_err();
+    assert_eq!(error.data.unwrap()["code"], "model_request_cancelled");
+    assert!(model.requests().is_empty());
+}
+
+/// Node uses `messages` when both `prompt` and `messages` are given.
+#[tokio::test]
+async fn messages_win_over_a_prompt() {
+    let model = Arc::new(ScriptedModel::new(vec![reply(
+        &[text("ok")],
+        StopReason::EndTurn,
+        usage(1, 1),
+    )]));
+    let (_scope, server) = server(model.clone());
+    let params = json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"},
+        "querySource": "x", "prompt": "from prompt",
+        "messages": [{"role": "user", "content": "from messages"}]});
+    generate_text(&server, &params).await.unwrap();
+    assert_eq!(
+        texts(&model.requests()[0]),
+        [(ApiRole::User, "from messages".to_owned())]
+    );
+}
+
+/// Without an operation id the call is bounded by Node's 60 s and answers its timeout, cancelling the model request.
+#[tokio::test(start_paused = true)]
+async fn a_call_without_an_operation_times_out_after_sixty_seconds() {
+    let model = Arc::new(
+        ScriptedModel::new(vec![reply(
+            &[text("never")],
+            StopReason::EndTurn,
+            usage(1, 1),
+        )])
+        .gated(Arc::new(Notify::new())),
+    );
+    let (_scope, server) = server(model.clone());
+    let params =
+        json!({"workspace": workspace(), "selection": {"providerId": "p", "modelId": "small"}});
+    let started = tokio::time::Instant::now();
+    let error = test_connectivity(&server, &params).await.unwrap_err();
+    assert_eq!(error.message, "Model request timed out.");
+    assert_eq!(error.data.unwrap()["code"], "model_request_timeout");
+    assert_eq!(started.elapsed(), std::time::Duration::from_secs(60));
 }
