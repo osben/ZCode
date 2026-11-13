@@ -149,8 +149,8 @@ import {
 } from "./workflow-escalation-registry.js";
 
 /** Default and maximum number of listRunsForSession items (bounded enumeration; never scan without a limit). */
-const DEFAULT_LIST_RUNS_LIMIT = 16;
-const MAX_LIST_RUNS_LIMIT = 64;
+export const DEFAULT_LIST_RUNS_LIMIT = 16;
+export const MAX_LIST_RUNS_LIMIT = 64;
 
 /** Input to the actor runtime factory. Includes runId because session IDs and task links are run-scoped. */
 export interface DynamicWorkflowActorRuntimeInput {

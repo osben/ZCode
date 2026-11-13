@@ -9,3 +9,4 @@ Invariants:
 - No Node storage entry or no binary path → the Node command is returned unchanged.
 - `ZCODE_AGENT_SERVER_COMMAND` is handled before this hook and bypasses it.
 - Wiring point: `resolveDefaultZCodeAgentCommand` (`zcodeAgentProcessManager.ts`).
+- The Rust command carries `ZCODE_FORK_NODE_HELPER_COMMAND`: JSON `{command, args, env}` that runs the same bundled Node entry as `__zcode-rust-helper --stdio` (specs/fork-rust-node-helper.md). The Rust agent spawns it lazily; the Host never starts it.

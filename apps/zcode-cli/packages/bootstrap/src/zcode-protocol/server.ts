@@ -159,10 +159,12 @@ import {
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import {
   createProtocolLogger,
+  getPluginOperationId,
   isErrorResponse,
   isNotification,
   isRequest,
   isResponse,
+  PLUGIN_PREPARATION_MUTATION_METHODS,
   PROTOCOL_CLIENT_REQUEST_ERROR_CODES,
   ProtocolRequestError,
   type ParamsSchema,
@@ -178,18 +180,6 @@ import { createInMemorySessionEventStore } from "@zcode/contracts";
 export type { ZCodeProtocolAgentDependencies, ZCodeProtocolSessionRecord };
 
 import { closeMcpUiInstance, openMcpUiInstance, validateMcpUiInstance } from "./mcp-ui/index.js";
-const PLUGIN_PREPARATION_MUTATION_METHODS = new Set<string>([
-  zcodeProtocolMethods.pluginsSetEnabled,
-  zcodeProtocolMethods.pluginsInstall,
-  zcodeProtocolMethods.pluginsUninstall,
-  zcodeProtocolMethods.pluginsUpdate,
-  zcodeProtocolMethods.pluginsRestoreBuiltin,
-  zcodeProtocolMethods.pluginsConfigure,
-  zcodeProtocolMethods.pluginsMarketplaceAdd,
-  zcodeProtocolMethods.pluginsMarketplaceRemove,
-  zcodeProtocolMethods.pluginsMarketplaceUpdate,
-]);
-
 const MAX_CLIENT_REQUEST_REANNOUNCE_INTERVAL_MS = 10_000;
 
 type ZCodeProtocolOutboundMessage = ZCodeProtocolNotification | ZCodeProtocolRequest;
@@ -249,14 +239,6 @@ function collectResidencySessionIds(params: unknown): string[] {
     }
   }
   return [...sessionIds];
-}
-
-function getPluginOperationId(params: unknown): string | undefined {
-  if (!params || typeof params !== "object") return undefined;
-  const operationId = (params as { operationId?: unknown }).operationId;
-  return typeof operationId === "string" && operationId.trim().length > 0
-    ? operationId.trim()
-    : undefined;
 }
 
 function getOperationId(params: unknown): string | undefined {
