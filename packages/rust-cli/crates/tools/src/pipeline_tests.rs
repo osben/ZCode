@@ -663,7 +663,7 @@ async fn a_tool_the_turn_hides_is_refused_before_any_hook() {
 /// Fork: an ordinary turn (default limits) refuses CronPauseSelf and runs the mutation tools; without a session view
 /// the gate uses the same default limits as the tool listing (fail closed: CronPauseSelf stays refused).
 #[tokio::test]
-async fn an_ordinary_turn_and_a_missing_view_refuse_cron_pause_self() {
+async fn a_missing_view_refuses_every_automation_tool_an_ordinary_turn_only_pause_self() {
     struct Ordinary;
     #[async_trait::async_trait]
     impl rust_cli_kernel_api::testing::OpsOverride for Ordinary {
@@ -711,8 +711,24 @@ async fn an_ordinary_turn_and_a_missing_view_refuse_cron_pause_self() {
             text(&output),
             "<tool_use_error>Error: No such tool available: CronPauseSelf</tool_use_error>"
         );
-        let output = run("CronDelete").await.output;
+        // An ordinary turn runs the mutation tools; without the view the turn may be an automation run, so they are
+        // refused (fail closed), the same answer as a hidden tool.
+        for name in ["CronCreate", "CronUpdate", "CronDelete"] {
+            let output = run(name).await.output;
+            if case == 0 {
+                assert!(!output.is_error, "{name}");
+                assert_eq!(text(&output), "ran");
+            } else {
+                assert!(output.is_error, "{name}");
+                assert_eq!(
+                    text(&output),
+                    format!(
+                        "<tool_use_error>Error: No such tool available: {name}</tool_use_error>"
+                    )
+                );
+            }
+        }
+        let output = run("Read").await.output;
         assert!(!output.is_error, "case {case}");
-        assert_eq!(text(&output), "ran");
     }
 }

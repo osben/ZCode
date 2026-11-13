@@ -70,6 +70,13 @@ impl TurnLimits {
             None => name == CRON_PAUSE_SELF,
         }
     }
+
+    /// Fork: the call-time gate when the session's view is gone (its actor stopped): the turn may be an automation run,
+    /// so the automation tools are refused (fail closed); CronPauseSelf has no automation id to pause either. The
+    /// Host's disallowlist cannot be known without the view.
+    pub fn hides_without_view(name: &str) -> bool {
+        name == CRON_PAUSE_SELF || AUTOMATION_MUTATION_TOOLS.contains(&name)
+    }
 }
 
 /// The `new` rule for a decoded id: trimmed, a blank one is none.

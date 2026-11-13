@@ -43,8 +43,8 @@ struct WorkspaceParam {
     workspace_path: String,
 }
 
-/// `zcodeSessionResumeParamsSchema` (only the fields used here). `thoughtLevel` is not read: Node uses it for a session
-/// without a stored selection, and every Rust session has one (specs/fork-rust-automations.md, slice 1 item 2).
+/// `zcodeSessionResumeParamsSchema` (only the fields used here). `thoughtLevel` is not read, as in Node: its resume
+/// path never reads it (`server-operations.ts` reads it only in create and `setThoughtLevel`).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResumeParams {
@@ -87,11 +87,10 @@ fn ack_result(ack: Ack) -> Result<Option<Value>, RpcError> {
         .filter(|message| !message.is_empty())
         .unwrap_or_else(|| {
             format!(
-                "the command was {:?}: {}",
-                ack.status,
+                "the command was {}: {}",
+                format!("{:?}", ack.status).to_lowercase(),
                 ack.reason_code.as_deref().unwrap_or("no reason")
             )
-            .to_lowercase()
         });
     match ack.status {
         Status::Accepted => Ok(ack.result),
@@ -137,6 +136,37 @@ fn snapshot_params(session: &SessionId) -> Value {
 /// Node `createSession`: the session is created like a v4 `createSession` without a first input and stays a draft
 /// until the first accepted input persists it (`persistence: "deferred"`); `"immediate"`, Node's default, persists it
 /// here.
+/// Node `resolveSupportedAppThoughtLevel`: the level when the target model offers it. The workspace default level may
+/// come from a previous model, so an unsupported one is skipped with a warning (the model keeps its own level). A model
+/// the directory does not list keeps the level: there is nothing to check it against.
+async fn supported_level(
+    server: &Server,
+    target: &rust_cli_kernel_api::model::ModelSelection,
+    level: &str,
+) -> Option<String> {
+    let catalog = server.context.catalog().await;
+    let entry = catalog
+        .iter()
+        .find(|entry| rust_cli_kernel_api::model_name::is_entry(target, entry));
+    match entry {
+        Some(entry)
+            if !entry
+                .reasoning_levels
+                .iter()
+                .any(|offered| offered == level) =>
+        {
+            tracing::warn!(
+                event = "zcode_protocol.session_create.thought_level_skipped",
+                level,
+                supported = ?entry.reasoning_levels,
+                "session/create skipped an unsupported thought level"
+            );
+            None
+        }
+        _ => Some(level.to_owned()),
+    }
+}
+
 pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, RpcError> {
     let params: CreateParams = parse(params)?;
     check_tool_lists(&params.tool_allowlist, &params.tool_denylist)?;
@@ -155,17 +185,26 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         Some(model) if !model.is_object() => {
             return Err(RpcError::invalid_params("model must be an object"));
         }
-        Some(model) => Some(model),
-        None => params.thought_level.as_ref().map(|_| {
+        model => model,
+    };
+    let target = match &model {
+        Some(model) => crate::commands::selection(Some(model)),
+        None => Some(server.defaults.selection.clone()),
+    };
+    let level = match (params.thought_level.as_deref().map(str::trim), target) {
+        (Some(level), Some(target)) if !level.is_empty() => {
+            supported_level(server, &target, level).await
+        }
+        _ => None,
+    };
+    if let Some(level) = level {
+        let model = model.get_or_insert_with(|| {
             let chosen = &server.defaults.selection;
             json!({"providerId": chosen.provider, "modelId": chosen.model})
-        }),
-    };
-    if let (Some(model), Some(level)) = (
-        model.as_mut().and_then(Value::as_object_mut),
-        params.thought_level.as_deref(),
-    ) {
-        model.insert("options".to_owned(), json!({"reasoningLevel": level}));
+        });
+        if let Some(model) = model.as_object_mut() {
+            model.insert("options".to_owned(), json!({"reasoningLevel": level}));
+        }
     }
     let mut config = json!({});
     if let Some(model) = model {
@@ -291,10 +330,7 @@ pub(crate) async fn set_thought_level(server: &Server, params: &Value) -> Result
         Value::Null,
     )
     .await?;
-    let current = match live.handle.view().await {
-        Ok(view) => view.selection,
-        Err(_) => live.sink.current_config().0,
-    };
+    let (current, _, _) = super::session_config::held_config(&live).await;
     request.payload =
         json!({"provider": current.provider, "model": current.model, "thought": thought});
     ack_result(super::session_config::switch_model(&live, &request, 0).await)?;

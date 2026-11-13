@@ -612,6 +612,42 @@ async fn repeated_switches_are_separate_commands() {
     );
 }
 
+/// A switch back to the value the projection still shows (its event has not arrived) is a real switch: "unchanged" is
+/// decided from the session's own view, not from the lagging projection.
+#[tokio::test]
+async fn a_switch_back_before_the_event_is_not_unchanged() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s11");
+    let original = selection().model;
+    for model in ["m9", original.as_str()] {
+        call(
+            &server,
+            "session/setModel",
+            json!({"sessionId": "s11", "model": {"providerId": selection().provider, "modelId": model}}),
+        )
+        .await
+        .unwrap();
+    }
+    for mode in ["auto", "build"] {
+        call(
+            &server,
+            "session/setMode",
+            json!({"sessionId": "s11", "mode": mode}),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        log(&kernel),
+        vec![
+            "SetModel m9 -".to_owned(),
+            format!("SetModel {original} -"),
+            "SetMode auto".to_owned(),
+            "SetMode build".to_owned(),
+        ]
+    );
+}
+
 /// A duplicate or stale acknowledgement carries no message: the legacy error names the reason instead of being empty.
 #[test]
 fn a_duplicate_or_stale_ack_is_an_error_with_a_reason() {
@@ -619,10 +655,14 @@ fn a_duplicate_or_stale_ack_is_an_error_with_a_reason() {
     for status in [Status::Duplicate, Status::Stale] {
         let mut ack = Ack::accepted("c1", 0, None);
         ack.status = status;
-        ack.reason_code = Some("command.duplicate".to_owned());
+        ack.reason_code = Some("command.alreadySeen".to_owned());
         let error = super::ack_result(ack).unwrap_err();
-        assert!(!error.message.is_empty(), "{status:?}");
-        assert!(error.message.contains("command.duplicate"), "{error:?}");
+        // The reason code is kept verbatim (camelCase), only the status is lowercased.
+        let status_name = format!("{status:?}").to_lowercase();
+        assert_eq!(
+            error.message,
+            format!("the command was {status_name}: command.alreadySeen")
+        );
     }
     let mut ack = Ack::accepted("c1", 0, None);
     ack.status = Status::Duplicate;
@@ -639,6 +679,73 @@ async fn a_thought_level_without_a_model_applies_to_the_default_model() {
     assert_eq!(
         log(&kernel)[0],
         format!("create s9 {} high edit", selection().model)
+    );
+}
+
+/// The model directory of the level tests: the default model offers `off`/`high`, `p/m2` only `low`.
+struct Levels;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for Levels {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let entry = |provider: &str, model: &str, levels: &[&str]| {
+            rust_cli_kernel_api::provider::CatalogModel {
+                capabilities: Default::default(),
+                provider: provider.to_owned(),
+                provider_name: "Test".to_owned(),
+                model: model.to_owned(),
+                protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+                reasoning_levels: levels.iter().map(|level| (*level).to_owned()).collect(),
+                context_window: 200_000,
+                max_output_tokens: 4_096,
+                connection: None,
+                host: None,
+            }
+        };
+        let main = selection();
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![
+                entry(&main.provider, &main.model, &["off", "high"]),
+                entry("p", "m2", &["low"]),
+            ],
+            default: None,
+        }
+    }
+}
+
+/// Node `resolveSupportedAppThoughtLevel`: a `thoughtLevel` the target model does not offer (the workspace default may
+/// come from a previous model) is skipped, with or without an explicit model; the model keeps its own level.
+#[tokio::test]
+async fn an_unsupported_thought_level_is_skipped() {
+    let (_scope, server, kernel) = server();
+    server.context.set_models(Arc::new(Levels));
+    let mut without_model = automation_create("s12");
+    without_model.as_object_mut().unwrap().remove("model");
+    without_model["thoughtLevel"] = json!("max");
+    call(&server, "session/create", without_model)
+        .await
+        .unwrap();
+    let mut supported = automation_create("s13");
+    supported.as_object_mut().unwrap().remove("model");
+    supported["thoughtLevel"] = json!(" high ");
+    call(&server, "session/create", supported).await.unwrap();
+    // The explicit model `p/m2` offers only `low`: `high` is skipped, the selection's own `low` stays.
+    call(&server, "session/create", automation_create("s14"))
+        .await
+        .unwrap();
+    let creates: Vec<String> = log(&kernel)
+        .into_iter()
+        .filter(|line| line.starts_with("create"))
+        .collect();
+    let main = selection().model;
+    assert_eq!(
+        creates,
+        vec![
+            format!("create s12 {main} - edit"),
+            format!("create s13 {main} high edit"),
+            "create s14 m2 low edit".to_owned(),
+        ]
     );
 }
 

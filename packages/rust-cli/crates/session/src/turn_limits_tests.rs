@@ -190,6 +190,41 @@ async fn queued_inputs_drain_with_their_own_limits() {
     assert_eq!(offered(&requests[2]), ordinary);
 }
 
+/// A plain input at the queue's head does not pull a limited input behind it into its batch: the limited one keeps
+/// its own turn and limits.
+#[tokio::test]
+async fn a_plain_head_does_not_batch_a_limited_input() {
+    let scope = TaskScope::root("test", |_| {});
+    let model = scripted(3);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gated = Arc::new(FirstGated {
+        inner: model.clone(),
+        gate: gate.clone(),
+        first: std::sync::atomic::AtomicBool::new(true),
+    });
+    let (_store, session) = tool_session(&scope, Arc::new(NoHooks), gated, tools()).await;
+    let mut events = session.subscribe(Some(0));
+
+    session
+        .send(submit_limited("o1", TurnLimits::default()))
+        .await;
+    session
+        .send(submit_limited("o2", TurnLimits::default()))
+        .await;
+    let automation = TurnLimits::new(Some("auto_1"), vec!["CronDelete".into()]);
+    session.send(submit_limited("run_1", automation)).await;
+    assert_eq!(session.view().await.unwrap().queue.len(), 2, "both queued");
+    gate.notify_one();
+    until_finished(&mut events, 3).await;
+
+    let requests = model.requests();
+    let ordinary = names(["CronCreate", "CronUpdate", "CronDelete", "Bash"]);
+    assert_eq!(requests.len(), 3);
+    assert_eq!(offered(&requests[0]), ordinary);
+    assert_eq!(offered(&requests[1]), ordinary);
+    assert_eq!(offered(&requests[2]), names(["CronPauseSelf", "Bash"]));
+}
+
 /// An automation input that named no mode leaves the session's mode alone, started at once or drained from the queue
 /// (Node gives such an input no execution state); its recorded state is not applied.
 #[tokio::test]
