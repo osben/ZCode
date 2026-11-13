@@ -4,11 +4,13 @@ Rule: while the session runtime is blocked, the composer slash menu lists only t
 
 Spec: `packages/desktop/test/e2e/conversation-session/conversation-session-blocked-runtime-slash-menu.test.ts`. It sends no model requests; its case manifest declares `providerRequestPolicy: "none"`.
 
-| ID    | Scenario                                                                        | Assertion                                                                         |
-| ----- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| BSM01 | Cold-open a persisted session while the resume hook holds (`initializing`)      | `/` lists exactly one app command, `app-slash:reload`; `app-slash:plan` is absent |
-| BSM02 | Release the hook; the runtime turns ready                                       | `app-slash:plan` is back in the menu (control for BSM01)                          |
-| BSM03 | Corrupt `session.revert` while the hook holds; materialization fails (`failed`) | The initialization retry shows; app commands are exactly `app-slash:reload`       |
+| ID    | Scenario                                                                        | Assertion                                                                                                |
+| ----- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| BSM01 | Cold-open a persisted session while the resume hook holds (`initializing`)      | `/reload` lists exactly `app-slash:reload`; `/plan` lists no app command (`app-slash:plan` absent)       |
+| BSM02 | Release the hook; the runtime turns ready                                       | `app-slash:plan` is back in the menu (control for BSM01)                                                 |
+| BSM03 | Corrupt `session.revert` while the hook holds; materialization fails (`failed`) | The initialization retry shows; `/reload` lists exactly `app-slash:reload`; `/plan` lists no app command |
+
+Query-based assertions: the slash panel is virtualised (overscan 8) and the 13 CLI commands precede the app rows on a bare `/`, so a `/` list cannot prove that `/plan` is absent. Each blocked check therefore types the command name: `/reload` is the positive anchor that app rows render, and `/plan` must then show no app row. BSM02 types `/plan` after release, which is the control that the same query does list `app-slash:plan`.
 
 ## How the runtime is blocked
 
@@ -28,6 +30,7 @@ No product hook. The spec reuses the history-first seed of HF01/HF02 (`conversat
 macOS Electron, built from this branch:
 
 - Green, 2/2 each: `desktop-e2e-20261031051923940-p20879-fb044b6fc27af613`, `desktop-e2e-20261031052506223-p30825-f5494f7fbfbbe62b`, `desktop-e2e-20261031052554254-p33104-da81d38bdd7bb2c8`, `desktop-e2e-20261031052641673-p34632-b7f60e7751da8194`; with the case manifest in place, `desktop-e2e-20261031052805042-p37042-952c45e777aefdb7`; at the final commit, in one invocation with `history-first`, `desktop-e2e-20261031054058409-p53532-ef460f4bcf18578b`.
+- Not yet run after the query-based assertions change (review follow-up on #376). The container/CI E2E run is required before this is trusted; it must not run on the developer's Mac.
 - Red control: with the selector temporarily set back to the old "blocked hides every app command" rule, `desktop-e2e-20261031052350487-p27427-67be739a21761be4` fails BSM01 and BSM03 on their own `/reload` anchors.
 
 Not run: Windows, Linux, mobile replayable, Docker. The spec lives in the formal `conversation-session/` directory, so it runs wherever that directory runs. It is not in the Docker verified suite (`CONVERSATION_SESSION_VERIFIED_E2E_SPEC`), because admission needs a verified Docker run artifact and none was produced.

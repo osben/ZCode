@@ -10,9 +10,12 @@ import { DatabaseSync } from "node:sqlite";
 import { TID_V4_COMPOSER_SEND } from "@zcode/shared/test-ids";
 import { DEFAULT_WORKSPACE, clearAppData, waitForWorkspaceApp } from "../helpers/desktop-app.js";
 import {
+  getV4SlashOptionIds,
   prepareV4ConversationE2E,
   selectV4TaskById,
   setV4ComposerText,
+  waitForV4ComposerText,
+  waitForV4SlashOption,
   waitForV4TimelineContaining,
 } from "../helpers/v4-conversation.js";
 import {
@@ -25,15 +28,13 @@ const root = join(DEFAULT_WORKSPACE, ".zcode", "history-first-e2e");
 const release = join(root, "release");
 const entered = join(root, "entered");
 const artifacts = process.env.ZCODE_E2E_ARTIFACT_DIR ?? join(process.cwd(), ".e2e-artifacts");
-const RELOAD_OPTION = '[data-option-id="app-slash:reload"]';
-const PLAN_OPTION = '[data-option-id="app-slash:plan"]';
+const RELOAD_ID = "app-slash:reload";
+const PLAN_ID = "app-slash:plan";
+const PLAN_OPTION = `[data-option-id="${PLAN_ID}"]`;
 
-function readAppSlashOptionIds(): Promise<string[]> {
-  return browser.execute(() =>
-    [...document.querySelectorAll('[data-option-id^="app-slash:"]')].map(
-      (node) => node.getAttribute("data-option-id") ?? "",
-    ),
-  );
+/** Ids of the app-command rows currently rendered in the slash panel (CLI commands excluded). */
+async function readAppSlashOptionIds(): Promise<string[]> {
+  return (await getV4SlashOptionIds()).filter((id) => id.startsWith("app-slash:"));
 }
 
 async function waitForResumeHookEntered() {
@@ -43,15 +44,27 @@ async function waitForResumeHookEntered() {
   );
 }
 
-/** Opens the slash menu; the reload option is the positive anchor that the menu rendered. */
-async function openSlashMenu() {
-  await setV4ComposerText("/");
-  await $(RELOAD_OPTION).waitForDisplayed({ timeout: 10_000 });
-}
-
 async function closeSlashMenu() {
   await browser.keys("Escape");
   await setV4ComposerText("");
+}
+
+/**
+ * Blocked-menu check. The panel is virtualised and a bare "/" lists 13 CLI commands before any app row,
+ * so a "/" list cannot prove that /plan is absent. Instead: "/reload" is the positive anchor that app rows
+ * render for a matching query, then "/plan" must show no app row.
+ */
+async function expectOnlyReloadWhileBlocked(screenshot: string) {
+  await setV4ComposerText("/reload");
+  await waitForV4SlashOption(RELOAD_ID);
+  expect(await readAppSlashOptionIds()).toEqual([RELOAD_ID]);
+  await browser.saveScreenshot(screenshot);
+
+  await setV4ComposerText("/plan");
+  await waitForV4ComposerText("/plan", "composer did not take the /plan query");
+  expect(await readAppSlashOptionIds()).toEqual([]);
+  expect(await $(PLAN_OPTION).isExisting()).toBe(false);
+  await closeSlashMenu();
 }
 
 describe("BSM: composer slash menu while the session runtime is blocked", () => {
@@ -73,11 +86,9 @@ describe("BSM: composer slash menu while the session runtime is blocked", () => 
     await waitForResumeHookEntered();
 
     try {
-      await openSlashMenu();
-      expect(await readAppSlashOptionIds()).toEqual(["app-slash:reload"]);
-      expect(await $(PLAN_OPTION).isExisting()).toBe(false);
-      await browser.saveScreenshot(join(artifacts, "blocked-runtime-slash-menu-initializing.png"));
-      await closeSlashMenu();
+      await expectOnlyReloadWhileBlocked(
+        join(artifacts, "blocked-runtime-slash-menu-initializing.png"),
+      );
     } finally {
       // A held resume blocks the next cold open too; release it so BSM03 does not fail in cascade.
       await writeFile(release, "release");
@@ -90,10 +101,9 @@ describe("BSM: composer slash menu while the session runtime is blocked", () => 
     );
     // Once the CLI catalog loads, its 13 commands precede the app rows in the virtualized panel
     // (max-h-56, overscan 8), so /plan is not in the DOM until the query narrows the list.
-    await openSlashMenu();
     await setV4ComposerText("/plan");
     await $(PLAN_OPTION).waitForDisplayed({ timeout: 10_000 });
-    expect(await readAppSlashOptionIds()).toEqual(expect.arrayContaining(["app-slash:plan"]));
+    expect(await readAppSlashOptionIds()).toEqual(expect.arrayContaining([PLAN_ID]));
     await closeSlashMenu();
   });
 
@@ -116,11 +126,7 @@ describe("BSM: composer slash menu while the session runtime is blocked", () => 
         timeout: 30_000,
       });
 
-      await openSlashMenu();
-      expect(await readAppSlashOptionIds()).toEqual(["app-slash:reload"]);
-      expect(await $(PLAN_OPTION).isExisting()).toBe(false);
-      await browser.saveScreenshot(join(artifacts, "blocked-runtime-slash-menu-failed.png"));
-      await closeSlashMenu();
+      await expectOnlyReloadWhileBlocked(join(artifacts, "blocked-runtime-slash-menu-failed.png"));
     } finally {
       database
         .prepare("UPDATE session SET revert = NULL WHERE id = ?")

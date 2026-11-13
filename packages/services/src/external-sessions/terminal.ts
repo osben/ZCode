@@ -3,7 +3,9 @@ import { quoteShellArgument } from "#src/external-sessions/contract.js";
 
 /**
  * The one line the resume terminal runs: `cd -- <cwd> && <resumeCommand>`. The cwd is quoted as a single
- * POSIX argument and `--` keeps a cwd starting with `-` from being read as a `cd` option; CR/LF/NUL anywhere are rejected because the line is embedded in a `.command` script.
+ * POSIX argument. `--` keeps a cwd starting with `-` from being read as a `cd` option, and a leading `-`
+ * also gets a `./` prefix because a bare `-` operand still means $OLDPWD after `--`. CR/LF/NUL anywhere
+ * are rejected because the line is embedded in a `.command` script.
  */
 export function buildResumeCommandLine(params: { cwd: string; resumeCommand: string }): string {
   if (!params.resumeCommand) {
@@ -15,5 +17,7 @@ export function buildResumeCommandLine(params: { cwd: string; resumeCommand: str
   ) {
     throw new Error("Resume command line must not contain NUL, CR or LF characters");
   }
-  return `cd -- ${quoteShellArgument(params.cwd)} && ${params.resumeCommand}`;
+  // `cd -- -` still means $OLDPWD, so a leading "-" is made an explicit relative path first.
+  const target = params.cwd.startsWith("-") ? `./${params.cwd}` : params.cwd;
+  return `cd -- ${quoteShellArgument(target)} && ${params.resumeCommand}`;
 }

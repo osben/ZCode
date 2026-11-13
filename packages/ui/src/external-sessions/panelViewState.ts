@@ -1,4 +1,8 @@
-import { EXTERNAL_SESSION_SOURCE_CATALOG, type ExternalSessionSource } from "./contract.js";
+import {
+  EXTERNAL_SESSION_SOURCE_CATALOG,
+  type ExternalSessionSource,
+  type ExternalSessionSourceStatus,
+} from "./contract.js";
 
 const VIEW_STORAGE_KEY = "zcode.externalSessions.view.v1";
 
@@ -33,4 +37,59 @@ export function persistViewState(state: PanelViewState): void {
   } catch {
     // Per-device convenience only.
   }
+}
+
+export type SourceStatusMap = Partial<Record<ExternalSessionSource, ExternalSessionSourceStatus>>;
+
+/** Empty selection = every source (specs/external-sessions.md "UI"). */
+function isActiveSource(sources: readonly ExternalSessionSource[], source: ExternalSessionSource) {
+  return sources.length === 0 || sources.includes(source);
+}
+
+/**
+ * Statuses of the selected sources only. Deselected sources were not scanned by the current request,
+ * so their cached or `not scanned` status must not drive counts or the empty-state message.
+ */
+export function selectedSourceStatuses(
+  statuses: SourceStatusMap | undefined,
+  sources: readonly ExternalSessionSource[],
+): ExternalSessionSourceStatus[] {
+  if (!statuses) return [];
+  return EXTERNAL_SESSION_SOURCE_CATALOG.filter((item) =>
+    isActiveSource(sources, item.source),
+  ).flatMap((item) => {
+    const status = statuses[item.source];
+    return status ? [status] : [];
+  });
+}
+
+export function summarizeSourceSelection(
+  statuses: SourceStatusMap | undefined,
+  sources: readonly ExternalSessionSource[],
+): { totalCount: number; everySourceUnavailable: boolean } {
+  const selected = selectedSourceStatuses(statuses, sources);
+  return {
+    totalCount: selected.reduce((sum, item) => sum + item.count, 0),
+    everySourceUnavailable: selected.length > 0 && selected.every((item) => !item.available),
+  };
+}
+
+/** Unavailable styling applies to selected chips only. */
+export function isChipUnavailable(
+  statuses: SourceStatusMap | undefined,
+  sources: readonly ExternalSessionSource[],
+  source: ExternalSessionSource,
+): boolean {
+  const status = statuses?.[source];
+  return isActiveSource(sources, source) && status !== undefined && !status.available;
+}
+
+/** A count is shown for an active chip, or for a deselected source whose cached status is available. */
+export function showChipCount(
+  statuses: SourceStatusMap | undefined,
+  sources: readonly ExternalSessionSource[],
+  source: ExternalSessionSource,
+): boolean {
+  const status = statuses?.[source];
+  return status !== undefined && (isActiveSource(sources, source) || status.available);
 }

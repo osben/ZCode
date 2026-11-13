@@ -100,6 +100,19 @@ describe("createExternalSessionsService", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts more duplicate sources than there are sources and still scans each once", async () => {
+    const list = vi.fn(async () => [summary({ source: "claude", sessionId: "a" })]);
+    const service = createExternalSessionsService({
+      adapters: [adapter("claude", list)],
+      homeDir: "/tmp",
+    });
+    const result = await service.listExternalSessions({
+      sources: ["claude", "claude", "claude", "claude", "claude", "claude", "claude"],
+    });
+    expect(result.sessions.map((item) => item.key)).toEqual(["claude:a"]);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
   it("reports sources outside the request by their last cached status, not as unavailable", async () => {
     const service = createExternalSessionsService({
       adapters: [
@@ -239,7 +252,11 @@ describe("resume command helpers", () => {
       "cd -- '/a b' && claude --resume s",
     );
     expect(buildResumeCommandLine({ cwd: "-P", resumeCommand: "claude --resume s" })).toBe(
-      "cd -- -P && claude --resume s",
+      "cd -- ./-P && claude --resume s",
+    );
+    // A bare "-" is the cd operand that means $OLDPWD even after "--", so it must become a path.
+    expect(buildResumeCommandLine({ cwd: "-", resumeCommand: "claude --resume s" })).toBe(
+      "cd -- ./- && claude --resume s",
     );
     expect(() =>
       buildResumeCommandLine({ cwd: "/a\nb", resumeCommand: "claude --resume s" }),

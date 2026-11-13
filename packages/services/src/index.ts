@@ -440,6 +440,7 @@ export {
 } from "#src/external-sessions/contract.js";
 export type {
   ExternalSessionSource,
+  ExternalSessionSourceStatus,
   ExternalSessionSummary,
   ExternalSessionTranscript,
   ExternalSessionsListResult,
