@@ -75,6 +75,7 @@ impl Actor {
         task: Task<Result<QueryStop, QueryError>>,
         prompt: Option<MessageId>,
         command: Option<CommandId>,
+        limits: rust_cli_kernel_api::turn_limits::TurnLimits,
     ) {
         let Opening {
             turn,
@@ -97,6 +98,7 @@ impl Actor {
                 self.deps.clock.now_ms(),
                 !self.pending.is_empty(),
             ),
+            limits,
         });
     }
 }

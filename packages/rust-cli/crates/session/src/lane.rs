@@ -541,8 +541,13 @@ impl Actor {
         let command = queued.input.command.clone();
         let text = queued.input.text.clone();
         let intent = queued.input.intent.clone();
+        // Fork: a head with turn limits takes no batch: the batched inputs would run under its limits.
+        let more = if queued.has_limits() {
+            Vec::new()
+        } else {
+            self.take_batch(&command, &text)
+        };
         let screened = queued.screened();
-        let more = self.take_batch(&command, &text);
         TurnInput::Human {
             screened,
             command,

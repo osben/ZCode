@@ -34,6 +34,9 @@ fn allowed(kind: &str) -> Vec<&'static str> {
             "executionKind",
             "inputSource",
             "backgroundSource",
+            "automationId",
+            "taskTrigger",
+            "scheduledAt",
         ][..],
         "model.request.status" => &[
             "requestId",
@@ -135,6 +138,8 @@ fn provider() -> Provider {
 struct Run {
     telemetry: Telemetry,
     provider: Provider,
+    /// The `automationId` the Host sent with the next `TurnStarted`'s input.
+    automation: Option<String>,
     seq: u64,
     facts: Vec<Value>,
 }
@@ -144,6 +149,7 @@ impl Run {
         Self {
             telemetry: Telemetry::new(session, role),
             provider: provider(),
+            automation: None,
             seq: 0,
             facts: Vec::new(),
         }
@@ -156,6 +162,7 @@ impl Run {
             seq: self.seq,
             now: 1_000 + self.seq,
             provider: &self.provider,
+            automation: self.automation.as_deref(),
         };
         let facts = self.telemetry.observe(&event, &at);
         self.facts.extend(facts);
@@ -169,6 +176,7 @@ impl Run {
             seq: self.seq,
             now: 1_000 + self.seq,
             provider: &self.provider,
+            automation: None,
         };
         let spawned = self.telemetry.subagents(links, &at, &mut out);
         self.facts.extend(out);
@@ -645,4 +653,54 @@ fn a_stall_reminder_is_not_a_consumed_subagent_result() {
     assert!(!subagent_result_consumed(&notification_metas([
         bash.as_str()
     ])));
+}
+
+/// The `turn.started` fact of a main turn whose input came with `automation` (Node `automationAdmission`).
+fn automation_turn(command: &str, automation: Option<&str>) -> Value {
+    let mut run = Run::new("sess_main", Role::Main);
+    run.automation = automation.map(str::to_owned);
+    run.event(turn_started("turn_1", Some(command)));
+    run.assert_schema();
+    run.facts[0].clone()
+}
+
+#[test]
+fn an_automation_turn_carries_its_automation_and_trigger() {
+    // "Run now": `automationId:manual:<uuid>`.
+    let manual = automation_turn("auto_1:manual:7f1c", Some("auto_1"));
+    assert_eq!(manual["sourceCommandId"], "auto_1:manual:7f1c");
+    assert_eq!(manual["automationId"], "auto_1");
+    assert_eq!(manual["taskTrigger"], "manual");
+    assert!(manual.get("scheduledAt").is_none());
+    // A scheduled run: `automationId:<scheduledAt>`.
+    let scheduled = automation_turn("auto_1:1800000000000", Some("auto_1"));
+    assert_eq!(scheduled["automationId"], "auto_1");
+    assert_eq!(scheduled["taskTrigger"], "schedule");
+    assert_eq!(scheduled["scheduledAt"], 1_800_000_000_000_u64);
+    // A command that is not this automation's run id keeps only the automation (Node does not guess the trigger).
+    for command in [
+        "cmd-1",
+        "auto_2:manual:7f1c",
+        "auto_1:manual:",
+        "auto_1:0",
+        "auto_1:soon",
+    ] {
+        let fact = automation_turn(command, Some("auto_1"));
+        assert_eq!(fact["automationId"], "auto_1", "{command}");
+        assert!(fact.get("taskTrigger").is_none(), "{command}");
+        assert!(fact.get("scheduledAt").is_none(), "{command}");
+    }
+    // An ordinary input: no automation fields, even when the command looks like a run id.
+    let plain = automation_turn("auto_1:manual:7f1c", None);
+    for key in ["automationId", "taskTrigger", "scheduledAt"] {
+        assert!(plain.get(key).is_none(), "{key}");
+    }
+}
+
+#[test]
+fn a_child_turn_carries_no_automation() {
+    let mut run = Run::new("sess_child", Role::Child);
+    run.automation = Some("auto_1".to_owned());
+    run.event(turn_started("turn_1", Some("auto_1:manual:7f1c")));
+    assert!(run.facts[0].get("automationId").is_none());
 }

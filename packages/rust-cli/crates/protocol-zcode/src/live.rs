@@ -111,6 +111,9 @@ pub struct Live {
     /// Fork: the queue items a `sendQueuedNow` is promoting (Node `reserveQueueItem`): a second promotion of the
     /// same item is refused instead of preempting the turn the first one started.
     promotions: crate::reservations::Reservations,
+    /// Fork: one model or mode switch at a time ([`Self::config_switch`]). A semaphore, not a Mutex: the lint policy
+    /// forbids holding a tokio MutexGuard across an await.
+    config_switches: tokio::sync::Semaphore,
     /// Fork: see [`ChildWatch`].
     child_watch: std::sync::OnceLock<Box<ChildWatch>>,
     /// Fork: the summary goes to the sessions index ([`listed_in_sessions_index`]).
@@ -190,6 +193,7 @@ impl Live {
             topics,
             rebuilds: tokio::sync::watch::Sender::new(0),
             promotions: crate::reservations::Reservations::default(),
+            config_switches: tokio::sync::Semaphore::new(1),
             child_watch: std::sync::OnceLock::new(),
             indexed: listed_in_sessions_index(view.meta.kind),
             admissions: std::sync::atomic::AtomicU64::new(0),
@@ -201,6 +205,20 @@ impl Live {
                 .incognito
                 .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
         }
+    }
+
+    /// Fork: the session's switch turn (Node `runSessionModelConfigMutation`): a model switch, a draft's config at its
+    /// activation and an edit's model read the session's config and send their commands while holding it, so
+    /// concurrent requests (each runs on its own task) apply in arrival order and none decides "unchanged" or reads
+    /// the model before the previous one is applied. Node's mutation covers model and reasoning only (its `setMode`
+    /// is synchronous); the mode switch here awaits the actor, so it takes the turn too, which is harmless.
+    pub(crate) async fn config_switch(
+        &self,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, &'static str> {
+        self.config_switches
+            .acquire()
+            .await
+            .map_err(|_| "the session's switch gate is closed")
     }
 
     /// Fork: admits one App input: its `admissionSeq` and `admittedAt` (ms) for the input intent.
@@ -316,6 +334,7 @@ impl Live {
                 seq,
                 now,
                 provider: &provider,
+                automation: None,
             },
             &mut facts,
         );
@@ -693,6 +712,7 @@ impl Live {
                         seq,
                         now,
                         provider: &provider,
+                        automation: None,
                     },
                     &mut facts,
                 )
@@ -1060,6 +1080,14 @@ impl SessionSink for Live {
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
         let provider = provider_of(&state.projection);
+        // The automation the Host sent with the input this turn starts (remembered by sendText, the only writer).
+        let automation = match &event.event {
+            KernelEvent::TurnStarted {
+                command: Some(command),
+                ..
+            } => state.projection.input_automation(command.as_str()),
+            _ => None,
+        };
         if let Some(telemetry) = &mut state.telemetry {
             let facts = telemetry.observe(
                 &event.event,
@@ -1068,6 +1096,7 @@ impl SessionSink for Live {
                     seq: event.seq,
                     now,
                     provider: &provider,
+                    automation: automation.as_deref(),
                 },
             );
             state.facts.extend(facts);

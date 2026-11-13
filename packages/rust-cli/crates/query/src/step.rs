@@ -36,8 +36,13 @@ impl StepTools {
     pub(crate) async fn refresh(scope: &RunScope, selection: &ModelSelection) -> Self {
         let capabilities = scope.parts.model.capabilities(selection).await;
         let snapshot = scope.parts.tools.snapshot(&scope.session);
+        // Fork: the running turn's limits (Node `getTurnTools`): an automation run hides the Cron mutation tools and its
+        // disallowlist, other turns hide CronPauseSelf (specs/fork-rust-automations.md).
+        let limits = scope.view().await.turn;
+        let mut tools = visible_tools(snapshot.tools, capabilities.as_ref());
+        tools.retain(|tool| !limits.hides(tool.name()));
         Self {
-            tools: visible_tools(snapshot.tools, capabilities.as_ref()),
+            tools,
             mcp: snapshot.mcp,
             capabilities,
         }

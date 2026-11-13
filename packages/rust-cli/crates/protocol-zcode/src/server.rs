@@ -397,7 +397,7 @@ impl Server {
         json!({"closed": true})
     }
 
-    async fn dispatch(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
+    pub(crate) async fn dispatch(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
         let reply = |value: Value| Ok(Reply::new(value));
         match method {
             "runtime/capabilities" => reply(capabilities(self.context.node_helper().is_some())),
@@ -426,8 +426,10 @@ impl Server {
                     "updatedSessionCount": 0}),
                 )
             }
+            // Fork: the off-peak tools are not ported yet (specs/fork-rust-automations.md, slice 3): answer disabled, so
+            // the Host does not assume OffPeakCreate / OffPeakList exist.
             "workspace/updateOffPeakToolPolicy" => {
-                reply(json!({"workspace": params["workspace"], "enabled": params["enabled"]}))
+                reply(json!({"workspace": params["workspace"], "enabled": false}))
             }
             // 动态工作流不移植（P4 决定）：回 disabled 生效。
             "workspace/updateDynamicWorkflowPolicy" => {
