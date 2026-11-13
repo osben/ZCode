@@ -80,8 +80,9 @@ sequenceDiagram
 
 ### Catalog (registry)
 
-1. Accounts come from `oauth:chatgpt:accounts` (JSON array of `{accountKey, sub?, email?, name?, addedAt?}`),
-   entries whose `accountKey` is 16 lowercase hex (`isChatGptPlanAccountKey`), first occurrence wins.
+1. Accounts come from `oauth:chatgpt:accounts` (JSON array of `{accountKey, sub, email?, name?, addedAt?}`),
+   entries whose `accountKey` is 16 lowercase hex (`isChatGptPlanAccountKey`) and whose `sub` is non-empty (Node
+   `parseAccountRecord`), first occurrence wins.
 2. An account is listed only if `oauth:chatgpt:<K>:access_token` or `…:refresh_token` is present (Node
    `listSiwcPlanAccounts`). It is entitled iff `oauth:chatgpt:<K>:scopes` (space separated) contains
    `chatgpt.tokens.use.direct`; an identity-only account is listed but not executable.
@@ -91,7 +92,9 @@ sequenceDiagram
    The base id is never published; with zero accounts the family is absent.
 4. A change of the account set, a label, or an entitlement changes the registry signature (one new revision). The
    revision is a counter: no account key or email appears in it or in logs.
-5. Unreadable credentials (cipher unavailable) keep the last published snapshot (cipher spec rule).
+5. Unreadable credentials (cipher unavailable, a value that does not decrypt) keep the last published snapshot
+   (cipher spec rule). A missing or unparsable `credentials.json` is "signed out" for every account provider, as for
+   the zhipu accounts (fail-closed).
 6. `chatgpt-account` is an account access: the provider is enabled regardless of `enabled`, executable only when
    entitled, its static `Authorization` / `x-api-key` headers are dropped, and its endpoint is renewable.
 
