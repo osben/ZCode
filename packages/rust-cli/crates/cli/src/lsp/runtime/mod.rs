@@ -1,6 +1,7 @@
 //! Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): a port of Node adapters `lsp/*` (JSON-RPC,
 //! pool, lifecycle) and core `lsp/*` (document sync, freshness, post-edit diagnostics).
 
+pub(crate) mod documents;
 pub(crate) mod edits;
 pub(crate) mod pool;
 pub(crate) mod process;

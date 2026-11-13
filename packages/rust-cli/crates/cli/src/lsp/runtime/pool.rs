@@ -977,4 +977,4 @@ async fn idle_loop(pool: Weak<Inner>, pool_key: PoolKey, generation: u64, idle: 
 
 #[cfg(test)]
 #[path = "pool_tests.rs"]
-mod tests;
+pub(crate) mod tests;
