@@ -88,11 +88,12 @@ describe("BSM: composer slash menu while the session runtime is blocked", () => 
       async () => await $(`[data-testid="${TID_V4_COMPOSER_SEND}"]`).isEnabled(),
       { timeout: 30_000, timeoutMsg: "runtime did not become ready after the barrier" },
     );
+    // Once the CLI catalog loads, its 13 commands precede the app rows in the virtualized panel
+    // (max-h-56, overscan 8), so /plan is not in the DOM until the query narrows the list.
     await openSlashMenu();
+    await setV4ComposerText("/plan");
     await $(PLAN_OPTION).waitForDisplayed({ timeout: 10_000 });
-    expect(await readAppSlashOptionIds()).toEqual(
-      expect.arrayContaining(["app-slash:reload", "app-slash:plan"]),
-    );
+    expect(await readAppSlashOptionIds()).toEqual(expect.arrayContaining(["app-slash:plan"]));
     await closeSlashMenu();
   });
 
