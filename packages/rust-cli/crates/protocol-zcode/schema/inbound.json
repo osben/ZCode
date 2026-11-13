@@ -172,6 +172,25 @@
       },
       "additionalProperties": false
     },
+    "session/cancelBackgroundTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "sessionId",
+        "taskId"
+      ],
+      "additionalProperties": false
+    },
     "session/close": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

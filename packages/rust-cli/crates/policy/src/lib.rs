@@ -71,7 +71,8 @@ use crate::rules::Rules;
 pub(crate) struct PolicyOptions {
     /// plan 模式按自动模式的语义走分类器（缺省开启）。
     pub(crate) auto_in_plan: bool,
-    /// Fork: Node's plan mode ([`chain::Outer::node_plan`]).
+    /// Fork: the Node desktop permission semantics (the app-server turns it on from `node_desktop`): Node's plan mode
+    /// ([`chain::Outer::node_plan`]) and WebSearch without approval in every mode ([`PolicyGate::own_check`]).
     pub(crate) node_plan: bool,
 }
 
@@ -133,7 +134,8 @@ impl PolicyGate {
         self
     }
 
-    /// Fork: plan mode denies what would ask, with Node's reason (the desktop app-server).
+    /// Fork: the Node desktop permission semantics (the desktop app-server): plan mode denies what would ask, with Node's
+    /// reason, and WebSearch needs no approval in any mode (specs/fork-rust-agent-parity.md).
     #[must_use]
     pub fn with_node_plan_mode(mut self, enabled: bool) -> Self {
         self.options.node_plan = enabled;
@@ -230,6 +232,35 @@ impl PolicyGate {
             plans,
         }
     }
+
+    /// The tool's own check. Fork: under the Node desktop semantics WebSearch needs no approval (Node capability
+    /// `readOnly`, `needsApproval: false`: `mode.build.readOnly`, `mode.plan.readOnly`), so its own ask (or passthrough:
+    /// it has no permission subject) becomes an allow and the inner chain's whole-tool deny and ask rules still come
+    /// first, as in Node. Node denies every call in auto mode and over an auto base (`mode.auto.unimplemented`) before
+    /// that allow.
+    async fn own_check(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        context: &ToolUseContext,
+    ) -> PermissionDecision {
+        let own = tool.check_permissions(input, context).await;
+        let auto =
+            context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
+        let needs_no_approval = self.options.node_plan
+            && !auto
+            && tool.name() == rust_cli_kernel_api::tool_names::WEB_SEARCH
+            && matches!(
+                own,
+                PermissionDecision::Ask { .. } | PermissionDecision::Passthrough
+            );
+        if needs_no_approval {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
+        own
+    }
 }
 
 #[async_trait]
@@ -251,9 +282,9 @@ impl ScopedGate for PolicyGate {
         };
         let paths = self.path_context(&base, context).await;
         let root = context.workspace.root.as_str();
-        let own = tool.check_permissions(input, context).await;
-        let subject = tool.permission_subject(input);
         let name = tool.name();
+        let own = self.own_check(tool, input, context).await;
+        let subject = tool.permission_subject(input);
         let guarded = guarded_command(subject.as_ref());
         let evaluate_with = |mode: PermissionMode, full_access: bool| {
             let inputs = Inputs {
@@ -388,6 +419,9 @@ impl PermissionGate for PolicyGate {
             // 会话本身是 yolo 时 hook 放行后也不再询问（工作线 F76）；别的模式这里按 bypass 跑，但不算完全访问。
             full_access: context.mode == PermissionMode::BypassPermissions,
         };
+        // The raw check, not `own_check`: the WebSearch allow belongs to `decide`. Here the bypass chain already passes
+        // the tool's own ask, so a hook's ask still reaches `ask_for` (tools/src/pipeline.rs); do not route this through
+        // `own_check` (a reverted ocr/Codex suggestion on PR #441).
         let own = tool.check_permissions(input, context).await;
         let (check, updated) = chain::own(subject.as_ref(), own, &inputs);
         match chain::inner(tool.name(), check, updated, &inputs) {

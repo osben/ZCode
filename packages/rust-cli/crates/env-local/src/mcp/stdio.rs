@@ -10,7 +10,8 @@
 use std::collections::BTreeMap;
 use std::process::Stdio;
 
-use rust_cli_kernel_api::mcp::{McpError, McpTransportEvent};
+use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::mcp::{McpError, McpProcess, McpTransportEvent};
 use rust_cli_proc::ledger::{Containment, Isolation, Ledger, Purpose, Tracked};
 use rust_cli_proc::tree::Shutdown;
 use serde_json::Value;
@@ -61,6 +62,41 @@ pub(crate) struct Launch<'a> {
     pub snapshot: &'a [(String, String)],
 }
 
+/// Fork: the stdio server processes alive now, keyed by start order (specs/fork-rust-agent-parity.md
+/// "`process/childProcesses`").
+#[derive(Default)]
+pub(crate) struct ProcessTable {
+    rows: std::sync::Mutex<BTreeMap<u64, McpProcess>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+impl ProcessTable {
+    fn insert(self: &std::sync::Arc<Self>, process: McpProcess) -> Listed {
+        let key = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.rows.lock_unpoisoned().insert(key, process);
+        Listed {
+            table: self.clone(),
+            key,
+        }
+    }
+
+    pub(crate) fn processes(&self) -> Vec<McpProcess> {
+        self.rows.lock_unpoisoned().values().cloned().collect()
+    }
+}
+
+/// The process's row: dropped after its tree ended, or with the connection task when that is aborted.
+struct Listed {
+    table: std::sync::Arc<ProcessTable>,
+    key: u64,
+}
+
+impl Drop for Listed {
+    fn drop(&mut self) {
+        self.table.rows.lock_unpoisoned().remove(&self.key);
+    }
+}
+
 /// 服务器进程的环境：快照的白名单投影，再加推来的变量（F96），最后是配置的 `env`（配置写明的优先）。
 pub(crate) fn child_env(
     snapshot: &[(String, String)],
@@ -87,6 +123,7 @@ fn spawn_error(server: &str, error: &std::io::Error) -> McpError {
 /// 启动进程与连接任务。
 pub(crate) async fn start(
     ledger: &Ledger,
+    processes: &std::sync::Arc<ProcessTable>,
     launch: Launch<'_>,
     events: EventSender,
 ) -> Result<(std::sync::Arc<StdioLink>, rust_cli_base::OwnedTask<()>), McpError> {
@@ -109,6 +146,10 @@ pub(crate) async fn start(
         )
         .await
         .map_err(|error| spawn_error(launch.server, &error))?;
+    let listed = processes.insert(McpProcess {
+        pid: tracked.pid(),
+        server: launch.server.to_owned(),
+    });
     let child = tracked.child();
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -123,6 +164,7 @@ pub(crate) async fn start(
     let task = rust_cli_base::owned(run(Pipes {
         server,
         tracked,
+        listed,
         stdin,
         stdout,
         stderr,
@@ -136,6 +178,7 @@ pub(crate) async fn start(
 struct Pipes {
     server: String,
     tracked: Tracked,
+    listed: Listed,
     stdin: tokio::process::ChildStdin,
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
@@ -208,6 +251,7 @@ async fn run(pipes: Pipes) {
     let Pipes {
         server,
         mut tracked,
+        listed,
         stdin,
         stdout,
         stderr,
@@ -238,6 +282,7 @@ async fn run(pipes: Pipes) {
     if let Err(error) = tracked.terminate(shutdown).await {
         tracing::warn!(server, %error, "could not confirm the MCP server process tree ended");
     }
+    drop(listed);
     // 读者已经释放事件流时发送失败，忽略。
     let _ = events
         .send(McpTransportEvent::Closed {

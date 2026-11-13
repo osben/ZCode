@@ -151,6 +151,8 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
+    // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
+    context.set_mcp_processes(opened.mcp.clone());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
     context.set_model_port(ported.ports.model.clone());
