@@ -1,7 +1,11 @@
 //! Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): a port of Node adapters `lsp/*` (JSON-RPC,
 //! pool, lifecycle) and core `lsp/*` (document sync, freshness, post-edit diagnostics).
 
+pub(crate) mod edits;
+pub(crate) mod pool;
+pub(crate) mod process;
 pub(crate) mod rpc;
+pub(crate) mod server;
 pub(crate) mod uri;
 
 use std::time::Duration;
@@ -44,5 +48,28 @@ impl LspError {
 impl std::fmt::Display for LspError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.message)
+    }
+}
+
+/// A declared server for tests: `p/<name>` for `.ts` (`typescript`), Node's default timeouts.
+#[cfg(test)]
+pub(crate) fn test_server(name: &str) -> rust_cli_ext::plugins::lsp::ResolvedLspServer {
+    rust_cli_ext::plugins::lsp::ResolvedLspServer {
+        id: format!("p/{name}"),
+        plugin_id: "p".to_owned(),
+        server_name: name.to_owned(),
+        command: format!("{name}-server"),
+        args: vec!["--stdio".to_owned()],
+        env: Vec::new(),
+        extension_to_language: vec![(".ts".to_owned(), "typescript".to_owned())],
+        initialization_options: None,
+        settings: None,
+        workspace_folder: None,
+        startup_timeout_ms: 30_000,
+        shutdown_timeout_ms: 5_000,
+        request_timeout_ms: 30_000,
+        restart_on_crash: true,
+        max_restarts: 3,
+        diagnostics_after_edit: true,
     }
 }
