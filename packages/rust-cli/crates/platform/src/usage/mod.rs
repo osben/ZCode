@@ -29,7 +29,7 @@ pub use history::{
     ActivitySnapshot, HealthSnapshot, HistoryRange, HistorySnapshot, ModelUsage, ToolUsage,
 };
 pub use quota::{PlanStatus, Quota, QuotaLimit, QuotaSnapshot, UsageDetail};
-pub use status::{AccountPlan, FamilyAccount};
+pub use status::{AccountPlan, FamilyAccount, FamilyLogin};
 
 use crate::Platform;
 use crate::account::{self, INDIVIDUAL_CODING_PLAN, TEAM_CODING_PLAN, ZCODE_JWT_KEY};

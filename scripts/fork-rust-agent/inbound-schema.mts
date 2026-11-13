@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import {
+  zcodeProcessHostAttachedParamsSchema,
   zcodeLspPreferencesGetParamsSchema,
   zcodeLspPreferencesSetParamsSchema,
   zcodeLspStatusParamsSchema,
@@ -51,6 +52,8 @@ import {
 
 // The methods whose params zcode-rs validates; a method not listed here is not checked.
 const METHODS = {
+  // Fork: the Host's attach acknowledgement, a notification (specs/fork-rust-credential-cipher.md F1).
+  "process/hostAttached": zcodeProcessHostAttachedParamsSchema,
   // Answered with Node's no-LSP-host error after this check (specs/fork-rust-agent-parity.md, "Language servers").
   "lsp/preferences/get": zcodeLspPreferencesGetParamsSchema,
   "lsp/preferences/set": zcodeLspPreferencesSetParamsSchema,

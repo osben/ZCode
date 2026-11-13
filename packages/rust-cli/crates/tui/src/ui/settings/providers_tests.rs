@@ -195,3 +195,50 @@ fn the_model_page_tests_through_the_runner_and_a_late_answer_is_dropped() {
     app.settings_tested("test", Err(UNAVAILABLE.into()));
     assert_eq!(test(&app), None);
 }
+
+/// B7 (fork spec `fork-rust-credential-cipher.md` F2): a family whose saved sign-in cannot be read offers neither
+/// Sign in nor Sign out; its Account row says so.
+#[test]
+fn an_unreadable_family_page_offers_neither_sign_in_nor_sign_out() {
+    let mut app = app_on(Some(Page::Family("zai".into())));
+    if let Some(ui) = app.settings.as_mut() {
+        ui.data.insert(
+            Section::Models,
+            SectionData::Models(data::Models {
+                families: vec![crate::services::FamilyStatus {
+                    family: crate::services::Family::Zai,
+                    name: "Z.ai".into(),
+                    login: crate::services::FamilyLogin::Unreadable,
+                    account: String::new(),
+                    connection: crate::services::PlanConnection::Individual,
+                    teams: Vec::new(),
+                    teams_error: String::new(),
+                    provider: "zai".into(),
+                    models: Vec::new(),
+                }],
+                ..models()
+            }),
+        );
+    }
+    let rows = ids(&app);
+    assert!(rows.contains(&"info:Account".to_owned()), "{rows:?}");
+    assert!(
+        !rows.iter().any(|r| r == "signIn" || r == "signOut"),
+        "{rows:?}"
+    );
+    let ui = app.settings.clone().expect("settings open");
+    let view = app.settings_view(&ui, 0);
+    let account = view.rows.iter().find_map(|row| match row {
+        Row::Info { label, value } if label == "Account" => {
+            Some(value.iter().map(|p| p.text.as_str()).collect::<String>())
+        }
+        _ => None,
+    });
+    assert_eq!(account.as_deref(), Some("Could not read the saved sign-in"));
+    assert!(
+        view.rows.iter().any(
+            |row| matches!(row, Row::Note(note) if note == "Could not read the saved sign-in.")
+        ),
+        "the models note says the sign-in could not be read"
+    );
+}

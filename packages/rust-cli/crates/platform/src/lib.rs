@@ -25,6 +25,7 @@ mod login;
 mod option_map;
 mod personal;
 mod providers;
+mod system_cipher;
 mod team;
 #[cfg(test)]
 mod test_support;
@@ -52,6 +53,9 @@ pub use login::{LoginError, LoginOutcome, PendingLogin, SetupOutcome};
 /// Node 的平台名（定义在 base，F55）；入口经 platform 取用，路径不变。
 pub use rust_cli_base::js::node_platform;
 pub use rust_cli_kernel_api::provider::{CipherError, CredentialCipher};
+pub use system_cipher::{
+    KeyStore, KeyStoreError, SYSTEM_SERVICE, SystemCipher, SystemCipherInputs,
+};
 pub use token::{AccountOrigins, TokenError};
 
 use crate::auth::AccountAuth;
@@ -177,6 +181,12 @@ impl Platform {
     /// 最近一次读取凭据失败的静态原因（读得到时为空）。缺省选择据此不把降级的结论写进记忆（cli `default_model`）。
     pub fn credentials_unreadable(&self) -> Option<&'static str> {
         self.registry.unreadable_reason()
+    }
+
+    /// Resolves once a catalog read finds the credentials readable (at once when the latest one did). The
+    /// default-model task waits on it to settle the default again (fork spec `fork-rust-credential-cipher.md` F3).
+    pub async fn credentials_readable(&self) {
+        self.registry.readable().await;
     }
 
     /// 凭据文件 `credentials.json` 的位置。

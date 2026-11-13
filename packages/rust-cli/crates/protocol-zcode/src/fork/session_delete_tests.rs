@@ -167,7 +167,7 @@ fn server(handle: Arc<TestHandle>, fail: bool) -> (TaskScope, Arc<Server>, Arc<D
         kernel.clone(),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

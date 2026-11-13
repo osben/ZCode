@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
-use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{EndReason, Kernel, KernelError};
 use rust_cli_protocol_core::connection::{Reply, Service};
@@ -32,7 +32,9 @@ const EVENT_BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis
 /// 新会话的缺省（入口给出）。
 #[derive(Debug, Clone)]
 pub struct Defaults {
-    pub selection: ModelSelection,
+    /// Read at each session creation: a degraded default is revised once the credentials are readable (fork spec
+    /// `fork-rust-credential-cipher.md` F3); only sessions created after that take it.
+    pub selection: DefaultModel,
     pub mode: PermissionMode,
     pub environment: EnvironmentId,
 }
