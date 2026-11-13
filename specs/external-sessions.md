@@ -48,7 +48,9 @@ source, and it cannot hand the session back to the native tool.
   `workspaceMissing`. A session with no cwd at all (Codex threads and rollouts) matches no
   workspace and is not listed.
 - **Subagent and sidechain records are excluded** from listing and counts (Claude `isSidechain`
-  and `subagents/` files; Codex `thread_source` ≠ main; Cursor `subagents/`).
+  and `subagents/` files; Codex threads whose `thread_source` is an explicit subagent kind (`subagent`, `guardian_review`,
+  `review`) or that carry a subagent `source`, `agent_role` or parent thread id — unknown kinds such
+  as `user`/`main` stay listed so a new Codex kind never hides every session; Cursor `subagents/`).
 - **Privacy.** Logs name sources, counts and file paths only; never titles or message text.
   Nothing leaves the machine: the panel is desktop-local and no relay or web path carries it.
 - **No new persistence, no `setting.json` keys, no shared-DB changes.** Filter and column state of
@@ -58,7 +60,7 @@ source, and it cannot hand the session back to the native tool.
 
 | Source      | Id         | Where it is read                                                                                                                                                                                                                                                                               | Listing fields                                                              | Transcript                                                                                                                                                             | Resume command                              |
 | ----------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Claude Code | `claude`   | `~/.claude/projects/<slug>/<sessionId>.jsonl` via the upstream `claudeNativeSessionImportRepo` scan + head parser                                                                                                                                                                              | cwd, created/updated, preview title, (model, branch, count from head/tail)  | yes (upstream parser `parseClaudeNativeSessionFile`)                                                                                                                   | `claude --resume <sessionId>`               |
+| Claude Code | `claude`   | `~/.claude/projects/<slug>/<sessionId>.jsonl` via the upstream `claudeNativeSessionImportRepo` scan + head parser                                                                                                                                                                              | cwd, created/updated, preview title, (model, branch)                        | yes (upstream parser `parseClaudeNativeSessionFile`)                                                                                                                   | `claude --resume <sessionId>`               |
 | Codex       | `codex`    | `~/.codex/state_5.sqlite` table `threads` (read-only; only `id` and `rollout_path` are required, other columns are selected when present); rows whose `rollout_path` is missing on disk are dropped; without the index, rollout `session_meta` heads are read with the same subagent exclusion | cwd, title/first_user_message, created/updated, model, git_branch, archived | yes, from the rollout JSONL (`response_item` messages of role user/assistant; `developer` skipped; `thread_rolled_back` events replayed); `.zst` archives are not read | `codex resume <sessionId>`                  |
 | OpenCode    | `opencode` | `~/.local/share/opencode/opencode.db` tables `session_v2` + `session_message` (read-only)                                                                                                                                                                                                      | directory, title, created/updated, model JSON, message count                | yes (`session_message` rows of type user/assistant, text parts only)                                                                                                   | `opencode --session <sessionId>`            |
 | Cursor      | `cursor`   | `~/.cursor/acp-sessions/<id>/meta.json` and `~/.cursor/chats/<md5(cwd)>/<agentId>/meta.json`                                                                                                                                                                                                   | cwd, title (acp) / name, created/updated (chats meta), no model             | **no** (blob stores are opaque; `transcriptAvailable: false`)                                                                                                          | `cursor-agent --resume <sessionId>`         |
@@ -98,7 +100,7 @@ interface ExternalSessionSummary {
 
 interface ExternalSessionsListParams {
   workspacePath?: string; // omit = all workspaces
-  sources?: ExternalSessionSource[];
+  sources?: ExternalSessionSource[]; // duplicates are ignored
   search?: string; // case-insensitive substring over title + sessionId
   limit?: number; // default 200, max 1000
   refresh?: boolean; // bypass the cache
@@ -106,6 +108,8 @@ interface ExternalSessionsListParams {
 
 interface ExternalSessionsListResult {
   sessions: ExternalSessionSummary[]; // sorted by updatedAt desc
+  // Requested sources report this scan; sources outside the request report their last cached
+  // status, or `not scanned` when no scan ever ran (the client must not read that as unavailable).
   sources: Record<ExternalSessionSource, { available: boolean; count: number; reason?: string }>;
   scannedAt: number;
 }
@@ -125,7 +129,7 @@ interface ExternalSessionTranscript {
 interface IExternalSessionsService {
   listExternalSessions(params: ExternalSessionsListParams): Promise<ExternalSessionsListResult>;
   readExternalSessionTranscript(ref: { source; sessionId }): Promise<ExternalSessionTranscript>; // throws `not_found` / `transcript_unavailable`
-  /** macOS: opens Terminal.app running `cd <cwd> && <resumeCommand>`; elsewhere `{opened:false, command}` and the UI offers copy. */
+  /** macOS: opens Terminal.app running `cd -- <cwd> && <resumeCommand>`; elsewhere `{opened:false, command}` and the UI offers copy. */
   openExternalSessionInTerminal(ref: {
     source;
     sessionId;
@@ -157,8 +161,9 @@ there is no shared state to reconcile.
 
 `openExternalSessionInTerminal` reuses the ACP login terminal helper (`acpAgentLogin.ts`): a
 temporary `.command` script run by `open -a Terminal`. The script is
-`cd <quoted cwd> && <resumeCommand>` and the same launch-rule check rejects NUL/CR/LF in any
-argument. Session ids are validated against `^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$` before they reach a
+`cd -- <quoted cwd> && <resumeCommand>` and the same launch-rule check rejects NUL/CR/LF in any
+argument. The `--` ends `cd`'s option parsing, so a recorded cwd that starts with `-` is a path,
+never an option. Session ids are validated against `^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$` before they reach a
 command line (see "Session ids"); anything else is `transcript`-only. When the workspace directory is missing the command runs
 from `$HOME` and the UI says so. Non-macOS: `{ opened: false, command }` and the panel copies the
 command to the clipboard instead.
@@ -177,7 +182,9 @@ command to the clipboard instead.
   hooks (`useExternalSessions`, `useExternalSessionActions`); the panel and dialog only render and
   keep dialog/busy state.
 - Header: source chips (one per catalog source with its count; unavailable sources are shown
-  disabled with the reason in a tooltip) and Refresh. An empty stored selection means "every
+  disabled with the reason in a tooltip) and Refresh. Only selected chips show the unavailable
+  style: a deselected source is not scanned by that request, so its chip shows the last known count
+  (from an earlier scan) or none, never "unavailable". An empty stored selection means "every
   source"; toggling a chip expands that sentinel first, so a click always flips that chip alone.
 - Rows (a plain list, not virtualised; one request returns at most `limit` rows, default 200): source mark + label, title, cwd leaf
   (hidden when scoped), model, message count, updated (relative), and a `⋯` menu:
@@ -207,7 +214,8 @@ command to the clipboard instead.
   markdown `MessageResponse`; a banner states the source, the count and whether it was truncated;
   footer buttons Resume / Continue in ZCode / Import (as above).
 - Empty states: "No sessions from other tools for this workspace" (scoped) / "…on this Mac"; a
-  source with `reason` shows it inline when every source is unavailable.
+  source with `reason` shows it inline when every selected source is unavailable (sources outside
+  the selection never count towards that message).
 - i18n: all strings in `en-US`, `zh-CN`, `uk-UA` (`externalSessions.*`); catalog labels are product
   names and stay untranslated.
 
