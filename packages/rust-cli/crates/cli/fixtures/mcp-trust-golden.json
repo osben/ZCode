@@ -1,0 +1,338 @@
+{
+  "cases": [
+    {
+      "name": "project",
+      "files": {
+        ".zcode/config.json": {
+          "mcp": {
+            "servers": {
+              "alpha": {
+                "env": {
+                  "Z_KEY": "ü✓\u0001",
+                  "A_TOKEN": "secret value"
+                },
+                "cwd": "tools",
+                "args": [
+                  "server.js",
+                  "--api-key",
+                  "sk-123",
+                  "--flag"
+                ],
+                "command": "node",
+                "type": "stdio"
+              },
+              "beta": {
+                "command": "python",
+                "environment": {
+                  "X": "1"
+                },
+                "enable": false,
+                "enabled": true,
+                "timeout": 5
+              },
+              "gamma": {
+                "type": "remote",
+                "url": "https://user:pass@example.com/mcp?token=abc#frag",
+                "http_headers": {
+                  "Authorization": "Bearer x"
+                }
+              },
+              "delta": {
+                "type": "sse",
+                "url": "http://localhost:9/sse",
+                "oauth": {
+                  "type": "client_credentials",
+                  "clientId": "c",
+                  "clientSecret": "s"
+                },
+                "protocolVersion": "legacy",
+                "alwaysLoad": true,
+                "timeoutMs": 1500,
+                "isolation": "workspace"
+              },
+              "eps": {
+                "url": "https://x.test/mcp"
+              },
+              "bad": {
+                "type": "stdio"
+              },
+              "zeta": {
+                "command": "/usr/bin/env",
+                "args": [
+                  "TOKEN=abc",
+                  "run"
+                ],
+                "startup_timeout_sec": 3
+              },
+              "shadowed": {
+                "command": "project-only"
+              }
+            }
+          }
+        },
+        "zcode.json": {
+          "mcp": {
+            "servers": {
+              "alpha2": {
+                "command": "deno",
+                "cwd": ".",
+                "args": []
+              }
+            }
+          }
+        }
+      },
+      "user": {
+        "mcp": {
+          "servers": {
+            "shadowed": {
+              "command": "user-wins"
+            }
+          }
+        }
+      },
+      "identity": null,
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws",
+      "reviews": {
+        "alpha": {
+          "declarationDigest": "12cfc9a259d5de1dfa724d8bcef747b740d0b2a0782a7e8b3ea7e8445da79cd0",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"command\": \"node server.js --api-key •••• --flag\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/tools\",\n  \"env\": [\n    \"Z_KEY\",\n    \"A_TOKEN\"\n  ]\n}",
+          "trusted": false
+        },
+        "beta": {
+          "declarationDigest": "62082450c04b124e48bc30a4480c9b8f2962bdb96520583090a9e2cbc1e9e555",
+          "configuredEnabled": false,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"command\": \"python\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws\",\n  \"env\": [\n    \"X\"\n  ]\n}",
+          "trusted": false
+        },
+        "gamma": {
+          "declarationDigest": "177736e2ee5a13cc08c0576241bdf310a4068df9827856e0f9b9559e7d5a4051",
+          "configuredEnabled": true,
+          "transport": "http",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"type\": \"http\",\n  \"url\": \"https://example.com/mcp\",\n  \"headers\": [\n    \"Authorization\"\n  ]\n}",
+          "trusted": false
+        },
+        "delta": {
+          "declarationDigest": "31dcdae1cf156755451b8104657e49d09bb5b385d8903692b796343ec41611bf",
+          "configuredEnabled": true,
+          "transport": "sse",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"type\": \"sse\",\n  \"url\": \"http://localhost:9/sse\",\n  \"headers\": [],\n  \"oauth\": \"client_credentials\"\n}",
+          "trusted": false
+        },
+        "eps": {
+          "declarationDigest": "9623471cbe5d5796146aaf15af173b67f6de3ded527a4ce6e3a88a1552816153",
+          "configuredEnabled": true,
+          "transport": "http",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"type\": \"http\",\n  \"url\": \"https://x.test/mcp\",\n  \"headers\": []\n}",
+          "trusted": false
+        },
+        "zeta": {
+          "declarationDigest": "730d320ff00cee83b38ff169fe345c5c4fb27884982a4803202efc70f947a8d5",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"command\": \"/usr/bin/env TOKEN=•••• run\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws\",\n  \"env\": []\n}",
+          "trusted": false
+        }
+      }
+    },
+    {
+      "name": "first-file-only",
+      "files": {
+        "zcode.json": {
+          "mcp": {
+            "servers": {
+              "early": {
+                "command": "node",
+                "cwd": "bin"
+              }
+            }
+          }
+        },
+        ".zcode/config.json": {
+          "permission": {
+            "mode": "default"
+          }
+        }
+      },
+      "user": {},
+      "identity": null,
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws",
+      "reviews": {
+        "early": {
+          "declarationDigest": "b9d91b69f6628b28daad7f8f88b5666bcdb82136ad34ec2c23bbec3587c5d358",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws/zcode.json",
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"command\": \"node\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/first-file-only/ws/bin\",\n  \"env\": []\n}",
+          "trusted": false
+        }
+      }
+    },
+    {
+      "name": "identity",
+      "files": {
+        ".zcode/config.json": {
+          "mcp": {
+            "servers": {
+              "one": {
+                "command": "node",
+                "args": [
+                  "a.js"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "user": {},
+      "identity": "remote:golden-host",
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/identity/ws",
+      "reviews": {
+        "one": {
+          "declarationDigest": "d4a44629f64d1a8ec87037c8173dc07dff34cffe21722aeaf0efa6b6b76d45f7",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/identity/ws/.zcode/config.json"
+          ],
+          "display": "{\n  \"command\": \"node a.js\",\n  \"cwd\": \"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/identity/ws\",\n  \"env\": []\n}",
+          "trusted": false
+        }
+      }
+    },
+    {
+      "name": "fallback",
+      "files": {
+        ".zcode/config.json": {
+          "permission": {
+            "mode": "default"
+          }
+        },
+        ".agents/mcp.json": {
+          "mcpServers": {
+            "fb": {
+              "command": "npx",
+              "args": [
+                "-y",
+                "pkg"
+              ],
+              "cwd": "sub"
+            },
+            "broken": {
+              "type": "stdio"
+            },
+            "remote": {
+              "type": "http",
+              "url": "https://fb.test/mcp",
+              "headers": {
+                "X-Api-Key": "k"
+              }
+            }
+          }
+        }
+      },
+      "user": {},
+      "identity": null,
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/fallback/ws",
+      "reviews": {
+        "fb": {
+          "declarationDigest": "cd6a8abddc4c7924007afe3acefaea53b449c28cf2fbf403cca317a56af49ab1",
+          "configuredEnabled": true,
+          "transport": "stdio",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/fallback/ws/.agents/mcp.json"
+          ],
+          "display": "{\n  \"command\": \"npx -y pkg\",\n  \"cwd\": \"sub\",\n  \"env\": []\n}",
+          "trusted": false
+        },
+        "remote": {
+          "declarationDigest": "9c6cd55372a4cc48bf0d8f363e3a9883d506465c9f76096be12dbd30a1ff3bef",
+          "configuredEnabled": true,
+          "transport": "http",
+          "sourcePaths": [
+            "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/fallback/ws/.agents/mcp.json"
+          ],
+          "display": "{\n  \"type\": \"http\",\n  \"url\": \"https://fb.test/mcp\",\n  \"headers\": [\n    \"X-Api-Key\"\n  ]\n}",
+          "trusted": false
+        }
+      }
+    },
+    {
+      "name": "invalid-blocks-fallback",
+      "files": {
+        ".zcode/config.json": {
+          "mcp": {
+            "servers": {
+              "nope": {
+                "type": "stdio"
+              }
+            }
+          }
+        },
+        ".agents/mcp.json": {
+          "mcpServers": {
+            "fb": {
+              "command": "npx"
+            }
+          }
+        }
+      },
+      "user": {},
+      "identity": null,
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/invalid-blocks-fallback/ws",
+      "reviews": {}
+    },
+    {
+      "name": "unreadable",
+      "files": {
+        ".zcode/config.json": "{ not json",
+        ".agents/mcp.json": {
+          "mcpServers": {
+            "fb": {
+              "command": "npx"
+            }
+          }
+        }
+      },
+      "user": {},
+      "identity": null,
+      "workspace": "/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/unreadable/ws",
+      "reviews": {}
+    }
+  ],
+  "store": {
+    "text": "{\"schemaVersion\":1,\"records\":[{\"workspaceIdentity\":\"/var/folders/yd/0zmx_r650mq4fy0fpnmpqb6c0000gn/T/mcp-trust-golden-mwPdvx/project/ws\",\"serverName\":\"gamma\",\"declarationDigest\":\"177736e2ee5a13cc08c0576241bdf310a4068df9827856e0f9b9559e7d5a4051\",\"grantedAt\":\"2026-11-13T17:12:31.379Z\"}]}",
+    "gammaTrusted": true,
+    "staleDigest": "workspace_mcp_declaration_changed"
+  }
+}
