@@ -114,20 +114,19 @@ where
     R: AsyncBufRead + Unpin,
 {
     let peer: Peer = context.peer.clone();
-    let server = Arc::new(server::Server::new(
-        context,
-        kernel,
-        spawner.clone(),
-        defaults,
-    ));
-    connection::serve(
-        reader,
-        peer,
-        Arc::new(server::Handler(server)),
-        spawner,
-        options,
-    )
-    .await
+    let service = handler(context, kernel, defaults, spawner.clone());
+    connection::serve(reader, peer, service, spawner, options).await
+}
+
+/// 协议的处理方（不读输入）：启动时可以先开读者（[`connection::Deferred`]），内核装好后再交给它。
+pub fn handler(
+    context: Arc<Context>,
+    kernel: Arc<dyn Kernel>,
+    defaults: Defaults,
+    spawner: Spawner,
+) -> Arc<dyn connection::Service> {
+    let server = Arc::new(server::Server::new(context, kernel, spawner, defaults));
+    Arc::new(server::Handler(server))
 }
 
 #[cfg(test)]

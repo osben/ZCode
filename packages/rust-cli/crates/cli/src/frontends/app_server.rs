@@ -105,6 +105,19 @@ async fn serve(
         ..
     } = run;
     // 凭据加解密委托 Host（Main 持有密钥）：standalone 不经这里（specs/fork-rust-credential-cipher.md）。
+    // 读者在组装之前就开始（specs/fork-rust-credential-cipher.md，启动死锁）：组装里的凭据加解密要它送来回复；对端的
+    // 请求在内核装好之前等待。
+    let (deferred, install) = rust_cli_protocol_core::connection::Deferred::new();
+    let reader = spawner.spawn(
+        "app-server-reader",
+        rust_cli_protocol_core::connection::serve(
+            tokio::io::BufReader::new(tokio::io::stdin()),
+            context.peer.clone(),
+            deferred,
+            spawner.clone(),
+            Options::default(),
+        ),
+    );
     let spec = Controller::app(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
@@ -147,11 +160,16 @@ async fn serve(
         mode: built.mode,
         environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
     };
-    let input = tokio::io::BufReader::new(tokio::io::stdin());
+    install.install(rust_cli_protocol_zcode::handler(
+        context,
+        built.kernel.clone(),
+        defaults,
+        spawner,
+    ));
     // 读到 Host 关掉输入或收到退出信号时结束（Host 回收整棵进程树）。
     tokio::select! {
-        result = rust_cli_protocol_zcode::serve(input, context, built.kernel.clone(), defaults, spawner, Options::default()) => {
-            result?;
+        result = reader => {
+            result.map_err(|error| anyhow::anyhow!("reading the protocol input: {error}"))??;
         }
         () = stop.token.cancelled() => {}
     }

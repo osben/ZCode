@@ -194,14 +194,47 @@ sequenceDiagram
 | bridge unavailable      | every value silently absent (logged out look) | error, tokens kept, last known catalog kept |
 | write while unavailable | not reached; reads treated as absent          | `mutate` aborts, file unchanged             |
 
+## Startup ordering (app-server)
+
+Found in review. Red test `cli/tests/app_server_credentials.rs` failed before the fix: the agent sent a cipher
+request during startup and waited for a reply it never read, so `ready` did not arrive within 10 s.
+`Controller::app` sets `wait_model`, so `assemble::ports` → `models::default_model` reads the catalog (and so
+`credentials.json`) before `serve()` reads stdin. Every desktop start with account credentials would have
+stalled to the bridge timeout before `ready`, and the Host waits for `ready`.
+
+Options:
+
+- (b) Node parity: no cipher use before serving; fail fast as Unavailable. Rejected. With `wait_model`,
+  `default_model` settles the default from the catalog and persists it (`memory::remember`). A fail-fast read
+  would persist a default chosen without the account models.
+- (a) Reader first (chosen). The app-server starts `connection::serve` on stdin before assembly, with a
+  `connection::Deferred` service. Replies to the agent's own requests resolve inline, so a cipher reply is
+  routed during assembly. The Host's requests are spawned and wait in `Deferred` until the kernel exists
+  (`Install::install` after `Startup::ready` and the defaults), so none are dropped. If assembly fails before
+  install, waiting requests get an error.
+
+Node differs on purpose: Node creates the server before it reads stdin, and its default-model startup does not
+read credentials, so its early bridge call fails as Unavailable without a stall. Rust settles the default in
+assembly, so its reader must run first.
+
+Host side (`packages/services/src/zcode-agent/zcodeAgentProcessManager.ts`, `zcodeAgentService.ts`): the
+protocol client, and so the stdout reader, is created at spawn. `onRequest` is attached in `wireClient`, right
+after `getClient` returns (chat lane, `zcodeAgentService.ts`). The agent sends its first reverse request only
+after its own process start, argument parsing, config and store open, which is tens of milliseconds after
+spawn. The Host sends no acknowledgement, so this ordering is not formal; see the open gap below.
+
 ## Open gaps
 
 - Standalone resolver for `enc:v2:` (keyring file, `credential-secret` file, `credential-source`): a follow-up.
   Until then standalone Rust cannot use desktop-written credentials. Standalone `zcode login` still works.
-- Startup race: the Host attaches `onRequest` after `getClient` returns from spawn. The Rust agent may issue
-  its first credential read during `assemble::open` (`wait_model`) before that attach. A dropped request
-  now costs one bounded timeout and an error, not a hang. Removing the race needs a Host-side ready signal
-  before the first reverse request. Not verified at runtime (no desktop E2E on this Mac).
+- Startup attach race (see "Startup ordering"): the Host attaches `onRequest` after `getClient` returns
+  from spawn. Assembly waits on the cipher reply (`wait_model`), so a request the Host drops stalls startup
+  until the 300 s bound, then fails. The window is small in practice, but it is not closed. Closing it needs a
+  Host acknowledgement, or the Host attaching before spawn. Not verified at runtime (no desktop E2E here).
+- Process test covers the startup stall and the cipher round trip, not the account entitlement or the
+  selected default after startup at process level. The entitlement path is covered by the platform
+  integration test `desktop_encrypted_credentials_entitle_the_account_models`. A process test needs the account
+  HTTP fake served from the cli test; follow-up.
 - Usage panel (`Platform::family_accounts`, `usage/status.rs`) still reports the families as signed out when
   `credentials.json` cannot be read. The model path keeps the last known result; the panel does not yet.
   Follow-up: carry an "unknown" state into `FamilyAccount`.
