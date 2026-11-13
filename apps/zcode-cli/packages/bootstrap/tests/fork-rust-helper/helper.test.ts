@@ -392,6 +392,37 @@ describe("fork: Node helper artifact read cache", () => {
     cache.clear();
   });
 
+  it("gives up on a load that never settles once it outlives the in-flight cap", async () => {
+    let clock = 0;
+    const cache = createArtifactReadCache({
+      now: () => clock,
+      maxBytes: 100,
+      ttlMs: 1_000,
+      inFlightMaxMs: 5_000,
+    });
+    let loads = 0;
+    void cache.read("x", () => {
+      loads += 1;
+      return new Promise(() => undefined); // a store read that hangs
+    });
+    clock = 4_000;
+    void cache.read("x", async () => {
+      loads += 1;
+      return payload(4);
+    });
+    expect(loads).toBe(1); // still within the cap: joins the load in flight
+    clock = 5_001;
+    await expect(
+      cache.read("x", async () => {
+        loads += 1;
+        return payload(4);
+      }),
+    ).resolves.toEqual(payload(4));
+    expect(loads).toBe(2);
+    expect(cache.stats()).toEqual({ entries: 1, bytes: 4 });
+    cache.clear();
+  });
+
   it("forgets a failed read so the next one retries", async () => {
     const cache = createArtifactReadCache({ now: () => 0, maxBytes: 100, ttlMs: 1_000 });
     await expect(cache.read("a", async () => Promise.reject(new Error("gone")))).rejects.toThrow("gone");

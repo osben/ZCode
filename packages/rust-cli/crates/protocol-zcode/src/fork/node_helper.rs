@@ -84,6 +84,8 @@ pub struct Timing {
     /// For `helper/initialize`. Every call waits on a start, so a helper that never answers the handshake must fail
     /// fast instead of holding them for the call timeout (spawn to answer is about 0.6 s).
     pub initialize: Duration,
+    /// For the `plugins/cancelOperation` Rust sends for an abandoned call; the Host's own cancel request timeout.
+    pub cancel: Duration,
     /// Idle time with no call in flight before the process is reclaimed.
     pub idle: Duration,
     /// The window in which `crash_limit` crashes keep the helper down for the life of the process.
@@ -99,6 +101,7 @@ impl Default for Timing {
         Self {
             request: Duration::from_secs(300),
             initialize: Duration::from_secs(30),
+            cancel: Duration::from_secs(5),
             idle: Duration::from_secs(300),
             crash_window: Duration::from_secs(60),
             crash_limit: 3,
@@ -505,7 +508,7 @@ impl NodeHelper {
             return;
         };
         let peer = peer.clone();
-        let deadline = self.timing.initialize;
+        let deadline = self.timing.cancel;
         drop(self.spawner.spawn("node-helper-cancel", async move {
             let cancel = json!({"operationId": operation_id});
             let _ = tokio::time::timeout(deadline, peer.request(CANCEL_OPERATION, &cancel)).await;
@@ -650,7 +653,9 @@ fn unavailable(message: &str) -> RpcError {
 /// requests with method-not-found.
 struct Relay {
     host: Peer,
-    /// Anything the process sends marks it alive (see [`Running::last_heard`]).
+    /// Anything the process sends marks it alive (see [`Running::last_heard`]), relayed or not: a dropped notification
+    /// is still proof that the process is running. A hung call on a live process is then left to its cancel (calls
+    /// with an `operationId`) and to the idle reclaim.
     helper: Weak<NodeHelper>,
     generation: u64,
 }

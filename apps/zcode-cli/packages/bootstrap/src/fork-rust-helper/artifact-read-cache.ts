@@ -11,11 +11,21 @@ export interface ArtifactReadCacheOptions {
   maxBytes?: number;
   /** Idle lifetime of an entry; defaults to the v4 gateway's binary read cache TTL. */
   ttlMs?: number;
+  /**
+   * How long a load may stay in flight before the cache stops sharing it; defaults to four TTLs. A store read that
+   * never settles would otherwise pin its key for the life of the helper, and every later read would join it.
+   */
+  inFlightMaxMs?: number;
 }
 
 interface Entry {
   accessedAt: number;
-  /** `null` while the read is in flight: not counted against the budget, never evicted by it or by the TTL. */
+  /** When the load started; readers joining it do not move this. */
+  startedAt: number;
+  /**
+   * `null` while the read is in flight: not counted against the budget, never evicted by it or by the TTL, only
+   * dropped once it outlives the in-flight cap (its late result is then discarded).
+   */
   bytes: number | null;
   payload: Promise<ArtifactPayload>;
 }
@@ -30,6 +40,7 @@ export function createArtifactReadCache(options: ArtifactReadCacheOptions = {}) 
   const now = options.now ?? Date.now;
   const maxBytes = options.maxBytes ?? PROTOCOL_V4_LIMITS.attachmentReadCacheMaxBytes;
   const ttlMs = options.ttlMs ?? PROTOCOL_V4_LIMITS.attachmentReadCacheTtlMs;
+  const inFlightMaxMs = options.inFlightMaxMs ?? ttlMs * 4;
   const entries = new Map<string, Entry>();
   let totalBytes = 0;
   let releaseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -42,9 +53,14 @@ export function createArtifactReadCache(options: ArtifactReadCacheOptions = {}) 
   }
 
   function prune(at: number) {
-    // A load in flight is not idle, however long the store takes: dropping it would start a second load.
+    // A load in flight is not idle, so the TTL does not drop it (that would start a second load for a slow store);
+    // only the in-flight cap does, so a load that never settles cannot pin its key.
     for (const [key, entry] of entries) {
-      if (entry.bytes !== null && at - entry.accessedAt > ttlMs) remove(key);
+      const stale =
+        entry.bytes === null
+          ? at - entry.startedAt > inFlightMaxMs
+          : at - entry.accessedAt > ttlMs;
+      if (stale) remove(key);
     }
     if (totalBytes <= maxBytes) return;
     const settled = [...entries.entries()]
@@ -97,7 +113,7 @@ export function createArtifactReadCache(options: ArtifactReadCacheOptions = {}) 
           throw error;
         },
       );
-      entry = { accessedAt: at, bytes: null, payload };
+      entry = { accessedAt: at, startedAt: at, bytes: null, payload };
       entries.set(key, entry);
       scheduleRelease();
       return payload;

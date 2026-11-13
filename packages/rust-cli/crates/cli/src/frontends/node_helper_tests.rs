@@ -113,6 +113,8 @@ async fn dropping_the_launched_process_kills_its_whole_tree() {
     let mut line = String::new();
     process.stdout.read_line(&mut line).await.expect("pid line");
     let grandchild: libc::pid_t = line.trim().parse().expect("a pid");
+    let ledger = temp.path().join("ledger");
+    assert!(has_entries(&ledger), "the launch wrote a ledger record");
     // Idle reclaim, a timeout and a crash restart only drop the guard: that alone must end the tree.
     drop(process);
     let gone = async {
@@ -125,7 +127,6 @@ async fn dropping_the_launched_process_kills_its_whole_tree() {
         .expect("the grandchild died with the helper");
     // The stop is confirmed, so its ledger record goes too: a long-lived agent reclaims a helper every idle period,
     // and an unconfirmed drop would leave one record per generation until the next process's sweep.
-    let ledger = temp.path().join("ledger");
     let cleared = async {
         while has_entries(&ledger) {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;

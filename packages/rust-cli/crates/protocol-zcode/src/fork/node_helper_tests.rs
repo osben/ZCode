@@ -244,6 +244,7 @@ fn timing() -> Timing {
     Timing {
         request: Duration::from_secs(5),
         initialize: Duration::from_secs(2),
+        cancel: Duration::from_secs(1),
         idle: Duration::from_secs(300),
         crash_window: Duration::from_secs(60),
         crash_limit: 3,
