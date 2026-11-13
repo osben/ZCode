@@ -50,6 +50,9 @@ pub(crate) struct TitleState {
     /// Fork: no more title requests (Node `sessionTitleGenerationSettled`): a generated title was stored or refused,
     /// the seed message was rewound away, or the title is custom.
     settled: bool,
+    /// Fork: title generation was disabled ([`TitleState::disable`]); a session title already in flight is dropped
+    /// when it returns, since `settled` only gates requests that have not started.
+    disabled: bool,
     /// Fork: the stored title is still automatic (`default` / `first_input`, Node `isAutoTitlePending`); a retry needs it.
     pending: bool,
     /// Fork: the first human input this actor saw (Node `sessionTitleSeed`), the preferred retry seed.
@@ -93,6 +96,7 @@ impl TitleState {
     /// a goal summary still runs (it is not the session's title request).
     pub(crate) fn disable(&mut self) {
         self.settled = true;
+        self.disabled = true;
     }
 
     pub(crate) fn mark_custom(&mut self) {
@@ -406,7 +410,10 @@ impl Actor {
             return;
         };
         // 用户先改了名，或首条输入已被回退掉（Node `isSuppressedByFirstQueryEdit`）：丢弃。
-        if self.titles.custom || !self.messages.iter().any(|m| m.id() == &prompt) {
+        if self.titles.custom
+            || self.titles.disabled
+            || !self.messages.iter().any(|m| m.id() == &prompt)
+        {
             tracing::debug!("the generated session title was discarded");
             self.titles.settled = true;
             return;
