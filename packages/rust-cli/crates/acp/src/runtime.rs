@@ -297,7 +297,10 @@ impl AcpRuntime {
         tokio::pin!(request);
         let stall = self.watch_stall(prompt_id);
         tokio::pin!(stall);
+        // Biased: the pump can settle the answer and report the exit in one poll (lines drained before the exit);
+        // an answer that arrived first wins, as in Node, where the response resolves the prompt before `exit`.
         let outcome = tokio::select! {
+            biased;
             outcome = &mut request => outcome.map_err(|error| match error.code {
                 AcpErrorCode::StreamClosed => AcpError::died("Agent process died during the prompt"),
                 _ => error,
