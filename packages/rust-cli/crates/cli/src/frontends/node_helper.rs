@@ -10,7 +10,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_base::Spawner;
 use rust_cli_base::names::env::ZCODE_FORK_NODE_HELPER_COMMAND;
-use rust_cli_proc::ledger::{Containment, Isolation, Ledger, Purpose};
+use rust_cli_proc::ledger::{Containment, Isolation, Ledger, Purpose, Tracked};
+use rust_cli_proc::tree::Shutdown;
 use rust_cli_protocol_zcode::{
     Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess, NodeHelperTiming,
 };
@@ -53,7 +54,8 @@ pub(crate) fn parse(raw: Option<&str>) -> Result<Option<Command>, &'static str> 
     let program = object
         .get("command")
         .and_then(Value::as_str)
-        .filter(|program| !program.trim().is_empty())
+        .map(str::trim)
+        .filter(|program| !program.is_empty())
         .ok_or("command must be a non-empty string")?;
     let args = match object.get("args") {
         None | Some(Value::Null) => Vec::new(),
@@ -94,6 +96,14 @@ pub(crate) struct ProcessLauncher {
     spawner: Spawner,
 }
 
+/// The program's file name only: the directory can hold the user's name, and launch failures are logged.
+fn program_file(program: &str) -> String {
+    std::path::Path::new(program).file_name().map_or_else(
+        || program.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
 #[async_trait]
 impl NodeHelperLauncher for ProcessLauncher {
     async fn launch(&self) -> io::Result<NodeHelperProcess> {
@@ -118,15 +128,20 @@ impl NodeHelperLauncher for ProcessLauncher {
             )
             .await
             .map_err(|error| {
-                // The file name only: the directory can hold the user's name, and the warning is logged.
-                let program = std::path::Path::new(&self.command.program)
-                    .file_name()
-                    .map_or_else(
-                        || self.command.program.clone(),
-                        |name| name.to_string_lossy().into_owned(),
-                    );
-                io::Error::new(error.kind(), format!("{program}: {error}"))
+                io::Error::new(
+                    error.kind(),
+                    format!("{}: {error}", program_file(&self.command.program)),
+                )
             })?;
+        if !tree.ends_with_drop() {
+            // Windows fell back to the process Job: dropping the guard would end nothing, and every reclaimed or
+            // timed-out helper would live on until this process exits. A failed launch instead (cooldown, warning).
+            let _ = tree.terminate(Shutdown::Graceful).await;
+            return Err(io::Error::other(format!(
+                "{}: the helper process tree cannot be contained in its own Job",
+                program_file(&self.command.program)
+            )));
+        }
         let child = tree.child();
         let stdin = child
             .stdin
@@ -145,8 +160,37 @@ impl NodeHelperLauncher for ProcessLauncher {
         Ok(NodeHelperProcess {
             stdin: Box::new(stdin),
             stdout: Box::new(BufReader::new(stdout)),
-            guard: Box::new(tree),
+            guard: Box::new(StopOnDrop {
+                tree: Some(tree),
+                spawner: self.spawner.clone(),
+            }),
         })
+    }
+}
+
+/// The helper's process tree, stopped when the helper drops it (idle reclaim, timeout, crash restart). The stop runs
+/// in a task so it is confirmed: the tree is reaped and its ledger record removed, instead of one record per
+/// generation waiting for the next process's sweep. If the task never runs (the scope is closing), dropping the tree
+/// still kills it.
+struct StopOnDrop {
+    tree: Option<Tracked>,
+    spawner: Spawner,
+}
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        let Some(mut tree) = self.tree.take() else {
+            return;
+        };
+        drop(self.spawner.spawn("node-helper-stop", async move {
+            if let Err(error) = tree.terminate(Shutdown::Graceful).await {
+                tracing::debug!(
+                    event = "helper.stop_unconfirmed",
+                    %error,
+                    "the node helper's process tree could not be confirmed stopped"
+                );
+            }
+        }));
     }
 }
 

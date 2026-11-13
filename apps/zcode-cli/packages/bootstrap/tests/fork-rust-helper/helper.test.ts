@@ -353,6 +353,45 @@ describe("fork: Node helper artifact read cache", () => {
     }
   });
 
+  it("counts a slow load as read when it settles, so it is not the first entry evicted", async () => {
+    let clock = 0;
+    const cache = createArtifactReadCache({ now: () => clock, maxBytes: 10, ttlMs: 1_000 });
+    let settle: (value: { bytes: Uint8Array; mediaType: string }) => void = () => undefined;
+    const slow = cache.read("x", () => new Promise((resolve) => (settle = resolve)));
+    clock = 5;
+    await cache.read("a", async () => payload(4));
+    clock = 6;
+    settle(payload(8)); // 12 bytes > 10: a (read at 5) goes, not x (settled at 6)
+    await slow;
+    const loads: string[] = [];
+    await cache.read("x", async () => {
+      loads.push("x");
+      return payload(8);
+    });
+    expect(loads).toEqual([]);
+    expect(cache.stats()).toEqual({ entries: 1, bytes: 8 });
+    cache.clear();
+  });
+
+  it("keeps a load in flight past the TTL, so a concurrent reader shares it", async () => {
+    let clock = 0;
+    const cache = createArtifactReadCache({ now: () => clock, maxBytes: 100, ttlMs: 1_000 });
+    let loads = 0;
+    let settle: (value: { bytes: Uint8Array; mediaType: string }) => void = () => undefined;
+    const load = () => {
+      loads += 1;
+      return new Promise<{ bytes: Uint8Array; mediaType: string }>((resolve) => (settle = resolve));
+    };
+    const first = cache.read("x", load);
+    clock = 2_000;
+    const second = cache.read("x", load);
+    settle(payload(4));
+    await Promise.all([first, second]);
+    expect(loads).toBe(1);
+    expect(cache.stats()).toEqual({ entries: 1, bytes: 4 });
+    cache.clear();
+  });
+
   it("forgets a failed read so the next one retries", async () => {
     const cache = createArtifactReadCache({ now: () => 0, maxBytes: 100, ttlMs: 1_000 });
     await expect(cache.read("a", async () => Promise.reject(new Error("gone")))).rejects.toThrow("gone");

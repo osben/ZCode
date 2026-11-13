@@ -160,8 +160,9 @@ struct Running {
     methods: HashSet<String>,
     in_flight: usize,
     last_used: Instant,
-    /// When the process last answered a forwarded call: a timed-out call keeps the process only if it answered since.
-    last_answer: Instant,
+    /// When the process last sent anything (an answer, a notification such as operation progress, a request): a
+    /// timed-out call keeps the process only if it was heard from since the call started.
+    last_heard: Instant,
     /// Dropped with the slot: kills the process tree. Always dropped after the state lock is released, since it comes
     /// from an injected launcher.
     _guard: Box<dyn Send>,
@@ -217,7 +218,9 @@ impl NodeHelper {
         let result =
             match tokio::time::timeout(self.timing.request, peer.request(method, params)).await {
                 Err(_elapsed) => {
-                    self.timed_out(generation, started);
+                    if self.timed_out(generation, started) {
+                        self.cancel_abandoned(method, params, &peer);
+                    }
                     Err(unavailable("the helper did not answer in time"))
                 }
                 Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
@@ -225,7 +228,7 @@ impl NodeHelper {
                     Err(unavailable("the helper connection closed"))
                 }
                 Ok(result) => {
-                    self.answered(generation);
+                    self.heard(generation);
                     result
                 }
             };
@@ -280,6 +283,12 @@ impl NodeHelper {
                                     // A panicked or aborted start never reached its own failure path; without this
                                     // the slot would hold this failed start for the life of the process.
                                     if let Some(helper) = weak.upgrade() {
+                                        helper.warn_once(
+                                            "start",
+                                            Some(
+                                                "the start task panicked or was aborted".to_owned(),
+                                            ),
+                                        );
                                         helper.start_failed(generation);
                                     }
                                     Err(unavailable("the helper start was interrupted"))
@@ -317,6 +326,8 @@ impl NodeHelper {
         let (peer, _writer) = connection::start(stdin, &self.spawner, Options::default());
         let relay = Arc::new(Relay {
             host: self.host.clone(),
+            helper: self.myself.clone(),
+            generation,
         });
         let weak = self.myself.clone();
         let reader_peer = peer.clone();
@@ -390,7 +401,7 @@ impl NodeHelper {
             methods,
             in_flight: 0,
             last_used: now,
-            last_answer: now,
+            last_heard: now,
             _guard: guard,
         });
         state.retry_at = None;
@@ -442,34 +453,35 @@ impl NodeHelper {
         }
     }
 
-    fn answered(&self, generation: u64) {
+    /// The process of `generation` sent something: it is alive.
+    fn heard(&self, generation: u64) {
         let mut state = self.state.lock_unpoisoned();
         if let Slot::Running(running) = &mut state.slot
             && running.generation == generation
         {
-            running.last_answer = Instant::now();
+            running.last_heard = Instant::now();
         }
     }
 
     /// A call of `generation` started at `started` timed out. The process is kept when other calls are in flight and
-    /// it answered one since this call started: it is alive and only this call is slow (a long install). Otherwise it
-    /// is hung and is dropped without counting a crash; a hung process with calls arriving all the time would
-    /// otherwise never be dropped.
-    fn timed_out(&self, generation: u64, started: Instant) {
+    /// it was heard from since this call started (an answer or progress): it is alive and only this call is slow.
+    /// Otherwise it is hung and is dropped without counting a crash; a hung process with calls arriving all the time
+    /// would otherwise never be dropped. Returns whether the process was kept.
+    fn timed_out(&self, generation: u64, started: Instant) -> bool {
         let mut state = self.state.lock_unpoisoned();
         let Slot::Running(running) = &state.slot else {
-            return;
+            return false;
         };
         if running.generation != generation {
-            return;
+            return false;
         }
-        if running.in_flight > 1 && running.last_answer >= started {
+        if running.in_flight > 1 && running.last_heard >= started {
             tracing::warn!(
                 event = "helper.call_timed_out",
                 generation,
                 "a forwarded call timed out; the helper is kept for the calls still in flight"
             );
-            return;
+            return true;
         }
         let retired = std::mem::replace(&mut state.slot, Slot::Idle);
         drop(state);
@@ -479,6 +491,25 @@ impl NodeHelper {
             reason = "timeout",
             "the node helper was dropped"
         );
+        false
+    }
+
+    /// The kept process still runs a call its caller gave up on. A cancellable plugin operation is cancelled in the
+    /// helper, as the Host would, so it neither keeps running nor stays registered under its id. Fire and forget: the
+    /// answer does not matter, and a process dropped meanwhile ends the operation anyway.
+    fn cancel_abandoned(&self, method: &str, params: &Value, peer: &Peer) {
+        if method == CANCEL_OPERATION {
+            return;
+        }
+        let Some(operation_id) = operation_id(params) else {
+            return;
+        };
+        let peer = peer.clone();
+        let deadline = self.timing.initialize;
+        drop(self.spawner.spawn("node-helper-cancel", async move {
+            let cancel = json!({"operationId": operation_id});
+            let _ = tokio::time::timeout(deadline, peer.request(CANCEL_OPERATION, &cancel)).await;
+        }));
     }
 
     /// The reader of `generation` ended (the process closed its stdout), or a call saw the connection closed.
@@ -603,6 +634,13 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
     }
 }
 
+/// The id a cancellable plugin operation registers under in the helper: trimmed and non-empty, as Node's
+/// `getPluginOperationId`.
+fn operation_id(params: &Value) -> Option<String> {
+    let id = params.get("operationId")?.as_str()?.trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
 fn unavailable(message: &str) -> RpcError {
     RpcError::internal(format!("{message} ({NODE_HELPER_UNAVAILABLE})"))
         .with_data(json!({"reasonCode": NODE_HELPER_UNAVAILABLE}))
@@ -612,15 +650,28 @@ fn unavailable(message: &str) -> RpcError {
 /// requests with method-not-found.
 struct Relay {
     host: Peer,
+    /// Anything the process sends marks it alive (see [`Running::last_heard`]).
+    helper: Weak<NodeHelper>,
+    generation: u64,
+}
+
+impl Relay {
+    fn heard(&self) {
+        if let Some(helper) = self.helper.upgrade() {
+            helper.heard(self.generation);
+        }
+    }
 }
 
 #[async_trait]
 impl Service for Relay {
     async fn request(&self, method: &str, _params: Value) -> Result<Reply, RpcError> {
+        self.heard();
         Err(RpcError::method_not_found(method))
     }
 
     async fn notification(&self, method: &str, params: Value) {
+        self.heard();
         if RELAYED_NOTIFICATIONS.contains(&method) {
             self.host.notify(method, &params).await;
         } else {

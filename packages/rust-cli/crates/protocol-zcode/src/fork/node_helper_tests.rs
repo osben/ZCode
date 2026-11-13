@@ -35,6 +35,13 @@ enum Act {
     },
     /// Sends a request of its own, then answers the forwarded call with `{}`.
     AskHost,
+    /// Sends `count` `plugins/operationProgress` notifications `every` apart, then answers `result`, holding the
+    /// helper's loop meanwhile (a long install reporting progress).
+    Stream {
+        every: Duration,
+        count: usize,
+        result: Value,
+    },
 }
 
 type Behaviour = dyn Fn(usize, &str, &Value) -> Act + Send + Sync;
@@ -56,6 +63,8 @@ struct Fake {
     stopped: Arc<AtomicUsize>,
     /// Responses the helper received for its own requests.
     answers: Arc<StdMutex<Vec<Value>>>,
+    /// Every forwarded request the helper received, as `(method, params)`.
+    received: Arc<StdMutex<Vec<(String, Value)>>>,
     /// The helper under test, so a guard can check how it is dropped.
     helper: Arc<OnceLock<Weak<NodeHelper>>>,
     /// Incremented when a guard is dropped while the helper's state lock is held.
@@ -101,6 +110,7 @@ impl NodeHelperLauncher for Fake {
             hang_initialize: self.hang_initialize,
             behaviour: self.behaviour.clone(),
             answers: self.answers.clone(),
+            received: self.received.clone(),
         };
         tokio::spawn(run_helper(script, helper_in, helper_out));
         Ok(NodeHelperProcess {
@@ -122,6 +132,7 @@ struct Script {
     hang_initialize: bool,
     behaviour: Arc<Behaviour>,
     answers: Arc<StdMutex<Vec<Value>>>,
+    received: Arc<StdMutex<Vec<(String, Value)>>>,
 }
 
 async fn write_line(output: &mut DuplexStream, line: String) {
@@ -150,6 +161,11 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
             write_line(&mut output, rpc::response(&id, &Ok(result))).await;
             continue;
         }
+        script
+            .received
+            .lock()
+            .unwrap()
+            .push((method.to_owned(), params.clone()));
         match (script.behaviour)(script.index, method, &params) {
             Act::Reply { notes, result } => {
                 for (note, note_params) in notes {
@@ -171,6 +187,21 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
                 )
                 .await;
                 write_line(&mut output, rpc::response(&id, &Ok(json!({})))).await;
+            }
+            Act::Stream {
+                every,
+                count,
+                result,
+            } => {
+                for step in 0..count {
+                    tokio::time::sleep(every).await;
+                    write_line(
+                        &mut output,
+                        rpc::notification("plugins/operationProgress", &json!({"step": step})),
+                    )
+                    .await;
+                }
+                write_line(&mut output, rpc::response(&id, &Ok(result))).await;
             }
         }
     }
@@ -203,6 +234,7 @@ fn fake(advertised: &[&str], behaviour: Arc<Behaviour>) -> Fake {
         launches: Arc::new(AtomicUsize::new(0)),
         stopped: Arc::new(AtomicUsize::new(0)),
         answers: Arc::new(StdMutex::new(Vec::new())),
+        received: Arc::new(StdMutex::new(Vec::new())),
         helper: Arc::new(OnceLock::new()),
         dropped_under_lock: Arc::new(AtomicUsize::new(0)),
     }
@@ -670,8 +702,18 @@ async fn a_timed_out_call_leaves_a_responsive_process_and_its_other_calls_alone(
     });
     let mut short = timing();
     short.request = Duration::from_secs(10);
-    let rig = rig(fake(&["plugins/install", "plugins/list"], behaviour), short);
-    let install = forward_err(&rig.helper, "plugins/install", json!({}));
+    let rig = rig(
+        fake(
+            &["plugins/install", "plugins/list", "plugins/cancelOperation"],
+            behaviour,
+        ),
+        short,
+    );
+    let install = forward_err(
+        &rig.helper,
+        "plugins/install",
+        json!({"operationId": " op-1 "}),
+    );
     let lists = async {
         // Answered while the install runs: the process is alive.
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -701,6 +743,63 @@ async fn a_timed_out_call_leaves_a_responsive_process_and_its_other_calls_alone(
     );
     assert_eq!(rig.helper.crash_count(), 0);
     assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+    // The kept process still runs the abandoned install: it is cancelled in the helper, under the operation id the
+    // helper registered it by (trimmed, as `getPluginOperationId` does).
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let cancels: Vec<Value> = rig
+        .fake
+        .received
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _)| method == "plugins/cancelOperation")
+        .map(|(_, params)| params.clone())
+        .collect();
+    assert_eq!(cancels, vec![json!({"operationId": "op-1"})]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_long_call_reporting_progress_keeps_the_process_when_a_neighbour_times_out() {
+    let behaviour = behaviour(|_, method, params| match method {
+        "plugins/install" => Act::Hang,
+        "plugins/update" => Act::Stream {
+            every: Duration::from_millis(500),
+            count: 18,
+            result: json!({"updated": true}),
+        },
+        _ => Act::Reply {
+            notes: Vec::new(),
+            result: params.clone(),
+        },
+    });
+    let mut short = timing();
+    short.request = Duration::from_secs(10);
+    let rig = rig(
+        fake(
+            &["plugins/install", "plugins/update", "plugins/list"],
+            behaviour,
+        ),
+        short,
+    );
+    // Answered at t = 0; nothing answers again before the install times out at t = 11 s.
+    forward_ok(&rig.helper, "plugins/list", json!({})).await;
+    let install = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        forward_err(&rig.helper, "plugins/install", json!({})).await
+    };
+    // Reports progress from t = 4.5 s and answers at t = 13 s.
+    let update = async {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        forward_ok(&rig.helper, "plugins/update", json!({})).await
+    };
+    let (install, update) = tokio::join!(install, update);
+    expect_unavailable(&install);
+    assert_eq!(update, json!({"updated": true}));
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        0,
+        "a process that reports progress is alive"
+    );
 }
 
 #[tokio::test(start_paused = true)]

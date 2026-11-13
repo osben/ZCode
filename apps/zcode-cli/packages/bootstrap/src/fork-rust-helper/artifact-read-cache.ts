@@ -15,7 +15,7 @@ export interface ArtifactReadCacheOptions {
 
 interface Entry {
   accessedAt: number;
-  /** `null` while the read is in flight: not counted against the budget, never evicted by it. */
+  /** `null` while the read is in flight: not counted against the budget, never evicted by it or by the TTL. */
   bytes: number | null;
   payload: Promise<ArtifactPayload>;
 }
@@ -42,7 +42,10 @@ export function createArtifactReadCache(options: ArtifactReadCacheOptions = {}) 
   }
 
   function prune(at: number) {
-    for (const [key, entry] of entries) if (at - entry.accessedAt > ttlMs) remove(key);
+    // A load in flight is not idle, however long the store takes: dropping it would start a second load.
+    for (const [key, entry] of entries) {
+      if (entry.bytes !== null && at - entry.accessedAt > ttlMs) remove(key);
+    }
     if (totalBytes <= maxBytes) return;
     const settled = [...entries.entries()]
       .filter(([, entry]) => entry.bytes !== null)
@@ -79,9 +82,13 @@ export function createArtifactReadCache(options: ArtifactReadCacheOptions = {}) 
       const payload = load().then(
         (artifact) => {
           if (entry && entries.get(key) === entry) {
+            const settledAt = now();
+            // The reader is waiting for this artifact now: count it as read when it settles, not when the load
+            // started, or a slow load would be the first entry the budget evicts.
+            entry.accessedAt = settledAt;
             entry.bytes = artifact.bytes.byteLength;
             totalBytes += entry.bytes;
-            prune(now());
+            prune(settledAt);
           }
           return artifact;
         },

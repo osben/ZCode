@@ -29,6 +29,11 @@ fn command_args_and_env_are_read() {
 }
 
 #[test]
+fn the_program_is_trimmed_as_it_is_checked() {
+    assert_eq!(parsed(r#"{"command": " node\t"}"#).program, "node");
+}
+
+#[test]
 fn args_and_env_default_to_empty() {
     let command = parsed(r#"{"command": "node"}"#);
     assert!(command.args.is_empty());
@@ -118,6 +123,26 @@ async fn dropping_the_launched_process_kills_its_whole_tree() {
     tokio::time::timeout(std::time::Duration::from_secs(5), gone)
         .await
         .expect("the grandchild died with the helper");
+    // The stop is confirmed, so its ledger record goes too: a long-lived agent reclaims a helper every idle period,
+    // and an unconfirmed drop would leave one record per generation until the next process's sweep.
+    let ledger = temp.path().join("ledger");
+    let cleared = async {
+        while has_entries(&ledger) {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), cleared)
+        .await
+        .expect("the helper's ledger record is removed");
+}
+
+#[cfg(unix)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test inspects the ledger directory itself"
+)]
+fn has_entries(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
 }
 
 #[cfg(unix)]
