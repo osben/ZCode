@@ -111,6 +111,10 @@ pub struct MemoryStore {
     load_gate: Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     /// Fork: execution worktrees (node-store `fork_execution_worktree`, set once).
     execution: Mutex<HashMap<SessionId, (crate::env::EnvPath, Option<String>)>>,
+    /// Fork: ACP session bindings (`fork_acp_session_binding`).
+    acp_bindings: Mutex<HashMap<SessionId, crate::store::AcpSessionBinding>>,
+    /// Fork: the next `set_acp_binding` fails ([`Self::fail_next_acp_binding_write`]).
+    fail_acp_binding: std::sync::atomic::AtomicBool,
 }
 
 impl MemoryStore {
@@ -127,6 +131,11 @@ impl MemoryStore {
     /// Fork: the next `set_execution_worktree` fails (as on a database without the columns), later ones work.
     pub fn fail_next_execution_worktree(&self) {
         self.fail_execution.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `set_acp_binding` fails (a storage error); later writes work.
+    pub fn fail_next_acp_binding_write(&self) {
+        self.fail_acp_binding.store(true, Ordering::SeqCst);
     }
 
     /// Fork: the next `put_record` of `kind` fails (a storage error); other kinds and later writes work.
@@ -887,6 +896,34 @@ impl StoreQueries for MemoryStore {
             .lock_unpoisoned()
             .entry(session.clone())
             .or_insert_with(|| (path.clone(), branch.map(str::to_owned)));
+        Ok(())
+    }
+
+    async fn acp_binding(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::store::AcpSessionBinding>, StoreError> {
+        Ok(self.acp_bindings.lock_unpoisoned().get(session).cloned())
+    }
+
+    async fn set_acp_binding(
+        &self,
+        session: &SessionId,
+        binding: &crate::store::AcpSessionBinding,
+    ) -> Result<(), StoreError> {
+        if self.fail_acp_binding.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "ACP binding write failed".to_owned(),
+            });
+        }
+        self.acp_bindings
+            .lock_unpoisoned()
+            .insert(session.clone(), binding.clone());
+        Ok(())
+    }
+
+    async fn clear_acp_binding(&self, session: &SessionId) -> Result<(), StoreError> {
+        self.acp_bindings.lock_unpoisoned().remove(session);
         Ok(())
     }
 

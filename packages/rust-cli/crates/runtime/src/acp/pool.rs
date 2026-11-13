@@ -76,6 +76,15 @@ impl AcpPool {
         self.slots.lock_unpoisoned().is_empty()
     }
 
+    /// Whether an acquire of the session holds its permit right now.
+    #[cfg(test)]
+    fn is_acquiring(&self, session: &SessionId) -> bool {
+        self.slots
+            .lock_unpoisoned()
+            .get(session)
+            .is_some_and(|slot| slot.gate.available_permits() == 0)
+    }
+
     fn slot(&self, session: &SessionId) -> Slot {
         self.slots
             .lock_unpoisoned()

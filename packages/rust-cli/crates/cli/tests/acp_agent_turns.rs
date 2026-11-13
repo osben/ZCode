@@ -575,3 +575,56 @@ fn stop_during_a_hang_ends_the_turn_and_the_next_turn_reuses_the_agent() {
     );
     server.stop();
 }
+
+#[test]
+fn stop_while_an_ask_waits_withdraws_it_and_the_agent_hears_cancelled() {
+    let (dir, home, work) = dirs();
+    let state_file = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state_file.to_str().unwrap()],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    let ack = server.command(send_text(&session, "c-ask", "permission"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let asked = server.wait_for(|frame| contains(frame, "\"kind\":\"permission\""));
+    let interaction = asked
+        .to_string()
+        .split("\"interactionId\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_owned();
+    // The agent's `session/cancel` does not settle a prompt that waits for an ask: only the withdrawn ask (answered
+    // `cancelled`) ends it.
+    let ack = server.command(json!({
+        "commandId": "c-stop", "clientId": "k", "sessionId": session, "type": "stop",
+        "issuedAt": 1, "payload": {},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let finished = server.wait_for(turn_finished);
+    assert!(
+        contains(&finished, "\"phase\":\"completedInterrupted\""),
+        "{finished}"
+    );
+    let state = std::fs::read_to_string(&state_file).unwrap();
+    assert!(state.contains("permission-cancelled"), "{state}");
+    // The dialog closes: the pending list is emptied after the ask was shown.
+    let shown = server
+        .seen
+        .iter()
+        .position(|frame| frame.contains(&interaction))
+        .expect("the ask was shown");
+    assert!(
+        server.seen[shown + 1..]
+            .iter()
+            .any(|frame| frame.contains("\"pendingInteractions\":[]")),
+        "the withdrawn ask stays pending"
+    );
+    server.stop();
+}

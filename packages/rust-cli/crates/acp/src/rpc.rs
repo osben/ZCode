@@ -423,7 +423,8 @@ impl Pump {
         let mut reading = true;
         let mut errors_open = true;
         let mut answers: JoinSet<(Value, Value)> = JoinSet::new();
-        let mut death: Option<Pin<Box<tokio::time::Sleep>>> = None;
+        // Armed when stdout ends or a write fails: the exit has the death grace to arrive before the stream fails.
+        let mut death: Option<(Pin<Box<tokio::time::Sleep>>, AcpError)> = None;
         let activity = {
             let inbound = inbound.clone();
             move || inbound.activity()
@@ -463,8 +464,9 @@ impl Pump {
                     }
                     Frame::End => {
                         reading = false;
-                        peer.close(&AcpError::stream_closed());
-                        death = Some(Box::pin(tokio::time::sleep(timings.death_grace)));
+                        let error = AcpError::stream_closed();
+                        peer.close(&error);
+                        death.get_or_insert_with(|| (Box::pin(tokio::time::sleep(timings.death_grace)), error));
                     }
                     Frame::TooLarge => {
                         let error = AcpError::new(
@@ -486,17 +488,18 @@ impl Pump {
                     }
                     // The answer goes through the outbox, which the writer task drains.
                 }
-                // A failed write (the agent closed its stdin): nothing more reaches it, so the stream fails like a
-                // closed stdout instead of leaving requests waiting for answers to messages never sent.
+                // A failed write (the agent closed its stdin): nothing more reaches it, so pending requests fail now
+                // instead of waiting for answers to messages never sent. Like a closed stdout, the exit gets the death
+                // grace, so an agent that is dying is still reported with its exit code.
                 _ = &mut writer, if !writer_ended => {
                     writer_ended = true;
                     let error = AcpError::new(AcpErrorCode::StreamClosed, "ACP agent stdin closed");
                     peer.close(&error);
-                    inbound.stream_failed(error);
-                    break Ended::StreamFailed;
+                    death.get_or_insert_with(|| (Box::pin(tokio::time::sleep(timings.death_grace)), error));
                 }
-                () = async { if let Some(sleep) = death.as_mut() { sleep.await } }, if death.is_some() => {
-                    inbound.stream_failed(AcpError::stream_closed());
+                () = async { if let Some((sleep, _)) = death.as_mut() { sleep.await } }, if death.is_some() => {
+                    let error = death.take().map_or_else(AcpError::stream_closed, |(_, error)| error);
+                    inbound.stream_failed(error);
                     break Ended::StreamFailed;
                 }
             }

@@ -92,7 +92,8 @@ describe("forkAgentRuntimeCommandGateError", () => {
         payload: { firstInput: { text: "hi", modelSelection: { providerId: "zai" } } },
       },
       { type: "stop" },
-      // Not ACP for the runtimes either: Node and zcode-rs match the prefix without trimming.
+      // Not ACP for the runtimes either: Node (`v4-bridge.ts`, `providerId.startsWith(ACP_PROVIDER_ID_PREFIX)`) and
+      // zcode-rs (`ModelSelection::external_agent`) match the prefix without trimming.
       { type: "sendText", payload: { modelSelection: { providerId: " acp:cursor" } } },
     ]) {
       expect(await forkAgentRuntimeCommandGateError(envelope, unread, rust)).toBeUndefined();

@@ -404,7 +404,11 @@ async fn a_prompt_fails_when_the_agent_closed_its_stdin() {
         .await
         .expect("a write the agent can no longer read fails the prompt instead of hanging");
     let error = result.expect_err("stdin closed");
-    assert_ne!(error.code, AcpErrorCode::State, "{error:?}");
+    // The pump fails the request when the write meets the closed pipe; the prompt reports a closed stream as a
+    // death (Node `normalizeAcpPromptError`), and the next prompt restarts the runtime.
+    assert_eq!(error.code, AcpErrorCode::AgentDied, "{error:?}");
+    assert_eq!(error.message, "Agent process died during the prompt");
+    assert_eq!(runtime.state(), AcpState::Failed);
     runtime.stop().await;
 }
 

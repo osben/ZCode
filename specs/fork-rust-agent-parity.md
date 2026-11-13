@@ -1409,8 +1409,10 @@ Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs` and `acp_agent
 - A turn reserves its pool slot before the acquire task runs, and a release closes the slot, so a
   session deleted in between starts no agent.
 - stderr lines are capped at 8 KiB (stdout frames at 2 MiB), so a runaway agent cannot grow memory.
-- A failed stdin write (the agent closed its stdin) fails the stream instead of leaving the prompt
-  waiting until Stop.
+- A failed stdin write (the agent closed its stdin) fails the pending requests at once instead of
+  leaving the prompt waiting until Stop. Like a closed stdout, the exit then has the death grace: an
+  agent that exits within it is reported as exited with its code, one that stays alive fails the
+  stream with "ACP agent stdin closed".
 - Agent records are validated like Node's strict schema (agent id without whitespace, non-empty
   provider name, env key pattern, no duplicate ids); an invalid file reads as empty.
 - Tool updates and permission requests without a `toolCallId` are dropped (an ask answers
@@ -1420,6 +1422,12 @@ Known small gaps and follow-ups:
 
 - A Stop that lands while `prompt()` restarts a runtime that failed between the acquire and the
   prompt is lost.
+- A write that reaches the pipe before the agent closes its stdin succeeds, and the agent never reads
+  it. With stdout open and the process alive, neither the exit nor a later write fails, and
+  `session/prompt` has no timeout, so the prompt waits until Stop. Node has the same window: its
+  stdin stream errors only on a failed write (`transport.ts`), and its stall watch only emits a
+  `stalled` status (`runtime-helpers.ts` `StallWatch`, `external-agent-turn.ts`); nothing fails the
+  prompt. No timeout is added on either side.
 - No idle reaping: an agent process stays resident until `deleteSession` or app exit (Node stops it
   on the desktop's session close). Follow-up: an idle timeout that stops the runtime through the slot
   gate; the binding lets the next turn resume.

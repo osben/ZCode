@@ -8,8 +8,8 @@
 //! `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
 //! process id is written there at start, so a test can see the process end), `--deaf-after-session` (Rust-only: after
 //! answering `session/new` it stops reading stdin and stays alive, so the client's writes block), `--silent-initialize`
-//! (Rust-only: `initialize` is never answered, so the start hangs), `--close-stdin-after-session` (Rust-only: after
-//! answering `session/new` it closes its stdin and stays alive with stdout open, so the client's next write fails).
+//! (Rust-only: `initialize` is never answered, so the start hangs), `--close-stdin-after-session` (Rust-only: it
+//! closes its stdin, then answers `session/new` and stays alive with stdout open, so the client's next write fails).
 #![allow(
     clippy::disallowed_methods,
     reason = "a test double binary: it reads its own argv/env and writes its state file directly"
@@ -245,7 +245,10 @@ impl Mock {
                 notify(&session_id, message("permission denied"));
                 done(&prompt_id, "end_turn");
             }
-            _ => done(&prompt_id, "cancelled"),
+            _ => {
+                self.record("permission-cancelled");
+                done(&prompt_id, "cancelled");
+            }
         }
     }
 
@@ -270,13 +273,15 @@ impl Mock {
                 self.record("session/new");
                 let mut result = self.session_config();
                 result["sessionId"] = json!(SESSION_ID);
-                send(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
                 if self.close_stdin_after_session {
+                    // Closed before the answer: the client's first write after the handshake meets a closed pipe.
                     close_stdin();
+                    send(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(3600));
                     }
                 }
+                send(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
                 if self.deaf_after_session {
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(3600));
