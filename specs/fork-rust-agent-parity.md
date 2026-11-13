@@ -1206,7 +1206,7 @@ the command gate. So `zcode-rs` ports the worker side, and the Host side stays a
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Agent records (launch config, enabled)                  | Host Settings (`NodeForkAcpAgentStore`); `zcode-rs` only reads them, once per turn       | `fork_acp_agents.json` next to `provider_config.json`                                 |
 | ACP process, handshake, prompt, cancel, config snapshot | crate `rust-cli-acp` (`AcpRuntime`), one per ZCode session                               | memory                                                                                |
-| Runtime per session (reuse, replace, restart, stop)     | `AcpPool` in `runtime`, app-scoped, stopped by the app `Closer`                          | memory                                                                                |
+| Runtime per session (reuse, replace, restart, stop)     | `AcpPool` in `runtime`, app-scoped; a slot is released when the kernel session closes    | memory                                                                                |
 | Binding, chosen values, choice before the first turn    | `node-store` fork methods over Node's tables                                             | `fork_acp_session_binding`, `fork_acp_session_choice` (created by Node `9003`–`9005`) |
 | Per-agent catalog                                       | shared file; writers are Host Settings Test and the agent turn, both under the file lock | `fork_acp_agent_catalog.json`                                                         |
 | Turn messages, tool rows, title, todos                  | session actor (`RunSink`), like any turn                                                 | `message`, `part`, `session`, Task v2 file                                            |
@@ -1307,6 +1307,34 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
     `externalAgentTurns: true`, and refuses them with
     `proto.forkRustAgent.externalAgentUnsupported` otherwise.
 
+### Delivery status (2026-11-13)
+
+Delivered: rules 1–4, 9, 10, 12, 17, 18; rule 8 only for its last sentence (no model title for an
+ACP session); rule 14 writes and reads the binding (resume when agent, cwd and launch key match).
+
+Not yet ported, tracked as follow-ups:
+
+- **Rows (S3), rules 5–7.** Tool and plan events only close the open text segment; no
+  `ExternalTool` block, live tool rows, `TodoWrite` plan rows or todos yet. The agent's
+  `session_info_update` title is not applied (rule 8, first part).
+- **Resume and divider (S5).** No context-reset divider (`ExternalAgentContextReset`), no stall
+  status in the projection (a stall is logged only), no second-process `session/load` test.
+- **Config (S6), rules 13, 15, 16.** No `setExternalAgentConfigOption` handler, no pending-choice
+  reconcile, no catalog write and no `config.externalAgentConfig` projection. The Host gate admits
+  the command for a runtime with `externalAgentTurns`; `zcode-rs` answers it as an unknown command.
+
+Divergences from Node, by design of `zcode-rs`:
+
+- **Process lifetime.** The agent process lives as long as the kernel session. `session/close`
+  only drops the protocol bridge, so the process stops on `deleteSession` and on app-server exit
+  (the closer's `released` step), not on the desktop's session close like Node.
+- **Side callers.** Cron, notice/peer and continuation turns refuse with Node's turn text (rule
+  11). Compaction, the goal verifier, subagents and the other model side calls fail through
+  `ExternalAgentModelGuard` with "Model acp:X is an external agent; <caller> cannot run it
+  (external_agent_unsupported)" instead of Node's per-feature text. Bash-mode input is not refused.
+- **Usage.** Usage is stored on the turn's final assistant message, not reported separately on
+  `TurnFinished`.
+
 ### Acceptance
 
 - Mock agent (`acp-mock-agent` test bin, integration tests over `zcode-rs app-server --stdio`):
@@ -1322,7 +1350,8 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 - The Host gate admits `acp:` commands for a runtime that reports `externalAgentTurns`, and refuses
   them otherwise.
 - Live check (macOS, headless `zcode-rs app-server --stdio` with a temporary data dir): opencode and
-  cursor-agent answer a prompt, and a config option can be set.
+  cursor-agent answer a prompt (2026-11-13: both complete; opencode also ran a shell tool). Setting a
+  config option waits for S6.
 - Desktop E2E: the ACP desktop specs run only on macOS (`acp-agent-e2e.ts` skips elsewhere), so the
   Linux E2E box does not cover them.
 
