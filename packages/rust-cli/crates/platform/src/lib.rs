@@ -24,6 +24,7 @@ mod login;
 mod option_map;
 mod personal;
 mod providers;
+mod system_cipher;
 mod team;
 #[cfg(test)]
 mod test_support;
@@ -50,6 +51,9 @@ pub use login::{LoginError, LoginOutcome, PendingLogin, SetupOutcome};
 /// Node 的平台名（定义在 base，F55）；入口经 platform 取用，路径不变。
 pub use rust_cli_base::js::node_platform;
 pub use rust_cli_kernel_api::provider::{CipherError, CredentialCipher};
+pub use system_cipher::{
+    KeyStore, KeyStoreError, SYSTEM_SERVICE, SystemCipher, SystemCipherInputs,
+};
 pub use token::{AccountOrigins, TokenError};
 
 use crate::auth::AccountAuth;

@@ -41,7 +41,7 @@ pub(crate) const PRIVATE_WRITE: WriteOptions = WriteOptions {
 };
 
 /// Node `Buffer.from(raw, "base64url")` 接受有无填充两种写法；输出始终无填充。
-const BASE64URL: GeneralPurpose = GeneralPurpose::new(
+pub(crate) const BASE64URL: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
     GeneralPurposeConfig::new()
         .with_encode_padding(false)
@@ -76,6 +76,14 @@ pub struct CredentialSecret {
 }
 
 impl CredentialSecret {
+    /// Node `legacyKeyCandidates` 的 fallback：`zcode-credential-fallback:<platform>:<homedir>:<username>`。
+    pub(crate) fn fallback(&self) -> String {
+        format!(
+            "zcode-credential-fallback:{}:{}:{}",
+            self.platform, self.home, self.username
+        )
+    }
+
     /// Node `defaultCredentialSecret`。
     fn derive(&self) -> String {
         match &self.explicit {
@@ -176,7 +184,8 @@ impl V1Codec {
     }
 }
 
-/// standalone（TUI、`-p`、`zcode login`）的凭据编解码：本地 v1。不读系统密钥库（specs/fork-rust-credential-cipher.md）。
+/// 本地 v1 编解码（`Platform::new`）：examples and tests only. Standalone entry points use [`crate::SystemCipher`]
+/// (specs/fork-rust-credential-cipher.md F4).
 pub struct LocalCipher {
     codec: V1Codec,
 }
@@ -196,7 +205,7 @@ impl CredentialCipher for LocalCipher {
     }
 
     async fn decrypt(&self, value: &str) -> Result<String, CipherError> {
-        // A2: a desktop-encrypted value is not plaintext; the standalone resolver is an open gap.
+        // A2: a desktop-encrypted value is not plaintext; this v1-only cipher cannot read it.
         if value.starts_with(DESKTOP_ENCRYPTED_PREFIX) {
             return Err(CipherError::Unavailable {
                 reason: "standalone agent cannot read desktop-encrypted (v2) credentials yet",

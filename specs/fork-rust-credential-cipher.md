@@ -398,4 +398,7 @@ app-server keeps `HostCredentialCipher` (product rule 1).
   integration test `desktop_encrypted_credentials_entitle_the_account_models`. A process test needs the account
   HTTP fake served from the cli test; follow-up.
 - Standalone read-time `enc:v1:` → `enc:v2:` migration is not ported (F4).
+- The OS store itself (Keychain, Secret Service, Credential Manager) is not exercised by automated tests: they inject
+  `KeyStore`, and the crates and entry shape are taken from `@napi-rs/keyring` 2.1.2's source and lockfile. A manual
+  check that standalone Rust reads the desktop app's Keychain item is pending.
 - Node's own bridge has no timeout; the Rust bound (300 s) is a Rust-only addition, see the timeout rationale above.
