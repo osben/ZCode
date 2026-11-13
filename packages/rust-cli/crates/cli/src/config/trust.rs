@@ -70,7 +70,7 @@ pub(crate) struct WorkspaceHooks {
 }
 
 /// 用户级配置的 `storage.dir`（信任记录的存储根，config.md §4.2）。
-fn storage_dir(user: Option<&Map<String, Value>>) -> Option<&str> {
+pub(crate) fn storage_dir(user: Option<&Map<String, Value>>) -> Option<&str> {
     user?.get("storage")?.get("dir")?.as_str()
 }
 

@@ -169,6 +169,15 @@ fn target(options: &Options, cwd: &str) -> (String, Option<String>) {
 
 async fn inspect_workspace(context: &TrustContext<'_>, options: &Options) -> WorkspaceHooks {
     let (path, identity) = target(options, context.cwd);
+    inspect_at(context, path, identity).await
+}
+
+/// The project hooks of `path`, with records keyed by `identity` when given (a remote workspace's identity).
+pub(crate) async fn inspect_at(
+    context: &TrustContext<'_>,
+    path: String,
+    identity: Option<String>,
+) -> WorkspaceHooks {
     let workspace = WorkspaceRef {
         environment: EnvironmentId::new(rust_cli_node_store::LOCAL_ENVIRONMENT),
         root: EnvPath::new(path.clone()),
@@ -265,6 +274,63 @@ fn unique(values: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// The reason codes `workspace/hooks/trustGrant` may answer (`zcodeWorkspaceHookTrustGrantReasonCodeSchema`).
+const APP_REASONS: [&str; 6] = [
+    "workspace_hooks_blocked_by_policy",
+    "workspace_hooks_bundle_changed",
+    "workspace_hooks_snapshot_mismatch",
+    "workspace_hooks_policy_requires_pretrust",
+    "workspace_hooks_trust_store_corrupt",
+    "workspace_hooks_config_unreadable",
+];
+
+/// Node `toPublicReasonCode`: anything else (an error text with paths, a status reason) becomes the stable
+/// `workspace_hooks_config_unreadable`, so no local detail crosses the protocol.
+fn public_reason(reason: &str) -> &'static str {
+    APP_REASONS
+        .iter()
+        .find(|code| **code == reason)
+        .copied()
+        .unwrap_or("workspace_hooks_config_unreadable")
+}
+
+/// `workspace/hooks/trustGrant` (Node `grantWorkspaceHookTrustForProtocol` with no workspace policy, i.e.
+/// `user_decides`): grants exactly the declaration the Settings page showed, after rediscovering the bundle, and
+/// accepts only when a re-read shows it trusted.
+pub(crate) async fn grant_for_app(
+    context: &TrustContext<'_>,
+    (path, identity): (String, Option<String>),
+    bundle_digest: &str,
+    declaration_digest: &str,
+) -> serde_json::Value {
+    let options = Options {
+        digests: vec![declaration_digest.to_owned()],
+        bundle: Some(bundle_digest.to_owned()),
+        ..Options::default()
+    };
+    let hooks = inspect_at(context, path.clone(), identity.clone()).await;
+    let granted = match hooks.bundle {
+        None => Err("no declarations".to_owned()),
+        Some(_) => match status::select(&hooks, &options) {
+            Ok(selected) => hooks
+                .store
+                .grant(records(&hooks, &selected, context))
+                .await
+                .map_err(|error| error.to_string()),
+            Err(reason) => Err(reason.to_owned()),
+        },
+    };
+    if let Err(reason) = granted {
+        return json!({"accepted": false, "reasonCode": public_reason(&reason)});
+    }
+    let after = inspect_at(context, path, identity).await;
+    if !corrupt(&after) && after.trusted().contains(declaration_digest) {
+        json!({"accepted": true})
+    } else {
+        json!({"accepted": false, "reasonCode": public_reason("")})
+    }
 }
 
 fn corrupt(hooks: &WorkspaceHooks) -> bool {

@@ -19,6 +19,7 @@ use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{Context, Defaults, HostCredentialCipher, HostHeaders, Startup};
 
 use crate::assemble::{self, Controller};
+use crate::frontends::app_workspace::{AppWorkspace, ProcessConfig};
 use crate::process::{ControllerRun, Start};
 
 /// 退出时等进程级任务收尾的上限（存活的上限，不用来同步状态）。
@@ -153,6 +154,23 @@ async fn serve(
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
+    // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
+    // handler is installed, so the first request already sees it.
+    let opened = &built.opened;
+    context.set_workspace_admin(Arc::new(AppWorkspace::new(
+        (opened.primary.files().clone(), paths.clone()),
+        ProcessConfig {
+            workspace: opened.workspace.clone(),
+            process_env: facts.process.env.clone(),
+            flag: opened.resolved.settings.clone(),
+            project_is_local: opened.deployment.primary_is_local(),
+        },
+        {
+            let kernel = built.kernel.clone();
+            Box::new(move |hooks| kernel.replace_hooks(hooks))
+        },
+        (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
+    )));
     state.ready().await;
     let defaults = Defaults {
         // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。

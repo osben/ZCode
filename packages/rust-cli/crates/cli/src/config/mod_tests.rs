@@ -152,7 +152,8 @@ async fn the_three_sections_come_from_the_node_files() {
         .iter()
         .map(|s| s.name.as_str())
         .collect();
-    assert_eq!(names, ["repo-mcp", "user-mcp"]);
+    // Fork: the project server waits for a workspace trust grant (specs/fork-rust-agent-parity.md).
+    assert_eq!(names, ["user-mcp"]);
     // 用户级 hooks 进快照；项目级 hooks 要先经信任（config.md §4），这里不出现。
     let (source, settings) = &snapshot.hooks.sources[0];
     assert_eq!(*source, HookSource::User);
@@ -163,6 +164,74 @@ async fn the_three_sections_come_from_the_node_files() {
     let pending = snapshot.pending.unwrap();
     assert_eq!(pending.identity, ROOT);
     assert_eq!(pending.digests.len(), 1);
+}
+
+/// Fork: a project MCP server joins the session only with a grant for its current declaration digest; a disabled
+/// one stays listed only when granted (so `/mcp enable` never connects an unreviewed declaration).
+#[tokio::test]
+async fn project_mcp_servers_need_a_workspace_trust_grant() {
+    let project = json!({"mcp": {"servers": {
+        "granted": {"command": "node"},
+        "pending": {"command": "deno"},
+        "off": {"command": "x", "enabled": false},
+        "off-granted": {"command": "y", "enabled": false},
+    }}});
+    let files = [("/Users/dev/repo/.zcode/config.json", project)];
+    let (_dir, paths) = home(Some(
+        json!({"mcp": {"servers": {"pending": {"command": "user"}}}}),
+    ));
+    let env = env(&files);
+    let workspace = WorkspaceRef {
+        environment: EnvironmentId::new("local"),
+        root: EnvPath::new(ROOT),
+    };
+    let inputs = ConfigInputs {
+        files: &env,
+        workspace: &workspace,
+        paths: &paths,
+        process_env: &rust_cli_base::secret::EnvSnapshot::default(),
+        flag: None,
+        project_is_local: true,
+    };
+    let read = read_files(&inputs).await;
+    let trust = mcp_trust::Inspection::read(
+        &env,
+        &workspace,
+        mcp_trust::Target::new(ROOT, None),
+        (read.user.object(), &read.projects),
+        &paths,
+    )
+    .await;
+    for name in ["granted", "off-granted"] {
+        let digest = trust.discovery().unwrap().get(name).unwrap().digest.clone();
+        let record = rust_cli_platform::local::McpTrustRecord {
+            workspace_identity: ROOT.to_owned(),
+            server_name: name.to_owned(),
+            declaration_digest: digest,
+            granted_at: "2026-11-13T00:00:00.000Z".to_owned(),
+        };
+        trust
+            .store
+            .decide(async || true, record, true)
+            .await
+            .unwrap();
+    }
+    let snapshot = assemble(&inputs).await;
+    let names = |servers: &[McpServer]| -> Vec<(String, McpScope)> {
+        servers.iter().map(|s| (s.name.clone(), s.scope)).collect()
+    };
+    // The user's `pending` shadows the project one, so it is not a workspace declaration at all.
+    assert_eq!(
+        names(&snapshot.mcp_servers),
+        [
+            ("granted".to_owned(), McpScope::Project),
+            ("pending".to_owned(), McpScope::User),
+        ]
+    );
+    assert_eq!(
+        names(&snapshot.mcp_disabled),
+        [("off-granted".to_owned(), McpScope::Project)]
+    );
 }
 
 #[tokio::test]

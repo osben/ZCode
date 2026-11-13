@@ -12,8 +12,11 @@ use std::collections::BTreeSet;
 
 use rust_cli_base::js::json::{properties, stringify};
 use rust_cli_ext::mcp::normalize_node_server;
-use rust_cli_kernel_api::env_files::PathStyle;
-use rust_cli_platform::local::{ConfigFile, McpTrustLoad};
+use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
+use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
+use rust_cli_kernel_api::machine::Files;
+use rust_cli_paths::StoragePaths;
+use rust_cli_platform::local::{ConfigFile, McpTrustLoad, McpTrustStore};
 use serde_json::{Map, Value, json};
 
 use super::files::ProjectFile;
@@ -509,6 +512,7 @@ pub(crate) fn reviews(
 }
 
 /// The reviews as Node's record (`Record<name, review>`).
+#[cfg(test)]
 pub(crate) fn reviews_value(reviews: &[Review]) -> Value {
     Value::Object(
         reviews
@@ -653,6 +657,94 @@ pub(crate) fn allows(
     declaration.enabled()
         && target.digest(name, config, &declaration.source_paths) == declaration.digest
         && store.trusts(&target.identity, name, &declaration.digest)
+}
+
+/// One read of a workspace's MCP trust state: its declarations and the shared store, read fresh on each call
+/// (the App edits config and the store while the agent runs).
+pub(crate) struct Inspection {
+    pub(crate) target: Target,
+    pub(crate) discovery: Result<Discovery, Unreadable>,
+    pub(crate) store: McpTrustStore,
+    pub(crate) load: McpTrustLoad,
+}
+
+impl Inspection {
+    /// `workspace` is the ref the project files were read through; the fallback is read through it too.
+    pub(crate) async fn read(
+        files: &dyn Files,
+        workspace: &WorkspaceRef,
+        target: Target,
+        (user, projects): (Option<&Map<String, Value>>, &[ProjectFile]),
+        paths: &StoragePaths,
+    ) -> Self {
+        let fallback = read_fallback(files, workspace, &target.fallback_path()).await;
+        let discovery = discover(
+            &target,
+            &Inputs {
+                user,
+                projects,
+                fallback: &fallback,
+            },
+        );
+        let store = McpTrustStore::beside(&paths.hook_trust_store(super::trust::storage_dir(user)));
+        let load = store.load().await;
+        Self {
+            target,
+            discovery,
+            store,
+            load,
+        }
+    }
+
+    pub(crate) fn discovery(&self) -> Result<&Discovery, Unreadable> {
+        self.discovery.as_ref().map_err(|unreadable| *unreadable)
+    }
+
+    pub(crate) fn reviews(&self) -> Vec<Review> {
+        reviews(&self.target, self.discovery(), &self.load)
+    }
+
+    pub(crate) fn admitted(&self) -> BTreeSet<String> {
+        admitted(&self.target, self.discovery(), &self.load)
+    }
+
+    /// Declarations with a grant for their current digest, enabled or not (a disabled one may be enabled later
+    /// from `/mcp`, which must not connect an unreviewed declaration).
+    pub(crate) fn granted(&self) -> BTreeSet<String> {
+        let Ok(discovery) = self.discovery() else {
+            return BTreeSet::new();
+        };
+        discovery
+            .declarations
+            .iter()
+            .filter(|(name, declaration)| {
+                self.load
+                    .trusts(&self.target.identity, name, &declaration.digest)
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    pub(crate) fn allows(&self, name: &str, config: &Map<String, Value>) -> bool {
+        allows(&self.target, self.discovery(), &self.load, name, config)
+    }
+}
+
+/// `<wd>/.agents/mcp.json`: missing, not JSON, or a JSON value.
+async fn read_fallback(files: &dyn Files, workspace: &WorkspaceRef, path: &str) -> Fallback {
+    let stat = StatFile {
+        path: EnvPath::new(path),
+    };
+    if !matches!(files.stat(workspace, stat).await, Ok(Some(_))) {
+        return Fallback::Missing;
+    }
+    let read = ReadFile {
+        path: EnvPath::new(path),
+    };
+    match files.read_file(workspace, read).await {
+        Ok(content) => Fallback::parse(&content.bytes),
+        Err(_) => Fallback::Invalid,
+    }
 }
 
 #[cfg(test)]
