@@ -239,6 +239,8 @@ pub(crate) struct LocalEnv {
     pub(crate) mcp: Arc<LocalMcpTransport>,
     /// Bash 工具用的 shell（Windows 上找不到 Git Bash 时没有）。
     pub(crate) bash: Option<PathBuf>,
+    /// Fork: the process tree ledger Bash and MCP use; ACP agent processes join it.
+    pub(crate) ledger: PathBuf,
 }
 
 /// 建 [`LocalEnv`]。`find_and_grep`：启动参数没有点名 Glob / Grep（embedded-search.md §8.1）；`expanding_vars`：MCP 配置里的
@@ -262,6 +264,7 @@ pub(crate) async fn local_env_with(
     let shell =
         crate::assemble::shell::config(process.env.clone(), &process.temp, find_and_grep).await;
     let bash = shell.bash.clone();
+    let ledger = shell.ledger.clone();
     let mcp = LocalMcpTransport::new(
         shell.ledger.clone(),
         shell.env.clone(),
@@ -281,7 +284,12 @@ pub(crate) async fn local_env_with(
     } else {
         env
     };
-    LocalEnv { env, mcp, bash }
+    LocalEnv {
+        env,
+        mcp,
+        bash,
+        ledger,
+    }
 }
 
 /// 第一阶段的前半：部署配置、出口、平台层、执行环境与注册表、要读文件的参数、配置、存储位置与会话库。
@@ -309,6 +317,8 @@ pub(crate) struct Opened {
     /// 时间与 ID 只有一份（README §4，F7）：内核、会话库的记录、模型、定时任务存储与 TUI 共用。
     pub(crate) ids: Arc<NodeIds>,
     pub(crate) store: Arc<NodeStore>,
+    /// Fork: the local process tree ledger (see [`LocalEnv::ledger`]).
+    pub(crate) ledger: PathBuf,
 }
 
 /// 开端口的前半。
@@ -357,6 +367,7 @@ pub(crate) async fn open(
     )
     .await;
     let monitor = options::monitor(&facts.hooks.assume, local.bash.is_some());
+    let ledger = local.ledger.clone();
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);
     let executor_source = machines::artifact_source(facts, &egress);
@@ -451,6 +462,7 @@ pub(crate) async fn open(
         paths,
         ids,
         store,
+        ledger,
     })
 }
 
@@ -640,6 +652,19 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    // Fork: the desktop app-server runs ACP agents (specs/fork-rust-agent-parity.md "ACP external agents"): records
+    // from the Host's sidecar next to `provider_config.json`, the raw process environment, the shared ledger.
+    if spec.node_desktop {
+        extensions.acp = Some(rust_cli_runtime::AcpSetup {
+            records_file: opened
+                .paths
+                .zcode_config()
+                .as_path()
+                .join("fork_acp_agents.json"),
+            env: env.vars().into(),
+            ledger: rust_cli_proc::ledger::Ledger::open(opened.ledger.clone()),
+        });
+    }
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened

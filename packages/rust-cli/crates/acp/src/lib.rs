@@ -8,6 +8,7 @@
 pub mod config;
 pub mod error;
 pub mod launch;
+pub mod registry;
 mod rpc;
 pub mod runtime;
 pub mod updates;

@@ -110,6 +110,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            acp: None,
         },
     );
     kernel.start_extensions().await;
@@ -218,6 +219,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            acp: None,
         },
     );
     kernel.start_extensions().await;

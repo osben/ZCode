@@ -129,6 +129,8 @@ pub(crate) struct SessionScoped {
     /// Fork: the agents' notice forwarders follow a session's close (specs/fork-rust-agent-parity.md, "After a
     /// restart, and on a remote executor").
     pub(crate) agents: Arc<dyn rust_cli_kernel_api::agents::AgentSignals>,
+    /// Fork: a session close releases its ACP agent process (specs/fork-rust-agent-parity.md "ACP external agents").
+    pub(crate) acp: Option<crate::acp::AcpRelease>,
 }
 
 impl SessionScoped {
@@ -164,6 +166,9 @@ impl SessionScoped {
         self.worktrees.forget(session);
         self.gate.release(session);
         self.mcp.release(session);
+        if let Some(acp) = &self.acp {
+            acp.released(session);
+        }
     }
 }
 

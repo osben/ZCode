@@ -30,6 +30,9 @@ pub struct Extensions {
     /// Fork: the Node desktop agent's semantics (plan mode boundary `PolicyGate::with_node_plan_mode`, one queued input per
     /// turn); the app-server turns it on.
     pub node_desktop: bool,
+    /// Fork: ACP external agents (the app-server gives it; specs/fork-rust-agent-parity.md "ACP external agents").
+    /// None: an `acp:` selection runs on the query loop like any provider.
+    pub acp: Option<crate::acp::AcpSetup>,
 }
 
 impl Extensions {
@@ -42,6 +45,7 @@ impl Extensions {
             streaming_input: false,
             monitor: false,
             node_desktop: false,
+            acp: None,
         }
     }
 }

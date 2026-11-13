@@ -21,9 +21,14 @@ parity = []
 async-trait.workspace = true
 # /context 的计数并发发出（`join!`）、按请求内容缓存（docs/specs/rust-cli/context-usage.md §3）。
 futures-util = { workspace = true, features = ["async-await", "async-await-macro"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# Fork: ACP external agents (specs/fork-rust-agent-parity.md "ACP external agents").
+rust-cli-acp.workspace = true
 rust-cli-base.workspace = true
+rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
+rust-cli-proc.workspace = true
 rust-cli-agents.workspace = true
 rust-cli-compact.workspace = true
 rust-cli-context.workspace = true
@@ -36,6 +41,7 @@ rust-cli-query.workspace = true
 rust-cli-session.workspace = true
 rust-cli-tools.workspace = true
 tracing.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
