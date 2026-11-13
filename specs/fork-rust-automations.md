@@ -108,6 +108,12 @@ exists"`. The answer is the legacy snapshot of `session/read` (the Host validate
    never derived from `commandId` or `inputId`. A hidden tool the model calls anyway is refused at the tool pipeline
    (`No such tool available`) before any hook runs; Node only refuses there in the Cron handlers, so the Rust side is
    stricter (fail-closed). A compaction input drops the pending limits, so they never reach a later turn.
+   Telemetry (Node `automationAdmission`): the run's `turn.started` fact carries `automationId`, and `taskTrigger`
+   (`manual` / `schedule` plus `scheduledAt`) when its `sourceCommandId` is that automation's run id
+   (`parseAutomationRunId`). A run gets no renderer send acknowledgement, so the Host seeds the run's `agent_step` /
+   `message_completion` from these fields. Owner: sendText remembers the input's automation id with the input
+   (`InputMeta`, the projection's per-command record, written only by sendText and the queue's send-now); the
+   telemetry observer reads it when that command's `TurnStarted` arrives.
 5. **`session/list`** keeps answering an empty list: the Host's directory lookup treats a missing entry as "no parent
    chain" and continues.
 
@@ -164,7 +170,9 @@ Rust tests (protocol-zcode, tools):
 3. `titleGenerationEnabled:false` produces no title request after the first turn; without it a title request runs.
 4. `session/resume` of a stored (cold) session and of a live one answers the snapshot; a missing id is an error.
 5. A `sendText` with `automationId` hides CronCreate/CronUpdate/CronDelete and the disallowlisted tools from that turn
-   only, offers CronPauseSelf, and the next ordinary turn sees the normal tool list without CronPauseSelf.
+   only, offers CronPauseSelf, and the next ordinary turn sees the normal tool list without CronPauseSelf. Its
+   `turn.started` fact names the automation and the trigger read from the run id (manual, schedule with
+   `scheduledAt`, none for a command that is not the automation's run id); an ordinary turn has none.
 6. Desktop session: the tool catalog has Node's five Cron tools and no local cron store; CronCreate sends
    `automation/checkTaskBinding` then `automation/create` with the session's selection, mode, `targetTaskId` and
    workspace; a bound session refuses; a non-`-32601` check failure refuses; `-32601` falls back to `automation/list`;

@@ -189,6 +189,7 @@ pub(super) async fn compact(
             requested: "queue",
             admitted,
             attachments: Vec::new(),
+            automation: None,
         },
     );
     // The App pins the Composer selection on the compaction (`payload.modelSelection`); a queued
