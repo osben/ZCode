@@ -339,3 +339,95 @@ fn a_disabled_agent_fails_the_turn_with_the_node_text() {
     });
     server.stop();
 }
+
+/// Answers the agent's permission ask with `option` and waits for the agent's reply text and the turn's end.
+fn permission_round(option: &str, reply: &str) {
+    let (_dir, home, work) = dirs();
+    write_agents(&home, &mock_agent(), true, &[]);
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    let ack = server.command(send_text(&session, "c-ask", "permission"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let asked = server.wait_for(|frame| contains(frame, "\"kind\":\"permission\""));
+    let text = asked.to_string();
+    // A user-once ask: no "always allow" option.
+    assert!(!text.contains("allowAlways"), "{text}");
+    assert!(text.contains("Run the tests"), "{text}");
+    let interaction = text
+        .split("\"interactionId\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_owned();
+    let ack = server.command(json!({
+        "commandId": "c-answer", "clientId": "k", "sessionId": session, "type": "resolveInteraction",
+        "issuedAt": 1, "payload": {"interactionId": interaction, "answer": {"optionId": option}},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let finished = server.wait_for(turn_finished);
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    assert!(
+        server.seen.iter().any(|frame| frame.contains(reply)),
+        "no {reply:?}"
+    );
+    server.stop();
+}
+
+#[test]
+fn an_allowed_ask_reaches_the_agent_as_allow_once() {
+    permission_round("allowOnce", "permission granted");
+}
+
+#[test]
+fn a_denied_ask_reaches_the_agent_as_reject_once() {
+    permission_round("deny", "permission denied");
+}
+
+#[test]
+fn stop_during_a_hang_ends_the_turn_and_the_next_turn_reuses_the_agent() {
+    let (dir, home, work) = dirs();
+    let pid_file = dir.path().join("agent.pid");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--pid-file", pid_file.to_str().unwrap()],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    let ack = server.command(send_text(&session, "c-hang", "hang"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    server.wait_for(|frame| contains(frame, "\"phase\":\"running\""));
+    let ack = server.command(json!({
+        "commandId": "c-stop", "clientId": "k", "sessionId": session, "type": "stop",
+        "issuedAt": 1, "payload": {},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let finished = server.wait_for(turn_finished);
+    assert!(
+        contains(&finished, "\"phase\":\"completedInterrupted\""),
+        "{finished}"
+    );
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+
+    let ack = server.command(send_text(&session, "c-again", "hello"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let finished = server.wait_for(turn_finished);
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&pid_file).unwrap(),
+        pid,
+        "a cancelled prompt keeps the agent process"
+    );
+    server.stop();
+}

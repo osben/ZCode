@@ -2,20 +2,26 @@
 //! record, acquire the session's runtime, prompt it with the newest human input, stream its message and thought
 //! chunks, and commit them as assistant messages. Stop is a bounded `session/cancel`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
+use futures_util::stream::{FuturesUnordered, StreamExt as _};
 use rust_cli_acp::registry::{display_name, is_auth_failure, login_command};
 use rust_cli_acp::{
-    AcpError, AcpErrorCode, AcpLaunch, PermissionAnswer, PromptResponse, RuntimeEvent,
+    AcpError, AcpErrorCode, AcpLaunch, PermissionAnswer, PermissionAsk, PromptResponse,
+    RuntimeEvent,
 };
 use rust_cli_kernel_api::abort::{Abort, AbortReason};
+use rust_cli_kernel_api::ids::ToolUseId;
+use rust_cli_kernel_api::interaction::{Answer, PermissionAnswer as UserAnswer};
 use rust_cli_kernel_api::message::{
     AssistantMessage, ContentBlock, ImageSource, Message, StopReason, Usage, UserMessage,
     UserOrigin,
 };
 use rust_cli_kernel_api::model::BlockDelta;
 use rust_cli_kernel_api::orchestration::{
-    QueryError, QueryEvent, QueryRequest, QueryStop, RunSink,
+    InteractionRequest, QueryError, QueryEvent, QueryRequest, QueryStop, RunSink,
 };
 use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::{Value, json};
@@ -40,6 +46,7 @@ pub(super) async fn run(
         model: request.selection.model.clone(),
         response: 0,
         segment: Vec::new(),
+        tools: HashMap::new(),
     };
     let launch = match read_launch(host, &agent_id, &request).await {
         Ok(launch) => launch,
@@ -75,18 +82,31 @@ pub(super) async fn run(
         std::future::pending::<()>().await;
     };
     tokio::pin!(cancelling);
+    // Permission asks wait for the user beside the event stream; a stop drops them (the agent hears `cancelled`).
+    let mut asks: FuturesUnordered<BoxFuture<'static, ()>> = FuturesUnordered::new();
     let outcome = loop {
         tokio::select! {
             biased;
-            Some(event) = events.recv() => turn.on_event(event).await,
+            Some(event) = events.recv() => {
+                if let Some(ask) = turn.on_event(event).await {
+                    asks.push(ask);
+                }
+            }
+            Some(()) = asks.next(), if !asks.is_empty() => {}
+            () = abort.token().cancelled(), if !asks.is_empty() => {
+                turn.withdraw_asks(&mut asks).await;
+            }
             outcome = &mut prompt => break outcome,
             () = &mut cancelling => {}
         }
     };
     // Updates the agent sent before its answer are already queued.
     while let Ok(event) = events.try_recv() {
-        turn.on_event(event).await;
+        if let Some(ask) = turn.on_event(event).await {
+            asks.push(ask);
+        }
     }
+    turn.withdraw_asks(&mut asks).await;
     drop(guard);
     match outcome {
         Ok(response) if !abort.is_aborted() || response.stop_reason != "cancelled" => {
@@ -248,22 +268,24 @@ struct Turn<'a> {
     response: usize,
     /// Text and reasoning since the last tool or plan event, one block per kind in order of first appearance.
     segment: Vec<(Kind, String)>,
+    /// ACP `toolCallId` → its row id and kind, minted on first sight (rows and asks share it).
+    tools: HashMap<String, (ToolUseId, Option<String>)>,
 }
 
 impl Turn<'_> {
-    async fn on_event(&mut self, event: RuntimeEvent) {
+    /// Applies one agent event; a permission ask comes back as the future that waits for the user.
+    async fn on_event(&mut self, event: RuntimeEvent) -> Option<BoxFuture<'static, ()>> {
         match event {
             RuntimeEvent::MessageChunk(text) => self.chunk(Kind::Text, text).await,
             RuntimeEvent::ThoughtChunk(text) => self.chunk(Kind::Thinking, text).await,
-            RuntimeEvent::ToolCall(_) | RuntimeEvent::ToolCallUpdate(_) | RuntimeEvent::Plan(_) => {
-                // A tool or plan event closes the open text segment (rows follow in S3).
-                if let Err(error) = self.close_segment(None).await {
-                    tracing::warn!(event = "acp.segment_commit_failed", %error, "ACP text segment could not be committed");
+            RuntimeEvent::ToolCall(info) | RuntimeEvent::ToolCallUpdate(info) => {
+                if let Some(kind) = info.kind.clone() {
+                    self.tool(&info.tool_call_id).1 = Some(kind);
                 }
+                self.close_segment_logged().await;
             }
-            RuntimeEvent::Permission { reply, .. } => {
-                let _ = reply.send(PermissionAnswer::Cancelled);
-            }
+            RuntimeEvent::Plan(_) => self.close_segment_logged().await,
+            RuntimeEvent::Permission { ask, reply } => return Some(self.permission(ask, reply)),
             RuntimeEvent::AvailableCommands(count) => {
                 tracing::debug!(
                     event = "acp.commands",
@@ -281,6 +303,81 @@ impl Turn<'_> {
             RuntimeEvent::SessionTitle(_)
             | RuntimeEvent::ConfigOptions(_)
             | RuntimeEvent::Resumed => {}
+        }
+        None
+    }
+
+    /// A tool or plan event closes the open text segment (rows follow in S3).
+    async fn close_segment_logged(&mut self) {
+        if let Err(error) = self.close_segment(None).await {
+            tracing::warn!(event = "acp.segment_commit_failed", %error, "ACP text segment could not be committed");
+        }
+    }
+
+    fn tool(&mut self, tool_call_id: &str) -> &mut (ToolUseId, Option<String>) {
+        let ids = &self.host.ids;
+        self.tools
+            .entry(tool_call_id.to_owned())
+            .or_insert_with(|| (ToolUseId::new(format!("acp_{}", ids.execution())), None))
+    }
+
+    /// Node `answerExternalAgentPermission`: a user-once ask (no mode or rule answers it). Allow selects the agent's
+    /// `allow_once` option and deny its `reject_once`; an ask nobody answers is `cancelled`.
+    fn permission(
+        &mut self,
+        ask: PermissionAsk,
+        reply: tokio::sync::oneshot::Sender<PermissionAnswer>,
+    ) -> BoxFuture<'static, ()> {
+        let (tool_use, kind) = self.tool(&ask.tool_call_id).clone();
+        let tool = format!("acp:{}", kind.as_deref().unwrap_or("other"));
+        let message = if ask.title.trim().is_empty() {
+            format!("{tool} needs your approval")
+        } else {
+            ask.title.clone()
+        };
+        let mut input = json!({"title": ask.title});
+        if let Some(detail) = &ask.detail {
+            input["detail"] = json!(detail);
+        }
+        let request = InteractionRequest::Permission {
+            tool_use,
+            tool,
+            input,
+            message,
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: true,
+            independent: false,
+            origin: None,
+        };
+        let sink = self.sink.clone();
+        Box::pin(async move {
+            let answer = match sink.ask(request).await {
+                Ok(answer) => match answer.answer {
+                    Answer::Permission(UserAnswer::Allow { .. }) => PermissionAnswer::Selected {
+                        kind: "allow_once".to_owned(),
+                    },
+                    Answer::Permission(UserAnswer::Deny { .. }) => PermissionAnswer::Selected {
+                        kind: "reject_once".to_owned(),
+                    },
+                    _ => PermissionAnswer::Cancelled,
+                },
+                Err(_) => PermissionAnswer::Cancelled,
+            };
+            let _ = reply.send(answer);
+        })
+    }
+
+    /// Drops the asks still waiting (their agent requests answer `cancelled`) and closes their dialogs.
+    async fn withdraw_asks(&mut self, asks: &mut FuturesUnordered<BoxFuture<'static, ()>>) {
+        if asks.is_empty() {
+            return;
+        }
+        asks.clear();
+        for (tool_use, _) in self.tools.values() {
+            self.sink.cancel_ask(tool_use).await;
         }
     }
 
