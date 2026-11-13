@@ -141,6 +141,20 @@ pub trait McpTransport: Send + Sync {
     async fn close(&self, connection: &McpConnectionId) -> Result<(), McpError>;
 }
 
+/// Fork: a live stdio MCP server process that this agent process started (Node `McpTrackedProcess`, the source of
+/// `process/childProcesses`, specs/fork-rust-agent-parity.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpProcess {
+    pub pid: u32,
+    /// The server name the connection was opened with (`McpConnect.server`).
+    pub server: String,
+}
+
+/// Fork: the stdio MCP server processes alive now, in the order they started.
+pub trait McpProcesses: Send + Sync {
+    fn processes(&self) -> Vec<McpProcess>;
+}
+
 /// 没有 MCP 传输时的空实现：连接一律失败。
 pub struct NoMcpTransport;
 
