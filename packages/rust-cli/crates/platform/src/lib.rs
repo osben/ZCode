@@ -15,6 +15,7 @@
 
 mod account;
 mod auth;
+mod chatgpt;
 mod consts;
 mod credentials;
 #[cfg(test)]
@@ -38,8 +39,9 @@ use rust_cli_base::secret::RedactedString;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::model::{ModelError, ModelSelection};
 use rust_cli_kernel_api::provider::{
-    Credential, EndpointQuery, HeaderRequest, HeaderSource, ModelCapabilities, ModelCatalog,
-    ModelDirectory, ModelEndpoint, ModelEndpoints, ModelLimits, TokenLimits, WireProtocol,
+    Credential, EndpointQuery, HeaderAccess, HeaderRequest, HeaderSource, ModelCapabilities,
+    ModelCatalog, ModelDirectory, ModelEndpoint, ModelEndpoints, ModelLimits, TokenLimits,
+    WireProtocol,
 };
 use rust_cli_net::Egress;
 use rust_cli_net::header;
@@ -226,8 +228,28 @@ impl Platform {
             let supplied = source
                 .request_auth(HeaderRequest {
                     selection: selection.clone(),
-                    account_type: account_type.clone(),
-                    mode: mode.clone(),
+                    access: HeaderAccess::Zhipu {
+                        account_type: account_type.clone(),
+                        mode: mode.clone(),
+                    },
+                    session: session.cloned(),
+                    rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
+                })
+                .await?;
+            return Ok((supplied.api_key, supplied.headers));
+        }
+        // Fork: ChatGPT Plan (specs/fork-rust-chatgpt-plan.md rule 7). The Host owns the SIWC refresh token and its
+        // rotation; a second refresher would revoke the grant (`refresh_token_reused`), so only the Host is asked.
+        if template.access == Access::ChatGpt {
+            let Some(source) = &self.header_source else {
+                return Err(ModelError::Authentication {
+                    message: CHATGPT_PLAN_HOST_REQUIRED.to_owned(),
+                });
+            };
+            let supplied = source
+                .request_auth(HeaderRequest {
+                    selection: selection.clone(),
+                    access: HeaderAccess::ChatGptPlan,
                     session: session.cloned(),
                     rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
                 })
@@ -253,6 +275,9 @@ impl Platform {
                     .credential((&template.provider, account_type, mode), team, rejected)
                     .await
             }
+            Access::ChatGpt => Err(ModelError::Authentication {
+                message: CHATGPT_PLAN_HOST_REQUIRED.to_owned(),
+            }),
         }
     }
 }
@@ -321,7 +346,11 @@ impl ModelEndpoints for Platform {
             .into_iter()
             .flatten()
             .min();
-        let body_patches = template.patches(selection.reasoning.as_deref(), max_output)?;
+        let mut body_patches = template.patches(selection.reasoning.as_deref(), max_output)?;
+        let chatgpt = template.access == Access::ChatGpt;
+        if chatgpt {
+            body_patches.push(chatgpt::request_patch(&template.model));
+        }
         let previous = match rejected.map(|endpoint| &endpoint.credential) {
             Some(Credential::ApiKey(previous)) => Some(previous),
             Some(Credential::None) | None => None,
@@ -340,7 +369,7 @@ impl ModelEndpoints for Platform {
         let mut headers = template.headers.clone();
         // 账号登录的 provider：配置里静态的鉴权头不发，凭据只来自每请求鉴权（Node `withoutModelAuthHeaders`，工作线
         // F64，model.md §2.4）。以前静态的 `Authorization` 会盖过账号的凭据。
-        if matches!(template.access, Access::Account { .. }) {
+        if matches!(template.access, Access::Account { .. } | Access::ChatGpt) {
             without_auth_headers(&mut headers);
         }
         // Node 的 Provider 适配器对 Anthropic 兼容网关同时发 Bearer；配置里显式给了 Authorization 时以配置为准。
@@ -371,7 +400,8 @@ impl ModelEndpoints for Platform {
             headers,
             body_patches,
             capabilities: template.capabilities,
-            renewable: matches!(template.access, Access::Account { .. }),
+            renewable: matches!(template.access, Access::Account { .. } | Access::ChatGpt),
+            compress_body_over: chatgpt.then_some(chatgpt::COMPRESS_BODY_OVER),
         })
     }
 
@@ -384,6 +414,10 @@ impl ModelEndpoints for Platform {
             .map(|template| template.capabilities)
     }
 }
+
+/// Fork: standalone `zcode-rs` has no Host to ask for a ChatGPT Plan token (specs/fork-rust-chatgpt-plan.md rule 8).
+const CHATGPT_PLAN_HOST_REQUIRED: &str =
+    "chatgpt_plan_host_required: ChatGPT Plan models need the ZCode app in Rust mode";
 
 /// 去掉 `authorization` 与 `x-api-key`（名字不分大小写，Node `MODEL_AUTH_HEADER_NAMES`）。
 fn without_auth_headers(headers: &mut Vec<(String, RedactedString)>) {

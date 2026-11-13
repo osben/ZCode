@@ -107,6 +107,9 @@ fn guided_fields(projection: &Projection) -> Value {
     if let Some(source) = steer.get("source") {
         fields["source"] = source.clone();
     }
+    if let Some(source) = steer.get("botGroupSource") {
+        fields["botGroupSource"] = source.clone();
+    }
     fields
 }
 
@@ -184,6 +187,27 @@ fn a_guided_steer_row_carries_its_source() {
     steer.data[queued_command::INTENT_KEY] = serde_json::to_value(&intent).unwrap();
     for projection in [live(history(steer.clone())), cold(history(steer))] {
         assert_eq!(guided_fields(&projection)["source"], source);
+    }
+}
+
+/// Fork (specs/fork-rust-topic-resource.md): a bot-group steer row carries the `botGroupSource` of its intent, live
+/// and cold.
+#[test]
+fn a_guided_steer_row_carries_its_bot_group_source() {
+    let source =
+        json!({"botId": "b1", "chatId": "oc_1", "threadId": "omt_1", "authorizationId": "a1"});
+    let intent: rust_cli_kernel_api::input_intent::InputIntent =
+        serde_json::from_value(json!({"text": "also b", "botGroupSource": source})).unwrap();
+    let mut steer = queued_command::steer_attachment(
+        MessageId::new("msg_s6"),
+        "also b",
+        SteerSender::User,
+        Some("c2"),
+        None,
+    );
+    steer.data[queued_command::INTENT_KEY] = serde_json::to_value(&intent).unwrap();
+    for projection in [live(history(steer.clone())), cold(history(steer))] {
+        assert_eq!(guided_fields(&projection)["botGroupSource"], source);
     }
 }
 

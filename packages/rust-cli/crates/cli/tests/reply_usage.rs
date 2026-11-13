@@ -281,6 +281,7 @@ async fn openai_usage_reported_at_the_end_is_kept() {
             ..ModelCapabilities::default()
         },
         renewable: false,
+        compress_body_over: None,
     };
     let selection = selection("openai-test", "gpt-test");
     let kernel = sandbox.kernel(endpoint, &selection).await;

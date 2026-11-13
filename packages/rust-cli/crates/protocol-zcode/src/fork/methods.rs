@@ -13,6 +13,13 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Option<Result<Reply, RpcError>> {
+    // Fork: the Node helper answers the forwarded families when the Host configured one. `None` falls through, so
+    // an unadvertised method keeps its answer (`-32601`, or `{"runs": []}` for the run list).
+    if let Some(helper) = server.context.node_helper()
+        && let Some(result) = helper.forward(method, &params).await
+    {
+        return Some(result.map(Reply::new));
+    }
     let result = match method {
         "v4/conversation/plans" => plans(server, &params).await,
         // Fork: the App's per-turn file summary queries (specs/fork-rust-agent-parity.md).
@@ -47,6 +54,19 @@ pub(crate) async fn dispatch(
         // Fork: the background Bash detail pane (Node `readBackgroundBashOutput`).
         "v4/conversation/backgroundBashOutput" => {
             super::background_work::bash_output(server, &params).await
+        }
+        // Fork: workspace model calls (Node `workspace-generate-text.ts`); unported without the entry's model port.
+        "workspace/generateText"
+        | "workspace/cancelGenerateText"
+        | "provider/testModelConnectivity"
+            if server.context.model_port().is_none() =>
+        {
+            return None;
+        }
+        "workspace/generateText" => super::workspace_model::generate_text(server, &params).await,
+        "workspace/cancelGenerateText" => super::workspace_model::cancel(server, &params),
+        "provider/testModelConnectivity" => {
+            super::workspace_model::test_connectivity(server, &params).await
         }
         // Fork: the legacy background stop (Node `cancelBackgroundTask`).
         "session/cancelBackgroundTask" => super::background_task::cancel(server, &params).await,

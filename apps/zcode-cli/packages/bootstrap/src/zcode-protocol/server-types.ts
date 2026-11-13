@@ -17,6 +17,7 @@ import type { WorkspaceHookPolicyProvider } from "@zcode/core";
 import type { AccountProviderConfigSnapshot } from "@zcode/provider";
 import {
   zcodeProtocolErrorCodes,
+  zcodeProtocolMethods,
   type AppToolSearchMode,
   type ZCodeAutomationBotDeliveryTarget,
   type ZCodeDeliveryKind,
@@ -251,6 +252,31 @@ export const PROTOCOL_CLIENT_REQUEST_ERROR_CODES = {
   /** 请求等待应答超时。 */
   timedOut: -32022,
 } as const;
+
+/**
+ * Plugin mutations after which the server invalidates its plugin caches. Exported for the fork's
+ * Rust-agent Node helper, which must invalidate after exactly the same methods.
+ */
+export const PLUGIN_PREPARATION_MUTATION_METHODS: ReadonlySet<string> = new Set<string>([
+  zcodeProtocolMethods.pluginsSetEnabled,
+  zcodeProtocolMethods.pluginsInstall,
+  zcodeProtocolMethods.pluginsUninstall,
+  zcodeProtocolMethods.pluginsUpdate,
+  zcodeProtocolMethods.pluginsRestoreBuiltin,
+  zcodeProtocolMethods.pluginsConfigure,
+  zcodeProtocolMethods.pluginsMarketplaceAdd,
+  zcodeProtocolMethods.pluginsMarketplaceRemove,
+  zcodeProtocolMethods.pluginsMarketplaceUpdate,
+]);
+
+/** The `operationId` a cancellable plugin operation registers under (trimmed, non-empty). */
+export function getPluginOperationId(params: unknown): string | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const operationId = (params as { operationId?: unknown }).operationId;
+  return typeof operationId === "string" && operationId.trim().length > 0
+    ? operationId.trim()
+    : undefined;
+}
 
 export class ProtocolRequestError extends Error {
   constructor(

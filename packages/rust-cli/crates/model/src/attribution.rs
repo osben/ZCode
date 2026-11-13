@@ -5,7 +5,7 @@
 //! `x-request-id` 算出这一组头。
 
 use rust_cli_base::rule_url::is_opencode_go_endpoint;
-use rust_cli_kernel_api::model::{ModelRequest, RequestOptions};
+use rust_cli_kernel_api::model::{ModelRequest, QuerySource, RequestOptions};
 
 use crate::metadata::{external_session, strip_prefixes};
 
@@ -32,13 +32,18 @@ pub(crate) struct Origin {
     subagent: bool,
     /// `x-zcode-query-source` 的值；不合格时为 None（Node 省略）。
     source: Option<String>,
+    /// Fork: a workspace-scoped request (Node's `scope: "workspace"` runtime model): `x-zcode-session-type` is `other`.
+    workspace: bool,
 }
 
 impl Origin {
     pub(crate) fn of(request: &ModelRequest) -> Self {
         // 请求来源的名字（model.md §2.4 的表）：Node 有对应用途的用 Node 的名字，其余用本工程的名字；与用量表的
         // `query_source` 同一个映射（工作线 F71）。
-        Self::sourced(request.source.node_name(), &request.options)
+        Self {
+            workspace: matches!(&request.source, QuerySource::Side(side) if side.workspace_scoped()),
+            ..Self::sourced(request.source.node_name(), &request.options)
+        }
     }
 
     /// 按来源名与请求选项（Node 对照夹具里的来源名不一定是本工程的来源，测试经这里给）。
@@ -54,6 +59,7 @@ impl Origin {
                 .map(|run| strip_prefixes(run.as_str(), &[RUN_PREFIX]).to_owned()),
             subagent: options.agent.is_some(),
             source: valid_source(source).then(|| source.to_owned()),
+            workspace: false,
         }
     }
 
@@ -61,7 +67,7 @@ impl Origin {
     fn session_type(&self) -> &'static str {
         if self.subagent {
             "subagent"
-        } else if self.session.is_some() {
+        } else if self.session.is_some() && !self.workspace {
             "main"
         } else {
             "other"
