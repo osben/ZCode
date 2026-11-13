@@ -102,6 +102,7 @@ import {
   HostMessageTypes,
 } from "@zcode/shared";
 import { logger, webRemoteControlRelayLogger, flushLocalTtftLogs } from "./logger.js";
+import { enablePrivateFileKeyFallback } from "@zcode/shared/credential-security";
 import { primeForkAgentRuntimeSelection } from "./fork-agent-runtime/contract.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
@@ -319,6 +320,17 @@ import {
   getPluginSandboxHost,
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
+
+// Linux without a reachable Secret Service could never create a credential key; enable the
+// private-file fallback before any cipher caches a key, so the choice is fixed for the process.
+if (
+  process.platform === "linux" &&
+  !enablePrivateFileKeyFallback({
+    onFallback: () => logger.warn("[credential] Linux 系统凭据库不可用，已改用私有文件密钥"),
+  })
+) {
+  logger.warn("[credential] 凭据已在回退开启前被访问，本次进程保持系统凭据库规则");
+}
 
 registerLocalMediaPreviewScheme(protocol, [
   PLUGIN_SANDBOX_PRIVILEGED_SCHEME,

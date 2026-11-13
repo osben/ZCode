@@ -56,6 +56,8 @@ interface AccountProviderRequestAuthServiceOptions {
     accountIdentity?: string;
     zcodeUserId?: string;
   } | null>;
+  /** Start Plan JWT of the signed-in login for this family (a zai_cn login serves bigmodel). */
+  loadStartPlanZcodeJwt(family: ProviderFamilyDomain): Promise<string | null>;
   loadIndividualPlanMaterial(
     providerId: string,
     family: ProviderFamilyDomain,
@@ -84,8 +86,9 @@ class AccountProviderRequestAuthService implements AccountRequestAuthResolver {
     if (!access) throw new AccountRequestCredentialUnavailableError(providerId);
 
     if (access.planKind === "start-plan") {
-      const tokenSet = await this.#options.loadOAuthTokenSet(resolveOAuthProviderId(access.family));
-      return { apiKey: requireApiKey(tokenSet?.zcodeJwtToken, providerId) };
+      return {
+        apiKey: requireApiKey(await this.#options.loadStartPlanZcodeJwt(access.family), providerId),
+      };
     }
 
     const scoped = input.reason !== "usage" || input.expectedAccountScope !== undefined;

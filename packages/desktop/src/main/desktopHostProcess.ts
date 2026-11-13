@@ -46,7 +46,7 @@ import {
   MessageChannelMain,
 } from "electron";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { BroadcastHub } from "./broadcastHub.js";
 import { bindDatabaseStartupRelay } from "./databaseStartupRelay.js";
 import { getMainLaunchPartialMarks } from "./desktopLaunchMarks.js";
@@ -430,6 +430,34 @@ export function spawnHostProcess(
         .catch(() => {
           // Host 已退出时只能放弃回包；任何凭据输入/结果都不得进入日志。
         });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.CredentialKeyShareRequest) {
+      const { requestId, targetBaseDir } = result.data;
+      // Main owns the OS keyring: the Host only names the new data root, the credentials path is derived here.
+      const share = isAbsolute(targetBaseDir)
+        ? credentialCipher.shareKeyWithCopiedCredentials(
+            join(targetBaseDir, ".zcode", "v2", "credentials.json"),
+          )
+        : Promise.reject(new Error("Data root must be absolute"));
+      void share
+        .then(
+          () => true,
+          () => false,
+        )
+        .then((ok) => {
+          dependencies.logger.info(`[credential-key-share] ${ok ? "completed" : "failed"}`);
+          if (!exitedHostProcesses.has(child)) {
+            child.postMessage({
+              type: HostMessageTypes.CredentialKeyShareResult,
+              requestId,
+              ok,
+              ...(ok ? {} : { errorCode: "CREDENTIAL_SECURE_STORAGE_UNAVAILABLE" as const }),
+            });
+          }
+        })
+        .catch(() => {});
       return;
     }
 

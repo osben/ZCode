@@ -1,5 +1,6 @@
 import childProcess from "node:child_process";
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -7,6 +8,14 @@ import {
   createEncodedPowerShellArgs,
   createWindowsPowerShellSecurityArgs,
 } from "../scripts/powershell-command.mjs";
+
+/** The signature query writes its JSON to `$zcodeSignatureOutput`; a mocked process must do the same. */
+function writeSignatureOutput(args: unknown, json: string): void {
+  const command = decodeCommand(args as string[]);
+  const literal = /\$zcodeSignatureOutput='((?:[^']|'')*)';/u.exec(command)?.[1];
+  if (!literal) throw new Error("signature output path missing");
+  writeFileSync(literal.replaceAll("''", "'"), json);
+}
 
 function decodeCommand(args: string[]): string {
   expect(args.slice(0, 4)).toEqual(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
@@ -114,7 +123,8 @@ describe("Windows Authenticode 有效性校验", () => {
           stdout: string,
           stderr: string,
         ) => void;
-        callback(null, JSON.stringify({ status: 0, subject }), "");
+        writeSignatureOutput(args[1], JSON.stringify({ status: 0, subject }));
+        callback(null, "", "");
         return {} as childProcess.ChildProcess;
       });
       try {
@@ -125,6 +135,7 @@ describe("Windows Authenticode 有效性校验", () => {
         const command = decodeCommand(args);
         expect(command).toContain("Get-AuthenticodeSignature -LiteralPath $zcodeArg0");
         expect(command).not.toContain("Example';&.exe");
+        expect(command).toContain("$zcodeArg0='C:\\Program Files\\Example'';&.exe';");
       } finally {
         spy.mockRestore();
       }
@@ -138,11 +149,8 @@ describe("Windows Authenticode 有效性校验", () => {
     { status: "0", subject: "CN=Malformed" },
   ])("拒绝无效签名或畸形结果：%j", async (result) => {
     const spy = vi.spyOn(childProcess, "execFile").mockImplementation((...args: unknown[]) => {
-      (args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void)(
-        null,
-        JSON.stringify(result),
-        "",
-      );
+      writeSignatureOutput(args[1], JSON.stringify(result));
+      (args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void)(null, "", "");
       return {} as childProcess.ChildProcess;
     });
     try {

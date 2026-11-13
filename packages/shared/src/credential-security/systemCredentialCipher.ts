@@ -1,9 +1,17 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { homedir, platform, userInfo } from "node:os";
-import { link, lstat, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { CREDENTIAL_DECRYPT_ERROR_CODE, CREDENTIAL_DECRYPT_ERROR_PREFIX } from "@zcode/shared";
 import { atomicWritePrivateTextFile, withFileLock } from "../node/privateFilePersistence.js";
+import {
+  ENCODED_KEY_PATTERN,
+  OS_SOURCE,
+  SOURCE_FILE,
+  keyFingerprint,
+  publishPrivateSecretFile,
+  shareOsKeyWithCopiedCredentials,
+} from "./copiedCredentialKeyShare.js";
 import type {
   CredentialCipher,
   CredentialKeyStore,
@@ -27,6 +35,22 @@ interface KeyMaterial {
 }
 const systemKeys = new Map<string, Promise<KeyMaterial>>();
 const injectedSystemKeys = new WeakMap<CredentialKeyStore, Map<string, Promise<KeyMaterial>>>();
+
+export interface PrivateFileKeyFallbackOptions {
+  onFallback?(): void;
+}
+let privateFileKeyFallback: PrivateFileKeyFallbackOptions | undefined;
+
+/**
+ * Upstream 3.18.2 (reconstructed): a Linux desktop without a usable Secret Service could never create
+ * its first key. Allow a private credential-secret file only for a brand-new key; existing OS-sourced
+ * data must keep failing closed. Must be enabled before any key is cached, so one process never mixes rules.
+ */
+export function enablePrivateFileKeyFallback(options: PrivateFileKeyFallbackOptions = {}): boolean {
+  if (systemKeys.size > 0) return false;
+  privateFileKeyFallback = options;
+  return true;
+}
 
 function keyCacheFor(store?: CredentialKeyStore): Map<string, Promise<KeyMaterial>> {
   if (!store) return systemKeys;
@@ -203,12 +227,12 @@ export function createSystemCredentialCipher(
     const pendingKey = withFileLock(`${filePath}.keyring`, async () => {
       lockAcquired = true;
       try {
-        const sourcePath = join(dirname(filePath), "credential-source");
+        const sourcePath = join(dirname(filePath), SOURCE_FILE);
         const pinnedSource = await readFile(sourcePath, "utf8").catch((error) => {
           if ((error as { code?: string }).code === "ENOENT") return null;
           throw error;
         });
-        if (pinnedSource !== null && pinnedSource !== "os\n") throw unavailable();
+        if (pinnedSource !== null && pinnedSource !== OS_SOURCE) throw unavailable();
         const raw = await readFile(filePath, "utf8").catch((error) => {
           if ((error as { code?: string }).code === "ENOENT") return "";
           throw error;
@@ -220,16 +244,28 @@ export function createSystemCredentialCipher(
           if (value) return { key: digest(value), source: "env", legacySecret: value } as const;
           if (raw.includes("enc:v2:env:")) throw unavailable();
         }
-        let encoded = await store.get();
-        if (encoded === null && create && !useOs && !raw.includes(SYSTEM_PREFIX)) {
-          encoded = randomBytes(KEY_BYTES).toString("base64url");
-          await store.set(encoded);
-          if ((await store.get()) !== encoded) throw unavailable();
+        const mayCreate = create && !useOs && !raw.includes(SYSTEM_PREFIX);
+        let encoded: string | null;
+        try {
+          encoded = await store.get();
+          if (encoded === null && mayCreate) {
+            encoded = randomBytes(KEY_BYTES).toString("base64url");
+            await store.set(encoded);
+            if ((await store.get()) !== encoded) throw unavailable();
+          }
+          if (!encoded || !ENCODED_KEY_PATTERN.test(encoded)) throw unavailable();
+        } catch (error) {
+          // Only a brand-new key may move to the private file; never replace an OS key that data depends on.
+          if (!privateFileKeyFallback || !mayCreate) throw error;
+          await publishPrivateSecretFile(join(dirname(filePath), "credential-secret"));
+          const value = await resolveManagedSecret({ filePath, env: {} }, true);
+          if (!value) throw unavailable();
+          privateFileKeyFallback.onFallback?.();
+          return { key: digest(value), source: "env", legacySecret: value } as const;
         }
-        if (!encoded || !/^[A-Za-z0-9_-]{43}$/.test(encoded)) throw unavailable();
         const key = Buffer.from(encoded, "base64url");
         if (key.length !== KEY_BYTES) throw unavailable();
-        if (!pinnedSource) await atomicWritePrivateTextFile(sourcePath, "os\n");
+        if (!pinnedSource) await atomicWritePrivateTextFile(sourcePath, OS_SOURCE);
         return { key, source: "os" } as const;
       } catch {
         throw unavailable();
@@ -248,10 +284,19 @@ export function createSystemCredentialCipher(
       await getKey(true);
     },
     needsMigration: (value) => !value.startsWith(SYSTEM_PREFIX),
+    shareKeyWithCopiedCredentials(targetFilePath, targetStore) {
+      const targetPath = resolve(targetFilePath);
+      return shareOsKeyWithCopiedCredentials({
+        sourcePath: filePath,
+        targetPath,
+        target: targetStore ?? systemKeyStore(targetPath),
+        loadSourceKey: () => getKey(false),
+        unavailable,
+      });
+    },
     async encrypt(value) {
       const { key, source } = await getKey(true);
-      const fingerprint = digest(key).toString("hex").slice(0, 24);
-      return `${SYSTEM_PREFIX}${source}:${fingerprint}:${seal(value, key)}`;
+      return `${SYSTEM_PREFIX}${source}:${keyFingerprint(key)}:${seal(value, key)}`;
     },
     async decrypt(value) {
       if (!value.startsWith(SYSTEM_PREFIX)) {
@@ -274,7 +319,7 @@ export function createSystemCredentialCipher(
         throw decryptError();
       const { key, source } = await getKey(false);
       if (parts[0] !== source) throw unavailable();
-      if (digest(key).toString("hex").slice(0, 24) !== parts[1]) throw unavailable();
+      if (keyFingerprint(key) !== parts[1]) throw unavailable();
       return open(parts[2], key);
     },
   };
@@ -313,19 +358,8 @@ export async function prepareServerCredentialStorage(
       });
       // 已有 v2 数据意味着已有独立密钥来源。丢失密钥时不能生成替代品或切换来源。
       if (raw.includes(SYSTEM_PREFIX)) return;
-      const temporary = `${secretPath}.${process.pid}.${randomBytes(12).toString("hex")}.tmp`;
-      try {
-        await writeFile(temporary, randomBytes(KEY_BYTES).toString("base64url"), {
-          mode: 0o600,
-          flag: "wx",
-        });
-        // 先完整写入，再排他发布；rename 会覆盖另一创建者，直接写目标会暴露半个密钥。
-        await link(temporary, secretPath).catch((error) => {
-          if ((error as { code?: string }).code !== "EEXIST") throw error;
-        });
-      } finally {
-        await rm(temporary, { force: true });
-      }
+      // 先完整写入，再排他发布；rename 会覆盖另一创建者，直接写目标会暴露半个密钥。
+      await publishPrivateSecretFile(secretPath);
     }),
   );
 }
