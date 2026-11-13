@@ -253,6 +253,7 @@
   "packages/ui/test/executeToolCallBlock.test.tsx",
   "packages/ui/test/externalAgentConfig.test.ts",
   "packages/ui/test/externalSessionsContextPack.test.ts",
+  "packages/ui/test/externalSessionsPanelSelection.test.ts",
   "packages/ui/test/featureRequestDialog.test.ts",
   "packages/ui/test/feedbackCenter.test.ts",
   "packages/ui/test/feedbackTicketDetailCopyState.test.ts",

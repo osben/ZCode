@@ -21,7 +21,14 @@ import {
 import { buildExternalSessionContextPack } from "./contextPack.js";
 import { ExternalSessionRow } from "./ExternalSessionRow.js";
 import { ExternalSessionTranscriptDialog } from "./ExternalSessionTranscriptDialog.js";
-import { type PanelViewState, persistViewState, readViewState } from "./panelViewState.js";
+import {
+  isChipUnavailable,
+  type PanelViewState,
+  persistViewState,
+  readViewState,
+  showChipCount,
+  summarizeSourceSelection,
+} from "./panelViewState.js";
 import { useExternalSessionActions } from "./useExternalSessionActions.js";
 import { useExternalSessions } from "./useExternalSessions.js";
 
@@ -245,26 +252,15 @@ export function ExternalSessionsPanel({
 
   // Only selected sources were scanned for this view; deselected ones carry a cached or
   // `not scanned` status that must not drive the counts or the "every source unavailable" message.
-  const selectedStatuses = useMemo(
-    () =>
-      statuses
-        ? EXTERNAL_SESSION_SOURCE_CATALOG.filter(
-            (item) => view.sources.length === 0 || view.sources.includes(item.source),
-          ).map((item) => statuses[item.source])
-        : [],
+  const { totalCount, everySourceUnavailable } = useMemo(
+    () => summarizeSourceSelection(statuses, view.sources),
     [statuses, view.sources],
-  );
-  const totalCount = useMemo(
-    () => selectedStatuses.reduce((sum, item) => sum + item.count, 0),
-    [selectedStatuses],
   );
 
   if (!state.supported) return null;
 
   const canImport = actions.canImport && Boolean(onOpenSession);
   const canContinue = Boolean(onCreateTask) && actions.canResolveProject;
-  const everySourceUnavailable =
-    selectedStatuses.length > 0 && selectedStatuses.every((item) => !item.available);
 
   return (
     <section
@@ -295,7 +291,7 @@ export function ExternalSessionsPanel({
             {EXTERNAL_SESSION_SOURCE_CATALOG.map((item) => {
               const status = statuses?.[item.source];
               const active = view.sources.length === 0 || view.sources.includes(item.source);
-              const unavailable = active && status !== undefined && !status.available;
+              const unavailable = isChipUnavailable(statuses, view.sources, item.source);
               return (
                 <button
                   key={item.source}
@@ -312,7 +308,7 @@ export function ExternalSessionsPanel({
                   )}
                 >
                   {item.label}
-                  {status && (active || status.available) ? (
+                  {showChipCount(statuses, view.sources, item.source) && status ? (
                     <span className="ml-1 text-foreground-subtlest">{status.count}</span>
                   ) : null}
                 </button>

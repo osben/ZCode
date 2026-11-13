@@ -9,6 +9,7 @@ export {
 } from "@zcode/services";
 export type {
   ExternalSessionSource,
+  ExternalSessionSourceStatus,
   ExternalSessionSummary,
   ExternalSessionTranscript,
   ExternalSessionsListResult,

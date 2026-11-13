@@ -30,7 +30,12 @@ const sourceSchema = z.enum(EXTERNAL_SESSION_SOURCES);
 const listParamsSchema = z
   .object({
     workspacePath: z.string().trim().min(1).optional(),
-    sources: z.array(sourceSchema).max(EXTERNAL_SESSION_SOURCES.length).optional(),
+    // Dedupe before any bound: the deduped list has at most one entry per source, so repeats of any count
+    // are accepted and scanned once (specs/external-sessions.md "Contract").
+    sources: z
+      .array(sourceSchema)
+      .transform((list) => [...new Set(list)])
+      .optional(),
     search: z.string().max(200).optional(),
     limit: z.number().int().positive().max(EXTERNAL_SESSIONS_MAX_LIMIT).optional(),
     refresh: z.boolean().optional(),
@@ -165,7 +170,7 @@ export function createExternalSessionsService(
     ): Promise<ExternalSessionsListResult> {
       const params = listParamsSchema.parse(rawParams ?? {});
       const requested = params.sources?.length
-        ? [...new Set(params.sources)].filter((source) => adaptersBySource.has(source))
+        ? params.sources.filter((source) => adaptersBySource.has(source))
         : [...adaptersBySource.keys()];
       await ensureFresh(requested, params.refresh === true);
       const statuses = emptyStatuses();

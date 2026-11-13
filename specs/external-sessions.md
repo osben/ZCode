@@ -100,7 +100,7 @@ interface ExternalSessionSummary {
 
 interface ExternalSessionsListParams {
   workspacePath?: string; // omit = all workspaces
-  sources?: ExternalSessionSource[]; // duplicates are ignored
+  sources?: ExternalSessionSource[]; // duplicates are ignored, of any count: the schema dedupes before any length bound, and each source is scanned once
   search?: string; // case-insensitive substring over title + sessionId
   limit?: number; // default 200, max 1000
   refresh?: boolean; // bypass the cache
@@ -163,7 +163,9 @@ there is no shared state to reconcile.
 temporary `.command` script run by `open -a Terminal`. The script is
 `cd -- <quoted cwd> && <resumeCommand>` and the same launch-rule check rejects NUL/CR/LF in any
 argument. The `--` ends `cd`'s option parsing, so a recorded cwd that starts with `-` is a path,
-never an option. Session ids are validated against `^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$` before they reach a
+never an option. A bare `-` operand is special to `cd` even after `--` (it means `$OLDPWD`), so a cwd
+that starts with `-` is written as `./<cwd>` before quoting (`cd -- ./-` enters a directory named `-`).
+Adapter cwds are absolute paths; the prefix only matters for a malformed store value. Session ids are validated against `^[A-Za-z0-9._:][A-Za-z0-9._:-]{0,127}$` before they reach a
 command line (see "Session ids"); anything else is `transcript`-only. When the workspace directory is missing the command runs
 from `$HOME` and the UI says so. Non-macOS: `{ opened: false, command }` and the panel copies the
 command to the clipboard instead.
@@ -186,6 +188,11 @@ command to the clipboard instead.
   style: a deselected source is not scanned by that request, so its chip shows the last known count
   (from an earlier scan) or none, never "unavailable". An empty stored selection means "every
   source"; toggling a chip expands that sentinel first, so a click always flips that chip alone.
+  The selection rules live in pure helpers in `panelViewState.ts` and are unit-tested
+  (`packages/ui/test/externalSessionsPanelSelection.test.ts`). Required cases: a persisted selection
+  `["claude"]` where Claude was scanned with zero sessions and the other sources were never scanned
+  shows "No sessions…" (not "No readable session stores…"); a deselected chip is never styled
+  unavailable; a chip count is shown only for an active chip or a source that is available.
 - Rows (a plain list, not virtualised; one request returns at most `limit` rows, default 200): source mark + label, title, cwd leaf
   (hidden when scoped), model, message count, updated (relative), and a `⋯` menu:
   - **Open transcript** (disabled with hint when `transcriptAvailable` is false)
