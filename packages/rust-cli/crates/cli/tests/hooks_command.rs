@@ -196,14 +196,14 @@ async fn pre_and_post_tool_hooks_run_as_real_processes() {
 
     let blocked = bash(&pipeline, &harness, 1, "rm -rf data").await;
     assert!(blocked.output.is_error);
-    assert_eq!(
-        text(&blocked.output.content),
-        format!(
-            "PreToolUse:Bash hook error: [{}]: rm is blocked\n",
-            script(&harness, "guard.sh")
-        )
+    assert_eq!(text(&blocked.output.content), "rm is blocked");
+    // Node's exit-2 output is a `continue: false`, so the refusal also stops the turn with the reason.
+    let stops = attachment_texts(&blocked.after);
+    assert_eq!(stops.len(), 1);
+    assert!(
+        stops[0].contains("PreToolUse:Bash hook stopped continuation: rm is blocked"),
+        "{stops:?}"
     );
-    assert!(blocked.after.is_empty());
 
     let ran = bash(&pipeline, &harness, 2, "echo hi").await;
     assert!(!ran.output.is_error);

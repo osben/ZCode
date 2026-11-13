@@ -50,9 +50,10 @@ pub(crate) fn deny(
     timeout_ms: u64,
 ) -> HookResult {
     match failure(executed, &interpreted, timeout_ms) {
-        Some(detail) => HookResult::blocking(
+        // Node `resolveDenyOnErrorReason` + `preToolUseDenyOutput`: the reason is the refusal text, without a command prefix.
+        Some(detail) => HookResult::pre_tool_refusal(
             format!(
-                "[{command}]: PreToolUse hook failed and its onError is \"deny\", so the tool call is blocked: {detail}"
+                "PreToolUse hook failed and its onError is \"deny\", so the tool call is blocked: {detail}"
             ),
             command.to_owned(),
         ),

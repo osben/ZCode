@@ -55,15 +55,29 @@ fn trim_for_preview(text: &str) -> Option<String> {
 /// Node `createExitCodeBlockOutput` for a PermissionRequest hook: exit code 2 stops the call before any JSON on stdout
 /// is read, with `trimForPreview(stderr) ?? trimForPreview(stdout) ?? "Hook blocked execution"`.
 fn permission_request_exit_two(command: &str, stdout: &str, stderr: &str) -> HookResult {
-    let reason = trim_for_preview(stderr)
+    HookResult::blocking(exit_two_reason(stdout, stderr), command.to_owned())
+}
+
+/// Node `createExitCodeBlockOutput` for a PreToolUse hook: the same reason, as a `continue: false` deny
+/// (`permissionDecisionReason` is the reason too), so the refusal text is the reason itself.
+fn pre_tool_exit_two(command: &str, stdout: &str, stderr: &str) -> HookResult {
+    HookResult::pre_tool_refusal(exit_two_reason(stdout, stderr), command.to_owned())
+}
+
+/// `trimForPreview(stderr) ?? trimForPreview(stdout) ?? "Hook blocked execution"`.
+fn exit_two_reason(stdout: &str, stderr: &str) -> String {
+    trim_for_preview(stderr)
         .or_else(|| trim_for_preview(stdout))
-        .unwrap_or_else(|| "Hook blocked execution".to_owned());
-    HookResult::blocking(reason, command.to_owned())
+        .unwrap_or_else(|| "Hook blocked execution".to_owned())
 }
 
 fn command_result(command: &str, event: &str, stdout: &str, stderr: &str, exit: i32) -> HookResult {
     if exit == BLOCKING_EXIT && event == "PermissionRequest" {
         return permission_request_exit_two(command, stdout, stderr);
+    }
+    // Node reads no stdout JSON when the exit code is 2 (`processHookExecutionResult`).
+    if exit == BLOCKING_EXIT && event == "PreToolUse" {
+        return pre_tool_exit_two(command, stdout, stderr);
     }
     match output::parse(stdout) {
         Parsed::Invalid(_) | Parsed::Plain if exit == BLOCKING_EXIT => exit_two(command, stderr),

@@ -82,6 +82,18 @@ impl HookResult {
             ..Self::default()
         }
     }
+
+    /// A PreToolUse refusal in Node's shape (`createExitCodeBlockOutput`, `preToolUseDenyOutput`): `continue: false`
+    /// with a deny whose reason is `reason`, so it prevents the call, counts as a deny and takes part in the reason merge.
+    pub(crate) fn pre_tool_refusal(reason: String, command: String) -> Self {
+        Self {
+            prevent: true,
+            stop_reason: Some(reason.clone()),
+            behavior: Some(Behavior::Deny),
+            reason: Some(reason.clone()),
+            ..Self::blocking(reason, command)
+        }
+    }
 }
 
 /// command / http 执行器的原始结果；REPL 与“外部”两条路径各自解释。

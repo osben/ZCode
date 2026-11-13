@@ -43,7 +43,7 @@ async fn pre_tool_use_runs_matching_hooks_with_the_input_on_stdin() {
     assert_eq!(
         outcome.decision,
         Some(PermissionDecision::Deny {
-            message: "PreToolUse:Bash hook error: [guard.sh]: no rm".to_owned()
+            message: "no rm".to_owned()
         })
     );
     assert_eq!(
@@ -451,4 +451,74 @@ async fn pre_tool_use_continue_false_refuses_the_call() {
         })
     );
     assert!(outcome.prevent_continuation);
+}
+
+/// Node `createExitCodeBlockOutput`: exit 2 on PreToolUse refuses with the stderr, the stdout JSON is not read, and a
+/// later allow's reason wins the last-truthy merge.
+#[tokio::test]
+async fn pre_tool_use_exit_two_refuses_with_its_reason() {
+    let allow = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"B ok"}}"#;
+    let env = Arc::new(ScriptedEnv::with(&[
+        ("a.sh", script("", "A says no", 2)),
+        ("b.sh", script(allow, "", 0)),
+    ]));
+    let settings = json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "a.sh"}, {"type": "command", "command": "b.sh"}
+    ]}]}});
+    let outcome = engine(env.clone(), &settings)
+        .run(pre_tool_event(), CancellationToken::new())
+        .await;
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Deny {
+            message: "B ok".to_owned()
+        })
+    );
+    assert!(outcome.prevent_continuation);
+
+    // Alone: stderr first, then stdout (not JSON-parsed), then the default.
+    for (stdout, stderr, expected) in [
+        (allow, "no", "no"),
+        ("plain words", "", "plain words"),
+        ("", "", "Hook blocked execution"),
+    ] {
+        let env = Arc::new(ScriptedEnv::with(&[("g.sh", script(stdout, stderr, 2))]));
+        let outcome = engine(env, &command_settings("PreToolUse", "Bash", "g.sh"))
+            .run(pre_tool_event(), CancellationToken::new())
+            .await;
+        assert_eq!(
+            outcome.decision,
+            Some(PermissionDecision::Deny {
+                message: expected.to_owned()
+            }),
+            "stdout {stdout:?} stderr {stderr:?}"
+        );
+    }
+}
+
+/// Node `processHookOutput`: `decision: "block"` on PreToolUse prevents the call, and its refusal is the
+/// `systemMessage` when there is no other text (`stopReason ?? reason ?? systemMessage`).
+#[tokio::test]
+async fn pre_tool_use_block_with_only_a_system_message_refuses_with_it() {
+    let env = Arc::new(ScriptedEnv::with(&[(
+        "g.sh",
+        script(r#"{"decision":"block","systemMessage":"m"}"#, "", 0),
+    )]));
+    let outcome = engine(env, &command_settings("PreToolUse", "Bash", "g.sh"))
+        .run(pre_tool_event(), CancellationToken::new())
+        .await;
+    assert_eq!(
+        outcome.decision,
+        Some(PermissionDecision::Deny {
+            message: "m".to_owned()
+        })
+    );
+    assert!(outcome.prevent_continuation);
+}
+
+fn pre_tool_event() -> HookEvent {
+    event(
+        HookEventName::PreToolUse,
+        json!({"tool_name": "Bash", "tool_input": {"command": "rm -rf x"}, "tool_use_id": "toolu_1"}),
+    )
 }

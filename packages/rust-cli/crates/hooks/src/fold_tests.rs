@@ -74,15 +74,21 @@ fn pre_tool_use_precedence_and_texts() {
             Vec::new()
         ))
     );
-    // 退出码 2 的阻塞：PreToolUse 的拒绝文本。
-    let out = pre_tool_use(&f, &[blocking("[g]: nope")]);
+    // 退出码 2 的拒绝：Node 的合成输出，文本是理由本身（没有 `hook error` 前缀）。
+    let out = pre_tool_use(
+        &f,
+        &[HookResult::pre_tool_refusal(
+            "nope".to_owned(),
+            "g".to_owned(),
+        )],
+    );
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "PreToolUse:Bash hook error: [g]: nope".to_owned()
+            message: "nope".to_owned()
         })
     );
-    // JSON deny：保留阻塞文本。
+    // JSON deny：理由就是拒绝文本，阻塞文本不再加前缀。
     let json_deny = HookResult {
         blocking: Some(Blocking {
             error: "no rm".to_owned(),
@@ -94,7 +100,7 @@ fn pre_tool_use_precedence_and_texts() {
     assert_eq!(
         out.decision,
         Some(PermissionDecision::Deny {
-            message: "PreToolUse:Bash hook error: no rm".to_owned()
+            message: "no rm".to_owned()
         })
     );
 }
@@ -487,4 +493,53 @@ fn pre_tool_use_a_denied_call_drops_the_updated_input() {
         })
     );
     assert_eq!(out.updated_input, None);
+}
+
+/// Node `mergeHookRunResult` assigns `stopReason` on every preventing result, even when it has none: the last stop
+/// decides the text, and with no text the refusal is Node's default.
+#[test]
+fn pre_tool_use_a_stop_without_a_reason_replaces_an_earlier_one() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let stop = |reason: Option<&str>| HookResult {
+        prevent: true,
+        stop_reason: reason.map(str::to_owned),
+        ..HookResult::default()
+    };
+    let out = pre_tool_use(&f, &[stop(Some("quota exceeded")), stop(None)]);
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "Blocked by PreToolUse hook".to_owned()
+        })
+    );
+    assert_eq!(out.stop_reason, None);
+    let out = pre_tool_use(&f, &[stop(None), stop(Some("later"))]);
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "later".to_owned()
+        })
+    );
+}
+
+/// The exit-code-2 refusal reason is a `permissionDecisionReason` (Node synthetic output), so it takes part in the
+/// last-truthy reason merge: a later allow with a reason gives the refusal that reason.
+#[test]
+fn pre_tool_use_a_refusal_reason_takes_part_in_the_merge() {
+    let ids = SequentialIds::default();
+    let f = fold(&ids, "PreToolUse", "PreToolUse:Bash");
+    let out = pre_tool_use(
+        &f,
+        &[
+            HookResult::pre_tool_refusal("A says no".to_owned(), "a".to_owned()),
+            decided(Behavior::Allow, Some("B ok"), None),
+        ],
+    );
+    assert_eq!(
+        out.decision,
+        Some(PermissionDecision::Deny {
+            message: "B ok".to_owned()
+        })
+    );
 }

@@ -50,11 +50,10 @@ fn aggregate(current: Option<Behavior>, next: Behavior) -> Option<Behavior> {
 /// Where a PreToolUse deny came from. Its text is picked after the loop: Node takes the last truthy reason of the hooks
 /// that gave a decision (`hookPermissionDecisionReason`), not the reason of the hook that denied.
 enum Denial {
-    /// Exit code 2 or a JSON deny: the blocking text.
-    Blocking(String),
-    /// `continue: false` (Node `preventContinuation`): the reason, else `stopReason`, else the default.
+    /// A prevented call (`continue: false`, exit 2, `decision: "block"`): the reason, else the last stop reason, else
+    /// Node's `Blocked by PreToolUse hook`.
     Stopped,
-    /// A `permissionDecision: "deny"` without blocking text.
+    /// A `permissionDecision: "deny"` that does not prevent: the reason, else the documented default text.
     Decision,
 }
 
@@ -73,26 +72,30 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
     for result in results {
         if result.prevent {
             outcome.prevent_continuation = true;
-            if result.stop_reason.is_some() {
-                outcome.stop_reason.clone_from(&result.stop_reason);
-            }
+            // Node `mergeHookRunResult` assigns `stopReason` on every preventing result, even when it has none.
+            outcome.stop_reason.clone_from(&result.stop_reason);
             aggregated = aggregate(aggregated, Behavior::Deny);
             denial = Some(Denial::Stopped);
         }
         if let Some(blocking) = &result.blocking {
-            let message = texts::pre_tool_blocking(fold.hook_name, blocking);
-            outcome.blocking_error = Some(message.clone());
+            outcome.blocking_error = Some(texts::pre_tool_blocking(fold.hook_name, blocking));
             aggregated = aggregate(aggregated, Behavior::Deny);
-            denial = Some(Denial::Blocking(message));
+            // A blocking result without a permission decision (or one that also prevents) refuses like a stop.
+            if result.prevent || result.behavior != Some(Behavior::Deny) {
+                denial = Some(Denial::Stopped);
+            }
         }
         if let Some(behavior) = result.behavior {
             aggregated = aggregate(aggregated, behavior);
             if result.reason.is_some() {
                 reason.clone_from(&result.reason);
             }
-            // A JSON deny with blocking text keeps the blocking text (the `blocking` branch above).
-            if behavior == Behavior::Deny && result.blocking.is_none() {
-                denial = Some(Denial::Decision);
+            if behavior == Behavior::Deny {
+                denial = Some(if result.prevent {
+                    Denial::Stopped
+                } else {
+                    Denial::Decision
+                });
             }
         }
         if result.updated_input.is_some() {
@@ -118,7 +121,6 @@ pub(crate) fn pre_tool_use(fold: &Fold<'_>, results: &[HookResult]) -> HookOutco
         }
         Some(Behavior::Deny) => {
             let message = match denial {
-                Some(Denial::Blocking(text)) => text,
                 Some(Denial::Stopped) => reason
                     .clone()
                     .or_else(|| outcome.stop_reason.clone())
