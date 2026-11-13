@@ -372,33 +372,29 @@ async fn plan_over_a_bypass_base_allows_built_in_read_only_tools() {
 /// WebSearch needs no approval in Node (see `web_search_needs_no_approval_under_node_semantics`).
 #[tokio::test]
 async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
-    let [(tool, input), _] = web_tools();
+    let (tool, input) = web_fetch();
     for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
-        {
-            let gate = PolicyGate::default().with_node_plan_mode(true);
-            let (once, independent, _) = asked(&read_only_over(&gate, &tool, &input, base).await);
-            assert!(!once && !independent, "{} over {base:?}", tool.0);
-            let gate =
-                PolicyGate::new(rules(&[(RuleBehavior::Deny, tool.0)])).with_node_plan_mode(true);
-            assert_eq!(
-                read_only_over(&gate, &tool, &input, base).await,
-                deny(texts::tool_denied(tool.0))
-            );
-            let gate =
-                PolicyGate::new(rules(&[(RuleBehavior::Allow, tool.0)])).with_node_plan_mode(true);
-            assert_eq!(read_only_over(&gate, &tool, &input, base).await, allow());
-        }
+        let gate = PolicyGate::default().with_node_plan_mode(true);
+        let (once, independent, _) = asked(&read_only_over(&gate, &tool, &input, base).await);
+        assert!(!once && !independent, "{} over {base:?}", tool.0);
+        let gate =
+            PolicyGate::new(rules(&[(RuleBehavior::Deny, tool.0)])).with_node_plan_mode(true);
+        assert_eq!(
+            read_only_over(&gate, &tool, &input, base).await,
+            deny(texts::tool_denied(tool.0))
+        );
+        let gate =
+            PolicyGate::new(rules(&[(RuleBehavior::Allow, tool.0)])).with_node_plan_mode(true);
+        assert_eq!(read_only_over(&gate, &tool, &input, base).await, allow());
     }
     // A view whose base is plan itself (a subagent, the fallback view) keeps the plan gate's denial.
-    {
-        let gate = PolicyGate::default().with_node_plan_mode(true);
-        assert_eq!(
-            read_only_over(&gate, &tool, &input, PermissionMode::Plan).await,
-            deny(texts::PLAN_MODE_READ_ONLY),
-            "{}",
-            tool.0
-        );
-    }
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    assert_eq!(
+        read_only_over(&gate, &tool, &input, PermissionMode::Plan).await,
+        deny(texts::PLAN_MODE_READ_ONLY),
+        "{}",
+        tool.0
+    );
 }
 
 /// Node checks no file path before the plan gate, and yolo or guarded then allows: a Read outside the workspace (a
@@ -453,6 +449,11 @@ async fn plan_over_a_bypass_base_keeps_read_only_shell_and_file_tools() {
             );
         }
     }
+}
+
+fn web_fetch() -> (ReadOnly, Value) {
+    let [fetch, _] = web_tools();
+    fetch
 }
 
 fn web_search() -> (ReadOnly, Value) {
@@ -538,7 +539,9 @@ async fn web_search_leaves_a_hooks_ask_to_the_hook() {
     );
 }
 
-/// Node denies every call in auto mode (`mode.auto.unimplemented`): the WebSearch allow does not apply there.
+/// The WebSearch allow does not apply in auto mode: the call falls through to the auto classifier (the default one is
+/// unavailable, so it denies). The `mode.auto.unimplemented` deny over an auto base is pinned by
+/// `plan_over_an_auto_base_denies_what_would_ask`.
 #[tokio::test]
 async fn web_search_is_not_allowed_in_auto_mode() {
     let (tool, input) = web_search();
@@ -546,7 +549,7 @@ async fn web_search_is_not_allowed_in_auto_mode() {
     let decision = gate
         .decide(&tool, &input, &context(PermissionMode::Auto))
         .await;
-    assert_ne!(decision, allow());
+    assert_eq!(decision, deny(texts::CLASSIFIER_UNAVAILABLE));
 }
 
 /// The allow does not depend on WebSearch's own check asking: a passthrough (no permission subject) is allowed too.

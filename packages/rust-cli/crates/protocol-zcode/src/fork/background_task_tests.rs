@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -37,6 +38,8 @@ struct TestHandle {
     view: SessionView,
     background: Vec<BackgroundEntry>,
     stopped: StdMutex<Vec<String>>,
+    /// The listing fails (a disconnected environment): the stop still runs and the answer has no snapshot.
+    list_fails: AtomicBool,
 }
 
 #[async_trait]
@@ -89,6 +92,11 @@ impl HandleOverride for TestHandle {
     }
 
     async fn background_tasks(&self) -> Result<Vec<BackgroundEntry>, KernelError> {
+        if self.list_fails.load(Ordering::SeqCst) {
+            return Err(KernelError::Failed {
+                message: "listing failed".to_owned(),
+            });
+        }
         Ok(self.background.clone())
     }
 }
@@ -174,6 +182,7 @@ fn handle(id: &str) -> Arc<TestHandle> {
             ),
         ],
         stopped: StdMutex::new(Vec::new()),
+        list_fails: AtomicBool::new(false),
     })
 }
 
@@ -343,6 +352,18 @@ async fn a_stopped_task_missing_from_the_list_has_no_snapshot() {
         cancel_task(&fixture, "unlisted_1").await,
         json!({"cancelled": true, "status": "cancelled", "taskId": "unlisted_1"})
     );
+}
+
+/// A listing failure only costs the snapshot: the stop still runs and is answered as cancelled.
+#[tokio::test]
+async fn a_failed_listing_still_stops_the_task_without_a_snapshot() {
+    let fixture = fixture().await;
+    fixture.resident.list_fails.store(true, Ordering::SeqCst);
+    assert_eq!(
+        cancel_task(&fixture, "bg_1").await,
+        json!({"cancelled": true, "status": "cancelled", "taskId": "bg_1"})
+    );
+    assert_eq!(*fixture.resident.stopped.lock_unpoisoned(), vec!["bg_1"]);
 }
 
 /// A stop that fails for another reason (the environment could not reach the process) is not "not found": Node

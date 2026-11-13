@@ -419,6 +419,9 @@ impl PermissionGate for PolicyGate {
             // 会话本身是 yolo 时 hook 放行后也不再询问（工作线 F76）；别的模式这里按 bypass 跑，但不算完全访问。
             full_access: context.mode == PermissionMode::BypassPermissions,
         };
+        // The raw check, not `own_check`: the WebSearch allow belongs to `decide`. Here the bypass chain already passes
+        // the tool's own ask, so a hook's ask still reaches `ask_for` (tools/src/pipeline.rs); do not route this through
+        // `own_check` (a reverted ocr/Codex suggestion on PR #441).
         let own = tool.check_permissions(input, context).await;
         let (check, updated) = chain::own(subject.as_ref(), own, &inputs);
         match chain::inner(tool.name(), check, updated, &inputs) {
