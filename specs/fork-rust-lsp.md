@@ -168,12 +168,15 @@ Read (main thread, text file, after the unchanged check)
 
 Edit / Write (main thread, after put_file succeeded)
   └─ CodeIntelligence::file_mutated(session, workspace, {path, kind, content, changedRange})
-        │ synchronously: tracker.record_syncing (when diagnostics after edit is on for that server)
-        └─ the session's sync queue, in publish order ── pool.acquire (with the mark below, under the tracker lock)
-              ├─ failed   → tracker.remove(path)
-              ├─ starting → tracker.mark_needs_sync(path)  (replayed on the server's ready event)
+        │ synchronously: the next mutation ordinal n; tracker.record_syncing(n) (when diagnostics after edit is on)
+        └─ the session's sync queue, in publish order ── under the tracker lock: code intelligence still on?
+              │                                           (off → tracker.remove_up_to(path, n), nothing starts)
+              │                                           then pool.acquire with the mark below
+              ├─ failed   → tracker.remove_up_to(path, n)
+              ├─ starting → tracker.mark_needs_sync(path, n)  (replayed on the server's ready event)
               └─ ready    → didChangeWatchedFiles, then documents.apply_mutation (didOpen | didChange | didClose)
-                             → tracker.settle(path, baseline)   then wake waiters
+                             → tracker.settle(path, baseline, n)   (a failed sync: remove_up_to(path, n))
+                             → wake waiters
 
 Server ──publishDiagnostics──▶ documents.handle_publish ──fresh──▶ wake waiters
 Server ◀──textDocument/diagnostic── documents.request_pull (after each didOpen/didChange when pull is supported)
@@ -184,6 +187,8 @@ Model request (main thread, collected after the skills listing, before the plan-
         │ consume: fresh → report; still pending → carried (dropped after 3 rounds)
         └─ attachment, source "diagnostics", committed to history like Node's `commitTurnRequestEntries`
 ```
+
+Each tracker entry keeps the ordinal of the last mutation that recorded it. A step of mutation `n` settles, marks or removes the entry only while its ordinal is at most `n`; the first decided baseline is kept either way. So an older queued mutation whose sync fails or finishes cannot drop or settle the record of a newer edit of the same file (Node records and starts each sync synchronously, so it has no such interleaving). The `enabled` check is repeated in the queue because Node checks and acquires when the mutation is published: a mutation still queued when code intelligence is turned off starts no server.
 
 The consume step runs under one tracker lock, so a mutation published meanwhile stays pending. If the request is cancelled while waiting, its future is dropped before anything is consumed, so the pending edits stay for the next request (Node leaves the tracker untouched on abort).
 
@@ -241,7 +246,7 @@ The consume step runs under one tracker lock, so a mutation published meanwhile 
 1. JSON-RPC: frames split anywhere, several frames per chunk and multi-byte bodies decode; an oversized header and a malformed one fail the stream; timeout and cancellation send `$/cancelRequest`; error codes map as above; server requests get the answers above.
 2. Pool on a paused clock: start → ready; crash → restart within the budget, `unavailable` after it, one more start after 30 s, final with `restartOnCrash: false`; `not_installed` retries after 30 s; idle stop after 10 minutes; the fifth start stops the least recently used idle server; a start failure carries the stderr tail.
 3. Freshness: a versionless publish after one change is fresh; after two quick changes it is ambiguous and the edit stays pending; a versioned stale publish is ignored; a pull for the current version is fresh.
-4. Diagnostics after edits: an edit followed by a fresh publish reports only new issues; a pre-existing issue that shifted lines is not new; without a baseline only the changed lines count; a still-pending edit reports `Diagnostics pending for 1 files` and is dropped after 3 rounds; an edit while the server starts is replayed on ready; cancellation leaves the pending edits; diagnostics after edit turned off for a server tracks nothing.
+4. Diagnostics after edits: an edit followed by a fresh publish reports only new issues; a pre-existing issue that shifted lines is not new; without a baseline only the changed lines count; a still-pending edit reports `Diagnostics pending for 1 files` and is dropped after 3 rounds; an edit while the server starts is replayed on ready; cancellation leaves the pending edits; diagnostics after edit turned off for a server tracks nothing; quick edits of one file are synced in order; an older mutation whose sync fails keeps the newer pending edit; a mutation queued when code intelligence is turned off starts no server.
 5. Status shows `starting`, `ready`, `crashed` and `unavailable` for the matching key only, and `pull` for a pull server.
 6. Disabling code intelligence stops every running server.
 7. One real-process test drives a small fake server binary through start, an edit and its diagnostics.

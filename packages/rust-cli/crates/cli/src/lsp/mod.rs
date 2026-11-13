@@ -135,7 +135,14 @@ impl Host {
                 return None;
             }
             let identity = match &self.inputs.store {
-                Some(store) => store.session_workspace_key(session).await.ok().flatten(),
+                Some(store) => match store.session_workspace_key(session).await {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        // The root becomes this session's key; status for an identity would not see its servers.
+                        tracing::warn!(event = "core.lsp.warn", operation = "workspace_key", %error, "LSP operation failed");
+                        None
+                    }
+                },
                 None => None,
             };
             let key = ServerKey {

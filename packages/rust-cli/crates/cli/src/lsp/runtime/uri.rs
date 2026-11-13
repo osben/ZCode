@@ -119,12 +119,26 @@ pub(crate) fn path_of(uri: &str, windows: bool) -> Option<String> {
     }
     let windows_path = decoded.replace('/', "\\");
     if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-        return Some(format!("\\\\{host}{windows_path}"));
+        return Some(format!("\\\\{}{windows_path}", unc_host(host)?));
     }
     let without_slash = windows_path.strip_prefix('\\')?;
     let bytes = without_slash.as_bytes();
     (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
         .then(|| without_slash.to_owned())
+}
+
+/// The URL parser's host of a `file:` URL: percent-decoded, ASCII-lowercased, and invalid (Node throws) when it holds
+/// a forbidden domain code point.
+fn unc_host(host: &str) -> Option<String> {
+    let decoded = decode(host)?;
+    let forbidden = |c: char| {
+        c.is_ascii_control()
+            || matches!(
+                c,
+                ' ' | '#' | '%' | '/' | ':' | '<' | '>' | '?' | '@' | '[' | '\\' | ']' | '^' | '|'
+            )
+    };
+    (!decoded.chars().any(forbidden)).then(|| decoded.to_ascii_lowercase())
 }
 
 fn decode(text: &str) -> Option<String> {
@@ -133,8 +147,10 @@ fn decode(text: &str) -> Option<String> {
     let mut at = 0;
     while at < bytes.len() {
         if bytes[at] == b'%' {
-            let hex = text.get(at + 1..at + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
+            // Two hex digits exactly, as `decodeURIComponent`: `from_str_radix` would also take a sign.
+            let high = hex_digit(*bytes.get(at + 1)?)?;
+            let low = hex_digit(*bytes.get(at + 2)?)?;
+            out.push(high << 4 | low);
             at += 3;
         } else {
             out.push(bytes[at]);
@@ -142,6 +158,12 @@ fn decode(text: &str) -> Option<String> {
         }
     }
     String::from_utf8(out).ok()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    char::from(byte)
+        .to_digit(16)
+        .and_then(|digit| u8::try_from(digit).ok())
 }
 
 /// Node `normalizeFileUri`: decode to a path and encode again; a URI that does not decode keeps its spelling. A

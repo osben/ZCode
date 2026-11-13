@@ -36,6 +36,7 @@ fn pending(
         needs_sync: false,
         baseline: Some(baseline),
         carried_rounds: 0,
+        ordinal: 0,
     }
 }
 
@@ -199,20 +200,46 @@ fn the_tracker_merges_ranges_keeps_the_first_baseline_and_drops_after_carry_roun
             end_line,
         })
     };
-    tracker.record_syncing("/w/a.ts", "p/ts", range(5, 6), now);
-    tracker.settle("/w/a.ts", Some(vec![diagnostic(1, Severity::Error, "x")]));
-    tracker.record_syncing("/w/a.ts", "p/ts", range(2, 3), now);
-    tracker.settle("/w/a.ts", None);
+    tracker.record_syncing("/w/a.ts", "p/ts", range(5, 6), now, 1);
+    tracker.settle(
+        "/w/a.ts",
+        Some(vec![diagnostic(1, Severity::Error, "x")]),
+        1,
+    );
+    tracker.record_syncing("/w/a.ts", "p/ts", range(2, 3), now, 2);
+    tracker.settle("/w/a.ts", None, 2);
     let entry = tracker.get("/w/a.ts").unwrap();
     assert_eq!(entry.changed_range, range(2, 6));
     assert_eq!(entry.baseline.as_ref().unwrap().as_ref().unwrap().len(), 1);
     assert!(!entry.syncing);
-    tracker.mark_needs_sync("/w/a.ts");
+    tracker.mark_needs_sync("/w/a.ts", 2);
     assert!(tracker.get("/w/a.ts").unwrap().needs_sync);
     assert_eq!(tracker.last_mutation(), Some(now));
     for _ in 0..3 {
         assert!(tracker.carry("/w/a.ts", 3));
     }
     assert!(!tracker.carry("/w/a.ts", 3));
+    assert!(tracker.is_empty());
+}
+
+/// A step of an older mutation never undoes what a newer mutation of the same file recorded.
+#[test]
+fn an_older_mutation_does_not_settle_or_remove_a_newer_record() {
+    let now = Instant::now();
+    let mut tracker = Tracker::default();
+    tracker.record_syncing("/w/a.ts", "p/ts", None, now, 1);
+    tracker.record_syncing("/w/a.ts", "p/ts", None, now, 2);
+    // The older sync decides the baseline but the newer one is still syncing.
+    tracker.settle("/w/a.ts", Some(Vec::new()), 1);
+    let entry = tracker.get("/w/a.ts").unwrap();
+    assert!(entry.syncing);
+    assert_eq!(entry.baseline, Some(Some(Vec::new())));
+    tracker.mark_needs_sync("/w/a.ts", 1);
+    assert!(!tracker.get("/w/a.ts").unwrap().needs_sync);
+    tracker.remove_up_to("/w/a.ts", 1);
+    assert!(tracker.get("/w/a.ts").is_some());
+    tracker.settle("/w/a.ts", None, 2);
+    assert!(!tracker.get("/w/a.ts").unwrap().syncing);
+    tracker.remove_up_to("/w/a.ts", 3);
     assert!(tracker.is_empty());
 }

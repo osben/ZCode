@@ -39,7 +39,7 @@ fn encode_round_trips_through_the_decoder() {
 
 #[test]
 fn invalid_streams_fail() {
-    let cases: [(&[u8], &str); 5] = [
+    let cases: [(&[u8], &str); 6] = [
         (
             &[b'x'; 8_193],
             "LSP header exceeds 8192 bytes without a terminator",
@@ -56,6 +56,11 @@ fn invalid_streams_fail() {
             b"Content-Type: x\r\n\r\n",
             "LSP header block has no usable Content-Length",
         ),
+        // Above Node's `Number.MAX_SAFE_INTEGER`.
+        (
+            b"Content-Length: 9007199254740992\r\n\r\n",
+            "LSP header block has no usable Content-Length",
+        ),
         (
             b"Content-Length: 2\r\n\r\n[]",
             "LSP message body is not a JSON object",
@@ -65,6 +70,13 @@ fn invalid_streams_fail() {
         let error = Decoder::default().push(bytes).unwrap_err();
         assert_eq!(error.0, message);
     }
+    // The largest safe integer is a usable length: the decoder waits for the body.
+    assert!(
+        Decoder::default()
+            .push(b"Content-Length: 9007199254740991\r\n\r\n{")
+            .unwrap()
+            .is_empty()
+    );
     let error = Decoder::default()
         .push(b"Content-Length: 1\r\n\r\n{")
         .unwrap_err();

@@ -97,11 +97,19 @@ fn content_length(header: &str) -> Result<usize, FramingError> {
                 "Content-Length header is not a non-negative integer".to_owned(),
             ));
         }
-        // Node `Number.isSafeInteger`: anything that does not fit is unusable.
-        length = Some(value.parse::<usize>().map_err(|_| no_length())?);
+        // Node `Number.isSafeInteger`: anything above 2^53 - 1 is unusable, even where usize holds it.
+        let parsed = value
+            .parse::<u64>()
+            .ok()
+            .filter(|parsed| *parsed <= MAX_SAFE_INTEGER)
+            .ok_or_else(no_length)?;
+        length = Some(usize::try_from(parsed).map_err(|_| no_length())?);
     }
     length.ok_or_else(no_length)
 }
+
+/// JS `Number.MAX_SAFE_INTEGER`.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 fn no_length() -> FramingError {
     FramingError("LSP header block has no usable Content-Length".to_owned())

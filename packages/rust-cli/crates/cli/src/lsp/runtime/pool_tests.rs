@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tokio::sync::{mpsc, watch};
 
-use super::{Acquired, Event, Limits, Pool, ServerKey, State, merge_env};
+use super::{Acquired, Event, Limits, Pool, ServerKey, State, decode_stderr, merge_env};
 use crate::lsp::runtime::process::{Launch, LaunchError, Launched, Launcher, Process};
 use crate::lsp::runtime::rpc::{Decoder, encode};
 use crate::lsp::runtime::test_server;
@@ -489,4 +489,19 @@ fn a_server_env_replaces_keys_case_insensitively_on_windows() {
             ("PATH".to_owned(), "b".to_owned())
         ]
     );
+}
+
+/// A character split across two stderr reads is kept whole (Node decodes the stream incrementally).
+#[test]
+fn stderr_keeps_a_character_split_between_reads() {
+    let mut pending = Vec::new();
+    let bytes = "aé✓".as_bytes();
+    let mut text = String::new();
+    for chunk in [&bytes[..2], &bytes[2..4], &bytes[4..]] {
+        text.push_str(&decode_stderr(&mut pending, chunk));
+    }
+    assert_eq!(text, "aé✓");
+    assert!(pending.is_empty());
+    // Invalid bytes are replaced, and only they are.
+    assert_eq!(decode_stderr(&mut pending, b"x\xffy"), "x\u{fffd}y");
 }

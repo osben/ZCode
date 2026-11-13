@@ -41,3 +41,26 @@ fn server_uris_are_matched_after_decoding() {
     assert_eq!(normalize("file:///C%3A/x/y", true), "file:///c:/x/y");
     assert_eq!(path_of("file:///c%3A/x/y%20z", true).unwrap(), "c:\\x\\y z");
 }
+
+/// Node `decodeURIComponent` accepts only two hex digits after `%`; a URI that does not decode keeps its spelling.
+#[test]
+fn a_signed_escape_does_not_decode() {
+    assert_eq!(path_of("file:///a%+2", false), None);
+    assert_eq!(path_of("file:///a%2+", false), None);
+    assert_eq!(normalize("file:///a%+2", false), "file:///a%+2");
+}
+
+/// Node `fileURLToPath` on Windows: the URL parser decodes and lowercases the host and rejects a forbidden one.
+#[test]
+fn a_unc_host_is_decoded_like_the_url_parser() {
+    assert_eq!(
+        path_of("file://ho%41st/share/x", true).as_deref(),
+        Some("\\\\hoast\\share\\x")
+    );
+    assert_eq!(
+        path_of("file://HOST/share/x", true).as_deref(),
+        Some("\\\\host\\share\\x")
+    );
+    assert_eq!(path_of("file://ho%20st/share/x", true), None);
+    assert_eq!(path_of("file://ho%zzst/share/x", true), None);
+}

@@ -467,7 +467,7 @@ impl Documents {
             })),
         );
         let pull = (document.id, document.text.clone());
-        self.request_pull(connection, key, &document.uri.clone(), pull, version);
+        self.request_pull(connection, key, &document.uri, pull, version);
     }
 
     /// Node `requestPull`: only when the server pulls; `kind: "unchanged"` changes nothing; failures are debug only.

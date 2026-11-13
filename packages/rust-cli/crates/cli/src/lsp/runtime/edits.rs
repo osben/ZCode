@@ -226,6 +226,9 @@ pub(crate) struct PendingEdit {
     /// Decided once by the first sync; `None` inside means no fresh result before the edit.
     pub(crate) baseline: Option<Option<Vec<Diagnostic>>>,
     pub(crate) carried_rounds: u32,
+    /// The session's ordinal of the last mutation that recorded this entry: a step of an older mutation (its sync
+    /// finishing or failing after a newer edit of the file was published) must not settle or remove it.
+    pub(crate) ordinal: u64,
 }
 
 /// Node `EditDiagnosticsTracker`: files mutated since the last model request, recorded synchronously when the
@@ -266,11 +269,13 @@ impl Tracker {
         server_id: &str,
         changed_range: Option<ChangedRange>,
         at: Instant,
+        ordinal: u64,
     ) {
         if let Some(existing) = self.get_mut(path) {
             existing.changed_range = merge(existing.changed_range, changed_range);
             existing.syncing = true;
             existing.carried_rounds = 0;
+            existing.ordinal = ordinal;
         } else {
             self.pending.push(PendingEdit {
                 path: path.to_owned(),
@@ -280,31 +285,44 @@ impl Tracker {
                 needs_sync: false,
                 baseline: None,
                 carried_rounds: 0,
+                ordinal,
             });
         }
         self.last_mutation = Some(at);
     }
 
-    pub(crate) fn mark_needs_sync(&mut self, path: &str) {
-        if let Some(entry) = self.get_mut(path) {
+    /// Mutation `ordinal` found its server starting; a newer mutation of the file decides for itself.
+    pub(crate) fn mark_needs_sync(&mut self, path: &str, ordinal: u64) {
+        if let Some(entry) = self.get_mut(path)
+            && entry.ordinal <= ordinal
+        {
             entry.syncing = false;
             entry.needs_sync = true;
         }
     }
 
-    /// Node `settle`: the first decided baseline is kept for the whole pending period.
-    pub(crate) fn settle(&mut self, path: &str, baseline: Option<Vec<Diagnostic>>) {
+    /// Node `settle`: the first decided baseline is kept for the whole pending period; the entry stops syncing only
+    /// once the mutation that last recorded it (or a later step) is synced.
+    pub(crate) fn settle(&mut self, path: &str, baseline: Option<Vec<Diagnostic>>, ordinal: u64) {
         if let Some(entry) = self.get_mut(path) {
-            entry.syncing = false;
-            entry.needs_sync = false;
             if entry.baseline.is_none() {
                 entry.baseline = Some(baseline);
+            }
+            if entry.ordinal <= ordinal {
+                entry.syncing = false;
+                entry.needs_sync = false;
             }
         }
     }
 
     pub(crate) fn remove(&mut self, path: &str) {
         self.pending.retain(|entry| entry.path != path);
+    }
+
+    /// Removes the entry unless a mutation newer than `ordinal` recorded it.
+    pub(crate) fn remove_up_to(&mut self, path: &str, ordinal: u64) {
+        self.pending
+            .retain(|entry| entry.path != path || entry.ordinal > ordinal);
     }
 
     pub(crate) fn clear(&mut self) {

@@ -117,22 +117,16 @@ impl ServerConnection {
         *self.last_used.lock_unpoisoned() = Instant::now();
     }
 
-    /// The `initialize` capabilities with a dynamically registered pull as `diagnosticProvider`.
-    pub(crate) fn capabilities(&self) -> Map<String, Value> {
-        let mut capabilities = self.initialize_capabilities.clone();
-        if let Some(options) = self
+    /// `capabilities.diagnosticProvider` is truthy (JS); runs on every sync, so nothing is cloned but a registration.
+    pub(crate) fn supports_pull(&self) -> bool {
+        let registered = self
             .registrations
             .lock_unpoisoned()
-            .options_for(PULL_DIAGNOSTICS)
-        {
-            capabilities.insert("diagnosticProvider".to_owned(), options);
-        }
-        capabilities
-    }
-
-    /// `capabilities.diagnosticProvider` is truthy (JS).
-    pub(crate) fn supports_pull(&self) -> bool {
-        match self.capabilities().get("diagnosticProvider") {
+            .options_for(PULL_DIAGNOSTICS);
+        let provider = registered
+            .as_ref()
+            .or_else(|| self.initialize_capabilities.get("diagnosticProvider"));
+        match provider {
             None | Some(Value::Null | Value::Bool(false)) => false,
             Some(Value::String(text)) => !text.is_empty(),
             Some(Value::Number(number)) => number.as_f64().is_some_and(|n| n != 0.0),
@@ -732,12 +726,14 @@ impl Driver {
 /// Keeps the last [`STDERR_TAIL_MAX_CHARS`] characters of stderr; never logged.
 async fn read_stderr(mut stderr: Box<dyn AsyncRead + Send + Unpin>, tail: Arc<Mutex<String>>) {
     let mut buffer = [0_u8; 4_096];
+    let mut pending = Vec::new();
     loop {
         match stderr.read(&mut buffer).await {
             Ok(0) | Err(_) => return,
             Ok(read) => {
+                let text = decode_stderr(&mut pending, &buffer[..read]);
                 let mut tail = tail.lock_unpoisoned();
-                tail.push_str(&String::from_utf8_lossy(&buffer[..read]));
+                tail.push_str(&text);
                 let extra = tail.chars().count().saturating_sub(STDERR_TAIL_MAX_CHARS);
                 if extra > 0 {
                     let cut = tail
@@ -749,6 +745,40 @@ async fn read_stderr(mut stderr: Box<dyn AsyncRead + Send + Unpin>, tail: Arc<Mu
             }
         }
     }
+}
+
+/// Decodes one stderr read; an incomplete character at its end waits in `pending` for the next read, as Node's
+/// incremental stream decoder does, instead of becoming two replacement characters.
+fn decode_stderr(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+    pending.extend_from_slice(chunk);
+    let mut text = String::new();
+    let mut rest: &[u8] = pending;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                text.push_str(valid);
+                rest = &[];
+                break;
+            }
+            Err(error) => {
+                let (valid, after) = rest.split_at(error.valid_up_to());
+                text.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                match error.error_len() {
+                    Some(bad) => {
+                        text.push(char::REPLACEMENT_CHARACTER);
+                        rest = &after[bad..];
+                    }
+                    None => {
+                        rest = after;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    let keep = rest.len();
+    pending.drain(..pending.len() - keep);
+    text
 }
 
 /// The driver's reports into the pool; each applies only while the entry still holds this process.

@@ -1,6 +1,7 @@
 //! Fork: one session's code intelligence (specs/fork-rust-lsp.md "Diagnostics after edits"), Node core
 //! `lsp/service.ts`: prewarm, file mutations and the post-edit report over the process-wide pool and documents.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use rust_cli_base::sync::LockUnpoisoned;
@@ -40,11 +41,13 @@ pub(crate) struct SessionLsp {
     /// Mutations in publish order: Node starts each sync synchronously, so two quick edits of one file reach its
     /// per-URI lock in order; spawned tasks would not.
     mutations: mpsc::UnboundedSender<Queued>,
+    /// The last mutation's ordinal; assigned and queued under the tracker lock, so queue order is ordinal order.
+    ordinal: AtomicU64,
     listener: u64,
 }
 
-/// One published mutation, its server and whether its diagnostics are tracked.
-type Queued = (Match, FileMutation, bool);
+/// One published mutation, its server, whether its diagnostics are tracked, and its ordinal.
+type Queued = (Match, FileMutation, bool, u64);
 
 impl SessionLsp {
     pub(crate) fn new(
@@ -58,11 +61,11 @@ impl SessionLsp {
             let mut tasks = JoinSet::new();
             let worker = weak.clone();
             tasks.spawn(async move {
-                while let Some((found, mutation, track)) = queued.recv().await {
+                while let Some((found, mutation, track, ordinal)) = queued.recv().await {
                     let Some(session) = worker.upgrade() else {
                         return;
                     };
-                    session.sync(&found, &mutation, track).await;
+                    session.sync(&found, &mutation, track, ordinal).await;
                 }
             });
             let weak = weak.clone();
@@ -87,6 +90,7 @@ impl SessionLsp {
                 tracker: Mutex::default(),
                 tasks: Mutex::new(tasks),
                 mutations,
+                ordinal: AtomicU64::new(0),
                 listener,
             }
         })
@@ -137,28 +141,31 @@ impl SessionLsp {
         };
         let diagnostics = self.diagnostics_after_edit(&found.server);
         let deleted = mutation.kind == FileMutationKind::Deleted;
-        {
-            let mut tracker = self.tracker.lock_unpoisoned();
-            if deleted {
-                tracker.remove(&mutation.path);
-            } else if diagnostics {
-                tracker.record_syncing(
-                    &mutation.path,
-                    &found.server.id,
-                    mutation.changed_range,
-                    Instant::now(),
-                );
-            }
+        let mut tracker = self.tracker.lock_unpoisoned();
+        let ordinal = self.ordinal.fetch_add(1, Ordering::Relaxed) + 1;
+        if deleted {
+            tracker.remove(&mutation.path);
+        } else if diagnostics {
+            tracker.record_syncing(
+                &mutation.path,
+                &found.server.id,
+                mutation.changed_range,
+                Instant::now(),
+                ordinal,
+            );
         }
         let _ = self
             .mutations
-            .send((found, mutation, diagnostics && !deleted));
+            .send((found, mutation, diagnostics && !deleted, ordinal));
     }
 
-    async fn sync(&self, found: &Match, mutation: &FileMutation, track: bool) {
-        if let Err(error) = self.run_mutation(found, mutation, track).await {
-            // A failed sync must not leave the edit "syncing", or every later request would wait the full bound.
-            self.tracker.lock_unpoisoned().remove(&mutation.path);
+    async fn sync(&self, found: &Match, mutation: &FileMutation, track: bool, ordinal: u64) {
+        if let Err(error) = self.run_mutation(found, mutation, track, ordinal).await {
+            // A failed sync must not leave the edit "syncing", or every later request would wait the full bound; a
+            // newer mutation of the file keeps its own record.
+            self.tracker
+                .lock_unpoisoned()
+                .remove_up_to(&mutation.path, ordinal);
             tracing::warn!(event = "core.lsp.warn", operation = "mutation", server_id = %found.server.id, %error, "LSP operation failed");
         }
         self.shared.documents.wake();
@@ -170,20 +177,27 @@ impl SessionLsp {
         found: &Match,
         mutation: &FileMutation,
         track: bool,
+        ordinal: u64,
     ) -> Result<(), String> {
         let connection = {
             // Acquire and mark under the tracker lock: the ready listener takes it too, so a server that becomes ready
             // right after `Starting` still finds the edit marked (Node does both in one synchronous step).
             let mut tracker = self.tracker.lock_unpoisoned();
+            // Node checks and acquires when the mutation is published; a queued one must not start a server after
+            // code intelligence was turned off.
+            if !self.enabled() {
+                tracker.remove_up_to(&mutation.path, ordinal);
+                return Ok(());
+            }
             match self.shared.pool.acquire(&found.server, &self.key) {
                 // A failed server never publishes; keeping the edit would only report "pending" for the carry rounds.
                 Acquired::Failed(_) => {
-                    tracker.remove(&mutation.path);
+                    tracker.remove_up_to(&mutation.path, ordinal);
                     return Ok(());
                 }
                 Acquired::Starting => {
                     if track {
-                        tracker.mark_needs_sync(&mutation.path);
+                        tracker.mark_needs_sync(&mutation.path, ordinal);
                     }
                     return Ok(());
                 }
@@ -207,7 +221,7 @@ impl SessionLsp {
         if track {
             self.tracker
                 .lock_unpoisoned()
-                .settle(&mutation.path, outcome.baseline);
+                .settle(&mutation.path, outcome.baseline, ordinal);
         }
         Ok(())
     }
@@ -222,13 +236,13 @@ impl SessionLsp {
         if *key != self.key {
             return;
         }
-        let pending: Vec<String> = self
+        let pending: Vec<(String, u64)> = self
             .tracker
             .lock_unpoisoned()
             .entries()
             .iter()
             .filter(|entry| entry.needs_sync && entry.server_id == server_id)
-            .map(|entry| entry.path.clone())
+            .map(|entry| (entry.path.clone(), entry.ordinal))
             .collect();
         if pending.is_empty() {
             return;
@@ -239,7 +253,7 @@ impl SessionLsp {
             let Some(session) = session.upgrade() else {
                 return;
             };
-            for path in pending {
+            for (path, ordinal) in pending {
                 let Some(found) = session.registry.for_file(&path) else {
                     continue;
                 };
@@ -250,10 +264,16 @@ impl SessionLsp {
                     disk: session.disk.as_ref(),
                 };
                 match session.shared.documents.ensure_open(&context, &path).await {
-                    Ok(()) => session.tracker.lock_unpoisoned().settle(&path, None),
+                    Ok(()) => session
+                        .tracker
+                        .lock_unpoisoned()
+                        .settle(&path, None, ordinal),
                     Err(error) => {
                         tracing::warn!(event = "core.lsp.warn", operation = "replay", server_id = %connection.server.id, %error, "LSP operation failed");
-                        session.tracker.lock_unpoisoned().remove(&path);
+                        session
+                            .tracker
+                            .lock_unpoisoned()
+                            .remove_up_to(&path, ordinal);
                     }
                 }
             }
