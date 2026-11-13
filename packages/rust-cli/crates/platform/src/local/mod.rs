@@ -20,5 +20,5 @@ pub use cli_config::{
 pub use device::{DeviceMid, NewUuid};
 pub use history::{History, Recorder};
 pub use hook_trust::{HookTrustStore, TrustError, TrustLoad, TrustRecord};
-pub use mcp_trust::{McpTrustError, McpTrustLoad, McpTrustRecord, McpTrustStore};
+pub use mcp_trust::{McpTrustError, McpTrustLoad, McpTrustRecord, McpTrustStore, StillDeclared};
 pub use settings::Settings;

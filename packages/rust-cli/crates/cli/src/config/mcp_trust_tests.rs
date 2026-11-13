@@ -247,3 +247,20 @@ fn host_dtos_are_converted_and_admitted_like_node() {
     );
     assert!(!unreadable);
 }
+
+#[test]
+fn a_fallback_gone_between_stat_and_read_is_missing_like_node() {
+    // Node `readJson` answers `undefined` for ENOENT; other read errors make discovery throw.
+    let gone = Err(rust_cli_kernel_api::env::EnvError::NotFound {
+        path: "/w/.agents/mcp.json".into(),
+    });
+    assert!(matches!(Fallback::read(gone), Fallback::Missing));
+    let denied = Err(rust_cli_kernel_api::env::EnvError::PermissionDenied {
+        message: "no".into(),
+    });
+    assert!(matches!(Fallback::read(denied), Fallback::Invalid));
+    assert!(matches!(
+        Fallback::read(Ok(b"{}".as_slice())),
+        Fallback::Loaded(_)
+    ));
+}

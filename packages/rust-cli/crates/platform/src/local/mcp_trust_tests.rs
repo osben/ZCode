@@ -42,15 +42,15 @@ async fn decide_writes_the_bytes_node_writes() {
     let store = store(dir.path());
     assert_eq!(store.load().await, McpTrustLoad::Missing);
     store
-        .decide(async || true, record("alpha", D2), true)
+        .decide(async || StillDeclared::Yes, record("alpha", D2), true)
         .await
         .unwrap();
     store
-        .decide(async || true, record("gamma", D1), true)
+        .decide(async || StillDeclared::Yes, record("gamma", D1), true)
         .await
         .unwrap();
     store
-        .decide(async || true, record("alpha", D2), false)
+        .decide(async || StillDeclared::Yes, record("alpha", D2), false)
         .await
         .unwrap();
     let text = std::fs::read_to_string(store.path()).unwrap();
@@ -83,15 +83,15 @@ async fn a_regrant_replaces_the_record_and_keeps_others() {
     let dir = tempfile::tempdir().unwrap();
     let store = store(dir.path());
     store
-        .decide(async || true, record("gamma", D1), true)
+        .decide(async || StillDeclared::Yes, record("gamma", D1), true)
         .await
         .unwrap();
     store
-        .decide(async || true, record("alpha", D2), true)
+        .decide(async || StillDeclared::Yes, record("alpha", D2), true)
         .await
         .unwrap();
     store
-        .decide(async || true, record("gamma", D1), true)
+        .decide(async || StillDeclared::Yes, record("gamma", D1), true)
         .await
         .unwrap();
     let names: Vec<_> = store
@@ -109,7 +109,7 @@ async fn a_changed_declaration_refuses_without_writing() {
     let dir = tempfile::tempdir().unwrap();
     let store = store(dir.path());
     let result = store
-        .decide(async || false, record("gamma", D1), true)
+        .decide(async || StillDeclared::Changed, record("gamma", D1), true)
         .await;
     assert!(matches!(result, Err(McpTrustError::Changed)));
     assert_eq!(store.load().await, McpTrustLoad::Missing);
@@ -129,8 +129,70 @@ async fn a_corrupt_store_is_untrusted_and_never_overwritten() {
     ] {
         std::fs::write(store.path(), text).unwrap();
         assert_eq!(store.load().await, McpTrustLoad::Corrupt, "{text}");
-        let result = store.decide(async || true, record("gamma", D1), true).await;
+        let result = store
+            .decide(async || StillDeclared::Yes, record("gamma", D1), true)
+            .await;
         assert!(matches!(result, Err(McpTrustError::Corrupt)), "{text}");
         assert_eq!(std::fs::read_to_string(store.path()).unwrap(), text);
     }
+}
+
+#[tokio::test]
+async fn an_unreadable_workspace_refuses_as_unavailable_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path());
+    let result = store
+        .decide(
+            async || StillDeclared::Unavailable,
+            record("gamma", D1),
+            true,
+        )
+        .await;
+    assert!(matches!(result, Err(McpTrustError::Unavailable)));
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "workspace_mcp_trust_unavailable"
+    );
+    assert_eq!(store.load().await, McpTrustLoad::Missing);
+}
+
+#[tokio::test]
+async fn an_invalid_record_is_refused_so_the_store_stays_readable() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path());
+    let mut bad = record("gamma", D1);
+    bad.granted_at = "yesterday".to_owned();
+    let result = store.decide(async || StillDeclared::Yes, bad, true).await;
+    assert!(matches!(result, Err(McpTrustError::Invalid)));
+    assert_eq!(store.load().await, McpTrustLoad::Missing);
+}
+
+#[tokio::test]
+async fn a_float_schema_version_is_node_s_literal_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path());
+    std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+    std::fs::write(
+        store.path(),
+        NODE_TEXT.replace(r#""schemaVersion":1"#, r#""schemaVersion":1.0"#),
+    )
+    .unwrap();
+    assert!(store.load().await.trusts("/ws", "gamma", D1));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_first_decision_creates_a_private_security_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path());
+    store
+        .decide(async || StillDeclared::Yes, record("gamma", D1), true)
+        .await
+        .unwrap();
+    let mode = std::fs::metadata(store.path().parent().unwrap())
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
 }

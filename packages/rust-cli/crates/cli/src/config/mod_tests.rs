@@ -212,7 +212,11 @@ async fn project_mcp_servers_need_a_workspace_trust_grant() {
         };
         trust
             .store
-            .decide(async || true, record, true)
+            .decide(
+                async || rust_cli_platform::local::StillDeclared::Yes,
+                record,
+                true,
+            )
             .await
             .unwrap();
     }

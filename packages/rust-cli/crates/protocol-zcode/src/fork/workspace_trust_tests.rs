@@ -11,7 +11,8 @@ use futures_util::stream::{self, BoxStream};
 use rust_cli_base::TaskScope;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId};
+use rust_cli_kernel_api::ids::{EnvironmentId, MessageId, SessionId, TraceId};
+use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
     Ack as KernelAck, CommandEnvelope, CommandResult, CreateSession, Kernel, KernelError,
@@ -144,6 +145,8 @@ fn a_rewritten_history_keeps_the_banners() {
 
 struct TestHandle {
     id: SessionId,
+    /// A stored session with history (a resume) rather than a new one.
+    resumed: bool,
 }
 
 #[async_trait]
@@ -163,7 +166,19 @@ impl HandleOverride for TestHandle {
     }
 
     async fn view(&self) -> Result<SessionView, KernelError> {
-        Ok(view())
+        let mut view = view();
+        if self.resumed {
+            view.messages.push(Message::User(UserMessage {
+                stall_execution: None,
+                intent: None,
+                id: MessageId::new("u1"),
+                content: vec![ContentBlock::Text {
+                    text: "earlier".to_owned(),
+                }],
+                origin: UserOrigin::Human,
+            }));
+        }
+        Ok(view)
     }
 }
 
@@ -258,6 +273,10 @@ impl WorkspaceAdmin for FakeAdmin {
 }
 
 fn fixture(admin: Option<Arc<FakeAdmin>>) -> (TaskScope, Arc<Server>) {
+    fixture_with(admin, false)
+}
+
+fn fixture_with(admin: Option<Arc<FakeAdmin>>, resumed: bool) -> (TaskScope, Arc<Server>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
@@ -270,6 +289,7 @@ fn fixture(admin: Option<Arc<FakeAdmin>>) -> (TaskScope, Arc<Server>) {
         Arc::new(OneKernel {
             handle: Arc::new(TestHandle {
                 id: SessionId::new("s1"),
+                resumed,
             }),
         }),
         scope.spawner(),
@@ -420,6 +440,41 @@ async fn a_banner_read_older_than_the_applied_one_is_dropped() {
     let snapshot = live.sink.snapshot();
     assert_eq!(snapshot["workspaceMcpAdmission"], mcp(2));
     assert_eq!(snapshot["workspaceHookAdmission"], hook(1));
+}
+
+/// Node reannounces the trust banners after `resumeFromStore`: a stored session opened again shows them before its
+/// next input.
+#[tokio::test]
+async fn a_resumed_session_shows_its_workspaces_banners_on_open() {
+    let admin = Arc::new(FakeAdmin::default());
+    *admin.banners.lock_unpoisoned() = admission(Some(mcp(1)), Some(hook(2)));
+    let (_scope, server) = fixture_with(Some(admin.clone()), true);
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    settled(&live).await;
+    let snapshot = live.sink.snapshot();
+    assert_eq!(snapshot["workspaceMcpAdmission"], mcp(1));
+    assert_eq!(snapshot["workspaceHookAdmission"], hook(2));
+    // An open of the already open session reads nothing again.
+    server.live(&SessionId::new("s1")).await.unwrap();
+    let reads = admin
+        .calls
+        .lock_unpoisoned()
+        .iter()
+        .filter(|call| call["admission"] == json!(ROOT))
+        .count();
+    assert_eq!(reads, 1);
+}
+
+/// A new session without history waits for its first input, as in Node.
+#[tokio::test]
+async fn a_new_session_reads_no_banners_on_open() {
+    let admin = Arc::new(FakeAdmin::default());
+    *admin.banners.lock_unpoisoned() = admission(Some(mcp(1)), None);
+    let (_scope, server) = fixture_with(Some(admin.clone()), false);
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    settled(&live).await;
+    assert!(live.sink.snapshot().get("workspaceMcpAdmission").is_none());
+    assert!(admin.calls.lock_unpoisoned().is_empty());
 }
 
 #[tokio::test]

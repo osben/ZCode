@@ -57,7 +57,9 @@ impl WorkspaceTarget {
     }
 }
 
-/// The two banner payloads of a workspace; `None` is "nothing pending".
+/// The two banner payloads of a workspace. For MCP, `None` means the review list could not be built (a declaration
+/// without a display, Node's `inspect()` throw) and leaves the published banner as it is; for hooks, `None` is
+/// "nothing pending" and clears the banner.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Admission {
     /// `{pendingCount, bundleDigest, workspaceIdentity}`; published even with `pendingCount: 0` once a banner
@@ -207,12 +209,9 @@ async fn refresh_workspace(
     }
 }
 
-/// A session's banners after an accepted input (Node refreshes on each real user input).
-pub(crate) async fn refresh_session(
-    server: &Server,
-    live: &Arc<Bridged<Live>>,
-    session: &SessionId,
-) {
+/// A session's banners after an accepted input, including a new session's first input, and after a stored session is
+/// opened again (Node `refreshWorkspaceTrustAdmission` on each real user input and after `resumeFromStore`).
+pub(crate) async fn refresh_session(server: &Server, live: &Bridged<Live>, session: &SessionId) {
     let Some(admin) = admin(server) else {
         return;
     };
@@ -224,7 +223,7 @@ pub(crate) async fn refresh_session(
     publish(live, admission, ticket);
 }
 
-fn publish(live: &Arc<Bridged<Live>>, admission: Admission, ticket: u64) {
+fn publish(live: &Bridged<Live>, admission: Admission, ticket: u64) {
     let sink = live.sink.clone();
     live.run(Box::pin(async move {
         sink.set_admission(admission, ticket).await;

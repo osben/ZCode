@@ -7,7 +7,7 @@ use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_paths::StoragePaths;
-use rust_cli_platform::local::{TrustLoad, TrustRecord};
+use rust_cli_platform::local::{ConfigFile, TrustLoad, TrustRecord};
 use serde_json::json;
 
 use crate::config::trust::WorkspaceHooks;
@@ -178,6 +178,15 @@ pub(crate) async fn inspect_at(
     path: String,
     identity: Option<String>,
 ) -> WorkspaceHooks {
+    inspect_read(context, path, identity).await.0
+}
+
+/// [`inspect_at`] and whether a config file could not be read or parsed.
+async fn inspect_read(
+    context: &TrustContext<'_>,
+    path: String,
+    identity: Option<String>,
+) -> (WorkspaceHooks, bool) {
     let workspace = WorkspaceRef {
         environment: EnvironmentId::new(rust_cli_node_store::LOCAL_ENVIRONMENT),
         root: EnvPath::new(path.clone()),
@@ -192,6 +201,12 @@ pub(crate) async fn inspect_at(
         project_is_local: true,
     };
     let files = read_files(&inputs).await;
+    // Node `discoverSnapshot` throws on a config it cannot read or parse.
+    let unreadable = matches!(files.user, ConfigFile::Invalid { .. })
+        || files
+            .projects
+            .iter()
+            .any(|project| matches!(project.file, ConfigFile::Invalid { .. }));
     let mut warnings = Vec::new();
     let mut hooks = WorkspaceHooks::inspect(
         &path,
@@ -204,7 +219,7 @@ pub(crate) async fn inspect_at(
     if let Some(identity) = identity {
         hooks.identity = identity;
     }
-    hooks
+    (hooks, unreadable)
 }
 
 #[path = "hooks_trust_status.rs"]
@@ -310,7 +325,10 @@ pub(crate) async fn grant_for_app(
         bundle: Some(bundle_digest.to_owned()),
         ..Options::default()
     };
-    let hooks = inspect_at(context, path.clone(), identity.clone()).await;
+    let (hooks, unreadable) = inspect_read(context, path.clone(), identity.clone()).await;
+    if unreadable {
+        return json!({"accepted": false, "reasonCode": "workspace_hooks_config_unreadable"});
+    }
     let granted = match hooks.bundle {
         None => Err("no declarations".to_owned()),
         Some(_) => match status::select(&hooks, &options) {
@@ -325,12 +343,33 @@ pub(crate) async fn grant_for_app(
     if let Err(reason) = granted {
         return json!({"accepted": false, "reasonCode": public_reason(&reason)});
     }
-    let after = inspect_at(context, path, identity).await;
-    if !corrupt(&after) && after.trusted().contains(declaration_digest) {
-        json!({"accepted": true})
+    confirm_grant(context, (path, identity), declaration_digest).await
+}
+
+/// Node `didGrantExactDeclaration` over the status re-read after a grant: accepted only while the declaration is
+/// still in the workspace's bundle and trusted. A corrupt store answers its own reason; a config that cannot be read
+/// and any other status answer `workspace_hooks_config_unreadable` (`toPublicReasonCode`).
+pub(crate) async fn confirm_grant(
+    context: &TrustContext<'_>,
+    (path, identity): (String, Option<String>),
+    declaration_digest: &str,
+) -> serde_json::Value {
+    let (after, unreadable) = inspect_read(context, path, identity).await;
+    let reason = if unreadable {
+        public_reason("")
+    } else if corrupt(&after) {
+        "workspace_hooks_trust_store_corrupt"
+    } else if after
+        .entries()
+        .iter()
+        .any(|entry| entry.digest == declaration_digest)
+        && after.trusted().contains(declaration_digest)
+    {
+        return json!({"accepted": true});
     } else {
-        json!({"accepted": false, "reasonCode": public_reason("")})
-    }
+        public_reason("")
+    };
+    json!({"accepted": false, "reasonCode": reason})
 }
 
 fn corrupt(hooks: &WorkspaceHooks) -> bool {

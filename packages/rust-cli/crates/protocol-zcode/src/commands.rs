@@ -674,6 +674,8 @@ async fn submit_first(
     Ok(
         match send(live.handle.as_ref(), &envelope.command_id, submit).await {
             KernelAck::Accepted { .. } => {
+                // Fork: the first input is a real user input; Node re-reads the trust banners for it too.
+                crate::fork::workspace_trust::refresh_session(server, live, live.handle.id()).await;
                 Some(json!({"delivery": "startNow", "inputId": envelope.command_id}))
             }
             _ => None,

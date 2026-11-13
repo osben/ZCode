@@ -15,11 +15,12 @@ use super::hook_trust::{datetime, sha256_hex};
 /// Node `STORE_NAME`, next to `workspace-hook-trust-v1.json`.
 pub const MCP_TRUST_STORE: &str = "workspace-mcp-trust-v1.json";
 
-/// Node `atomicWritePrivateTextFile`: 0600, hidden temporary name, parent created.
+/// Node `atomicWritePrivateTextFile`: 0600, hidden temporary name. The `security/` directory is created 0700 before
+/// the lock, like the hook trust store.
 const PRIVATE_WRITE: WriteOptions = WriteOptions {
     mode: FileMode::Private,
     temp_name: TempName::Hidden,
-    parent: ParentDir::Create,
+    parent: ParentDir::Existing,
     rename_retry: rust_cli_fs::NODE_RENAME_RETRY,
 };
 
@@ -77,7 +78,9 @@ impl McpTrustRecord {
 fn parse_store(bytes: &[u8]) -> Option<Vec<McpTrustRecord>> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     let object = value.as_object()?;
-    if object.len() != 2 || object.get("schemaVersion") != Some(&json!(1)) {
+    // Node `z.literal(1)` compares JS numbers, so `1.0` and `1e0` are the literal too.
+    let version = object.get("schemaVersion").and_then(Value::as_f64);
+    if object.len() != 2 || version != Some(1.0) {
         return None;
     }
     object
@@ -112,19 +115,34 @@ impl McpTrustLoad {
     }
 }
 
-#[derive(Debug)]
-pub enum McpTrustError {
-    /// The declaration is gone or its digest differs (Node `workspace_mcp_declaration_changed`).
+/// What the workspace declares now, re-read under the lock (Node `decide` rediscovers there).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StillDeclared {
+    /// The declaration is there with the decided digest.
+    Yes,
+    /// The declaration is gone or its digest differs.
     Changed,
-    /// The store could not be parsed; nothing is written over it.
-    Corrupt,
-    Io(std::io::Error),
+    /// The workspace config could not be read (Node's `discover` throws).
+    Unavailable,
 }
 
-impl From<std::io::Error> for McpTrustError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error)
-    }
+/// The display is the reason code the App gets.
+#[derive(Debug, thiserror::Error)]
+pub enum McpTrustError {
+    /// The declaration is gone or its digest differs.
+    #[error("workspace_mcp_declaration_changed")]
+    Changed,
+    /// The workspace config could not be read.
+    #[error("workspace_mcp_trust_unavailable")]
+    Unavailable,
+    /// A record that would not parse back; written, it would make the whole store corrupt.
+    #[error("workspace_mcp_trust_unavailable")]
+    Invalid,
+    /// The store could not be parsed; nothing is written over it.
+    #[error("workspace_mcp_trust_unavailable")]
+    Corrupt,
+    #[error("workspace_mcp_trust_unavailable")]
+    Io(#[from] std::io::Error),
 }
 
 /// The record file.
@@ -159,18 +177,28 @@ impl McpTrustStore {
     }
 
     /// Node `decide`: under the directory lock, `still_declared` re-reads the workspace (a missing or changed
-    /// declaration refuses), then the matching record is dropped and, when `trusted`, appended again with
-    /// `granted_at`. The file is written compact with no trailing newline, like Node's `JSON.stringify`.
+    /// declaration refuses, an unreadable workspace too), then the matching record is dropped and, when `trusted`,
+    /// appended again with `granted_at`. The file is written compact with no trailing newline, like Node's
+    /// `JSON.stringify`.
     pub async fn decide(
         &self,
-        still_declared: impl AsyncFnOnce() -> bool,
+        still_declared: impl AsyncFnOnce() -> StillDeclared,
         record: McpTrustRecord,
         trusted: bool,
     ) -> Result<(), McpTrustError> {
+        // Node builds the record itself; one that would not parse back must never reach the shared file.
+        if McpTrustRecord::parse(&record.to_value()).as_ref() != Some(&record) {
+            return Err(McpTrustError::Invalid);
+        }
         let file = self.file.as_path();
+        if let Some(parent) = file.parent() {
+            rust_cli_fs::create_private_dir_all(parent).await?;
+        }
         rust_cli_fs::with_file_lock(file, &LockOptions::default(), async || {
-            if !still_declared().await {
-                return Err(McpTrustError::Changed);
+            match still_declared().await {
+                StillDeclared::Yes => {}
+                StillDeclared::Changed => return Err(McpTrustError::Changed),
+                StillDeclared::Unavailable => return Err(McpTrustError::Unavailable),
             }
             let current = match rust_cli_fs::read_optional(file).await? {
                 None => Vec::new(),

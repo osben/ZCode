@@ -280,6 +280,95 @@ async fn a_hook_grant_is_persisted_and_rebuilds_the_process_hooks() {
     assert_eq!(fixture.admin.admission(&target(ROOT)).await.hook, None);
 }
 
+/// The current hook bundle and its first pending digest.
+async fn pending_hook(fixture: &Fixture) -> (String, String) {
+    let banner = fixture.admin.admission(&target(ROOT)).await.hook.unwrap();
+    let bundle = banner["bundleDigest"].as_str().unwrap().to_owned();
+    let context = TrustContext {
+        files: fixture.admin.files.as_ref(),
+        paths: &fixture.admin.paths,
+        cwd: ROOT,
+        version: "0.1.0",
+        now_ms: 0,
+    };
+    let pending = hooks_trust::inspect_at(&context, ROOT.to_owned(), None)
+        .await
+        .pending()
+        .unwrap();
+    (bundle, pending.digests[0].clone())
+}
+
+/// Node `discoverSnapshot` throws when a config cannot be parsed (`readUserHooks` rethrows), so the grant answers
+/// `workspace_hooks_config_unreadable` and writes nothing, even when the readable files still give the same bundle.
+#[tokio::test]
+async fn a_hook_grant_with_an_unreadable_config_is_refused() {
+    let fixture = fixture(serde_json::from_str(HOOKS).unwrap(), json!({}));
+    let (bundle, digest) = pending_hook(&fixture).await;
+    std::fs::write(
+        fixture._home.path().join(".zcode/cli/config.json"),
+        "{ not json",
+    )
+    .unwrap();
+    let answer = fixture
+        .admin
+        .hook_trust_grant(&target(ROOT), &bundle, &digest)
+        .await;
+    assert_eq!(
+        answer,
+        json!({"accepted": false, "reasonCode": "workspace_hooks_config_unreadable"})
+    );
+    assert!(fixture.hooks.lock().unwrap().is_empty());
+    assert!(
+        !fixture
+            .admin
+            .paths
+            .hook_trust_store(None)
+            .as_path()
+            .exists()
+    );
+}
+
+/// Node `didGrantExactDeclaration` reads the status after the grant: a corrupt store answers its own reason, and a
+/// grant counts only while the declaration is still in the bundle.
+#[tokio::test]
+async fn a_hook_grant_is_confirmed_against_the_reread_bundle_and_store() {
+    let fixture = fixture(serde_json::from_str(HOOKS).unwrap(), json!({}));
+    let (bundle, digest) = pending_hook(&fixture).await;
+    let answer = fixture
+        .admin
+        .hook_trust_grant(&target(ROOT), &bundle, &digest)
+        .await;
+    assert_eq!(answer, json!({"accepted": true}));
+    let context = TrustContext {
+        files: fixture.admin.files.as_ref(),
+        paths: &fixture.admin.paths,
+        cwd: ROOT,
+        version: "0.1.0",
+        now_ms: 0,
+    };
+    let confirmed = hooks_trust::confirm_grant(&context, (ROOT.to_owned(), None), &digest).await;
+    assert_eq!(confirmed, json!({"accepted": true}));
+    // A trusted record for a declaration the workspace no longer has does not count.
+    let store = fixture.admin.paths.hook_trust_store(None);
+    let mut file: Value = serde_json::from_slice(&std::fs::read(store.as_path()).unwrap()).unwrap();
+    let mut gone = file["records"][0].clone();
+    gone["hookDeclarationDigest"] = json!("f".repeat(64));
+    file["records"].as_array_mut().unwrap().push(gone);
+    std::fs::write(store.as_path(), file.to_string()).unwrap();
+    let other =
+        hooks_trust::confirm_grant(&context, (ROOT.to_owned(), None), &"f".repeat(64)).await;
+    assert_eq!(
+        other,
+        json!({"accepted": false, "reasonCode": "workspace_hooks_config_unreadable"})
+    );
+    std::fs::write(store.as_path(), "{ corrupt").unwrap();
+    let corrupt = hooks_trust::confirm_grant(&context, (ROOT.to_owned(), None), &digest).await;
+    assert_eq!(
+        corrupt,
+        json!({"accepted": false, "reasonCode": "workspace_hooks_trust_store_corrupt"})
+    );
+}
+
 #[tokio::test]
 async fn an_unreadable_config_makes_a_decision_unavailable_not_changed() {
     let fixture = fixture_text("{ not json", json!({}));
@@ -355,4 +444,31 @@ async fn a_revoke_with_a_stale_digest_keeps_the_grant() {
     );
     let statuses = list(&fixture, "k", false).await;
     assert_eq!(statuses["alpha"]["workspaceTrust"]["trusted"], true);
+}
+
+#[tokio::test]
+async fn an_older_connect_never_replaces_a_newer_lane() {
+    let fixture = fixture(
+        json!({}),
+        json!({"mcp": {"servers": {"mine": {"command": "user-tool"}}}}),
+    );
+    let older = fixture.admin.arrival();
+    let newer = fixture.admin.arrival();
+    fixture
+        .admin
+        .list(&target("new"), None, Some(newer))
+        .await
+        .unwrap();
+    // The older request finishes last; Node runs the settings-lane mutations in arrival order.
+    let statuses = fixture
+        .admin
+        .list(&target("old"), None, Some(older))
+        .await
+        .unwrap();
+    assert_eq!(fixture.transport.started(), ["mine"]);
+    assert_eq!(statuses["statuses"]["mine"]["status"], "disconnected");
+    assert_eq!(
+        list(&fixture, "new", false).await["mine"]["status"],
+        "failed"
+    );
 }

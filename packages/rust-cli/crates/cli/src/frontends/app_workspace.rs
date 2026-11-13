@@ -7,7 +7,7 @@
 //! `protocol-settings` lease): connecting there never changes what a running session has.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ use rust_cli_kernel_api::manage::{McpAction, McpServerInfo, McpServerState};
 use rust_cli_kernel_api::mcp::McpTransport;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_paths::StoragePaths;
-use rust_cli_platform::local::{McpTrustError, McpTrustRecord};
+use rust_cli_platform::local::{McpTrustError, McpTrustRecord, StillDeclared};
 use rust_cli_protocol_zcode::{Admission, WorkspaceAdmin, WorkspaceTarget};
 use serde_json::{Map, Value, json};
 
@@ -54,10 +54,13 @@ pub(crate) struct AppWorkspace {
     pub(crate) mcp: McpSettings,
     pub(crate) version: &'static str,
     lane: StdMutex<Option<Arc<Lane>>>,
+    arrivals: AtomicU64,
 }
 
 /// The settings lane of one workspace key: the servers it connected and the ones it refused.
 struct Lane {
+    /// The arrival number of the connect that built it ([`AppWorkspace::arrival`]).
+    arrival: u64,
     key: String,
     manager: McpManager,
     blocked: BTreeMap<String, Value>,
@@ -91,6 +94,7 @@ impl AppWorkspace {
             },
             version: crate::VERSION,
             lane: StdMutex::new(None),
+            arrivals: AtomicU64::new(0),
         }
     }
 
@@ -226,36 +230,102 @@ impl AppWorkspace {
         value
     }
 
+    /// Numbers a connect when its request arrives: Node runs the settings-lane mutations in that order.
+    pub(crate) fn arrival(&self) -> u64 {
+        self.arrivals.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
     /// Replaces the settings lane with one for `key` holding `servers` (Node connects with replace semantics and
-    /// revalidates on every Settings refresh). The previous lane is closed before the new one starts; a lane that a
-    /// concurrent connect put in meanwhile is closed too, so at most one lane stays open.
+    /// revalidates on every Settings refresh). A connect that arrived before the stored lane's does nothing, so an
+    /// older server set (read before a revoke, say) never displaces a newer one. The new lane is stored before it
+    /// settles, so a status read meanwhile reports `connecting`; the displaced lane is closed first.
     async fn connect(
         &self,
+        arrival: u64,
         key: &str,
         workspace: WorkspaceRef,
         (servers, blocked): (Vec<McpServer>, BTreeMap<String, Value>),
     ) {
-        let previous = self.lane.lock_unpoisoned().take();
-        if let Some(previous) = previous {
-            close(&previous).await;
-        }
         let manager = McpManager::new(
             self.transport.clone(),
             self.spawner.clone(),
             self.mcp.clone(),
             self.clock.clone(),
         );
-        manager.start(workspace, servers);
-        manager.wait_ready().await;
         let fresh = Arc::new(Lane {
+            arrival,
             key: key.to_owned(),
             manager,
             blocked,
         });
-        let displaced = self.lane.lock_unpoisoned().replace(fresh);
+        let displaced = {
+            let mut lane = self.lane.lock_unpoisoned();
+            if lane
+                .as_ref()
+                .is_some_and(|current| current.arrival > arrival)
+            {
+                return;
+            }
+            lane.replace(fresh.clone())
+        };
         if let Some(displaced) = displaced {
             close(&displaced).await;
         }
+        fresh.manager.start(workspace, servers);
+        fresh.manager.wait_ready().await;
+    }
+
+    /// `mcp/list`; `arrival` is set for a connect ([`Self::arrival`]), `None` for a status read.
+    pub(crate) async fn list(
+        &self,
+        target: &WorkspaceTarget,
+        servers: Option<&[Value]>,
+        arrival: Option<u64>,
+    ) -> Result<Value, String> {
+        let read = self.read(target).await;
+        let configured = Self::configured(&read, servers);
+        // Node's `inspect()` throws from `displayConfig` before anything connects.
+        let reviews = read
+            .inspection
+            .reviews()
+            .map_err(|_| "Invalid URL".to_owned())?;
+        let untrusted: BTreeSet<&str> = reviews
+            .iter()
+            .filter(|review| !review.trusted)
+            .map(|review| review.name.as_str())
+            .collect();
+        if let Some(arrival) = arrival {
+            let admitted = self.admit(&read, &configured, &untrusted);
+            self.connect(arrival, &target.key, read.workspace.clone(), admitted)
+                .await;
+        }
+        // A status read reuses the lane only for its own workspace key (it never takes the lane over).
+        let lane = self.lane.lock_unpoisoned().clone();
+        let current = lane.as_deref().filter(|lane| lane.key == target.key);
+        let infos: BTreeMap<String, McpServerInfo> = current
+            .map(|lane| lane.manager.server_infos())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|info| (info.name.clone(), info))
+            .collect();
+        let mut statuses = Map::new();
+        for (name, config) in &configured {
+            let kind = transport(config);
+            let status = if let Some(info) = infos.get(name) {
+                self.live(info, kind)
+            } else if let Some(blocked) = current.and_then(|lane| lane.blocked.get(name)) {
+                blocked.clone()
+            } else if config.get("enabled") == Some(&Value::Bool(false)) {
+                self.idle("disabled", kind)
+            } else if untrusted.contains(name.as_str()) {
+                self.idle("untrusted", kind)
+            } else {
+                self.idle("disconnected", kind)
+            };
+            statuses.insert(name.clone(), status);
+        }
+        self.with_reviews(&mut statuses, &configured, &reviews);
+        Ok(json!({ "statuses": statuses }))
     }
 
     /// Node `withReviews`: workspace declarations carry their review, and an unreviewed or disabled one shows so.
@@ -314,50 +384,8 @@ impl WorkspaceAdmin for AppWorkspace {
         servers: Option<&[Value]>,
         connect: bool,
     ) -> Result<Value, String> {
-        let read = self.read(target).await;
-        let configured = Self::configured(&read, servers);
-        // Node's `inspect()` throws from `displayConfig` before anything connects.
-        let reviews = read
-            .inspection
-            .reviews()
-            .map_err(|_| "Invalid URL".to_owned())?;
-        let untrusted: BTreeSet<&str> = reviews
-            .iter()
-            .filter(|review| !review.trusted)
-            .map(|review| review.name.as_str())
-            .collect();
-        if connect {
-            let admitted = self.admit(&read, &configured, &untrusted);
-            self.connect(&target.key, read.workspace.clone(), admitted)
-                .await;
-        }
-        // A status read reuses the lane only for its own workspace key (it never takes the lane over).
-        let lane = self.lane.lock_unpoisoned().clone();
-        let current = lane.as_deref().filter(|lane| lane.key == target.key);
-        let infos: BTreeMap<String, McpServerInfo> = current
-            .map(|lane| lane.manager.server_infos())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|info| (info.name.clone(), info))
-            .collect();
-        let mut statuses = Map::new();
-        for (name, config) in &configured {
-            let kind = transport(config);
-            let status = if let Some(info) = infos.get(name) {
-                self.live(info, kind)
-            } else if let Some(blocked) = current.and_then(|lane| lane.blocked.get(name)) {
-                blocked.clone()
-            } else if config.get("enabled") == Some(&Value::Bool(false)) {
-                self.idle("disabled", kind)
-            } else if untrusted.contains(name.as_str()) {
-                self.idle("untrusted", kind)
-            } else {
-                self.idle("disconnected", kind)
-            };
-            statuses.insert(name.clone(), status);
-        }
-        self.with_reviews(&mut statuses, &configured, &reviews);
-        Ok(json!({ "statuses": statuses }))
+        let arrival = connect.then(|| self.arrival());
+        self.list(target, servers, arrival).await
     }
 
     async fn mcp_trust(
@@ -377,17 +405,18 @@ impl WorkspaceAdmin for AppWorkspace {
         // Node rediscovers inside the store lock: the decision is about the declaration shown, not a newer one.
         // An unreadable config is not a changed declaration: Node's `discover` throws and the answer is
         // `workspace_mcp_trust_unavailable`.
-        let unreadable = AtomicBool::new(false);
         let still_declared = async || {
             let current = self.read(target).await;
             match current.inspection.discovery() {
-                Ok(discovery) => discovery
-                    .get(server)
-                    .is_some_and(|declaration| declaration.digest == digest),
-                Err(_) => {
-                    unreadable.store(true, Ordering::Relaxed);
-                    false
+                Ok(discovery)
+                    if discovery
+                        .get(server)
+                        .is_some_and(|declaration| declaration.digest == digest) =>
+                {
+                    StillDeclared::Yes
                 }
+                Ok(_) => StillDeclared::Changed,
+                Err(_) => StillDeclared::Unavailable,
             }
         };
         match read
@@ -397,12 +426,11 @@ impl WorkspaceAdmin for AppWorkspace {
             .await
         {
             Ok(()) => json!({"accepted": true}),
-            Err(McpTrustError::Changed) if !unreadable.load(Ordering::Relaxed) => {
-                json!({"accepted": false, "reasonCode": "workspace_mcp_declaration_changed"})
-            }
             Err(error) => {
-                tracing::warn!(error = ?error, "workspace MCP trust decision failed");
-                json!({"accepted": false, "reasonCode": "workspace_mcp_trust_unavailable"})
+                if !matches!(error, McpTrustError::Changed) {
+                    tracing::warn!(error = ?error, "workspace MCP trust decision failed");
+                }
+                json!({"accepted": false, "reasonCode": error.to_string()})
             }
         }
     }

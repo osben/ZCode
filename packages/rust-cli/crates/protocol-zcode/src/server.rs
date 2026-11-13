@@ -202,10 +202,19 @@ impl Server {
         // Set by the one open that makes the projection: only it starts the session's watchers.
         let made = std::sync::atomic::AtomicBool::new(false);
         let made_here = &made;
+        // Fork: a stored interactive session with history, opened again (Node `resumeFromStore`); a subagent's child
+        // session opened in a side tab has no trust banners.
+        let resumed = std::sync::atomic::AtomicBool::new(false);
+        let resumed_here = &resumed;
         let live = self
             .bridge
             .open(session, move |handle, view| {
                 made_here.store(true, std::sync::atomic::Ordering::Relaxed);
+                resumed_here.store(
+                    view.meta.kind == rust_cli_kernel_api::store::SessionKind::Interactive
+                        && !view.messages.is_empty(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 Live::new(
                     context,
                     topics,
@@ -220,8 +229,14 @@ impl Server {
         if made.load(std::sync::atomic::Ordering::Relaxed) {
             // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
             let queries = self.kernel.queries();
-            if queries.is_draft(session).await.unwrap_or(false) {
+            let draft = queries.is_draft(session).await.unwrap_or(false);
+            if draft {
                 live.sink.set_draft_probe(queries);
+            }
+            // Fork: a resumed session shows its workspace's trust banners before the next input, as Node's resume
+            // reannounce does (specs/fork-rust-agent-parity.md, "Workspace MCP trust").
+            if !draft && resumed.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::fork::workspace_trust::refresh_session(self, &live, session).await;
             }
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(

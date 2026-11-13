@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use rust_cli_base::js::json::{properties, stringify};
 use rust_cli_ext::mcp::normalize_node_server;
-use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
+use rust_cli_kernel_api::env::{EnvError, EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_paths::StoragePaths;
@@ -107,6 +107,16 @@ pub(crate) enum Fallback {
 impl Fallback {
     pub(crate) fn parse(bytes: &[u8]) -> Self {
         serde_json::from_slice(bytes).map_or(Self::Invalid, Self::Loaded)
+    }
+
+    /// Node `readJson`: a file gone between the stat and the read (the App edits config while the agent runs) is
+    /// missing; any other read error makes discovery throw.
+    fn read(read: Result<&[u8], EnvError>) -> Self {
+        match read {
+            Ok(bytes) => Self::parse(bytes),
+            Err(EnvError::NotFound { .. }) => Self::Missing,
+            Err(_) => Self::Invalid,
+        }
     }
 }
 
@@ -250,7 +260,7 @@ fn user_server_names(user: Option<&Map<String, Value>>) -> BTreeSet<String> {
 }
 
 /// Node `getProjectConfigBaseDir`: the file's directory, or its parent when that directory is `.zcode`.
-fn base_dir(path: &str) -> String {
+pub(super) fn base_dir(path: &str) -> String {
     let style = PathStyle::infer(path);
     let dir = style.dirname(path);
     if style.file_name(&dir) == rust_cli_base::names::DOT_DIR {
@@ -262,7 +272,7 @@ fn base_dir(path: &str) -> String {
 
 /// Node `isAbsolute(cwd) ? cwd : resolve(base, cwd)`: an absolute path is kept byte for byte (the digest covers
 /// it), a relative one is resolved and normalized.
-fn absolute_or_resolved(base: &str, cwd: &str) -> String {
+pub(super) fn absolute_or_resolved(base: &str, cwd: &str) -> String {
     let style = PathStyle::infer(base);
     if style.is_absolute(cwd) {
         cwd.to_owned()
@@ -745,8 +755,8 @@ async fn read_fallback(files: &dyn Files, workspace: &WorkspaceRef, path: &str) 
         path: EnvPath::new(path),
     };
     match files.read_file(workspace, read).await {
-        Ok(content) => Fallback::parse(&content.bytes),
-        Err(_) => Fallback::Invalid,
+        Ok(content) => Fallback::read(Ok(&content.bytes)),
+        Err(error) => Fallback::read(Err(error)),
     }
 }
 
