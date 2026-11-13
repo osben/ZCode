@@ -63,7 +63,7 @@ impl State {
 pub(crate) enum Acquired {
     Ready(Arc<ServerConnection>),
     Starting,
-    Failed(LspError),
+    Failed(#[cfg_attr(not(test), expect(dead_code, reason = "the LSP tool (D2) reports it"))] LspError),
 }
 
 /// Node `LanguageServerEvent`.
@@ -74,10 +74,12 @@ pub(crate) enum Event {
         key: ServerKey,
         connection: Arc<ServerConnection>,
     },
+    #[allow(dead_code, reason = "Node's event shape; no listener reads a crash's names yet")]
     Crashed {
         server_id: String,
         key: ServerKey,
     },
+    #[allow(dead_code, reason = "Node's event shape; no listener reads a stop's names yet")]
     Stopped {
         server_id: String,
         key: ServerKey,

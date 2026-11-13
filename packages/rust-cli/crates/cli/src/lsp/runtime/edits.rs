@@ -250,6 +250,7 @@ impl Tracker {
         &self.pending
     }
 
+    #[cfg(test)]
     pub(crate) fn get(&self, path: &str) -> Option<&PendingEdit> {
         self.pending.iter().find(|entry| entry.path == path)
     }

@@ -134,12 +134,17 @@ impl Launcher for FakeLauncher {
     }
 }
 
-pub(crate) fn fake_pool() -> (Pool, Arc<FakeLauncher>, mpsc::UnboundedReceiver<FakeProcess>) {
+pub(crate) fn fake_launcher() -> (Arc<FakeLauncher>, mpsc::UnboundedReceiver<FakeProcess>) {
     let (launched, receiver) = mpsc::unbounded_channel();
     let launcher = Arc::new(FakeLauncher {
         launched,
         missing: Mutex::default(),
     });
+    (launcher, receiver)
+}
+
+pub(crate) fn fake_pool() -> (Pool, Arc<FakeLauncher>, mpsc::UnboundedReceiver<FakeProcess>) {
+    let (launcher, receiver) = fake_launcher();
     let base = vec![("PATH".to_owned(), "/bin".to_owned())];
     let pool = Pool::new(
         Arc::clone(&launcher) as Arc<dyn Launcher>,

@@ -3,32 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use rust_cli_base::secret::EnvSnapshot;
-
 /// Node `DEFAULT_WINDOWS_PATHEXT`.
 const DEFAULT_PATHEXT: [&str; 4] = [".COM", ".EXE", ".BAT", ".CMD"];
-
-/// Node `buildLspProcessEnv`: the process environment with the server's `env` on top. On Windows a server key replaces
-/// every process key that differs only in case, and the new key goes last.
-pub(super) fn process_env(
-    base: &EnvSnapshot,
-    server: &[(String, String)],
-    windows: bool,
-) -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = base.vars().to_vec();
-    for (key, value) in server {
-        if windows {
-            env.retain(|(existing, _)| !existing.eq_ignore_ascii_case(key));
-            env.push((key.clone(), value.clone()));
-        } else {
-            match env.iter_mut().find(|(existing, _)| existing == key) {
-                Some(slot) => slot.1.clone_from(value),
-                None => env.push((key.clone(), value.clone())),
-            }
-        }
-    }
-    env
-}
 
 /// Node `getWindowsEnvValue`: the first key equal to `name` ignoring case (Node uses it for `PATH` on every platform).
 fn lookup<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {

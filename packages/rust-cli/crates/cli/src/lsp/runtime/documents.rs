@@ -158,6 +158,8 @@ impl Store {
 #[derive(Debug, Default)]
 pub(crate) struct MutationOutcome {
     pub(crate) baseline: Option<Vec<Diagnostic>>,
+    /// Whether didOpen/didChange/didClose went out; the LSP tool (D2) waits for fresh results only then.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the LSP tool (D2) reads it"))]
     pub(crate) synced: bool,
 }
 
