@@ -2,6 +2,7 @@
 //! 密钥在 Electron Main。限制与回复形状照 Node `validation.ts` 与 `bridge.ts`；失败只映射成静态原因，不带 Host 的消息。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -80,11 +81,14 @@ impl HostCredentialCipher {
             "operation": operation.name(),
             "value": value,
         });
-        // The wait for the Host's attach acknowledgement is part of the same bound (F1).
+        // The wait for the Host's attach acknowledgement is part of the same bound (F1). `ready` is set inside the
+        // bound, so an acknowledgement that lands just after the timeout does not change which bound is named.
+        let ready = AtomicBool::new(false);
         let answer = tokio::time::timeout(self.limit, async {
             if self.context.host_ready().await == Some(false) {
                 return Err(unavailable("the host has no credential cipher"));
             }
+            ready.store(true, Ordering::SeqCst);
             // JSON-RPC 错误（例如 -32602）与连接关闭都是传输失败；原始消息不向上传。
             self.context
                 .peer
@@ -94,7 +98,7 @@ impl HostCredentialCipher {
         })
         .await;
         let result = match answer {
-            Err(_) if self.context.attach.waiting() => {
+            Err(_) if !ready.load(Ordering::SeqCst) => {
                 return Err(unavailable(
                     "the host did not acknowledge the attach in time",
                 ));

@@ -203,3 +203,30 @@ async fn a_missing_ack_is_named_when_the_bound_ends() {
     );
     assert!(host.next_within(Duration::from_millis(100)).await.is_none());
 }
+
+/// A reader torn down before the acknowledgement (its task aborted with the scope) also stops holding reverse
+/// requests, as when the input ends.
+#[tokio::test]
+async fn a_torn_down_reader_stops_holding_requests() {
+    let scope = TaskScope::root("test", |_| {});
+    let (agent_out, _host_in) = duplex(1 << 20);
+    let (_host_out, agent_in) = duplex(1 << 20);
+    let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
+    context.expect_host_attach();
+    let serving = serve_attached(
+        BufReader::new(agent_in),
+        context.clone(),
+        Arc::new(Nothing),
+        scope.spawner(),
+        Options::default(),
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), serving)
+            .await
+            .is_err(),
+        "the reader is still waiting for input"
+    );
+    assert!(!context.attach.waiting(), "held requests are released");
+    assert_eq!(context.attach.ready().await, None);
+}

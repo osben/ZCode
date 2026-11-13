@@ -68,6 +68,7 @@ impl HostAttach {
     }
 
     /// Whether reverse requests are still held for the acknowledgement.
+    #[cfg(test)]
     pub(crate) fn waiting(&self) -> bool {
         *self.0.borrow() == State::Waiting
     }
@@ -89,7 +90,8 @@ impl HostAttach {
 }
 
 /// Serves the connection with [`AttachGate`] in front of `inner`. When the input ends, reverse requests still held
-/// for the acknowledgement are released: the closed peer fails them at once instead of at their bound.
+/// for the acknowledgement are released: the closed peer fails them at once instead of at their bound. They are also
+/// released when this future is dropped (the reader task torn down with its scope).
 pub async fn serve_attached<R>(
     reader: R,
     context: Arc<Context>,
@@ -100,10 +102,15 @@ pub async fn serve_attached<R>(
 where
     R: AsyncBufRead + Unpin,
 {
+    struct Release(Arc<Context>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.attach.detached();
+        }
+    }
+    let _release = Release(context.clone());
     let gate = AttachGate::wrap(context.clone(), inner);
-    let served = connection::serve(reader, context.peer.clone(), gate, spawner, options).await;
-    context.attach.detached();
-    served
+    connection::serve(reader, context.peer.clone(), gate, spawner, options).await
 }
 
 /// Handles the acknowledgement in front of the connection's service. It must not wait for that service: in the

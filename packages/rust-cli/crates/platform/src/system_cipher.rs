@@ -9,7 +9,7 @@
 //! `enc:v1:` and plaintext values are read without the OS store.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -18,6 +18,7 @@ use futures_util::FutureExt;
 use futures_util::future::{BoxFuture, Shared};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
+use rust_cli_base::TaskError;
 use rust_cli_base::secret::RedactedString;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_fs::LockOptions;
@@ -154,12 +155,18 @@ impl Key {
 
 type Lookup = Shared<BoxFuture<'static, Result<Key, CipherError>>>;
 
+/// The cached lookup with the generation its task clears it by.
+struct Slot {
+    generation: u64,
+    lookup: Lookup,
+}
+
 /// The standalone `enc:v2` cipher (TUI, `-p`, `zcode login`).
 pub struct SystemCipher {
     inner: Arc<Inner>,
     /// One key lookup per cipher, shared by concurrent calls. A failure stays cached only when the lock was taken
     /// (a denied prompt is not repeated; a lock timeout is retried).
-    key: Mutex<Option<Lookup>>,
+    key: Arc<Mutex<Option<Slot>>>,
     /// The managed secret for `enc:v1:` values once resolved (Node memoizes the key lookup it comes from).
     legacy: Mutex<Option<Option<Arc<str>>>>,
 }
@@ -170,6 +177,7 @@ struct Inner {
     env_secret_file: Option<PathBuf>,
     fallback: String,
     store: Arc<dyn KeyStore>,
+    lock: LockOptions,
 }
 
 impl SystemCipher {
@@ -197,44 +205,79 @@ impl SystemCipher {
                 env_secret_file: inputs.env_secret_file,
                 fallback: inputs.legacy.fallback(),
                 store,
+                lock: LockOptions::default(),
             }),
-            key: Mutex::new(None),
+            key: Arc::default(),
             legacy: Mutex::new(None),
         }
     }
 
+    /// A shorter `.keyring` lock wait (tests).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_lock_wait(mut self, wait: std::time::Duration) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("not shared yet")
+            .lock
+            .max_wait = wait;
+        self
+    }
+
     async fn key(&self, create: bool) -> Result<Key, CipherError> {
-        let (lookup, acquired) = {
+        let lookup = {
             let mut slot = self.key.lock_unpoisoned();
             match slot.as_ref() {
-                Some(lookup) => (lookup.clone(), None),
+                Some(cached) => cached.lookup.clone(),
                 None => {
-                    let acquired = Arc::new(AtomicBool::new(false));
+                    static GENERATION: AtomicU64 = AtomicU64::new(0);
+                    let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
                     // The lookup runs as its own task, owned by the slot: it may hold the `.keyring` lock, and a
-                    // `Shared` future whose only caller gave up would stay suspended with the lock held.
+                    // `Shared` future whose only caller gave up would stay suspended with the lock held. The task
+                    // also un-caches its own retriable failure, since no caller may be left to do it.
                     let task = {
-                        let (inner, acquired) = (self.inner.clone(), acquired.clone());
-                        rust_cli_base::owned(async move { inner.lookup(create, &acquired).await })
+                        let (inner, slot) = (self.inner.clone(), Arc::downgrade(&self.key));
+                        rust_cli_base::owned(async move {
+                            let acquired = AtomicBool::new(false);
+                            let result = inner.lookup(create, &acquired).await;
+                            if result.is_err()
+                                && !acquired.load(Ordering::SeqCst)
+                                && let Some(slot) = slot.upgrade()
+                            {
+                                let mut slot = slot.lock_unpoisoned();
+                                if slot
+                                    .as_ref()
+                                    .is_some_and(|cached| cached.generation == generation)
+                                {
+                                    *slot = None;
+                                }
+                            }
+                            result
+                        })
                     };
-                    let lookup = async move { task.await.unwrap_or_else(|_| Err(unavailable())) }
-                        .boxed()
-                        .shared();
-                    *slot = Some(lookup.clone());
-                    (lookup, Some(acquired))
+                    let lookup = async move {
+                        task.await.unwrap_or_else(|error| {
+                            tracing::warn!(
+                                event = "credentials.key_lookup.failed",
+                                reason = match error {
+                                    TaskError::Panicked(_) => "panicked",
+                                    _ => "aborted",
+                                },
+                                "credential key lookup ended without a result"
+                            );
+                            Err(unavailable())
+                        })
+                    }
+                    .boxed()
+                    .shared();
+                    *slot = Some(Slot {
+                        generation,
+                        lookup: lookup.clone(),
+                    });
+                    lookup
                 }
             }
         };
-        let result = lookup.clone().await;
-        if let Some(acquired) = acquired
-            && result.is_err()
-            && !acquired.load(Ordering::SeqCst)
-        {
-            let mut slot = self.key.lock_unpoisoned();
-            if slot.as_ref().is_some_and(|cached| cached.ptr_eq(&lookup)) {
-                *slot = None;
-            }
-        }
-        result
+        lookup.await
     }
 
     /// The managed secret for `enc:v1:` candidates, without the OS store.
@@ -242,7 +285,11 @@ impl SystemCipher {
         if let Some(secret) = self.legacy.lock_unpoisoned().clone() {
             return Ok(secret);
         }
-        let cached = self.key.lock_unpoisoned().clone();
+        let cached = self
+            .key
+            .lock_unpoisoned()
+            .as_ref()
+            .map(|slot| slot.lookup.clone());
         let secret = if let Some(Ok(key)) = cached.as_ref().and_then(Shared::peek) {
             key.legacy.clone()
         } else if let Some(key) = self.inner.explicit().await? {
@@ -321,7 +368,7 @@ impl Inner {
     ) -> Result<T, CipherError> {
         let mut lock = self.file.clone().into_os_string();
         lock.push(".keyring");
-        rust_cli_fs::with_file_lock(Path::new(&lock), &LockOptions::default(), async || {
+        rust_cli_fs::with_file_lock(Path::new(&lock), &self.lock, async || {
             work().await.map_err(|_| Locked)
         })
         .await

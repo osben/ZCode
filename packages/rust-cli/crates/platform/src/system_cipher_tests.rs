@@ -428,6 +428,47 @@ async fn a_cancelled_caller_does_not_park_the_held_lock() {
     assert_eq!(cipher.decrypt(FIXED_OS).await.unwrap(), "rust os plaintext");
 }
 
+/// A lookup that times out on the `.keyring` lock after its only caller gave up is not cached: the next call takes
+/// the lock again once it is free.
+#[tokio::test]
+async fn a_lock_timeout_after_the_caller_gave_up_is_retried() {
+    let setup = Setup::new();
+    setup.write("credential-source", "os\n").await;
+    let cipher = setup
+        .cipher(Memory::holding(OS_KEY))
+        .with_lock_wait(Duration::from_millis(300));
+    let mut lock = setup.file().into_os_string();
+    lock.push(".keyring");
+    let lock = PathBuf::from(lock);
+    let (held, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    let holder = tokio::spawn({
+        let (lock, held, release) = (lock.clone(), held.clone(), release.clone());
+        async move {
+            rust_cli_fs::with_file_lock(&lock, &LockOptions::default(), async || {
+                held.notify_one();
+                release.notified().await;
+                Ok::<_, std::io::Error>(())
+            })
+            .await
+        }
+    });
+    held.notified().await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), cipher.decrypt(FIXED_OS))
+            .await
+            .is_err(),
+        "the lookup waits for the held lock"
+    );
+    // The orphaned lookup times out on the lock without a caller.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    release.notify_one();
+    holder.await.unwrap().unwrap();
+    assert_eq!(cipher.decrypt(FIXED_OS).await.unwrap(), "rust os plaintext");
+}
+
 /// The OS store account hashes the path Node's `path.resolve` gives, so the desktop's entry is found even when the
 /// home directory is spelled with `.`, `..` or repeated separators.
 #[cfg(unix)]

@@ -3,6 +3,7 @@
 //! 调用方放弃（模型请求被取消）或超过 180 s 时发 `interaction/providerRuntimeHeadersCancelled`，Host 释放它的队列。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -97,15 +98,18 @@ impl HeaderSource for HostHeaders {
                 "workspace": workspace}),
             ),
         };
-        // Fork: held until the Host's attach acknowledgement, inside the same bound (F1).
+        // Fork: held until the Host's attach acknowledgement, inside the same bound (F1). `sent` is set inside the
+        // bound: an acknowledgement that lands just after the timeout must not make an unsent request look sent.
+        let sent = AtomicBool::new(false);
         let answer = tokio::time::timeout(self.limit, async {
             self.context.host_ready().await;
+            sent.store(true, Ordering::SeqCst);
             self.context.peer.request(REQUEST, &params).await
         })
         .await;
         let result = match answer {
             // The request never went out: nothing to cancel.
-            Err(_) if self.context.attach.waiting() => {
+            Err(_) if !sent.load(Ordering::SeqCst) => {
                 pending.params = None;
                 return Err(failed(
                     "The host did not acknowledge the attach before the account credentials request",
