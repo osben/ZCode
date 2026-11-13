@@ -2,7 +2,7 @@
 //! flags, session id and method log), so Rust tests drive the runtime the way the Node tests drive theirs.
 //!
 //! Prompt markers, checked in order: "crash" (exit 3 without answering; Rust-only), "last words" (answer "end_turn",
-//! then exit 0 at once; Rust-only), "slow" (answer "end_turn" after 300 ms without reading stdin; Rust-only),
+//! then exit 0 at once; Rust-only), "slow" (stream "partial", then answer "end_turn" with usage after 300 ms without reading stdin; Rust-only),
 //! "narrate" (text, a tool call, more text; Rust-only), "hang" (wait for
 //! `session/cancel`), "tool", "plan", "title", "permission", "remember <word>", "recall", anything else "pong".
 //! Flags: `--state <file>` (memory and method log), `--config options|legacy` (or `ACP_MOCK_CONFIG`),
@@ -150,8 +150,10 @@ impl Mock {
         }
         if text.contains("slow") {
             // Answers after a pause without reading stdin, so a `session/cancel` sent meanwhile is read too late.
+            notify(&session_id, message("partial"));
             std::thread::sleep(std::time::Duration::from_millis(300));
-            return done(&id, "end_turn");
+            return send(&json!({"jsonrpc": "2.0", "id": id, "result": {
+                "stopReason": "end_turn", "usage": {"inputTokens": 7, "outputTokens": 3}}}));
         }
         if text.contains("narrate") {
             notify(&session_id, message("let me look"));

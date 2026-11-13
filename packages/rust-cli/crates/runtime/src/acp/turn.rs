@@ -133,7 +133,8 @@ pub(super) async fn run(
     match outcome {
         // Node `external-agent-turn.ts`: after Stop the turn ends interrupted whatever the agent answered.
         _ if abort.is_aborted() => {
-            turn.close_segment(None).await?;
+            turn.close_segment(outcome.as_ref().ok().and_then(usage_of))
+                .await?;
             turn.aborted(&abort).await
         }
         Ok(response) => {

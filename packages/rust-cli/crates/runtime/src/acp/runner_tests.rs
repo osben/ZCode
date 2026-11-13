@@ -213,10 +213,20 @@ async fn an_answer_that_settles_after_stop_ends_the_turn_interrupted() {
     abort.abort(AbortReason::User);
     let stop = running.await.expect("task").expect("run");
     assert_eq!(stop, QueryStop::Aborted);
+    let messages = sink.messages();
     assert_eq!(
-        texts(&sink.messages()).last().map(String::as_str),
+        texts(&messages).last().map(String::as_str),
         Some(INTERRUPT_TEXTS[0]),
         "the interrupt marker follows a stopped turn"
+    );
+    // The answer's usage is kept on the closed segment, as for a completed turn.
+    let usage = messages.iter().find_map(|message| match message {
+        Message::Assistant(assistant) => assistant.usage.clone(),
+        _ => None,
+    });
+    assert_eq!(
+        usage.map(|usage| (usage.input_tokens, usage.output_tokens)),
+        Some((7, 3))
     );
     harness.release().await;
 }
