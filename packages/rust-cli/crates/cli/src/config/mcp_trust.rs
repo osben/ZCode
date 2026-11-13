@@ -479,20 +479,23 @@ impl Review {
     }
 }
 
+/// A declaration whose display cannot be built (a URL that does not parse): Node's `inspect()` throws from
+/// `displayConfig`, so its callers fail instead of showing nothing to review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Undisplayable;
+
 /// Node `inspect()`: unreadable config means no reviews; a corrupt store shows every declaration untrusted.
 pub(crate) fn reviews(
     target: &Target,
     discovery: Result<&Discovery, Unreadable>,
     store: &McpTrustLoad,
-) -> Vec<Review> {
+) -> Result<Vec<Review>, Undisplayable> {
     let Ok(discovery) = discovery else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut out = Vec::new();
     for (name, declaration) in &discovery.declarations {
-        let Some(shown) = display(&declaration.config, &target.working_directory) else {
-            return Vec::new();
-        };
+        let shown = display(&declaration.config, &target.working_directory).ok_or(Undisplayable)?;
         out.push(Review {
             name: name.clone(),
             digest: declaration.digest.clone(),
@@ -508,7 +511,7 @@ pub(crate) fn reviews(
             trusted: store.trusts(&target.identity, name, &declaration.digest),
         });
     }
-    out
+    Ok(out)
 }
 
 /// The reviews as Node's record (`Record<name, review>`).
@@ -700,7 +703,7 @@ impl Inspection {
         self.discovery.as_ref().map_err(|unreadable| *unreadable)
     }
 
-    pub(crate) fn reviews(&self) -> Vec<Review> {
+    pub(crate) fn reviews(&self) -> Result<Vec<Review>, Undisplayable> {
         reviews(&self.target, self.discovery(), &self.load)
     }
 

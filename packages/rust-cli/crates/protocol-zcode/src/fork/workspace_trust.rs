@@ -180,14 +180,30 @@ async fn refresh_workspace(
     admin: &Arc<dyn WorkspaceAdmin>,
     target: &WorkspaceTarget,
 ) {
-    for live in server.bridge.sessions() {
-        let id = live.handle.id().clone();
-        if server.context.workspace_of(id.as_str()).as_deref() != Some(target.path.as_str()) {
-            continue;
-        }
-        let ticket = live.sink.admission_ticket();
-        let admission = admin.admission(&WorkspaceTarget::local(&target.path)).await;
-        publish(&live, admission, ticket);
+    // The banners depend only on the workspace: one read for all of its sessions. Every ticket is taken before the
+    // read, so a read that started earlier for any of them cannot land after this one.
+    let matched: Vec<(Arc<Bridged<Live>>, u64)> = server
+        .bridge
+        .sessions()
+        .into_iter()
+        .filter(|live| {
+            server
+                .context
+                .workspace_of(live.handle.id().as_str())
+                .as_deref()
+                == Some(target.path.as_str())
+        })
+        .map(|live| {
+            let ticket = live.sink.admission_ticket();
+            (live, ticket)
+        })
+        .collect();
+    if matched.is_empty() {
+        return;
+    }
+    let admission = admin.admission(&WorkspaceTarget::local(&target.path)).await;
+    for (live, ticket) in matched {
+        publish(&live, admission.clone(), ticket);
     }
 }
 

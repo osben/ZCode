@@ -292,3 +292,67 @@ async fn an_unreadable_config_makes_a_decision_unavailable_not_changed() {
         json!({"accepted": false, "reasonCode": "workspace_mcp_trust_unavailable"})
     );
 }
+
+#[tokio::test]
+async fn a_host_dto_cannot_relabel_an_untrusted_declaration_as_a_user_server() {
+    let fixture = fixture(mcp_project(), json!({}));
+    let dtos =
+        [json!({"name": "alpha", "scope": "user", "command": "node", "args": ["a.js"], "env": []})];
+    let result = fixture
+        .admin
+        .mcp_list(&target("k"), Some(&dtos), true)
+        .await
+        .unwrap();
+    // Node `omitMcpServers(configured, untrustedProjectMcpServers)` drops by name.
+    assert!(fixture.transport.started().is_empty());
+    let alpha = &result["statuses"]["alpha"];
+    assert_eq!(alpha["status"], "untrusted");
+    // Node `withReviews` skips user-sourced configs, so no trust prompt is attached.
+    assert!(alpha.get("workspaceTrust").is_none());
+}
+
+#[tokio::test]
+async fn a_declaration_without_a_display_fails_the_list_and_keeps_the_banner() {
+    let project = json!({"mcp": {"servers": {
+        "alpha": {"command": "node", "args": ["a.js"]},
+        "web": {"type": "http", "url": "not a url"},
+    }}});
+    let fixture = fixture(
+        project,
+        json!({"mcp": {"servers": {"mine": {"command": "user-tool"}}}}),
+    );
+    let error = fixture
+        .admin
+        .mcp_list(&target("k"), None, true)
+        .await
+        .unwrap_err();
+    assert_eq!(error, "Invalid URL");
+    assert!(fixture.transport.started().is_empty());
+    // Node's admission refresh rejects and publishes nothing: `None` leaves the banner as it is.
+    assert_eq!(fixture.admin.admission(&target("k")).await.mcp, None);
+}
+
+#[tokio::test]
+async fn a_revoke_with_a_stale_digest_keeps_the_grant() {
+    let fixture = fixture(mcp_project(), json!({}));
+    let statuses = list(&fixture, "k", false).await;
+    let digest = statuses["alpha"]["workspaceTrust"]["declarationDigest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let granted = fixture
+        .admin
+        .mcp_trust(&target("k"), "alpha", &digest, true)
+        .await;
+    assert_eq!(granted, json!({"accepted": true}));
+    let stale = fixture
+        .admin
+        .mcp_trust(&target("k"), "alpha", &"0".repeat(64), false)
+        .await;
+    assert_eq!(
+        stale,
+        json!({"accepted": false, "reasonCode": "workspace_mcp_declaration_changed"})
+    );
+    let statuses = list(&fixture, "k", false).await;
+    assert_eq!(statuses["alpha"]["workspaceTrust"]["trusted"], true);
+}

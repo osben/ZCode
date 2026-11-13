@@ -106,7 +106,7 @@ enum Field {
 }
 
 /// Node `displayConfig`; `config` is a validated declaration. A URL that does not parse has no display (Node
-/// throws there, which empties the whole review).
+/// throws there, which fails the whole review: [`super::mcp_trust::Undisplayable`]).
 pub(crate) fn display(config: &Map<String, Value>, working_directory: &str) -> Option<String> {
     let text = |key: &str| config.get(key).and_then(Value::as_str);
     if text("type") == Some("stdio") {

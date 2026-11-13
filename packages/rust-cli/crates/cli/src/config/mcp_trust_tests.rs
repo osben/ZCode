@@ -62,7 +62,7 @@ fn run(case: &Case, store: &McpTrustLoad) -> (Result<Discovery, Unreadable>, Vec
         fallback: &case.fallback,
     };
     let discovery = discover(&case.target, &inputs);
-    let reviews = reviews(&case.target, discovery.as_ref().map_err(|e| *e), store);
+    let reviews = reviews(&case.target, discovery.as_ref().map_err(|e| *e), store).unwrap();
     (discovery, reviews)
 }
 
@@ -160,7 +160,7 @@ fn a_disabled_declaration_is_never_admitted_or_pending() {
         granted_at: "2026-11-13T00:00:00.000Z".into(),
     }]);
     assert!(admitted_names(&project.target, &discovery, &load).is_empty());
-    let reviews = reviews(&project.target, Ok(&discovery), &load);
+    let reviews = reviews(&project.target, Ok(&discovery), &load).unwrap();
     let banner = admission(&project.target, &reviews);
     // alpha, delta, eps, gamma, zeta are enabled and untrusted; beta is disabled.
     assert_eq!(banner["pendingCount"], json!(5));

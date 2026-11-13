@@ -6,7 +6,7 @@
 //! the stores are shared with Node. The settings lane is separate from the kernel's session MCP (Node's
 //! `protocol-settings` lease): connecting there never changes what a running session has.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -166,16 +166,22 @@ impl AppWorkspace {
     }
 
     /// The servers the settings lane may connect, and the status of each refused one (Node's guarded port).
+    /// `untrusted` are the workspace declarations without a grant: Node omits them by name
+    /// (`omitMcpServers`), so a Host DTO that gives such a name another source cannot connect it.
     fn admit(
         &self,
         read: &Read,
         configured: &[(String, Map<String, Value>)],
+        untrusted: &BTreeSet<&str>,
     ) -> (Vec<McpServer>, BTreeMap<String, Value>) {
         let mut admitted = Vec::new();
         let mut blocked = BTreeMap::new();
         for (name, config) in configured {
             let disabled = config.get("enabled") == Some(&Value::Bool(false));
-            if disabled || !read.inspection.allows(name, config) {
+            if disabled
+                || untrusted.contains(name.as_str())
+                || !read.inspection.allows(name, config)
+            {
                 let status = if disabled { "disabled" } else { "untrusted" };
                 blocked.insert(name.clone(), self.idle(status, transport(config)));
                 continue;
@@ -310,14 +316,18 @@ impl WorkspaceAdmin for AppWorkspace {
     ) -> Result<Value, String> {
         let read = self.read(target).await;
         let configured = Self::configured(&read, servers);
-        let reviews = read.inspection.reviews();
-        let untrusted: Vec<&str> = reviews
+        // Node's `inspect()` throws from `displayConfig` before anything connects.
+        let reviews = read
+            .inspection
+            .reviews()
+            .map_err(|_| "Invalid URL".to_owned())?;
+        let untrusted: BTreeSet<&str> = reviews
             .iter()
             .filter(|review| !review.trusted)
             .map(|review| review.name.as_str())
             .collect();
         if connect {
-            let admitted = self.admit(&read, &configured);
+            let admitted = self.admit(&read, &configured, &untrusted);
             self.connect(&target.key, read.workspace.clone(), admitted)
                 .await;
         }
@@ -339,7 +349,7 @@ impl WorkspaceAdmin for AppWorkspace {
                 blocked.clone()
             } else if config.get("enabled") == Some(&Value::Bool(false)) {
                 self.idle("disabled", kind)
-            } else if untrusted.contains(&name.as_str()) {
+            } else if untrusted.contains(name.as_str()) {
                 self.idle("untrusted", kind)
             } else {
                 self.idle("disconnected", kind)
@@ -438,7 +448,13 @@ impl WorkspaceAdmin for AppWorkspace {
 
     async fn admission(&self, target: &WorkspaceTarget) -> Admission {
         let read = self.read(target).await;
-        let mcp = mcp_trust::admission(&read.inspection.target, &read.inspection.reviews());
+        // A declaration without a display leaves the MCP banner as it is (Node's refresh rejects and publishes
+        // nothing).
+        let mcp = read
+            .inspection
+            .reviews()
+            .ok()
+            .map(|reviews| mcp_trust::admission(&read.inspection.target, &reviews));
         let trust = &read.inspection.target;
         let context = TrustContext {
             files: self.files.as_ref(),
@@ -457,10 +473,7 @@ impl WorkspaceAdmin for AppWorkspace {
                 "workspaceIdentity": pending.identity,
             })
         });
-        Admission {
-            mcp: Some(mcp),
-            hook,
-        }
+        Admission { mcp, hook }
     }
 }
 
