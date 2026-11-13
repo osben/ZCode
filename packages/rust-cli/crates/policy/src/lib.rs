@@ -304,6 +304,16 @@ impl ScopedGate for PolicyGate {
         if let Some(mcp) = plan_mcp {
             result = chain::plan_mcp(name, mcp, base_bypass, result);
         }
+        // Node `checkPermission` denies every call while the base mode is auto (`mode.auto.unimplemented`), before the
+        // plan gate and the project ask rules. An ask left over an auto base is that denial, not a prompt to the user.
+        if node_plan
+            && context.base_mode == PermissionMode::Auto
+            && matches!(result, chain::Inner::Ask { .. })
+        {
+            result = chain::Inner::Deny {
+                message: texts::AUTO_UNIMPLEMENTED.to_owned(),
+            };
+        }
         let call = Call {
             tool: name,
             input,

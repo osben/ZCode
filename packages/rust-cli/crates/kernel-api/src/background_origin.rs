@@ -87,7 +87,8 @@ pub fn origin_meta(text: &str) -> Option<Value> {
 
 /// Node `subagent-stall-reminder.ts`'s `originMeta`, read back from the reminder block. The title and the stall
 /// fields come from the block's own tags, which the formatter wrote from the same numbers. Node's `executionId`
-/// is not in the text, so it is not here (Rust has no execution id).
+/// is not in the text: it travels as `UserMessage::stall_execution` (set by the store and the projection), and
+/// `origin_meta_with_execution` writes it as `subagentStall.executionId`.
 fn stall_origin_meta(text: &str) -> Option<Value> {
     let block = between(
         text,

@@ -2,7 +2,7 @@
 //!
 //! REPL 路径：command 与 http 的结果按退出码与 JSON 输出解释。“外部”路径：每个 hook 的结果单独给出。
 
-use rust_cli_base::js::string::utf16_prefix;
+use rust_cli_base::js::string::{trim, utf16_prefix};
 use rust_cli_base::proto::http;
 use serde_json::Value;
 
@@ -39,8 +39,8 @@ fn with_stderr(message: &str, exit: i32, stderr: &str) -> String {
 /// Node `trimForPreview`: the trimmed text cut at 4000 UTF-16 units with `...`, or none when it is blank.
 fn trim_for_preview(text: &str) -> Option<String> {
     const MAX_UNITS: usize = 4000;
-    // JS `String.prototype.trim` also drops U+FEFF.
-    let trimmed = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    // Node's `value.trim()` is JS trim: it drops U+FEFF and keeps U+0085, the opposite of `str::trim`.
+    let trimmed = trim(text);
     if trimmed.is_empty() {
         return None;
     }

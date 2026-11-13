@@ -245,6 +245,27 @@ async fn plan_over_another_base_still_asks() {
     }
 }
 
+/// Node `checkPermission` denies every call while the base mode is auto (`mode.auto.unimplemented`), before the plan
+/// gate. So an ask that is left over an auto base is that denial and is never put to the user (review of #424,
+/// finding B). Other bases keep the asks above.
+#[tokio::test]
+async fn plan_over_an_auto_base_denies_what_would_ask() {
+    let auto_text = "Auto mode is reserved but not implemented yet";
+    assert_eq!(
+        plan_over(&node_plan(None), &mcp(false, false), PermissionMode::Auto).await,
+        deny(auto_text)
+    );
+    for (tool, input) in web_tools() {
+        let gate = PolicyGate::default().with_node_plan_mode(true);
+        assert_eq!(
+            read_only_over(&gate, &tool, &input, PermissionMode::Auto).await,
+            deny(auto_text),
+            "{}",
+            tool.0
+        );
+    }
+}
+
 /// A built-in read-only tool: its own check gives `own`, its subject comes from the test helper.
 struct ReadOnly(&'static str, PermissionDecision);
 

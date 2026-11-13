@@ -40,6 +40,24 @@ fn exit_codes() {
     );
 }
 
+/// Node `trimForPreview` is JS `trim()`: U+0085 (NEL) is kept and U+FEFF is removed. Rust's `char::is_whitespace`
+/// does the opposite on both (review of #424, finding A).
+#[test]
+fn permission_request_exit_two_preview_follows_js_trim() {
+    let nel = repl(
+        command("", "\u{85}not allowed\u{85}", 2),
+        "c",
+        "PermissionRequest",
+    );
+    assert_eq!(nel.blocking.unwrap().error, "\u{85}not allowed\u{85}");
+    let bom = repl(
+        command("", "\u{feff} not allowed \u{feff}", 2),
+        "c",
+        "PermissionRequest",
+    );
+    assert_eq!(bom.blocking.unwrap().error, "not allowed");
+}
+
 #[test]
 fn json_and_exit_two() {
     // JSON 合法且退出码 2、JSON 没给阻塞：用 stderr 阻塞。
