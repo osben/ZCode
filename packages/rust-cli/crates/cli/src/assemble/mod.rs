@@ -39,6 +39,7 @@ use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
+use rust_cli_kernel_api::topic_resource::TopicResources;
 use rust_cli_net::{Egress, RequestObserver};
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::StoragePaths;
@@ -163,6 +164,8 @@ pub(crate) struct Controller {
     /// Fork: Node's "ZCode Desktop Context" system section ([`ContextConfig::desktop`]); only the app-server started
     /// with `--surface desktop` (the Host's rollout decision) turns it on.
     pub(crate) desktop_context: bool,
+    /// Fork: the Host's topic resources (`ReadTopicResource`, specs/fork-rust-topic-resource.md); only the app-server.
+    pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -183,6 +186,7 @@ impl Controller {
             token_budget: true,
             node_desktop: false,
             desktop_context: false,
+            topic_resources: None,
             cli,
         }
     }
@@ -208,6 +212,7 @@ impl Controller {
             token_budget: true,
             node_desktop: false,
             desktop_context: false,
+            topic_resources: None,
             cli,
         }
     }
@@ -218,6 +223,7 @@ impl Controller {
         headers: Arc<dyn HeaderSource>,
         credential_cipher: Arc<dyn CredentialCipher>,
         observer: Arc<dyn RequestObserver>,
+        topic_resources: Arc<dyn TopicResources>,
         desktop_context: bool,
     ) -> Self {
         Self {
@@ -234,6 +240,7 @@ impl Controller {
             token_budget: false,
             node_desktop: true,
             desktop_context,
+            topic_resources: Some(topic_resources),
             cli: CliInputs::default(),
         }
     }
@@ -654,6 +661,7 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    extensions.topic_resources = spec.topic_resources.clone();
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened

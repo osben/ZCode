@@ -17,7 +17,8 @@ use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
-    Context, Defaults, HostCredentialCipher, HostHeaders, NetworkCapture, Startup,
+    Context, Defaults, HostCredentialCipher, HostHeaders, HostTopicResources, NetworkCapture,
+    Startup,
 };
 
 use crate::assemble::{self, Controller};
@@ -137,6 +138,7 @@ async fn serve(
         // Fork: every observed request of this process reaches the capture (MCP is built unobserved), from the moment
         // the egress exists.
         Arc::new(CaptureObserver(capture.clone())),
+        Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;

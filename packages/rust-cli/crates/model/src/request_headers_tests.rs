@@ -130,6 +130,7 @@ fn endpoint(protocol: WireProtocol, base_url: &str, headers: &[(&str, &str)]) ->
             ..ModelCapabilities::default()
         },
         renewable: false,
+        compress_body_over: None,
     }
 }
 
