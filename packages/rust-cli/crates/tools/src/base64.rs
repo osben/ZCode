@@ -30,13 +30,28 @@ pub(crate) fn encode(bytes: &[u8]) -> String {
 /// Fork: decodes standard base64 the way Node's `Buffer.from(text, "base64")` does for text that already matched
 /// `[A-Za-z0-9+/]*={0,2}`: padding ends the data and leftover bits are dropped. The caller compares
 /// `encode(decode(text))` with `text` to reject non-canonical input (specs/fork-rust-topic-resource.md).
+const INVALID: u8 = 0xff;
+/// Byte → sextet, [`INVALID`] outside the alphabet (a 20 MiB payload is about 27M characters).
+const DECODE: [u8; 256] = {
+    let mut table = [INVALID; 256];
+    let mut index = 0;
+    while index < ALPHABET.len() {
+        table[ALPHABET[index] as usize] = index as u8;
+        index += 1;
+    }
+    table
+};
+
 pub(crate) fn decode(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() / GROUP_CHARS * GROUP_BYTES);
     let mut bits: u32 = 0;
     let mut count: u32 = 0;
     for byte in text.trim_end_matches('=').bytes() {
-        let value = ALPHABET.iter().position(|&c| c == byte)?;
-        bits = (bits << 6) | value as u32;
+        let value = DECODE[usize::from(byte)];
+        if value == INVALID {
+            return None;
+        }
+        bits = (bits << 6) | u32::from(value);
         count += 6;
         if count >= 8 {
             count -= 8;

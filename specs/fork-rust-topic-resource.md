@@ -120,8 +120,11 @@ sequenceDiagram
 - **Request id.** `requestId` is the agent context's fresh id (`topic-resource-<prefix>-<n>`), not a UUID; the Host
   treats it as an opaque key.
 - **Intent selection.** It uses zcode-rs's hydrated intent (`node-records` `of_message`). A stored
-  `conversationInputIntent` that does not have Node's shape falls back to the legacy `inputIntent`; Node's tool stops
-  at it instead.
+  `conversationInputIntent` that does not have Node's shape falls back to the legacy `inputIntent`, or is dropped when
+  there is none, so the search goes on to older inputs; Node's tool stops at it instead. Both builds write
+  Node-shaped intents, so only a hand-edited or foreign record can reach this.
+- **Subagents.** The tool reads `context.session`, like Node's `context.sessionId`: a subagent's child session has no
+  admitted input, so the read fails with the authorization error.
 
 ## Not ported (recorded in the parity spec)
 

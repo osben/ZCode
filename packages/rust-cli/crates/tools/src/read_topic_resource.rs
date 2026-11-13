@@ -273,6 +273,15 @@ fn data_url_payload<'a>(content: &'a str, mime: &str) -> Option<&'a str> {
 }
 
 fn parse_input(input: Value) -> Result<Input, ToolError> {
+    // zod `.optional()` rejects an explicit null, which serde's `Option` would accept.
+    if ["inputId", "index"]
+        .iter()
+        .any(|key| input.get(*key).is_some_and(Value::is_null))
+    {
+        return Err(failed(
+            "Invalid input: inputId and index must not be null".to_owned(),
+        ));
+    }
     let input: Input =
         serde_json::from_value(input).map_err(|error| failed(format!("Invalid input: {error}")))?;
     let bounded = |id: &str| (1..=MAX_ID_CHARS).contains(&id.chars().count());

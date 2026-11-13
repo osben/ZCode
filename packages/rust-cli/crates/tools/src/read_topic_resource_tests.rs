@@ -491,6 +491,8 @@ async fn input_outside_the_contract_is_rejected() {
         json!({"messageId": "om", "inputId": ""}),
         json!({"messageId": "om", "index": -1}),
         json!({"messageId": "om", "extra": true}),
+        json!({"messageId": "om", "inputId": null}),
+        json!({"messageId": "om", "index": null}),
     ] {
         assert!(error_text(fixture.call(input).await).starts_with("Invalid input"));
     }
