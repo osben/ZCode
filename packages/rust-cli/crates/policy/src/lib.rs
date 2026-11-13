@@ -232,6 +232,21 @@ impl PolicyGate {
     }
 }
 
+/// Fork: under the Node desktop semantics WebSearch needs no approval (Node capability `readOnly`, `needsApproval: false`:
+/// `mode.build.readOnly`, `mode.plan.readOnly`). The tool's own ask becomes an allow, so the inner chain's whole-tool deny
+/// and ask rules still come first, as in Node.
+fn node_needs_no_approval(node: bool, name: &str, own: PermissionDecision) -> PermissionDecision {
+    if node
+        && name == rust_cli_kernel_api::tool_names::WEB_SEARCH
+        && matches!(own, PermissionDecision::Ask { .. })
+    {
+        return PermissionDecision::Allow {
+            updated_input: None,
+        };
+    }
+    own
+}
+
 #[async_trait]
 impl ScopedGate for PolicyGate {
     /// 与 [`PermissionGate::decide`] 相同，另把 `allowed` 当作这一次判决的 allow 规则（skill 的
@@ -251,9 +266,15 @@ impl ScopedGate for PolicyGate {
         };
         let paths = self.path_context(&base, context).await;
         let root = context.workspace.root.as_str();
-        let own = tool.check_permissions(input, context).await;
-        let subject = tool.permission_subject(input);
         let name = tool.name();
+        // Node denies every call in auto mode and over an auto base (`mode.auto.unimplemented`) before this allow.
+        let auto = context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
+        let own = node_needs_no_approval(
+            self.options.node_plan && !auto,
+            name,
+            tool.check_permissions(input, context).await,
+        );
+        let subject = tool.permission_subject(input);
         let guarded = guarded_command(subject.as_ref());
         let evaluate_with = |mode: PermissionMode, full_access: bool| {
             let inputs = Inputs {

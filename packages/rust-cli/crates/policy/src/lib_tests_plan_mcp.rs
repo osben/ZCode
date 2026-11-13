@@ -369,11 +369,13 @@ async fn plan_over_a_bypass_base_allows_built_in_read_only_tools() {
 
 /// Node `checkPlanMode` passes a read-only, non-destructive tool over any base, and `checkBuildMode` then asks when it
 /// needs approval (`mode.build.sideEffect`): over a default or accept-edits base the plan gate no longer denies it.
-/// WebSearch is allowed in Node (`needsApproval: false`) but asks in Rust in any mode (known gap, see the spec).
+/// WebSearch needs no approval in Node (see `web_search_needs_no_approval_under_node_semantics`).
 #[tokio::test]
 async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
+    let [web_fetch, _] = web_tools();
+    let web_fetch = || [(ReadOnly(web_fetch.0.0, web_fetch.0.1.clone()), web_fetch.1.clone())];
     for base in [PermissionMode::Default, PermissionMode::AcceptEdits] {
-        for (tool, input) in web_tools() {
+        for (tool, input) in web_fetch() {
             let gate = PolicyGate::default().with_node_plan_mode(true);
             let (once, independent, _) = asked(&read_only_over(&gate, &tool, &input, base).await);
             assert!(!once && !independent, "{} over {base:?}", tool.0);
@@ -389,7 +391,7 @@ async fn plan_over_a_default_base_asks_for_built_in_read_only_tools() {
         }
     }
     // A view whose base is plan itself (a subagent, the fallback view) keeps the plan gate's denial.
-    for (tool, input) in web_tools() {
+    for (tool, input) in web_fetch() {
         let gate = PolicyGate::default().with_node_plan_mode(true);
         assert_eq!(
             read_only_over(&gate, &tool, &input, PermissionMode::Plan).await,
@@ -452,4 +454,69 @@ async fn plan_over_a_bypass_base_keeps_read_only_shell_and_file_tools() {
             );
         }
     }
+}
+
+fn web_search() -> (ReadOnly, Value) {
+    let [_, search] = web_tools();
+    search
+}
+
+/// Node's WebSearch capability is read-only with `needsApproval: false`: `checkBuildMode` and the plan gate allow it in
+/// every mode and over every base (`mode.build.readOnly`, `mode.plan.readOnly`); a deny rule denies and an ask rule asks
+/// with the normal options first.
+#[tokio::test]
+async fn web_search_needs_no_approval_under_node_semantics() {
+    let (tool, input) = web_search();
+    let modes = [
+        PermissionMode::Default,
+        PermissionMode::AcceptEdits,
+        PermissionMode::BypassPermissions,
+        PermissionMode::Guarded,
+    ];
+    let gate = PolicyGate::default().with_node_plan_mode(true);
+    for mode in modes {
+        assert_eq!(gate.decide(&tool, &input, &context(mode)).await, allow(), "{mode:?}");
+    }
+    for base in modes.into_iter().chain([PermissionMode::Plan]) {
+        assert_eq!(
+            read_only_over(&gate, &tool, &input, base).await,
+            allow(),
+            "plan over {base:?}"
+        );
+    }
+    let deny_rule =
+        PolicyGate::new(rules(&[(RuleBehavior::Deny, "WebSearch")])).with_node_plan_mode(true);
+    let ask_rule =
+        PolicyGate::new(rules(&[(RuleBehavior::Ask, "WebSearch")])).with_node_plan_mode(true);
+    for mode in [PermissionMode::Default, PermissionMode::AcceptEdits] {
+        assert_eq!(
+            deny_rule.decide(&tool, &input, &context(mode)).await,
+            deny(texts::tool_denied("WebSearch")),
+            "{mode:?}"
+        );
+        let (once, independent, _) = asked(&ask_rule.decide(&tool, &input, &context(mode)).await);
+        assert!(!once && !independent, "{mode:?}");
+    }
+    for base in [PermissionMode::Default, PermissionMode::Plan] {
+        assert_eq!(
+            read_only_over(&deny_rule, &tool, &input, base).await,
+            deny(texts::tool_denied("WebSearch")),
+            "plan over {base:?}"
+        );
+    }
+    let (once, independent, _) = asked(
+        &read_only_over(&ask_rule, &tool, &input, PermissionMode::Default).await,
+    );
+    assert!(!once && !independent);
+    // Over an auto base Node denies first (`mode.auto.unimplemented`); the test above keeps that denial.
+}
+
+/// The standalone CLI keeps the tool's own ask (docs/specs/rust-cli tools-more §5).
+#[tokio::test]
+async fn web_search_still_asks_without_node_semantics() {
+    let (tool, input) = web_search();
+    let decision = PolicyGate::default()
+        .decide(&tool, &input, &context(PermissionMode::Default))
+        .await;
+    assert!(matches!(decision, PermissionDecision::Ask { .. }), "{decision:?}");
 }
