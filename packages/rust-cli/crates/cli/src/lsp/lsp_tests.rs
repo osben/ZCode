@@ -11,8 +11,8 @@ use rust_cli_kernel_api::testing::MemoryEnvironment;
 use serde_json::json;
 
 use super::installed::candidates;
-use super::runtime::pool::tests::{FakeProcess, fake_launcher};
 use super::preferences::{apply, parse, text};
+use super::runtime::pool::tests::{FakeProcess, fake_launcher};
 use super::*;
 
 /// The Node fork Vitest `lsp-preferences-sidecar.test.ts` asserts Node writes the same bytes for the same patches.
@@ -482,11 +482,20 @@ async fn the_host_runs_a_server_for_a_session_and_stops_it_when_disabled() {
     };
     // Nothing mutated: no runtime is even created.
     assert_eq!(fixture.host.edit_diagnostics(&session).await, None);
-    fixture.host.prewarm(&session, &root, "/Users/dev/a/x.ts").await;
+    fixture
+        .host
+        .prewarm(&session, &root, "/Users/dev/a/x.ts")
+        .await;
     let mut process = fixture.launched.recv().await.unwrap();
     assert_eq!(process.launch.command, "typescript-language-server");
-    assert_eq!(state_of(&fixture.host, &here).await, ("starting", "unknown"));
-    assert_eq!(state_of(&fixture.host, &elsewhere).await, ("stopped", "unknown"));
+    assert_eq!(
+        state_of(&fixture.host, &here).await,
+        ("starting", "unknown")
+    );
+    assert_eq!(
+        state_of(&fixture.host, &elsewhere).await,
+        ("stopped", "unknown")
+    );
     process.initialize(json!({"diagnosticProvider": {}})).await;
     for _ in 0..500 {
         if state_of(&fixture.host, &here).await.0 == "ready" {

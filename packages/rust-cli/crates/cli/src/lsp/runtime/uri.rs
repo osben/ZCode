@@ -94,7 +94,10 @@ pub(crate) fn document_uri(path: &str, windows: bool) -> String {
 /// Node `fileURLToPath`, or `None` where it throws: not a `file:` URI, a host on POSIX, an encoded separator, or an
 /// escape that does not decode to UTF-8.
 pub(crate) fn path_of(uri: &str, windows: bool) -> Option<String> {
-    let rest = uri.get(..7)?.eq_ignore_ascii_case("file://").then(|| &uri[7..])?;
+    let rest = uri
+        .get(..7)?
+        .eq_ignore_ascii_case("file://")
+        .then(|| &uri[7..])?;
     let rest = rest.split(['?', '#']).next().unwrap_or(rest);
     let (host, path) = match rest.find('/') {
         Some(at) => (&rest[..at], &rest[at..]),
@@ -144,10 +147,8 @@ fn decode(text: &str) -> Option<String> {
 /// Node `normalizeFileUri`: decode to a path and encode again; a URI that does not decode keeps its spelling. A
 /// Windows drive letter is lowercased either way.
 pub(crate) fn normalize(uri: &str, windows: bool) -> String {
-    let canonical = path_of(uri, windows).map_or_else(
-        || uri.to_owned(),
-        |path| document_uri(&path, windows),
-    );
+    let canonical =
+        path_of(uri, windows).map_or_else(|| uri.to_owned(), |path| document_uri(&path, windows));
     lowercase_drive(&canonical)
 }
 

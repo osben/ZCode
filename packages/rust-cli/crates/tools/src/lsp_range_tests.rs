@@ -38,6 +38,9 @@ fn hunks_union_their_new_sides() {
         json!({"newStart": 10, "newLines": 0}),
     ];
     assert_eq!(from_hunks(&hunks), Some(range(4, 10)));
-    assert_eq!(from_hunks(&[json!({"newStart": 0, "newLines": 0})]), Some(range(1, 1)));
+    assert_eq!(
+        from_hunks(&[json!({"newStart": 0, "newLines": 0})]),
+        Some(range(1, 1))
+    );
     assert_eq!(from_hunks(&[]), None);
 }

@@ -100,7 +100,12 @@ pub struct FileMutation {
 #[async_trait]
 pub trait CodeIntelligence: Send + Sync {
     /// Starts the server for the file's type in the background (acquire only, never waits for the start).
-    async fn prewarm(&self, session: &crate::ids::SessionId, workspace: &crate::env::WorkspaceRef, path: &str);
+    async fn prewarm(
+        &self,
+        session: &crate::ids::SessionId,
+        workspace: &crate::env::WorkspaceRef,
+        path: &str,
+    );
     /// Records the mutation before it returns (so the next request sees it), then syncs it in the background.
     async fn file_mutated(
         &self,

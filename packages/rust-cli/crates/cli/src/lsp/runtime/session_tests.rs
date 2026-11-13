@@ -86,8 +86,10 @@ fn at(line: u32, message: &str) -> Value {
 
 async fn publish(process: &mut FakeProcess, path: &str, diagnostics: Vec<Value>) {
     process
-        .send(json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-            "params": {"uri": format!("file://{path}"), "diagnostics": diagnostics}}))
+        .send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": format!("file://{path}"), "diagnostics": diagnostics}}),
+        )
         .await;
 }
 
@@ -102,7 +104,12 @@ async fn only_new_issues_are_reported_and_a_shifted_one_is_not_new() {
         .session
         .file_mutated(changed("/w/a.ts", "a\nb\nc\n", (2, 2)));
     process.expect("textDocument/didOpen").await;
-    publish(&mut process, "/w/a.ts", vec![at(0, "outside"), at(1, "old")]).await;
+    publish(
+        &mut process,
+        "/w/a.ts",
+        vec![at(0, "outside"), at(1, "old")],
+    )
+    .await;
     assert_eq!(
         harness.session.edit_diagnostics().await.as_deref(),
         Some("Found 1 new diagnostic issues in 1 files\na.ts:2:1 error old")
@@ -167,8 +174,10 @@ async fn two_quick_changes_stay_pending_until_a_versioned_result() {
         Some("Diagnostics pending for 1 files")
     );
     process
-        .send(json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-            "params": {"uri": "file:///w/a.ts", "version": 2, "diagnostics": [at(0, "v2")]}}))
+        .send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": "file:///w/a.ts", "version": 2, "diagnostics": [at(0, "v2")]}}),
+        )
         .await;
     // Past the 2 s bound the request does not wait: let the publish arrive first.
     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -222,8 +231,11 @@ async fn a_cancelled_request_leaves_the_pending_edits() {
         .session
         .file_mutated(changed("/w/a.ts", "a\n", (1, 1)));
     process.expect("textDocument/didOpen").await;
-    let cancelled =
-        tokio::time::timeout(Duration::from_millis(500), harness.session.edit_diagnostics()).await;
+    let cancelled = tokio::time::timeout(
+        Duration::from_millis(500),
+        harness.session.edit_diagnostics(),
+    )
+    .await;
     assert!(cancelled.is_err());
     assert!(harness.session.has_pending());
     publish(&mut process, "/w/a.ts", vec![at(0, "late")]).await;

@@ -76,16 +76,25 @@ fn raw(message: &str) -> Value {
 fn a_versionless_publish_counts_only_with_one_change_in_flight() {
     let mut freshness = Freshness::default();
     freshness.record_change(1);
-    assert_eq!(freshness.record_publish(None, vec![item("a")]), Outcome::Fresh);
+    assert_eq!(
+        freshness.record_publish(None, vec![item("a")]),
+        Outcome::Fresh
+    );
     assert_eq!(freshness.current_fresh(), Some(&vec![item("a")]));
     // Two quick changes, one versionless publish: it may answer either.
     freshness.record_change(2);
     freshness.record_change(3);
-    assert_eq!(freshness.record_publish(None, vec![item("b")]), Outcome::Ambiguous);
+    assert_eq!(
+        freshness.record_publish(None, vec![item("b")]),
+        Outcome::Ambiguous
+    );
     assert_eq!(freshness.current_fresh(), None);
     assert_eq!(freshness.last_fresh(), Some(&vec![item("a")]));
     // Nothing in flight any more: a further publish is unattributed.
-    assert_eq!(freshness.record_publish(None, vec![item("c")]), Outcome::Unattributed);
+    assert_eq!(
+        freshness.record_publish(None, vec![item("c")]),
+        Outcome::Unattributed
+    );
 }
 
 #[test]
@@ -93,10 +102,16 @@ fn versioned_publishes_and_pulls_count_only_for_the_current_version() {
     let mut freshness = Freshness::default();
     freshness.record_change(1);
     freshness.record_change(2);
-    assert_eq!(freshness.record_publish(Some(1.0), vec![item("old")]), Outcome::Stale);
+    assert_eq!(
+        freshness.record_publish(Some(1.0), vec![item("old")]),
+        Outcome::Stale
+    );
     assert_eq!(freshness.current_fresh(), None);
     assert_eq!(freshness.record_pull(1, vec![item("old")]), Outcome::Stale);
-    assert_eq!(freshness.record_pull(2, vec![item("pulled")]), Outcome::Fresh);
+    assert_eq!(
+        freshness.record_pull(2, vec![item("pulled")]),
+        Outcome::Fresh
+    );
     assert_eq!(freshness.current_fresh(), Some(&vec![item("pulled")]));
     freshness.record_change(3);
     assert_eq!(freshness.current_fresh(), None);
@@ -104,7 +119,11 @@ fn versioned_publishes_and_pulls_count_only_for_the_current_version() {
     assert_eq!(freshness.current_fresh(), Some(&vec![]));
 }
 
-async fn ready(pool: &Pool, process: &mut FakeProcess, capabilities: Value) -> Arc<ServerConnection> {
+async fn ready(
+    pool: &Pool,
+    process: &mut FakeProcess,
+    capabilities: Value,
+) -> Arc<ServerConnection> {
     let ts = Arc::new(test_server("ts"));
     process.initialize(capabilities).await;
     for _ in 0..200 {
@@ -156,8 +175,10 @@ async fn open_change_close_and_publish_freshness() {
     documents.ensure_open(&context, "/w/a.ts").await.unwrap();
     let mut wakeups = documents.wakeups();
     process
-        .send(json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-            "params": {"uri": "file:///w/a.ts", "diagnostics": [raw("first")]}}))
+        .send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": "file:///w/a.ts", "diagnostics": [raw("first")]}}),
+        )
         .await;
     wakeups.changed().await.unwrap();
     let fresh = documents.fresh("p/ts", &key, "file:///w/a.ts").unwrap();
@@ -165,7 +186,10 @@ async fn open_change_close_and_publish_freshness() {
 
     // A change keeps the last fresh result as the baseline and bumps the version.
     let outcome = documents
-        .apply_mutation(&context, &mutation("/w/a.ts", FileMutationKind::Changed, Some("let a = 2\n")))
+        .apply_mutation(
+            &context,
+            &mutation("/w/a.ts", FileMutationKind::Changed, Some("let a = 2\n")),
+        )
         .await
         .unwrap();
     assert!(outcome.synced);
@@ -178,29 +202,45 @@ async fn open_change_close_and_publish_freshness() {
     assert_eq!(documents.fresh("p/ts", &key, "file:///w/a.ts"), None);
     // The same text again: nothing to send.
     let same = documents
-        .apply_mutation(&context, &mutation("/w/a.ts", FileMutationKind::Changed, Some("let a = 2\n")))
+        .apply_mutation(
+            &context,
+            &mutation("/w/a.ts", FileMutationKind::Changed, Some("let a = 2\n")),
+        )
         .await
         .unwrap();
     assert!(!same.synced);
     // A stale versioned publish is ignored; the current version's is fresh.
     process
-        .send(json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-            "params": {"uri": "file:///w/a.ts", "version": 1, "diagnostics": [raw("stale")]}}))
+        .send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": "file:///w/a.ts", "version": 1, "diagnostics": [raw("stale")]}}),
+        )
         .await;
     process
-        .send(json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-            "params": {"uri": "file:///w/a.ts", "version": 2, "diagnostics": []}}))
+        .send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": "file:///w/a.ts", "version": 2, "diagnostics": []}}),
+        )
         .await;
     wakeups.changed().await.unwrap();
-    assert_eq!(documents.fresh("p/ts", &key, "file:///w/a.ts"), Some(vec![]));
+    assert_eq!(
+        documents.fresh("p/ts", &key, "file:///w/a.ts"),
+        Some(vec![])
+    );
 
     let deleted = documents
-        .apply_mutation(&context, &mutation("/w/a.ts", FileMutationKind::Deleted, None))
+        .apply_mutation(
+            &context,
+            &mutation("/w/a.ts", FileMutationKind::Deleted, None),
+        )
         .await
         .unwrap();
     assert!(deleted.synced);
     let close = process.expect("textDocument/didClose").await;
-    assert_eq!(close["params"], json!({"textDocument": {"uri": "file:///w/a.ts"}}));
+    assert_eq!(
+        close["params"],
+        json!({"textDocument": {"uri": "file:///w/a.ts"}})
+    );
     assert_eq!(documents.fresh("p/ts", &key, "file:///w/a.ts"), None);
 }
 
@@ -240,24 +280,38 @@ async fn a_pull_server_is_asked_after_each_sync_and_unchanged_is_ignored() {
     };
     let mut wakeups = documents.wakeups();
     let created = documents
-        .apply_mutation(&context, &mutation("/w/b.ts", FileMutationKind::Created, Some("x\n")))
+        .apply_mutation(
+            &context,
+            &mutation("/w/b.ts", FileMutationKind::Created, Some("x\n")),
+        )
         .await
         .unwrap();
     assert!(created.synced && created.baseline.is_none());
     let pull = process.expect("textDocument/diagnostic").await;
-    assert_eq!(pull["params"], json!({"textDocument": {"uri": "file:///w/b.ts"}}));
+    assert_eq!(
+        pull["params"],
+        json!({"textDocument": {"uri": "file:///w/b.ts"}})
+    );
     process
         .reply(&pull, json!({"kind": "full", "items": [raw("pulled")]}))
         .await;
     wakeups.changed().await.unwrap();
-    assert_eq!(documents.fresh("p/ts", &key, "file:///w/b.ts").unwrap()[0].message, "pulled");
+    assert_eq!(
+        documents.fresh("p/ts", &key, "file:///w/b.ts").unwrap()[0].message,
+        "pulled"
+    );
 
     documents
-        .apply_mutation(&context, &mutation("/w/b.ts", FileMutationKind::Changed, Some("y\n")))
+        .apply_mutation(
+            &context,
+            &mutation("/w/b.ts", FileMutationKind::Changed, Some("y\n")),
+        )
         .await
         .unwrap();
     let pull = process.expect("textDocument/diagnostic").await;
-    process.reply(&pull, json!({"kind": "unchanged", "resultId": "1"})).await;
+    process
+        .reply(&pull, json!({"kind": "unchanged", "resultId": "1"}))
+        .await;
     tokio::time::sleep(Duration::from_millis(10)).await;
     assert_eq!(documents.fresh("p/ts", &key, "file:///w/b.ts"), None);
 }
@@ -274,13 +328,22 @@ async fn watched_files_and_the_open_document_limit() {
         language_id: "typescript",
         disk: &disk,
     };
-    documents.notify_watched_file(&connection, &mutation("/w/c.ts", FileMutationKind::Deleted, None));
+    documents.notify_watched_file(
+        &connection,
+        &mutation("/w/c.ts", FileMutationKind::Deleted, None),
+    );
     let watched = process.expect("workspace/didChangeWatchedFiles").await;
-    assert_eq!(watched["params"], json!({"changes": [{"uri": "file:///w/c.ts", "type": 3}]}));
+    assert_eq!(
+        watched["params"],
+        json!({"changes": [{"uri": "file:///w/c.ts", "type": 3}]})
+    );
     for index in 0..=MAX_OPEN_DOCUMENTS {
         let path = format!("/w/f{index}.ts");
         documents
-            .apply_mutation(&context, &mutation(&path, FileMutationKind::Created, Some("x")))
+            .apply_mutation(
+                &context,
+                &mutation(&path, FileMutationKind::Created, Some("x")),
+            )
             .await
             .unwrap();
     }

@@ -14,11 +14,11 @@ use rust_cli_kernel_api::lsp::{FileMutation, FileMutationKind};
 use serde_json::{Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
+use super::MAX_OPEN_DOCUMENTS;
 use super::edits::{Diagnostic, normalize, split_lines};
 use super::pool::{ServerConnection, ServerKey};
 use super::server::PULL_DIAGNOSTICS;
 use super::uri::{document_uri, normalize as normalize_uri};
-use super::MAX_OPEN_DOCUMENTS;
 
 const INITIAL_VERSION: i64 = 1;
 
@@ -87,7 +87,11 @@ impl Freshness {
     }
 
     /// A publish: every publish resets the in-flight count.
-    pub(crate) fn record_publish(&mut self, version: Option<f64>, items: Vec<Diagnostic>) -> Outcome {
+    pub(crate) fn record_publish(
+        &mut self,
+        version: Option<f64>,
+        items: Vec<Diagnostic>,
+    ) -> Outcome {
         let in_flight = std::mem::take(&mut self.in_flight);
         if let Some(version) = version {
             // Versions are small integers; the comparison is Node's number comparison.
@@ -128,11 +132,15 @@ struct Store {
 
 impl Store {
     fn position(&self, uri: &str) -> Option<usize> {
-        self.documents.iter().position(|document| document.uri == uri)
+        self.documents
+            .iter()
+            .position(|document| document.uri == uri)
     }
 
     fn peek_mut(&mut self, uri: &str) -> Option<&mut Document> {
-        self.documents.iter_mut().find(|document| document.uri == uri)
+        self.documents
+            .iter_mut()
+            .find(|document| document.uri == uri)
     }
 
     /// Moves the document to the most recently used end.
@@ -206,7 +214,9 @@ impl Documents {
     }
 
     pub(crate) fn wake(&self) {
-        self.0.wake.send_modify(|count| *count = count.wrapping_add(1));
+        self.0
+            .wake
+            .send_modify(|count| *count = count.wrapping_add(1));
     }
 
     pub(crate) fn uri(&self, path: &str) -> String {
@@ -214,7 +224,12 @@ impl Documents {
     }
 
     /// The current fresh diagnostics of an open document, for any connection of that server and key.
-    pub(crate) fn fresh(&self, server_id: &str, key: &ServerKey, uri: &str) -> Option<Vec<Diagnostic>> {
+    pub(crate) fn fresh(
+        &self,
+        server_id: &str,
+        key: &ServerKey,
+        uri: &str,
+    ) -> Option<Vec<Diagnostic>> {
         let stores = self.0.stores.lock_unpoisoned();
         let store = stores.get(&(server_id.to_owned(), key.clone()))?;
         let at = store.position(uri)?;
@@ -273,11 +288,17 @@ impl Documents {
                 },
             );
         }
-        stores.get_mut(&key).unwrap_or_else(|| unreachable!("inserted above"))
+        stores
+            .get_mut(&key)
+            .unwrap_or_else(|| unreachable!("inserted above"))
     }
 
     /// Node `ensureOpen`: opens the file from disk, or re-reads an open one whose mtime or size drifted.
-    pub(crate) async fn ensure_open(&self, context: &SyncContext<'_>, path: &str) -> Result<(), String> {
+    pub(crate) async fn ensure_open(
+        &self,
+        context: &SyncContext<'_>,
+        path: &str,
+    ) -> Result<(), String> {
         let uri = self.uri(path);
         let _lock = self.lock(&store_key(context), &uri).await;
         let open = {
@@ -324,9 +345,10 @@ impl Documents {
             let store = self.store_for(&mut stores, context);
             let removed = store.position(&uri).map(|at| store.documents.remove(at));
             if removed.is_some() {
-                context
-                    .connection
-                    .notify("textDocument/didClose", Some(json!({"textDocument": {"uri": uri}})));
+                context.connection.notify(
+                    "textDocument/didClose",
+                    Some(json!({"textDocument": {"uri": uri}})),
+                );
             }
             return Ok(MutationOutcome {
                 baseline: None,
@@ -337,14 +359,10 @@ impl Documents {
             Some(content) => content.clone(),
             None => context.disk.read(&mutation.path).await?,
         };
-        let snapshot = context
-            .disk
-            .stat(&mutation.path)
-            .await
-            .unwrap_or(Snapshot {
-                size: text.len() as u64,
-                mtime_ms: None,
-            });
+        let snapshot = context.disk.stat(&mutation.path).await.unwrap_or(Snapshot {
+            size: text.len() as u64,
+            mtime_ms: None,
+        });
         let mut stores = self.0.stores.lock_unpoisoned();
         let store = self.store_for(&mut stores, context);
         if let Some(document) = store.touch(&uri) {
@@ -370,7 +388,11 @@ impl Documents {
     }
 
     /// Node `notifyWatchedFile`: type 1 created, 2 changed, 3 deleted.
-    pub(crate) fn notify_watched_file(&self, connection: &ServerConnection, mutation: &FileMutation) {
+    pub(crate) fn notify_watched_file(
+        &self,
+        connection: &ServerConnection,
+        mutation: &FileMutation,
+    ) {
         let kind = match mutation.kind {
             FileMutationKind::Created => 1,
             FileMutationKind::Changed => 2,
@@ -414,8 +436,16 @@ impl Documents {
                 Some(json!({"textDocument": {"uri": evicted.uri}})),
             );
         }
-        context.connection.notify("textDocument/didOpen", Some(open));
-        self.request_pull(context.connection, store_key(context), uri, pull, INITIAL_VERSION);
+        context
+            .connection
+            .notify("textDocument/didOpen", Some(open));
+        self.request_pull(
+            context.connection,
+            store_key(context),
+            uri,
+            pull,
+            INITIAL_VERSION,
+        );
     }
 
     /// Node `applyChange`: a full-text didChange with version + 1, then a pull.
@@ -457,7 +487,10 @@ impl Documents {
         let uri = uri.to_owned();
         drop(tokio::spawn(async move {
             let params = json!({"textDocument": {"uri": uri}});
-            let result = match connection.request(PULL_DIAGNOSTICS, Some(params), None, None).await {
+            let result = match connection
+                .request(PULL_DIAGNOSTICS, Some(params), None, None)
+                .await
+            {
                 Ok(result) => result,
                 Err(error) => {
                     tracing::debug!(event = "core.lsp.pull_failed", server_id = %connection.server.id, code = error.code, "LSP pull diagnostics failed");

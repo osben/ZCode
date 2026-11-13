@@ -36,9 +36,11 @@ fn initialize_params_name_the_workspace_and_its_extra_folder() {
     server.initialization_options = None;
     let folders = workspace_folders(&server, "/", false).unwrap();
     assert_eq!(folders, [json!({"uri": "file:///", "name": "/"})]);
-    assert!(initialize_params(&server, "/", &folders, 1, false)
-        .get("initializationOptions")
-        .is_none());
+    assert!(
+        initialize_params(&server, "/", &folders, 1, false)
+            .get("initializationOptions")
+            .is_none()
+    );
 }
 
 #[test]
@@ -76,30 +78,64 @@ fn server_requests_keep_registrations_and_answer_folders() {
         Arc::clone(&registrations),
     );
     assert_eq!(
-        answer("workspace/configuration", &json!({"items": [{"section": "a"}, {}]})).unwrap(),
+        answer(
+            "workspace/configuration",
+            &json!({"items": [{"section": "a"}, {}]})
+        )
+        .unwrap(),
         json!([1, {"a": 1}])
     );
     let register = json!({"registrations": [{"id": "1", "method": PULL_DIAGNOSTICS, "registerOptions": {"identifier": "ts"}}]});
-    assert_eq!(answer("client/registerCapability", &register).unwrap(), Value::Null);
+    assert_eq!(
+        answer("client/registerCapability", &register).unwrap(),
+        Value::Null
+    );
     assert_eq!(
         registrations.lock().unwrap().options_for(PULL_DIAGNOSTICS),
         Some(json!({"identifier": "ts"}))
     );
     // Both spellings of the unregister list.
-    answer("client/unregisterCapability", &json!({"unregisterations": [{"id": "1"}]})).unwrap();
-    assert_eq!(registrations.lock().unwrap().options_for(PULL_DIAGNOSTICS), None);
-    answer("client/registerCapability", &json!({"registrations": [{"id": "2", "method": PULL_DIAGNOSTICS}]})).unwrap();
+    answer(
+        "client/unregisterCapability",
+        &json!({"unregisterations": [{"id": "1"}]}),
+    )
+    .unwrap();
+    assert_eq!(
+        registrations.lock().unwrap().options_for(PULL_DIAGNOSTICS),
+        None
+    );
+    answer(
+        "client/registerCapability",
+        &json!({"registrations": [{"id": "2", "method": PULL_DIAGNOSTICS}]}),
+    )
+    .unwrap();
     assert_eq!(
         registrations.lock().unwrap().options_for(PULL_DIAGNOSTICS),
         Some(json!({}))
     );
-    answer("client/unregisterCapability", &json!({"unregistrations": [{"id": "2"}]})).unwrap();
-    assert_eq!(registrations.lock().unwrap().options_for(PULL_DIAGNOSTICS), None);
-    assert_eq!(answer("window/workDoneProgress/create", &json!({})).unwrap(), Value::Null);
-    assert_eq!(answer("workspace/workspaceFolders", &Value::Null).unwrap(), json!(folders));
+    answer(
+        "client/unregisterCapability",
+        &json!({"unregistrations": [{"id": "2"}]}),
+    )
+    .unwrap();
+    assert_eq!(
+        registrations.lock().unwrap().options_for(PULL_DIAGNOSTICS),
+        None
+    );
+    assert_eq!(
+        answer("window/workDoneProgress/create", &json!({})).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        answer("workspace/workspaceFolders", &Value::Null).unwrap(),
+        json!(folders)
+    );
     assert_eq!(
         answer("window/showDocument", &json!({})).unwrap_err(),
-        (-32_601, "client does not implement window/showDocument".to_owned())
+        (
+            -32_601,
+            "client does not implement window/showDocument".to_owned()
+        )
     );
 }
 
@@ -112,7 +148,10 @@ fn files_find_their_server_by_extension() {
     upper.extension_to_language = vec![(".TSX".to_owned(), "typescriptreact".to_owned())];
     let registry = Registry::new(vec![test_server("ts"), upper]);
     let found = registry.for_file("/w/a.ts").unwrap();
-    assert_eq!((found.server.id.as_str(), found.language_id.as_str()), ("p/ts", "typescript"));
+    assert_eq!(
+        (found.server.id.as_str(), found.language_id.as_str()),
+        ("p/ts", "typescript")
+    );
     // No exact `.tsx`: the lowercase fallback.
     assert_eq!(registry.for_file("/w/a.tsx").unwrap().server.id, "p/upper");
     assert_eq!(registry.for_file("/w/A.TS").unwrap().server.id, "p/ts");

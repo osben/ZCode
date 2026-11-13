@@ -3,7 +3,8 @@ use serde_json::json;
 use tokio::time::Instant;
 
 use super::{
-    Diagnostic, PendingEdit, Resolved, Severity, Tracker, model_path, normalize, report, split_lines,
+    Diagnostic, PendingEdit, Resolved, Severity, Tracker, model_path, normalize, report,
+    split_lines,
 };
 
 fn diagnostic(line: u32, severity: Severity, message: &str) -> Diagnostic {
@@ -19,7 +20,11 @@ fn diagnostic(line: u32, severity: Severity, message: &str) -> Diagnostic {
     }
 }
 
-fn pending(path: &str, baseline: Option<Vec<Diagnostic>>, range: Option<(u32, u32)>) -> PendingEdit {
+fn pending(
+    path: &str,
+    baseline: Option<Vec<Diagnostic>>,
+    range: Option<(u32, u32)>,
+) -> PendingEdit {
     PendingEdit {
         path: path.to_owned(),
         server_id: "p/ts".to_owned(),
@@ -53,7 +58,12 @@ fn raw_diagnostics_become_one_based_code_point_positions() {
     let items = normalize(&lines, &raw);
     assert_eq!(items.len(), 3);
     assert_eq!(
-        (items[0].line, items[0].character, items[0].end_line, items[0].end_character),
+        (
+            items[0].line,
+            items[0].character,
+            items[0].end_line,
+            items[0].end_character
+        ),
         (1, 3, 2, 4)
     );
     assert_eq!(items[0].severity, Severity::Warning);
@@ -158,7 +168,9 @@ fn errors_come_first_then_path_and_the_list_is_capped() {
     let single = report(&resolved[..1], 0, "/w", 20, false);
     assert_eq!(
         single.body.as_deref(),
-        Some("Found 2 new diagnostic issues in 1 files\nb.ts:7:1 error e2\nb.ts:1:1 warning w [ts 6133]")
+        Some(
+            "Found 2 new diagnostic issues in 1 files\nb.ts:7:1 error e2\nb.ts:1:1 warning w [ts 6133]"
+        )
     );
     // Only a pending notice.
     assert_eq!(

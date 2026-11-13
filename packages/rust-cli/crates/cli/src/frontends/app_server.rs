@@ -185,7 +185,8 @@ async fn serve(
         opened.config.storage.dir.as_deref(),
         std::path::Path::new(opened.workspace.root.as_str()),
     );
-    let ledger = rust_cli_proc::ledger::Ledger::open(rust_cli_proc::private::user_dir(&facts.process.temp));
+    let ledger =
+        rust_cli_proc::ledger::Ledger::open(rust_cli_proc::private::user_dir(&facts.process.temp));
     let language_servers = Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
         files: opened.primary.files().clone(),
         environment: opened.workspace.environment.clone(),

@@ -143,7 +143,11 @@ pub(crate) fn fake_launcher() -> (Arc<FakeLauncher>, mpsc::UnboundedReceiver<Fak
     (launcher, receiver)
 }
 
-pub(crate) fn fake_pool() -> (Pool, Arc<FakeLauncher>, mpsc::UnboundedReceiver<FakeProcess>) {
+pub(crate) fn fake_pool() -> (
+    Pool,
+    Arc<FakeLauncher>,
+    mpsc::UnboundedReceiver<FakeProcess>,
+) {
     let (launcher, receiver) = fake_launcher();
     let base = vec![("PATH".to_owned(), "/bin".to_owned())];
     let pool = Pool::new(
@@ -185,7 +189,10 @@ async fn settle(pool: &Pool, server: &str, state: State) {
         }
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
-    panic!("{server} never reached {state:?}; it is {:?}", state_of(pool, server));
+    panic!(
+        "{server} never reached {state:?}; it is {:?}",
+        state_of(pool, server)
+    );
 }
 
 fn failed(acquired: Acquired) -> (&'static str, String) {
@@ -213,19 +220,33 @@ async fn a_start_initializes_and_becomes_ready() {
     assert_eq!(process.launch.command, "ts-server");
     assert_eq!(process.launch.args, ["--stdio"]);
     assert_eq!(process.launch.cwd, "/w");
-    assert_eq!(process.launch.env, [("PATH".to_owned(), "/opt/bin".to_owned())]);
+    assert_eq!(
+        process.launch.env,
+        [("PATH".to_owned(), "/opt/bin".to_owned())]
+    );
     // Still starting: acquire does not start a second process.
     assert!(matches!(pool.acquire(&ts, &key()), Acquired::Starting));
     let initialize = process.expect("initialize").await;
     assert_eq!(initialize["params"]["rootUri"], "file:///w");
     assert_eq!(initialize["params"]["processId"], std::process::id());
     process
-        .reply(&initialize, json!({"capabilities": {"diagnosticProvider": {"interFileDependencies": false}}}))
+        .reply(
+            &initialize,
+            json!({"capabilities": {"diagnosticProvider": {"interFileDependencies": false}}}),
+        )
         .await;
     process.expect("initialized").await;
     let configuration = process.expect("workspace/didChangeConfiguration").await;
-    assert_eq!(configuration["params"], json!({"settings": {"ts": {"x": 1}}}));
-    let Event::Ready { server_id, key: ready_key, connection } = events.recv().await.unwrap() else {
+    assert_eq!(
+        configuration["params"],
+        json!({"settings": {"ts": {"x": 1}}})
+    );
+    let Event::Ready {
+        server_id,
+        key: ready_key,
+        connection,
+    } = events.recv().await.unwrap()
+    else {
         panic!("not a ready event");
     };
     assert_eq!((server_id.as_str(), ready_key), ("p/ts", key()));
@@ -235,7 +256,10 @@ async fn a_start_initializes_and_becomes_ready() {
     };
     assert_eq!(again.id, connection.id);
     let status = &pool.status()[0];
-    assert_eq!((status.state, status.pull, status.restarts), (State::Ready, true, 0));
+    assert_eq!(
+        (status.state, status.pull, status.restarts),
+        (State::Ready, true, 0)
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -253,14 +277,21 @@ async fn crashes_restart_within_the_budget_then_the_server_is_unavailable() {
     assert!(matches!(events.recv().await, Some(Event::Crashed { .. })));
     assert!(first.terminated.load(Ordering::SeqCst));
     let status = &pool.status()[0];
-    assert_eq!((status.state, status.last_error_code), (State::Crashed, Some("lsp_server_crashed")));
+    assert_eq!(
+        (status.state, status.last_error_code),
+        (State::Crashed, Some("lsp_server_crashed"))
+    );
     // One restart is in the budget.
     assert!(matches!(pool.acquire(&ts, &key()), Acquired::Starting));
     let second = launched.recv().await.unwrap();
     assert_eq!(pool.status()[0].restarts, 1);
     // It dies before `initialize` answers, with something on stderr.
     let mut second = second;
-    second.stderr.write_all(b"boom: no tsconfig\n").await.unwrap();
+    second
+        .stderr
+        .write_all(b"boom: no tsconfig\n")
+        .await
+        .unwrap();
     second.expect("initialize").await;
     tokio::time::sleep(Duration::from_millis(5)).await;
     second.exit("exited (code 2, signal none)");
@@ -274,7 +305,10 @@ async fn crashes_restart_within_the_budget_then_the_server_is_unavailable() {
     assert_eq!(state_of(&pool, "p/ts"), State::Unavailable);
     // Within the 30 s window nothing starts.
     tokio::time::advance(Duration::from_secs(29)).await;
-    assert_eq!(failed(pool.acquire(&ts, &key())).0, "lsp_server_unavailable");
+    assert_eq!(
+        failed(pool.acquire(&ts, &key())).0,
+        "lsp_server_unavailable"
+    );
     tokio::time::advance(Duration::from_secs(2)).await;
     assert!(matches!(pool.acquire(&ts, &key()), Acquired::Starting));
     assert!(launched.recv().await.is_some());
@@ -288,7 +322,11 @@ async fn the_stderr_tail_is_in_the_last_error_message() {
     let ts = Arc::new(declared);
     let _ = pool.acquire(&ts, &key());
     let mut process = launched.recv().await.unwrap();
-    process.stderr.write_all(b"  boom: no tsconfig\n").await.unwrap();
+    process
+        .stderr
+        .write_all(b"  boom: no tsconfig\n")
+        .await
+        .unwrap();
     process.expect("initialize").await;
     tokio::time::sleep(Duration::from_millis(5)).await;
     process.exit("exited (code 2, signal none)");
@@ -316,7 +354,10 @@ async fn without_restart_on_crash_unavailable_is_final() {
     settle(&pool, "p/ts", State::Ready).await;
     process.exit("exited (code null, signal SIGKILL)");
     settle(&pool, "p/ts", State::Crashed).await;
-    assert_eq!(failed(pool.acquire(&ts, &key())).0, "lsp_server_unavailable");
+    assert_eq!(
+        failed(pool.acquire(&ts, &key())).0,
+        "lsp_server_unavailable"
+    );
     tokio::time::advance(Duration::from_secs(120)).await;
     let (code, message) = failed(pool.acquire(&ts, &key()));
     assert_eq!(code, "lsp_server_unavailable");
@@ -329,7 +370,10 @@ async fn without_restart_on_crash_unavailable_is_final() {
 #[tokio::test(start_paused = true)]
 async fn a_missing_command_is_retried_after_thirty_seconds() {
     let (pool, launcher, mut launched) = fake_pool();
-    launcher.missing.lock_unpoisoned().push("ts-server".to_owned());
+    launcher
+        .missing
+        .lock_unpoisoned()
+        .push("ts-server".to_owned());
     let ts = server("ts");
     // Node's spawn error arrives after acquire returned.
     assert!(matches!(pool.acquire(&ts, &key()), Acquired::Starting));

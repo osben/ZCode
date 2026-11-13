@@ -113,7 +113,11 @@ impl Host {
     }
 
     /// The session's runtime for `workspace`; a session that moved to another root gets a new one.
-    async fn session(&self, session: &SessionId, workspace: &WorkspaceRef) -> Option<Arc<SessionLsp>> {
+    async fn session(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+    ) -> Option<Arc<SessionLsp>> {
         let root = workspace.root.as_str().to_owned();
         let cell = {
             let mut sessions = self.sessions.lock_unpoisoned();
@@ -244,7 +248,9 @@ fn entry(
             "unknown"
         },
         diagnostics_after_edit,
-        restarts: running.map_or(0, |running| u32::try_from(running.restarts).unwrap_or(u32::MAX)),
+        restarts: running.map_or(0, |running| {
+            u32::try_from(running.restarts).unwrap_or(u32::MAX)
+        }),
         last_error_code: running
             .and_then(|running| running.last_error_code)
             .map(str::to_owned),
@@ -350,7 +356,12 @@ impl CodeIntelligence for Host {
         }
     }
 
-    async fn file_mutated(&self, session: &SessionId, workspace: &WorkspaceRef, mutation: FileMutation) {
+    async fn file_mutated(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+        mutation: FileMutation,
+    ) {
         if !self.current().await.enabled {
             return;
         }

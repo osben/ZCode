@@ -373,7 +373,10 @@ pub(crate) fn report(
         }
         let added: Vec<&Diagnostic> = match (baseline, entry.changed_range) {
             (Some(baseline), _) => not_in_baseline(current, baseline),
-            (None, Some(range)) => current.iter().filter(|item| overlaps(item, range)).collect(),
+            (None, Some(range)) => current
+                .iter()
+                .filter(|item| overlaps(item, range))
+                .collect(),
             (None, None) => Vec::new(),
         };
         issues.extend(

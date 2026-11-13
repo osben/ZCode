@@ -40,11 +40,26 @@ fn encode_round_trips_through_the_decoder() {
 #[test]
 fn invalid_streams_fail() {
     let cases: [(&[u8], &str); 5] = [
-        (&[b'x'; 8_193], "LSP header exceeds 8192 bytes without a terminator"),
-        (b"Content-Length 3\r\n\r\n{}", "malformed LSP header line: \"Content-Length 3\""),
-        (b"Content-Length: 3x\r\n\r\n", "Content-Length header is not a non-negative integer"),
-        (b"Content-Type: x\r\n\r\n", "LSP header block has no usable Content-Length"),
-        (b"Content-Length: 2\r\n\r\n[]", "LSP message body is not a JSON object"),
+        (
+            &[b'x'; 8_193],
+            "LSP header exceeds 8192 bytes without a terminator",
+        ),
+        (
+            b"Content-Length 3\r\n\r\n{}",
+            "malformed LSP header line: \"Content-Length 3\"",
+        ),
+        (
+            b"Content-Length: 3x\r\n\r\n",
+            "Content-Length header is not a non-negative integer",
+        ),
+        (
+            b"Content-Type: x\r\n\r\n",
+            "LSP header block has no usable Content-Length",
+        ),
+        (
+            b"Content-Length: 2\r\n\r\n[]",
+            "LSP message body is not a JSON object",
+        ),
     ];
     for (bytes, message) in cases {
         let error = Decoder::default().push(bytes).unwrap_err();
@@ -110,7 +125,10 @@ async fn a_request_gets_its_answer_and_errors_map_to_codes() {
         ),
         (
             json!({"error": {"code": -32_601, "message": "nope"}}),
-            Err(("lsp_operation_unsupported", "p/s does not support m (code -32601): nope")),
+            Err((
+                "lsp_operation_unsupported",
+                "p/s does not support m (code -32601): nope",
+            )),
         ),
         (
             json!({"error": {"code": -1, "message": "bad"}}),
@@ -148,7 +166,10 @@ async fn a_timeout_sends_cancel_request() {
         timeout_code: "lsp_startup_timeout",
         cancel: None,
     };
-    let error = connection.request("initialize", None, options).await.unwrap_err();
+    let error = connection
+        .request("initialize", None, options)
+        .await
+        .unwrap_err();
     assert_eq!(error.code, "lsp_startup_timeout");
     assert_eq!(error.message, "initialize timed out after 1500 ms");
     let sent = peer.next().await;
@@ -243,5 +264,7 @@ async fn an_invalid_frame_ends_the_pump() {
         .await
         .unwrap();
     let end = task.await.unwrap();
-    assert!(matches!(end, ReadEnd::Invalid(error) if error.0 == "LSP message body is not a JSON object"));
+    assert!(
+        matches!(end, ReadEnd::Invalid(error) if error.0 == "LSP message body is not a JSON object")
+    );
 }

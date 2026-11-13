@@ -18,7 +18,7 @@ use tokio::sync::{oneshot, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use super::process::{LaunchError, Launch, Launcher};
+use super::process::{Launch, LaunchError, Launcher};
 use super::rpc::{self, NotificationHandler, ReadEnd, RequestOptions};
 use super::server::{
     PULL_DIAGNOSTICS, Registrations, initialize_params, server_requests, workspace_folders,
@@ -63,7 +63,9 @@ impl State {
 pub(crate) enum Acquired {
     Ready(Arc<ServerConnection>),
     Starting,
-    Failed(#[cfg_attr(not(test), expect(dead_code, reason = "the LSP tool (D2) reports it"))] LspError),
+    Failed(
+        #[cfg_attr(not(test), expect(dead_code, reason = "the LSP tool (D2) reports it"))] LspError,
+    ),
 }
 
 /// Node `LanguageServerEvent`.
@@ -74,16 +76,16 @@ pub(crate) enum Event {
         key: ServerKey,
         connection: Arc<ServerConnection>,
     },
-    #[allow(dead_code, reason = "Node's event shape; no listener reads a crash's names yet")]
-    Crashed {
-        server_id: String,
-        key: ServerKey,
-    },
-    #[allow(dead_code, reason = "Node's event shape; no listener reads a stop's names yet")]
-    Stopped {
-        server_id: String,
-        key: ServerKey,
-    },
+    #[allow(
+        dead_code,
+        reason = "Node's event shape; no listener reads a crash's names yet"
+    )]
+    Crashed { server_id: String, key: ServerKey },
+    #[allow(
+        dead_code,
+        reason = "Node's event shape; no listener reads a stop's names yet"
+    )]
+    Stopped { server_id: String, key: ServerKey },
 }
 
 pub(crate) type Listener = Arc<dyn Fn(&Event) + Send + Sync>;
@@ -312,21 +314,19 @@ impl Pool {
     pub(crate) fn acquire(&self, server: &Arc<ResolvedLspServer>, key: &ServerKey) -> Acquired {
         let mut entries = self.0.entries.lock_unpoisoned();
         let pool_key = (server.id.clone(), key.clone());
-        let entry = entries
-            .entry(pool_key.clone())
-            .or_insert_with(|| Entry {
-                server: Arc::clone(server),
-                state: State::Stopped,
-                restarts: 0,
-                last_used: Arc::new(Mutex::new(Instant::now())),
-                last_error: None,
-                not_installed_at: None,
-                unavailable_at: None,
-                process: None,
-                connection: None,
-                stopping: None,
-                idle: None,
-            });
+        let entry = entries.entry(pool_key.clone()).or_insert_with(|| Entry {
+            server: Arc::clone(server),
+            state: State::Stopped,
+            restarts: 0,
+            last_used: Arc::new(Mutex::new(Instant::now())),
+            last_error: None,
+            not_installed_at: None,
+            unavailable_at: None,
+            process: None,
+            connection: None,
+            stopping: None,
+            idle: None,
+        });
         entry.server = Arc::clone(server);
         *entry.last_used.lock_unpoisoned() = Instant::now();
         if entry.stopping.is_some() {
@@ -409,11 +409,8 @@ impl Pool {
             self.0.windows,
         );
         let registrations = Arc::new(Mutex::new(Registrations::default()));
-        let requests = server_requests(
-            server.settings.clone(),
-            folders,
-            Arc::clone(&registrations),
-        );
+        let requests =
+            server_requests(server.settings.clone(), folders, Arc::clone(&registrations));
         let (connection, outbox) = rpc::Connection::new(&server.id, requests);
         let (stop, stopped) = oneshot::channel();
         let (done, done_rx) = watch::channel(false);
@@ -743,7 +740,10 @@ async fn read_stderr(mut stderr: Box<dyn AsyncRead + Send + Unpin>, tail: Arc<Mu
                 tail.push_str(&String::from_utf8_lossy(&buffer[..read]));
                 let extra = tail.chars().count().saturating_sub(STDERR_TAIL_MAX_CHARS);
                 if extra > 0 {
-                    let cut = tail.char_indices().nth(extra).map_or(tail.len(), |(at, _)| at);
+                    let cut = tail
+                        .char_indices()
+                        .nth(extra)
+                        .map_or(tail.len(), |(at, _)| at);
                     tail.drain(..cut);
                 }
             }
@@ -761,7 +761,10 @@ struct Report {
 
 impl Report {
     /// Runs `apply` on the entry when it still holds this process; the events it returns go out after the lock.
-    fn with_entry<T>(&self, apply: impl FnOnce(&Inner, &mut Entry) -> (T, Option<Event>)) -> Option<T> {
+    fn with_entry<T>(
+        &self,
+        apply: impl FnOnce(&Inner, &mut Entry) -> (T, Option<Event>),
+    ) -> Option<T> {
         let pool = self.pool.upgrade()?;
         let (value, event) = {
             let mut entries = pool.entries.lock_unpoisoned();
@@ -885,7 +888,13 @@ impl Report {
     }
 
     /// Node `failProcess`. False when a stop was requested: the stop finishes the process instead.
-    fn failed(&self, error: LspError, tail: &Mutex<String>, initialized: bool, rpc: &rpc::Connection) -> bool {
+    fn failed(
+        &self,
+        error: LspError,
+        tail: &Mutex<String>,
+        initialized: bool,
+        rpc: &rpc::Connection,
+    ) -> bool {
         let server = Arc::clone(&self.server);
         let key = self.pool_key.1.clone();
         self.with_entry(|_, entry| {

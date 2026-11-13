@@ -25,8 +25,14 @@ fn folders_encode_each_segment_like_encode_uri_component() {
 #[test]
 fn server_uris_are_matched_after_decoding() {
     assert_eq!(normalize("file:///a%40b", false), "file:///a@b");
-    assert_eq!(normalize("file:///a/%E2%9C%93", false), "file:///a/%E2%9C%93");
-    assert_eq!(normalize("file:///a/b%20c", false), document_uri("/a/b c", false));
+    assert_eq!(
+        normalize("file:///a/%E2%9C%93", false),
+        "file:///a/%E2%9C%93"
+    );
+    assert_eq!(
+        normalize("file:///a/b%20c", false),
+        document_uri("/a/b c", false)
+    );
     // Not decodable: the spelling is kept.
     assert_eq!(normalize("file:///a%2Fb", false), "file:///a%2Fb");
     assert_eq!(normalize("file:///a%zz", false), "file:///a%zz");

@@ -40,11 +40,24 @@ pub(crate) struct SessionLsp {
 }
 
 impl SessionLsp {
-    pub(crate) fn new(shared: Shared, registry: Registry, key: ServerKey, disk: Arc<dyn Disk>) -> Arc<Self> {
+    pub(crate) fn new(
+        shared: Shared,
+        registry: Registry,
+        key: ServerKey,
+        disk: Arc<dyn Disk>,
+    ) -> Arc<Self> {
         Arc::new_cyclic(|weak: &Weak<Self>| {
             let weak = weak.clone();
             let listener = shared.pool.subscribe(Arc::new(move |event: &Event| {
-                if let (Some(session), Event::Ready { server_id, key, connection }) = (weak.upgrade(), event) {
+                if let (
+                    Some(session),
+                    Event::Ready {
+                        server_id,
+                        key,
+                        connection,
+                    },
+                ) = (weak.upgrade(), event)
+                {
                     session.on_ready(server_id, key, connection);
                 }
             }));
@@ -134,7 +147,12 @@ impl SessionLsp {
     }
 
     /// Node `runMutation`.
-    async fn run_mutation(&self, found: &Match, mutation: &FileMutation, track: bool) -> Result<(), String> {
+    async fn run_mutation(
+        &self,
+        found: &Match,
+        mutation: &FileMutation,
+        track: bool,
+    ) -> Result<(), String> {
         let connection = match self.shared.pool.acquire(&found.server, &self.key) {
             // A failed server never publishes; keeping the edit would only report "pending" for the carry rounds.
             Acquired::Failed(_) => {
@@ -143,7 +161,9 @@ impl SessionLsp {
             }
             Acquired::Starting => {
                 if track {
-                    self.tracker.lock_unpoisoned().mark_needs_sync(&mutation.path);
+                    self.tracker
+                        .lock_unpoisoned()
+                        .mark_needs_sync(&mutation.path);
                 }
                 return Ok(());
             }
@@ -155,16 +175,29 @@ impl SessionLsp {
             language_id: &found.language_id,
             disk: self.disk.as_ref(),
         };
-        self.shared.documents.notify_watched_file(&connection, mutation);
-        let outcome = self.shared.documents.apply_mutation(&context, mutation).await?;
+        self.shared
+            .documents
+            .notify_watched_file(&connection, mutation);
+        let outcome = self
+            .shared
+            .documents
+            .apply_mutation(&context, mutation)
+            .await?;
         if track {
-            self.tracker.lock_unpoisoned().settle(&mutation.path, outcome.baseline);
+            self.tracker
+                .lock_unpoisoned()
+                .settle(&mutation.path, outcome.baseline);
         }
         Ok(())
     }
 
     /// Node `onServerEvent`: edits made while the server started are opened once it is ready, for this key only.
-    fn on_ready(self: &Arc<Self>, server_id: &str, key: &ServerKey, connection: &Arc<ServerConnection>) {
+    fn on_ready(
+        self: &Arc<Self>,
+        server_id: &str,
+        key: &ServerKey,
+        connection: &Arc<ServerConnection>,
+    ) {
         if *key != self.key {
             return;
         }
@@ -208,7 +241,10 @@ impl SessionLsp {
     }
 
     /// Fresh diagnostics of a pending edit, or None while it is syncing or not fresh.
-    fn fresh_items(&self, entry: &super::edits::PendingEdit) -> Option<Vec<super::edits::Diagnostic>> {
+    fn fresh_items(
+        &self,
+        entry: &super::edits::PendingEdit,
+    ) -> Option<Vec<super::edits::Diagnostic>> {
         if entry.syncing || entry.needs_sync {
             return None;
         }
@@ -218,7 +254,9 @@ impl SessionLsp {
 
     fn all_fresh(&self) -> bool {
         let entries = self.tracker.lock_unpoisoned().entries().to_vec();
-        entries.iter().all(|entry| self.fresh_items(entry).is_some())
+        entries
+            .iter()
+            .all(|entry| self.fresh_items(entry).is_some())
     }
 
     /// Node `collectEditDiagnostics`. Dropping the future while it waits consumes nothing.

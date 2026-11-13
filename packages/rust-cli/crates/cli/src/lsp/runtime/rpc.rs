@@ -54,8 +54,7 @@ impl Decoder {
                 }
                 break;
             };
-            let length =
-                content_length(&String::from_utf8_lossy(&self.pending[..header_end]))?;
+            let length = content_length(&String::from_utf8_lossy(&self.pending[..header_end]))?;
             let body_start = header_end + HEADER_SEPARATOR.len();
             let frame_end = body_start.saturating_add(length);
             if self.pending.len() < frame_end {
@@ -86,7 +85,10 @@ fn content_length(header: &str) -> Result<usize, FramingError> {
                 Value::String(shown)
             ))
         })?;
-        if !line[..separator].trim().eq_ignore_ascii_case("content-length") {
+        if !line[..separator]
+            .trim()
+            .eq_ignore_ascii_case("content-length")
+        {
             continue;
         }
         let value = line[separator + 1..].trim();

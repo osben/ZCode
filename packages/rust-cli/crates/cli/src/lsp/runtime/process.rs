@@ -120,7 +120,7 @@ struct Child {
 impl Process for Child {
     async fn wait(&mut self) -> String {
         match self.tracked.child().wait().await {
-            Ok(status) => exit_detail(status.code(), signal_of(&status)),
+            Ok(status) => exit_detail(status.code(), signal_of(status)),
             Err(_) => exit_detail(None, None),
         }
     }
@@ -139,7 +139,7 @@ pub(crate) fn exit_detail(code: Option<i32>, signal: Option<&'static str>) -> St
 }
 
 #[cfg(unix)]
-fn signal_of(status: &std::process::ExitStatus) -> Option<&'static str> {
+fn signal_of(status: std::process::ExitStatus) -> Option<&'static str> {
     use std::os::unix::process::ExitStatusExt;
     let number = status.signal()?;
     let names = [
@@ -168,6 +168,10 @@ fn signal_of(status: &std::process::ExitStatus) -> Option<&'static str> {
 }
 
 #[cfg(not(unix))]
-fn signal_of(_: &std::process::ExitStatus) -> Option<&'static str> {
+fn signal_of(_: std::process::ExitStatus) -> Option<&'static str> {
     None
 }
+
+#[cfg(all(test, unix))]
+#[path = "process_tests.rs"]
+mod tests;
