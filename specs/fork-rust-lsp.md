@@ -169,7 +169,7 @@ Read (main thread, text file, after the unchanged check)
 Edit / Write (main thread, after put_file succeeded)
   └─ CodeIntelligence::file_mutated(session, workspace, {path, kind, content, changedRange})
         │ synchronously: tracker.record_syncing (when diagnostics after edit is on for that server)
-        └─ background task ── pool.acquire
+        └─ the session's sync queue, in publish order ── pool.acquire (with the mark below, under the tracker lock)
               ├─ failed   → tracker.remove(path)
               ├─ starting → tracker.mark_needs_sync(path)  (replayed on the server's ready event)
               └─ ready    → didChangeWatchedFiles, then documents.apply_mutation (didOpen | didChange | didClose)
@@ -185,7 +185,7 @@ Model request (main thread, collected after the skills listing, before the plan-
         └─ attachment, source "diagnostics", committed to history like Node's `commitTurnRequestEntries`
 ```
 
-If the request is cancelled while waiting, its future is dropped before anything is consumed, so the pending edits stay for the next request (Node leaves the tracker untouched on abort).
+The consume step runs under one tracker lock, so a mutation published meanwhile stays pending. If the request is cancelled while waiting, its future is dropped before anything is consumed, so the pending edits stay for the next request (Node leaves the tracker untouched on abort).
 
 ### Pool
 
