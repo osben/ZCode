@@ -253,20 +253,30 @@ async fn asking_session_input(
     hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
     input: serde_json::Value,
 ) -> (Arc<MemoryStore>, Arc<ScriptedModel>, Session) {
-    let store = Arc::new(MemoryStore::default());
-    store.create(meta()).await.unwrap();
-    let ids = Arc::new(SequentialIds::default());
     let model = Arc::new(ScriptedModel::new(vec![
         rust_cli_kernel_api::testing::tool_use_response("toolu_1", "AskUserQuestion", &input),
         text_response(&["thanks"]),
     ]));
+    let (store, session) =
+        tool_session(scope, hooks, model.clone(), vec![Arc::new(AskingTool)]).await;
+    (store, model, session)
+}
+
+/// A created session whose turns run `model` with `tools` (no execution environment).
+pub(super) async fn tool_session(
+    scope: &TaskScope,
+    hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
+    model: Arc<dyn rust_cli_kernel_api::model::ModelPort>,
+    tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>>,
+) -> (Arc<MemoryStore>, Session) {
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let ids = Arc::new(SequentialIds::default());
     let env = Arc::new(UnusedEnvironment);
     let runner = Arc::new(QueryLoop::new(QueryParts {
         model: model.clone(),
         context: Arc::new(FixedContext(Vec::new())),
-        tools: Arc::new(rust_cli_kernel_api::testing::ListTools(vec![Arc::new(
-            AskingTool,
-        )])),
+        tools: Arc::new(rust_cli_kernel_api::testing::ListTools(tools)),
         executor: Arc::new(rust_cli_kernel_api::testing::DirectExecutor),
         compactor: Arc::new(NeverCompact),
         hooks: Arc::new(NoHooks),
@@ -332,7 +342,7 @@ async fn asking_session_input(
         },
         Opened::Created,
     );
-    (store, model, session)
+    (store, session)
 }
 
 /// 等到工具向用户提问。
@@ -433,3 +443,6 @@ mod close;
 
 #[path = "input_ledger_tests.rs"]
 mod input_ledger_tests;
+
+#[path = "turn_limits_tests.rs"]
+mod turn_limits_tests;

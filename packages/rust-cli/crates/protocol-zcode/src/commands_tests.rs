@@ -23,6 +23,26 @@ fn a_guide_steers_only_into_a_running_turn() {
     );
 }
 
+/// Fork: an input with turn limits (an automation run) is never steered into a running turn: steered, its limits would
+/// not reach the turn it joins. It queues and opens its own turn (specs/fork-rust-automations.md).
+#[test]
+fn an_input_with_turn_limits_or_attachments_is_not_steered() {
+    let limits = InputExecution {
+        state: ExecutionState::default(),
+        selection: None,
+        limits: TurnLimits::new(Some("auto_1"), Vec::new()),
+        keeps_session_state: true,
+    };
+    assert!(unsteerable(false, Some(&limits)));
+    assert!(unsteerable(true, None));
+    let plain = InputExecution {
+        limits: TurnLimits::default(),
+        ..limits
+    };
+    assert!(!unsteerable(false, Some(&plain)));
+    assert!(!unsteerable(false, None));
+}
+
 #[test]
 fn attachments_queue_and_an_idle_session_starts_now() {
     assert_eq!(
@@ -402,6 +422,38 @@ fn a_plan_switch_without_a_mode_keeps_the_session_mode() {
     assert!(execution.state.plan);
     let plain: Input = serde_json::from_value(serde_json::json!({"text": "x"})).unwrap();
     assert!(input_execution(&plain, Some(&view)).is_none());
+}
+
+/// Fork (specs/fork-rust-automations.md, slice 1 item 4): `automationId` and `toolDisallowlist` ride on the input's
+/// execution, so they apply to that turn only, queued or not; the session's state is unchanged.
+#[test]
+fn an_automation_input_carries_its_turn_limits() {
+    let input: Input = serde_json::from_value(serde_json::json!({
+        "text": "run", "automationId": " auto_1 ",
+        "toolDisallowlist": ["CronCreate", "CronUpdate", "CronDelete"],
+    }))
+    .unwrap();
+    let execution = input_execution(&input, None).expect("limits alone make an execution");
+    assert!(
+        execution.keeps_session_state,
+        "no mode or plan named: the session's state is left alone (Node gives no state)"
+    );
+    assert_eq!(execution.selection, None);
+    assert_eq!(execution.limits.automation(), Some("auto_1"));
+    assert!(execution.limits.hides("CronCreate"));
+    assert!(!execution.limits.hides("CronPauseSelf"));
+    let blank: Input =
+        serde_json::from_value(serde_json::json!({"text": "x", "automationId": "  "})).unwrap();
+    assert!(
+        input_execution(&blank, None).is_none(),
+        "a blank id is no automation"
+    );
+    // A mode named with the limits is frozen like any other input's.
+    let moded: Input = serde_json::from_value(
+        serde_json::json!({"text": "run", "automationId": "auto_1", "mode": "auto"}),
+    )
+    .unwrap();
+    assert!(!input_execution(&moded, None).unwrap().keeps_session_state);
 }
 
 /// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`) case by case.
@@ -963,4 +1015,26 @@ fn only_a_normal_ask_offers_always_allow() {
     assert!(always(ask(false, false)));
     assert!(!always(ask(true, false)));
     assert!(!always(ask(false, true)));
+}
+
+#[test]
+fn the_remembered_input_keeps_the_host_automation_for_the_telemetry_facts() {
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "auto_1:manual:7f1c",
+        "clientId": "host",
+        "sessionId": "s1",
+        "type": "sendText",
+        "payload": {},
+    }))
+    .unwrap();
+    let meta = |payload: serde_json::Value| {
+        let input: Input = serde_json::from_value(payload).unwrap();
+        input_meta(&envelope, &input, "startNow", "startNow").automation
+    };
+    assert_eq!(
+        meta(json!({"text": "run", "automationId": " auto_1 "})).as_deref(),
+        Some("auto_1")
+    );
+    assert_eq!(meta(json!({"text": "run", "automationId": "  "})), None);
+    assert_eq!(meta(json!({"text": "run"})), None);
 }

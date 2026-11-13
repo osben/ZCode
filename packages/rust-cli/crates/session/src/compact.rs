@@ -108,7 +108,7 @@ impl Actor {
                 }
             }
         });
-        self.launch(opening, task, None, None);
+        self.launch(opening, task, None, None, Default::default());
         Ok(())
     }
 

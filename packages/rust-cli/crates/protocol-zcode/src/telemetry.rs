@@ -55,6 +55,9 @@ pub struct Observed<'a> {
     pub seq: u64,
     pub now: u64,
     pub provider: &'a Provider,
+    /// Fork: the `automationId` the Host sent with the input a `TurnStarted { command }` opens (sendText, remembered
+    /// with the input by the projection); None for every other event.
+    pub automation: Option<&'a str>,
 }
 
 #[derive(Debug, Default)]
@@ -73,6 +76,8 @@ struct Turn {
     /// A turn opened without a command: `turn.started` waits for its first message to learn the wake source.
     held: Option<(u64, u64)>,
     background_source: Option<String>,
+    /// The automation that dispatched the turn's input (main turns opened by a command only).
+    automation: Option<String>,
     /// A background subagent's notification reached the model in this turn (a wake, or merged into the running turn).
     consumed_subagent: bool,
     request: Option<Request>,
@@ -122,6 +127,9 @@ impl Telemetry {
                     started_at: at.now,
                     held: (command.is_none() && self.role == Role::Main)
                         .then_some((at.seq, at.now)),
+                    automation: (self.role == Role::Main && command.is_some())
+                        .then(|| at.automation.map(str::to_owned))
+                        .flatten(),
                     ..Turn::default()
                 });
                 self.tools.clear();
@@ -388,6 +396,7 @@ impl Telemetry {
             seq,
             now: started,
             provider: at.provider,
+            automation: None,
         };
         // The held fact keeps the seq of its TurnStarted; its index must not collide with facts already emitted for
         // that seq (none: it was held).
@@ -405,6 +414,11 @@ impl Telemetry {
                 fact.insert("inputSource".into(), json!("subagent"));
             }
             Role::Main => {
+                if let Some(turn) = &self.turn
+                    && let Some(automation) = &turn.automation
+                {
+                    automation_admission(&mut fact, &turn.command, automation);
+                }
                 if let Some(source) = self
                     .turn
                     .as_ref()
@@ -563,6 +577,37 @@ impl Telemetry {
         fact.insert("sessionId".into(), json!(self.session));
         fact.insert("kind".into(), json!(kind));
         fact
+    }
+}
+
+/// Fork: Node `automationAdmission`: an automation turn names its automation, and the trigger (and scheduled time)
+/// its command reads as when the command is that automation's run id (`parseAutomationRunId`:
+/// `<automationId>:manual:<id>` or `<automationId>:<scheduledAt>`). The Host's telemetry seeds the run's
+/// `agent_step` / `message_completion` from these fields, since a run gets no renderer send acknowledgement.
+fn automation_admission(fact: &mut Map<String, Value>, command: &str, automation: &str) {
+    fact.insert("automationId".into(), json!(automation));
+    let Some((prefix, rest)) = command.split_once(':') else {
+        return;
+    };
+    if prefix.is_empty() || prefix != automation {
+        return;
+    }
+    if let Some(id) = rest.strip_prefix("manual:") {
+        if !id.is_empty() {
+            fact.insert("taskTrigger".into(), json!("manual"));
+        }
+        return;
+    }
+    // `Number.isSafeInteger(n) && n > 0`: plain decimal digits only (Node's `Number()` also reads forms such as
+    // `1e12`, which run ids never carry).
+    const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+    if !rest.is_empty()
+        && rest.bytes().all(|byte| byte.is_ascii_digit())
+        && let Ok(at) = rest.parse::<u64>()
+        && (1..=MAX_SAFE_INTEGER).contains(&at)
+    {
+        fact.insert("taskTrigger".into(), json!("schedule"));
+        fact.insert("scheduledAt".into(), json!(at));
     }
 }
 

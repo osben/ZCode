@@ -609,9 +609,18 @@ pub(super) async fn send_queued_now(
             },
             |execution| execution.state,
         );
+        let limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
+        let keeps_session_state = execution
+            .as_ref()
+            .is_some_and(|execution| execution.keeps_session_state);
         execution = Some(rust_cli_kernel_api::session_api::InputExecution {
             state,
             selection: Some(chosen),
+            limits,
+            keeps_session_state,
         });
     }
     live.sink.remember_input(
@@ -624,6 +633,9 @@ pub(super) async fn send_queued_now(
             requested: "queue",
             admitted: "startNow",
             attachments: chips,
+            automation: execution
+                .as_ref()
+                .and_then(|execution| execution.limits.automation().map(str::to_owned)),
         },
     );
     let submitted = send(

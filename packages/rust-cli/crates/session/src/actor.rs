@@ -138,6 +138,8 @@ pub(crate) struct Running {
     pub(crate) command: Option<CommandId>,
     /// 回合结束那一行的计时（修复线 F118，duration.rs）。
     pub(crate) timing: crate::duration::TurnTiming,
+    /// Fork: the limits the input that opened this turn set (automation id, hidden tools); they end with the turn.
+    pub(crate) limits: rust_cli_kernel_api::turn_limits::TurnLimits,
 }
 
 enum Next {
@@ -470,6 +472,11 @@ impl Actor {
                 result: CommandResult::Queued,
             };
         }
+        // Fork: the limits belong to the turn this input opens; a compaction runs no turn and takes none.
+        let limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
         if let Some(execution) = execution
             && let Err(reason) = self.submitted_execution(execution).await
         {
@@ -496,7 +503,7 @@ impl Actor {
                 intent,
             }
         };
-        match self.start_turn(input).await {
+        match self.start_turn_with(input, limits).await {
             Ok(()) => accepted(),
             Err(reason) => rejected(reason),
         }
@@ -750,6 +757,10 @@ impl Actor {
             Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
             Command::AdoptTitle { title } => {
                 self.adopt_title(title);
+                accepted()
+            }
+            Command::DisableTitleGeneration => {
+                self.titles.disable();
                 accepted()
             }
             Command::Rename { title } => self.rename(id, title, None).await,

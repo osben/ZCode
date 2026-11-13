@@ -619,6 +619,7 @@ fn denied_tools_interrupt_markers_and_immediate_inputs_follow_node() {
             requested: "startNow",
             admitted: "startNow",
             attachments: Vec::new(),
+            automation: None,
         },
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
@@ -678,6 +679,7 @@ fn the_remembered_admission_follows_the_kernel() {
         requested: "startNow",
         admitted,
         attachments: Vec::new(),
+        automation: None,
     };
     let queued = || KernelEvent::QueueChanged {
         items: vec![QueuedInput {
@@ -1255,6 +1257,7 @@ fn a_held_queue_after_a_finished_turn_routes_input_to_a_choice() {
             requested: "queue",
             admitted: "queue",
             attachments: Vec::new(),
+            automation: None,
         },
     );
     let queued = feed.apply(KernelEvent::QueueChanged {
@@ -1432,12 +1435,28 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
             plan: true,
         },
         selection: Some(selection()),
+        limits: Default::default(),
+        keeps_session_state: false,
     };
     let deltas = feed.apply(KernelEvent::QueueChanged {
         items: vec![
             item("c1", "plan this", QueuedKind::Text, Some(frozen)),
             item("c2", "/goal ship it", QueuedKind::Goal, None),
             item("c3", "/compact", QueuedKind::Compact, None),
+            item(
+                "c4",
+                "run",
+                QueuedKind::Text,
+                Some(InputExecution {
+                    state: ExecutionState::default(),
+                    selection: None,
+                    limits: rust_cli_kernel_api::turn_limits::TurnLimits::new(
+                        Some("auto_1"),
+                        Vec::new(),
+                    ),
+                    keeps_session_state: true,
+                }),
+            ),
         ],
     });
     let queue = deltas
@@ -1449,13 +1468,19 @@ fn queue_items_show_the_kernel_kind_and_frozen_state() {
         .iter()
         .map(|item| item["kind"].as_str().unwrap())
         .collect();
-    assert_eq!(kinds, ["sendText", "sendGoalCommand", "compact"]);
+    assert_eq!(
+        kinds,
+        ["sendText", "sendGoalCommand", "compact", "sendText"]
+    );
     assert_eq!(items[0]["mode"], "guarded");
     assert_eq!(items[0]["planEnabled"], true);
     assert_eq!(items[0]["modelSelection"], state::selection(&selection()));
     assert_eq!(items[1]["text"], "/goal ship it");
     assert!(items[1].get("mode").is_none());
     assert_eq!(items[2]["text"], "/compact");
+    // An input that named no mode (an automation run's limits alone) shows none.
+    assert!(items[3].get("mode").is_none(), "{:?}", items[3]);
+    assert!(items[3].get("planEnabled").is_none(), "{:?}", items[3]);
 }
 
 /// Fork: the desktop composer adopts the session mode once per full-access grant and the plan
@@ -2196,6 +2221,7 @@ fn a_queue_item_shows_its_edit_lock_and_its_attachment_chips() {
             requested: "queue",
             admitted: "queue",
             attachments: vec![json!({"ref": "old"})],
+            automation: None,
         },
     );
     let patch = feed

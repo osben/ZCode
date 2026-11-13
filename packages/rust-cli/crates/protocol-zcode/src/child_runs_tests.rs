@@ -117,6 +117,7 @@ impl Parent {
                 seq: 7,
                 now: self.now,
                 provider: &provider,
+                automation: None,
             },
             &mut out,
         );

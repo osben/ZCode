@@ -595,3 +595,141 @@ async fn an_incognito_gate_refuses_a_removed_tool_before_any_hook() {
         .output;
     assert_eq!(text(&output), "contents");
 }
+
+/// Fork (specs/fork-rust-automations.md): a tool the running turn hides is refused like an unregistered one when the
+/// model names it anyway (an automation turn's CronDelete from history), before any hook; other tools still run.
+#[tokio::test]
+async fn a_tool_the_turn_hides_is_refused_before_any_hook() {
+    struct AutomationTurn;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::testing::OpsOverride for AutomationTurn {
+        async fn view(&self) -> Option<rust_cli_kernel_api::session_ops::RunView> {
+            let mut view = rust_cli_kernel_api::session_ops::RunView::new(
+                rust_cli_kernel_api::permission::PermissionMode::Default,
+                WorkspaceRef {
+                    environment: EnvironmentId::new("local"),
+                    root: EnvPath::new("/work"),
+                },
+            );
+            view.turn = rust_cli_kernel_api::turn_limits::TurnLimits::new(
+                Some("auto_1"),
+                vec!["Bash".to_owned()],
+            );
+            Some(view)
+        }
+    }
+    let hooks = Arc::new(RecordingHooks::default());
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        hooks.clone(),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let in_turn = || ToolUseContext {
+        session_ops: Arc::new(AutomationTurn),
+        ..context(allow())
+    };
+    for name in ["CronDelete", "Bash"] {
+        let output = pipeline
+            .execute(
+                Arc::new(FakeTool::new(name, false, "ran")),
+                json!({}),
+                in_turn(),
+                progress.clone(),
+            )
+            .await
+            .output;
+        assert!(output.is_error, "{name}");
+        assert_eq!(
+            text(&output),
+            format!("<tool_use_error>Error: No such tool available: {name}</tool_use_error>")
+        );
+    }
+    assert!(hooks.0.lock().unwrap().is_empty());
+    let output = pipeline
+        .execute(
+            Arc::new(FakeTool::new("CronPauseSelf", false, "paused")),
+            json!({}),
+            in_turn(),
+            progress,
+        )
+        .await
+        .output;
+    assert!(!output.is_error);
+    assert_eq!(text(&output), "paused");
+}
+
+/// Fork: an ordinary turn (default limits) refuses CronPauseSelf and runs the mutation tools; without a session view
+/// the turn may be an automation run, so the gate fails closed and refuses CronCreate/CronUpdate/CronDelete and
+/// CronPauseSelf (`TurnLimits::hides_without_view`), although the tool listing falls back to default limits.
+#[tokio::test]
+async fn a_missing_view_refuses_every_automation_tool_an_ordinary_turn_only_pause_self() {
+    struct Ordinary;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::testing::OpsOverride for Ordinary {
+        async fn view(&self) -> Option<rust_cli_kernel_api::session_ops::RunView> {
+            Some(rust_cli_kernel_api::session_ops::RunView::new(
+                rust_cli_kernel_api::permission::PermissionMode::Default,
+                WorkspaceRef {
+                    environment: EnvironmentId::new("local"),
+                    root: EnvPath::new("/work"),
+                },
+            ))
+        }
+    }
+    struct NoView;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::testing::OpsOverride for NoView {
+        async fn view(&self) -> Option<rust_cli_kernel_api::session_ops::RunView> {
+            None
+        }
+    }
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let ops: [Arc<dyn rust_cli_kernel_api::session_ops::SessionOps>; 2] =
+        [Arc::new(Ordinary), Arc::new(NoView)];
+    for (case, ops) in ops.into_iter().enumerate() {
+        let run = |name: &str| {
+            pipeline.execute(
+                Arc::new(FakeTool::new(name, false, "ran")),
+                json!({}),
+                ToolUseContext {
+                    session_ops: ops.clone(),
+                    ..context(allow())
+                },
+                progress.clone(),
+            )
+        };
+        let output = run("CronPauseSelf").await.output;
+        assert!(output.is_error, "case {case}");
+        assert_eq!(
+            text(&output),
+            "<tool_use_error>Error: No such tool available: CronPauseSelf</tool_use_error>"
+        );
+        // An ordinary turn runs the mutation tools; without the view the turn may be an automation run, so they are
+        // refused (fail closed), the same answer as a hidden tool.
+        for name in ["CronCreate", "CronUpdate", "CronDelete"] {
+            let output = run(name).await.output;
+            if case == 0 {
+                assert!(!output.is_error, "{name}");
+                assert_eq!(text(&output), "ran");
+            } else {
+                assert!(output.is_error, "{name}");
+                assert_eq!(
+                    text(&output),
+                    format!(
+                        "<tool_use_error>Error: No such tool available: {name}</tool_use_error>"
+                    )
+                );
+            }
+        }
+        let output = run("Read").await.output;
+        assert!(!output.is_error, "case {case}");
+    }
+}
