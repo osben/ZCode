@@ -5,7 +5,7 @@
 //
 //   pnpm exec tsx scripts/fork-rust-agent/mcp-trust-golden.mts
 //
-// Writes packages/rust-cli/crates/cli/fixtures/mcp-trust-golden.json. The workspace path is recorded as-is (the
+// Writes packages/rust-cli/crates/cli/tests/fixtures/mcp-trust-golden.json. The workspace path is recorded as-is (the
 // digest covers it); Rust rebuilds the workspaces under its own temporary directory and compares the
 // path-independent parts with `<WS>` in place of the path.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const output = join(root, "packages/rust-cli/crates/cli/fixtures/mcp-trust-golden.json");
+const output = join(root, "packages/rust-cli/crates/cli/tests/fixtures/mcp-trust-golden.json");
 
 type Files = Record<string, unknown>;
 

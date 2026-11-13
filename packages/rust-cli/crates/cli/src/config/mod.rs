@@ -6,6 +6,8 @@
 //! 候选目录在同一次组装里从本机存储的插件清单得出（`plugins`，config.md §2.1）。
 
 mod files;
+pub(crate) mod mcp_trust;
+mod mcp_trust_display;
 pub(crate) mod merge;
 mod plugins;
 mod storage;

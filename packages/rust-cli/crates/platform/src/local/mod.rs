@@ -9,6 +9,7 @@ pub(crate) mod cli_config;
 mod device;
 mod history;
 mod hook_trust;
+mod mcp_trust;
 pub mod plugin_inventory;
 mod settings;
 
@@ -19,4 +20,5 @@ pub use cli_config::{
 pub use device::{DeviceMid, NewUuid};
 pub use history::{History, Recorder};
 pub use hook_trust::{HookTrustStore, TrustError, TrustLoad, TrustRecord};
+pub use mcp_trust::{McpTrustError, McpTrustLoad, McpTrustRecord, McpTrustStore};
 pub use settings::Settings;
