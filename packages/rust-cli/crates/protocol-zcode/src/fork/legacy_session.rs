@@ -133,12 +133,10 @@ fn snapshot_params(session: &SessionId) -> Value {
     json!({"sessionId": session.as_str()})
 }
 
-/// Node `createSession`: the session is created like a v4 `createSession` without a first input and stays a draft
-/// until the first accepted input persists it (`persistence: "deferred"`); `"immediate"`, Node's default, persists it
-/// here.
-/// Node `resolveSupportedAppThoughtLevel`: the level when the target model offers it. The workspace default level may
-/// come from a previous model, so an unsupported one is skipped with a warning (the model keeps its own level). A model
-/// the directory does not list keeps the level: there is nothing to check it against.
+/// Node `resolveSupportedAppThoughtLevel`: the level only when the target model's own list offers it. The workspace
+/// default level may come from a previous model, so any other is skipped with a warning (the model keeps its own
+/// level); a model the directory does not list, or an empty directory, offers none (Node lists `[]` for a model the
+/// registry does not own).
 async fn supported_level(
     server: &Server,
     target: &rust_cli_kernel_api::model::ModelSelection,
@@ -148,25 +146,23 @@ async fn supported_level(
     let entry = catalog
         .iter()
         .find(|entry| rust_cli_kernel_api::model_name::is_entry(target, entry));
-    match entry {
-        Some(entry)
-            if !entry
-                .reasoning_levels
-                .iter()
-                .any(|offered| offered == level) =>
-        {
-            tracing::warn!(
-                event = "zcode_protocol.session_create.thought_level_skipped",
-                level,
-                supported = ?entry.reasoning_levels,
-                "session/create skipped an unsupported thought level"
-            );
-            None
-        }
-        _ => Some(level.to_owned()),
+    let offered = entry.map_or(&[][..], |entry| entry.reasoning_levels.as_slice());
+    if offered.iter().any(|offered| offered == level) {
+        return Some(level.to_owned());
     }
+    tracing::warn!(
+        event = "zcode_protocol.session_create.thought_level_skipped",
+        level,
+        listed = entry.is_some(),
+        supported = ?offered,
+        "session/create skipped an unsupported thought level"
+    );
+    None
 }
 
+/// Node `createSession`: the session is created like a v4 `createSession` without a first input and stays a draft
+/// until the first accepted input persists it (`persistence: "deferred"`); `"immediate"`, Node's default, persists it
+/// here.
 pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, RpcError> {
     let params: CreateParams = parse(params)?;
     check_tool_lists(&params.tool_allowlist, &params.tool_denylist)?;
@@ -194,6 +190,15 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
     let level = match (params.thought_level.as_deref().map(str::trim), target) {
         (Some(level), Some(target)) if !level.is_empty() => {
             supported_level(server, &target, level).await
+        }
+        (Some(level), None) if !level.is_empty() => {
+            // The model names no provider and model id: there is no model to check the level against.
+            tracing::warn!(
+                event = "zcode_protocol.session_create.thought_level_skipped",
+                level,
+                "session/create skipped a thought level: the model does not parse"
+            );
+            None
         }
         _ => None,
     };
@@ -316,24 +321,22 @@ pub(crate) async fn set_mode(server: &Server, params: &Value) -> Result<Value, R
 }
 
 /// Node `setThoughtLevel`: the reasoning level of the session's current model (v4 `switchModelConfig`, same model).
-/// The model is the session's own, not the projection's: the projection learns of a `setModel` just applied only
-/// when its event arrives, and a stale model here would switch the model back.
+/// The model is the session's own, read once inside the session's switch turn ([`super::session_config::switch_thought`]),
+/// not the projection's: the projection learns of a `setModel` just applied only when its event arrives, and a stale
+/// model here would switch the model back.
 pub(crate) async fn set_thought_level(server: &Server, params: &Value) -> Result<Value, RpcError> {
     let id = super::methods::session_id(params)?;
     let thought = params["thoughtLevel"].as_str().unwrap_or_default();
-    // The payload's model is filled in once the session is open.
-    let (mut request, live) = opened(
+    // The model is read inside the switch turn, not here.
+    let (request, live) = opened(
         server,
         &id,
         "switchModelConfig",
         "session/setThoughtLevel",
-        Value::Null,
+        json!({"thought": thought}),
     )
     .await?;
-    let (current, _, _) = super::session_config::held_config(&live).await;
-    request.payload =
-        json!({"provider": current.provider, "model": current.model, "thought": thought});
-    ack_result(super::session_config::switch_model(&live, &request, 0).await)?;
+    ack_result(super::session_config::switch_thought(&live, &request, 0, thought).await)?;
     crate::legacy::read(server, &snapshot_params(&id)).await
 }
 
