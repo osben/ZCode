@@ -40,7 +40,11 @@ pub(crate) async fn dispatch(
         "v4/conversation/backgroundBashOutput" => {
             super::background_work::bash_output(server, &params).await
         }
-        _ => return super::lsp::dispatch(method).map(|result| result.map(Reply::new)),
+        _ => {
+            return super::lsp::dispatch(server.context.language_servers(), method, &params)
+                .await
+                .map(|result| result.map(Reply::new));
+        }
     };
     Some(result.map(Reply::new))
 }

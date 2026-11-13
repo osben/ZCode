@@ -151,6 +151,20 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
+    // Fork: one language-server host per process, shared by all workspaces (specs/fork-rust-lsp.md "Owners"). The
+    // sidecar's root follows the startup config's `storage.dir`, as Node's protocol entry resolves it once.
+    let preferences = paths.lsp_preferences(
+        opened.config.storage.dir.as_deref(),
+        std::path::Path::new(opened.workspace.root.as_str()),
+    );
+    context.set_language_servers(Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
+        files: opened.primary.files().clone(),
+        environment: opened.workspace.environment.clone(),
+        paths: paths.clone(),
+        process_env: facts.process.env.clone(),
+        view_host: desktop_context,
+        preferences: preferences.as_path().to_path_buf(),
+    })));
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
     state.ready().await;
