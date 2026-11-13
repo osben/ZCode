@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::model::ModelPort;
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
@@ -29,6 +30,9 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
+    /// stay unported.
+    model: std::sync::OnceLock<Arc<dyn ModelPort>>,
 }
 
 impl Context {
@@ -41,6 +45,17 @@ impl Context {
     /// Fork: the storage root (Node `context.deps.storageRoot`).
     pub fn set_storage_root(&self, root: std::path::PathBuf) {
         let _ = self.storage_root.set(root);
+    }
+
+    /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
+    pub fn set_model_port(&self, model: Arc<dyn ModelPort>) {
+        let _ = self.model.set(model);
+    }
+
+    /// Fork: the model port, when the entry point provided one and a model directory resolves selections.
+    pub(crate) fn model_port(&self) -> Option<Arc<dyn ModelPort>> {
+        self.models.get()?;
+        self.model.get().cloned()
     }
 
     /// Fork: the storage root, when the entry point provided one.
@@ -71,6 +86,7 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            model: std::sync::OnceLock::new(),
         }
     }
 
@@ -79,6 +95,11 @@ impl Context {
         self.sessions
             .lock_unpoisoned()
             .insert(session.to_owned(), workspace.to_owned());
+    }
+
+    /// Fork: forgets a session registered only for one call (a workspace model call's requester).
+    pub fn unregister(&self, session: &str) {
+        self.sessions.lock_unpoisoned().remove(session);
     }
 
     pub fn workspace_of(&self, session: &str) -> Option<String> {

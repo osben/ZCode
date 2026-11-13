@@ -13,7 +13,10 @@ fn every_source_is_listed_and_reads_back() {
             | SideSource::WebFetch
             | SideSource::WebSearch
             | SideSource::GoalSummaryTitle
-            | SideSource::GoalVerification => {}
+            | SideSource::GoalVerification
+            | SideSource::WorkspaceText
+            | SideSource::GitCommitMessage
+            | SideSource::ConnectivityProbe => {}
         }
         assert_eq!(SideSource::from_wire(source.as_wire()), Some(source));
     }
@@ -46,6 +49,21 @@ fn names_are_the_previous_strings() {
             "goal_summary_title",
             "goal_summary_title",
         ),
+        (
+            SideSource::WorkspaceText,
+            "workspace_generate_text",
+            "workspace_generate_text",
+        ),
+        (
+            SideSource::GitCommitMessage,
+            "git_commit_message",
+            "git_commit_message",
+        ),
+        (
+            SideSource::ConnectivityProbe,
+            "provider_settings_connectivity",
+            "provider_settings_connectivity",
+        ),
     ];
     for (source, wire, node) in table {
         assert_eq!(source.as_wire(), wire);
@@ -75,11 +93,28 @@ fn the_rules_match_the_previous_lists() {
         (SideSource::WebFetch, true, false),
         (SideSource::WebSearch, true, false),
         (SideSource::GoalSummaryTitle, false, false),
+        (SideSource::WorkspaceText, true, false),
+        (SideSource::GitCommitMessage, true, false),
+        (SideSource::ConnectivityProbe, true, false),
     ];
     for (source, foreground, quiet) in table {
         assert_eq!(source.foreground(), foreground, "{source:?}");
         assert_eq!(source.quiet(), quiet, "{source:?}");
         assert!(!source.agentic(), "{source:?}");
+    }
+}
+
+/// Fork: only the desktop workspace model calls are workspace-scoped (`x-zcode-session-type: other`).
+#[test]
+fn only_the_workspace_model_calls_are_workspace_scoped() {
+    for source in SideSource::ALL {
+        let expected = matches!(
+            source,
+            SideSource::WorkspaceText
+                | SideSource::GitCommitMessage
+                | SideSource::ConnectivityProbe
+        );
+        assert_eq!(source.workspace_scoped(), expected, "{source:?}");
     }
 }
 
