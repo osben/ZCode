@@ -342,6 +342,11 @@ pub struct ContextRequest {
     /// （[`QueryRequest::default_machine`]）；主 env 不写出。机器清单提醒按它写“不写 `machine` 时在哪台机器上”。
     #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
     pub default_machine: crate::ids::MachineName,
+    /// Fork: the run this step belongs to (the query loop's [`QueryRequest::run`]); None for requests outside a run
+    /// (compaction, `/context` usage). The agent catalog reads the Host's subagent snapshot once per parent run
+    /// (specs/fork-rust-subagent-runtime-config.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<crate::ids::RunId>,
 }
 
 impl ContextRequest {
@@ -366,6 +371,7 @@ impl ContextRequest {
             capabilities: None,
             mcp: None,
             default_machine: crate::ids::MachineName::default(),
+            run: None,
         }
     }
 }

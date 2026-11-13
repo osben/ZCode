@@ -128,6 +128,7 @@ pub(crate) fn parse(raw: &str, source: AgentSource) -> Option<AgentDefinition> {
             .filter(|turns| *turns > 0),
         permission_mode: text("permissionMode").and_then(permission_mode),
         background: text("background") == Some("true"),
+        selection: None,
     })
 }
 

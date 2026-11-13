@@ -41,6 +41,7 @@ pub(crate) fn definition() -> AgentDefinition {
         max_turns: Some(MAX_TURNS),
         permission_mode: None,
         background: true,
+        selection: None,
     }
 }
 

@@ -53,6 +53,9 @@ pub struct AgentDefinition {
     pub permission_mode: Option<PermissionMode>,
     /// frontmatter `background: true`：总在后台运行。
     pub background: bool,
+    /// Fork: the full model selection (provider, model, reasoning level) of a Host profile or a Settings override
+    /// for a built-in; it wins over `model` (specs/fork-rust-subagent-runtime-config.md, rule 9).
+    pub selection: Option<rust_cli_kernel_api::model::ModelSelection>,
 }
 
 impl AgentDefinition {
@@ -117,6 +120,7 @@ fn built_in(agent_type: &str, when_to_use: &str, prompt: &str) -> AgentDefinitio
         max_turns: None,
         permission_mode: None,
         background: false,
+        selection: None,
     }
 }
 

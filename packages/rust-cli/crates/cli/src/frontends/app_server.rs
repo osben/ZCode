@@ -18,7 +18,7 @@ use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
     Context, Defaults, HOST_ATTACH_ACK_ENV, HostAutomations, HostCredentialCipher, HostHeaders,
-    HostTopicResources, NetworkCapture, Startup,
+    HostSubagentConfig, HostTopicResources, NetworkCapture, Startup,
 };
 
 use crate::assemble::{self, Controller};
@@ -147,6 +147,7 @@ async fn serve(
         // the egress exists.
         Arc::new(CaptureObserver(capture.clone())),
         Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
+        Arc::new(HostSubagentConfig::new(context.clone())),
         desktop_context,
     );
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;

@@ -99,6 +99,7 @@ pub(crate) fn parse(raw: &str, file: &PluginAgentFile, project_dir: &str) -> Age
         // 插件 agent 不认 permissionMode（插件是第三方代码）。
         permission_mode: None,
         background: text("background") == Some("true"),
+        selection: None,
     }
 }
 

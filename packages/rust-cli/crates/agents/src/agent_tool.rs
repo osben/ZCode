@@ -75,11 +75,12 @@ impl AgentTool {
         if self.core.fork && wanted == crate::fork::FORK {
             return Ok(crate::fork::definition());
         }
+        // Fork: a failed Host read is the tool's error (specs/fork-rust-subagent-runtime-config.md, rule 4).
         let definitions = self
             .core
             .catalog
-            .definitions_in(&context.workspace, Some(&context.session))
-            .await;
+            .prepared_definitions(&context.workspace, &context.session, Some(&context.run))
+            .await?;
         if let Some(found) = definitions.iter().find(|agent| agent.agent_type == wanted) {
             return Ok(found.clone());
         }
@@ -249,6 +250,7 @@ impl Tool for AgentTool {
             } else {
                 spawn::selection(
                     &parent.selection,
+                    definition.selection.as_ref(),
                     definition.model.as_deref(),
                     input.effort.clone().or_else(|| definition.effort.clone()),
                 )

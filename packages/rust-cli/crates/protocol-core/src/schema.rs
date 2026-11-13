@@ -68,6 +68,8 @@ const SUPPORTED: &[&str] = &[
     "anyOf",
     "oneOf",
     "default",
+    // Fork: an annotation (zod `.readonly()`); it does not constrain the value.
+    "readOnly",
 ];
 
 fn ty(name: &str) -> Result<Ty, String> {

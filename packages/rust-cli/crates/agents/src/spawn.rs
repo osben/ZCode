@@ -26,17 +26,28 @@ use crate::toolset::{FilteredTools, ToolRule};
 
 /// 子代理的模型：定义里的模型 ID（`inherit` 与缺省继承父运行），`effort` 参数优先于定义。provider 与账号连接
 /// （Team Plan 的团队项目，工作线 F49）都跟父运行：同一个团队项目、换一个模型。
+///
+/// Fork: a full selection (a Host profile or a Settings override, specs/fork-rust-subagent-runtime-config.md rule 9)
+/// wins over `model`: its provider, model and reasoning level; the connection follows the parent only on the same
+/// provider, otherwise the platform picks it as for an App selection.
 pub(crate) fn selection(
     parent: &ModelSelection,
+    full: Option<&ModelSelection>,
     model: Option<&str>,
     effort: Option<String>,
 ) -> ModelSelection {
-    let mut selection = match model.filter(|model| *model != "inherit") {
-        Some(model) => ModelSelection {
+    let mut selection = match (full, model.filter(|model| *model != "inherit")) {
+        (Some(full), _) => ModelSelection {
+            connection: (full.provider == parent.provider)
+                .then(|| parent.connection.clone())
+                .flatten(),
+            ..full.clone()
+        },
+        (None, Some(model)) => ModelSelection {
             connection: parent.connection.clone(),
             ..ModelSelection::new(parent.provider.clone(), model.to_owned())
         },
-        None => parent.clone(),
+        (None, None) => parent.clone(),
     };
     if effort.is_some() {
         selection.reasoning = effort;

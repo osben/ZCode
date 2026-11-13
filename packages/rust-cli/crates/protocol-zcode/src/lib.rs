@@ -30,6 +30,7 @@ mod preparation;
 mod projection;
 mod reservations;
 mod server;
+mod subagent_config;
 mod subscribe;
 mod telemetry;
 // Fork: specs/fork-rust-topic-resource.md.
@@ -57,6 +58,7 @@ pub use fork::{Admission, WorkspaceAdmin, WorkspaceTarget};
 pub use headers::HostHeaders;
 pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
+pub use subagent_config::HostSubagentConfig;
 pub use topic_resource::HostTopicResources;
 
 /// 存储的启动状态（`startup/storageState`，`zcodeStorageStartupStateSchema`）：checking → ready / failed。迁移与备份只由

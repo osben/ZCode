@@ -40,6 +40,7 @@ use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
+use rust_cli_kernel_api::subagent_config::SubagentConfigSource;
 use rust_cli_kernel_api::topic_resource::TopicResources;
 use rust_cli_net::{Egress, RequestObserver};
 use rust_cli_node_store::{NodeIds, NodeStore};
@@ -153,6 +154,9 @@ pub(crate) struct Controller {
     /// Fork: the Network panel capture (specs/fork-rust-network-capture.md), installed on the egress as soon as it
     /// exists so requests made while assembling are reported too; only the app-server has one.
     pub(crate) observer: Option<Arc<dyn RequestObserver>>,
+    /// Fork: the subagent snapshot through the Host (specs/fork-rust-subagent-runtime-config.md); None reads the
+    /// agent files.
+    pub(crate) subagent_config: Option<Arc<dyn SubagentConfigSource>>,
     pub(crate) root_bypass: RootBypass,
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
@@ -186,6 +190,7 @@ impl Controller {
             headers: None,
             credential_cipher: None,
             observer: None,
+            subagent_config: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
             token_budget: true,
@@ -214,6 +219,7 @@ impl Controller {
             headers: None,
             credential_cipher: None,
             observer: None,
+            subagent_config: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
             token_budget: true,
@@ -234,6 +240,7 @@ impl Controller {
         automation: Arc<dyn rust_cli_kernel_api::automation::AutomationPort>,
         observer: Arc<dyn RequestObserver>,
         topic_resources: Arc<dyn TopicResources>,
+        subagent_config: Arc<dyn SubagentConfigSource>,
         desktop_context: bool,
     ) -> Self {
         Self {
@@ -245,6 +252,7 @@ impl Controller {
             headers: Some(headers),
             credential_cipher: Some(credential_cipher),
             observer: Some(observer),
+            subagent_config: Some(subagent_config),
             root_bypass: RootBypass::Allow,
             wait_model: true,
             token_budget: false,
@@ -685,6 +693,7 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    extensions.subagent_config = spec.subagent_config.clone();
     // The runtime derives `/loop` hiding and the storeless local cron from this port.
     extensions.automation = spec.automation.clone();
     extensions.topic_resources = spec.topic_resources.clone();

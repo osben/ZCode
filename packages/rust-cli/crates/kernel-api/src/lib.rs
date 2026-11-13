@@ -121,6 +121,7 @@ pub mod session_follow;
 pub mod session_ops;
 pub mod side_request;
 pub mod store;
+pub mod subagent_config;
 pub mod title;
 pub mod tool;
 pub mod tool_names;

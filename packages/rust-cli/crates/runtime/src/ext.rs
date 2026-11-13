@@ -47,6 +47,10 @@ pub struct Extensions {
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): Read, Edit and Write report to it and the
     /// context builder asks it for the post-edit diagnostics. Only the app-server gives it.
     pub code_intelligence: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork: the Host's subagent snapshot (specs/fork-rust-subagent-runtime-config.md); only the desktop app-server
+    /// gives one. None: the agent files apply.
+    pub subagent_config:
+        Option<Arc<dyn rust_cli_kernel_api::subagent_config::SubagentConfigSource>>,
 }
 
 impl Extensions {
@@ -63,6 +67,7 @@ impl Extensions {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            subagent_config: None,
         }
     }
 }

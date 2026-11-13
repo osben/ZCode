@@ -264,6 +264,14 @@ pub struct Agents {
 impl Agents {
     pub fn new(ports: AgentsPorts, base: Arc<dyn ToolRegistry>, config: AgentsConfig) -> Self {
         let live = Arc::new(Live::new(ports.clock.clone()));
+        // Fork: a subagent's catalog lookups use its root session's Host snapshot.
+        let tree = Arc::downgrade(&live);
+        ports
+            .catalog
+            .set_roots(Arc::new(move |session: &SessionId| {
+                tree.upgrade()
+                    .map_or_else(|| session.clone(), |live| live.root_of(session))
+            }));
         let registry = Arc::new_cyclic(|registry: &Weak<AgentRegistry>| {
             let core = Arc::new(Core {
                 catalog: ports.catalog.clone(),
