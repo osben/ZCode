@@ -81,6 +81,12 @@ pub(crate) enum TurnInput {
 
 impl Actor {
     pub(crate) async fn start_turn(&mut self, input: TurnInput) -> Result<(), StoreError> {
+        // The held SessionStart result is written first: Node's `session_persistence` phase runs before the
+        // turn's `TurnStarted`, the UserPromptSubmit hook and the input. Bash and compaction are not turns in Node
+        // (`turn.ts` returns before that phase for `/compact`), so they do not write it.
+        if !matches!(input, TurnInput::Bash { .. } | TurnInput::Compact { .. }) {
+            self.commit_pending_session_start().await?;
+        }
         let meta = |source: &str| UserOrigin::Meta {
             source: source.to_owned(),
         };
@@ -371,8 +377,22 @@ impl Actor {
         let command = messages
             .iter()
             .find_map(|message| self.command_of(message.id()));
+        // A compaction that restores a SessionStart context replaces the held one (Node
+        // `discardPendingSessionStartContext` after `compactSessionStart.hasContext`). Every compaction commits its
+        // batch through here (manual, automatic and reactive), so the check holds for all of them.
+        let compacts_with_context = messages.iter().any(|message| {
+            matches!(
+                message,
+                Message::System(rust_cli_kernel_api::message::SystemMessage::CompactBoundary(_))
+            )
+        }) && messages
+            .iter()
+            .any(crate::hooks::is_session_start_context);
         match self.append(command, messages, usage).await {
             Ok(appended) => {
+                if compacts_with_context {
+                    self.pending_session_start.clear();
+                }
                 self.after_commit(appended).await;
                 Ok(())
             }

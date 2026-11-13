@@ -273,6 +273,9 @@ pub(crate) struct Actor {
     pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
     /// Fork: `SessionState::execution_worktree`; set by a successful `Command::SetExecutionRoot` (workspace.rs).
     pub(crate) execution_worktree: bool,
+    /// The SessionStart result waiting for the first turn to write it (Node `pendingSessionStartContexts`, hooks.rs).
+    /// Empty when there is none. Kept in memory only: a reopen runs SessionStart again.
+    pub(crate) pending_session_start: Vec<Message>,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -372,6 +375,7 @@ impl Actor {
             wait_started: None,
             asks,
             deferred_start: None,
+            pending_session_start: Vec::new(),
             execution_worktree,
         };
         if defer_start {

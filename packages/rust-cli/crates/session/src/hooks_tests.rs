@@ -389,3 +389,149 @@ async fn prompt_hook_context_follows_the_turn_attachments_of_the_input() {
         .collect();
     assert_eq!(ids[1..4], ["msg_turn", "msg_ups", "msg_date"], "{ids:?}");
 }
+
+/// A SessionStart additional-context attachment as the hook fold writes it (`hooks` `texts::additional_context`).
+fn start_context(id: &str, text: &str) -> Message {
+    Message::Attachment(rust_cli_kernel_api::message::AttachmentMessage {
+        id: rust_cli_kernel_api::ids::MessageId::new(id),
+        source: "hook_additional_context".into(),
+        text: format!(
+            "<system-reminder>\nSessionStart hook additional context: {text}\n</system-reminder>"
+        ),
+        data: serde_json::json!({
+            "hookName": "SessionStart",
+            "hookEvent": "SessionStart",
+            "content": [text],
+        }),
+    })
+}
+
+fn start_outcome(messages: Vec<Message>, title: Option<&str>) -> HookOutcome {
+    HookOutcome {
+        messages,
+        session_title: title.map(str::to_owned),
+        ..HookOutcome::default()
+    }
+}
+
+/// The additional-context attachments in order, as their full text.
+fn context_texts(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::Attachment(attachment) if attachment.source == "hook_additional_context" => {
+                Some(attachment.text.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The startup title is set after the SessionStart result is kept, so seeing it means the result is held.
+async fn wait_for_startup_title(session: &crate::Session, title: &str) {
+    for _ in 0..500 {
+        if session.view().await.unwrap().meta.title == title {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the startup title was never set");
+}
+
+/// Node keeps the SessionStart result in a pending slot until the first turn writes it
+/// (`commitPendingSessionStartContext`): a prewarm has no conversation before its first input, so the desktop's
+/// first send can adopt it. Before, the result was appended at creation and the adoption was refused.
+#[tokio::test]
+async fn a_session_start_result_is_held_until_the_first_input() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        start_outcome(
+            vec![start_context("msg_s1", "start context")],
+            Some("startup title"),
+        ),
+    ));
+    let built = setup.build().await;
+    wait_for_startup_title(&built.session, "startup title").await;
+    let view = built.session.view().await.unwrap();
+    assert!(view.messages.is_empty(), "{} stored", view.messages.len());
+    assert!(model.requests().is_empty());
+}
+
+/// The first turn writes the held context before its input: the model request and the stored history both have
+/// the context first.
+#[tokio::test]
+async fn the_first_turn_writes_the_held_context_before_its_input() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        start_outcome(vec![start_context("msg_s1", "start context")], None),
+    ));
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "typed")).await;
+    until(&mut events, finished).await;
+
+    let request = serde_json::to_string(&model.requests()[0].messages).unwrap();
+    let (context, input) = (request.find("start context"), request.find("typed"));
+    assert!(
+        matches!((context, input), (Some(c), Some(i)) if c < i),
+        "{request}"
+    );
+
+    let messages = built.session.view().await.unwrap().messages;
+    let position = |predicate: &dyn Fn(&Message) -> bool| messages.iter().position(predicate);
+    let context = position(
+        &|message| matches!(message, Message::Attachment(a) if a.text.contains("start context")),
+    );
+    let input = position(
+        &|message| matches!(message, Message::User(user) if texts(std::slice::from_ref(message)) == ["typed"]),
+    );
+    assert!(
+        matches!((context, input), (Some(c), Some(i)) if c < i),
+        "{context:?} {input:?}"
+    );
+}
+
+/// Node skips a SessionStart context equal to the latest one already in the history
+/// (`commitPendingSessionStartContext`): a reopen whose hook output did not change adds nothing.
+#[tokio::test]
+async fn an_unchanged_session_start_context_is_not_written_again() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.messages = vec![start_context("msg_old", "start context")];
+    setup.start = StartSource::Resume;
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        start_outcome(vec![start_context("msg_new", "start context")], None),
+    ));
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "typed")).await;
+    until(&mut events, finished).await;
+    let contexts = context_texts(&built.session.view().await.unwrap().messages);
+    assert_eq!(contexts.len(), 1, "{contexts:?}");
+    assert!(contexts[0].contains("start context"));
+}
+
+/// A changed context is written after the earlier one: the dedup compares with the latest context only.
+#[tokio::test]
+async fn a_changed_session_start_context_is_written_after_the_earlier_one() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.messages = vec![start_context("msg_old", "start context")];
+    setup.start = StartSource::Resume;
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        start_outcome(vec![start_context("msg_new", "newer context")], None),
+    ));
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "typed")).await;
+    until(&mut events, finished).await;
+    let contexts = context_texts(&built.session.view().await.unwrap().messages);
+    assert_eq!(contexts.len(), 2, "{contexts:?}");
+    assert!(contexts[0].contains("start context") && contexts[1].contains("newer context"));
+}

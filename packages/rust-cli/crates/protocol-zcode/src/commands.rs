@@ -514,7 +514,7 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
             .workspace_id
             .as_deref()
             .is_none_or(|workspace| view.meta.workspace.root == server.workspace(workspace).root);
-        if crate::preparation::recreate_existing(
+        if let Err(reason) = crate::preparation::recreate_existing(
             marker.as_ref(),
             workspace_matches,
             crate::preparation::has_conversation(view),
@@ -522,9 +522,12 @@ pub(crate) async fn create_session(server: &Server, envelope: &Envelope) -> Ack 
                 stored: view.meta.incognito,
                 requested: incognito,
             },
-        )
-        .is_err()
-        {
+        ) {
+            tracing::warn!(
+                event = "session.create_refused",
+                reason,
+                "createSession refused an existing session"
+            );
             return Ack::refused(
                 &envelope.command_id,
                 Status::Rejected,
@@ -823,6 +826,11 @@ async fn reserve_submission(
             crate::preparation::Reserve::Repeat => return accepted(&id),
             crate::preparation::Reserve::Adopt => {}
             crate::preparation::Reserve::Refuse(reason) => {
+                tracing::warn!(
+                    event = "session.reserve_refused",
+                    reason,
+                    "a submission could not reserve an existing session"
+                );
                 return refused(
                     "proto.invalidPayload",
                     format!("session {} cannot be reserved: {reason}", id.as_str()),
