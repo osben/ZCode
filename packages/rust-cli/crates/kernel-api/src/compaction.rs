@@ -432,6 +432,12 @@ pub struct CompactResult {
     pub summary: UserMessage,
     /// 压缩后重新注入的内容（最近读过的文件、计划、已调用的 skill 等）。
     pub restored: Vec<Message>,
+    /// Fork: the SessionStart(`compact`) run gave a SessionStart additional context, whether it is in `restored` or was
+    /// dropped as a duplicate of the kept one (Node `compactSessionStart.hasContext`). The session clears its held
+    /// SessionStart result when the compaction commits with this flag (specs/fork-rust-agent-parity.md, "SessionStart
+    /// pending slot"). Off when the hook gave no context.
+    #[serde(default)]
+    pub session_start_context: bool,
 }
 
 #[cfg(test)]

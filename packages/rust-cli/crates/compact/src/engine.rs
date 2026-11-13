@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rust_cli_kernel_api::history;
+use rust_cli_kernel_api::hooks::is_session_start_context;
 use rust_cli_kernel_api::message::{
     CompactBoundary, ContentBlock, Message, PreservedSegment, UserMessage, UserOrigin,
 };
@@ -46,6 +47,14 @@ pub(crate) enum Failure {
     Aborted,
     #[error("Error during compaction: {0}")]
     Error(String),
+}
+
+/// The text of an attachment message (the full text, as the SessionStart comparison uses it).
+fn attachment_text(message: &Message) -> Option<&str> {
+    match message {
+        Message::Attachment(attachment) => Some(attachment.text.as_str()),
+        _ => None,
+    }
 }
 
 /// 一次摘要请求的输入。
@@ -434,7 +443,23 @@ impl Engine<'_> {
             .collect();
         restored.extend(self.listings(request, &split.keep).await);
         // SessionStart（`compact`）的消息排在附件之后，三种触发都跑。
-        restored.extend(hooks::session_start(self.ports.hooks.as_ref(), request, cancel).await);
+        let started = hooks::session_start(self.ports.hooks.as_ref(), request, cancel).await;
+        let session_start_context = started.iter().any(is_session_start_context);
+        // Node `runCompactSessionStartHooks`: a context equal to the latest one the compaction keeps is not restored
+        // (`preservedEntries`), and its hook group goes with it. The kept history is the only comparison.
+        let kept = split
+            .keep
+            .iter()
+            .rev()
+            .find(|message| is_session_start_context(message))
+            .and_then(|message| attachment_text(message));
+        let duplicate = kept.is_some()
+            && started.iter().any(|message| {
+                is_session_start_context(message) && attachment_text(message) == kept
+            });
+        if !duplicate {
+            restored.extend(started);
+        }
         hooks::post_compact(self.ports.hooks.as_ref(), request, &raw, cancel).await;
         Ok(CompactResult {
             boundary: CompactBoundary {
@@ -447,6 +472,7 @@ impl Engine<'_> {
             },
             summary,
             restored,
+            session_start_context,
         })
     }
 }

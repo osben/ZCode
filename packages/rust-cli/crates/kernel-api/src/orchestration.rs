@@ -233,6 +233,15 @@ pub trait RunSink: Interactions + SessionOps {
     /// 存储事务里提交。没有事务的输出端（只收集的、子代理的）逐条提交。
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError>;
 
+    /// Fork: a compaction batch (boundary, summary and restored messages) committed as one group, with the flag of
+    /// [`crate::compaction::CompactResult::session_start_context`]. The session clears its held SessionStart result
+    /// once the batch has committed with the flag set. Sinks with no held result commit the messages only.
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError>;
+
     /// 一条消息与它的计量事实在一个存储事务里提交（docs/specs/rust-cli/usage.md §2.5）：assistant 消息带这次
     /// 模型请求，工具结果带这次工具调用；`message` 为 None 时只提交计量（没有内容的失败请求、丢弃的响应）。
     /// 没有存储的输出端只提交消息、丢弃计量。

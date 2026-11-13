@@ -535,3 +535,151 @@ async fn a_changed_session_start_context_is_written_after_the_earlier_one() {
     assert_eq!(contexts.len(), 2, "{contexts:?}");
     assert!(contexts[0].contains("start context") && contexts[1].contains("newer context"));
 }
+
+/// Node's SessionStart output has no `initialUserMessage` (it reads only `additionalContext`), so under the desktop
+/// the hook's input is dropped: the prewarm keeps no queue, no turn and no message, and the first send can adopt it.
+#[tokio::test]
+async fn a_desktop_session_start_input_is_not_run() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["unused"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.session_start_input = false;
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome {
+            initial_user_message: Some("hook input".into()),
+            session_title: Some("startup title".into()),
+            ..HookOutcome::default()
+        },
+    ));
+    let built = setup.build().await;
+    wait_for_startup_title(&built.session, "startup title").await;
+    let view = built.session.view().await.unwrap();
+    assert!(view.queue.is_empty(), "{:?}", view.queue);
+    assert!(!view.running);
+    assert!(view.messages.is_empty(), "{:?}", view.messages);
+    assert!(model.requests().is_empty());
+}
+
+/// The TUI and `-p` keep the hook's input: it is queued and runs as the session's first turn.
+#[tokio::test]
+async fn a_session_start_input_runs_as_the_first_turn_when_queued() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome {
+            initial_user_message: Some("hook input".into()),
+            ..HookOutcome::default()
+        },
+    ));
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    until(&mut events, finished).await;
+    let requests = model.requests();
+    assert_eq!(requests.len(), 1);
+    let request = serde_json::to_string(&requests[0].messages).unwrap();
+    assert!(request.contains("hook input"), "{request}");
+}
+
+/// A manual compactor with a fixed result: the batch holds the boundary and the summary, and the flag is `session_start_context`.
+struct FixedCompact {
+    session_start_context: bool,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::orchestration::Compactor for FixedCompact {
+    fn should_auto_compact(
+        &self,
+        _history: &[Message],
+        _selection: &rust_cli_kernel_api::model::ModelSelection,
+    ) -> bool {
+        false
+    }
+
+    async fn compact(
+        &self,
+        request: rust_cli_kernel_api::orchestration::CompactRequest,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<
+        rust_cli_kernel_api::orchestration::CompactResult,
+        rust_cli_kernel_api::orchestration::OrchestrationError,
+    > {
+        Ok(rust_cli_kernel_api::orchestration::CompactResult {
+            boundary: rust_cli_kernel_api::message::CompactBoundary {
+                id: rust_cli_kernel_api::ids::MessageId::new("msg_b"),
+                trigger: request.trigger,
+                pre_tokens: 5,
+                summary: rust_cli_kernel_api::ids::MessageId::new("msg_s"),
+                preserved: None,
+                discovered_tools: Vec::new(),
+            },
+            summary: UserMessage {
+                stall_execution: None,
+                intent: None,
+                id: rust_cli_kernel_api::ids::MessageId::new("msg_s"),
+                content: vec![ContentBlock::Text {
+                    text: "S".to_owned(),
+                }],
+                origin: UserOrigin::CompactSummary,
+            },
+            restored: Vec::new(),
+            session_start_context: self.session_start_context,
+        })
+    }
+}
+
+fn holds_start_context(messages: &[Message]) -> bool {
+    messages.iter().any(
+        |message| matches!(message, Message::Attachment(a) if a.text.contains("start context")),
+    )
+}
+
+/// Startup holds a SessionStart result, a manual compaction commits with the given flag, then a typed input runs.
+/// Returns the stored history after the typed turn.
+async fn history_after_compaction_over_a_held_result(session_start_context: bool) -> Vec<Message> {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut setup = Setup::new(model.clone());
+    setup.compactor = Some(Arc::new(FixedCompact {
+        session_start_context,
+    }));
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        start_outcome(
+            vec![start_context("msg_s1", "start context")],
+            Some("startup title"),
+        ),
+    ));
+    let built = setup.build().await;
+    wait_for_startup_title(&built.session, "startup title").await;
+    let mut events = built.session.subscribe(Some(0));
+    built
+        .session
+        .send(envelope("c1", Command::Compact { instructions: None }))
+        .await;
+    until(&mut events, finished).await;
+    built.session.send(submit("c2", "typed")).await;
+    until(&mut events, finished).await;
+    let messages = built.session.view().await.unwrap().messages;
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::System(_))),
+        "the compaction boundary is stored: {messages:?}"
+    );
+    messages
+}
+
+/// Node `discardPendingSessionStartContext` after `hasContext`: a compaction whose SessionStart context duplicates the
+/// kept one still clears the held startup result (the flag is set), so the next turn does not write it.
+#[tokio::test]
+async fn a_duplicate_compaction_context_still_clears_the_held_result() {
+    let messages = history_after_compaction_over_a_held_result(true).await;
+    assert!(!holds_start_context(&messages), "{messages:?}");
+}
+
+/// A compaction whose SessionStart hook gave no context leaves the held startup result to the next turn, as Node does.
+#[tokio::test]
+async fn a_compaction_without_a_session_start_context_keeps_the_held_result() {
+    let messages = history_after_compaction_over_a_held_result(false).await;
+    assert!(holds_start_context(&messages), "{messages:?}");
+}

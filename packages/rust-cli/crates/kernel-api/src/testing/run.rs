@@ -95,6 +95,14 @@ impl RunSink for RecordingSink {
         Ok(())
     }
 
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        _session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.commit_messages(messages).await
+    }
+
     async fn compact_started(&self, _trigger: crate::message::CompactTrigger) {}
 
     async fn compact_failed(&self, _trigger: crate::message::CompactTrigger, _message: String) {}

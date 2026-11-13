@@ -293,6 +293,19 @@ impl Actor {
             SinkRequest::Messages { messages, reply } => {
                 let _ = reply.send(self.record(messages, Vec::new()).await);
             }
+            SinkRequest::Compaction {
+                messages,
+                session_start_context,
+                reply,
+            } => {
+                // A compaction whose SessionStart run gave a context replaces the held result, once the batch has
+                // committed (Node `discardPendingSessionStartContext` after `compactSessionStart.hasContext`).
+                let result = self.record(messages, Vec::new()).await;
+                if session_start_context && result.is_ok() {
+                    self.pending_session_start.clear();
+                }
+                let _ = reply.send(result);
+            }
             SinkRequest::CompactStarted(trigger) => crate::compact::compact_started(self, trigger),
             SinkRequest::CompactFailed(trigger, message) => {
                 self.log
@@ -377,22 +390,8 @@ impl Actor {
         let command = messages
             .iter()
             .find_map(|message| self.command_of(message.id()));
-        // A compaction that restores a SessionStart context replaces the held one (Node
-        // `discardPendingSessionStartContext` after `compactSessionStart.hasContext`). Every compaction commits its
-        // batch through here (manual, automatic and reactive), so the check holds for all of them.
-        let compacts_with_context = messages.iter().any(|message| {
-            matches!(
-                message,
-                Message::System(rust_cli_kernel_api::message::SystemMessage::CompactBoundary(_))
-            )
-        }) && messages
-            .iter()
-            .any(crate::hooks::is_session_start_context);
         match self.append(command, messages, usage).await {
             Ok(appended) => {
-                if compacts_with_context {
-                    self.pending_session_start.clear();
-                }
                 self.after_commit(appended).await;
                 Ok(())
             }

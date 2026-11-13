@@ -43,6 +43,16 @@ pub trait SinkOverride: Send + Sync {
         self.sink().commit_messages(messages).await
     }
 
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.sink()
+            .commit_compaction(messages, session_start_context)
+            .await
+    }
+
     async fn commit_metered(
         &self,
         message: Option<Message>,
@@ -84,6 +94,14 @@ impl<T: SinkOverride + Interactions + SessionOps> RunSink for T {
 
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         SinkOverride::commit_messages(self, messages).await
+    }
+
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        SinkOverride::commit_compaction(self, messages, session_start_context).await
     }
 
     async fn commit_metered(

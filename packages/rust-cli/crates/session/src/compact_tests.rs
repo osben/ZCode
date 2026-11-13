@@ -114,6 +114,7 @@ impl Compactor for FakeCompactor {
                 origin: UserOrigin::CompactSummary,
             },
             restored: Vec::new(),
+            session_start_context: false,
         })
     }
 }
@@ -201,6 +202,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_input: true,
         },
         SessionState {
             commands: Default::default(),

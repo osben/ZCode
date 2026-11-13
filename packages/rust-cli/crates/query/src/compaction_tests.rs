@@ -68,6 +68,7 @@ impl FakeCompactor {
 
 fn result(trigger: CompactTrigger) -> CompactResult {
     CompactResult {
+        session_start_context: false,
         boundary: CompactBoundary {
             id: MessageId::new("msg_boundary"),
             trigger,

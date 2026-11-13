@@ -482,6 +482,15 @@ impl RunSink for ChildSink {
         Ok(())
     }
 
+    /// 子代理没有待写的 SessionStart 结果，压缩的标志不用。
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        _session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.commit_messages(messages).await
+    }
+
     /// 子代理里的压缩不显示进度。
     async fn compact_started(&self, _trigger: rust_cli_kernel_api::message::CompactTrigger) {}
 

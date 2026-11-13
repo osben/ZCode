@@ -121,6 +121,8 @@ pub(crate) struct Built {
 pub(crate) struct Setup {
     pub model: Arc<dyn ModelPort>,
     pub hooks: Arc<dyn HookRunner>,
+    /// The manual compactor (`/compact`); `NeverCompact` when unset.
+    pub compactor: Option<Arc<dyn rust_cli_kernel_api::orchestration::Compactor>>,
     pub machine: MachineEnv,
     pub controller: ControllerServices,
     pub artifacts: Arc<MemoryArtifacts>,
@@ -166,6 +168,8 @@ pub(crate) struct Setup {
     pub fork_while_running: bool,
     /// Fork: `SessionDeps::error_holds_queue`; off by default.
     pub error_holds_queue: bool,
+    /// Fork: `SessionDeps::session_start_input`; on by default (the TUI and `-p`).
+    pub session_start_input: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -192,6 +196,7 @@ impl Setup {
         Self {
             model,
             hooks: Arc::new(rust_cli_kernel_api::testing::NoHooks),
+            compactor: None,
             machine: machine(env.clone()),
             controller: controller_services(env),
             artifacts: Arc::new(MemoryArtifacts::default()),
@@ -219,6 +224,7 @@ impl Setup {
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_input: true,
             store: None,
             store_hooks: None,
             machines: None,
@@ -294,7 +300,7 @@ impl Setup {
                 store: session_store,
                 ids: ids.clone(),
                 runner,
-                compactor: Arc::new(NeverCompact),
+                compactor: self.compactor.unwrap_or_else(|| Arc::new(NeverCompact)),
                 machines,
                 max_turns: None,
                 agents: self.agents,
@@ -317,6 +323,7 @@ impl Setup {
                 desktop_goals: self.desktop_goals,
                 fork_while_running: self.fork_while_running,
                 error_holds_queue: self.error_holds_queue,
+                session_start_input: self.session_start_input,
             },
             SessionState {
                 commands: Default::default(),

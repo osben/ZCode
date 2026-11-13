@@ -69,6 +69,7 @@ impl Actor {
         let task = self.deps.spawner.spawn("compact-run", async move {
             match compactor.compact(request, signal.token().clone()).await {
                 Ok(result) => {
+                    let session_start_context = result.session_start_context;
                     let mut messages = vec![
                         Message::System(SystemMessage::CompactBoundary(result.boundary)),
                         Message::User(result.summary),
@@ -78,7 +79,8 @@ impl Actor {
                         ids.as_ref(),
                         &compact_record(&args, LocalCommandOutput::Stdout(dim(COMPACTED))),
                     ));
-                    sink.commit_messages(messages).await?;
+                    sink.commit_compaction(messages, session_start_context)
+                        .await?;
                     Ok(QueryStop::Completed)
                 }
                 Err(_) if signal.is_aborted() => Ok(QueryStop::Aborted),

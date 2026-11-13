@@ -51,6 +51,13 @@ pub(crate) enum SinkRequest {
         messages: Vec<Message>,
         reply: oneshot::Sender<Result<(), StoreError>>,
     },
+    /// Fork: a compaction batch, with the flag that clears the held SessionStart result once it has committed
+    /// (`RunSink::commit_compaction`).
+    Compaction {
+        messages: Vec<Message>,
+        session_start_context: bool,
+        reply: oneshot::Sender<Result<(), StoreError>>,
+    },
     /// 主循环开始压缩。
     CompactStarted(CompactTrigger),
     /// 开始了的压缩失败了（compact.md §4.1）。
@@ -322,6 +329,19 @@ impl RunSink for ActorSink {
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         self.call(|reply| SinkRequest::Messages { messages, reply })
             .await
+    }
+
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.call(|reply| SinkRequest::Compaction {
+            messages,
+            session_start_context,
+            reply,
+        })
+        .await
     }
 
     async fn commit_metered(

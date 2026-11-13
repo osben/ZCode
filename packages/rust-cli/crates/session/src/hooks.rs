@@ -4,7 +4,9 @@
 //! Notification 是可取消的计时任务，SessionEnd 在调用方的任务里跑。actor 只按 `HookOutcome`
 //! 提交消息、改标题、决定流程，所以 hook 跑多久都不会挡住中断与 `view`。
 
-use rust_cli_kernel_api::hooks::{HookContext, HookEvent, HookEventName, HookOutcome};
+use rust_cli_kernel_api::hooks::{
+    HookContext, HookEvent, HookEventName, HookOutcome, is_session_start_context,
+};
 use rust_cli_kernel_api::ids::CommandId;
 // 权限询问多久没回答才发 Notification（6000 ms）：只定义在 kernel-api，TUI 的终端通知用同一个值（F58：
 // 以前这里与 tui 各写一份）。
@@ -102,18 +104,6 @@ pub(crate) async fn session_end(
 /// SessionStart 给的首条输入的命令 ID 前缀。
 pub(crate) const SESSION_START_INPUT: &str = rust_cli_kernel_api::session_api::SESSION_START_INPUT;
 
-/// The SessionStart additional-context attachment (source `hook_additional_context`, `data.hookEvent`
-/// `SessionStart`): the message the pending slot dedups (Node `latestSessionStartContext`).
-pub(crate) fn is_session_start_context(message: &Message) -> bool {
-    matches!(
-        message,
-        Message::Attachment(attachment)
-            if attachment.source == "hook_additional_context"
-                && attachment.data.get("hookEvent").and_then(Value::as_str)
-                    == Some(HookEventName::SessionStart.as_str())
-    )
-}
-
 fn attachment_text(message: &Message) -> Option<&str> {
     match message {
         Message::Attachment(attachment) => Some(attachment.text.as_str()),
@@ -153,7 +143,12 @@ impl Actor {
         if let Some(title) = outcome.session_title {
             self.retitle(title).await;
         }
-        if let Some(text) = outcome.initial_user_message {
+        // Fork: the Node desktop agent has no SessionStart `initialUserMessage` (its output reads only
+        // `additionalContext`), so the desktop drops it: queuing it would start a turn in an unsent draft.
+        if let Some(text) = outcome
+            .initial_user_message
+            .filter(|_| self.deps.session_start_input)
+        {
             let command = CommandId::new(format!(
                 "{SESSION_START_INPUT}{}",
                 self.deps.ids.operation()

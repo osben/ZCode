@@ -137,6 +137,7 @@ fn spawn(
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_input: true,
         },
         SessionState {
             commands: Default::default(),
