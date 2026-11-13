@@ -221,7 +221,7 @@ async fn an_answer_that_settles_after_stop_ends_the_turn_interrupted() {
     );
     // The answer's usage is kept on the closed segment, as for a completed turn.
     let usage = messages.iter().find_map(|message| match message {
-        Message::Assistant(assistant) => assistant.usage.clone(),
+        Message::Assistant(assistant) => assistant.usage,
         _ => None,
     });
     assert_eq!(
