@@ -32,7 +32,7 @@ pub const ACP_PROVIDER_PREFIX: &str = "acp:";
 
 /// The agent id of an ACP selection.
 pub fn external_agent(selection: &ModelSelection) -> Option<&str> {
-    selection.provider.strip_prefix(ACP_PROVIDER_PREFIX)
+    selection.external_agent()
 }
 
 /// What the entry gives the runtime to run ACP agents: where the Host keeps the agent records, the raw process

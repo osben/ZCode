@@ -285,6 +285,11 @@ impl Actor {
         let Some(titles) = self.deps.titles.clone() else {
             return;
         };
+        // Fork: an ACP agent names the session itself; no model title runs for its turns (Node skips the title
+        // sidecar for external-agent turns).
+        if self.selection.external_agent().is_some() {
+            return;
+        }
         let DeferredTitle {
             prompt,
             text,

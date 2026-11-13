@@ -244,6 +244,13 @@ pub struct ModelSelection {
 }
 
 impl ModelSelection {
+    /// Fork: the agent id of an ACP external agent selection (`acp:<agentId>`, Node `ACP_PROVIDER_ID_PREFIX`); such a
+    /// selection runs on the agent process, never on a model provider (specs/fork-rust-agent-parity.md "ACP external
+    /// agents").
+    pub fn external_agent(&self) -> Option<&str> {
+        self.provider.strip_prefix("acp:")
+    }
+
     /// 只有 provider 与模型的选择：推理档位、账号连接为空（由目录项或用户的选择填上，结构更新）。
     pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
         Self {

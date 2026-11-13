@@ -751,3 +751,34 @@ async fn a_blank_first_input_keeps_the_placeholder_until_a_real_input() {
     built.session.send(submit("c2", "real question")).await;
     until(&mut events, |event| titled(event, "real question")).await;
 }
+
+/// Fork (specs/fork-rust-agent-parity.md "ACP external agents", rule 8): an ACP agent names the session itself, so
+/// no model title is requested for its turns.
+#[tokio::test]
+async fn an_acp_selection_generates_no_model_title() {
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main.clone());
+    setup.titles = titles(title_model.clone());
+    let built = setup.build().await;
+    let ack = built
+        .session
+        .send(CommandEnvelope {
+            id: rust_cli_kernel_api::ids::CommandId::new("cmd_model"),
+            command: Command::SetModel {
+                selection: rust_cli_kernel_api::model::ModelSelection::new("acp:cursor", "cursor"),
+            },
+        })
+        .await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    until(&mut events, finished).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(title_model.requests().is_empty());
+}
