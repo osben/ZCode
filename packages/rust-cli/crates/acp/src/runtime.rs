@@ -314,8 +314,20 @@ impl AcpRuntime {
             {
                 core.active = None;
             }
+            // A dead connection can wake the prompt before the pump reports the exit: the runtime is failed then,
+            // never ready, so the next prompt restarts it.
+            let died = outcome.as_ref().is_err_and(|error| {
+                matches!(
+                    error.code,
+                    AcpErrorCode::AgentDied | AcpErrorCode::StreamClosed
+                )
+            });
             if core.state == AcpState::Prompting {
-                core.state = AcpState::Ready;
+                core.state = if died {
+                    AcpState::Failed
+                } else {
+                    AcpState::Ready
+                };
             }
         }
         let response = outcome?;
