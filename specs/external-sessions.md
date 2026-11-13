@@ -188,6 +188,10 @@ command to the clipboard instead.
   style: a deselected source is not scanned by that request, so its chip shows the last known count
   (from an earlier scan) or none, never "unavailable". An empty stored selection means "every
   source"; toggling a chip expands that sentinel first, so a click always flips that chip alone.
+  Last-chip rule: turning off the last selected chip is a no-op. At least one source stays
+  selected, and deselection never collapses the selection back into the "every source" sentinel
+  (the sentinel is re-entered only by selecting the fifth source, so a stored `[]` never results
+  from a deselect). The toggle is the pure helper `toggleSourceSelection` in `panelViewState.ts`.
   The selection rules live in pure helpers in `panelViewState.ts` and are unit-tested
   (`packages/ui/test/externalSessionsPanelSelection.test.ts`). Required cases: a persisted selection
   `["claude"]` where Claude was scanned with zero sessions and the other sources were never scanned
@@ -205,7 +209,9 @@ command to the clipboard instead.
 "local", targetWorkspace })`; nothing is sent automatically, the user reviews the draft. A session
     whose folder is missing gets a toast naming that folder path instead, and so does a folder that is only a secondary root
     of an existing project (`prepareSession` starts drafts in the primary root, which would silently
-    change the cwd). The pack is: a one-line header naming the source and
+    change the cwd). Every failure in this flow (transcript read, project resolve, draft creation)
+    goes through one error path that shows the error message as a toast. The row menu and the
+    transcript dialog share it, and the dialog stays open so the user can retry. The pack is: a one-line header naming the source and
     title, then the last `CONTEXT_PACK_MESSAGES` (12) user/assistant messages, each trimmed to
     `CONTEXT_PACK_CHARS_PER_MESSAGE` (1200), ending with "Continue from here." This is lossy by
     design and labelled as such in the UI.

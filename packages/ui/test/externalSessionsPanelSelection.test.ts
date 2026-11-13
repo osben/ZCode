@@ -8,6 +8,7 @@ import {
   selectedSourceStatuses,
   showChipCount,
   summarizeSourceSelection,
+  toggleSourceSelection,
 } from "../src/external-sessions/panelViewState.js";
 
 // specs/external-sessions.md "UI": selection-scoped counts, empty-state message and chip styling.
@@ -75,5 +76,28 @@ describe("external sessions panel selection", () => {
     expect(showChipCount(statuses, ["claude"], "codex")).toBe(false);
     // No status at all (never scanned): hidden.
     expect(showChipCount(statuses, ["claude"], "gemini")).toBe(false);
+  });
+
+  it("toggling a chip from the every-source sentinel turns off only that chip", () => {
+    const next = toggleSourceSelection([], "codex");
+    expect(new Set(next)).toEqual(new Set(["claude", "cursor", "gemini", "opencode"]));
+    expect(next).not.toEqual([]);
+  });
+
+  it("re-adding the fifth source returns the selection to the every-source sentinel", () => {
+    expect(toggleSourceSelection(["claude", "cursor", "gemini", "opencode"], "codex")).toEqual([]);
+  });
+
+  it("adding a source to a partial selection keeps the other selected sources", () => {
+    expect(toggleSourceSelection(["claude"], "gemini")).toEqual(["claude", "gemini"]);
+  });
+
+  it("turning off the last remaining chip is a no-op, not a return to every source", () => {
+    const current: ExternalSessionSource[] = ["claude"];
+    expect(toggleSourceSelection(current, "claude")).toEqual(["claude"]);
+  });
+
+  it("turning off one of two selected chips leaves the other selected", () => {
+    expect(toggleSourceSelection(["claude", "codex"], "claude")).toEqual(["codex"]);
   });
 });

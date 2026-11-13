@@ -19,6 +19,7 @@ import {
   type ExternalSessionTranscript,
 } from "./contract.js";
 import { buildExternalSessionContextPack } from "./contextPack.js";
+import { runWithErrorReport } from "./panelErrors.js";
 import { ExternalSessionRow } from "./ExternalSessionRow.js";
 import { ExternalSessionTranscriptDialog } from "./ExternalSessionTranscriptDialog.js";
 import {
@@ -28,6 +29,7 @@ import {
   readViewState,
   showChipCount,
   summarizeSourceSelection,
+  toggleSourceSelection,
 } from "./panelViewState.js";
 import { useExternalSessionActions } from "./useExternalSessionActions.js";
 import { useExternalSessions } from "./useExternalSessions.js";
@@ -77,19 +79,14 @@ export function ExternalSessionsPanel({
   const now = Date.now();
 
   const toggleSource = useCallback((source: ExternalSessionSource) => {
-    setView((current) => {
-      // An empty list is the "every source" sentinel: expand it first so a click always flips the chip's own state.
-      const next = new Set<ExternalSessionSource>(
-        current.sources.length === 0
-          ? EXTERNAL_SESSION_SOURCE_CATALOG.map((item) => item.source)
-          : current.sources,
-      );
-      if (next.has(source)) next.delete(source);
-      else next.add(source);
-      const all = EXTERNAL_SESSION_SOURCE_CATALOG.length;
-      return { ...current, sources: next.size === all ? [] : [...next] };
-    });
+    setView((current) => ({
+      ...current,
+      sources: toggleSourceSelection(current.sources, source),
+    }));
   }, []);
+
+  // The one error path for the row menu and the transcript dialog (specs/external-sessions.md "Continue in ZCode").
+  const reportError = useCallback((error: unknown) => toast(getErrorMessage(error)), []);
 
   const resume = useCallback(
     async (summary: ExternalSessionSummary) => {
@@ -154,58 +151,59 @@ export function ExternalSessionsPanel({
   );
 
   const continueInZCode = useCallback(
-    async (transcript: ExternalSessionTranscript) => {
-      if (!onCreateTask || !actions.canResolveProject) return;
-      const { workspacePath: sourcePath, workspaceMissing } = transcript.summary;
-      if (workspaceMissing) {
-        toast(
-          intl.formatMessage(
-            { id: "externalSessions.toast.workspaceMissing" },
-            { path: sourcePath },
-          ),
-        );
-        return;
-      }
-      // `targetWorkspace.workspacePath` alone does not decide the draft's cwd (prepareSession would allocate a
-      // managed directory); the hook resolves the folder's local project first, like "Open folder" does.
-      const target = await actions.resolveContinuation(sourcePath);
-      if (target.kind === "secondary-root") {
-        toast(
-          intl.formatMessage(
-            { id: "externalSessions.toast.secondaryRoot" },
-            { project: target.projectName, primary: target.primaryRootPath },
-          ),
-        );
-        return;
-      }
-      onCreateTask({
-        initialPrompt: buildExternalSessionContextPack(transcript),
-        projectId: target.projectId,
-        hostId: "local",
-        targetWorkspace: {
-          workspacePath: sourcePath,
+    (transcript: ExternalSessionTranscript) =>
+      runWithErrorReport(async () => {
+        if (!onCreateTask || !actions.canResolveProject) return;
+        const { workspacePath: sourcePath, workspaceMissing } = transcript.summary;
+        if (workspaceMissing) {
+          toast(
+            intl.formatMessage(
+              { id: "externalSessions.toast.workspaceMissing" },
+              { path: sourcePath },
+            ),
+          );
+          return;
+        }
+        // `targetWorkspace.workspacePath` alone does not decide the draft's cwd (prepareSession would allocate a
+        // managed directory); the hook resolves the folder's local project first, like "Open folder" does.
+        const target = await actions.resolveContinuation(sourcePath);
+        if (target.kind === "secondary-root") {
+          toast(
+            intl.formatMessage(
+              { id: "externalSessions.toast.secondaryRoot" },
+              { project: target.projectName, primary: target.primaryRootPath },
+            ),
+          );
+          return;
+        }
+        onCreateTask({
+          initialPrompt: buildExternalSessionContextPack(transcript),
           projectId: target.projectId,
           hostId: "local",
-        },
-      });
-      setDialog(null);
-    },
-    [actions, intl, onCreateTask],
+          targetWorkspace: {
+            workspacePath: sourcePath,
+            projectId: target.projectId,
+            hostId: "local",
+          },
+        });
+        setDialog(null);
+      }, reportError),
+    [actions, intl, onCreateTask, reportError],
   );
 
   const continueFromRow = useCallback(
     async (summary: ExternalSessionSummary) => {
       setBusyKey(summary.key);
       try {
-        const transcript = await loadTranscript(summary);
-        if (transcript) await continueInZCode(transcript);
-      } catch (error) {
-        toast(getErrorMessage(error));
+        await runWithErrorReport(async () => {
+          const transcript = await loadTranscript(summary);
+          if (transcript) await continueInZCode(transcript);
+        }, reportError);
       } finally {
         setBusyKey(null);
       }
     },
-    [continueInZCode, loadTranscript],
+    [continueInZCode, loadTranscript, reportError],
   );
 
   const importToZCode = useCallback(

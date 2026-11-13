@@ -93,3 +93,23 @@ export function showChipCount(
   const status = statuses?.[source];
   return status !== undefined && (isActiveSource(sources, source) || status.available);
 }
+
+/**
+ * Next stored selection after a chip click. Empty stored selection = every source, so it is expanded first and a
+ * click flips that chip alone. Turning off the last selected chip is a no-op: deselection never collapses the
+ * selection into the every-source sentinel (specs/external-sessions.md "Last-chip rule").
+ */
+export function toggleSourceSelection(
+  current: readonly ExternalSessionSource[],
+  source: ExternalSessionSource,
+): ExternalSessionSource[] {
+  const all = EXTERNAL_SESSION_SOURCE_CATALOG.map((item) => item.source);
+  const next = new Set<ExternalSessionSource>(current.length === 0 ? all : current);
+  if (next.has(source)) {
+    if (next.size === 1) return [...current];
+    next.delete(source);
+  } else {
+    next.add(source);
+  }
+  return next.size === all.length ? [] : [...next];
+}
