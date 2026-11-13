@@ -355,11 +355,41 @@ impl Start {
             capacity: 0,
             truncations: 0,
             resent: false,
+            renewed: false,
             notified: false,
             limits,
             cancel,
             trail,
         })
+    }
+}
+
+/// Fork: gzip the body and mark it with `content-encoding: gzip` (Node `compressRequestBodyIfNeeded`'s fallback
+/// encoding). Compression runs off the async workers; if it fails the body goes out plain.
+async fn compress(http: &mut HttpRequest) {
+    use std::io::Write as _;
+    let body = http.body.clone();
+    let gzipped = rust_cli_base::blocking(move || {
+        let mut encoder = flate2::write::GzEncoder::new(
+            Vec::with_capacity(body.len() / 4),
+            flate2::Compression::default(),
+        );
+        encoder.write_all(&body)?;
+        encoder.finish()
+    })
+    .await;
+    match gzipped {
+        Ok(Ok(gzipped)) => {
+            http.body = gzipped.into();
+            http.headers
+                .retain(|(name, _)| !name.eq_ignore_ascii_case("content-encoding"));
+            http.headers
+                .push(("content-encoding".to_owned(), "gzip".into()));
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "request body compression failed; sending it plain")
+        }
+        Err(error) => tracing::warn!(%error, "request body compression failed; sending it plain"),
     }
 }
 
@@ -391,6 +421,9 @@ pub(crate) struct Connect {
     truncations: u32,
     /// 用过 G 没有（一次流式重发代替非流式重发，D3 (b)，F113）。
     resent: bool,
+    /// Fork: the endpoint was already renewed once after an auth rejection (Node `AccountRequestRetry` `#used`,
+    /// specs/fork-rust-chatgpt-plan.md rule 10): a second rejection ends the request.
+    renewed: bool,
     /// 发过 `Retrying` 通知、还没有产出 `Resumed`。
     notified: bool,
     /// 这个端点上的看门狗上限。
@@ -410,7 +443,7 @@ impl Connect {
     /// 发一次请求。失败时决定结束、换 fallback 模型，还是等待后重发。每次发送记一条模型轨迹（model-io.md §6）。
     async fn attempt(mut self: Box<Self>) -> Outcome {
         // 每次发送都按当前端点合并各层的头：凭据续期之后换新，`x-request-id` 每次换新（F64）。
-        let http = crate::request_headers::outbound(
+        let mut http = crate::request_headers::outbound(
             self.protocol,
             &self.encoded,
             &self.endpoint,
@@ -421,6 +454,12 @@ impl Connect {
             .trail
             .as_ref()
             .map(|trail| trail.tape(self.attempt, &http));
+        // Fork: compressed after the tape, so the model-io trace keeps the plain body (rule 14).
+        if let Some(limit) = self.endpoint.compress_body_over
+            && http.body.len() > limit
+        {
+            compress(&mut http).await;
+        }
         let Some(sent) = self
             .cancel
             .run_until_cancelled(self.route.egress.send(http))
