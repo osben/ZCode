@@ -1,3 +1,4 @@
+import { FORK_RUST_HELPER_SUBCOMMAND } from "@zcode/shared/fork-rust-helper";
 import { STORAGE_MIGRATION_COMMAND } from "@zcode/shared/sqlite-migrations";
 import { interceptTuiStderr, isTuiInvocation } from "./tui-stderr.js";
 import { interceptKnownRuntimeWarnings } from "./runtime-warnings.js";
@@ -21,7 +22,11 @@ async function main(): Promise<void> {
   // 真实 zcode CLI 进程里仍可能有少量路径直接读取 process.env。
   // 入口先清洗用户 shell 注入的 NODE_ENV、代理和证书变量；网络变量只封存给后续 Bash/tool 子进程恢复。
   applyCliRuntimeEnvSanitization(process.env);
-  const isProtocol = argv[0] === STORAGE_MIGRATION_COMMAND || isProtocolServerInvocation(argv);
+  // The Rust agent's Node helper speaks NDJSON on stdout too, so it gets the same stdout guards.
+  const isProtocol =
+    argv[0] === STORAGE_MIGRATION_COMMAND ||
+    argv[0] === FORK_RUST_HELPER_SUBCOMMAND ||
+    isProtocolServerInvocation(argv);
   const isTui = isTuiInvocation(argv);
   if (isProtocol) installProtocolStderrBoundary(process.stderr);
   const lifecycle =
@@ -62,6 +67,18 @@ async function main(): Promise<void> {
     // 即使最终没有创建 AgentRuntime，也会让每个 MCP 子进程持有整套业务依赖。
     if (isPluginHostInvocation(argv)) {
       process.exitCode = await runPluginHostCommand(context, argv.slice(1));
+      return;
+    }
+    // Fork: the Rust agent's Node helper (specs/fork-rust-node-helper.md). Like plugin-host it must
+    // not import run.js, which would evaluate the whole agent runtime the helper never uses.
+    if (argv[0] === FORK_RUST_HELPER_SUBCOMMAND) {
+      const { runForkRustHelper } = await import("@zcode/bootstrap/fork-rust-helper");
+      await runForkRustHelper({
+        input: lifecycle?.input ?? process.stdin,
+        output: process.stdout,
+        env: process.env,
+        cwd: process.cwd(),
+      });
       return;
     }
     if (argv[0] !== STORAGE_MIGRATION_COMMAND && !argv.includes("--prepare-storage")) {

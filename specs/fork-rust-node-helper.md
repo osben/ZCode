@@ -309,9 +309,21 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
   - Office panel spec (F3);
   - node-repl and browser-use specs (F4).
 
-  The exact spec names are listed per PR from `packages/desktop/e2e` once F1 starts. A spec that fails on both runtimes is not a parity gap.
+  The exact spec names are listed per PR from `packages/desktop/test/e2e`. A spec that fails on both runtimes is not a parity gap.
+  - F1+F2 PR:
+    - `plugins/installation/plugin-management-personal-lifecycle`;
+    - `plugins/installation/plugin-management-builtin-inline`;
+    - `plugins/installation/plugin-concurrent-install`;
+    - `automations/workflows/automations-workflows-hub`.
+  - In the workflows hub spec, the "saved workflows hub" and "global workflows hub" groups are F2. The "direct launch" group starts and observes runs, which is F5; on Rust it stays failing until F5.
 
 - **Memory.** Idle RSS of the helper after F1 calls, measured on the packaged bundle and recorded here.
+  - 2026-11-13, macOS arm64, the F1+F2 bundle (`cli/dist/zcode.cjs`) run by the packaged app's Electron binary with `ELECTRON_RUN_AS_NODE=1` (Node 24, as the Host starts it), empty storage root:
+    - spawn to `helper/initialize` answer: about 0.6 s;
+    - RSS after `helper/initialize`: 266 MB;
+    - RSS after `plugins/list`, `plugins/overview`, `workflows/list` and `v4/conversation/workflowRuns`, and still 10 s later: 324 MB.
+  - The same bundle under system Node 26: 357 MB and 394 MB.
+  - This memory is held only while a forwarded method is in use: the helper starts on the first forwarded call and exits after 5 idle minutes.
 
 ## Delivery
 
