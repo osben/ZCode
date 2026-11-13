@@ -252,6 +252,46 @@ async fn a_rename_before_the_title_arrives_wins() {
     );
 }
 
+/// Fork (specs/fork-rust-automations.md): `DisableTitleGeneration` also covers a title request already in flight: its
+/// result is not applied (the usage row is still written, like a discarded title).
+#[tokio::test]
+async fn disabling_titles_drops_a_title_already_in_flight() {
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let open = Arc::new(Notify::new());
+    let served = Arc::new(AtomicUsize::new(0));
+    let mut setup = Setup::new(main);
+    setup.titles = titles(Arc::new(Gated {
+        open: open.clone(),
+        served: served.clone(),
+    }));
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "please name this session later"))
+        .await;
+    until(&mut events, finished).await;
+    let ack = built
+        .session
+        .send(envelope("c2", Command::DisableTitleGeneration))
+        .await;
+    assert!(matches!(
+        ack,
+        rust_cli_kernel_api::session_api::Ack::Accepted { .. }
+    ));
+    open.notify_one();
+    while served.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    until_title_call(&built.store).await;
+    let title = built.session.view().await.unwrap().meta.title;
+    assert_eq!(title, "please name this session later");
+    let facts = built
+        .store
+        .facts(&rust_cli_kernel_api::ids::SessionId::new("sess_1"));
+    assert!(generated(&facts).is_empty());
+}
+
 /// 标题请求在请求结束时写一行用量（工作线 F73，usage.md §2.1.1）：单独一批，锚在起标题时的首条输入（标题晚于第二条
 /// 输入回来也一样）；没有首字时间；这个 ID 没有消息。
 #[tokio::test]
@@ -769,10 +809,7 @@ async fn a_session_with_title_generation_disabled_keeps_its_first_input_title() 
     let mut events = built.session.subscribe(None);
     let ack = built
         .session
-        .send(CommandEnvelope {
-            id: CommandId::new("c0"),
-            command: Command::DisableTitleGeneration,
-        })
+        .send(envelope("c0", Command::DisableTitleGeneration))
         .await;
     assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
     built

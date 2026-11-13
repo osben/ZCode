@@ -13,7 +13,7 @@ fn an_ordinary_turn_hides_only_cron_pause_self() {
 #[test]
 fn an_automation_turn_hides_the_mutation_tools_and_offers_pause_self() {
     let limits = TurnLimits::new(Some(" auto-1 "), Vec::new());
-    assert_eq!(limits.automation.as_deref(), Some("auto-1"));
+    assert_eq!(limits.automation(), Some("auto-1"));
     for name in ["CronCreate", "CronUpdate", "CronDelete"] {
         assert!(limits.hides(name), "{name}");
     }
@@ -28,8 +28,25 @@ fn an_automation_turn_hides_the_mutation_tools_and_offers_pause_self() {
 #[test]
 fn a_blank_automation_id_is_none() {
     let limits = TurnLimits::new(Some("  "), Vec::new());
-    assert!(limits.automation.is_none());
+    assert!(limits.automation().is_none());
     assert!(limits.hides("CronPauseSelf"));
+}
+
+/// A decoded value keeps the trimmed, non-empty rule: a blank id is no automation, so an ordinary turn never becomes a
+/// pseudo-automation turn.
+#[test]
+fn a_decoded_blank_automation_id_is_none() {
+    for raw in ["", "   "] {
+        let limits: TurnLimits =
+            serde_json::from_value(serde_json::json!({"automation": raw})).unwrap();
+        assert!(limits.automation().is_none(), "{raw:?}");
+        assert!(limits.is_empty());
+        assert!(limits.hides("CronPauseSelf"));
+        assert!(!limits.hides("CronDelete"));
+    }
+    let limits: TurnLimits =
+        serde_json::from_value(serde_json::json!({"automation": " a1 "})).unwrap();
+    assert_eq!(limits.automation(), Some("a1"));
 }
 
 #[test]

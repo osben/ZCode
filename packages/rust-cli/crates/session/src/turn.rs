@@ -81,6 +81,17 @@ pub(crate) enum TurnInput {
 
 impl Actor {
     pub(crate) async fn start_turn(&mut self, input: TurnInput) -> Result<(), StoreError> {
+        self.start_turn_with(input, Default::default()).await
+    }
+
+    /// Fork: [`Self::start_turn`] with the limits of the input that opens the turn (automation id, hidden tools,
+    /// specs/fork-rust-automations.md). Only a human input's turn takes them; Bash, a compaction, a goal continuation, a
+    /// cron fire and notices run without, so no other turn can inherit an input's limits.
+    pub(crate) async fn start_turn_with(
+        &mut self,
+        input: TurnInput,
+        limits: rust_cli_kernel_api::turn_limits::TurnLimits,
+    ) -> Result<(), StoreError> {
         // The held SessionStart result is written first: Node's `session_persistence` phase runs before the
         // turn's `TurnStarted`, the UserPromptSubmit hook and the input. Bash and compaction are not turns in Node
         // (`turn.ts` returns before that phase for `/compact`), so they do not write it.
@@ -107,7 +118,7 @@ impl Actor {
                 } else {
                     vec![ContentBlock::Text { text }]
                 };
-                self.start_human_turn(command, content, screened, more, intent);
+                self.start_human_turn(command, content, (screened, more), intent, limits);
                 return Ok(());
             }
             TurnInput::Content {
@@ -115,7 +126,7 @@ impl Actor {
                 content,
                 intent,
             } => {
-                self.start_human_turn(command, content, None, Vec::new(), intent);
+                self.start_human_turn(command, content, (None, Vec::new()), intent, limits);
                 return Ok(());
             }
             TurnInput::Bash { command, line } => {
@@ -234,7 +245,7 @@ impl Actor {
         let task = self.deps.spawner.spawn("query-run", async move {
             runner.run(request, sink, signal).await
         });
-        self.launch(opening, task, prompt, None);
+        self.launch(opening, task, prompt, None, Default::default());
         Ok(())
     }
 
@@ -540,7 +551,7 @@ impl Actor {
             return;
         };
         // Fork: the item's turn limits (automation id, hidden tools) belong to the turn it opens.
-        self.next_limits = execution
+        let limits = execution
             .as_ref()
             .map(|execution| execution.limits.clone())
             .unwrap_or_default();
@@ -555,8 +566,7 @@ impl Actor {
         }
         // 提交失败时只记日志：排队输入已出队，前端从 QueueChanged 看到它消失；通知没有 ack，
         // 会再次送达。
-        let started = self.start_turn(input).await;
-        self.next_limits = Default::default();
+        let started = self.start_turn_with(input, limits).await;
         if let Err(reason) = started {
             tracing::warn!(%reason, "queued input could not start a turn");
         }

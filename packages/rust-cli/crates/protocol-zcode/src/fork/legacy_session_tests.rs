@@ -34,6 +34,8 @@ struct TestHandle {
     id: SessionId,
     view: StdMutex<SessionView>,
     log: Log,
+    /// The command ids, in order (the session actor dedupes by id for its whole lifetime).
+    ids: Log,
 }
 
 #[async_trait]
@@ -43,6 +45,10 @@ impl HandleOverride for TestHandle {
     }
 
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
+        self.ids
+            .lock()
+            .unwrap()
+            .push(envelope.id.as_str().to_owned());
         let name = match &envelope.command {
             Command::SetMode { mode } => {
                 self.view.lock().unwrap().mode = *mode;
@@ -160,6 +166,7 @@ struct TestKernel {
     handles: StdMutex<HashMap<SessionId, Arc<TestHandle>>>,
     created: StdMutex<HashMap<SessionId, (ModelSelection, PermissionMode)>>,
     log: Log,
+    ids: Log,
     fail_persist: std::sync::atomic::AtomicBool,
 }
 
@@ -182,6 +189,7 @@ impl TestKernel {
             id: id.clone(),
             view: StdMutex::new(SessionView::new(meta, Vec::new(), chosen, mode)),
             log: self.log.clone(),
+            ids: self.ids.clone(),
         });
         self.handles
             .lock()
@@ -281,6 +289,7 @@ fn server() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
         handles: StdMutex::new(HashMap::new()),
         created: StdMutex::new(HashMap::new()),
         log: Arc::new(StdMutex::new(Vec::new())),
+        ids: Arc::new(StdMutex::new(Vec::new())),
         fail_persist: std::sync::atomic::AtomicBool::new(false),
     });
     let server = Arc::new(Server::new(
@@ -385,7 +394,9 @@ async fn a_failed_immediate_persistence_leaves_no_session_behind() {
     let mut params = automation_create("s3");
     params["persistence"] = json!("immediate");
     let error = call(&server, "session/create", params).await.unwrap_err();
-    assert!(error.message.contains("disk full"), "{error:?}");
+    // A storage error can name the storage path: the Host gets a generic text.
+    assert!(!error.message.contains("disk full"), "{error:?}");
+    assert!(error.message.contains("persisting"), "{error:?}");
     assert_eq!(
         log(&kernel),
         vec![
@@ -397,6 +408,11 @@ async fn a_failed_immediate_persistence_leaves_no_session_behind() {
         ]
     );
     assert!(server.bridge.get(&SessionId::new("s3")).is_none());
+    // The open announced `ready`; the teardown announces `unloaded` (one more revision).
+    assert_eq!(
+        server.lifecycles.current(&SessionId::new("s3"), "-")["revision"],
+        2
+    );
 }
 
 #[tokio::test]
@@ -421,6 +437,11 @@ async fn fields_the_agent_cannot_honour_refuse_the_create_before_the_kernel() {
         ("toolDenylist", json!(["Bash"])),
         ("toolAllowlist", json!(["Read"])),
         ("parentSessionId", json!("p1")),
+        (
+            "importedHistory",
+            json!({"source": "claudeCode", "messages": [{"role": "user", "content": "hi"}]}),
+        ),
+        ("executionWorktree", json!({"path": "/w/wt"})),
     ] {
         let mut params = automation_create("s4");
         params[field] = value;
@@ -512,9 +533,9 @@ async fn set_mode_thought_and_model_switch_the_live_session() {
         vec![
             "SetMode auto".to_owned(),
             "SetModel m9 -".to_owned(),
-            format!("SetModel {} max", selection().model),
+            "SetModel m9 max".to_owned(),
         ],
-        "setThoughtLevel keeps the model the projection holds"
+        "setThoughtLevel keeps the model the session holds, not a projection that has not seen the switch yet"
     );
     let missing = call(
         &server,
@@ -538,4 +559,144 @@ async fn the_off_peak_tool_policy_answers_disabled_until_the_tools_are_ported() 
     .await
     .unwrap();
     assert_eq!(reply, json!({"workspace": workspace, "enabled": false}));
+}
+
+/// Each legacy call is its own command: the session actor dedupes command ids for its whole lifetime, so a repeated
+/// switch must not answer `Duplicate`.
+#[tokio::test]
+async fn repeated_switches_are_separate_commands() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s8");
+    for mode in ["auto", "edit", "auto"] {
+        call(
+            &server,
+            "session/setMode",
+            json!({"sessionId": "s8", "mode": mode}),
+        )
+        .await
+        .unwrap();
+    }
+    for level in ["low", "high"] {
+        call(
+            &server,
+            "session/setThoughtLevel",
+            json!({"sessionId": "s8", "thoughtLevel": level}),
+        )
+        .await
+        .unwrap();
+    }
+    for model in ["m1", "m2"] {
+        call(
+            &server,
+            "session/setModel",
+            json!({"sessionId": "s8", "model": {"providerId": "p", "modelId": model}}),
+        )
+        .await
+        .unwrap();
+    }
+    let ids = kernel.ids.lock().unwrap().clone();
+    assert_eq!(ids.len(), 7, "{ids:?}");
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+    assert_eq!(
+        log(&kernel),
+        vec![
+            "SetMode auto",
+            "SetMode edit",
+            "SetMode auto",
+            &format!("SetModel {} low", selection().model),
+            &format!("SetModel {} high", selection().model),
+            "SetModel m1 -",
+            "SetModel m2 -",
+        ]
+    );
+}
+
+/// A duplicate or stale acknowledgement carries no message: the legacy error names the reason instead of being empty.
+#[test]
+fn a_duplicate_or_stale_ack_is_an_error_with_a_reason() {
+    use crate::inbox::{Ack, Status};
+    for status in [Status::Duplicate, Status::Stale] {
+        let mut ack = Ack::accepted("c1", 0, None);
+        ack.status = status;
+        ack.reason_code = Some("command.duplicate".to_owned());
+        let error = super::ack_result(ack).unwrap_err();
+        assert!(!error.message.is_empty(), "{status:?}");
+        assert!(error.message.contains("command.duplicate"), "{error:?}");
+    }
+    let mut ack = Ack::accepted("c1", 0, None);
+    ack.status = Status::Duplicate;
+    assert!(!super::ack_result(ack).unwrap_err().message.is_empty());
+}
+
+/// `thoughtLevel` without `model` is the level of the default model (the one the create would pick), not dropped.
+#[tokio::test]
+async fn a_thought_level_without_a_model_applies_to_the_default_model() {
+    let (_scope, server, kernel) = server();
+    let mut params = automation_create("s9");
+    params.as_object_mut().unwrap().remove("model");
+    call(&server, "session/create", params).await.unwrap();
+    assert_eq!(
+        log(&kernel)[0],
+        format!("create s9 {} high edit", selection().model)
+    );
+}
+
+/// A `model` that is not an object is refused, never a panic (the handler does not rely on the schema for that).
+#[tokio::test]
+async fn a_model_that_is_not_an_object_is_refused() {
+    let (_scope, server, kernel) = server();
+    let mut params = automation_create("s10");
+    params["model"] = json!("gpt");
+    let error = server
+        .dispatch("session/create", params)
+        .await
+        .map(|reply| reply.result)
+        .unwrap_err();
+    assert_eq!(error.code, -32602, "{error:?}");
+    assert!(log(&kernel).is_empty(), "{:?}", log(&kernel));
+}
+
+/// A session whose prepared worktree is not active yet refuses the switches like the v4 route, before the session
+/// is opened at the parent checkout.
+#[tokio::test]
+async fn switches_on_a_session_before_its_worktree_activation_are_refused() {
+    let (_scope, server, kernel) = server();
+    kernel.stored("s11");
+    let marker = crate::worktree::Marker::preparing(&crate::worktree::Request {
+        branch_name: "b".to_owned(),
+        target_path: "/w/wt".to_owned(),
+        base_branch: None,
+        attempt_id: None,
+    });
+    kernel
+        .store
+        .put_record(&SessionId::new("s11"), &marker.record("s11"))
+        .await
+        .unwrap();
+    for (method, params) in [
+        (
+            "session/setMode",
+            json!({"sessionId": "s11", "mode": "auto"}),
+        ),
+        (
+            "session/setThoughtLevel",
+            json!({"sessionId": "s11", "thoughtLevel": "max"}),
+        ),
+        (
+            "session/setModel",
+            json!({"sessionId": "s11", "model": {"providerId": "p", "modelId": "m9"}}),
+        ),
+    ] {
+        let error = call(&server, method, params).await.unwrap_err();
+        assert!(
+            error.message.contains("v4 command session not found: s11"),
+            "{method}: {error:?}"
+        );
+    }
+    assert!(log(&kernel).is_empty(), "{:?}", log(&kernel));
+    assert!(
+        server.bridge.get(&SessionId::new("s11")).is_none(),
+        "not opened"
+    );
 }

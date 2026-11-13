@@ -24,9 +24,9 @@ impl Actor {
         &mut self,
         command: CommandId,
         content: Vec<ContentBlock>,
-        screened: Option<Box<HookOutcome>>,
-        more: Vec<crate::turn::MorePrompt>,
+        (screened, more): (Option<Box<HookOutcome>>, Vec<crate::turn::MorePrompt>),
         intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
+        limits: rust_cli_kernel_api::turn_limits::TurnLimits,
     ) {
         let prompt = self.deps.ids.message();
         let text = content
@@ -159,7 +159,7 @@ impl Actor {
             request.prompt_hook_messages = hook_messages;
             runner.run(request, sink, signal).await
         });
-        self.launch(opening, task, Some(prompt), Some(command));
+        self.launch(opening, task, Some(prompt), Some(command), limits);
     }
 
     /// 本回合开头那条 user 消息的提交带上命令 ID（Node `anchor.sourceCommandId`）。

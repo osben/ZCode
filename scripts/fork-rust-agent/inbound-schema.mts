@@ -21,6 +21,7 @@ import {
   zcodeProviderRuntimeHeadersResponseSchema,
   zcodeProviderUpdateAccountConfigParamsSchema,
   zcodeRuntimeCapabilitiesParamsSchema,
+  zcodeSessionCancelBackgroundTaskParamsSchema,
   zcodeSessionCloseParamsSchema,
   zcodeSessionCreateParamsSchema,
   zcodeSessionListParamsSchema,
@@ -56,6 +57,7 @@ const METHODS = {
   "provider/refreshRegistry": zcodeProviderRefreshRegistryParamsSchema,
   "provider/updateAccountConfig": zcodeProviderUpdateAccountConfigParamsSchema,
   "runtime/capabilities": zcodeRuntimeCapabilitiesParamsSchema,
+  "session/cancelBackgroundTask": zcodeSessionCancelBackgroundTaskParamsSchema,
   "session/close": zcodeSessionCloseParamsSchema,
   // Legacy session methods behind the Host's automation runs (specs/fork-rust-automations.md).
   "session/create": zcodeSessionCreateParamsSchema,

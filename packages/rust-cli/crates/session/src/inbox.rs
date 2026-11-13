@@ -69,11 +69,21 @@ pub(crate) struct Queued {
 
 impl Queued {
     /// 能与头一条成批进同一个回合（修复线 L-A，query.md §4.3）：普通文字、不是斜杠命令、不含 `@`。
+    /// Fork: an input with turn limits is never batched, so its limits stay with its own turn.
     fn plain(&self) -> bool {
         matches!(self.kind, InputKind::Text)
             && !is_slash(&self.input.text)
             && !self.input.text.contains('@')
             && self.edit_lock.is_none()
+            && !self.has_limits()
+    }
+
+    /// Fork: the input carries turn limits (automation id, hidden tools).
+    pub(crate) fn has_limits(&self) -> bool {
+        self.input
+            .execution
+            .as_ref()
+            .is_some_and(|execution| !execution.limits.is_empty())
     }
 
     /// 并入点筛查留下的结果（回合结束后开它时用，不再跑 hook）。
@@ -452,13 +462,20 @@ impl Inbox {
         }
         if edit.model_selection.is_some() || edit.mode.is_some() || edit.plan_enabled.is_some() {
             let previous = queued.input.execution.clone();
-            let base = previous.as_ref().map_or(current, |frozen| frozen.state);
-            // Fork: an edit of the text or config keeps the turn's limits (the automation that dispatched it).
-            let limits = previous
+            // Fork: a state recorded for an input that named none is not the item's: the session's current one is.
+            let base = previous
                 .as_ref()
-                .map(|frozen| frozen.limits.clone())
+                .filter(|frozen| !frozen.keeps_session_state)
+                .map_or(current, |frozen| frozen.state);
+            let keeps_session_state = previous
+                .as_ref()
+                .is_some_and(|frozen| frozen.keeps_session_state)
+                && edit.mode.is_none()
+                && edit.plan_enabled.is_none();
+            // Fork: an edit of the text or config keeps the turn's limits (the automation that dispatched it).
+            let (limits, previous_selection) = previous
+                .map(|frozen| (frozen.limits, frozen.selection))
                 .unwrap_or_default();
-            let previous_selection = previous.and_then(|frozen| frozen.selection);
             // Node `dropHighspeed`: the frozen Highspeed card belongs to the model it was chosen for. Node compares the
             // payload with the item's own selection, which is the intent's when it has one.
             let stored = queued
@@ -505,6 +522,7 @@ impl Inbox {
                 state,
                 selection,
                 limits,
+                keeps_session_state,
             });
         }
         let released = editor.is_some();
@@ -544,6 +562,7 @@ impl Inbox {
         for item in &mut self.items {
             if let Item::Input(queued) = item
                 && let Some(execution) = &mut queued.input.execution
+                && !execution.keeps_session_state
                 && execution.state.mode != mode
             {
                 execution.state = execution.state.with_mode(mode);

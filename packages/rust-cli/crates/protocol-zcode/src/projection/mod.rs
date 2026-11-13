@@ -1419,8 +1419,11 @@ impl Projection {
                     if let Some(selection) = &execution.selection {
                         value["modelSelection"] = state::selection(selection);
                     }
-                    value["mode"] = json!(state::mode_name(execution.state.mode));
-                    value["planEnabled"] = json!(execution.state.plan);
+                    // Fork: an input that named no mode or plan shows none (Node's queue item has no state then).
+                    if !execution.keeps_session_state {
+                        value["mode"] = json!(state::mode_name(execution.state.mode));
+                        value["planEnabled"] = json!(execution.state.plan);
+                    }
                 }
                 value
             })

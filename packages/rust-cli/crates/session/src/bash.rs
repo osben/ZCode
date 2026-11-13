@@ -130,6 +130,12 @@ impl Actor {
             request.messages.extend([input, output]);
             runner.run(request, sink, signal).await
         });
-        self.launch(opening, task, Some(prompt), Some(command));
+        self.launch(
+            opening,
+            task,
+            Some(prompt),
+            Some(command),
+            Default::default(),
+        );
     }
 }

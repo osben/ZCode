@@ -43,7 +43,8 @@ struct WorkspaceParam {
     workspace_path: String,
 }
 
-/// `zcodeSessionResumeParamsSchema` (only the fields used here).
+/// `zcodeSessionResumeParamsSchema` (only the fields used here). `thoughtLevel` is not read: Node uses it for a session
+/// without a stored selection, and every Rust session has one (specs/fork-rust-automations.md, slice 1 item 2).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResumeParams {
@@ -77,9 +78,21 @@ fn check_tool_lists(allow: &[String], deny: &[String]) -> Result<(), RpcError> {
 }
 
 /// A refused v4 acknowledgement as the legacy method's error. `config.unchanged` (a switch to the value already in
-/// effect) is not an error for the legacy methods.
+/// effect) is not an error for the legacy methods. An acknowledgement without a message (a duplicate or stale one)
+/// names its status and reason code instead.
 fn ack_result(ack: Ack) -> Result<Option<Value>, RpcError> {
-    let message = ack.message.clone().unwrap_or_default();
+    let message = ack
+        .message
+        .clone()
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "the command was {:?}: {}",
+                ack.status,
+                ack.reason_code.as_deref().unwrap_or("no reason")
+            )
+            .to_lowercase()
+        });
     match ack.status {
         Status::Accepted => Ok(ack.result),
         Status::Noop => Ok(None),
@@ -88,6 +101,16 @@ fn ack_result(ack: Ack) -> Result<Option<Value>, RpcError> {
         }
         _ => Err(RpcError::internal(message)),
     }
+}
+
+/// A fresh command id per legacy call: the session actor dedupes command ids for its whole lifetime, so an id built
+/// from the method and the session would answer a repeated switch `Duplicate`.
+fn command_id(method: &str) -> String {
+    format!(
+        "legacy:{method}:{:016x}{:016x}",
+        rust_cli_base::random::u64(),
+        rust_cli_base::random::u64()
+    )
 }
 
 fn envelope(
@@ -126,10 +149,23 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
     if params.execution_worktree.is_some() {
         return Err(unsupported("executionWorktree"));
     }
-    // `thoughtLevel` is the reasoning level of the requested model (the Host sends the selection's own level).
-    let mut model = params.model.clone();
-    if let (Some(model), Some(level)) = (model.as_mut(), params.thought_level.as_deref()) {
-        model["options"] = json!({"reasoningLevel": level});
+    // `thoughtLevel` is the reasoning level of the requested model (the Host sends the selection's own level); without
+    // a model it is the level of the default model, the one the create picks anyway.
+    let mut model = match params.model.clone() {
+        Some(model) if !model.is_object() => {
+            return Err(RpcError::invalid_params("model must be an object"));
+        }
+        Some(model) => Some(model),
+        None => params.thought_level.as_ref().map(|_| {
+            let chosen = &server.defaults.selection;
+            json!({"providerId": chosen.provider, "modelId": chosen.model})
+        }),
+    };
+    if let (Some(model), Some(level)) = (
+        model.as_mut().and_then(Value::as_object_mut),
+        params.thought_level.as_deref(),
+    ) {
+        model.insert("options".to_owned(), json!({"reasoningLevel": level}));
     }
     let mut config = json!({});
     if let Some(model) = model {
@@ -145,25 +181,14 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
     if let Some(incognito) = &params.incognito {
         payload["incognito"] = incognito.clone();
     }
-    // Node refuses any id that already exists (`createSessionWith`); the v4 route below would also let a retry
-    // re-create an empty stored session, which the legacy method does not. A soft-deleted id is refused there.
-    if let Some(id) = params.session_id.as_deref() {
-        let id = SessionId::new(id);
-        let stored = server.bridge.get(&id).is_some()
-            || crate::preparation::absent_if_not_found(server.kernel.session_snapshot(&id).await)
-                .map_err(|error| kernel_error(&error))?
-                .is_some();
-        if stored {
-            return Err(RpcError::invalid_params("sessionId already exists"));
-        }
-    }
-    let command = format!(
-        "legacy:session/create:{}",
-        params.session_id.as_deref().unwrap_or("new")
-    );
-    let ack = crate::commands::create_session(
+    // Node refuses any id that already exists (`createSessionWith`); the v4 route would also let a retry re-create an
+    // empty stored session, which the legacy method does not. The strict check runs with the create under the
+    // reservation gate, so a concurrent create of the same id cannot slip between them.
+    let command = command_id("session/create");
+    let ack = crate::commands::create_session_with(
         server,
         &envelope("createSession", command.clone(), None, payload),
+        crate::commands::Existing::Refuse,
     )
     .await;
     let result = ack_result(ack)?.unwrap_or_default();
@@ -186,12 +211,15 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
     if params.persistence.as_deref() != Some("deferred") {
         let queries = server.kernel.queries();
         if let Err(error) = queries.persist_for_input(&id, "").await {
+            // No error text: a storage error can name the storage path.
+            tracing::warn!(event = "legacy.session_create.persist_failed", session = %id, error = %error, "persisting the created session failed");
             // Leave no half-created id behind, so a retry with the same id is not refused as existing: drop the draft
-            // and the runtime like a deferred `session/close`.
+            // and the runtime like a deferred `session/close`, which also reports the session unloaded.
             let _ = queries.discard_draft(&id).await;
             server.bridge.close(&id);
             live.handle.close(EndReason::Other).await;
-            return Err(RpcError::internal(error.to_string()));
+            server.announce_lifecycle(&id, "unloaded").await;
+            return Err(RpcError::internal("persisting the created session failed"));
         }
     }
     crate::legacy::read(server, &snapshot_params(&id)).await
@@ -210,58 +238,88 @@ pub(crate) async fn resume(server: &Server, params: &Value) -> Result<Value, Rpc
     crate::legacy::read(server, &snapshot_params(&id)).await
 }
 
+/// The v4 command `kind` for the session, after the v4 route guard: a session whose prepared worktree is not active
+/// yet refuses it like v4 `decide`, before the session is opened (an open would start it at the parent checkout).
 async fn opened(
     server: &Server,
-    params: &Value,
-) -> Result<(SessionId, std::sync::Arc<Bridged<Live>>), RpcError> {
-    let id = super::methods::session_id(params)?;
+    id: &SessionId,
+    kind: &str,
+    method: &str,
+    payload: Value,
+) -> Result<(Envelope, std::sync::Arc<Bridged<Live>>), RpcError> {
+    let request = envelope(kind, command_id(method), Some(id), payload);
+    if let Some(ack) =
+        crate::worktree::refuse_before_activation(server, &request, id.as_str()).await
+    {
+        ack_result(ack)?;
+    }
     let live = server
-        .live(&id)
+        .live(id)
         .await
         .map_err(|error| kernel_error(&error))?;
-    Ok((id, live))
+    Ok((request, live))
 }
 
 /// Node `setMode` through the v4 `switchCollaborationMode` rule (the Host uses it for `auto`).
 pub(crate) async fn set_mode(server: &Server, params: &Value) -> Result<Value, RpcError> {
-    let (id, live) = opened(server, params).await?;
+    let id = super::methods::session_id(params)?;
     let mode = params["mode"].as_str().unwrap_or_default();
-    let command = format!("legacy:session/setMode:{}", id.as_str());
-    let request = envelope(
+    let (request, live) = opened(
+        server,
+        &id,
         "switchCollaborationMode",
-        command,
-        Some(&id),
+        "session/setMode",
         json!({"mode": mode}),
-    );
+    )
+    .await?;
     ack_result(super::session_config::switch_mode(&live, &request, 0).await)?;
     crate::legacy::read(server, &snapshot_params(&id)).await
 }
 
 /// Node `setThoughtLevel`: the reasoning level of the session's current model (v4 `switchModelConfig`, same model).
+/// The model is the session's own, not the projection's: the projection learns of a `setModel` just applied only
+/// when its event arrives, and a stale model here would switch the model back.
 pub(crate) async fn set_thought_level(server: &Server, params: &Value) -> Result<Value, RpcError> {
-    let (id, live) = opened(server, params).await?;
-    let (current, _, _) = live.sink.current_config();
+    let id = super::methods::session_id(params)?;
     let thought = params["thoughtLevel"].as_str().unwrap_or_default();
-    let command = format!("legacy:session/setThoughtLevel:{}", id.as_str());
-    let payload = json!({"provider": current.provider, "model": current.model, "thought": thought});
-    let request = envelope("switchModelConfig", command, Some(&id), payload);
+    // The payload's model is filled in once the session is open.
+    let (mut request, live) = opened(
+        server,
+        &id,
+        "switchModelConfig",
+        "session/setThoughtLevel",
+        Value::Null,
+    )
+    .await?;
+    let current = match live.handle.view().await {
+        Ok(view) => view.selection,
+        Err(_) => live.sink.current_config().0,
+    };
+    request.payload =
+        json!({"provider": current.provider, "model": current.model, "thought": thought});
     ack_result(super::session_config::switch_model(&live, &request, 0).await)?;
     crate::legacy::read(server, &snapshot_params(&id)).await
 }
 
 /// Node `setModel` through the v4 `switchModelConfig` rule.
 pub(crate) async fn set_model(server: &Server, params: &Value) -> Result<Value, RpcError> {
-    let (id, live) = opened(server, params).await?;
+    let id = super::methods::session_id(params)?;
     let Some(selection) = crate::commands::selection(Some(&params["model"])) else {
         return Err(RpcError::invalid_params("model is required"));
     };
-    let command = format!("legacy:session/setModel:{}", id.as_str());
     let payload = json!({
         "provider": selection.provider,
         "model": selection.model,
         "thought": selection.reasoning.unwrap_or_default(),
     });
-    let request = envelope("switchModelConfig", command, Some(&id), payload);
+    let (request, live) = opened(
+        server,
+        &id,
+        "switchModelConfig",
+        "session/setModel",
+        payload,
+    )
+    .await?;
     ack_result(super::session_config::switch_model(&live, &request, 0).await)?;
     crate::legacy::read(server, &snapshot_params(&id)).await
 }

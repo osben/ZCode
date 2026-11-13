@@ -20,6 +20,7 @@ fn submit_with(id: &str, text: &str, mode: PermissionMode, plan: bool) -> Comman
                 state: ExecutionState { mode, plan },
                 selection: None,
                 limits: Default::default(),
+                keeps_session_state: false,
             }),
             behind_held: false,
             lease: None,

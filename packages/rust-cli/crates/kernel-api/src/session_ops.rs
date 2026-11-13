@@ -40,7 +40,9 @@ pub struct RunView {
     /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then).
     pub execution_worktree: bool,
     /// Fork: the limits of the running turn (automation id, hidden tools; specs/fork-rust-automations.md). Default
-    /// outside a turn the Host dispatched, and always for a subagent.
+    /// outside a turn the Host dispatched, and always for a subagent: like Node, a child run takes the session's tool
+    /// config, not the turn's. The desktop agent's Cron tools are main-session only (slice 2), so a subagent of an
+    /// automation run never reaches them; until that slice lands, the local Cron tools stay offered to subagents.
     pub turn: crate::turn_limits::TurnLimits,
 }
 
