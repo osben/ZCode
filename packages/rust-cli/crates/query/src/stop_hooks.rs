@@ -7,6 +7,7 @@ use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::orchestration::QueryError;
 use serde_json::{Map, Value, json};
 
+use crate::limits::{CONSECUTIVE_STOP_BLOCKS, NODE_STOP_CONTINUATIONS};
 use crate::respond::commit;
 use crate::{RunScope, StopContinuations};
 
@@ -17,7 +18,26 @@ pub(crate) enum StopHook {
     /// hook 阻止继续（`prevent_continuation`）：结束说明已提交，以 `stop_hook_prevented` 结束（query.md §3）。
     Prevented,
     /// hook 阻塞了结束：反馈已提交，再请求一次（`stop_hook_blocking`）。
-    Continue,
+    Continue(Continuation),
+}
+
+/// Fork: what continued the turn. Under [`StopContinuations::NodeTurn`] only [`Continuation::Hook`] counts toward
+/// the hook cap; an unmet `/goal` is a new Node turn (`goal-continuation`, core `runtime/methods/target.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Continuation {
+    Hook,
+    Goal,
+}
+
+/// The Stop counts of the run so far (see `LoopState` in `run.rs`).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct StopCounts {
+    /// 这一轮已经因 Stop hook 续过。
+    pub active: bool,
+    /// 此前（连续）阻塞的次数。
+    pub blocked: u32,
+    /// Fork: goal continuations under [`StopContinuations::NodeTurn`].
+    pub goals: u32,
 }
 
 /// 最后一条 assistant 的文本块用 `\n` 连接后去空白；没有文本时省略。
@@ -56,16 +76,17 @@ fn payload(scope: &RunScope, source: &QuerySource, active: bool, last: Option<St
     Value::Object(payload)
 }
 
-/// `active`：这一轮已经因 Stop hook 续过；`blocked`：此前连续阻塞的次数。`selection` 是这次运行的模型
-/// （`/goal` 评估的对话记录按它 normalize）。
+/// `counts`：这次运行的 Stop 计数。`selection` 是这次运行的模型（`/goal` 评估的对话记录按它 normalize）。
 pub(crate) async fn stop_hooks(
     scope: &RunScope,
     history: &mut Vec<Message>,
     source: &QuerySource,
     selection: &ModelSelection,
-    active: bool,
-    blocked: u32,
+    counts: StopCounts,
 ) -> Result<StopHook, QueryError> {
+    let StopCounts {
+        active, blocked, ..
+    } = counts;
     if scope.abort.is_aborted() {
         return Ok(StopHook::End);
     }
@@ -97,6 +118,9 @@ pub(crate) async fn stop_hooks(
     };
     // 会话有目标时，目标的评估与配置的 Stop hooks 一起跑（会话级的 Stop hook，goal.md §4）。
     let goal = crate::goal::due(scope, source, view.goal);
+    if scope.parts.limits.stop_continuations == StopContinuations::NodeTurn {
+        return node_turn(scope, history, selection, event, goal, counts).await;
+    }
     let hooks = scope
         .parts
         .hooks
@@ -111,15 +135,9 @@ pub(crate) async fn stop_hooks(
     };
     let prevent = outcome.prevent_continuation;
     let mut block = !prevent && !outcome.messages.is_empty();
-    let rule = scope.parts.limits.stop_continuations;
-    let over_cap = blocked + 1 > rule.cap();
-    // Fork: Node writes the Stop context only when the turn continues (`turn-stop.ts`); at its cap the feedback is
-    // dropped. zcode-rs commits it before the cap check.
-    let keep = prevent || !over_cap || rule == StopContinuations::Consecutive;
-    if keep {
-        for message in outcome.messages {
-            commit(scope, history, message).await?;
-        }
+    let over_cap = blocked + 1 > StopContinuations::Consecutive.cap();
+    for message in outcome.messages {
+        commit(scope, history, message).await?;
     }
     // 中止时不报告判定（直接返回）。
     if let Some((condition, verdict)) = checked.filter(|_| !scope.abort.is_aborted()) {
@@ -143,7 +161,58 @@ pub(crate) async fn stop_hooks(
         );
         return Ok(StopHook::End);
     }
-    Ok(StopHook::Continue)
+    Ok(StopHook::Continue(Continuation::Hook))
+}
+
+/// Fork: the Node desktop rule (specs/fork-rust-agent-parity.md "Stop continuation cap"). Node checks the goal only
+/// once the turn ends (after its Stop hooks, core `runtime/methods/target.ts`), and an unmet goal starts a new turn
+/// with its own hook count. So the goal is evaluated only when the hooks let the turn end, and an unmet verdict always
+/// continues: it is never written and then ended. Past [`CONSECUTIVE_STOP_BLOCKS`] goal continuations in one run the
+/// goal is not evaluated (a bound Node does not have; production desktop goals run in the session, not here).
+async fn node_turn(
+    scope: &RunScope,
+    history: &mut Vec<Message>,
+    selection: &ModelSelection,
+    event: HookEvent,
+    goal: Option<String>,
+    counts: StopCounts,
+) -> Result<StopHook, QueryError> {
+    let outcome = scope
+        .parts
+        .hooks
+        .run(event.clone(), scope.abort.token().clone())
+        .await;
+    if outcome.prevent_continuation {
+        for message in outcome.messages {
+            commit(scope, history, message).await?;
+        }
+        return Ok(StopHook::Prevented);
+    }
+    if !outcome.messages.is_empty() {
+        // Node writes the Stop context only when the turn continues (`turn-stop.ts`); at its cap it is dropped.
+        if counts.blocked < NODE_STOP_CONTINUATIONS {
+            for message in outcome.messages {
+                commit(scope, history, message).await?;
+            }
+            return Ok(StopHook::Continue(Continuation::Hook));
+        }
+        tracing::warn!(
+            blocked = counts.blocked + 1,
+            "stop hooks blocked the turn too many times"
+        );
+    }
+    let Some(condition) = goal.filter(|_| counts.goals < CONSECUTIVE_STOP_BLOCKS) else {
+        return Ok(StopHook::End);
+    };
+    let verdict = crate::goal::evaluate(scope, event, condition.clone(), history, selection).await;
+    // 中止时不报告判定。
+    if scope.abort.is_aborted() {
+        return Ok(StopHook::End);
+    }
+    if crate::goal::report(scope, history, condition, verdict).await? {
+        return Ok(StopHook::Continue(Continuation::Goal));
+    }
+    Ok(StopHook::End)
 }
 
 #[cfg(test)]

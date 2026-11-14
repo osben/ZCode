@@ -27,7 +27,7 @@ use crate::recovery::{Fate, Guards, Outcome};
 use crate::request::{Prepared, orchestration, prepare};
 use crate::respond::{Responded, commit, commit_metered, respond};
 use crate::step::StepTools;
-use crate::stop_hooks::{StopHook, stop_hooks};
+use crate::stop_hooks::{Continuation, StopCounts, StopHook, stop_hooks};
 
 /// 一次运行内不变的请求参数。
 struct Inputs {
@@ -55,6 +55,8 @@ struct LoopState {
     stop_hook_active: bool,
     /// 连续被 Stop hook 阻塞的次数。Fork: under [`StopContinuations::NodeTurn`] the count of the whole run.
     stop_blocks: u32,
+    /// Fork: goal continuations of the run under [`StopContinuations::NodeTurn`] (bounded, never reset).
+    goal_blocks: u32,
     /// Fork: whether a tool round resets `stop_blocks` (specs/fork-rust-agent-parity.md "Stop continuation cap").
     stop_continuations: StopContinuations,
     /// 自动压缩的跟踪与是否试过反应式压缩。
@@ -69,6 +71,7 @@ impl LoopState {
             guards: Guards::default(),
             stop_hook_active: false,
             stop_blocks: 0,
+            goal_blocks: 0,
             stop_continuations,
             compaction: Compaction::default(),
         }
@@ -93,6 +96,24 @@ impl LoopState {
         self.stop_blocks += 1;
         self.turn_count += 1;
         self.guards.after_stop_block();
+    }
+
+    /// Fork: an unmet `/goal` under [`StopContinuations::NodeTurn`] starts a new Node turn (`goal-continuation`): its
+    /// Stop hooks count from zero again and see `stop_hook_active: false`.
+    fn after_goal_block(&mut self) {
+        self.stop_hook_active = false;
+        self.stop_blocks = 0;
+        self.goal_blocks += 1;
+        self.turn_count += 1;
+        self.guards.after_stop_block();
+    }
+
+    fn stop_counts(&self) -> StopCounts {
+        StopCounts {
+            active: self.stop_hook_active,
+            blocked: self.stop_blocks,
+            goals: self.goal_blocks,
+        }
     }
 }
 
@@ -462,16 +483,15 @@ async fn reply_ended(
                 history,
                 &inputs.source,
                 &inputs.selection,
-                state.stop_hook_active,
-                state.stop_blocks,
+                state.stop_counts(),
             )
             .await?;
             match hook {
                 StopHook::End => return Ok(Some(QueryStop::Completed)),
                 StopHook::Prevented => return Ok(Some(QueryStop::StopHookPrevented)),
-                StopHook::Continue => {}
+                StopHook::Continue(Continuation::Hook) => state.after_stop_block(),
+                StopHook::Continue(Continuation::Goal) => state.after_goal_block(),
             }
-            state.after_stop_block();
             if reached_max_turns(scope, history, inputs.max_turns, state.turn_count).await? {
                 return Ok(Some(QueryStop::MaxTurns));
             }
