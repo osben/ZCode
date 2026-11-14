@@ -24,6 +24,19 @@ pub enum ProjectEntry {
     Invalid,
 }
 
+/// An engine epoch, reserved by a write before it reads ([`ProjectHookSlots::reserve_project`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProjectEpoch(pub u64);
+
+/// The writes of workspace entries, in the order of the epochs they reserved: one owner for every writer (the
+/// session's loads and the App's rebuilds alike).
+pub trait ProjectHookSlots: Send + Sync {
+    /// The next epoch; a write takes it before it reads the files and trust records it installs.
+    fn reserve_project(&self) -> ProjectEpoch;
+    /// Sets the entry of `key` unless a write that reserved after `epoch` already set it; false when refused.
+    fn put_project_at(&self, key: &str, epoch: ProjectEpoch, entry: ProjectEntry) -> bool;
+}
+
 /// Assembles a workspace's entry from its config files and trust records (the cli owns the IO).
 #[async_trait]
 pub trait ProjectHookLoader: Send + Sync {
@@ -79,20 +92,24 @@ impl State {
         }
     }
 
-    fn put(&mut self, key: String, entry: ProjectEntry) {
+    fn reserve(&mut self) -> u64 {
         self.epoch += 1;
-        let epoch = self.epoch;
+        self.epoch
+    }
+
+    fn put(&mut self, key: String, entry: ProjectEntry) {
+        let epoch = self.reserve();
         self.put_at(key, entry, epoch);
     }
 
     /// Sets the slot of `key` unless a write that started after `epoch` already set it.
-    fn put_at(&mut self, key: String, entry: ProjectEntry, epoch: u64) {
+    fn put_at(&mut self, key: String, entry: ProjectEntry, epoch: u64) -> bool {
         if self
             .projects
             .get(&key)
             .is_some_and(|slot| slot.epoch > epoch)
         {
-            return;
+            return false;
         }
         let loaded = combine(&self.process, &entry);
         self.projects.insert(
@@ -103,6 +120,7 @@ impl State {
                 epoch,
             },
         );
+        true
     }
 
     /// The snapshot of a workspace: its entry's, or the process sources alone.
@@ -196,16 +214,25 @@ impl HookEngine {
                 .loader
                 .clone()
                 .filter(|_| reloads(event) || !state.projects.contains_key(&key));
-            loader.map(|loader| {
-                state.epoch += 1;
-                (loader, state.epoch)
-            })
+            loader.map(|loader| (loader, state.reserve()))
         };
         if let Some((loader, started)) = pending {
             let entry = loader.load(&event.workspace).await;
             self.state.write_unpoisoned().put_at(key, entry, started);
         }
         self.state.read_unpoisoned().snapshot(&event.workspace)
+    }
+}
+
+impl ProjectHookSlots for HookEngine {
+    fn reserve_project(&self) -> ProjectEpoch {
+        ProjectEpoch(self.state.write_unpoisoned().reserve())
+    }
+
+    fn put_project_at(&self, key: &str, epoch: ProjectEpoch, entry: ProjectEntry) -> bool {
+        self.state
+            .write_unpoisoned()
+            .put_at(project_key(key), entry, epoch.0)
     }
 }
 

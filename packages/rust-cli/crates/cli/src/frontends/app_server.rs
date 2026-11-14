@@ -225,10 +225,7 @@ async fn serve(
         ProcessConfig {
             process_env: facts.process.env.clone(),
         },
-        {
-            let kernel = built.kernel.clone();
-            Box::new(move |key, entry| kernel.put_project_hooks(&key, entry))
-        },
+        built.kernel.project_hook_slots(),
         (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
     )));
     state.ready().await;

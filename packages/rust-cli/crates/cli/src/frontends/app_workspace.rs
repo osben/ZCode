@@ -15,7 +15,7 @@ use rust_cli_base::Spawner;
 use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
-use rust_cli_hooks::ProjectEntry;
+use rust_cli_hooks::ProjectHookSlots;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
@@ -43,8 +43,8 @@ pub(crate) struct AppWorkspace {
     pub(crate) files: Arc<dyn Files>,
     pub(crate) paths: StoragePaths,
     pub(crate) process: ProcessConfig,
-    /// The kernel's `put_project_hooks` (a seam: tests record the entries instead).
-    pub(crate) put_project_hooks: Box<dyn Fn(String, ProjectEntry) + Send + Sync>,
+    /// The engine's ordered writes of workspace entries (a seam: tests record the entries instead).
+    pub(crate) project_hooks: Arc<dyn ProjectHookSlots>,
     pub(crate) transport: Arc<dyn McpTransport>,
     pub(crate) spawner: Spawner,
     pub(crate) clock: Arc<dyn Clock>,
@@ -84,14 +84,14 @@ impl AppWorkspace {
     pub(crate) fn new(
         (files, paths): (Arc<dyn Files>, StoragePaths),
         process: ProcessConfig,
-        put_project_hooks: Box<dyn Fn(String, ProjectEntry) + Send + Sync>,
+        project_hooks: Arc<dyn ProjectHookSlots>,
         (transport, spawner, clock): (Arc<dyn McpTransport>, Spawner, Arc<dyn Clock>),
     ) -> Self {
         Self {
             files,
             paths,
             process,
-            put_project_hooks,
+            project_hooks,
             transport,
             spawner,
             clock,

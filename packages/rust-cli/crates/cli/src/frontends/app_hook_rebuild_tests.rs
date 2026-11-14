@@ -382,3 +382,43 @@ async fn a_toggle_puts_the_entry_of_the_read_that_checked_it() {
         .unwrap();
     assert_eq!(commands(&fixture), ["node check.js --fast"]);
 }
+
+#[tokio::test]
+async fn a_stalled_review_rebuild_never_replaces_a_later_session_load() {
+    // The review rebuild reads the enabled config and stalls; the hook is disabled and a session start loads the
+    // newer config (the engine's loader reserves before it reads). The rebuild's install comes last and is refused.
+    let gate = Arc::new(Gate::default());
+    let fixture = fixture_files(PROJECT, json!({}), |inner| {
+        Arc::new(HoldsRead {
+            inner,
+            gate: gate.clone(),
+        })
+    });
+    let review = bundle(&fixture).await;
+    fixture
+        .admin
+        .review_grant(&target(ROOT), &review.bundle_digest, &ids(&review))
+        .await
+        .unwrap();
+    gate.armed.store(true, Ordering::SeqCst);
+    let own = Target::new(ROOT, None);
+    let stalled = fixture.admin.rebuild_hooks(&own);
+    let session = async {
+        gate.held.notified().await;
+        let epoch = fixture.slots.reserve_project();
+        assert!(
+            fixture
+                .slots
+                .put_project_at(ROOT, epoch, ProjectEntry::Admitted(Vec::new()))
+        );
+        gate.release.notify_one();
+    };
+    tokio::join!(stalled, session);
+    let (key, last) = fixture.hooks.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(key, rust_cli_hooks::project_key(ROOT));
+    assert_eq!(
+        last,
+        ProjectEntry::Admitted(Vec::new()),
+        "the session's load stays"
+    );
+}

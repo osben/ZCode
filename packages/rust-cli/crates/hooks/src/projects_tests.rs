@@ -323,3 +323,31 @@ fn the_key_trims_only_the_separators_of_the_paths_style() {
     assert_eq!(project_key("C:\\"), "C:\\");
     assert_eq!(project_key("\\\\server\\share\\"), "\\\\server\\share");
 }
+
+#[tokio::test]
+async fn an_install_reserved_before_a_session_start_load_never_replaces_it() {
+    // A review rebuild reserves its epoch, reads an enabled declaration and stalls; the declaration is disabled and a
+    // session starts, whose load reads the newer files. The stalled install must not re-enable the hook.
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &json!({}));
+    let stalled = hooks.reserve_project();
+    hooks.set_project_loader(Arc::new(Fixed(project("UserPromptSubmit", "session.sh"))));
+    run(
+        &hooks,
+        event_in(A, HookEventName::SessionStart, json!({"source": "startup"})),
+    )
+    .await;
+    assert!(!hooks.put_project_at(A, stalled, project("UserPromptSubmit", "stale.sh")));
+    run(&hooks, prompt_in(A)).await;
+    assert_eq!(started(&env), ["session.sh"]);
+}
+
+/// Always loads the same entry.
+struct Fixed(ProjectEntry);
+
+#[async_trait]
+impl ProjectHookLoader for Fixed {
+    async fn load(&self, _workspace: &WorkspaceRef) -> ProjectEntry {
+        self.0.clone()
+    }
+}

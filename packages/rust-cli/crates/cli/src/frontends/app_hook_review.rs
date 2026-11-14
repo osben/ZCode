@@ -70,8 +70,8 @@ impl AppWorkspace {
             return false;
         }
         *newest = ticket;
-        (self.put_project_hooks)(key, entry);
-        true
+        let epoch = self.project_hooks.reserve_project();
+        self.project_hooks.put_project_at(&key, epoch, entry)
     }
 
     /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs, from the

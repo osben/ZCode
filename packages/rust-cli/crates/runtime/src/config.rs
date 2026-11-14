@@ -25,6 +25,11 @@ impl LocalKernel {
         self.hooks.put_project(key, entry);
     }
 
+    /// Fork: the engine's ordered writes of workspace entries, for the App's trust rebuilds.
+    pub fn project_hook_slots(&self) -> std::sync::Arc<dyn rust_cli_hooks::ProjectHookSlots> {
+        self.hooks.clone()
+    }
+
     /// Fork: the loader that assembles a workspace's project hook entry at its first event and at a session start.
     pub fn set_project_hook_loader(
         &self,

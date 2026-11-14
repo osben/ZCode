@@ -68,7 +68,7 @@ use tokio_util::sync::CancellationToken;
 
 pub use config::{HookSource, HooksConfig, HooksSettings};
 pub use plugin::PluginHooks;
-pub use projects::{ProjectEntry, ProjectHookLoader, project_key};
+pub use projects::{ProjectEntry, ProjectEpoch, ProjectHookLoader, ProjectHookSlots, project_key};
 pub use run::{HookPorts, NodeStdinPorts};
 
 use crate::config::{HookCommand, HookOrigin};
