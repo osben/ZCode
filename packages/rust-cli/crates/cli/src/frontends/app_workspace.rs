@@ -34,9 +34,8 @@ use crate::commands::hooks_trust::{self, TrustContext};
 use crate::config::mcp_trust::{self, Inspection, Review, Target};
 use crate::config::{ConfigInputs, read_files};
 
-/// The app-server's own workspace and process environment.
+/// The app-server's process environment. Trust changes name their own workspace, so the App holds no process root.
 pub(crate) struct ProcessConfig {
-    pub(crate) workspace: WorkspaceRef,
     pub(crate) process_env: EnvSnapshot,
 }
 

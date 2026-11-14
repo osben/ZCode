@@ -103,10 +103,6 @@ pub(super) fn fixture_files(
     let admin = AppWorkspace::new(
         (wrap(Arc::new(env)), paths),
         ProcessConfig {
-            workspace: WorkspaceRef {
-                environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
-                root: EnvPath::new(ROOT),
-            },
             process_env: EnvSnapshot::default(),
         },
         Box::new(move |key, entry| recorded.lock().unwrap().push((key, entry))),

@@ -53,7 +53,8 @@ struct Slot {
 pub(crate) struct State {
     pub(crate) process: Arc<Loaded>,
     projects: BTreeMap<String, Slot>,
-    /// Counts slot writes; a load started before a later write never replaces it.
+    /// Counts slot writes, taken when a write starts (a put when it is made, a load before it reads): a slot is
+    /// replaced only by a write that started later.
     epoch: u64,
     loader: Option<Arc<dyn ProjectHookLoader>>,
 }
@@ -78,8 +79,20 @@ impl State {
 
     fn put(&mut self, key: String, entry: ProjectEntry) {
         self.epoch += 1;
-        let loaded = combine(&self.process, &entry);
         let epoch = self.epoch;
+        self.put_at(key, entry, epoch);
+    }
+
+    /// Sets the slot of `key` unless a write that started after `epoch` already set it.
+    fn put_at(&mut self, key: String, entry: ProjectEntry, epoch: u64) {
+        if self
+            .projects
+            .get(&key)
+            .is_some_and(|slot| slot.epoch > epoch)
+        {
+            return;
+        }
+        let loaded = combine(&self.process, &entry);
         self.projects.insert(
             key,
             Slot {
@@ -117,8 +130,10 @@ impl State {
     }
 }
 
-/// The process sources with project sources after the user config's own source: the cli assembles the user file
-/// first and the `--settings` hooks last (also `User`), and the order is the order the hooks run and fold in.
+/// The process sources with project sources after the user config's own source, the order startup assembly gave
+/// before per-workspace entries (the user file, the project files, the `--settings` hooks, also `User`). It is only
+/// the `/hooks` listing order: the run and fold order comes from `HooksConfig::effective_with`, which stable-sorts
+/// the sources by kind.
 fn with_projects<'a>(
     process: &[(HookSource, HooksSettings)],
     projects: impl IntoIterator<Item = &'a (HookSource, HooksSettings)>,
@@ -169,27 +184,24 @@ impl HookEngine {
     }
 
     /// The snapshot `event` runs with, assembling its workspace's entry first when it has none yet or the event
-    /// opens a session. A write made while the load ran wins over the load.
+    /// opens a session. The load takes its epoch before it reads: a put made while it ran, or a load that started
+    /// (and read) after it, wins over it, whichever finishes first.
     pub(crate) async fn snapshot_for(&self, event: &HookEvent) -> Arc<Loaded> {
         let key = project_key(event.workspace.root.as_str());
         let pending = {
-            let state = self.state.read_unpoisoned();
-            state
+            let mut state = self.state.write_unpoisoned();
+            let loader = state
                 .loader
                 .clone()
-                .filter(|_| reloads(event) || !state.projects.contains_key(&key))
-                .map(|loader| (loader, state.epoch))
+                .filter(|_| reloads(event) || !state.projects.contains_key(&key));
+            loader.map(|loader| {
+                state.epoch += 1;
+                (loader, state.epoch)
+            })
         };
         if let Some((loader, started)) = pending {
             let entry = loader.load(&event.workspace).await;
-            let mut state = self.state.write_unpoisoned();
-            let newer = state
-                .projects
-                .get(&key)
-                .is_some_and(|slot| slot.epoch > started);
-            if !newer {
-                state.put(key, entry);
-            }
+            self.state.write_unpoisoned().put_at(key, entry, started);
         }
         self.state.read_unpoisoned().snapshot(&event.workspace)
     }

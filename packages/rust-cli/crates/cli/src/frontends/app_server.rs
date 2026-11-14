@@ -223,7 +223,6 @@ async fn serve(
     context.set_workspace_admin(Arc::new(AppWorkspace::new(
         (opened.primary.files().clone(), paths.clone()),
         ProcessConfig {
-            workspace: opened.workspace.clone(),
             process_env: facts.process.env.clone(),
         },
         {

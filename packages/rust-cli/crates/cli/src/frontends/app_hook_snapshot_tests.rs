@@ -1,5 +1,6 @@
 //! Fork: the App's trust changes rebuild the entry of the workspace they change (specs/fork-rust-agent-parity.md,
-//! "Per-workspace hook snapshots and strict project hook discovery"), wherever the process runs.
+//! "Per-workspace hook snapshots and strict project hook discovery"): the App holds no process root, so a Desktop agent
+//! whose cwd is `~/.zcode` rebuilds the session's workspace like any other.
 #![allow(
     clippy::disallowed_methods,
     reason = "the fixture keeps the trust store in a temporary HOME"
@@ -9,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use rust_cli_hooks::{ProjectEntry, project_key};
-use rust_cli_kernel_api::env::{EnvPath, FileContent, WorkspaceRef, WriteFile, WriteReceipt};
+use rust_cli_kernel_api::env::{FileContent, WorkspaceRef, WriteFile, WriteReceipt};
 use rust_cli_kernel_api::env_files::{
     DirEntry, EnsureDir, FileStat, FileWritten, ListDir, ReadText, StatFile, StatMany, TextRead,
 };
@@ -44,15 +45,9 @@ fn last_put(fixture: &Fixture) -> (String, ProjectEntry) {
         .expect("an entry was put")
 }
 
-/// A Desktop agent runs with its cwd in `~/.zcode`, never in the session's workspace.
-fn elsewhere(fixture: &mut Fixture) {
-    fixture.admin.process.workspace.root = EnvPath::new("/Users/dev/.zcode");
-}
-
 #[tokio::test]
-async fn trust_changes_rebuild_the_entry_of_a_workspace_outside_the_process_root() {
-    let mut fixture = fixture_text(PROJECT, json!({}));
-    elsewhere(&mut fixture);
+async fn trust_changes_rebuild_the_entry_of_the_requested_workspace() {
+    let fixture = fixture_text(PROJECT, json!({}));
     let review = bundle(&fixture).await;
     fixture
         .admin
@@ -80,8 +75,7 @@ async fn trust_changes_rebuild_the_entry_of_a_workspace_outside_the_process_root
 
 #[tokio::test]
 async fn a_toggle_rebuilds_the_entry() {
-    let mut fixture = fixture_text(PROJECT, json!({}));
-    elsewhere(&mut fixture);
+    let fixture = fixture_text(PROJECT, json!({}));
     let review = bundle(&fixture).await;
     fixture
         .admin
@@ -195,13 +189,12 @@ impl Files for FailsAfterWrite {
 async fn a_committed_toggle_whose_rebuild_fails_invalidates_the_workspace() {
     // Node `admission.invalidate("workspace_hooks_config_rebuild_failed")`: no project hook runs until the next
     // successful assembly, instead of the hooks the lenient parse would rebuild.
-    let mut fixture = fixture_files(PROJECT, json!({}), |inner| {
+    let fixture = fixture_files(PROJECT, json!({}), |inner| {
         Arc::new(FailsAfterWrite {
             inner,
             written: AtomicBool::new(false),
         })
     });
-    elsewhere(&mut fixture);
     let review = bundle(&fixture).await;
     fixture
         .admin

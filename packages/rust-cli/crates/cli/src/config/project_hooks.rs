@@ -9,7 +9,7 @@ use rust_cli_hooks::{ProjectEntry, ProjectHookLoader};
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_paths::StoragePaths;
-use rust_cli_platform::local::read_cli_config;
+use rust_cli_platform::local::{ConfigFile, read_cli_config};
 
 use super::files;
 use super::trust::WorkspaceHooks;
@@ -22,7 +22,19 @@ pub(crate) async fn entry(
     identity: Option<String>,
 ) -> ProjectEntry {
     let user = read_cli_config(paths).await;
+    if matches!(user, ConfigFile::Invalid { .. }) {
+        tracing::warn!(
+            "the user config cannot be loaded; project hook trust is read from the default store"
+        );
+    }
     let projects = files::discover(files, workspace).await;
+    let skipped = super::trust::failed(&projects).count();
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            "a project hook config cannot be loaded; its hooks are skipped"
+        );
+    }
     let mut warnings = Vec::new();
     let mut hooks = WorkspaceHooks::inspect(
         workspace.root.as_str(),

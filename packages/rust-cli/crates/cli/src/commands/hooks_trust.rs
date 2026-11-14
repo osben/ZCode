@@ -167,16 +167,20 @@ fn target(options: &Options, cwd: &str) -> (String, Option<String>) {
     }
 }
 
-/// The workspace's hooks and, when a project file cannot be loaded, Node `discoverSnapshot`'s error.
+/// The workspace's hooks and, when a project file or the user config cannot be loaded, Node `discoverSnapshot`'s
+/// error: the project files are read first, then the user hooks (`readUserHooks` throws on anything but a missing
+/// file, a `hooks` value its strict schema rejects included).
 async fn inspect_workspace(
     context: &TrustContext<'_>,
     options: &Options,
 ) -> (WorkspaceHooks, Option<String>) {
     let (path, identity) = target(options, context.cwd);
     let (hooks, failures, _) = inspect_review(context, path, identity).await;
-    let error = failures
-        .project
-        .map(|path| format!("Unable to read Workspace Hook config: {path}"));
+    let error = match &failures.project {
+        Some(path) => Some(format!("Unable to read Workspace Hook config: {path}")),
+        None => (failures.user || failures.user_hooks)
+            .then(|| format!("Unable to read the user config: {}", failures.user_path)),
+    };
     (hooks, error)
 }
 
@@ -204,6 +208,10 @@ async fn inspect_read(
 pub(crate) struct Failures {
     /// The user config: it could name another trust store, so every trust decision fails closed.
     pub(crate) user: bool,
+    /// A user `hooks` value Node's strict schema rejects. Only the trust CLI refuses it (Node `readUserHooks`).
+    pub(crate) user_hooks: bool,
+    /// The user config's path, for the trust CLI's error.
+    pub(crate) user_path: String,
     /// The first project file Node cannot load (unreadable, not an object, or `hooks` its strict schema rejects).
     pub(crate) project: Option<String>,
 }
@@ -249,6 +257,12 @@ pub(crate) async fn inspect_review(
     // (`readWorkspaceHookProjectSources`), naming the first one.
     let failures = Failures {
         user: matches!(files.user, ConfigFile::Invalid { .. }),
+        user_hooks: files
+            .user
+            .object()
+            .and_then(|object| object.get("hooks"))
+            .is_some_and(|hooks| crate::config::workspace_schema::check(hooks).is_err()),
+        user_path: files.user_path.clone(),
         project: trust::failed(&files.projects)
             .next()
             .map(|file| file.path.clone()),

@@ -42,29 +42,24 @@ impl AppWorkspace {
         hooks_trust::inspect_review(&context, trust.working_directory.clone(), identity).await
     }
 
-    /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs.
-    pub(super) async fn rebuild_hooks(&self, trust: &Target) {
-        let key = rust_cli_hooks::project_key(&trust.working_directory);
-        // Two trust mutations rebuild one workspace concurrently (grant, revoke, toggle, `trustGrant` from different
-        // sessions). The ticket is drawn after this mutation's write and before the read, so a newer ticket's read sees
-        // every write an older ticket's saw; a rebuild whose read predates a later mutation's must not put its entry
-        // after that mutation's own rebuild and re-enable a revoked hook. Tickets compare per workspace key.
-        let ticket = self
-            .rebuilds_issued
+    /// Two trust mutations rebuild one workspace concurrently (grant, revoke, toggle, `trustGrant` from different
+    /// sessions). A rebuild draws its ticket after its mutation's write and before its read, so a newer ticket's read
+    /// sees every write an older ticket's saw.
+    fn rebuild_ticket(&self) -> u64 {
+        self.rebuilds_issued
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
-        let workspace = WorkspaceRef {
-            environment: self.process.workspace.environment.clone(),
-            root: EnvPath::new(trust.working_directory.clone()),
-        };
-        let identity = (trust.identity != trust.working_directory).then(|| trust.identity.clone());
-        let entry = crate::config::project_hooks::entry(
-            self.files.as_ref(),
-            &self.paths,
-            &workspace,
-            identity,
-        )
-        .await;
+            + 1
+    }
+
+    /// Puts a rebuilt entry unless a newer ticket of the same workspace already put one: a rebuild whose read predates
+    /// a later mutation's must not replace that mutation's entry (re-enable a revoked hook, or lift its `Invalid`).
+    fn put_rebuilt(
+        &self,
+        trust: &Target,
+        ticket: u64,
+        entry: rust_cli_hooks::ProjectEntry,
+    ) -> bool {
+        let key = rust_cli_hooks::project_key(&trust.working_directory);
         let mut installed = self.rebuilds_installed.lock_unpoisoned();
         let newest = installed.entry(key.clone()).or_default();
         if *newest > ticket {
@@ -72,14 +67,25 @@ impl AppWorkspace {
                 event = "workspace.hooks.rebuild_superseded",
                 "a newer rebuild already put the workspace's project hook entry"
             );
-            return;
+            return false;
         }
         *newest = ticket;
-        tracing::info!(
-            event = "workspace.hooks.rebuilt",
-            "the workspace's project hook entry was rebuilt"
-        );
         (self.put_project_hooks)(key, entry);
+        true
+    }
+
+    /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs, from the
+    /// same read the review answers from.
+    pub(super) async fn rebuild_hooks(&self, trust: &Target) {
+        let ticket = self.rebuild_ticket();
+        let (hooks, _, _) = self.review_hooks(trust).await;
+        let entry = rust_cli_hooks::ProjectEntry::Admitted(hooks.admitted());
+        if self.put_rebuilt(trust, ticket, entry) {
+            tracing::info!(
+                event = "workspace.hooks.rebuilt",
+                "the workspace's project hook entry was rebuilt"
+            );
+        }
     }
 
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
@@ -211,6 +217,8 @@ impl AppWorkspace {
         self.write_toggle(&trust, &hooks, &sources, review_item_id, enabled)
             .await
             .map_err(ToggleError::Rejected)?;
+        // Node `rebuildSnapshot`: one read after the write decides the outcome and is the snapshot that lands.
+        let ticket = self.rebuild_ticket();
         let (after, failures, _) = self.review_hooks(&trust).await;
         // Node `admission.invalidate("workspace_hooks_config_rebuild_failed")`: once the write is committed and the
         // config cannot be rebuilt, no project hook of the workspace runs until its next successful assembly. A
@@ -220,13 +228,16 @@ impl AppWorkspace {
                 event = "workspace.hooks.invalidated",
                 "the toggled workspace config cannot be rebuilt; its project hooks are blocked"
             );
-            (self.put_project_hooks)(
-                rust_cli_hooks::project_key(&trust.working_directory),
-                rust_cli_hooks::ProjectEntry::Invalid,
-            );
+            self.put_rebuilt(&trust, ticket, rust_cli_hooks::ProjectEntry::Invalid);
             return Err(ToggleError::RebuildFailed);
         }
-        self.rebuild_hooks(&trust).await;
+        let entry = rust_cli_hooks::ProjectEntry::Admitted(after.admitted());
+        if self.put_rebuilt(&trust, ticket, entry) {
+            tracing::info!(
+                event = "workspace.hooks.rebuilt",
+                "the workspace's project hook entry was rebuilt"
+            );
+        }
         Ok(())
     }
 

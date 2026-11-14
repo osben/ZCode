@@ -18,6 +18,13 @@ pub(super) const PROJECT: &str = r#"{"zeta": 1.5, "hooks": {"enabled": true, "ev
 
 pub(super) const PROJECT_PATH: &str = "/Users/dev/repo/.zcode/config.json";
 
+fn root_workspace() -> WorkspaceRef {
+    WorkspaceRef {
+        environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
+        root: EnvPath::new(ROOT),
+    }
+}
+
 pub(super) async fn bundle(fixture: &Fixture) -> ReviewBundle {
     match fixture.admin.review_bundle(&target(ROOT)).await {
         ReviewLookup::Bundle(bundle) => bundle,
@@ -38,7 +45,7 @@ fn stored(bundle: &ReviewBundle) -> Vec<StoredTrust> {
 }
 
 async fn project(fixture: &Fixture) -> Vec<u8> {
-    let workspace = fixture.admin.process.workspace.clone();
+    let workspace = root_workspace();
     fixture
         .admin
         .files
@@ -54,7 +61,7 @@ async fn project(fixture: &Fixture) -> Vec<u8> {
 }
 
 async fn write_project(fixture: &Fixture, text: &str) {
-    let workspace = fixture.admin.process.workspace.clone();
+    let workspace = root_workspace();
     let context = OperationContext::new(
         workspace.environment.clone(),
         Generation::new("test"),
@@ -417,7 +424,7 @@ async fn the_review_skips_only_the_file_node_cannot_load() {
     // a file its strict schema rejects is skipped and the other files are reviewed. Its toggle still rebuilds from
     // every file and refuses (`rebuildSnapshot`, `workspace_hooks_config_unreadable`).
     let fixture = fixture_text(PROJECT, json!({}));
-    let workspace = fixture.admin.process.workspace.clone();
+    let workspace = root_workspace();
     let context = OperationContext::new(
         workspace.environment.clone(),
         Generation::new("test"),

@@ -204,6 +204,10 @@ pub(super) fn select(
 }
 
 async fn act(action: Action, options: &Options, context: &TrustContext<'_>) -> Result<(), String> {
+    // Status and review only read; `run` reads once for their output.
+    if matches!(action, Action::Status | Action::Review) {
+        return Ok(());
+    }
     let (hooks, unreadable) = inspect_workspace(context, options).await;
     match action {
         Action::Status | Action::Review => Ok(()),
