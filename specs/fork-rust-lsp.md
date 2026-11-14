@@ -1,6 +1,6 @@
 # Fork: language servers in the Rust agent
 
-Status: stage 1 ("Protocol surface") is implemented. Stage 2 is split the way Node shipped it (design §11, decision 4: diagnostics before navigation): D1 ("Runtime", this PR) runs the servers and reports diagnostics after edits; D2 (the `LSP` agent tool) is the next PR.
+Status: stage 1 ("Protocol surface") and D1 ("Runtime") are implemented. Stage 2 is split the way Node shipped it (design §11, decision 4: diagnostics before navigation): D1 runs the servers and reports diagnostics after edits; D2 ("Tool", this PR) adds the `LSP` agent tool.
 
 Node references: bootstrap `zcode-protocol/lsp.ts`, `app/lsp-preferences.ts`, `app/lsp-runtime-hub.ts`, `zcode-protocol-entrypoint.ts` (the LSP hub); adapters `plugins/lsp.ts`, `plugins/template.ts`, `lsp/command-resolution.ts`; contracts `lsp/index.ts`; design `apps/zcode-cli/docs/design/v2/tool/19-lsp.md`.
 
@@ -251,6 +251,106 @@ The consume step runs under one tracker lock, so a mutation published meanwhile 
 6. Disabling code intelligence stops every running server.
 7. One real-process test drives a small fake server binary through start, an edit and its diagnostics.
 8. No desktop E2E spec covers language servers, and the E2E box has no language server installed, so this stage has no E2E run.
+
+## Tool (D2)
+
+This is a port of Node's `LSP` agent tool: contracts `tools/lsp.ts`, core `tool/handlers/lsp.ts`, `tool/handlers/lsp-format.ts`, `lsp/query-runner.ts`, `lsp/operations.ts`, `lsp/position.ts`, `lsp/results.ts`, `lsp/operation-output.ts`, and its gating in `runtime/methods/lsp.ts`, `runtime/helpers/tool-allowlist.ts` `resolveRuntimeLspToolIncluded` and `tool/handlers/index.ts` (`includeLsp`). The design doc is `apps/zcode-cli/docs/design/v2/tool/19-lsp.md` §7.
+
+### When the tool is offered
+
+Node registers `LSP` in a session runtime only when all of these hold (`includeLsp`):
+
+- the runtime has an LSP service: the main thread of a session in a process with the hub, with at least one server declared for its workspace;
+- code intelligence is enabled;
+- at least one declared server's command is installed (`LspService.isAvailable`).
+
+Node computes this when the runtime is built and again after each preference change (`applyLspPreferences`); the turn loop awaits the pending computation (`settleLspPreferences`) before it reads the tool set. A subagent runtime has no LSP service, so no subagent (Explore included) ever has the tool.
+
+Rust:
+
+- Only the app-server has the tool: it is registered when the assembly has the code-intelligence port (the `lsp::Host`), the same condition as D1.
+- **Owner.** The host keeps one availability fact per session: the workspace it was computed for and the answer. `CodeIntelligence::refresh_tool(session, workspace)` computes and stores it: off when code intelligence is disabled, off when the session's runtime has no declared server, else whether any declared server is installed (the same install probe and env as `lsp/status`).
+- **When it is computed.** The main thread's runner calls `refresh_tool` before every main-thread run, before the run's first tool snapshot (Node's turn-start settle). `lsp/preferences/set` recomputes the fact of every session that has one before it answers (Node's `applyLspPreferences` for every registered runtime). `session_closed` drops it.
+- **Who reads it.** One registry layer under the permission filter owns the tool's visibility: it adds `LSP` to a session's snapshot and resolves it by name for that session (`find_for`) only while `CodeIntelligence::tool_offered(session)` is true. That sync read is "enabled now and the stored fact is true", so turning code intelligence off hides the tool at once. Every consumer of the session view goes through this layer: the main loop's step snapshot, ToolSearch (search and the deferred listing), the executor's lookup, `system/init` and `/context`. Lookups without a session (`tools`, `find`) never return it.
+- **Subagents.** The subagent tool filter and the fork child's registry hide `LSP` for every child, like the main-session-only Cron tools, because the session-keyed fact would otherwise reach a child of an offered session.
+
+```
+main-thread input ─▶ runner: CodeIntelligence::refresh_tool(session, workspace) ── awaited
+                          │   (prefs enabled? → session runtime has servers? → any installed?) → host fact[session]
+                          ▼
+                     query loop: StepTools::refresh ─▶ registry snapshot(session)
+                                                       └─ LSP layer: tool_offered(session) = enabled && fact[session]
+lsp/preferences/set ─▶ write sidecar ─▶ remember prefs ─▶ (off: stop_all) ─▶ recompute fact[s] for every known s
+session close ─▶ CodeIntelligence::session_closed ─▶ drop fact[session]
+```
+
+### Contract
+
+- Name `LSP`. The description is Node's four sentences joined by a space. The input schema is `prompts/tools/LSP.json`, generated from Node's `LspInputJsonSchema` (`operation` enum of seven operations, `filePath` required; `line`, `character` numbers; `symbol`, `query` strings; `includeDeclaration` boolean). Unknown keys are stripped (`z.object`).
+- Deferred behind ToolSearch (`shouldDefer`), read-only, concurrency-safe, no search hint.
+- Permission: Node's `read` class with no approval. Rust gives the judgment chain a Read path subject on the resolved `filePath`, as Read, Glob and Grep do, so `LSP` deny rules and path rules apply.
+- Timeout 65 s: the call fails with "Tool execution timed out after 65000ms". Results above 100 000 characters go to an artifact with a preview.
+- `display` is Node's `LspOutput` object; the model sees the formatted text below.
+
+### Call order
+
+1. Input rules the schema cannot express (each a tool error, Node `validateOperationInput`):
+   - `workspaceSymbol` with a missing or empty `query`: "workspaceSymbol requires query".
+   - A positional operation (`goToDefinition`, `findReferences`, `hover`, `goToImplementation`) without `line`: "`{op}` requires line"; with both or neither of `character` and `symbol`: "`{op}` requires exactly one of character or symbol".
+2. No runtime for the session: "LSP service is not configured for the LSP tool".
+3. `filePath`: empty is "Tool path must not be empty"; an absolute path is normalized; a relative one is resolved against the session's current directory (no `~` expansion, Node `path.resolve`).
+4. The query (Node `runLspQuery`), each failure with Node's stable code and text:
+   - disabled: `lsp_disabled` "Code intelligence is turned off";
+   - no server for the file's extension: `lsp_no_server_for_file` "No language server is configured for `{op}` on this file type";
+   - the server's command is not installed: `lsp_server_not_installed` "Language server `{id}` is not installed on this machine";
+   - acquire: `starting` is `lsp_server_starting` "Language server `{id}` is starting; retry shortly; use Grep meanwhile"; a failed acquire passes its code and message through;
+   - the operation's server capability (`definitionProvider`, `implementationProvider`, `referencesProvider`, `hoverProvider`, `documentSymbolProvider`, `workspaceSymbolProvider`; none for `diagnostics`) is not truthy in the initialize result: `lsp_operation_unsupported` "Language server `{id}` does not support `{op}`";
+   - `workspaceSymbol` sends `workspace/symbol {query}` without opening the file;
+   - every other operation opens the file (or re-syncs a drifted one) through the shared documents, then:
+     - `diagnostics` waits up to 2000 ms for a result fresh for the current version (woken by the documents, never polled). Fresh gives `status: "ok"` with the error and warning items; still not fresh gives `status: "pending"` with no items.
+     - positional operations resolve the position against the synced text, then send `textDocument/definition`, `implementation`, `references` (`context.includeDeclaration`, default false) or `hover`; `documentSymbol` sends `textDocument/documentSymbol`.
+   - Request failures keep D1's codes (`lsp_request_timeout`, `lsp_cancelled`, `lsp_request_failed`, `lsp_operation_unsupported`, `lsp_server_crashed`). Cancelling the tool call cancels the request (`$/cancelRequest`).
+   - The model sees each failure's message as a tool error.
+
+### Positions
+
+- Model side: 1-based line, 1-based column counted in code points. LSP side: 0-based line, UTF-16 column. Lines split on LF with one trailing CR removed.
+- `line` must be an integer in 1..lines: "Line `{n}` is outside the file (1-`{count}`)" (`lsp_invalid_position`).
+- `symbol` wins: its first whole-word occurrence on the line, whole word meaning neither neighbour is `[\p{L}\p{N}_$]`; none is `lsp_symbol_not_found_on_line` "Symbol "`{s}`" does not occur as a whole word on line `{n}`".
+- `character` must be an integer ≥ 1: "Column must be a positive integer, got `{c}`"; the end-of-line column is allowed, past it is "Column `{c}` is past the end of the line".
+- Numbers print as JavaScript prints them (`1.5`, `2`).
+
+### Results
+
+- Locations (definition, implementation, references): `Location | Location[] | LocationLink[] | null`; a link uses `targetSelectionRange`, else `targetRange`; malformed items are skipped. Each becomes `{path, line, character, endLine, endCharacter, preview}`: the path relative to the workspace with `/` when inside it (D1's `model_path`), 1-based code-point positions read from the target file (read once per file per call; an unreadable file keeps the server's columns plus one), and a preview of the start line, trimmed and cut to 200 code points.
+- Symbols: a `DocumentSymbol` tree is flattened depth first (`selectionRange`, children get the parent's name as `containerName`); `SymbolInformation` uses `location` and its own `containerName`. Kinds map to Node's names (`file` … `typeParameter`, else `unknown`). Each becomes `{name, kind, path, line, containerName?}`.
+- Hover: `MarkupContent`, `MarkedString` or an array of them, joined by a blank line and trimmed; empty gives no `hover`; longer than 2000 UTF-16 units is cut and gets `\n...(truncated)`.
+- Lists are capped at 200 items: `truncated` and `total` (the uncapped count). Hover has no `total`.
+- A URI that is not a decodable `file:` URI fails the call ("The URL must be of scheme file"), as Node's `fileURLToPath` throws.
+
+### Model text (Node `formatLspModelContent`)
+
+- One line per location `path:line:character  preview` (trailing spaces trimmed), per symbol `kind name[ in container]  path:line`, the hover text, and per diagnostic `path:line:character severity message[ [source code]]`.
+- `pending` adds "Diagnostics pending: the language server has not reported fresh results for this file yet. This is not the same as no errors." for `diagnostics`, else "Result pending: the language server has not answered yet. Retry shortly, or use Grep meanwhile."
+- Nothing to show: "No diagnostics reported" for `diagnostics`, else "No results".
+- Truncated lists end with "(Results are truncated. Narrow the query to see the rest.)".
+
+### Differences kept on purpose (D2)
+
+- The result budget counts characters (Rust's artifact threshold), Node's counts bytes; both are 100 000.
+- A cancelled call settles as the pipeline's generic cancellation, without Node's `userVisibleMessage` text.
+- A file the documents cannot read fails with the environment's error text, not Node's `FileSystemPort` text.
+- The TUI and `-p` still have no LSP runtime, so they have no `LSP` tool (D1).
+- Rust's built-in Explore description does not list `LSP` (Node's static Explore tool list names it, though no subagent can use it). Explore's Rust description follows its own port and is not changed here.
+
+### Acceptance (D2)
+
+1. Golden texts produced by Node's own `projectOperationResult`, `projectDiagnostics` and `formatLspModelContent` match the Rust projection and text for: a Location, a Location array, LocationLinks, null, a DocumentSymbol tree, SymbolInformation, each hover form and its truncation, 201 references (truncation), and pending diagnostics.
+2. Position resolution: CRLF lines, a surrogate pair before the column, the end-of-line column, `use` not matching `user`, and every error text.
+3. Input rules and their texts, before any runtime access.
+4. Through the fake pool: a starting server answers `lsp_server_starting`; a missing capability answers `lsp_operation_unsupported`; definition opens the file and projects the answer; `workspaceSymbol` opens nothing; `diagnostics` is `pending` without a fresh result and `ok` with one; cancelling the call sends `$/cancelRequest`.
+5. Gating: offered only when enabled and a server is installed; hidden at once after disabling and offered again after enabling; absent for a session without declared servers; absent in subagents and fork children; ToolSearch neither lists nor loads it while hidden; the executor cannot resolve it while hidden.
+6. No desktop E2E spec covers language servers and the E2E box has no language server, so D2 has no E2E run.
 
 ## Differences kept on purpose (stage 1)
 
